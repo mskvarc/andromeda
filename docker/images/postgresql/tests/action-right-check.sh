@@ -15,7 +15,7 @@
 # current_attributes. The broker is then restarted in automatic mode as a role
 # that is no superuser, holds the data privileges and MAINTAIN on every table
 # of public, and holds no MAINTAIN on any history chunk. That is the state a
-# broker is in once database.url moves to a new role while the tables stay
+# broker is in once database.connection moves to a new role while the tables stay
 # owned by the old one.
 #
 # The controller runs the responsive profile: the stale entities statistics
@@ -94,7 +94,7 @@ logged() {
 start_broker() {
 	docker run -d --name "$1" --network "$network" -p 127.0.0.1::1056 \
 		-e ANDROMEDA__SERVER__HOST=0.0.0.0 \
-		-e "ANDROMEDA__DATABASE__URL=$2" \
+		-e "ANDROMEDA__DATABASE__CONNECTION=$2" \
 		-e "ANDROMEDA__DATABASE__MAINTENANCE__MODE=$3" \
 		-e ANDROMEDA__DATABASE__MAINTENANCE__PROFILE=responsive \
 		-e ANDROMEDA__TEMPORAL__STORAGE__COLUMNSTORE__SWEEP_INTERVAL=2s \

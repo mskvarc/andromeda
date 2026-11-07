@@ -1,6 +1,7 @@
 //! The `[database]` table: the PostgreSQL the broker stores in, and how it
 //! connects.
 
+pub mod connection;
 pub mod maintenance;
 pub mod name_cache;
 pub mod pooler;
@@ -8,14 +9,19 @@ pub mod write_reserve;
 
 use crate::{
     human_duration::HumanDuration,
-    schema::database::{maintenance::MaintenanceConfig, name_cache::NameCacheConfig, pooler::PoolerConfig, write_reserve::WriteReserve},
+    schema::database::{
+        connection::PostgresConnection,
+        maintenance::MaintenanceConfig,
+        name_cache::NameCacheConfig,
+        pooler::PoolerConfig,
+        write_reserve::WriteReserve,
+    },
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroU32, time::Duration};
 use strum::{Display, EnumString};
 use url::Url;
-use url_macro::url;
 
 /// Postgres `synchronous_commit` durability, applied to each tenant database and
 /// the platform database with `ALTER DATABASE ... SET` rather than per connection.
@@ -62,18 +68,19 @@ pub enum SynchronousCommit {
 #[schemars(description = "The PostgreSQL server the broker stores in, and how it connects to it.")]
 #[schemars(deny_unknown_fields)]
 pub struct DatabaseConfig {
-    /// PostgreSQL connection URL. It always names PostgreSQL itself, never a
-    /// proxy: provisioning, migration and maintenance connect here, and so
-    /// does the request path unless `[database.pooler]` is configured.
+    /// The PostgreSQL server and the default tenant's database. It always
+    /// names PostgreSQL itself, never a proxy: provisioning, migration and
+    /// maintenance connect here, and so does the request path unless
+    /// `[database.pooler]` is configured. It has no default.
     #[schemars(
-        description = "The PostgreSQL server and the default tenant's database. It always names PostgreSQL itself, never a proxy: tenant creation, migrations and maintenance connect here even when `database.pooler` is set, and so do requests when it is not."
+        description = "The PostgreSQL server and the default tenant's database, as a connection URL or as a table of its parts. It has no default: set it here or in `ANDROMEDA__DATABASE__CONNECTION`, or each part in its own variable such as `ANDROMEDA__DATABASE__CONNECTION__PASSWORD`. It always names PostgreSQL itself, never a proxy: tenant creation, migrations and maintenance connect here even when `database.pooler` is set, and so do requests when it is not."
     )]
-    pub url: Url,
+    pub connection: PostgresConnection,
     /// The most connections the platform pool opens: the pool over the
     /// platform database that holds the tenant registry, the wake schedule and
     /// the forwarded-subscription routes. Always direct to PostgreSQL.
     #[schemars(
-        description = "The most connections the platform pool opens, in each broker process. It reads and writes the tenant registry every tenant load consults, the schedule of tenants with due work and the routes of forwarded subscriptions, and always connects to `database.url`, even when `database.pooler` is set. Tenants size their own pools with `tenancy.default_tenant.max_connections` and `tenancy.databases.max_connections`."
+        description = "The most connections the platform pool opens, in each broker process. It reads and writes the tenant registry every tenant load consults, the schedule of tenants with due work and the routes of forwarded subscriptions, and always connects to `database.connection`, even when `database.pooler` is set. Tenants size their own pools with `tenancy.default_tenant.max_connections` and `tenancy.databases.max_connections`."
     )]
     pub platform_max_connections: NonZeroU32,
     /// Percentage of each tenant pool that read requests (queries, retrievals,
@@ -98,10 +105,10 @@ pub struct DatabaseConfig {
     )]
     pub synchronous_commit: SynchronousCommit,
     /// A transaction-pooling proxy on the request path. Left out, every
-    /// connection goes to `url`.
+    /// connection goes to `connection`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "A transaction-pooling proxy, such as PgBouncer in transaction mode, on the request path. Left out, every connection goes straight to `database.url`."
+        description = "A transaction-pooling proxy, such as PgBouncer in transaction mode, on the request path. Left out, every connection goes straight to `database.connection`."
     )]
     pub pooler: Option<PoolerConfig>,
     /// The tenant name dictionary caches.
@@ -112,16 +119,32 @@ pub struct DatabaseConfig {
     pub maintenance: MaintenanceConfig,
 }
 
-impl Default for DatabaseConfig {
-    fn default() -> DatabaseConfig {
-        DatabaseConfig {
-            // Compile-time validated, so the built-in default carries no runtime parse or panic.
-            url: url!("postgres://andromeda:andromeda@localhost:5432/andromeda"),
+/// Every `[database]` key that has a built-in default, at it: all but the
+/// connection, which has none, and the pooler, which is left out.
+#[derive(Serialize, Debug, Clone, Copy)]
+pub struct DatabaseDefaults {
+    /// See [`DatabaseConfig::platform_max_connections`].
+    pub platform_max_connections: NonZeroU32,
+    /// See [`DatabaseConfig::write_reserve_percent`].
+    pub write_reserve_percent: WriteReserve,
+    /// See [`DatabaseConfig::acquire_timeout`].
+    pub acquire_timeout: HumanDuration,
+    /// See [`DatabaseConfig::synchronous_commit`].
+    pub synchronous_commit: SynchronousCommit,
+    /// See [`DatabaseConfig::name_cache`].
+    pub name_cache: NameCacheConfig,
+    /// See [`DatabaseConfig::maintenance`].
+    pub maintenance: MaintenanceConfig,
+}
+
+impl Default for DatabaseDefaults {
+    // Manual because `NonZeroU32` has no `Default`.
+    fn default() -> DatabaseDefaults {
+        DatabaseDefaults {
             platform_max_connections: NonZeroU32::MIN.saturating_add(31),
             write_reserve_percent: WriteReserve::DEFAULT,
             acquire_timeout: HumanDuration::from_secs(5),
             synchronous_commit: SynchronousCommit::On,
-            pooler: None,
             name_cache: NameCacheConfig::default(),
             maintenance: MaintenanceConfig::default(),
         }
@@ -129,6 +152,30 @@ impl Default for DatabaseConfig {
 }
 
 impl DatabaseConfig {
+    /// The `[database]` table that connects to `connection` directly, every
+    /// other key at `defaults`.
+    #[must_use]
+    pub const fn new(connection: PostgresConnection, defaults: DatabaseDefaults) -> DatabaseConfig {
+        let DatabaseDefaults {
+            platform_max_connections,
+            write_reserve_percent,
+            acquire_timeout,
+            synchronous_commit,
+            name_cache,
+            maintenance,
+        } = defaults;
+        DatabaseConfig {
+            connection,
+            platform_max_connections,
+            write_reserve_percent,
+            acquire_timeout,
+            synchronous_commit,
+            pooler: None,
+            name_cache,
+            maintenance,
+        }
+    }
+
     /// The request-path connection acquire deadline as a [`Duration`].
     #[must_use]
     pub const fn acquire_timeout(&self) -> Duration {
@@ -136,23 +183,23 @@ impl DatabaseConfig {
     }
 
     /// The base URL the request path connects through: the pooler when one is
-    /// configured, otherwise [`url`](Self::url). Per-tenant serving pools and
-    /// the platform serving pool are derived from this.
+    /// configured, otherwise [`connection`](Self::connection). Per-tenant
+    /// serving pools and the platform serving pool are derived from this.
     #[must_use]
     pub fn request_url(&self) -> &Url {
-        self.pooler.as_ref().map_or(&self.url, |pooler| &pooler.url)
+        self.pooler.as_ref().map_or(self.connection.url(), |pooler| pooler.connection.url())
     }
 
     /// The straight-to-PostgreSQL base URL for work that must keep session state
     /// across transactions.
     ///
-    /// Always [`url`](Self::url): tenant provisioning (`CREATE DATABASE`), schema
+    /// Always [`connection`](Self::connection): tenant provisioning (`CREATE DATABASE`), schema
     /// migration (the migrator holds a session advisory lock), the
     /// `ALTER DATABASE` durability settings and maintenance's session advisory
     /// lock bypass any pooler and reach PostgreSQL directly.
     #[must_use]
     pub const fn direct_url(&self) -> &Url {
-        &self.url
+        self.connection.url()
     }
 
     /// Whether a transaction-pooling proxy fronts the request path, for the
@@ -178,24 +225,24 @@ impl DatabaseConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::schema::database::{DatabaseConfig, SynchronousCommit, pooler::PoolerConfig};
+    use crate::schema::database::{DatabaseConfig, DatabaseDefaults, SynchronousCommit, connection::PostgresConnection, pooler::PoolerConfig};
     use std::{num::NonZeroU32, str::FromStr, time::Duration};
+    use url_macro::url;
 
-    #[test]
-    fn the_built_in_default_database_url_is_valid() {
-        pretty_assertions::assert_eq!(
-            DatabaseConfig::default().url.as_str(),
-            "postgres://andromeda:andromeda@localhost:5432/andromeda"
-        );
+    fn direct() -> DatabaseConfig {
+        DatabaseConfig::new(
+            PostgresConnection::new(url!("postgres://postgres:postgres@postgres:5432/postgres")),
+            DatabaseDefaults::default(),
+        )
     }
 
     fn pooled(max_connections_per_tenant: NonZeroU32) -> DatabaseConfig {
         DatabaseConfig {
             pooler: Some(PoolerConfig {
-                url: "postgres://localhost:6432/postgres".parse().expect("pooler URL"),
+                connection: PostgresConnection::new(url!("postgres://postgres:postgres@pgbouncer:6432/postgres")),
                 max_connections_per_tenant,
             }),
-            ..DatabaseConfig::default()
+            ..direct()
         }
     }
 
@@ -210,7 +257,7 @@ mod tests {
 
     #[test]
     fn a_zero_pooler_connection_count_is_refused_as_it_is_read() {
-        let refused = toml::from_str::<PoolerConfig>("url = \"postgres://localhost:6432/postgres\"\nmax_connections_per_tenant = 0\n");
+        let refused = toml::from_str::<PoolerConfig>("connection = \"postgres://localhost:6432/postgres\"\nmax_connections_per_tenant = 0\n");
         assert!(refused.is_err());
     }
 
@@ -230,32 +277,25 @@ mod tests {
 
     #[test]
     fn an_acknowledged_write_is_flushed_unless_an_operator_opts_out() {
-        pretty_assertions::assert_eq!(DatabaseConfig::default().synchronous_commit, SynchronousCommit::On);
+        pretty_assertions::assert_eq!(direct().synchronous_commit, SynchronousCommit::On);
     }
 
     #[test]
     fn the_default_acquire_timeout_is_five_seconds() {
-        pretty_assertions::assert_eq!(DatabaseConfig::default().acquire_timeout(), Duration::from_secs(5));
+        pretty_assertions::assert_eq!(direct().acquire_timeout(), Duration::from_secs(5));
     }
 
     #[test]
     fn without_a_pooler_the_request_and_direct_base_are_both_the_url() {
-        let config = DatabaseConfig::default();
+        let config = direct();
         assert!(!config.is_pooled());
-        pretty_assertions::assert_eq!(config.request_url(), &config.url);
-        pretty_assertions::assert_eq!(config.direct_url(), &config.url);
+        pretty_assertions::assert_eq!(config.request_url(), config.connection.url());
+        pretty_assertions::assert_eq!(config.direct_url(), config.connection.url());
     }
 
     #[test]
     fn a_pooler_moves_only_the_request_base_and_leaves_the_direct_base_on_postgres() {
-        let config = DatabaseConfig {
-            url: "postgres://postgres:postgres@postgres:5432/postgres".parse().expect("direct URL"),
-            pooler: Some(PoolerConfig {
-                url: "postgres://postgres:postgres@pgbouncer:6432/postgres".parse().expect("pooler URL"),
-                ..PoolerConfig::default()
-            }),
-            ..DatabaseConfig::default()
-        };
+        let config = pooled(NonZeroU32::MIN);
         assert!(config.is_pooled());
         pretty_assertions::assert_eq!(config.request_url().as_str(), "postgres://postgres:postgres@pgbouncer:6432/postgres");
         pretty_assertions::assert_eq!(config.direct_url().as_str(), "postgres://postgres:postgres@postgres:5432/postgres");

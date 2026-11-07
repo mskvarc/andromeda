@@ -49,7 +49,7 @@ mod tests {
 
     #[test]
     fn a_name_cache_without_capacity_is_refused_and_one_byte_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.database.name_cache.max_size_per_dictionary = HumanByteSize::b(0);
         assert_eq!(
             refusals(&config),
@@ -67,14 +67,14 @@ mod tests {
             |config, value| config.database.name_cache.idle_eviction_after = Ceiling::At(value),
             ConfigKey::DatabaseNameCacheIdleEvictionAfter,
         );
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.database.name_cache.idle_eviction_after = Ceiling::Unlimited(Unlimited::Unlimited);
         assert_accepted(&config);
     }
 
     #[test]
     fn a_repack_ceiling_of_no_bytes_is_refused_and_one_byte_and_unlimited_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.database.maintenance.repack.max_relation_size = Ceiling::At(HumanByteSize::b(0));
         assert_eq!(
             refusals(&config),

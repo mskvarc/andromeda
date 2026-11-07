@@ -23,7 +23,7 @@ mod tests {
 
     #[test]
     fn a_separate_management_port_of_zero_is_refused_and_port_one_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.management.mode = ManagementMode::SeparatePort;
         config.management.port = 0;
         assert_eq!(
@@ -38,7 +38,7 @@ mod tests {
 
     #[test]
     fn a_management_port_of_zero_is_not_read_outside_separate_port_mode() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.management.port = 0;
         for mode in [ManagementMode::SharedPort, ManagementMode::Disabled] {
             config.management.mode = mode;

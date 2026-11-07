@@ -1,22 +1,25 @@
 //! The root of the configuration: every top-level table.
 
-use crate::schema::{
-    database::DatabaseConfig,
-    entity::EntityConfig,
-    expiry::ExpiryConfig,
-    extensions::ExtensionsConfig,
-    federation::FederationConfig,
-    http::HttpStackConfig,
-    jsonld::JsonLdConfig,
-    management::ManagementConfig,
-    notifications::NotificationsConfig,
-    observability::ObservabilityConfig,
-    request_limits::RequestLimitsConfig,
-    server::ServerConfig,
-    snapshot::SnapshotConfig,
-    temporal::TemporalConfig,
-    tenancy::TenancyConfig,
-    tls::TlsConfig,
+use crate::{
+    built_in_defaults::BuiltInDefaults,
+    schema::{
+        database::{DatabaseConfig, connection::PostgresConnection},
+        entity::EntityConfig,
+        expiry::ExpiryConfig,
+        extensions::ExtensionsConfig,
+        federation::FederationConfig,
+        http::HttpStackConfig,
+        jsonld::JsonLdConfig,
+        management::ManagementConfig,
+        notifications::NotificationsConfig,
+        observability::ObservabilityConfig,
+        request_limits::RequestLimitsConfig,
+        server::ServerConfig,
+        snapshot::SnapshotConfig,
+        temporal::TemporalConfig,
+        tenancy::TenancyConfig,
+        tls::TlsConfig,
+    },
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -25,8 +28,8 @@ use serde::{Deserialize, Serialize};
 /// configures.
 ///
 /// The broker composition reads it and hands each crate the one table that
-/// crate reads.
-#[derive(Deserialize, Serialize, Default, JsonSchema, Debug, Clone)]
+/// crate reads. It has no default: the database connection has none.
+#[derive(Deserialize, Serialize, JsonSchema, Debug, Clone)]
 #[schemars(deny_unknown_fields)]
 #[schemars(
     title = "Andromeda configuration",
@@ -103,4 +106,56 @@ pub struct BrokerConfig {
     /// Logging and metrics.
     #[schemars(description = "Logging and metrics.")]
     pub observability: ObservabilityConfig,
+}
+
+impl BrokerConfig {
+    /// The configuration of a broker storing in `connection`, every other key
+    /// at its built-in default.
+    #[must_use]
+    pub fn new(connection: PostgresConnection) -> BrokerConfig {
+        let BuiltInDefaults {
+            server,
+            tls,
+            management,
+            request_limits,
+            http,
+            database,
+            tenancy,
+            expiry,
+            jsonld,
+            entity,
+            temporal,
+            notifications,
+            federation,
+            snapshot,
+            extensions,
+            observability,
+        } = BuiltInDefaults::default();
+        BrokerConfig {
+            server,
+            tls,
+            management,
+            request_limits,
+            http,
+            database: DatabaseConfig::new(connection, database),
+            tenancy,
+            expiry,
+            jsonld,
+            entity,
+            temporal,
+            notifications,
+            federation,
+            snapshot,
+            extensions,
+            observability,
+        }
+    }
+
+    /// The built-in defaults storing in a local PostgreSQL, for tests that
+    /// change one key and never connect.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn local() -> BrokerConfig {
+        BrokerConfig::new(PostgresConnection::new(url_macro::url!("postgres://andromeda@localhost/andromeda")))
+    }
 }

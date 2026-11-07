@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn a_fetch_timeout_below_one_second_is_refused_and_one_second_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.jsonld.fetch.timeout = HumanDuration::from_millis(999);
         assert_eq!(
             refusals(&config),
@@ -98,7 +98,7 @@ mod tests {
 
     #[test]
     fn a_zero_fetch_size_is_refused_and_one_byte_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.jsonld.fetch.max_size = HumanByteSize::b(0);
         assert_eq!(
             refusals(&config),
@@ -127,7 +127,7 @@ mod tests {
             url: url.clone(),
             path: PathBuf::from("context.jsonld"),
         };
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.jsonld.preloaded_contexts = vec![context(&url), context(&url), context(&url)];
         assert_eq!(refusals(&config), [ConfigurationViolation::DuplicatePreloadedContext { url: url.clone() }]);
         config.jsonld.preloaded_contexts = vec![context(&url), context(&other)];

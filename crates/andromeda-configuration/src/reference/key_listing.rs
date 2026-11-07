@@ -3,7 +3,7 @@
 //! shown at.
 
 use crate::{
-    broker_config::BrokerConfig,
+    built_in_defaults::BuiltInDefaults,
     reference::{
         ReferenceError,
         example::example_configuration,
@@ -59,8 +59,9 @@ pub(crate) enum KeyState {
     Default,
     /// It is not set; the value shown is an example.
     Unset,
-    /// Its table is not set, and a table that is set must hold it; the value
-    /// shown is an example.
+    /// It has no default, and the configuration must set it once its table is
+    /// set; the value shown is an example. A key of a table set by default,
+    /// such as `database.connection`, must always be set.
     Required,
 }
 
@@ -179,7 +180,7 @@ pub(crate) enum ReferenceEntry {
 /// configuration cannot be written and read back.
 pub(crate) fn key_listing() -> Result<Vec<ReferenceEntry>, ReferenceError> {
     let schema = SchemaNode::configuration()?;
-    let defaults = document(&BrokerConfig::default())?;
+    let defaults = document(&BuiltInDefaults::default())?;
     let example = document(&example_configuration()?)?;
     let mut entries = Vec::new();
     list_table(&mut entries, &KeyPath::default(), example.as_table(), Some(defaults.as_table()), &schema);
@@ -206,8 +207,8 @@ pub(crate) fn key_listing() -> Result<Vec<ReferenceEntry>, ReferenceError> {
     Ok(entries)
 }
 
-/// The configuration as a TOML document.
-fn document(config: &BrokerConfig) -> Result<DocumentMut, ReferenceError> {
+/// A configuration, or its defaults, as a TOML document.
+fn document(config: &impl Serialize) -> Result<DocumentMut, ReferenceError> {
     Ok(toml::to_string(config)?.parse::<DocumentMut>()?)
 }
 
@@ -220,7 +221,7 @@ fn list_table(entries: &mut Vec<ReferenceEntry>, path: &KeyPath, example: &Table
         let default = defaults.and_then(|table| table.get(name)).and_then(Item::as_value);
         let state = match default {
             Some(_) => KeyState::Default,
-            None if defaults.is_none() && schema.requires(name) => KeyState::Required,
+            None if schema.requires(name) => KeyState::Required,
             None => KeyState::Unset,
         };
         entries.push(ReferenceEntry::Key(KeyEntry {

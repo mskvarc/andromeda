@@ -43,7 +43,7 @@ impl Default for TenantDatabasesConfig {
 
 /// The default tenant's pool.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
-#[schemars(description = "The tenant a request reaches when it names none in `NGSILD-Tenant`, whose data lives in `database.url`.")]
+#[schemars(description = "The tenant a request reaches when it names none in `NGSILD-Tenant`, whose data lives in `database.connection`.")]
 #[schemars(deny_unknown_fields)]
 pub struct DefaultTenantConfig {
     /// The most connections the default tenant's pool opens.

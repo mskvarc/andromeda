@@ -22,7 +22,7 @@ pub(crate) fn assert_accepted(config: &BrokerConfig) {
 /// Assert that the duration `set` writes is refused at zero, alone, and
 /// accepted one millisecond above it.
 pub(crate) fn assert_positive_duration(set: fn(&mut BrokerConfig, HumanDuration), key: ConfigKey) {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     set(&mut config, HumanDuration::from_millis(0));
     assert_eq!(refusals(&config), [ConfigurationViolation::Zero { key }], "{key}");
     set(&mut config, HumanDuration::from_millis(1));
@@ -31,14 +31,14 @@ pub(crate) fn assert_positive_duration(set: fn(&mut BrokerConfig, HumanDuration)
 
 #[test]
 fn the_default_configuration_breaks_no_rule() {
-    assert_accepted(&BrokerConfig::default());
+    assert_accepted(&BrokerConfig::local());
 }
 
 /// Validation goes on past a broken rule, so a file breaking three rules in
 /// three tables is refused for all three, in the order the rules run.
 #[test]
 fn a_configuration_breaking_three_rules_is_refused_for_all_three() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.server.port = 0;
     config.expiry.sweep_interval = HumanDuration::from_secs(0);
     config.snapshot.preparation.lease_timeout = HumanDuration::from_secs(0);
@@ -58,7 +58,7 @@ fn a_configuration_breaking_three_rules_is_refused_for_all_three() {
 
 #[test]
 fn the_refusal_lists_every_violation_on_its_own_line() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.server.port = 0;
     config.expiry.sweep_interval = HumanDuration::from_secs(0);
     let message = validate(&config).map_err(|error| error.to_string());

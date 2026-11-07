@@ -1,16 +1,15 @@
 //! The effective configuration with its secrets hidden, for operator output.
 
-use crate::broker_config::BrokerConfig;
+use crate::{broker_config::BrokerConfig, schema::database::connection::PostgresConnection};
 use serde_json::Error as JsonError;
 use thiserror::Error;
 use toml::ser::Error as TomlError;
-use url::Url;
 use url_macro::url;
 
-/// What a database URL is replaced with: it names no host and carries no
-/// credential.
-fn redacted_database_url() -> Url {
-    url!("postgres://redacted.invalid/redacted")
+/// What a database connection is replaced with: it names no host and carries
+/// no credential.
+fn redacted_connection() -> PostgresConnection {
+    PostgresConnection::new(url!("postgres://redacted.invalid/redacted"))
 }
 
 /// The effective configuration could not be written out.
@@ -26,17 +25,17 @@ pub enum RenderError {
 
 /// The dotted paths of the keys [`redacted`] replaces. The configuration
 /// descriptor marks exactly these sensitive.
-pub const SENSITIVE_KEYS: [&str; 2] = ["database.url", "database.pooler.url"];
+pub const SENSITIVE_KEYS: [&str; 2] = ["database.connection", "database.pooler.connection"];
 
-/// The configuration with both database URLs, the direct one and the pooler's,
-/// replaced, since either may carry a password.
+/// The configuration with both database connections, the direct one and the
+/// pooler's, replaced, since either may carry a password.
 #[must_use]
 pub fn redacted(config: &BrokerConfig) -> BrokerConfig {
     // clone: the output is a printable copy; the live configuration is not changed.
     let mut redacted = config.clone();
-    redacted.database.url = redacted_database_url();
+    redacted.database.connection = redacted_connection();
     if let Some(pooler) = &mut redacted.database.pooler {
-        pooler.url = redacted_database_url();
+        pooler.connection = redacted_connection();
     }
     redacted
 }
@@ -61,11 +60,14 @@ pub fn redacted_toml(config: &BrokerConfig) -> Result<String, RenderError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SENSITIVE_KEYS, redacted};
-    use crate::{broker_config::BrokerConfig, schema::database::pooler::PoolerConfig};
+    use crate::{
+        broker_config::BrokerConfig,
+        redact::{SENSITIVE_KEYS, redacted},
+        schema::database::{connection::PostgresConnection, pooler::PoolerConfig},
+    };
     use pretty_assertions::assert_eq;
     use serde_json::Value;
-    use std::collections::BTreeSet;
+    use std::{collections::BTreeSet, num::NonZeroU32};
     use url_macro::url;
 
     /// The dotted path of every leaf of `value` with its value.
@@ -80,11 +82,10 @@ mod tests {
 
     #[test]
     fn redaction_changes_exactly_the_sensitive_keys() -> Result<(), serde_json::Error> {
-        let mut config = BrokerConfig::default();
-        config.database.url = url!("postgres://user:secret@db.example/andromeda");
+        let mut config = BrokerConfig::new(PostgresConnection::new(url!("postgres://user:secret@db.example/andromeda")));
         config.database.pooler = Some(PoolerConfig {
-            url: url!("postgres://user:secret@pooler.example/andromeda"),
-            ..PoolerConfig::default()
+            connection: PostgresConnection::new(url!("postgres://user:secret@pooler.example/andromeda")),
+            max_connections_per_tenant: NonZeroU32::MIN,
         });
         let (mut before, mut after) = (Vec::new(), Vec::new());
         leaves(&serde_json::to_value(&config)?, "", &mut before);

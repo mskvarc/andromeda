@@ -9,7 +9,7 @@
 # pile up. The broker is then restarted in automatic mode as a role that is
 # no superuser, holds the data privileges and MAINTAIN on every table, and
 # lacks MAINTAIN on the tenant's entities only. That is the state a broker is
-# in once database.url moves to a new role while the tables stay owned by the
+# in once database.connection moves to a new role while the tables stay owned by the
 # old one.
 set -Eeuo pipefail
 
@@ -68,7 +68,7 @@ wait_for() {
 start_broker() {
 	docker run -d --name "$1" --network "$network" -p 127.0.0.1::1056 \
 		-e ANDROMEDA__SERVER__HOST=0.0.0.0 \
-		-e "ANDROMEDA__DATABASE__URL=$2" \
+		-e "ANDROMEDA__DATABASE__CONNECTION=$2" \
 		-e "ANDROMEDA__DATABASE__MAINTENANCE__MODE=$3" \
 		-e ANDROMEDA__DATABASE__MAINTENANCE__PROFILE=responsive \
 		"$broker_image" > /dev/null

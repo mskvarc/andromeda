@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn a_zero_lease_is_refused_with_the_margin_it_lacks() {
         let lease = ConfigKey::Queue(HISTORY, QueueKey::LeaseTimeout);
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.temporal.history.queue.lease_timeout = HumanDuration::from_secs(0);
         assert_eq!(
             refusals(&config),
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn a_poll_ceiling_below_its_floor_is_refused_and_an_equal_one_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.temporal.history.queue.poll_interval = HumanDuration::from_secs(5);
         config.temporal.history.queue.max_poll_interval = HumanDuration::from_millis(4_999);
         assert_eq!(
@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn a_retry_ceiling_below_its_first_step_is_refused_and_an_equal_one_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.entity.side_effects.queue.retry_interval = HumanDuration::from_secs(10);
         config.entity.side_effects.queue.max_retry_interval = HumanDuration::from_millis(9_999);
         let side_effects = QueueName::EntitySideEffects;
@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn a_queue_violation_names_the_queue_key_path() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.notifications.delivery.queue.retry_interval = HumanDuration::from_secs(0);
         assert_eq!(
             refusals(&config),

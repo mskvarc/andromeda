@@ -3,7 +3,7 @@
 use crate::configuration::{
     commands::load_admitted,
     error::ConfigurationError,
-    section_admission::{SectionAdmissionError, admit_sections},
+    section_admission::SectionAdmissionError,
     source_identity::{AliasOrigin, SourceIdentityError},
 };
 use andromeda_configuration::{
@@ -31,16 +31,19 @@ fn write_temp_config(contents: &str) -> NamedTempFile {
     file
 }
 
-/// Load `contents` as the configuration file through the admission the
-/// broker runs at startup.
+/// The `[database]` table naming the connection, which has no default.
+const CONNECTION_TABLE: &str = "[database]\nconnection = \"postgres://andromeda@localhost/andromeda\"\n\n";
+
+/// Load `contents`, after the connection, as the configuration file through
+/// the admission the broker runs at startup.
 fn admitted(contents: &str) -> Result<BrokerConfig, ConfigurationError> {
-    let file = write_temp_config(contents);
+    let file = write_temp_config(&format!("{CONNECTION_TABLE}{contents}"));
     load_admitted(Some(file.path().to_path_buf()), ListenerOverrides::default()).map(|(_, loaded)| loaded.config)
 }
 
 #[test]
 fn the_default_configuration_is_admitted() {
-    assert!(admit_sections(&BrokerConfig::default()).is_ok());
+    assert!(admitted("").is_ok());
 }
 
 /// `extensions.cursor_pagination.mode = "disabled"` serves offset paging

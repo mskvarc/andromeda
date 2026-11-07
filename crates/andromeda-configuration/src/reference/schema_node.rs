@@ -195,8 +195,22 @@ impl SchemaNode {
             || self.items.as_deref().is_some_and(|member| member.requires(name))
     }
 
+    /// Whether one of the shapes the value may take is a scalar, as a
+    /// database connection may be a URL string or a table of its parts.
+    #[cfg(test)]
+    fn may_be_a_scalar(&self) -> bool {
+        self.any_of.iter().any(|shape| {
+            shape
+                .types
+                .writable()
+                .iter()
+                .any(|name| matches!(*name, "string" | "integer" | "number" | "boolean"))
+        })
+    }
+
     /// The dotted path of every key the configuration names below this node:
-    /// a value, or a table whose keys are the operator's own.
+    /// a value, a value that may also be written as a table, or a table whose
+    /// keys are the operator's own.
     #[cfg(test)]
     pub(crate) fn leaf_paths(&self, prefix: &str) -> Vec<String> {
         let tables = self.any_of.iter().chain(self.items.as_deref());
@@ -204,7 +218,11 @@ impl SchemaNode {
             .iter()
             .flat_map(|(name, node)| {
                 let path = if prefix.is_empty() { name.clone() } else { format!("{prefix}.{name}") };
-                if node.names_its_keys() { node.leaf_paths(&path) } else { vec![path] }
+                if node.names_its_keys() && !node.may_be_a_scalar() {
+                    node.leaf_paths(&path)
+                } else {
+                    vec![path]
+                }
             })
             .chain(tables.flat_map(|shape| shape.leaf_paths(prefix)))
             .collect()

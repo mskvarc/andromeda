@@ -12,6 +12,7 @@
 
 pub mod address_rule;
 pub mod broker_config;
+mod built_in_defaults;
 pub mod comma_list;
 pub mod header_section_limit;
 pub mod human_byte_size;

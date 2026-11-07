@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn a_proxies_trust_without_a_proxy_is_refused_and_with_one_accepted() -> Result<(), Box<dyn Error>> {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.http.forwarded.trust = ForwardedTrust::Proxies;
         assert_eq!(
             refusals(&config),
@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn proxies_beside_a_trust_that_reads_no_list_are_refused() -> Result<(), Box<dyn Error>> {
         for trust in [ForwardedTrust::None, ForwardedTrust::Any] {
-            let mut config = BrokerConfig::default();
+            let mut config = BrokerConfig::local();
             config.http.forwarded.trust = trust;
             config.http.forwarded.proxies = vec!["10.0.0.0/8".parse()?];
             assert_eq!(refusals(&config), [ConfigurationViolation::ProxiesWithoutProxyTrust { trust }]);
@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn credentials_beside_a_wildcard_are_refused_and_beside_listed_rules_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.http.cors.mode = CorsMode::Configured;
         config.http.cors.credentials = CorsPermission::Allowed;
         config.http.cors.allow_origins = OriginRule::Any;
@@ -168,7 +168,7 @@ mod tests {
     /// `u64`, the only platforms a byte size can pass it on.
     #[test]
     fn a_decode_threshold_past_the_address_width_is_refused() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.http.body_decoding.blocking_threshold = HumanByteSize::b(u64::MAX);
         if usize::try_from(u64::MAX).is_ok() {
             assert_accepted(&config);
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn an_empty_coding_list_is_refused_while_its_table_is_on_and_accepted_while_off() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.http.compression.algorithms = EnumSet::empty();
         config.http.decompression.algorithms = EnumSet::empty();
         assert_eq!(

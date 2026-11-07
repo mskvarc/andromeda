@@ -98,7 +98,7 @@ tenant_database() {
 start_broker() {
 	docker run -d --name "$broker" --network "$network" -p 127.0.0.1::1056 \
 		-e ANDROMEDA__SERVER__HOST=0.0.0.0 \
-		-e "ANDROMEDA__DATABASE__URL=postgres://andromeda:check@$database:5432/andromeda" \
+		-e "ANDROMEDA__DATABASE__CONNECTION=postgres://andromeda:check@$database:5432/andromeda" \
 		"$1" > /dev/null
 	local port
 	port="$(docker port "$broker" 1056/tcp)"

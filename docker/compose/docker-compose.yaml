@@ -31,7 +31,7 @@ services:
       postgresql:
         condition: service_healthy
     environment:
-      ANDROMEDA__DATABASE__URL: postgres://andromeda:${POSTGRES_PASSWORD}@postgresql:5432/andromeda
+      ANDROMEDA__DATABASE__CONNECTION: postgres://andromeda:${POSTGRES_PASSWORD}@postgresql:5432/andromeda
     ports:
       - "1056:1056"
 

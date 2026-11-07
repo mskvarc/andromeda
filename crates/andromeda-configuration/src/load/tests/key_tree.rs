@@ -13,6 +13,11 @@ use url_macro::url;
 /// setting the load ignores in it, and the file spelling it has now.
 const MOVED: &[(&str, &str, &str)] = &[
     (
+        "[database]\nurl = \"postgres://p/db\"\n",
+        "database.url",
+        "[database]\nconnection = \"postgres://p/db\"\n",
+    ),
+    (
         "[database]\nmax_connections = 8\n",
         "database.max_connections",
         "[database]\nplatform_max_connections = 8\n\n[tenancy.default_tenant]\nmax_connections = 8\n",
@@ -709,9 +714,14 @@ fn every_moved_key_loads_at_its_new_path_and_its_old_path_is_ignored_with_a_warn
 const REFUSED_OLD_SPELLINGS: &[(&str, &str, &str)] = &[
     ("[management]\nmode = \"merged\"\n", "merged", "[management]\nmode = \"shared-port\"\n"),
     (
-        "[database.pooler]\nurl = \"postgres://p/db\"\ntenant_max_connections = 2\n",
+        "[database.pooler]\nconnection = \"postgres://p/db\"\ntenant_max_connections = 2\n",
         "max_connections_per_tenant",
+        "[database.pooler]\nconnection = \"postgres://p/db\"\nmax_connections_per_tenant = 2\n",
+    ),
+    (
         "[database.pooler]\nurl = \"postgres://p/db\"\nmax_connections_per_tenant = 2\n",
+        "connection",
+        "[database.pooler]\nconnection = \"postgres://p/db\"\nmax_connections_per_tenant = 2\n",
     ),
 ];
 

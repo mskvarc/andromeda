@@ -10,7 +10,7 @@ use crate::{
     reference::template::configuration_template,
     schema::{
         content_coding::ContentCoding,
-        database::{pooler::PoolerConfig, write_reserve::WriteReserve},
+        database::{connection::PostgresConnection, pooler::PoolerConfig, write_reserve::WriteReserve},
         entity::spatial_index::SpatialConsistency,
         http::{
             compression::CompressionQuality,
@@ -29,14 +29,27 @@ use std::{
     env,
     fs,
     net::IpAddr,
-    path::PathBuf,
+    num::NonZeroU32,
+    path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+/// Load with the connection [`BrokerConfig::local`] names in the environment,
+/// since no layer has a default one.
+fn load_connected(configuration_file: Option<&Path>, overrides: ListenerOverrides) -> Result<LoadedConfiguration, LoadError> {
+    let local = BrokerConfig::local();
+    temp_env::with_var(CONNECTION_VARIABLE, Some(local.database.direct_url().as_str()), || {
+        load(configuration_file, overrides)
+    })
+}
+
+/// The variable that names the database connection whole.
+const CONNECTION_VARIABLE: &str = "ANDROMEDA__DATABASE__CONNECTION";
 
 /// Load with only the built-in defaults and the environment, so no file layer
 /// contributes.
 fn load_env_only() -> BrokerConfig {
-    load(None, ListenerOverrides::default()).expect("config should load").config
+    load_connected(None, ListenerOverrides::default()).expect("config should load").config
 }
 
 fn write_temp_config(contents: &str) -> PathBuf {
@@ -52,7 +65,7 @@ fn write_temp_config(contents: &str) -> PathBuf {
 /// Load `contents` as the configuration file, with what the load ignores.
 fn load_file_reporting(contents: &str) -> Result<LoadedConfiguration, LoadError> {
     let path = write_temp_config(contents);
-    let result = load(Some(&path), ListenerOverrides::default());
+    let result = load_connected(Some(&path), ListenerOverrides::default());
     fs::remove_file(path).expect("temp config should be removed");
     result
 }
@@ -104,11 +117,80 @@ fn env_overrides_default_host() {
 
 #[test]
 #[serial]
-fn env_overrides_database_url() {
-    temp_env::with_vars([("ANDROMEDA__DATABASE__URL", Some("postgres://envhost/envdb"))], || {
-        let config = load_env_only();
-        pretty_assertions::assert_eq!(config.database.url.as_str(), "postgres://envhost/envdb");
+fn the_connection_reads_whole_from_the_environment() {
+    temp_env::with_vars([(CONNECTION_VARIABLE, Some("postgres://envhost/envdb"))], || {
+        let config = load(None, ListenerOverrides::default()).expect("config should load").config;
+        pretty_assertions::assert_eq!(config.database.direct_url().as_str(), "postgres://envhost/envdb");
     });
+}
+
+#[test]
+#[serial]
+fn a_configuration_naming_no_connection_is_refused_by_the_missing_key() {
+    temp_env::with_vars([(CONNECTION_VARIABLE, None::<&str>)], || {
+        let refused = load(None, ListenerOverrides::default()).map(|_| ()).map_err(|error| error.to_string());
+        assert!(refused.as_ref().is_err_and(|message| message.contains("connection")), "{refused:?}");
+    });
+}
+
+/// Each part reads as the text it is, so a password and a database name of
+/// digits keep their leading zero; the port alone is a number.
+#[test]
+#[serial]
+fn the_connection_reads_part_by_part_from_the_environment_with_numeric_text_kept() {
+    temp_env::with_vars(
+        [
+            ("ANDROMEDA__DATABASE__CONNECTION__HOST", Some("db.example")),
+            ("ANDROMEDA__DATABASE__CONNECTION__PORT", Some("6543")),
+            ("ANDROMEDA__DATABASE__CONNECTION__USER", Some("broker")),
+            ("ANDROMEDA__DATABASE__CONNECTION__PASSWORD", Some("0123")),
+            ("ANDROMEDA__DATABASE__CONNECTION__DATABASE", Some("2024")),
+            ("ANDROMEDA__DATABASE__CONNECTION__PARAMETERS__CONNECT_TIMEOUT", Some("10")),
+        ],
+        || {
+            let config = load(None, ListenerOverrides::default()).expect("config should load").config;
+            pretty_assertions::assert_eq!(
+                config.database.direct_url().as_str(),
+                "postgres://broker:0123@db.example:6543/2024?connect_timeout=10"
+            );
+        },
+    );
+}
+
+/// The file names the server and the environment adds the password, as a
+/// deployment keeps its password in a secret.
+#[test]
+#[serial]
+fn the_file_and_the_environment_each_give_parts_of_one_connection() {
+    let path = write_temp_config("[database.connection]\nhost = \"db.example\"\nuser = \"broker\"\ndatabase = \"andromeda\"\n");
+    temp_env::with_vars([("ANDROMEDA__DATABASE__CONNECTION__PASSWORD", Some("s3cret"))], || {
+        let result = load(Some(&path), ListenerOverrides::default());
+        fs::remove_file(&path).expect("temp config should be removed");
+        let config = result.expect("config should load").config;
+        pretty_assertions::assert_eq!(config.database.direct_url().as_str(), "postgres://broker:s3cret@db.example/andromeda");
+    });
+}
+
+#[test]
+#[serial]
+fn a_misspelt_connection_part_is_ignored_and_named() {
+    let path = write_temp_config("[database.connection]\nhost = \"db.example\"\nuser = \"broker\"\npasword = \"s3cret\"\ndatabase = \"andromeda\"\n");
+    let result = load(Some(&path), ListenerOverrides::default());
+    fs::remove_file(&path).expect("temp config should be removed");
+    let loaded = result.expect("config should load");
+    pretty_assertions::assert_eq!(ignored_settings_of(&loaded), in_file("database.connection.pasword"));
+    pretty_assertions::assert_eq!(loaded.config.database.direct_url().as_str(), "postgres://broker@db.example/andromeda");
+}
+
+#[test]
+#[serial]
+fn the_pooler_connection_reads_from_its_parts() {
+    let config = load_file(concat!(
+        "[database.pooler]\nmax_connections_per_tenant = 2\n",
+        "[database.pooler.connection]\nhost = \"pgbouncer\"\nport = 6432\nuser = \"broker\"\ndatabase = \"andromeda\"\n",
+    ))
+    .expect("config should load");
+    pretty_assertions::assert_eq!(config.database.request_url().as_str(), "postgres://broker@pgbouncer:6432/andromeda");
 }
 
 #[test]
@@ -149,7 +231,7 @@ fn a_table_cannot_be_set_from_the_environment() {
             Some("[{\"url\":\"https://example.com/context.jsonld\",\"path\":\"contexts/test.jsonld\"}]"),
         )],
         || {
-            let result = load(None, ListenerOverrides::default());
+            let result = load_connected(None, ListenerOverrides::default());
             assert!(matches!(result, Err(LoadError::Layers(_))), "{result:?}");
         },
     );
@@ -192,17 +274,18 @@ fn the_generated_defaults_load_back_to_the_defaults() {
     pretty_assertions::assert_eq!(ignored_settings_of(&loaded), Vec::new());
     pretty_assertions::assert_eq!(
         toml::to_string(&loaded.config).expect("the loaded configuration renders"),
-        toml::to_string(&BrokerConfig::default()).expect("the defaults render")
+        toml::to_string(&BrokerConfig::local()).expect("the defaults render")
     );
 }
 
 #[test]
-fn redaction_hides_the_direct_and_the_pooler_database_url() {
-    let mut config = BrokerConfig::default();
-    config.database.url = "postgres://user:direct-secret@db/andromeda".parse().expect("database URL");
+fn redaction_hides_the_direct_and_the_pooler_database_connection() {
+    let mut config = BrokerConfig::new(PostgresConnection::new(
+        "postgres://user:direct-secret@db/andromeda".parse().expect("database URL"),
+    ));
     config.database.pooler = Some(PoolerConfig {
-        url: "postgres://user:pooler-secret@pooler/andromeda".parse().expect("pooler URL"),
-        ..PoolerConfig::default()
+        connection: PostgresConnection::new("postgres://user:pooler-secret@pooler/andromeda".parse().expect("pooler URL")),
+        max_connections_per_tenant: NonZeroU32::MIN,
     });
     let rendered = redacted_toml(&config).expect("redacted toml should render");
     assert!(!rendered.contains("direct-secret") && !rendered.contains("pooler-secret"), "{rendered}");
@@ -366,7 +449,7 @@ fn a_file_breaking_three_rules_is_refused_for_all_three() {
 fn a_write_reserve_loads_below_the_whole_pool_and_the_whole_pool_is_refused() {
     let loaded = load_file("[database]\nwrite_reserve_percent = 40\n").expect("a 40 percent reserve loads");
     assert_eq!(loaded.database.write_reserve_percent.read_connections(10), 6);
-    assert_eq!(BrokerConfig::default().database.write_reserve_percent, WriteReserve::DEFAULT);
+    assert_eq!(BrokerConfig::local().database.write_reserve_percent, WriteReserve::DEFAULT);
     let error = load_file("[database]\nwrite_reserve_percent = 100\n").expect_err("a reserve of the whole pool leaves reads nothing");
     assert!(error.to_string().contains("write_reserve_percent"), "{error}");
 }
@@ -376,7 +459,7 @@ fn a_write_reserve_loads_below_the_whole_pool_and_the_whole_pool_is_refused() {
 fn env_overrides_file() {
     let path = write_temp_config("[server]\nport = 1600\n");
     temp_env::with_vars([("ANDROMEDA__SERVER__PORT", Some("1700"))], || {
-        let config = load(Some(&path), ListenerOverrides::default()).expect("config should load").config;
+        let config = load_connected(Some(&path), ListenerOverrides::default()).expect("config should load").config;
         fs::remove_file(path).expect("temp config should be removed");
         pretty_assertions::assert_eq!(config.server.port, 1700);
     });
@@ -386,7 +469,7 @@ fn env_overrides_file() {
 #[serial]
 fn cli_overrides_env() {
     temp_env::with_vars([("ANDROMEDA__SERVER__PORT", Some("8888"))], || {
-        let config = load(None, ListenerOverrides { host: None, port: Some(7777) })
+        let config = load_connected(None, ListenerOverrides { host: None, port: Some(7777) })
             .expect("config should load")
             .config;
         pretty_assertions::assert_eq!(config.server.port, 7777);
@@ -406,10 +489,10 @@ fn a_single_prefix_underscore_name_is_not_read() {
 #[serial]
 fn a_single_underscore_between_table_and_key_is_ignored_as_an_unknown_key() {
     temp_env::with_vars([("ANDROMEDA__SERVER_HOST", Some("203.0.113.1"))], || {
-        let result = load(None, ListenerOverrides::default());
+        let result = load_connected(None, ListenerOverrides::default());
         let loaded = result.expect("an unknown environment key loads");
         pretty_assertions::assert_eq!(ignored_settings_of(&loaded), vec![("server_host".to_owned(), "environment")]);
-        pretty_assertions::assert_eq!(loaded.config.server.host, BrokerConfig::default().server.host);
+        pretty_assertions::assert_eq!(loaded.config.server.host, BrokerConfig::local().server.host);
     });
 }
 
@@ -541,7 +624,7 @@ an_unknown_key_is_ignored_and_reported_with_its_path! {
 #[test]
 #[serial]
 fn an_unknown_database_pooler_key_is_ignored_and_the_pooler_still_loads() {
-    let loaded = load_file_reporting("[database.pooler]\nurl = \"postgres://pooler/db\"\nmax_connections_per_tenant = 2\nunknown_key = 1\n")
+    let loaded = load_file_reporting("[database.pooler]\nconnection = \"postgres://pooler/db\"\nmax_connections_per_tenant = 2\nunknown_key = 1\n")
         .expect("an unknown pooler key loads");
     pretty_assertions::assert_eq!(ignored_settings_of(&loaded), in_file("database.pooler.unknown_key"));
     assert!(loaded.config.database.is_pooled());
@@ -592,7 +675,7 @@ fn a_file_without_unknown_keys_ignores_nothing() {
 #[serial]
 fn an_ignored_file_key_names_its_path_and_its_file() {
     let path = write_temp_config("[server]\nunknown_key = 1\n");
-    let result = load(Some(&path), ListenerOverrides::default());
+    let result = load_connected(Some(&path), ListenerOverrides::default());
     fs::remove_file(&path).expect("temp config should be removed");
     let message = result
         .expect("an unknown key loads")
@@ -613,7 +696,7 @@ fn an_ignored_file_key_names_its_path_and_its_file() {
 #[serial]
 fn an_unknown_prefixed_environment_variable_is_ignored_and_named() {
     temp_env::with_vars([("ANDROMEDA__HTTP__SERVER_TIMING__PHASEZ", Some("1"))], || {
-        let result = load(None, ListenerOverrides::default());
+        let result = load_connected(None, ListenerOverrides::default());
         let loaded = result.expect("an unknown environment key loads");
         pretty_assertions::assert_eq!(ignored_settings_of(&loaded), vec![("http.server_timing.phasez".to_owned(), "environment")]);
         pretty_assertions::assert_eq!(
@@ -633,7 +716,7 @@ fn an_unknown_prefixed_environment_variable_is_ignored_and_named() {
 fn an_unknown_key_written_by_the_file_and_the_environment_is_reported_for_both() {
     let path = write_temp_config("[server]\nunknown_key = 1\n");
     temp_env::with_vars([("ANDROMEDA__SERVER__UNKNOWN_KEY", Some("2"))], || {
-        let result = load(Some(&path), ListenerOverrides::default());
+        let result = load_connected(Some(&path), ListenerOverrides::default());
         fs::remove_file(&path).expect("temp config should be removed");
         pretty_assertions::assert_eq!(
             ignored_settings_of(&result.expect("an unknown key loads")),
@@ -662,7 +745,7 @@ fn a_defined_duration_key_with_a_malformed_value_is_still_refused() {
 #[serial]
 fn an_environment_variable_without_the_prefix_is_not_read() {
     temp_env::with_vars([("HTTP__SERVER_TIMING__PHASEZ", Some("1"))], || {
-        let result = load(None, ListenerOverrides::default());
+        let result = load_connected(None, ListenerOverrides::default());
         result.expect("an unprefixed variable never reaches the configuration");
     });
 }

@@ -99,7 +99,10 @@ mod tests {
     use andromeda_configuration::{
         broker_config::BrokerConfig,
         human_duration::HumanDuration,
-        schema::federation::cooldown::{CooldownConfig, CooldownMode},
+        schema::{
+            database::connection::PostgresConnection,
+            federation::cooldown::{CooldownConfig, CooldownMode},
+        },
         validate::validate,
     };
     use andromeda_retry::{growth::Growth, jitter::Jitter, schedule::BackoffSchedule, schedule_error::BackoffScheduleError};
@@ -178,7 +181,7 @@ mod tests {
             (CooldownMode::Exponential, 1, 1),
         ];
         for (mode, retry, max) in edges {
-            let mut config = BrokerConfig::default();
+            let mut config = BrokerConfig::new(PostgresConnection::new("postgres://andromeda@localhost/andromeda".parse().expect("a URL")));
             config.federation.cooldown = CooldownConfig {
                 mode,
                 retry_interval: HumanDuration::from_millis(retry),

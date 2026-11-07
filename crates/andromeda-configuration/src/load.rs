@@ -7,7 +7,11 @@
 //! `notifications.periodic.max_poll_interval`; a single underscore separates the words
 //! of one key and never nests. An environment variable sets a scalar only: a
 //! list setting takes its members separated by commas, and a table is set in
-//! the file alone.
+//! the file alone. A database connection part is read as the text it is, so a
+//! password of digits stays the password rather than becoming a number.
+//!
+//! The database connection has no built-in default: a configuration that names
+//! none in any layer does not load.
 //!
 //! A key the configuration does not define is ignored and reported, so a file
 //! written for a later version still loads. A defined key holding a value it
@@ -17,6 +21,7 @@ pub mod ignored_setting;
 
 use crate::{
     broker_config::BrokerConfig,
+    built_in_defaults::BuiltInDefaults,
     load::ignored_setting::{IgnoredSetting, WritingLayers, ignored_settings},
     validate::{InvalidConfiguration, validate},
 };
@@ -25,7 +30,7 @@ use figment2::{
     Error as LayerError,
     Figment,
     providers::{Env, Format, Serialized, Toml},
-    value::Value,
+    value::{UncasedStr, Value},
 };
 use std::{
     net::IpAddr,
@@ -41,6 +46,13 @@ const CONFIGURATION_FILE_NAME: &str = "andromeda.toml";
 
 /// The prefix every environment variable the configuration reads carries.
 pub(crate) const ENVIRONMENT_PREFIX: &str = "ANDROMEDA__";
+
+/// The keys of the database connections, below which every environment value
+/// but a port is text.
+const CONNECTION_KEYS: [&str; 2] = ["database.connection", "database.pooler.connection"];
+
+/// The connection part that is a number rather than text.
+const CONNECTION_PORT: &str = "port";
 
 /// The layers in the order a later one overrides an earlier one, for operator
 /// reporting.
@@ -128,7 +140,7 @@ pub struct LoadedConfiguration {
 /// Returns [`LoadError::Layers`] when the layers do not read into the
 /// configuration, and [`LoadError::Invalid`] when a check refuses it.
 pub fn load(configuration_file: Option<&Path>, overrides: ListenerOverrides) -> Result<LoadedConfiguration, LoadError> {
-    let mut figment = Figment::from(Serialized::defaults(BrokerConfig::default()));
+    let mut figment = Figment::from(Serialized::defaults(BuiltInDefaults::default()));
     if let Some(path) = configuration_file {
         figment = figment.merge(Toml::file(path));
     }
@@ -154,9 +166,33 @@ pub fn load(configuration_file: Option<&Path>, overrides: ListenerOverrides) -> 
 }
 
 /// The `ANDROMEDA__` environment layer: `__` nests, and every value is a
-/// scalar.
-fn environment_layer() -> Env {
-    Env::prefixed(ENVIRONMENT_PREFIX).split("__").parser(environment_scalar)
+/// scalar. A connection's text part is read verbatim, every other value
+/// through [`environment_scalar`].
+fn environment_layer() -> Figment {
+    Figment::from(
+        Env::prefixed(ENVIRONMENT_PREFIX)
+            .split("__")
+            .filter(|key| !is_connection_text(key))
+            .parser(environment_scalar),
+    )
+    .merge(
+        Env::prefixed(ENVIRONMENT_PREFIX)
+            .split("__")
+            .filter(is_connection_text)
+            .parser(|raw: &str| Value::from(raw)),
+    )
+}
+
+/// Whether the dotted `key` is a database connection written whole, or one of
+/// its parts other than the port: text an operator chooses, such as a
+/// password, that may happen to spell a number.
+fn is_connection_text(key: &UncasedStr) -> bool {
+    let key = key.as_str().to_ascii_lowercase();
+    CONNECTION_KEYS.iter().any(|connection| match key.strip_prefix(connection) {
+        Some("") => true,
+        Some(part) => part.strip_prefix('.').is_some_and(|part| part != CONNECTION_PORT),
+        None => false,
+    })
 }
 
 /// The scalar an environment value spells: a boolean, an integer, a decimal

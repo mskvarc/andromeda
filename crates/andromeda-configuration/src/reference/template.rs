@@ -12,7 +12,9 @@ const PREAMBLE: &str = "\
 #
 # Every key is shown at its built-in default. A key that is not set by
 # default is shown commented out, at an example value, and the comment above
-# it says what leaving it out means.";
+# it says what leaving it out means. A key with no default, such as
+# database.connection, is shown commented out too: set it here or in the
+# environment, or the broker does not start.";
 
 /// The widest a comment line runs, its `# ` included.
 const COMMENT_WIDTH: usize = 80;

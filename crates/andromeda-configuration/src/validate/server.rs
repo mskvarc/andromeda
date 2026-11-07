@@ -39,7 +39,7 @@ mod tests {
 
     #[test]
     fn port_zero_is_refused_and_port_one_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.server.port = 0;
         assert_eq!(refusals(&config), [ConfigurationViolation::Zero { key: ConfigKey::ServerPort }]);
         config.server.port = 1;
@@ -56,7 +56,7 @@ mod tests {
 
     #[test]
     fn an_announced_close_timeout_at_the_graceful_drain_is_refused_and_one_step_below_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.server.graceful_drain_timeout = HumanDuration::from_secs(5);
         config.server.announced_close_timeout = HumanDuration::from_secs(5);
         assert_eq!(

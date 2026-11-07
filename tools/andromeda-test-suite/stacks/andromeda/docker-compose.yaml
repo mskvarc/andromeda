@@ -26,7 +26,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1071"
-      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres:5432/andromeda"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker:1071"
@@ -61,7 +61,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1072"
-      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-conformance:5432/andromeda"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-conformance:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-conformance"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-conformance"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-conformance:1072"
@@ -90,7 +90,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1073"
-      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-not-recorded:5432/andromeda"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-not-recorded:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-not-recorded"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-not-recorded"
       ANDROMEDA__TEMPORAL__HISTORY__CORE_WRITES: "not-recorded"
@@ -123,7 +123,7 @@ services:
       ANDROMEDA__HTTP__SECURITY_HEADERS__STRICT_TRANSPORT_SECURITY__MODE: "enabled"
       ANDROMEDA__MANAGEMENT__PORT: "1075"
       ANDROMEDA__MANAGEMENT__TRANSPORT: "tls"
-      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-tls:5432/andromeda"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-tls:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-tls"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-tls"
     volumes:
@@ -173,7 +173,7 @@ services:
       ANDROMEDA__TLS__MINIMUM_PROTOCOL_VERSION: "tls1.3"
       ANDROMEDA__TLS__CLIENT_AUTHENTICATION__MODE: "required"
       ANDROMEDA__TLS__CLIENT_AUTHENTICATION__CA: "/etc/andromeda/tls/client-ca.crt"
-      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-mutual:5432/andromeda"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-mutual:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-mutual"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-mutual"
     volumes:
@@ -202,7 +202,7 @@ services:
       ANDROMEDA__TLS__CERTIFICATE: "/etc/andromeda/identity/tls.crt"
       ANDROMEDA__TLS__PRIVATE_KEY: "/etc/andromeda/identity/tls.key"
       ANDROMEDA__TLS__RELOAD_SETTLE_AFTER: "500ms"
-      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-rotating:5432/andromeda"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-rotating:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-rotating"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-rotating"
     volumes:
@@ -226,7 +226,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1076"
-      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-durable:5432/andromeda"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-durable:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-durable"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-durable"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-durable:1076"
@@ -254,7 +254,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1077"
-      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-single-tenant:5432/andromeda"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-single-tenant:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-single-tenant"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-single-tenant"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-single-tenant:1077"
@@ -289,7 +289,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1078"
-      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-edge:5432/andromeda"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-edge:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-edge"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-edge"
       ANDROMEDA__HTTP__FORWARDED__TRUST: "proxies"
@@ -337,7 +337,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1079"
-      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-prefixed:5432/andromeda"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-prefixed:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-prefixed"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-prefixed"
       ANDROMEDA__SERVER__PUBLIC_URL: "https://gw.example.com/broker"
@@ -362,7 +362,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1082"
-      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-observed:5432/andromeda"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-observed:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-observed"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-observed"
       ANDROMEDA__OBSERVABILITY__METRICS__PROMETHEUS__MODE: "enabled"
@@ -385,7 +385,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1083"
-      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-waker:5432/andromeda"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-waker:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-waker"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-waker"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-waker:1083"
@@ -411,7 +411,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1084"
-      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-backlog:5432/andromeda"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-backlog:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-backlog"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-backlog"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-backlog:1084"
@@ -437,7 +437,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1085"
-      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-roomy:5432/andromeda"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-roomy:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-roomy"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-roomy"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-roomy:1085"
@@ -464,7 +464,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1088"
-      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-overloaded:5432/andromeda"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-overloaded:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-overloaded"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-overloaded"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-overloaded:1088"
@@ -505,7 +505,7 @@ services:
         condition: service_healthy
     environment:
       ANDROMEDA__SERVER__PORT: "1087"
-      ANDROMEDA__DATABASE__URL: "postgres://andromeda:andromeda@postgres-oversized:5432/andromeda"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-oversized:5432/andromeda"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-oversized"
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-oversized"
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-oversized:1087"

@@ -125,13 +125,17 @@ fn andromeda_report() -> ComponentReport {
 mod tests {
     use crate::component_report::{andromeda_report, broker_connection_ceiling, build};
     use andromeda_component_report::ComponentReport;
-    use andromeda_configuration::{broker_config::BrokerConfig, schema::database::pooler::PoolerConfig};
+    use andromeda_configuration::{
+        broker_config::BrokerConfig,
+        schema::database::{connection::PostgresConnection, pooler::PoolerConfig},
+    };
     use pretty_assertions::{assert_eq, assert_ne};
     use std::num::{NonZeroU32, NonZeroUsize};
+    use url_macro::url;
 
     /// A configuration with small, distinct pool sizes.
     fn sized() -> BrokerConfig {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::new(PostgresConnection::new(url!("postgres://andromeda@localhost:5432/andromeda")));
         config.database.platform_max_connections = NonZeroU32::MIN.saturating_add(9);
         config.tenancy.default_tenant.max_connections = NonZeroU32::MIN.saturating_add(6);
         config.tenancy.build.max_concurrent = NonZeroUsize::MIN.saturating_add(3);
@@ -153,7 +157,10 @@ mod tests {
     #[test]
     fn behind_a_pooler_only_the_direct_pools_count() {
         let mut config = sized();
-        config.database.pooler = Some(PoolerConfig::default());
+        config.database.pooler = Some(PoolerConfig {
+            connection: PostgresConnection::new(url!("postgres://andromeda@localhost:6432/andromeda")),
+            max_connections_per_tenant: NonZeroU32::MIN.saturating_add(1),
+        });
         assert_eq!(broker_connection_ceiling(&config), 10 + 3 + 1 + 2 + 8);
     }
 

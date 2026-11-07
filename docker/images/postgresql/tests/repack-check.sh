@@ -183,7 +183,7 @@ start_postgres() {
 start_broker() {
 	docker run -d --name "$1" --network "$network" -p 127.0.0.1::1056 \
 		-e ANDROMEDA__SERVER__HOST=0.0.0.0 \
-		-e "ANDROMEDA__DATABASE__URL=$2" \
+		-e "ANDROMEDA__DATABASE__CONNECTION=$2" \
 		-e ANDROMEDA__DATABASE__MAINTENANCE__MODE=automatic \
 		-e ANDROMEDA__DATABASE__MAINTENANCE__PROFILE=responsive \
 		-e ANDROMEDA__DATABASE__MAINTENANCE__REPACK__MODE=automatic \

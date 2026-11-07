@@ -13,9 +13,11 @@ use schemars::{
 /// It is JSON Schema draft 7, the newest draft TOML editors read, with every
 /// table written out in place so the schema reads top to bottom like the
 /// file. It requires no key: the loader lays the file over the built-in
-/// defaults, so any key may be left out. A key a table needs once the file
-/// writes that table, such as `database.pooler.url`, is refused by the loader
-/// rather than by the schema.
+/// defaults and lays the environment over the file, so any key may be left
+/// out of the file. A key that has no default, such as `database.connection`,
+/// may come from the environment, and a key a table needs once the file
+/// writes that table, such as `database.pooler.connection`, is refused by the
+/// loader rather than by the schema.
 #[must_use]
 pub fn configuration_schema() -> Schema {
     let mut schema = declared_schema();

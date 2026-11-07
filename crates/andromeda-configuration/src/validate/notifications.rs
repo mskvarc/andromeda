@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn a_delivery_value_past_its_ceiling_is_refused_and_one_at_it_accepted() {
         let attempts = ConfigKey::NotificationsDeliveryMaxAttempts;
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.notifications.delivery.queue.lease_timeout = HumanDuration::from_secs(86_401);
         config.notifications.delivery.max_attempts = NonZeroU32::MAX;
         config.notifications.delivery.max_concurrent = NonZeroU32::MIN.saturating_add(1_024);
@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn a_delivery_lease_short_of_its_margin_is_refused_and_the_margin_exactly_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.notifications.delivery.request_timeout = HumanDuration::from_secs(10);
         config.notifications.delivery.queue.lease_timeout = HumanDuration::from_millis(14_999);
         assert_eq!(
@@ -197,7 +197,7 @@ mod tests {
     /// A zero lease is also short of the margin over the request timeout.
     #[test]
     fn a_zero_delivery_lease_is_refused_with_the_margin_it_lacks() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.notifications.delivery.queue.lease_timeout = HumanDuration::from_secs(0);
         assert_eq!(
             refusals(&config),

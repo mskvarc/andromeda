@@ -79,7 +79,7 @@ mod tests {
 
     #[test]
     fn a_nesting_limit_past_its_ceiling_is_refused_and_one_at_it_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.request_limits.max_attribute_nesting = NonZeroUsize::new(63).expect("a positive depth");
         config.request_limits.max_q_nesting = NonZeroUsize::new(65).expect("a positive depth");
         assert_eq!(
@@ -108,7 +108,7 @@ mod tests {
     /// it.
     #[test]
     fn a_zero_request_timeout_is_refused_with_the_deadlines_it_must_exceed() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.request_limits.timeout = HumanDuration::from_secs(0);
         let zero = Bound::setting(ConfigKey::RequestLimitsTimeout, Duration::ZERO);
         assert_eq!(
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn a_zero_body_ceiling_is_refused_and_one_byte_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.request_limits.max_body = HumanByteSize::b(0);
         assert_eq!(
             refusals(&config),
@@ -173,7 +173,7 @@ mod tests {
     /// those rules refuse too.
     #[test]
     fn a_body_ceiling_past_the_address_width_is_refused() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.request_limits.max_body = HumanByteSize::b(u64::MAX);
         let notification_limit = ConfigurationViolation::OutOfRange {
             key: ConfigKey::NotificationsDeliveryMaxHttpBody,

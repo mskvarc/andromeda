@@ -94,7 +94,7 @@ mod tests {
     /// cover.
     #[test]
     fn a_zero_request_timeout_is_refused_with_the_connect_timeout_it_must_cover() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.federation.forwarding.request_timeout = HumanDuration::from_secs(0);
         assert_eq!(
             refusals(&config),
@@ -116,7 +116,7 @@ mod tests {
 
     #[test]
     fn a_connect_timeout_past_the_request_timeout_is_refused_and_an_equal_one_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.federation.forwarding.connect_timeout = HumanDuration::from_millis(5_001);
         assert_eq!(
             refusals(&config),
@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn a_forwarded_request_timeout_at_the_request_deadline_is_refused_and_one_below_it_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.federation.forwarding.request_timeout = HumanDuration::from_secs(30);
         assert_eq!(
             refusals(&config),
@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn a_source_row_ceiling_below_the_entity_limit_is_refused_and_an_equal_one_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.federation.query.max_entities = NonZeroU32::new(500).expect("positive");
         config.federation.query.max_source_rows = NonZeroU32::new(499).expect("positive");
         assert_eq!(
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn a_zero_cooldown_hold_is_refused_unless_the_cooldown_is_disabled() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.federation.cooldown.retry_interval = HumanDuration::from_secs(0);
         assert_accepted(&config);
         for mode in [CooldownMode::Constant, CooldownMode::Exponential] {
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn a_cooldown_cap_below_its_first_hold_is_refused_only_when_holds_grow() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.federation.cooldown.retry_interval = HumanDuration::from_secs(10);
         config.federation.cooldown.max_retry_interval = HumanDuration::from_secs(9);
         config.federation.cooldown.mode = CooldownMode::Constant;

@@ -27,7 +27,7 @@ fn count_out_of_range(key: ConfigKey, value: u64, relation: Relation, bound: Bou
 
 #[test]
 fn a_zero_default_last_n_is_refused_and_one_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.temporal.query.default_last_n = 0;
     assert_eq!(
         refusals(&config),
@@ -41,7 +41,7 @@ fn a_zero_default_last_n_is_refused_and_one_accepted() {
 
 #[test]
 fn a_max_last_n_below_the_default_is_refused_and_an_equal_one_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.temporal.query.default_last_n = 100;
     config.temporal.query.max_last_n = 99;
     assert_eq!(
@@ -59,7 +59,7 @@ fn a_max_last_n_below_the_default_is_refused_and_an_equal_one_accepted() {
 
 #[test]
 fn a_max_last_n_past_its_ceiling_is_refused_and_the_ceiling_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.temporal.query.max_last_n = 5_001;
     assert_eq!(
         refusals(&config),
@@ -76,7 +76,7 @@ fn a_max_last_n_past_its_ceiling_is_refused_and_the_ceiling_accepted() {
 
 #[test]
 fn an_edge_group_below_the_max_last_n_is_refused_and_an_equal_one_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.temporal.query.max_edge_group = 999;
     assert_eq!(
         refusals(&config),
@@ -93,7 +93,7 @@ fn an_edge_group_below_the_max_last_n_is_refused_and_an_equal_one_accepted() {
 
 #[test]
 fn an_edge_group_past_its_ceiling_is_refused_and_the_ceiling_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.temporal.query.max_edge_group = 1_000_001;
     assert_eq!(
         refusals(&config),
@@ -110,7 +110,7 @@ fn an_edge_group_past_its_ceiling_is_refused_and_the_ceiling_accepted() {
 
 #[test]
 fn an_aggregation_bound_past_its_ceiling_is_refused_and_the_ceiling_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.temporal.query.max_aggregation_instances = NonZeroU64::MIN.saturating_add(100_000_000);
     assert_eq!(
         refusals(&config),
@@ -127,7 +127,7 @@ fn an_aggregation_bound_past_its_ceiling_is_refused_and_the_ceiling_accepted() {
 
 #[test]
 fn a_chunk_interval_of_part_days_is_refused_and_whole_days_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.temporal.storage.chunk_interval = Some(HumanDuration::from_secs(DAY + DAY / 2));
     assert_eq!(
         refusals(&config),
@@ -142,7 +142,7 @@ fn a_chunk_interval_of_part_days_is_refused_and_whole_days_accepted() {
 
 #[test]
 fn a_columnstore_lag_of_part_days_is_refused_and_whole_days_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.temporal.storage.columnstore.convert_after = HumanDuration::from_secs(8 * DAY + DAY / 2);
     assert_eq!(
         refusals(&config),
@@ -158,7 +158,7 @@ fn a_columnstore_lag_of_part_days_is_refused_and_whole_days_accepted() {
 /// Without an override the bound is the schema's own seven-day partition.
 #[test]
 fn a_columnstore_lag_below_the_chunk_interval_is_refused_and_an_equal_one_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.temporal.storage.columnstore.convert_after = HumanDuration::from_days(6);
     assert_eq!(
         refusals(&config),
@@ -197,7 +197,7 @@ fn a_zero_columnstore_or_retention_sweep_is_refused() {
 
 #[test]
 fn enabled_retention_without_an_age_is_refused_and_with_one_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.temporal.storage.retention.mode = FeatureMode::Enabled;
     assert_eq!(
         refusals(&config),
@@ -214,7 +214,7 @@ fn enabled_retention_without_an_age_is_refused_and_with_one_accepted() {
 /// refused either way, so turning retention on never surfaces it later.
 #[test]
 fn a_retention_age_of_part_days_is_refused_and_one_day_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.temporal.storage.retention.delete_after = Some(HumanDuration::from_secs(DAY / 2));
     assert_eq!(
         refusals(&config),

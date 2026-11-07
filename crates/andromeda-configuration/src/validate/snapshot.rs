@@ -63,7 +63,7 @@ mod tests {
     /// A zero maximum is also below the default it must not undercut.
     #[test]
     fn a_zero_max_lifetime_is_refused_with_the_default_it_must_hold() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.snapshot.max_lifetime = HumanDuration::from_secs(0);
         assert_eq!(
             refusals(&config),
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn a_default_lifetime_past_the_maximum_is_refused_and_an_equal_one_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.snapshot.max_lifetime = HumanDuration::from_secs(3_600);
         config.snapshot.default_lifetime = HumanDuration::from_millis(3_600_001);
         assert_eq!(
@@ -101,7 +101,7 @@ mod tests {
 
     #[test]
     fn a_storage_quota_of_no_bytes_is_refused_and_one_byte_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.snapshot.quota.max_storage_per_tenant = Ceiling::At(HumanByteSize::b(0));
         assert_eq!(
             refusals(&config),

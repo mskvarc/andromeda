@@ -5,7 +5,7 @@ use crate::{
     mqtt_packet_limit::{MqttPacketLimit, MqttPacketLimitError},
     notification_body_limit::{NotificationBodyLimit, NotificationBodyLimitError},
     schema::{
-        database::pooler::PoolerConfig,
+        database::{connection::PostgresConnection, pooler::PoolerConfig},
         feature_mode::FeatureMode,
         http3::Http3Mode,
         listener_transport::ListenerTransport,
@@ -58,7 +58,7 @@ fn missing_key_pair(listener: Requirement) -> [ConfigurationViolation; 2] {
 /// is at its boundary.
 #[test]
 fn an_acquire_timeout_at_the_request_timeout_is_refused_and_one_step_below_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.entity.side_effects.queue.lease_timeout = HumanDuration::from_secs(35);
     config.temporal.history.queue.lease_timeout = HumanDuration::from_secs(35);
     config.database.acquire_timeout = HumanDuration::from_secs(30);
@@ -77,7 +77,7 @@ fn an_acquire_timeout_at_the_request_timeout_is_refused_and_one_step_below_accep
 
 #[test]
 fn a_side_effect_lease_short_of_its_margin_over_the_acquire_timeout_is_refused_and_the_margin_exactly_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.database.acquire_timeout = HumanDuration::from_secs(5);
     config.entity.side_effects.queue.lease_timeout = HumanDuration::from_millis(9_999);
     assert_eq!(
@@ -99,7 +99,7 @@ fn a_side_effect_lease_short_of_its_margin_over_the_acquire_timeout_is_refused_a
 
 #[test]
 fn a_history_lease_short_of_its_margin_over_the_acquire_timeout_is_refused_and_the_margin_exactly_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.database.acquire_timeout = HumanDuration::from_secs(5);
     config.temporal.history.queue.lease_timeout = HumanDuration::from_millis(9_999);
     assert_eq!(
@@ -121,7 +121,7 @@ fn a_history_lease_short_of_its_margin_over_the_acquire_timeout_is_refused_and_t
 
 #[test]
 fn a_build_admission_timeout_at_the_request_timeout_is_refused_and_one_step_below_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.tenancy.build.admission_timeout = HumanDuration::from_secs(30);
     assert_eq!(
         refusals(&config),
@@ -138,7 +138,7 @@ fn a_build_admission_timeout_at_the_request_timeout_is_refused_and_one_step_belo
 
 #[test]
 fn a_scoped_operation_timeout_at_the_request_timeout_is_refused_and_one_step_below_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.snapshot.preparation.scoped_operation_timeout = HumanDuration::from_secs(30);
     assert_eq!(
         refusals(&config),
@@ -155,7 +155,7 @@ fn a_scoped_operation_timeout_at_the_request_timeout_is_refused_and_one_step_bel
 
 #[test]
 fn a_context_fetch_timeout_at_the_request_timeout_is_refused_and_one_step_below_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.jsonld.fetch.timeout = HumanDuration::from_secs(30);
     assert_eq!(
         refusals(&config),
@@ -172,7 +172,7 @@ fn a_context_fetch_timeout_at_the_request_timeout_is_refused_and_one_step_below_
 
 #[test]
 fn a_notification_body_limit_at_the_request_body_limit_is_refused_and_one_byte_above_accepted() -> Result<(), NotificationBodyLimitError> {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.request_limits.max_body = HumanByteSize::mib(64);
     config.notifications.delivery.max_http_body = NotificationBodyLimit::try_from(HumanByteSize::mib(64))?;
     assert_eq!(
@@ -191,7 +191,7 @@ fn a_notification_body_limit_at_the_request_body_limit_is_refused_and_one_byte_a
 
 #[test]
 fn an_mqtt_packet_limit_at_the_request_body_limit_is_refused_and_one_byte_above_accepted() -> Result<(), MqttPacketLimitError> {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.request_limits.max_body = HumanByteSize::mib(64);
     config.notifications.delivery.max_mqtt_packet = MqttPacketLimit::try_from(HumanByteSize::mib(64))?;
     assert_eq!(
@@ -210,11 +210,11 @@ fn an_mqtt_packet_limit_at_the_request_body_limit_is_refused_and_one_byte_above_
 
 #[test]
 fn a_pooled_tenant_pool_past_the_direct_one_is_refused_an_equal_one_accepted_and_no_pooler_checks_nothing() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.tenancy.databases.max_connections = NonZeroU32::MIN.saturating_add(3);
     assert_accepted(&config);
     config.database.pooler = Some(PoolerConfig {
-        url: url!("postgres://andromeda:andromeda@localhost:6432/andromeda"),
+        connection: PostgresConnection::new(url!("postgres://andromeda:andromeda@localhost:6432/andromeda")),
         max_connections_per_tenant: NonZeroU32::MIN.saturating_add(4),
     });
     assert_eq!(
@@ -232,7 +232,7 @@ fn a_pooled_tenant_pool_past_the_direct_one_is_refused_an_equal_one_accepted_and
 
 #[test]
 fn a_provisional_tenant_lifetime_at_the_request_timeout_is_refused_and_one_step_above_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.tenancy.provisional_tenant_lifetime = HumanDuration::from_secs(30);
     assert_eq!(
         refusals(&config),
@@ -249,7 +249,7 @@ fn a_provisional_tenant_lifetime_at_the_request_timeout_is_refused_and_one_step_
 
 #[test]
 fn a_separate_management_port_equal_to_the_server_port_is_refused_and_the_next_port_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.management.mode = ManagementMode::SeparatePort;
     config.management.port = config.server.port;
     assert_eq!(
@@ -263,7 +263,7 @@ fn a_separate_management_port_equal_to_the_server_port_is_refused_and_the_next_p
 /// The management port is not read while the endpoints ride the data plane.
 #[test]
 fn a_shared_port_management_plane_never_collides() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.management.mode = ManagementMode::SharedPort;
     config.management.port = config.server.port;
     assert_accepted(&config);
@@ -271,7 +271,7 @@ fn a_shared_port_management_plane_never_collides() {
 
 #[test]
 fn metrics_without_a_management_plane_are_refused_and_on_a_shared_port_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.observability.metrics.prometheus.mode = FeatureMode::Enabled;
     config.management.mode = ManagementMode::Disabled;
     assert_eq!(refusals(&config), [ConfigurationViolation::MetricsWithoutManagementPlane]);
@@ -281,7 +281,7 @@ fn metrics_without_a_management_plane_are_refused_and_on_a_shared_port_accepted(
 
 #[test]
 fn a_tls_listener_without_a_key_pair_is_refused_for_both_files_and_with_one_accepted() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.server.transport = ListenerTransport::Tls;
     assert_eq!(refusals(&config), missing_key_pair(Requirement::ServerTls));
     with_key_pair(&mut config);
@@ -290,14 +290,14 @@ fn a_tls_listener_without_a_key_pair_is_refused_for_both_files_and_with_one_acce
 
 #[test]
 fn an_enabled_http3_listener_asks_for_the_key_pair() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.server.http3.mode = Http3Mode::Enabled;
     assert_eq!(refusals(&config), missing_key_pair(Requirement::Http3));
 }
 
 #[test]
 fn a_separate_port_tls_management_listener_asks_for_the_key_pair() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.management.mode = ManagementMode::SeparatePort;
     config.management.transport = ListenerTransport::Tls;
     assert_eq!(refusals(&config), missing_key_pair(Requirement::ManagementTls));
@@ -307,7 +307,7 @@ fn a_separate_port_tls_management_listener_asks_for_the_key_pair() {
 /// asks for no identity when the management endpoints ride the data plane.
 #[test]
 fn a_shared_port_tls_management_transport_needs_no_key_pair() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.management.mode = ManagementMode::SharedPort;
     config.management.transport = ListenerTransport::Tls;
     assert_accepted(&config);
@@ -316,7 +316,7 @@ fn a_shared_port_tls_management_transport_needs_no_key_pair() {
 #[test]
 fn client_authentication_without_a_ca_is_refused_and_with_one_accepted() {
     for mode in [ClientAuthenticationMode::Optional, ClientAuthenticationMode::Required] {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.server.transport = ListenerTransport::Tls;
         with_key_pair(&mut config);
         config.tls.client_authentication.mode = mode;
@@ -334,7 +334,7 @@ fn client_authentication_without_a_ca_is_refused_and_with_one_accepted() {
 
 #[test]
 fn a_ca_without_client_authentication_is_refused() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.server.transport = ListenerTransport::Tls;
     with_key_pair(&mut config);
     config.tls.client_authentication.ca = Some(PathBuf::from("/etc/andromeda/clients.pem"));
@@ -344,7 +344,7 @@ fn a_ca_without_client_authentication_is_refused() {
 /// The `[tls]` table is inert until a listener terminates TLS.
 #[test]
 fn an_incomplete_tls_table_is_not_read_without_a_tls_listener() {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::local();
     config.tls.client_authentication.mode = ClientAuthenticationMode::Required;
     assert_accepted(&config);
 }

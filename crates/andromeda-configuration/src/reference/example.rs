@@ -1,12 +1,13 @@
 //! The configuration with every key that is not set by default set, which
-//! gives the template and the documentation a value to show such a key at.
+//! gives the template and the documentation a value to show such a key at,
+//! the database connections that have no default among them.
 
 use crate::{
     broker_config::BrokerConfig,
     human_duration::HumanDuration,
     reference::ReferenceError,
     schema::{
-        database::pooler::PoolerConfig,
+        database::{connection::PostgresConnection, pooler::PoolerConfig},
         jsonld::PreloadedContext,
         source_alias::SourceAlias,
         source_extras::SourceExtras,
@@ -14,7 +15,7 @@ use crate::{
     },
 };
 use iri_rs::iri;
-use std::path::PathBuf;
+use std::{num::NonZeroU32, path::PathBuf};
 use url_macro::url;
 
 /// The built-in defaults with every key that is not set by default set to an
@@ -25,13 +26,18 @@ use url_macro::url;
 /// Returns [`ReferenceError::Example`] when the example
 /// `[federation.identity.extras]` table does not read.
 pub(crate) fn example_configuration() -> Result<BrokerConfig, ReferenceError> {
-    let mut config = BrokerConfig::default();
+    let mut config = BrokerConfig::new(PostgresConnection::new(url!("postgres://andromeda:andromeda@localhost:5432/andromeda")));
     config.server.public_url = Some(url!("https://broker.example.org/"));
     config.tls.certificate = Some(PathBuf::from("/etc/andromeda/tls/tls.crt"));
     config.tls.private_key = Some(PathBuf::from("/etc/andromeda/tls/tls.key"));
     config.tls.client_authentication.ca = Some(PathBuf::from("/etc/andromeda/tls/clients.pem"));
     config.http.cors.preflight_lifetime = Some(HumanDuration::from_secs(600));
-    config.database.pooler = Some(PoolerConfig::default());
+    // Two connections overlap a read with a write while the proxy does the
+    // real backend pooling.
+    config.database.pooler = Some(PoolerConfig {
+        connection: PostgresConnection::new(url!("postgres://andromeda:andromeda@localhost:6432/andromeda")),
+        max_connections_per_tenant: NonZeroU32::MIN.saturating_add(1),
+    });
     config.jsonld.preloaded_contexts = vec![PreloadedContext {
         url: url!("https://example.org/ngsi-ld/context.jsonld"),
         path: PathBuf::from("contexts/example.jsonld"),

@@ -64,7 +64,7 @@ mod tests {
     /// A zero lifetime is also not above the request timeout it must exceed.
     #[test]
     fn a_zero_provisional_tenant_lifetime_is_refused_with_the_request_timeout_it_must_exceed() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.tenancy.provisional_tenant_lifetime = HumanDuration::from_secs(0);
         assert_eq!(
             refusals(&config),
@@ -86,7 +86,7 @@ mod tests {
     /// must stay below it.
     #[test]
     fn a_zero_idle_eviction_is_refused_with_the_woken_lifetime_it_must_exceed() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.tenancy.residency.idle_eviction_after = HumanDuration::from_secs(0);
         assert_eq!(
             refusals(&config),
@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn a_woken_lifetime_at_the_idle_eviction_is_refused_and_one_step_below_accepted() {
-        let mut config = BrokerConfig::default();
+        let mut config = BrokerConfig::local();
         config.tenancy.residency.idle_eviction_after = HumanDuration::from_secs(60);
         config.tenancy.residency.woken_lifetime = HumanDuration::from_secs(60);
         assert_eq!(
