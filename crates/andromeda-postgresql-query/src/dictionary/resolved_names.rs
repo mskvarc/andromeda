@@ -72,10 +72,6 @@ impl<N: InternedName> ResolvedNames<N> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};

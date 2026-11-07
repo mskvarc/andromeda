@@ -13,9 +13,6 @@
 //! which is the whole point: adding a component means implementing the trait
 //! and adding a [`component::ComponentName`], not editing an aggregator.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod aggregate;
 pub mod background_task_details;
 pub mod component;

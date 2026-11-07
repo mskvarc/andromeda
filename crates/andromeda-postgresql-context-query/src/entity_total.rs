@@ -175,11 +175,6 @@ pub(crate) fn count_over(relations: EntityRelations, schema: Option<&DynIden>, c
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         entity::build_query,

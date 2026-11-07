@@ -19,7 +19,7 @@ use tokio_util::task::TaskTracker;
 /// Queues committed entity changes for the tenant's live notification
 /// evaluation.
 #[derive(Clone, Debug)]
-pub struct QueuedEntityChangeSink {
+pub(crate) struct QueuedEntityChangeSink {
     /// The queue live evaluation reads.
     sender: mpsc::Sender<PendingChange>,
     /// The changes handed off and not yet evaluated.
@@ -31,7 +31,7 @@ pub struct QueuedEntityChangeSink {
 impl QueuedEntityChangeSink {
     /// Create a sink queueing into `sender`, holding every change among
     /// `commits` until it is dropped.
-    pub fn new(sender: mpsc::Sender<PendingChange>, commits: Arc<PendingCommits>) -> QueuedEntityChangeSink {
+    pub(crate) fn new(sender: mpsc::Sender<PendingChange>, commits: Arc<PendingCommits>) -> QueuedEntityChangeSink {
         QueuedEntityChangeSink {
             sender,
             commits,
@@ -41,12 +41,12 @@ impl QueuedEntityChangeSink {
 
     /// The tasks finishing the hand-off of writes that found the queue full;
     /// stopping the tenant waits for them.
-    pub const fn handoffs(&self) -> &TaskTracker {
+    pub(crate) const fn handoffs(&self) -> &TaskTracker {
         &self.handoffs
     }
 
     /// The changes handed off through this sink and not yet evaluated.
-    pub const fn commits(&self) -> &Arc<PendingCommits> {
+    pub(crate) const fn commits(&self) -> &Arc<PendingCommits> {
         &self.commits
     }
 }
@@ -59,7 +59,6 @@ impl EntityChangeSink for QueuedEntityChangeSink {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "test code expects on purpose")]
 mod tests {
     use crate::event::{entity_change_sink::QueuedEntityChangeSink, queued_handoff::settle};
     use andromeda_context_commit::{change_event::ChangeEvent, context_change_event::ContextChangeEvent, store_instant::StoreInstant};

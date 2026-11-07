@@ -120,10 +120,6 @@ fn is_string_constructor(path: &Path) -> bool {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::string_typed_error::string_shape::{is_string_expression, type_mentions_string};
 

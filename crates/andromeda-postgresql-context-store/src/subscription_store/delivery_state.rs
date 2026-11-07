@@ -32,7 +32,7 @@ use sea_query::{Alias, Cond, Expr, ExprTrait, Func, InsertStatement, JoinType, Q
 /// The statement claiming one notification slot, by when the gate stamps the
 /// notification.
 #[derive(Debug)]
-pub enum SlotClaimStatement {
+pub(crate) enum SlotClaimStatement {
     /// The `UPDATE` that stamps the notification at the claim; zero rows
     /// affected is a refused slot.
     Stamping(UpdateStatement),
@@ -52,7 +52,7 @@ enum OwnerStatus {
 
 /// The insert of the state row that completes a freshly created subscription,
 /// under the surrogate key it minted, into the subscription's branch schema.
-pub fn state_insert(target: &ContextTarget, subscription_key: i64) -> Result<InsertStatement, SubscriptionError> {
+pub(crate) fn state_insert(target: &ContextTarget, subscription_key: i64) -> Result<InsertStatement, SubscriptionError> {
     let mut insert = Query::insert();
     insert
         .into_table(table_of(target, SubscriptionDeliveryState::Table))
@@ -98,7 +98,7 @@ fn admitted_by(column: SubscriptionDeliveryState, ceiling: DateTime<Utc>) -> Con
 /// gate writes nothing: the claim reads `NOW()` as the notification's instant
 /// and the outcome's write counts it, so the row is written once per
 /// notification.
-pub fn slot_claim_statement(target: &ContextTarget, id: &Identifier, kind: StoredKind, gate: NotificationSlotGate) -> SlotClaimStatement {
+pub(crate) fn slot_claim_statement(target: &ContextTarget, id: &Identifier, kind: StoredKind, gate: NotificationSlotGate) -> SlotClaimStatement {
     let owner = Expr::col(SubscriptionDeliveryState::SubscriptionKey).eq(owner_key(target, id, kind, OwnerStatus::ActiveOnly));
     let cooldown = gate.last_failure.map(|ceiling| admitted_by(SubscriptionDeliveryState::LastFailure, ceiling));
     match gate.notification {
@@ -158,7 +158,7 @@ fn stamping_claim(target: &ContextTarget, owner: SimpleExpr, cooldown: Option<Co
 /// `last_notification` moves to the latest of their claim instants unless a
 /// notification claimed later already finished, since clause 5.8.6 makes it the
 /// instant of the last notification sent.
-pub fn outcome_statement(tally: OutcomeTally, target: &ContextTarget, id: &Identifier, kind: StoredKind) -> UpdateStatement {
+pub(crate) fn outcome_statement(tally: OutcomeTally, target: &ContextTarget, id: &Identifier, kind: StoredKind) -> UpdateStatement {
     let mut statement = Query::update();
     statement
         .table(table_of(target, SubscriptionDeliveryState::Table))
@@ -192,7 +192,7 @@ pub fn outcome_statement(tally: OutcomeTally, target: &ContextTarget, id: &Ident
 /// The join is outer so a subscription whose state row is missing still reads;
 /// `times_sent` and `times_failed` then coalesce to zero, the instants to NULL,
 /// which is exactly what a never-notified subscription reports.
-pub fn join_delivery_state(select: &mut SelectStatement, target: &ContextTarget) {
+pub(crate) fn join_delivery_state(select: &mut SelectStatement, target: &ContextTarget) {
     select
         .join(
             JoinType::LeftJoin,
@@ -240,7 +240,7 @@ fn owed_grid_point() -> SimpleExpr {
 /// periodic subscription whose owed grid point has been reached at `cutoff`,
 /// the sweep's own instant rather than the wall clock, so a sweep decides the
 /// set it was scheduled for.
-pub fn interval_owed(cutoff: DateTime<Utc>) -> SimpleExpr {
+pub(crate) fn interval_owed(cutoff: DateTime<Utc>) -> SimpleExpr {
     owed_grid_point().lte(Expr::val(cutoff))
 }
 
@@ -251,7 +251,7 @@ pub fn interval_owed(cutoff: DateTime<Utc>) -> SimpleExpr {
 /// The state row is outer-joined so a subscription whose state row is missing
 /// still reads, as never answered. The caller narrows this to one family and to
 /// active subscriptions with a non-null `time_interval`.
-pub fn interval_anchor_select(target: &ContextTarget) -> SelectStatement {
+pub(crate) fn interval_anchor_select(target: &ContextTarget) -> SelectStatement {
     let mut select = Query::select();
     select
         .expr_as(Expr::col((Subscriptions::Table, Subscriptions::CreatedAt)), Alias::new("anchor"))
@@ -271,7 +271,7 @@ pub fn interval_anchor_select(target: &ContextTarget) -> SelectStatement {
 /// answered its grid at without a notification: nothing matched, so it is not
 /// owed again before its next grid point, and `last_notification` keeps the
 /// instant of the last notification sent (Table 5.2.14.2-1).
-pub fn record_interval_tick_statement(target: &ContextTarget, id: &Identifier, kind: StoredKind, cutoff: DateTime<Utc>) -> UpdateStatement {
+pub(crate) fn record_interval_tick_statement(target: &ContextTarget, id: &Identifier, kind: StoredKind, cutoff: DateTime<Utc>) -> UpdateStatement {
     let mut statement = Query::update();
     statement
         .table(table_of(target, SubscriptionDeliveryState::Table))
@@ -281,10 +281,6 @@ pub fn record_interval_tick_statement(target: &ContextTarget, id: &Identifier, k
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::subscription_store::{
         delivery_state::{

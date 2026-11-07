@@ -81,6 +81,10 @@ fn merge_forwarded_purges(result: &mut BatchOperationResult, forwarded: &[Forwar
     }
 }
 
+/// Purge Entities (clause 5.6.21): 204 when every matched entity was purged,
+/// 207 with the clause 5.2.16 result otherwise. A purge that matched nothing
+/// here and failed at its single proxied source answers with that source's
+/// error (clause 6.3.17).
 pub(crate) async fn delete_by_query(
     context_target::ExistingTargetedTenantState {
         services: state,

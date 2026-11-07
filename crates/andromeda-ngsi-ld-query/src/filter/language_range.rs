@@ -119,10 +119,6 @@ fn next_step(wanted: &str, held: &str) -> Option<bool> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::filter::language_range::{LanguageRange, LanguageRangeError, extended_filter};
     use langtag::LangTag;

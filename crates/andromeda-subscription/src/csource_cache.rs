@@ -8,6 +8,7 @@ use std::sync::Arc;
 /// Thread-safe compiled context-source-subscription cache.
 #[derive(Debug, Default)]
 pub struct CsourceSubscriptionCache {
+    /// The compiled subscriptions, by subscription id.
     inner: DashMap<Identifier, Arc<CompiledCsrSubscription>>,
 }
 
@@ -53,10 +54,6 @@ impl CsourceSubscriptionCache {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{compiled::CompiledCsrSubscription, csource_cache::CsourceSubscriptionCache, geo_filter::SubscriptionGeoFilter};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;

@@ -72,10 +72,6 @@ impl RenderedCommand for PoolerCommand {
 impl Command for PoolerCommand {}
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         command::rendering::RenderedCommand,

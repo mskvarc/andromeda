@@ -1,8 +1,5 @@
 //! Notification evaluation, payload construction, delivery policy, and durable event and delivery semantics.
 
-#![forbid(unsafe_code)]
-#![deny(missing_docs)]
-
 /// The order context source registrations and subscriptions were written in.
 pub mod csource_change_order;
 /// Sending one context source notification.
@@ -65,10 +62,6 @@ pub mod error;
 pub mod held_events;
 /// The notified-registration record held in memory for tests.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod in_memory_ledger;
 /// Entity interval notification evaluation.
 pub mod interval;
@@ -88,19 +81,11 @@ mod notification_outcome;
 pub mod notified_registration_store;
 /// The ports a notifier is built on, as doubles for its tests.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod notifier_test_double;
 /// Recording notification outcomes with one write in flight per subscription.
 mod outcome_batching;
 /// A subscription store recording the outcome writes it is asked for.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod outcome_recording_store;
 /// The committed entity changes handed to live evaluation and not yet
 /// evaluated.

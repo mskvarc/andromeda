@@ -94,10 +94,6 @@ pub fn whole_stream_parts(branch: &HistoryBranch, stream: &HistoryStream) -> Str
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::history_source::{EvolutionColumns, HistoryBranch, HistoryOf, HistoryStream, stream_parts::whole_stream_parts};
     use sea_query::{Alias, DynIden, Expr, IntoIden, PostgresQueryBuilder};

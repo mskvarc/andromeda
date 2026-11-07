@@ -107,7 +107,6 @@ fn millis_at(at: Instant) -> u64 {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "test code expects on purpose")]
 mod tests {
     use crate::{
         due_work::{DueWork, DueWorkSource},

@@ -79,10 +79,6 @@ impl EntityPayloadBudget {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::payload_budget::{GeometryOwner, PayloadBudgetExceeded};
     use andromeda_ngsi_ld_geometry::geometry_census::GeometryPositionLimit;

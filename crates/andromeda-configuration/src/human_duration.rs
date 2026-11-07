@@ -124,10 +124,6 @@ impl<'de> Deserialize<'de> for HumanDuration {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::human_duration::HumanDuration;
     use serde::{Deserialize, Serialize};

@@ -78,6 +78,8 @@ impl EntityQueryService {
             .await
     }
 
+    /// Compile `params` against `context` without consulting the cache, admitting
+    /// the `q` filter's complexity on the way.
     async fn compile_query(
         &self,
         params: &EntityQueryParameters,
@@ -232,10 +234,6 @@ fn compile_ordering_geometry(params: &EntityQueryParameters, limits: GeometryCen
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{error::EntityError, query::service_test_double::service_resolving};
     use andromeda_jsonld::context_spec::ContextSpec;

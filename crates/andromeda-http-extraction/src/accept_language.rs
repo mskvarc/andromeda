@@ -89,10 +89,6 @@ async fn negotiate_accept_language(request: Request, next: Next) -> Response {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{accept_language::AcceptLanguageReading, language::LanguageNegotiation};
     use axum::{

@@ -188,10 +188,6 @@ struct ArrayMember<E>(#[serde(deserialize_with = "clearable_array::deserialize")
 struct OneOrManyMember<E>(#[serde(deserialize_with = "clearable_array::deserialize_one_or_many")] Clearable<Vec<E>>);
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::registration_body::RegistrationBody;
     use andromeda_ngsi_ld_model::clearable::Clearable;

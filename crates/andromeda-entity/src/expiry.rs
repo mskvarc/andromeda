@@ -22,9 +22,13 @@ use tracing::warn;
 
 /// One entity-policy-owned bounded expiry operation.
 pub struct EntityExpirySweep {
+    /// The branch the sweep expires entities and attributes in.
     target: ContextTarget,
+    /// The service whose atomic mutations remove what has expired.
     entity_policy: Arc<EntityService>,
+    /// Finds entities and attribute instances whose expiry has passed.
     source: Arc<dyn EntityExpirySource>,
+    /// Most candidates each phase of one sweep reads.
     batch_size: EntityExpiryBatchSize,
 }
 
@@ -255,10 +259,6 @@ fn purged_state(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<Purge
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 fn purge_write(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<AtomicWrite> {
     let purged = purged_state(snapshot, cutoff)?;
     Some(
@@ -274,10 +274,6 @@ fn purge_write(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<Atomic
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         entity_snapshot::EntitySnapshot,

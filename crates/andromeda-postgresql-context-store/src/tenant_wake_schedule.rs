@@ -242,10 +242,6 @@ fn next_unprobed_query(limit: usize) -> SelectStatement {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::tenant_wake_schedule::{claim_statement, earliest_wake_query, next_unprobed_query, overdue_query, upsert_statement};
     use andromeda_ngsi_ld_lexicon::tenant::TenantName;

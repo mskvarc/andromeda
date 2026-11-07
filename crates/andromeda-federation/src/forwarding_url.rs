@@ -121,10 +121,6 @@ pub(crate) fn build_temporal_retrieve_url(endpoint: &Url, entity_id: &Identifier
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::forwarding_url::{build_retrieve_url, forwarding_url, with_local_scope, with_offset};
     use url::Url;

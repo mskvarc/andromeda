@@ -234,10 +234,6 @@ const fn mutation(rows_affected: u64) -> ContextMutation {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         jsonld_context::registry_store::{insert_statement, insertion, mutation},

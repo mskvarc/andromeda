@@ -117,10 +117,6 @@ fn delete_streams_query(schema: Option<&DynIden>, stream_keys: &[i64]) -> Delete
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::attribute_stream_deletion::{DatasetSelector, delete_streams_query, select_attribute_streams_query};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;

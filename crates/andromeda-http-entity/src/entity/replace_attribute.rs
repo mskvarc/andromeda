@@ -40,6 +40,8 @@ use andromeda_ngsi_ld_request::query_narrowing::ExecutionScope;
 use axum::http::Method;
 use std::slice;
 
+/// Replace Attribute (clause 5.6.19): 204 when the attribute was written
+/// everywhere, 207 with the clause 5.2.18 `UpdateResult` otherwise.
 pub(crate) async fn replace_attr(
     context_target::ExistingTargetedTenantState {
         services: state,

@@ -20,9 +20,6 @@
 //! names are written on the wire, not what they are (clause 5.5.7), so neither
 //! JSON-LD processing nor compaction lives here.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod admission;
 pub mod attribute_instances;
 pub mod attributes;

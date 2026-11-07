@@ -32,10 +32,6 @@ pub fn with_unreadable_entity_warnings(mut warnings: Vec<NgsiLdWarning>, unreada
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::unreadable_entity_warning::with_unreadable_entity_warnings;
     use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};

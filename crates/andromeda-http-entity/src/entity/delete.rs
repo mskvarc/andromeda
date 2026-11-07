@@ -30,6 +30,8 @@ use andromeda_http_extraction::{context_target, path_segment::EntityId};
 use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
 use axum::http::{HeaderMap, Method};
 
+/// Delete Entity (clause 5.6.6): 204 when every part succeeded, 207 with the
+/// clause 5.2.16 result when only some did.
 pub(crate) async fn delete(
     context_target::ExistingTargetedTenantState {
         services: state,

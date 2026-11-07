@@ -21,7 +21,7 @@ use andromeda_ngsi_ld_geometry::{bounding_box::BoundingBox, form::GeometryForm};
 
 /// One expanded item: what JSON-LD 1.1 expansion yields in a value position.
 #[derive(Clone, Debug, PartialEq)]
-pub enum ExpandedItem {
+pub(crate) enum ExpandedItem {
     /// A value object (`@value`, with `@type`, `@language` or `@direction`).
     Value(ValueObject),
     /// A JSON literal (`"@type": "@json"`), carried verbatim.
@@ -38,7 +38,7 @@ pub enum ExpandedItem {
 /// A `GeoJSON` geometry read into its positions, with the members written
 /// beside them (IETF RFC 7946 sections 5 and 6.1).
 #[derive(Clone, Debug, PartialEq)]
-pub struct ExpandedGeometry {
+pub(crate) struct ExpandedGeometry {
     /// The positions.
     pub form: GeometryForm,
     /// The `bbox`, when one was written.
@@ -50,7 +50,7 @@ pub struct ExpandedGeometry {
 impl ExpandedGeometry {
     /// A geometry of positions alone.
     #[must_use]
-    pub const fn bare(form: GeometryForm) -> ExpandedGeometry {
+    pub(crate) const fn bare(form: GeometryForm) -> ExpandedGeometry {
         ExpandedGeometry {
             form,
             bbox: None,
@@ -61,7 +61,7 @@ impl ExpandedGeometry {
 
 /// The scalar of a value object.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Scalar {
+pub(crate) enum Scalar {
     /// A number, as the exact text it was written with.
     Number(String),
     /// A string.
@@ -72,7 +72,7 @@ pub enum Scalar {
 
 /// A value object.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ValueObject {
+pub(crate) struct ValueObject {
     /// The value.
     pub scalar: Scalar,
     /// The expanded datatype IRI of `@type`.
@@ -86,7 +86,7 @@ pub struct ValueObject {
 impl ValueObject {
     /// An untyped, untagged value object.
     #[must_use]
-    pub const fn plain(scalar: Scalar) -> ValueObject {
+    pub(crate) const fn plain(scalar: Scalar) -> ValueObject {
         ValueObject {
             scalar,
             datatype: None,
@@ -97,7 +97,7 @@ impl ValueObject {
 
     /// The string of the value object, when it holds a string.
     #[must_use]
-    pub fn as_str(&self) -> Option<&str> {
+    pub(crate) fn as_str(&self) -> Option<&str> {
         match &self.scalar {
             Scalar::String(text) => Some(text),
             Scalar::Number(_) | Scalar::Boolean(_) => None,
@@ -107,7 +107,7 @@ impl ValueObject {
 
 /// A node object.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct ExpandedNode {
+pub(crate) struct ExpandedNode {
     /// The `@id`, as expansion produced it.
     pub id: Option<String>,
     /// The `@type` entries, as expanded IRIs, in order.
@@ -119,7 +119,7 @@ pub struct ExpandedNode {
 
 impl ExpandedNode {
     /// Append `values` to the member `name`, creating it when absent.
-    pub fn add_member(&mut self, name: String, values: Vec<ExpandedItem>) {
+    pub(crate) fn add_member(&mut self, name: String, values: Vec<ExpandedItem>) {
         match self.members.iter_mut().find(|(existing, _)| *existing == name) {
             Some((_, existing)) => existing.extend(values),
             None => self.members.push((name, values)),
@@ -128,13 +128,13 @@ impl ExpandedNode {
 
     /// Whether the node carries an identifier and nothing else.
     #[must_use]
-    pub const fn is_reference(&self) -> bool {
+    pub(crate) const fn is_reference(&self) -> bool {
         self.id.is_some() && self.types.is_empty() && self.members.is_empty()
     }
 
     /// The values of the member `name`, when the node carries it.
     #[must_use]
-    pub fn member(&self, name: &str) -> Option<&[ExpandedItem]> {
+    pub(crate) fn member(&self, name: &str) -> Option<&[ExpandedItem]> {
         self.members.iter().find(|(existing, _)| existing == name).map(|(_, values)| values.as_slice())
     }
 }

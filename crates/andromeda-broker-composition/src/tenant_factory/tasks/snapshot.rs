@@ -140,6 +140,9 @@ pub(super) fn register_snapshot_expiry(
         .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
+/// Register the sweep that prepares pending Snapshots every `cadence`,
+/// starting at once; a pass that prepared any wakes status delivery so their
+/// notifications go out without waiting for the drain's idle fallback.
 fn register_snapshot_preparation(supervisor: &TaskSupervisor, recovery: PreparationRecovery, status_wake: WakeHandle) -> Result<(), TenantAssemblyError> {
     let PreparationRecovery { preparation, cadence, pacer } = recovery;
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;

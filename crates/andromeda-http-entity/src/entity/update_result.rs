@@ -64,7 +64,7 @@ impl NotUpdatedReason {
 
 /// What the local part of an attribute write did with the attributes it was
 /// given.
-pub struct LocalAttributeWrite<'a> {
+pub(crate) struct LocalAttributeWrite<'a> {
     /// Whether the local part ran, and how it ended.
     pub outcome: &'a LocalOutcome,
     /// The attributes the local part was given, by their expanded names.
@@ -88,7 +88,11 @@ pub struct LocalAttributeWrite<'a> {
 /// # Errors
 ///
 /// The complete operation failed, as [`provision_verdict`] decides.
-pub fn attribute_write_response(local: LocalAttributeWrite<'_>, forwarded: &[ForwardedWriteResult], instance: &HttpUri) -> Result<Response, ProblemResponse> {
+pub(crate) fn attribute_write_response(
+    local: LocalAttributeWrite<'_>,
+    forwarded: &[ForwardedWriteResult],
+    instance: &HttpUri,
+) -> Result<Response, ProblemResponse> {
     let verdict = provision_verdict(forwarded, local.outcome, instance)?;
     let source_partly_wrote = forwarded.iter().any(|result| match &result.outcome {
         ForwardedWriteOutcome::Completed { status, .. } => *status == StatusCode::MULTI_STATUS.as_u16(),
@@ -169,10 +173,6 @@ fn push_updated<'a>(result: &mut UpdateResult, written: impl Iterator<Item = &'a
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::entity::update_result::{LocalAttributeWrite, NotUpdatedReason, attribute_write_response, update_result};
     use andromeda_federation::{

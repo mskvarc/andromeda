@@ -1,7 +1,5 @@
 //! HTTP binding for snapshot lifecycle and purge operations.
 
-#![deny(missing_docs)]
-
 pub mod error;
 mod handler;
 pub mod routes;

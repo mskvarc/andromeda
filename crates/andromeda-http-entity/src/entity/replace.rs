@@ -31,6 +31,8 @@ use andromeda_http_extraction::{context_target, path_segment::EntityId};
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use axum::http::Method;
 
+/// Replace Entity (clause 5.6.18): 204 when every part succeeded, 207 with the
+/// clause 5.2.16 result when only some did.
 pub(crate) async fn update(
     context_target::ExistingTargetedTenantState {
         services: state,

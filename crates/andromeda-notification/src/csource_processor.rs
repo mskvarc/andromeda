@@ -45,16 +45,24 @@ use futures::{StreamExt, stream};
 use std::sync::Arc;
 use tracing::{debug, error};
 
+/// Planned notifications one registration change sends at once.
 const CSR_NOTIFICATION_CONCURRENCY: usize = 20;
 
 /// Applies context-source subscription and registration events to notification policy.
 pub struct CsourceNotificationProcessor {
+    /// The live branch of the tenant the subscriptions are listed on.
     target: ContextTarget,
+    /// The tenant's subscriptions, read to refresh the cache.
     sub_repo: Arc<dyn SubscriptionStore>,
+    /// The tenant's registrations, matched against each subscription.
     csr_repo: Arc<dyn RegistrationStore>,
+    /// The write order that decides which change notifies a subscription.
     order: Arc<dyn CsourceChangeOrder>,
+    /// The compiled active context source subscriptions, keyed by id.
     cache: CsourceSubscriptionCache,
+    /// The recorded registrations each subscription was already notified of.
     membership: CsourceMembership,
+    /// Renders and sends the planned notifications.
     delivery: CsourceNotificationDelivery,
 }
 

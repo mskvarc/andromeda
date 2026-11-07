@@ -14,10 +14,6 @@ use sea_query::Iden;
 pub struct Excluded;
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::conflict_image::Excluded;
     use sea_query::{Alias, Expr, OnConflict, PostgresQueryBuilder, Query};

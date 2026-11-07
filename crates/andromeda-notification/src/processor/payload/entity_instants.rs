@@ -37,10 +37,6 @@ pub(crate) fn notified_instants(instants: Option<&SysAttrsSnapshot>, expiry: Exp
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::processor::payload::entity_instants::{ExpiryStamp, notified_instants};
     use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;

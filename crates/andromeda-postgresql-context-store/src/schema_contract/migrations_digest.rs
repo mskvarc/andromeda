@@ -92,10 +92,6 @@ pub enum MigrationsDigestError {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::schema_contract::migrations_digest::{MigrationsDigest, MigrationsDigestError};
     use sqlx::migrate::{Migration, MigrationType};

@@ -187,10 +187,6 @@ pub fn first_family_value<'a, I: QueriedInstance<'a>>(instance: I) -> Option<Val
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         filter::{family_target::family_target, target_value::TargetOrigin},

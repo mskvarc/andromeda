@@ -13,13 +13,15 @@ use futures::future::BoxFuture;
 use std::sync::Arc;
 
 /// Resolves one broker tenant and projects only Context Registry capabilities.
-pub struct BrokerContextRegistryStateResolver {
+pub(crate) struct BrokerContextRegistryStateResolver {
+    /// The process tenant runtimes; each resolution leases the tenant's state
+    /// for the lifetime of the request.
     tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
 }
 
 impl BrokerContextRegistryStateResolver {
     /// Construct a focused resolver over the tenant runtime manager.
-    pub const fn new(tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>) -> BrokerContextRegistryStateResolver {
+    pub(crate) const fn new(tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>) -> BrokerContextRegistryStateResolver {
         BrokerContextRegistryStateResolver { tenants }
     }
 }

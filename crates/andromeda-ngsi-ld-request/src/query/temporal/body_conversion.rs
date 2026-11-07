@@ -98,10 +98,6 @@ impl TryFrom<Query> for TemporalQueryParameters {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation, post_parameters::TemporalPostQueryParams};
     use andromeda_linked_retrieval::admission::TemporalJoin;

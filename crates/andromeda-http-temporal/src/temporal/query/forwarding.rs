@@ -348,11 +348,6 @@ pub(crate) struct InEffectRequest<'r> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::temporal::query::forwarding::{QueryScope, forwarding_outcome};
     use andromeda_context_space::context_target::ContextTarget;

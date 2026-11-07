@@ -29,7 +29,9 @@ use std::collections::HashSet;
 /// Creating each entity of a chunk (clause 5.6.7.4 runs the behaviour of
 /// clause 5.6.1 per entity).
 struct CreateRewrite<'a> {
+    /// The service whose insert builds each write.
     service: &'a EntityService,
+    /// The branch the chunk writes.
     target: &'a ContextTarget,
 }
 
@@ -77,6 +79,8 @@ impl EntityService {
         (deduped, errors)
     }
 
+    /// Create the entities of one chunk at `now`, answering an identifier the chunk
+    /// repeats with a conflict. Fails only on a store failure that concerns the whole chunk.
     pub(super) async fn batch_create_chunk(
         &self,
         placement: SideEffectPlacement<'_>,

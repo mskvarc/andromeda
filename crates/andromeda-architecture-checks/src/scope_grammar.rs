@@ -174,10 +174,6 @@ fn is_level_separator(argument: &Expr) -> bool {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::scope_grammar::ScopeGrammarVisitor;
     use syn::visit::Visit;

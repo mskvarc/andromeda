@@ -62,20 +62,34 @@ use url::Url;
 pub(super) struct TenantStorage {
     /// The tenant this storage graph was opened, migrated and warmed for.
     pub(super) tenant: TenantRef,
+    /// The tenant's serving pool, opened against its migrated schema.
     pub(super) pool: PgPool,
+    /// The tenant's live context-space target, as opposed to a Snapshot branch.
     pub(super) live_target: ContextTarget,
+    /// The tenant's JSON-LD engine; every service holds a clone of the handle.
     pub(super) engine: JsonLdEngine,
+    /// Workers over the stored `@context`s, handed to the runtime for shutdown.
     pub(super) context_workers: TenantContextWorkers,
     /// The clause 5.13.1 invalidation port, driven by a supervised scheduled task.
     pub(super) cached_context_invalidation: Arc<dyn CachedContextInvalidation>,
+    /// The tenant's one attribute name dictionary cache.
     pub(super) attribute_names: Arc<dyn NameLookup<AttributeName>>,
+    /// The tenant's one entity type name dictionary cache.
     pub(super) entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
+    /// Attribute history store, shared by the temporal and entity services.
     pub(super) temporal_repo: Arc<TemporalRepository>,
+    /// Capabilities of the tenant's entity repository.
     pub(super) entity_ports: EntityStoragePorts,
+    /// Context Source Registration store.
     pub(super) registration_store: Arc<dyn RegistrationStore>,
+    /// Types and attributes the registrations advertise, for discovery to union
+    /// with the local store.
     pub(super) registry_type_source: Arc<dyn RegistryTypeSource>,
+    /// Entity Map store, shared by request handling and the expiry sweep.
     pub(super) entity_map_store: Arc<dyn EntityMapStore>,
+    /// Snapshot control records and their lifecycle state.
     pub(super) snapshot_store: Arc<dyn SnapshotStore>,
+    /// Entity Subscriptions the change notifier matches committed changes against.
     pub(super) subscription_cache: Arc<SubscriptionCache>,
     /// Which spatial index, if any, the tenant's geo queries are narrowed
     /// through, seeded from the store.
@@ -107,13 +121,21 @@ impl TenantContextWorkers {
 
 /// Focused capabilities supplied by the tenant's entity repository.
 pub(super) struct EntityStoragePorts {
+    /// Entity states and the snapshots optimistic writes check against.
     pub(super) reader: Arc<dyn EntityReader>,
+    /// Paged entity query, shared by request handling and notification evaluation.
     pub(super) query: Arc<dyn EntityQueryStore>,
+    /// What the existing entities carry, for clause 5.7 discovery.
     pub(super) discovery: Arc<dyn EntityDiscoveryStore>,
+    /// Stored entity states paged in identifier order, all or of one type.
     pub(super) payload_pages: Arc<dyn EntityPayloadPages>,
+    /// Candidates for the entity expiry sweep.
     pub(super) expiry: Arc<dyn EntityExpirySource>,
+    /// Entity locations read to seed and rebuild the in-memory spatial index.
     pub(super) spatial_snapshots: Arc<dyn EntitySpatialSnapshotSource>,
+    /// The reads that let a deletion skip the payload it removes.
     pub(super) deletion_outline: Arc<dyn DeletionOutlineReader>,
+    /// A local entity's stored types, read without decoding its payload.
     pub(super) entity_types: Arc<dyn EntityTypeReader>,
 }
 

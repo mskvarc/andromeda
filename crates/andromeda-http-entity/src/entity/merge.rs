@@ -34,6 +34,8 @@ use andromeda_ngsi_ld_model::attribute::merge_member::MergeMember;
 use andromeda_ngsi_ld_request::fragment_entity_id::admit_fragment_entity_id;
 use axum::http::Method;
 
+/// Merge Entity (clause 5.6.17): 204 when every part succeeded, 207 with the
+/// clause 5.2.16 result when only some did.
 pub(crate) async fn merge(
     context_target::ExistingTargetedTenantState {
         services: state,

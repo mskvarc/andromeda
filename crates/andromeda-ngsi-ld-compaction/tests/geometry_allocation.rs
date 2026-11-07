@@ -8,11 +8,6 @@
 //! other tests of the binary do not disturb it; the compaction runs on a
 //! current-thread runtime for that reason.
 
-#![expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_compaction::entity_compactor::{EntityCompactor, EntityRead};
 use andromeda_ngsi_ld_entity::{

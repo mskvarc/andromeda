@@ -165,6 +165,14 @@ struct IntervalWake {
     subscription_changes: broadcast::Sender<CsourceSubscriptionChange>,
 }
 
+/// Register the resident worker that evaluates committed registration changes
+/// against the cached context source Subscriptions (clause 5.11).
+///
+/// Subscription changes keep the cache current, and pending ones are applied
+/// before each registration change is evaluated; a lagged stream reloads the
+/// cache. Each registration change also wakes the periodic sweep. On
+/// cancellation the queued registration changes are evaluated before the
+/// worker stops; a closed channel fails the attempt, retried after one second.
 fn register_csource_notification_processor(
     supervisor: &TaskSupervisor,
     streams: CsourceNotificationStreams,
@@ -260,6 +268,8 @@ fn register_csource_notification_processor(
         .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
+/// Register the periodic context source sweep, woken early by every context
+/// source Subscription change and by an evaluation a full pass refused.
 fn register_csource_interval_notification(
     supervisor: &TaskSupervisor,
     operation: Arc<CsourceIntervalNotificationOperation>,

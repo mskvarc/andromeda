@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 /// The complete entity and context-source subscription route fragment.
 pub struct SubscriptionRoutes {
+    /// The `/subscriptions` and `/csourceSubscriptions` routes with the tenant resolver bound as state.
     router: Router,
 }
 

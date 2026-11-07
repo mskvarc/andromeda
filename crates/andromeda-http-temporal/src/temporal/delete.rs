@@ -61,7 +61,9 @@ impl LocalDeletion {
     }
 }
 
-pub async fn delete(
+/// Delete Temporal Evolution of an Entity (clause 5.6.16): 204 when every part
+/// succeeded, 207 with the clause 5.2.16 result when only some did.
+pub(crate) async fn delete(
     // Clause 6.3.20: the parameters are read first, before the tenant is
     // resolved, so an undefined one is an `InvalidRequest` on any tenant.
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
@@ -116,10 +118,6 @@ pub async fn delete(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::temporal::delete::LocalDeletion;
     use andromeda_federation::{

@@ -6,10 +6,6 @@
 //! The measurement counts the allocations of the calling thread alone, so the
 //! other tests of the binary do not disturb it.
 
-#![expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 use andromeda_ngsi_ld_model::{request_body::RequestBody, temporal::written_temporal_entity::WrittenTemporalEntity};
 use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
 use std::fmt::Write;

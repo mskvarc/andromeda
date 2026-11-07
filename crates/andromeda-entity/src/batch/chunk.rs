@@ -83,8 +83,11 @@ pub(super) struct UpdatedStates<'a> {
 /// An entity update once its instances carry the write instant: the state it
 /// replaces, the state replacing it and what the Temporal Evolution records.
 struct StampedUpdate<'a> {
+    /// The entity as the store holds it before the write.
     previous: &'a EntitySnapshot,
+    /// The replacing state, each modified instance stamped with the write instant.
     current: Arc<EntityState>,
+    /// History rows for the instances the update modified and the ones it removed.
     history: Vec<HistoryRecord>,
 }
 
@@ -366,10 +369,6 @@ impl EntityService {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{batch::chunk::error_of, error::EntityError};
     use andromeda_context_commit::{store_instant::StoreInstant, submission_refusal::SubmissionRefusal, write_outcome::WriteOutcome};

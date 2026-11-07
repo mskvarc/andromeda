@@ -1,8 +1,5 @@
 //! Explicit scope and ordering for the broker's inbound HTTP middleware.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod cors_tokens;
 pub mod stack;
 

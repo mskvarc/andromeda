@@ -176,10 +176,6 @@ fn delete_member(state: &mut EntityState, attribute: &AttributeName, selection: 
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::attrs::delete::{delete_member, deletion_history};
     use andromeda_context_commit::history_record::HistoryRecord;

@@ -69,10 +69,6 @@ pub fn classify_context_link_error(error: &ContextLinkError) -> ClassifiedReport
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_tenancy::runtime_build_failure::RuntimeBuildFailure;

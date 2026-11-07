@@ -7,10 +7,6 @@
 //! The measurement counts the allocations of the calling thread alone, so the
 //! other tests of the binary do not disturb it.
 
-#![expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_geometry::{

@@ -36,7 +36,7 @@ use axum::response::Response;
 ///
 /// The classified failure of converting the body into the operation's inputs,
 /// and every failure clause 5.7.4 raises while the query runs.
-pub async fn query(
+pub(crate) async fn query(
     context_target::ExistingTargetedTenantState { services, target, snapshot: _ }: TemporalTenantState,
     accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope { uri, incoming_via: _, headers }: NgsiLdRequestEnvelope,

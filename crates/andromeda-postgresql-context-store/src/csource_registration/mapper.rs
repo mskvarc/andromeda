@@ -357,10 +357,6 @@ fn row_to_lifecycle(row: &PgRow) -> Result<RegistrationLifecycle, ContextStoreEr
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::csource_registration::{
         mapper::{StoredManagement, context_source_info_of, duration_of, interval_of, management_of},

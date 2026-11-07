@@ -59,10 +59,6 @@ impl<'a> ExpandedSelectors<'a> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{fixed_registration_store::offline_service, selector_expansion::ExpandedSelectors};
     use andromeda_json_literal::JsonLiteral;

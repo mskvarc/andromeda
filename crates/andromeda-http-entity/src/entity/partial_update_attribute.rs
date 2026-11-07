@@ -40,6 +40,8 @@ use andromeda_ngsi_ld_request::query_narrowing::ExecutionScope;
 use axum::http::Method;
 use std::slice;
 
+/// Partial Attribute Update (clause 5.6.4): 204 when the attribute was written
+/// everywhere, 207 with the clause 5.2.18 `UpdateResult` otherwise.
 pub(crate) async fn partial_update_attr(
     context_target::ExistingTargetedTenantState {
         services: state,

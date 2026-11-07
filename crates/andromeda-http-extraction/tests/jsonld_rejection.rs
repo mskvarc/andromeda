@@ -1,3 +1,6 @@
+//! The problem details the JSON-LD body extractor answers a malformed or
+//! structurally invalid request body with.
+
 use andromeda_http_extraction::jsonld::JsonLd;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::user_context_admission::AdmittedContext;

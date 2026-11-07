@@ -136,10 +136,6 @@ fn resolution<A: LinkedAnswer, T>(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::linked_forwarding::resolution;
     use andromeda_federation::{

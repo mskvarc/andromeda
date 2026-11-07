@@ -18,10 +18,6 @@ pub(crate) fn context_syntax(resolved: &ResolvedContext) -> Result<Context, Json
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{context_spec::ContextSpec, engine::context_syntax::context_syntax, error::JsonLdError};
     use andromeda_json_literal::JsonLiteral;

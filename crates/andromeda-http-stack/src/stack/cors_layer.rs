@@ -83,10 +83,6 @@ fn origin_header_value(url: &Url) -> Option<HeaderValue> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::stack::cors_layer::build_cors_layer;
     use andromeda_configuration::schema::http::cors::{CorsConfig, CorsMode, CorsPermission, HeaderRule, MethodRule, OriginRule};

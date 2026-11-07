@@ -45,12 +45,15 @@ pub trait SnapshotStateResolver: Send + Sync {
     fn resolve<'a>(&'a self, tenant: &'a TenantRef, creation_policy: TenantCreationPolicy) -> BoxFuture<'a, Result<Arc<SnapshotRouteServices>, TenancyError>>;
 }
 
+/// Axum state for the complete snapshot route fragment.
 #[derive(Clone)]
 pub(crate) struct SnapshotRouteState {
+    /// Resolves the request's tenant to its snapshot capabilities.
     resolver: Arc<dyn SnapshotStateResolver>,
 }
 
 impl SnapshotRouteState {
+    /// Route state resolving tenants through `resolver`.
     pub(crate) const fn new(resolver: Arc<dyn SnapshotStateResolver>) -> SnapshotRouteState {
         SnapshotRouteState { resolver }
     }

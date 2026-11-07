@@ -76,10 +76,6 @@ pub fn state_remainder(state: &EntityState, projection: &Projection, now: DateTi
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::query::projection_remainder::{ProjectionRemainder, projection_remainder};
     use andromeda_ngsi_ld_model::entity::Entity;

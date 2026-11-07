@@ -24,7 +24,7 @@ use thiserror::Error;
 
 /// Why the `/info/sourceIdentity` route could not be built from the configured identity.
 #[derive(Debug, Error)]
-pub enum SourceIdentityRouteError {
+pub(crate) enum SourceIdentityRouteError {
     /// The configured `contextSourceExtras` are no admissible JSON.
     #[error("the configured source extras are not admissible JSON: {0}")]
     Extras(#[from] JsonLiteralError),
@@ -32,13 +32,15 @@ pub enum SourceIdentityRouteError {
 
 /// Resolves the default tenant and projects the contexts `/info/sourceIdentity`
 /// answers under (clause 4.14: the default tenant always exists).
-pub struct BrokerDefaultTenantContexts {
+pub(crate) struct BrokerDefaultTenantContexts {
+    /// The process tenant runtimes; the default tenant's state is leased per
+    /// resolution.
     tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
 }
 
 impl BrokerDefaultTenantContexts {
     /// Construct the resolver over the process tenant runtime manager.
-    pub const fn new(tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>) -> BrokerDefaultTenantContexts {
+    pub(crate) const fn new(tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>) -> BrokerDefaultTenantContexts {
         BrokerDefaultTenantContexts { tenants }
     }
 }

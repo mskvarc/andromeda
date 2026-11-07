@@ -152,6 +152,11 @@ pub(super) fn register_spatial_workers(supervisor: &TaskSupervisor, config: &Ten
     }
 }
 
+/// Register the wake-driven drain of durable entity side-effect jobs.
+///
+/// Without a wake it runs on the fallback interval between `fallback_floor` and
+/// `fallback_ceiling`, and a pass that reports work may remain is followed by
+/// another at once. Shutdown waits up to one `lease_duration` for a pass.
 fn register_entity_side_effect_drain(
     supervisor: &TaskSupervisor,
     drain: Arc<EntitySideEffectDrain>,
@@ -256,6 +261,9 @@ where
         .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
+/// Classify a Subscription expiry failure: store faults are transient, an
+/// internal error is an invariant violation, and request-level errors are
+/// permanent.
 pub(super) const fn classify_subscription_expiry_failure(error: SubscriptionError) -> TaskFailure<SubscriptionError> {
     let class = match &error {
         // A store of hosted `@context`s that failed a write fails for the
@@ -282,6 +290,9 @@ pub(super) const fn classify_subscription_expiry_failure(error: SubscriptionErro
     TaskFailure::new(class, error)
 }
 
+/// Classify a registration expiry failure: store faults are transient, an
+/// internal error is an invariant violation, and request-level errors are
+/// permanent.
 pub(super) const fn classify_registration_expiry_failure(error: RegistrationError) -> TaskFailure<RegistrationError> {
     let class = match &error {
         RegistrationError::Persistence(_) | RegistrationError::StoreSaturated | RegistrationError::StoreUnavailable => FailureClass::Transient,

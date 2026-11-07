@@ -102,10 +102,6 @@ impl IntervalCandidates<'_> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::interval_candidates::IntervalCandidates;
     use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};

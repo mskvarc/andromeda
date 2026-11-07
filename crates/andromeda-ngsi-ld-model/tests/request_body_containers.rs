@@ -4,9 +4,8 @@
 
 #![expect(
     clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+    reason = "clippy reaches only `#[test]` functions in a member crate's integration test, and these helpers fail the test by panicking"
 )]
-
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{
     attribute::{instance::AttributeValue, written_attribute::WrittenAttribute},

@@ -42,10 +42,6 @@ pub(super) fn contributed_candidates(branch: &HistoryBranch, contributed: &Contr
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::stage1::{contributed_candidates::contributed_candidates, query_fixture::ids};
     use andromeda_ngsi_ld_query::temporal::contributed_entities::{ContributedEntities, ContributedRendering};

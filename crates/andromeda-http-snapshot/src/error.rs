@@ -66,11 +66,13 @@ impl<T> SnapshotResultExt<T> for Result<T, JsonLdError> {
     }
 }
 
+/// The multi-status entry for one Snapshot a purge could not delete.
 pub(crate) fn project_purge_failure(failure: SnapshotPurgeFailure) -> BatchEntityError {
     let report = classify_snapshot_error(&failure.error);
     BatchEntityError::new(failure.identifier.into(), report.error_type(), report.detail())
 }
 
+/// A 500 answer at `instance` that logs `source` and discloses only `summary`.
 pub(crate) fn internal_problem(source: &impl Display, summary: InternalFailureSummary, instance: &Uri) -> ProblemResponse {
     ClassifiedReport::internal(source, summary).with_instance(instance.clone())
 }

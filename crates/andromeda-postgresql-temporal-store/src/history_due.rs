@@ -88,10 +88,6 @@ fn earliest_due(states: &[ChunkState], kept: &[DateTime<Utc>], support: Columnst
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         columnstore_capability::ColumnstoreSupport,

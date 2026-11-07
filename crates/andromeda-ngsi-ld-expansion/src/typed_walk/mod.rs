@@ -8,7 +8,7 @@
 //! member the write decides is the NGSI-LD Null written in place of a whole
 //! attribute.
 
-pub mod instance;
+pub(crate) mod instance;
 pub(crate) mod member_census;
 pub(crate) mod merge_instance;
 
@@ -32,7 +32,7 @@ use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, ke
 /// # Errors
 ///
 /// Declines whatever the walk does not model.
-pub fn entity_node<M: WrittenMember>(scope: &TermScope<'_>, entity: &Entity<M>, normalization: Normalization) -> Result<Expanded, Decline> {
+pub(crate) fn entity_node<M: WrittenMember>(scope: &TermScope<'_>, entity: &Entity<M>, normalization: Normalization) -> Result<Expanded, Decline> {
     let mut node = NodeBuilder::default();
     add_serialized(&mut node, scope, keyword::ID_ALIAS, &entity.id)?;
     add_serialized(&mut node, scope, keyword::TYPE_ALIAS, &entity.type_)?;
@@ -55,7 +55,7 @@ pub fn entity_node<M: WrittenMember>(scope: &TermScope<'_>, entity: &Entity<M>, 
 /// # Errors
 ///
 /// Declines whatever the walk does not model.
-pub fn patch_node<M: WrittenMember>(scope: &TermScope<'_>, patch: &EntityPatch<M>, normalization: Normalization) -> Result<Expanded, Decline> {
+pub(crate) fn patch_node<M: WrittenMember>(scope: &TermScope<'_>, patch: &EntityPatch<M>, normalization: Normalization) -> Result<Expanded, Decline> {
     let mut node = NodeBuilder::default();
     add_optional(&mut node, scope, keyword::ID_ALIAS, patch.id.as_ref())?;
     add_optional(&mut node, scope, keyword::TYPE_ALIAS, patch.type_.as_ref())?;

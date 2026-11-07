@@ -61,7 +61,6 @@ impl ContextReading<'static> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "test code expects on purpose; migrating it to typed assertions is pending")]
 mod tests {
     use crate::{
         compact_node::{CompactNode, NodeShape, context_reading::ContextReading},

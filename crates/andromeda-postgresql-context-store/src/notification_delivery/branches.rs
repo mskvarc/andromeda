@@ -93,10 +93,6 @@ pub(crate) fn is_reaped_relation(error: &sqlx::Error) -> bool {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::notification_delivery::branches::drainable_snapshots_statement;
     use andromeda_postgresql_schema::branch_schema_version::BranchSchemaVersion;

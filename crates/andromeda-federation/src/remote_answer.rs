@@ -34,10 +34,6 @@ impl fmt::Display for ProblemDetailSuffix<'_> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::remote_answer::RemoteAnswer;
     use andromeda_ngsi_ld_problem_details::batch_operation::BatchProblemDetail;

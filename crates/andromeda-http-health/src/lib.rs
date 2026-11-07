@@ -1,8 +1,5 @@
 //! Focused HTTP binding for broker health aggregation.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod error;
 pub mod handler;
 pub mod routes;

@@ -14,7 +14,7 @@ use andromeda_postgresql_codes::notification_trigger::NotificationTriggerCode;
 
 /// The registry member the schema persists for a trigger condition.
 #[must_use]
-pub const fn stored_trigger(trigger: NotificationTrigger) -> NotificationTriggerCode {
+pub(crate) const fn stored_trigger(trigger: NotificationTrigger) -> NotificationTriggerCode {
     match trigger {
         NotificationTrigger::EntityCreated => NotificationTriggerCode::EntityCreated,
         NotificationTrigger::EntityUpdated => NotificationTriggerCode::EntityUpdated,
@@ -28,13 +28,13 @@ pub const fn stored_trigger(trigger: NotificationTrigger) -> NotificationTrigger
 /// The stored `SMALLINT[]` of a subscription's trigger set, or `None` when the
 /// subscription carries no explicit set (matching every trigger).
 #[must_use]
-pub fn stored_trigger_list(triggers: Option<&[NotificationTrigger]>) -> Option<Vec<i16>> {
+pub(crate) fn stored_trigger_list(triggers: Option<&[NotificationTrigger]>) -> Option<Vec<i16>> {
     triggers.map(|triggers| triggers.iter().map(|trigger| stored_trigger(*trigger).code()).collect())
 }
 
 /// The trigger condition a stored registry member names.
 #[must_use]
-pub const fn trigger_of(code: NotificationTriggerCode) -> NotificationTrigger {
+pub(crate) const fn trigger_of(code: NotificationTriggerCode) -> NotificationTrigger {
     match code {
         NotificationTriggerCode::EntityCreated => NotificationTrigger::EntityCreated,
         NotificationTriggerCode::EntityUpdated => NotificationTrigger::EntityUpdated,

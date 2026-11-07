@@ -11,8 +11,6 @@
 //! [`TemporalRepository`]: repo::TemporalRepository
 //! [`TemporalRecorder`]: recorder::TemporalRecorder
 
-#![deny(missing_docs)]
-
 /// Decoding `PgRow` into the backend-neutral aggregation row and its group span.
 pub(crate) mod aggregation_group_key_decode;
 pub(crate) mod aggregation_row_decode;

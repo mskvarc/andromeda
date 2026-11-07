@@ -57,10 +57,6 @@ impl<'a> LinkedEntities<'a> for &'a LinkedStates {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{entity_state::EntityState, entity_types::EntityTypes, queried::linked_states::LinkedStates};
     use andromeda_ngsi_ld_query::queried_entity::linked_entities::LinkedEntities;

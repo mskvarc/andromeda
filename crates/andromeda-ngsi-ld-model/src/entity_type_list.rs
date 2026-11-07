@@ -6,9 +6,9 @@ use iri_rs::IriBuf;
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 
-constant_string!(EntityTypeListType, "EntityTypeList");
-constant_string!(EntityTypeType, "EntityType");
-constant_string!(EntityTypeInfoType, "EntityTypeInfo");
+constant_string!(pub EntityTypeListType, "EntityTypeList");
+constant_string!(pub EntityTypeType, "EntityType");
+constant_string!(pub EntityTypeInfoType, "EntityTypeInfo");
 
 /// NGSI-LD `EntityTypeList` representation (ETSI GS CIM 009 clause 5.2.24).
 ///
@@ -74,10 +74,6 @@ pub struct EntityTypeInfo {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::entity_type_list::{EntityType, EntityTypeInfo, EntityTypeInfoType, EntityTypeList, EntityTypeListType};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, ngsi_ld_urn::EntityTypeListId};

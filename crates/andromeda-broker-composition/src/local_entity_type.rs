@@ -18,6 +18,7 @@ use tracing::warn;
 
 /// Resolves a local entity's expanded types through the tenant's entity store.
 pub(crate) struct EntityStoreTypeResolver {
+    /// Reads the stored expanded types of a local entity without its payload.
     types: Arc<dyn EntityTypeReader>,
 }
 

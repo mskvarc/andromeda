@@ -150,10 +150,6 @@ pub fn multi_status_result(entity_id: &Identifier, local: &LocalOutcome, forward
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         classified_report::ClassifiedReport,

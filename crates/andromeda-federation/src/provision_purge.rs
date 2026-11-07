@@ -232,10 +232,6 @@ impl FederationService {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::provision_purge::{forwarded_query_string, narrowed_query_string, reported_ids};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;

@@ -26,9 +26,6 @@
 //! refusal is reported as the `BadRequestData` clauses 5.7.2.4 and 5.7.4.4 ask
 //! for.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod provisioned_collations;
 
 #[cfg(test)]

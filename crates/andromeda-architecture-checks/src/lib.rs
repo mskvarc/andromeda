@@ -6,9 +6,6 @@
 //! The exported declarative macros generate the caller-side tests, so failures
 //! continue to identify the crate that broke its boundary.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod architecture;
 pub mod configuration_description;
 pub mod configuration_layering;
@@ -22,6 +19,7 @@ pub mod god_file;
 pub mod linked_retrieval;
 pub mod manifest_hygiene;
 pub mod module_naming;
+pub mod package_metadata;
 pub mod raw_constant;
 pub mod raw_sql;
 pub mod raw_sql_shape;
@@ -35,6 +33,7 @@ pub mod swallowed_row_decode;
 pub mod time_handling;
 pub mod type_erased_error;
 pub mod untyped_json;
+mod workspace_manifest;
 
 /// Declarative macros that generate caller-side architecture tests.
 #[macro_use]

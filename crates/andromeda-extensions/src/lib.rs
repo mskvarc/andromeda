@@ -12,9 +12,6 @@
 //! query grammar, for the level of `q` target languages the enabled set serves
 //! and a Context Source's advertisement announces.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod advertisement;
 pub mod enabled;
 pub mod startup_log;

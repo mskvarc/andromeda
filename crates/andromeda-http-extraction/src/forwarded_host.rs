@@ -99,10 +99,6 @@ pub fn forwarded_host(headers: &HeaderMap) -> Option<Authority> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::forwarded_host::{ForwardedHostError, forwarded_host, from_forwarded, from_x_forwarded_host};
     use axum::http::{HeaderMap, HeaderValue};

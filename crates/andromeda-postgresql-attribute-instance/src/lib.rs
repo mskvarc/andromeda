@@ -12,9 +12,6 @@
 //! history row, a queue record) and the statements that write and read it
 //! belong to the stores that hold it.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 /// Assembling one stored instance and its sub-attribute tree.
 pub mod assemble;
 /// Flattening one instance and its sub-attribute tree.

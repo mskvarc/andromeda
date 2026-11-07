@@ -14,9 +14,6 @@
 //! framework, so the same shapes serve the server answering a request and the
 //! forwarding client reading someone else's answer.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod batch_operation;
 pub mod error_type;
 pub mod problem_detail;

@@ -47,8 +47,12 @@ const REFRESH_RETRY: RetryPolicy = RetryPolicy {
 /// lifecycle changes) and take it exclusively.
 #[derive(Debug)]
 pub struct SubscriptionCache {
+    /// One candidate index per branch the tenant's subscriptions live on.
     indices: RwLock<HashMap<ContextTarget, CandidateIndex>>,
+    /// The geoQ bounding rectangles of the live branch's subscriptions,
+    /// shared with the notification worker.
     spatial: Arc<SpatialSubscriptionIndex>,
+    /// The tenant the spatial keys are partitioned by.
     tenant: TenantRef,
     /// The broker's mode every cached subscription's target languages select
     /// keys by.
@@ -305,6 +309,10 @@ impl SubscriptionCache {
         self.len(target) == 0
     }
 
+    /// Index the geoQ of a live-branch subscription under every type its
+    /// selectors name, and under the wildcard partition when a selector names
+    /// none or a boolean type expression; a Snapshot branch, no geoQ or a
+    /// geometry without a bounding rectangle indexes nothing.
     fn spatial_insert(&self, target: &ContextTarget, compiled: &CompiledSubscription) {
         if target.snapshot().is_some() {
             return;
@@ -354,11 +362,6 @@ impl SubscriptionCache {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         answering_store::{AnsweringStore, StoredAnswer},

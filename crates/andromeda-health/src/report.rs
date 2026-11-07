@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-constant_string!(HealthCheckType, "HealthCheck");
+constant_string!(pub HealthCheckType, "HealthCheck");
 
 /// Top-level health check response for `GET /ngsi-ld/v1/health`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -40,10 +40,6 @@ pub struct HealthCheckDetails {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         component::{ComponentDetail, ComponentName},

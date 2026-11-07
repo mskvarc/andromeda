@@ -91,10 +91,6 @@ fn owed_events<'a>(landed: &[&'a AtomicWrite]) -> Vec<&'a ChangeEvent> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::consequences::side_effects::owed_events;
     use andromeda_context_commit::{

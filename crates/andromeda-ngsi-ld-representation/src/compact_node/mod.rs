@@ -215,8 +215,4 @@ fn decoded_string<T, S: for<'de> DeserializeSeed<'de, Value = T>>(text: &str, se
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests;

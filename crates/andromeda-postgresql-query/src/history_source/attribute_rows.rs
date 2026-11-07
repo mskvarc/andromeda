@@ -231,10 +231,6 @@ fn keyed_stream_rows(schema: Option<&DynIden>) -> SelectStatement {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::history_source::{
         BesideComparison,

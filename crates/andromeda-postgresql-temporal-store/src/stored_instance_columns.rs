@@ -32,10 +32,6 @@ pub fn verbatim_instance_id(instance: &InstanceIdentity) -> Option<&str> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::stored_instance_columns::{generated_instance_id, verbatim_instance_id};
     use andromeda_ngsi_ld_lexicon::instance_identity::InstanceIdentity;

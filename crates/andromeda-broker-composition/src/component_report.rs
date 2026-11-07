@@ -1,6 +1,10 @@
 //! Active-component assembly from composition metadata and selected adapters.
 
-#![expect(clippy::absolute_paths, reason = "shadow generates absolute standard-library paths")]
+#![expect(
+    clippy::absolute_paths,
+    unreachable_pub,
+    reason = "shadow generates absolute standard-library paths, and its constants as `pub` inside this private module"
+)]
 
 use crate::broker::MAINTENANCE_PLATFORM_POOL_CONNECTIONS;
 use andromeda_component_report::{

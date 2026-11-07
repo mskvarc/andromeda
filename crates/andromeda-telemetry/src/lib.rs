@@ -6,9 +6,6 @@
 //! hand it typed names, outcomes and plain values, and the crate turns them into labelled
 //! series.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod build_info;
 pub mod delivery_ops;
 mod description;

@@ -151,10 +151,6 @@ where
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::tenant_factory::tasks::columnstore_conversion::{ConversionTally, convert_each};
     use andromeda_postgresql_temporal_store::columnstore_conversion::ChunkConversion;

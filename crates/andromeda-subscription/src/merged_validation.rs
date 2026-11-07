@@ -20,7 +20,7 @@ use crate::{error::SubscriptionError, fields::SubscriptionWriteValues, subscript
 /// `timeInterval` or `throttling` that is not greater than zero, and, unless
 /// it is `localOnly`, when it names neither `entities` nor `watchedAttributes`
 /// (a deleted `entities` cannot leave it without a selector).
-pub fn validate_merged_subscription(values: &SubscriptionWriteValues) -> Result<(), SubscriptionError> {
+pub(crate) fn validate_merged_subscription(values: &SubscriptionWriteValues) -> Result<(), SubscriptionError> {
     if values.time_interval.is_some() && values.watched_attributes.is_some() {
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::TimeIntervalWithWatchedAttributes));
     }
@@ -57,10 +57,6 @@ fn validate_selector(values: &SubscriptionWriteValues) -> Result<(), Subscriptio
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         error::SubscriptionError,

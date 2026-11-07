@@ -96,47 +96,46 @@ fn violations_of(contents: &str) -> Option<Vec<ConfigurationViolation>> {
 #[test]
 #[serial]
 fn env_overrides_default_host() {
-    unsafe { env::set_var("ANDROMEDA__SERVER__HOST", "192.168.1.1") };
-    let config = load_env_only();
-    unsafe { env::remove_var("ANDROMEDA__SERVER__HOST") };
-    pretty_assertions::assert_eq!(config.server.host, IpAddr::from([192, 168, 1, 1]));
+    temp_env::with_vars([("ANDROMEDA__SERVER__HOST", Some("192.168.1.1"))], || {
+        let config = load_env_only();
+        pretty_assertions::assert_eq!(config.server.host, IpAddr::from([192, 168, 1, 1]));
+    });
 }
 
 #[test]
 #[serial]
 fn env_overrides_database_url() {
-    unsafe { env::set_var("ANDROMEDA__DATABASE__URL", "postgres://envhost/envdb") };
-    let config = load_env_only();
-    unsafe { env::remove_var("ANDROMEDA__DATABASE__URL") };
-    pretty_assertions::assert_eq!(config.database.url.as_str(), "postgres://envhost/envdb");
+    temp_env::with_vars([("ANDROMEDA__DATABASE__URL", Some("postgres://envhost/envdb"))], || {
+        let config = load_env_only();
+        pretty_assertions::assert_eq!(config.database.url.as_str(), "postgres://envhost/envdb");
+    });
 }
 
 #[test]
 #[serial]
 fn env_reaches_a_key_three_tables_deep() {
-    unsafe { env::set_var("ANDROMEDA__ENTITY__SIDE_EFFECTS__STUCK_AFTER_ATTEMPTS", "64") };
-    let config = load_env_only();
-    unsafe { env::remove_var("ANDROMEDA__ENTITY__SIDE_EFFECTS__STUCK_AFTER_ATTEMPTS") };
-    pretty_assertions::assert_eq!(config.entity.side_effects.stuck_after_attempts.get(), 64);
+    temp_env::with_vars([("ANDROMEDA__ENTITY__SIDE_EFFECTS__STUCK_AFTER_ATTEMPTS", Some("64"))], || {
+        let config = load_env_only();
+        pretty_assertions::assert_eq!(config.entity.side_effects.stuck_after_attempts.get(), 64);
+    });
 }
 
 #[test]
 #[serial]
 fn env_parses_enumerated_values_in_kebab_case() {
-    unsafe {
-        env::set_var("ANDROMEDA__HTTP__COMPRESSION__QUALITY", "best");
-        env::set_var("ANDROMEDA__HTTP__CORS__MODE", "disabled");
-        env::set_var("ANDROMEDA__ENTITY__SPATIAL_INDEX__CONSISTENCY", "store-verified");
-    };
-    let config = load_env_only();
-    unsafe {
-        env::remove_var("ANDROMEDA__HTTP__COMPRESSION__QUALITY");
-        env::remove_var("ANDROMEDA__HTTP__CORS__MODE");
-        env::remove_var("ANDROMEDA__ENTITY__SPATIAL_INDEX__CONSISTENCY");
-    };
-    pretty_assertions::assert_eq!(config.http.compression.quality, CompressionQuality::Best);
-    pretty_assertions::assert_eq!(config.http.cors.mode, CorsMode::Disabled);
-    pretty_assertions::assert_eq!(config.entity.spatial_index.consistency, SpatialConsistency::StoreVerified);
+    temp_env::with_vars(
+        [
+            ("ANDROMEDA__HTTP__COMPRESSION__QUALITY", Some("best")),
+            ("ANDROMEDA__HTTP__CORS__MODE", Some("disabled")),
+            ("ANDROMEDA__ENTITY__SPATIAL_INDEX__CONSISTENCY", Some("store-verified")),
+        ],
+        || {
+            let config = load_env_only();
+            pretty_assertions::assert_eq!(config.http.compression.quality, CompressionQuality::Best);
+            pretty_assertions::assert_eq!(config.http.cors.mode, CorsMode::Disabled);
+            pretty_assertions::assert_eq!(config.entity.spatial_index.consistency, SpatialConsistency::StoreVerified);
+        },
+    );
 }
 
 /// A table is set in the file alone: an environment value is a scalar, so
@@ -144,42 +143,43 @@ fn env_parses_enumerated_values_in_kebab_case() {
 #[test]
 #[serial]
 fn a_table_cannot_be_set_from_the_environment() {
-    unsafe {
-        env::set_var(
+    temp_env::with_vars(
+        [(
             "ANDROMEDA__JSONLD__PRELOADED_CONTEXTS",
-            "[{\"url\":\"https://example.com/context.jsonld\",\"path\":\"contexts/test.jsonld\"}]",
-        );
-    };
-    let result = load(None, ListenerOverrides::default());
-    unsafe { env::remove_var("ANDROMEDA__JSONLD__PRELOADED_CONTEXTS") };
-    assert!(matches!(result, Err(LoadError::Layers(_))), "{result:?}");
+            Some("[{\"url\":\"https://example.com/context.jsonld\",\"path\":\"contexts/test.jsonld\"}]"),
+        )],
+        || {
+            let result = load(None, ListenerOverrides::default());
+            assert!(matches!(result, Err(LoadError::Layers(_))), "{result:?}");
+        },
+    );
 }
 
 #[test]
 #[serial]
 fn a_list_set_from_the_environment_splits_on_commas() {
-    unsafe { env::set_var("ANDROMEDA__HTTP__COMPRESSION__ALGORITHMS", "gzip,zstd") };
-    let config = load_env_only();
-    unsafe { env::remove_var("ANDROMEDA__HTTP__COMPRESSION__ALGORITHMS") };
-    pretty_assertions::assert_eq!(config.http.compression.algorithms, ContentCoding::Gzip | ContentCoding::Zstd);
+    temp_env::with_vars([("ANDROMEDA__HTTP__COMPRESSION__ALGORITHMS", Some("gzip,zstd"))], || {
+        let config = load_env_only();
+        pretty_assertions::assert_eq!(config.http.compression.algorithms, ContentCoding::Gzip | ContentCoding::Zstd);
+    });
 }
 
 #[test]
 #[serial]
 fn a_cors_method_list_set_from_the_environment_splits_on_commas() {
-    unsafe {
-        env::set_var("ANDROMEDA__HTTP__CORS__MODE", "configured");
-        env::set_var("ANDROMEDA__HTTP__CORS__ALLOW_METHODS", "GET,POST");
-    };
-    let config = load_env_only();
-    unsafe {
-        env::remove_var("ANDROMEDA__HTTP__CORS__MODE");
-        env::remove_var("ANDROMEDA__HTTP__CORS__ALLOW_METHODS");
-    };
-    assert!(
-        matches!(&config.http.cors.allow_methods, MethodRule::List(methods) if methods.len() == 2),
-        "{:?}",
-        config.http.cors.allow_methods
+    temp_env::with_vars(
+        [
+            ("ANDROMEDA__HTTP__CORS__MODE", Some("configured")),
+            ("ANDROMEDA__HTTP__CORS__ALLOW_METHODS", Some("GET,POST")),
+        ],
+        || {
+            let config = load_env_only();
+            assert!(
+                matches!(&config.http.cors.allow_methods, MethodRule::List(methods) if methods.len() == 2),
+                "{:?}",
+                config.http.cors.allow_methods
+            );
+        },
     );
 }
 
@@ -375,42 +375,42 @@ fn a_write_reserve_loads_below_the_whole_pool_and_the_whole_pool_is_refused() {
 #[serial]
 fn env_overrides_file() {
     let path = write_temp_config("[server]\nport = 1600\n");
-    unsafe { env::set_var("ANDROMEDA__SERVER__PORT", "1700") };
-    let config = load(Some(&path), ListenerOverrides::default()).expect("config should load").config;
-    unsafe { env::remove_var("ANDROMEDA__SERVER__PORT") };
-    fs::remove_file(path).expect("temp config should be removed");
-    pretty_assertions::assert_eq!(config.server.port, 1700);
+    temp_env::with_vars([("ANDROMEDA__SERVER__PORT", Some("1700"))], || {
+        let config = load(Some(&path), ListenerOverrides::default()).expect("config should load").config;
+        fs::remove_file(path).expect("temp config should be removed");
+        pretty_assertions::assert_eq!(config.server.port, 1700);
+    });
 }
 
 #[test]
 #[serial]
 fn cli_overrides_env() {
-    unsafe { env::set_var("ANDROMEDA__SERVER__PORT", "8888") };
-    let config = load(None, ListenerOverrides { host: None, port: Some(7777) })
-        .expect("config should load")
-        .config;
-    unsafe { env::remove_var("ANDROMEDA__SERVER__PORT") };
-    pretty_assertions::assert_eq!(config.server.port, 7777);
+    temp_env::with_vars([("ANDROMEDA__SERVER__PORT", Some("8888"))], || {
+        let config = load(None, ListenerOverrides { host: None, port: Some(7777) })
+            .expect("config should load")
+            .config;
+        pretty_assertions::assert_eq!(config.server.port, 7777);
+    });
 }
 
 #[test]
 #[serial]
 fn a_single_prefix_underscore_name_is_not_read() {
-    unsafe { env::set_var("ANDROMEDA_PORT", "8888") };
-    let config = load_env_only();
-    unsafe { env::remove_var("ANDROMEDA_PORT") };
-    pretty_assertions::assert_eq!(config.server.port, 1056);
+    temp_env::with_vars([("ANDROMEDA_PORT", Some("8888"))], || {
+        let config = load_env_only();
+        pretty_assertions::assert_eq!(config.server.port, 1056);
+    });
 }
 
 #[test]
 #[serial]
 fn a_single_underscore_between_table_and_key_is_ignored_as_an_unknown_key() {
-    unsafe { env::set_var("ANDROMEDA__SERVER_HOST", "203.0.113.1") };
-    let result = load(None, ListenerOverrides::default());
-    unsafe { env::remove_var("ANDROMEDA__SERVER_HOST") };
-    let loaded = result.expect("an unknown environment key loads");
-    pretty_assertions::assert_eq!(ignored_settings_of(&loaded), vec![("server_host".to_owned(), "environment")]);
-    pretty_assertions::assert_eq!(loaded.config.server.host, BrokerConfig::default().server.host);
+    temp_env::with_vars([("ANDROMEDA__SERVER_HOST", Some("203.0.113.1"))], || {
+        let result = load(None, ListenerOverrides::default());
+        let loaded = result.expect("an unknown environment key loads");
+        pretty_assertions::assert_eq!(ignored_settings_of(&loaded), vec![("server_host".to_owned(), "environment")]);
+        pretty_assertions::assert_eq!(loaded.config.server.host, BrokerConfig::default().server.host);
+    });
 }
 
 #[test]
@@ -612,15 +612,18 @@ fn an_ignored_file_key_names_its_path_and_its_file() {
 #[test]
 #[serial]
 fn an_unknown_prefixed_environment_variable_is_ignored_and_named() {
-    unsafe { env::set_var("ANDROMEDA__HTTP__SERVER_TIMING__PHASEZ", "1") };
-    let result = load(None, ListenerOverrides::default());
-    unsafe { env::remove_var("ANDROMEDA__HTTP__SERVER_TIMING__PHASEZ") };
-    let loaded = result.expect("an unknown environment key loads");
-    pretty_assertions::assert_eq!(ignored_settings_of(&loaded), vec![("http.server_timing.phasez".to_owned(), "environment")]);
-    pretty_assertions::assert_eq!(
-        loaded.ignored.iter().map(ToString::to_string).collect::<Vec<_>>(),
-        vec!["ANDROMEDA__HTTP__SERVER_TIMING__PHASEZ sets `http.server_timing.phasez`, which is not a setting this broker reads, so it is ignored".to_owned()]
-    );
+    temp_env::with_vars([("ANDROMEDA__HTTP__SERVER_TIMING__PHASEZ", Some("1"))], || {
+        let result = load(None, ListenerOverrides::default());
+        let loaded = result.expect("an unknown environment key loads");
+        pretty_assertions::assert_eq!(ignored_settings_of(&loaded), vec![("http.server_timing.phasez".to_owned(), "environment")]);
+        pretty_assertions::assert_eq!(
+            loaded.ignored.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            vec![
+                "ANDROMEDA__HTTP__SERVER_TIMING__PHASEZ sets `http.server_timing.phasez`, which is not a setting this broker reads, so it is ignored"
+                    .to_owned()
+            ]
+        );
+    });
 }
 
 /// The file and the environment each write the unknown key, so each is
@@ -629,14 +632,14 @@ fn an_unknown_prefixed_environment_variable_is_ignored_and_named() {
 #[serial]
 fn an_unknown_key_written_by_the_file_and_the_environment_is_reported_for_both() {
     let path = write_temp_config("[server]\nunknown_key = 1\n");
-    unsafe { env::set_var("ANDROMEDA__SERVER__UNKNOWN_KEY", "2") };
-    let result = load(Some(&path), ListenerOverrides::default());
-    unsafe { env::remove_var("ANDROMEDA__SERVER__UNKNOWN_KEY") };
-    fs::remove_file(&path).expect("temp config should be removed");
-    pretty_assertions::assert_eq!(
-        ignored_settings_of(&result.expect("an unknown key loads")),
-        vec![("server.unknown_key".to_owned(), "file"), ("server.unknown_key".to_owned(), "environment")]
-    );
+    temp_env::with_vars([("ANDROMEDA__SERVER__UNKNOWN_KEY", Some("2"))], || {
+        let result = load(Some(&path), ListenerOverrides::default());
+        fs::remove_file(&path).expect("temp config should be removed");
+        pretty_assertions::assert_eq!(
+            ignored_settings_of(&result.expect("an unknown key loads")),
+            vec![("server.unknown_key".to_owned(), "file"), ("server.unknown_key".to_owned(), "environment")]
+        );
+    });
 }
 
 /// A key the configuration defines holding a value of the wrong type is
@@ -658,10 +661,10 @@ fn a_defined_duration_key_with_a_malformed_value_is_still_refused() {
 #[test]
 #[serial]
 fn an_environment_variable_without_the_prefix_is_not_read() {
-    unsafe { env::set_var("HTTP__SERVER_TIMING__PHASEZ", "1") };
-    let result = load(None, ListenerOverrides::default());
-    unsafe { env::remove_var("HTTP__SERVER_TIMING__PHASEZ") };
-    result.expect("an unprefixed variable never reaches the configuration");
+    temp_env::with_vars([("HTTP__SERVER_TIMING__PHASEZ", Some("1"))], || {
+        let result = load(None, ListenerOverrides::default());
+        result.expect("an unprefixed variable never reaches the configuration");
+    });
 }
 
 #[test]

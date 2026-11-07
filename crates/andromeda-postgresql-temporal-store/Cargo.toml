@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+description = "PostgreSQL/TimescaleDB-backed temporal store for the NGSI-LD Temporal API"
 
 [lints]
 workspace = true

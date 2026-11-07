@@ -61,7 +61,7 @@ pub enum StoredChangeError {
 ///
 /// Returns [`StoredChangeError`] when a code is unassigned, the per-instance
 /// arrays disagree in length or a `datasetId` is no URI.
-pub fn decode_change(
+pub(crate) fn decode_change(
     lifecycle: i16,
     kinds: Vec<i16>,
     attributes: Vec<AttributeName>,
@@ -104,7 +104,7 @@ pub fn decode_change(
 ///
 /// Returns [`StoredChangeError::IncompleteSystemAttributes`] when only one of
 /// `createdAt` and `modifiedAt` is stored, or `expiresAt` without them.
-pub const fn decode_system_attributes(
+pub(crate) const fn decode_system_attributes(
     created_at: Option<DateTime<Utc>>,
     modified_at: Option<DateTime<Utc>>,
     expires_at: Option<DateTime<Utc>>,
@@ -121,10 +121,6 @@ pub const fn decode_system_attributes(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::notification_delivery::stored_change::{StoredChangeError, decode_change, decode_system_attributes};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;

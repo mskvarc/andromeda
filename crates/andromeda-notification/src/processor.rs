@@ -58,8 +58,16 @@ use futures::{StreamExt, stream};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
+/// Subscriptions one committed change notifies at once.
 const NOTIFICATION_CONCURRENCY: usize = 20;
 
+/// Parse the endpoint and notifier info of a compiled subscription into its
+/// transport binding.
+///
+/// # Errors
+///
+/// Returns the parse failure, logged at debug level, when the stored endpoint
+/// is not deliverable.
 fn compiled_transport(subscription: &CompiledSubscription) -> Result<EndpointTransport, EndpointParseError> {
     parse_endpoint_transport(&subscription.endpoint_uri, subscription.endpoint_notifier_info.as_deref())
         .inspect_err(|error| debug!(subscription = %subscription.id, %error, "Compiled subscription endpoint is no longer deliverable"))
@@ -84,15 +92,26 @@ fn aggregate_delivery_outcomes(attempts: Vec<Option<Result<(), NotificationAttem
 
 /// Applies subscription and entity changes to entity-notification policy.
 pub struct NotificationProcessor {
+    /// The tenant's live branch, the one the cache is reloaded from.
     live_target: ContextTarget,
+    /// Subscription reads, notification records and cache refreshes.
     sub_repo: Arc<dyn SubscriptionStore>,
+    /// Records each delivery's outcome, one write in flight per subscription.
     outcomes: OutcomeBatcher,
+    /// Reads the changed entity once per change, shared by every notification.
     entity_reader: Arc<dyn EntityReader>,
+    /// Language targeting, linked-entity reads for `rel{…}` hops and `join`.
     entity_query: Arc<EntityQueryService>,
+    /// The compiled subscriptions, with the superseded selections still held.
     cache: Arc<SubscriptionCache>,
+    /// Sends each notification over its endpoint's binding.
     transport: Arc<TransportDispatcher>,
+    /// Compacts the notification payload.
     engine: JsonLdEngine,
+    /// The tenant named in each delivery request.
     tenant: TenantRef,
+    /// The changes not yet evaluated; their floor bounds which superseded
+    /// selections are released.
     pending_commits: Arc<PendingCommits>,
 }
 
@@ -189,6 +208,9 @@ impl NotificationProcessor {
         self.cache.release_superseded(self.pending_commits.floor());
     }
 
+    /// Evaluate one committed change for `audience` and deliver a
+    /// notification under `identity` to every subscription it is owed to,
+    /// at most [`NOTIFICATION_CONCURRENCY`] at once.
     async fn apply_entity_change_for(
         &self,
         target: ContextTarget,
@@ -325,10 +347,6 @@ impl NotificationProcessor {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::processor::change_audience::{ChangeAudience, CommitFilters, addressed, admitted_by_entity_filters, in_force_versions, owed_since_commit};
     use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreInstant, subscription_key::SubscriptionKey};

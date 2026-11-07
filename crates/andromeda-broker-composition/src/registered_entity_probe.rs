@@ -173,11 +173,6 @@ impl RegisteredEntityProbe for EntityStoreRegistrationProbe {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::registered_entity_probe::EntityStoreRegistrationProbe;
     use andromeda_context_space::context_target::ContextTarget;

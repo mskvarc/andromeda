@@ -45,10 +45,12 @@ pub trait ContextRegistryStateResolver: Send + Sync {
 /// Axum state for the complete Context Registry route fragment.
 #[derive(Clone)]
 pub(crate) struct ContextRegistryRouteState {
+    /// Resolves the request's tenant to its Context Registry capabilities.
     resolver: Arc<dyn ContextRegistryStateResolver>,
 }
 
 impl ContextRegistryRouteState {
+    /// Route state resolving tenants through `resolver`.
     pub(crate) const fn new(resolver: Arc<dyn ContextRegistryStateResolver>) -> ContextRegistryRouteState {
         ContextRegistryRouteState { resolver }
     }

@@ -21,9 +21,6 @@
 //! `andromeda-http-headers`; this crate reads the values they carry and
 //! never the request they came from.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod body_response;
 mod concise;
 pub mod context;
@@ -32,16 +29,8 @@ mod entity_body;
 pub mod entity_map_body;
 pub mod entity_response;
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod entity_response_fallback_tests;
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod entity_response_tests;
 pub mod error;
 pub mod forwarded_entity;
@@ -52,21 +41,12 @@ pub mod geometry_selection;
 pub mod joined_notification;
 pub mod language_negotiation;
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod list_as_relationship_tests;
 pub mod notification_data;
 pub mod notification_entity;
 pub mod notification_language;
 pub mod notified_changes;
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod notified_changes_tests;
 pub mod registration;
 pub mod response;

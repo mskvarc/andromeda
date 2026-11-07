@@ -8,19 +8,12 @@
 //! under a forwarded copy's identifier is re-assembled and delivered to the
 //! local subscriber under the local subscription's identifier.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 /// The companion context source registration subscription of a local subscription.
 pub mod companion;
 /// Failures of the distributed subscription side.
 pub mod error;
 /// What an expired subscription leaves at the context sources.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod expiry_withdrawal_tests;
 /// Placing, updating and removing reduced copies at context sources.
 pub mod forwarder;
@@ -30,18 +23,9 @@ pub mod forwarding_invariant;
 pub mod inbound;
 /// What a source whose registration starts to match is given.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod late_placement_tests;
 /// The lifecycle steps of one local subscription, run one after the other.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod lifecycle_step_tests;
 /// The identifier mappings the distributed side keeps.
 pub mod mapping;
@@ -55,18 +39,9 @@ mod participation;
 pub mod reassembly;
 /// The distributed subscription side wired to in-memory doubles.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod reassembly_harness;
 /// What the distributed subscription side does with an inbound notification.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod reassembly_tests;
 /// One entity of an inbound notification in the typed model.
 mod received_entity;
@@ -78,18 +53,9 @@ pub mod reduced_copy;
 mod registration_removal;
 /// Relaying one notified entity as the inbound side does, for the tests.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod relay_fixture;
 /// What a relayed notification makes of the deletions its source reports.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod relayed_deletion_tests;
 /// The entities of a relayed copy beside what their source reported of the
 /// change.
@@ -99,10 +65,6 @@ mod relayed_entities;
 mod relayed_join;
 /// What a relayed notification carries of its Linked Entities.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod relayed_join_tests;
 /// The service tying the parts together.
 pub mod service;

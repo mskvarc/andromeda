@@ -191,11 +191,6 @@ impl headers::Header for NgsiLdWarningHeader {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         ngsild_warning::{LISTED_WARNING_BYTES, NgsiLdWarning, NgsiLdWarningHeader, VALUE_SEPARATOR_BYTES, WarnCode},

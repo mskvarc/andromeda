@@ -1,13 +1,7 @@
 //! Subscription policy for ETSI GS CIM 009 clauses 5.8 and 5.11.
 
-#![deny(missing_docs)]
-
 /// A subscription store answering only reads, for tests.
 #[cfg(any(test, feature = "test-support"))]
-#[expect(
-    clippy::expect_used,
-    reason = "test support unwraps and expects on fixtures on purpose; migrating it to typed assertions is pending"
-)]
 pub mod answering_store;
 /// Shared compiled subscription cache.
 pub mod cache;
@@ -16,10 +10,6 @@ pub mod candidate_funnel;
 /// The routing index over active subscriptions.
 pub mod candidate_index;
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod candidate_index_property;
 /// Subscription lifecycle change values.
 pub mod change;

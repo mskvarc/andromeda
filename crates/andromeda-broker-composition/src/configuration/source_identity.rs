@@ -21,7 +21,7 @@ use url::{Host, Url};
 
 /// Where the alias in effect comes from.
 #[derive(Clone, Copy, Debug, Display, Eq, PartialEq)]
-pub enum AliasOrigin {
+pub(crate) enum AliasOrigin {
     /// `federation.identity.source_alias` sets it.
     #[display("federation.identity.source_alias")]
     Configured,
@@ -35,7 +35,7 @@ pub enum AliasOrigin {
 
 /// The identity is not one the broker can report.
 #[derive(Debug, Error)]
-pub enum SourceIdentityError {
+pub(crate) enum SourceIdentityError {
     /// No alias is configured and nothing names the broker.
     #[error(
         "federation.identity.source_alias is not set, and neither server.public_url nor the machine's host name gives one; set federation.identity.source_alias"

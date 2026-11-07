@@ -4,7 +4,7 @@ use andromeda_component_report::ComponentReport;
 use andromeda_ngsi_ld_lexicon::{constant_string, identifier::Identifier};
 use serde::Serialize;
 
-constant_string!(ComponentReportListType, "ComponentReportList");
+constant_string!(pub ComponentReportListType, "ComponentReportList");
 
 /// Borrowed `/version` response assembled from the active component set.
 #[derive(Debug, Serialize)]

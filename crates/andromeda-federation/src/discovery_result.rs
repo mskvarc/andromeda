@@ -285,11 +285,6 @@ fn merge_attribute_info(held: &mut AttributeInfo, record: AttributeInfo) {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{discovery_result::Discovered, fixed_registration_store::offline_service, outcome::ForwardedDiscoveryResult};
     use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};

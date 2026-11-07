@@ -8,9 +8,6 @@
 //! qualify their table references through [`BranchSchema`]; schema commands name
 //! the schema through [`snapshot_schema`].
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 use andromeda_context_space::{context_target::ContextTarget, snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
 use andromeda_postgresql_seaquery::branch::qualified;
 use sea_query::{Alias, DynIden, IntoIden, TableRef};
@@ -104,10 +101,6 @@ pub fn schema_iden(target: &ContextTarget) -> Option<DynIden> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{BranchSchema, PUBLISHED_SNAPSHOT_SCHEMA_PATTERN, SNAPSHOT_SCHEMA_PATTERN, published_snapshot_key, snapshot_schema_name, table_of};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};

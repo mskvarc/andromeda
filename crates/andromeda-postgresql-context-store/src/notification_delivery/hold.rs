@@ -340,10 +340,6 @@ pub(crate) fn cte(name: impl Iden + 'static, query: impl Into<SubQueryStatement>
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         notification_delivery::hold::{HeldSubscription, hand_over_statement, resume_statement, set_aside_statement},

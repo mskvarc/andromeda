@@ -59,16 +59,16 @@ const CONTEXTS: &[(&str, &str)] = &[
 ];
 
 /// The URL of the test context declaring every coercion the walk models.
-pub const TERMS: &str = "https://example.org/contexts/terms.jsonld";
+pub(crate) const TERMS: &str = "https://example.org/contexts/terms.jsonld";
 
 /// The URL of the test context setting `@vocab` and a default `@language`.
-pub const VOCAB_AND_LANGUAGE: &str = "https://example.org/contexts/vocab-and-language.jsonld";
+pub(crate) const VOCAB_AND_LANGUAGE: &str = "https://example.org/contexts/vocab-and-language.jsonld";
 
 /// The URL of the test context declaring what the walk declines.
-pub const UNSUPPORTED: &str = "https://example.org/contexts/unsupported.jsonld";
+pub(crate) const UNSUPPORTED: &str = "https://example.org/contexts/unsupported.jsonld";
 
 /// An engine resolving the test contexts and nothing else.
-pub fn engine() -> JsonLdEngine {
+pub(crate) fn engine() -> JsonLdEngine {
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/contexts");
     let preloads: HashMap<Url, PathBuf> = CONTEXTS
         .iter()
@@ -83,7 +83,7 @@ pub fn engine() -> JsonLdEngine {
 
 /// Why a fixture could not be expanded both ways at all.
 #[derive(Debug)]
-pub enum FixtureFailure {
+pub(crate) enum FixtureFailure {
     /// The request's context did not resolve offline.
     Context(JsonLdError),
     /// The body does not decode as the typed compact request.
@@ -94,7 +94,7 @@ pub enum FixtureFailure {
 
 impl FixtureFailure {
     /// Why the fixture could not be expanded, for a test's report.
-    pub fn reason(&self) -> String {
+    pub(crate) fn reason(&self) -> String {
         match self {
             FixtureFailure::Context(error) => format!("context: {error}"),
             FixtureFailure::NotTyped(error) => format!("not typed: {error}"),
@@ -104,7 +104,7 @@ impl FixtureFailure {
 }
 
 /// Both expansions of one request.
-pub struct BothWays<T> {
+pub(crate) struct BothWays<T> {
     /// The typed walk's.
     pub typed: Result<TypedExpansion<T>, ExpansionError>,
     /// The processor's.
@@ -114,7 +114,7 @@ pub struct BothWays<T> {
 impl<T: Debug + PartialEq> BothWays<T> {
     /// The document both expansions agree on; fails when the walk declined
     /// or the two differ.
-    pub fn agreed(self) -> T {
+    pub(crate) fn agreed(self) -> T {
         match (self.typed, self.processor) {
             (Ok(TypedExpansion::Expanded(typed)), Ok(processor)) => {
                 pretty_assertions::assert_eq!(typed, processor, "the typed walk and the processor disagree");
@@ -126,7 +126,7 @@ impl<T: Debug + PartialEq> BothWays<T> {
     }
 
     /// The refusal both expansions agree on.
-    pub fn refused(self) -> String {
+    pub(crate) fn refused(self) -> String {
         match (self.typed, self.processor) {
             (Err(typed), Err(processor)) => {
                 pretty_assertions::assert_eq!(typed.to_string(), processor.to_string());
@@ -138,7 +138,7 @@ impl<T: Debug + PartialEq> BothWays<T> {
 
     /// The refusal of the typed expander, which checks the written names
     /// before either expansion path runs.
-    pub fn refused_before_expansion(self) -> String {
+    pub(crate) fn refused_before_expansion(self) -> String {
         match self.typed {
             Err(refusal) => refusal.to_string(),
             Ok(typed) => panic!("expected the written names to be refused, got {typed:?}"),
@@ -148,7 +148,7 @@ impl<T: Debug + PartialEq> BothWays<T> {
 
 /// A request body as the transport reads it: numbers canonicalised and the
 /// body `@context` split off into the request context.
-pub fn admitted(mut body: Value) -> (Value, ContextSpec) {
+pub(crate) fn admitted(mut body: Value) -> (Value, ContextSpec) {
     let text = serde_json::to_vec(&body).expect("a fixture body serialises");
     admit_json_text(&text).expect("the fixture's numbers are in range");
     let context = body.as_object_mut().and_then(|members| members.remove("@context"));
@@ -179,7 +179,7 @@ fn handed(text: Result<Vec<u8>, ExpansionError>) -> Result<Vec<u8>, FixtureFailu
 }
 
 /// Expand `body` decoded as the typed compact `Entity`.
-pub async fn entity(engine: &JsonLdEngine, body: Value, normalization: Normalization) -> Result<BothWays<EntityDocument>, FixtureFailure> {
+pub(crate) async fn entity(engine: &JsonLdEngine, body: Value, normalization: Normalization) -> Result<BothWays<EntityDocument>, FixtureFailure> {
     let (body, spec) = admitted(body);
     let entity: Entity = typed(&body)?;
     let context = context(engine, &spec).await?;
@@ -192,7 +192,7 @@ pub async fn entity(engine: &JsonLdEngine, body: Value, normalization: Normaliza
 
 /// Expand `body` decoded as the typed compact `EntityPatch` of the write
 /// `normalization` names: an update fragment, or a merge fragment.
-pub async fn patch(engine: &JsonLdEngine, body: Value, normalization: Normalization) -> Result<BothWays<EntityDocument>, FixtureFailure> {
+pub(crate) async fn patch(engine: &JsonLdEngine, body: Value, normalization: Normalization) -> Result<BothWays<EntityDocument>, FixtureFailure> {
     match normalization {
         Normalization::Entity => patch_of::<AttributeValue>(engine, body, normalization).await,
         Normalization::MemberDeletions => patch_of::<MergeMember>(engine, body, normalization).await,
@@ -218,7 +218,7 @@ async fn patch_of<M: WrittenMember + MemberReading>(
 /// The processor's expansion of `body` decoded as the typed compact
 /// `EntityPatch`, read by the processor decoding and by the canonical decoder
 /// of the entity crate from the expanded text.
-pub async fn decoded_both_ways(
+pub(crate) async fn decoded_both_ways(
     engine: &JsonLdEngine,
     body: Value,
     normalization: Normalization,
@@ -234,7 +234,7 @@ pub async fn decoded_both_ways(
 
 /// Expand `body` as the attribute fragment of clauses 5.6.4 and 5.6.19,
 /// written for the attribute `name`.
-pub async fn attribute(engine: &JsonLdEngine, name: &str, body: Value) -> Result<BothWays<AttributeFragment>, FixtureFailure> {
+pub(crate) async fn attribute(engine: &JsonLdEngine, name: &str, body: Value) -> Result<BothWays<AttributeFragment>, FixtureFailure> {
     let (body, spec) = admitted(body);
     let written = RawValue::from_string(body.to_string()).map_err(FixtureFailure::NotTyped)?;
     let member = MergeMember::from_fragment_node(name, ProducedNode::new(JsonPiece::new(&written)))
@@ -250,7 +250,7 @@ pub async fn attribute(engine: &JsonLdEngine, name: &str, body: Value) -> Result
 
 /// Expand `body` decoded as the Temporal Evolution of an entity, its clause 4.8
 /// system times travelling beside the instances.
-pub async fn temporal(engine: &JsonLdEngine, body: Value) -> Result<BothWays<TemporalDocument>, FixtureFailure> {
+pub(crate) async fn temporal(engine: &JsonLdEngine, body: Value) -> Result<BothWays<TemporalDocument>, FixtureFailure> {
     let (body, spec) = admitted(body);
     let evolution: TemporalEntity = typed(&body)?;
     let (entity, system_times) = evolution

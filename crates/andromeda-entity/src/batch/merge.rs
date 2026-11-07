@@ -30,7 +30,9 @@ use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::Sy
 /// Merging each entity of a chunk into the entity as an attempt read it
 /// (clause 5.6.20.4 runs the merge of clause 5.6.17 per entity).
 struct MergeRewrite<'a> {
+    /// The service whose merge builds each write.
     service: &'a EntityService,
+    /// The branch the chunk writes.
     target: &'a ContextTarget,
 }
 
@@ -72,6 +74,8 @@ impl ChunkRewrite for MergeRewrite<'_> {
 }
 
 impl EntityService {
+    /// Merge each fragment of `chunk` into its entity at `now`. Fails only on a
+    /// store failure that concerns the whole chunk.
     pub(super) async fn batch_merge_chunk(
         &self,
         placement: SideEffectPlacement<'_>,
@@ -96,10 +100,6 @@ impl EntityService {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         admission_fixture::admitted_batch,

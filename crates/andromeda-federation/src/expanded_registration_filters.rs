@@ -73,10 +73,6 @@ impl ExpandedRegistrationFilters {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{expanded_registration_filters::ExpandedRegistrationFilters, fixed_registration_store::generous_geo_admission};
     use andromeda_json_literal::JsonLiteral;

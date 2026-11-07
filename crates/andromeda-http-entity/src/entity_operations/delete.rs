@@ -30,6 +30,8 @@ use andromeda_http_extraction::{
 use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_request::{local::LocalOnlyParams, query_narrowing::ExecutionScope};
 
+/// Batch Entity Delete (clause 5.6.10): 204 when every entity was deleted, 207
+/// with the clause 5.2.16 result otherwise.
 pub(crate) async fn batch_delete(
     // The clause 6.3.4 preconditions are properties of the incoming request
     // alone, so they answer before the query is read or the tenant is resolved.

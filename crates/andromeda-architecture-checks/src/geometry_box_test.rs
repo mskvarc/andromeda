@@ -124,10 +124,6 @@ impl<'ast> Visit<'ast> for GeometryBoxTestVisitor<'_> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::geometry_box_test::GeometryBoxTestVisitor;
     use pretty_assertions::assert_eq;

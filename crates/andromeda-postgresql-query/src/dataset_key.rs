@@ -67,10 +67,6 @@ pub fn is_named_instance(column: impl Into<SimpleExpr>) -> SimpleExpr {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::dataset_key::{DatasetKey, is_default_instance, is_named_instance};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;

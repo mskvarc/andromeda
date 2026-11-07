@@ -36,6 +36,8 @@ use andromeda_http_extraction::{
 use axum::http::{HeaderMap, Method};
 use std::slice;
 
+/// Delete Attribute (clause 5.6.5): 204 when the attribute was deleted
+/// everywhere, 207 with the clause 5.2.18 `UpdateResult` otherwise.
 pub(crate) async fn delete_attr(
     context_target::ExistingTargetedTenantState {
         services: state,

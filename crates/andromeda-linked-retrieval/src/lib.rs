@@ -12,9 +12,6 @@
 //! Core reads, notifications, and the temporal operations behind their
 //! extension -- can depend on it.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod admission;
 pub mod candidate;
 pub mod edge;
@@ -26,10 +23,6 @@ pub mod plan;
 pub mod representation;
 pub mod source;
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod test_graph;
 pub mod traversal;
 pub mod typed;

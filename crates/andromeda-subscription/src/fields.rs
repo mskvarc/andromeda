@@ -20,7 +20,7 @@ use langtag::LangTagBuf;
 /// This shape mirrors the subscription table boundary. Every member is already
 /// its domain type; only human-readable text remains textual.
 #[derive(Debug)]
-pub struct SubscriptionWriteValues {
+pub(crate) struct SubscriptionWriteValues {
     /// Optional human-readable subscription name.
     pub subscription_name: Option<String>,
     /// Optional free-text description.
@@ -100,7 +100,7 @@ impl SubscriptionWriteValues {
     ///
     /// Returns [`SubscriptionValidationReason::EndpointRequired`] when the
     /// notification names no endpoint.
-    pub fn from_create(request: SubscriptionRequest, dataset_id_policy: DatasetIdPolicy) -> Result<SubscriptionWriteValues, SubscriptionError> {
+    pub(crate) fn from_create(request: SubscriptionRequest, dataset_id_policy: DatasetIdPolicy) -> Result<SubscriptionWriteValues, SubscriptionError> {
         let SubscriptionRequest {
             id: _,
             type_: _,
@@ -171,7 +171,7 @@ impl SubscriptionWriteValues {
     ///
     /// Returns [`SubscriptionValidationReason::EndpointRequired`] when the
     /// fragment's notification names no endpoint.
-    pub fn merged(
+    pub(crate) fn merged(
         request: SubscriptionRequest,
         existing: Subscription,
         dataset_id_policy: DatasetIdPolicy,
@@ -248,7 +248,7 @@ impl SubscriptionWriteValues {
     }
 
     /// Borrow the values in the shape required by the persistence port.
-    pub fn to_fields(&self) -> SubscriptionFields<'_> {
+    pub(crate) fn to_fields(&self) -> SubscriptionFields<'_> {
         SubscriptionFields {
             subscription_name: self.subscription_name.as_deref(),
             description: self.description.as_deref(),
@@ -278,10 +278,6 @@ impl SubscriptionWriteValues {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         error::SubscriptionError,

@@ -5,9 +5,6 @@
 //! one operation: transaction handles, statement phases and backend encodings
 //! belong to its implementations.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 /// Everything one entity write must commit together.
 pub mod atomic_write;
 /// The instant each attempt of one write is stamped at.

@@ -28,7 +28,7 @@ const ROWSTORE_REBUILD_COOLDOWN: ChronoDuration = ChronoDuration::zero();
 
 /// Whether a completed action achieved what it was queued for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ActionVerdict {
+pub(crate) enum ActionVerdict {
     /// The action achieved its purpose.
     Effective,
     /// A vacuum left the dead share at or above the threshold that queued it,
@@ -81,7 +81,7 @@ pub(crate) fn action_verdict(profile: PolicyProfile, target: MaintenanceTarget, 
 
 /// How one executed action ended, as the cooldown reads it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ActionEnding {
+pub(crate) enum ActionEnding {
     /// The statement completed.
     Completed(ActionVerdict),
     /// The statement failed.
@@ -105,7 +105,7 @@ pub enum ActionEnding {
 /// stops leaving an artifact to recover on every visit. A backoff past what a
 /// calendar duration represents is past [`FAILURE_BACKOFF_CEILING`].
 #[must_use]
-pub fn cooldown_after(profile: PolicyProfile, target: MaintenanceTarget, ending: ActionEnding, now: DateTime<Utc>) -> DateTime<Utc> {
+pub(crate) fn cooldown_after(profile: PolicyProfile, target: MaintenanceTarget, ending: ActionEnding, now: DateTime<Utc>) -> DateTime<Utc> {
     now + match (target, ending) {
         (MaintenanceTarget::Statistics(_), ActionEnding::Completed(_)) => ANALYZE_COOLDOWN,
         (MaintenanceTarget::Columnstore(_), ActionEnding::Completed(_)) => RECOMPRESSION_COOLDOWN,

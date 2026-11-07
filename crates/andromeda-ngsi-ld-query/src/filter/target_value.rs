@@ -202,10 +202,6 @@ pub fn json_member<'a>(seed: &ResolvedTarget<'a>, keys: &[AttributeName]) -> Opt
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::filter::target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue, json_member};
     use andromeda_json_literal::JsonLiteral;

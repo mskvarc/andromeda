@@ -144,11 +144,6 @@ fn declares(datatype: &SimpleExpr, iri: &str) -> SimpleExpr {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::attribute_value_datatype::{OrderedValue, datatype_rank, datatype_token};
     use andromeda_ngsi_ld_query::ordering::sort_direction::SortDirection;

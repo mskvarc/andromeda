@@ -82,10 +82,6 @@ pub struct ExpectedDeployment {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::expected_deployment::{ColumnstoreConversion, HistoryRetention};
     use chrono::{Duration as ChronoDuration, TimeZone, Utc};

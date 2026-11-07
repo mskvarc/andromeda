@@ -180,10 +180,6 @@ fn ends_in_parse(expr: &Expr) -> bool {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::time_handling::source_reading::time_handling_findings;
 

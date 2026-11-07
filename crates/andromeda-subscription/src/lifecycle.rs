@@ -53,6 +53,7 @@ pub struct SubscriptionService<V: SubscriptionVariant> {
     variant: V,
     /// Optional sink for completed subscription changes.
     change_sink: Option<Arc<dyn SubscriptionChangeSink<V::Change>>>,
+    /// Refuses an endpoint no delivery binding of this broker serves.
     endpoint_validator: Arc<dyn SubscriptionEndpointValidator>,
     /// The distributed side of the lifecycle (clauses 5.8.1.4, 5.8.2.4,
     /// 5.8.5.4), absent for the variants that have none.
@@ -65,6 +66,7 @@ impl<V> SubscriptionService<V>
 where
     V: SubscriptionVariant,
 {
+    /// Publish `change` to the change sink, when one is attached.
     async fn emit_change(&self, change: V::Change) {
         if let Some(ref sink) = self.change_sink {
             sink.publish(change).await;
@@ -323,9 +325,4 @@ where
 /// Retrieving and listing subscriptions.
 mod read;
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests;

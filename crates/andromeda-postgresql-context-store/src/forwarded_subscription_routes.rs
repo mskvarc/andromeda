@@ -162,10 +162,6 @@ impl ForwardedSubscriptionRouter for PostgresForwardedSubscriptionRouter {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::forwarded_subscription_routes::{register_statement, tenant_of_statement};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, tenant::TenantName};

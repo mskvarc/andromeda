@@ -288,10 +288,6 @@ fn document_id(document: &ExpandedDocument<IriBuf, BlankIdBuf>) -> &str {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         context_cache::ContextCache,

@@ -41,7 +41,7 @@ use axum::{
 /// Snapshot members are read. The snapshot stores its queries as written,
 /// beside the context they are later run under, which is admitted first
 /// (clause 5.5.7).
-pub async fn create(
+pub(crate) async fn create(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
@@ -59,7 +59,7 @@ pub async fn create(
 }
 
 /// GET /ngsi-ld/v1/snapshots/{snapshot_id} -- Retrieve snapshot status.
-pub async fn get(
+pub(crate) async fn get(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
@@ -83,7 +83,7 @@ fn snapshot_response(accept: AcceptFormatNoGeo, snapshot: &Snapshot, uri: &Uri) 
 }
 
 /// PATCH /ngsi-ld/v1/snapshots/{snapshot_id} -- Update snapshot status.
-pub async fn update(
+pub(crate) async fn update(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
@@ -101,7 +101,7 @@ pub async fn update(
 }
 
 /// DELETE /ngsi-ld/v1/snapshots/{snapshot_id} -- Delete a snapshot.
-pub async fn delete(
+pub(crate) async fn delete(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
@@ -124,7 +124,7 @@ pub async fn delete(
 /// - All matches deleted -> 204 No Content.
 /// - At least one deletion failed -> 207 Multi-Status with a
 ///   [`BatchOperationResult`] body.
-pub async fn purge(
+pub(crate) async fn purge(
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     SnapshotPurgeQ(filter): SnapshotPurgeQ,
@@ -152,7 +152,7 @@ pub async fn purge(
 }
 
 /// POST /ngsi-ld/v1/snapshots/{snapshot_id}/clone -- Clone a snapshot.
-pub async fn clone(
+pub(crate) async fn clone(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,

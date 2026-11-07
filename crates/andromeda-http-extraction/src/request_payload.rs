@@ -178,10 +178,6 @@ fn closing_http1_connection(refusal: ProblemResponse, version: Version) -> Probl
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{request_body_limit::RequestBodyLimit, request_json_value_limit::RequestJsonValueLimit, request_payload::RequestPayload};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;

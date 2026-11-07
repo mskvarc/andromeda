@@ -137,7 +137,7 @@ enum BrokerStartupError {
 }
 
 /// Construct the broker, serve HTTP, then close process resources in order.
-pub async fn run(loaded: LoadedConfiguration) -> ProcessExitOutcome {
+pub(crate) async fn run(loaded: LoadedConfiguration) -> ProcessExitOutcome {
     let LoadedConfiguration { config, ignored } = loaded;
     // Held for the whole process: dropping the guard flushes the non-blocking
     // file appender, so it lives until after the shutdown logs below are written.

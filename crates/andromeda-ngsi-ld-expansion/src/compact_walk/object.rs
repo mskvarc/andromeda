@@ -18,7 +18,7 @@ use rdfx::BlankIdBuf;
 use std::borrow::Cow;
 
 /// One member of an object with its key expanded.
-pub struct KeyedEntry<'k, N> {
+pub(crate) struct KeyedEntry<'k, N> {
     /// The key as written.
     pub key: Cow<'k, str>,
     /// What the key expanded to.
@@ -33,7 +33,11 @@ pub struct KeyedEntry<'k, N> {
 /// # Errors
 ///
 /// Declines whatever the walk does not model.
-pub fn expand_object<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, active_property: Option<&str>, members: NodeMembers<'n, N>) -> Result<Expanded, Decline> {
+pub(crate) fn expand_object<'n, N: CompactNode<'n>>(
+    scope: &TermScope<'_>,
+    active_property: Option<&str>,
+    members: NodeMembers<'n, N>,
+) -> Result<Expanded, Decline> {
     let mut entries = Vec::with_capacity(members.len());
     for (key, value) in members {
         let term = scope.expand_key(&key)?;
@@ -89,7 +93,7 @@ fn declares_type_scoped_context<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, v
 }
 
 /// The items of a value read as an array (`[value]` for a non-array).
-pub fn force_array<'n, N: CompactNode<'n>>(value: N) -> Vec<N> {
+pub(crate) fn force_array<'n, N: CompactNode<'n>>(value: N) -> Vec<N> {
     match value.shape() {
         NodeShape::Array(items) => items,
         NodeShape::Null | NodeShape::Boolean(_) | NodeShape::Number(_) | NodeShape::String(_) | NodeShape::Object(_) | NodeShape::Geometry(_) => vec![value],
@@ -98,7 +102,7 @@ pub fn force_array<'n, N: CompactNode<'n>>(value: N) -> Vec<N> {
 
 /// A node object being expanded, entry by entry (step 13).
 #[derive(Default)]
-pub struct NodeBuilder {
+pub(crate) struct NodeBuilder {
     /// The node so far.
     node: ExpandedNode,
     /// Whether an entry expanded to `@id` already.
@@ -112,7 +116,7 @@ impl NodeBuilder {
     ///
     /// Declines a keyword the walk does not model and a value the algorithm
     /// refuses.
-    pub fn add_json<'n, N: CompactNode<'n>>(&mut self, scope: &TermScope<'_>, entry: &KeyedEntry<'_, N>) -> Result<(), Decline> {
+    pub(crate) fn add_json<'n, N: CompactNode<'n>>(&mut self, scope: &TermScope<'_>, entry: &KeyedEntry<'_, N>) -> Result<(), Decline> {
         match entry.term.as_ref() {
             Term::Null => Ok(()),
             Term::Keyword(Keyword::Id) => {
@@ -150,7 +154,7 @@ impl NodeBuilder {
     }
 
     /// Add a member whose values were expanded already.
-    pub fn add_expanded(&mut self, name: String, values: Vec<ExpandedItem>) {
+    pub(crate) fn add_expanded(&mut self, name: String, values: Vec<ExpandedItem>) {
         self.node.add_member(name, values);
     }
 
@@ -158,7 +162,7 @@ impl NodeBuilder {
     /// (written at the top of the document) holding nothing but an `@id`
     /// (step 20).
     #[must_use]
-    pub fn finish(self, active_property: Option<&str>) -> Expanded {
+    pub(crate) fn finish(self, active_property: Option<&str>) -> Expanded {
         let ExpandedNode { types, members, .. } = &self.node;
         if active_property.is_none() && types.is_empty() && members.is_empty() {
             return Expanded::Null;
@@ -169,7 +173,7 @@ impl NodeBuilder {
 
 /// The member name a key that expanded to `property` names, or `None` for a
 /// key expansion drops: one that expanded to text with no `:` (step 13.3).
-pub fn property_name(property: &Id<IriBuf, BlankIdBuf>) -> Option<String> {
+pub(crate) fn property_name(property: &Id<IriBuf, BlankIdBuf>) -> Option<String> {
     let text = id_text(property);
     text.contains(':').then_some(text)
 }

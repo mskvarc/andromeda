@@ -1,18 +1,9 @@
 //! The NGSI-LD attribute families and the members they share (ETSI GS CIM 009 clause 5.2).
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod budgeted_member_tests;
 pub mod common_fields;
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod family_member_prohibition_tests;
 pub mod geo_property;
 pub mod geo_property_value;
@@ -29,11 +20,6 @@ pub mod member_decoding;
 mod member_node;
 pub mod member_reading;
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod member_reading_tests;
 pub(crate) mod member_value_reading;
 pub mod merge_instance;

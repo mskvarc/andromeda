@@ -142,11 +142,6 @@ where
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::content_length_precondition::{ContentLengthPreconditionError, DeclaredBodyLength, ReceivedContentLength, declared_body_length};
     use andromeda_http_response::extraction_rejection::ExtractorRejection;

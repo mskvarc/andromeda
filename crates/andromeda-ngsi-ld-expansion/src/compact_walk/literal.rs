@@ -15,7 +15,7 @@ use jsonld::{Direction as JsonLdDirection, Nullable, Type};
 /// # Errors
 ///
 /// Declines a type mapping the algorithm refuses for a scalar.
-pub fn expand_scalar<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, property: &str, value: N) -> Result<ExpandedItem, Decline> {
+pub(crate) fn expand_scalar<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, property: &str, value: N) -> Result<ExpandedItem, Decline> {
     let definition = scope.definition(property);
     let type_mapping = definition.and_then(|definition| definition.typ());
     match (type_mapping, value.shape()) {
@@ -63,7 +63,7 @@ pub fn expand_scalar<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, property: &s
 /// # Errors
 ///
 /// Declines a value that is no scalar.
-pub fn scalar<N>(shape: NodeShape<'_, N>) -> Result<Scalar, Decline> {
+pub(crate) fn scalar<N>(shape: NodeShape<'_, N>) -> Result<Scalar, Decline> {
     match shape {
         NodeShape::Boolean(flag) => Ok(Scalar::Boolean(flag)),
         NodeShape::Number(text) => Ok(Scalar::Number(text.into_owned())),
@@ -78,7 +78,7 @@ fn node_reference(id: Option<String>) -> ExpandedItem {
 }
 
 /// The base direction in the model's terms.
-pub const fn direction_of(direction: JsonLdDirection) -> Direction {
+pub(crate) const fn direction_of(direction: JsonLdDirection) -> Direction {
     match direction {
         JsonLdDirection::Ltr => Direction::Ltr,
         JsonLdDirection::Rtl => Direction::Rtl,

@@ -191,10 +191,6 @@ pub fn row_of(row: &PgRow) -> Result<Option<CurrentAttributeRow>, ContextStoreEr
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::current_attribute::read::{RowSelection, rows_of};
     use andromeda_context_space::context_target::ContextTarget;

@@ -20,10 +20,6 @@ impl RequestRefusal for NotJsonDocument {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::not_json_document::NotJsonDocument;
     use andromeda_http_response::request_refusal::RequestRefusal;

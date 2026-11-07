@@ -16,9 +16,6 @@
 //! configuration for one listener. Which ALPN tokens a listener speaks is the
 //! listener crate's business; this crate knows none of them.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod crypto_provider;
 pub mod handshake_policy;
 pub mod material_watch;

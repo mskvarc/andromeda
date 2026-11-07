@@ -42,7 +42,7 @@ use indexmap::IndexMap;
 ///
 /// Returns the refusal of the first member that is not what its expanded IRI
 /// names.
-pub fn instance_document(attribute: &AttributeName, node: ExpandedNode) -> Result<InstanceDocument, EntityRefusal> {
+pub(crate) fn instance_document(attribute: &AttributeName, node: ExpandedNode) -> Result<InstanceDocument, EntityRefusal> {
     on_sufficient_stack(|| read_instance(attribute, node))
 }
 

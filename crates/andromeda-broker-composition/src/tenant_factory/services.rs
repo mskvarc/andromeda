@@ -59,7 +59,10 @@ use std::{num::NonZeroUsize, sync::Arc};
 
 /// Request-facing state and the scheduled snapshot preparation operation composed with it.
 pub(super) struct ConstructedServices {
+    /// The services every route of the tenant reaches.
     pub(super) state: AndromedaState,
+    /// The preparation the scheduled sweep drives; the Snapshot service starts
+    /// the same one at create time.
     pub(super) snapshot_preparation: Arc<SnapshotPreparation>,
 }
 

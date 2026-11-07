@@ -98,6 +98,7 @@ pub(crate) struct EntityQueryRequest {
     pub(crate) pagination: RequestPagination,
 }
 
+/// Query Entities through its query-string binding (clause 6.4.3.2).
 pub(crate) async fn query(
     context_target::ExistingTargetedTenantState { services, target, snapshot: _ }: EntityTenantState,
     accept: AcceptFormat,

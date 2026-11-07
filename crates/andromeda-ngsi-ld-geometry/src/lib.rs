@@ -34,9 +34,6 @@
 //! [`proximity`] holds that measure, [`great_circle`] the extent of a geometry
 //! read that way and [`near_envelope`] the region a distance can reach.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod bounding_box;
 pub mod compact_geojson;
 pub mod coordinate_path;

@@ -62,11 +62,10 @@ mod commit_consequence;
 mod due_work_check;
 mod error;
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "test code expects on purpose")]
 mod held_change_fixture;
 mod periodic_due;
 /// Runtime ownership and ordered shutdown.
-pub mod runtime;
+pub(crate) mod runtime;
 mod services;
 mod snapshot_subscriptions;
 mod spatial;
@@ -78,7 +77,7 @@ mod temporal_intent_task;
 mod transport;
 
 /// Builds a tenant's runtime from the broker's configuration.
-pub struct BrokerTenantFactory {
+pub(crate) struct BrokerTenantFactory {
     /// Owner-provided configuration required to construct one tenant.
     config: Arc<TenantFactoryConfig>,
     /// The request-path base URL each tenant's serving pool is derived from.
@@ -184,7 +183,7 @@ impl BrokerTenantFactory {
     }
 
     /// The MQTT pool of the default tenant's runtime, once it has been built.
-    pub fn default_mqtt_pool(&self) -> Option<Arc<MqttTransportPool>> {
+    pub(crate) fn default_mqtt_pool(&self) -> Option<Arc<MqttTransportPool>> {
         self.default_mqtt_pool.get().map(Arc::clone)
     }
 }

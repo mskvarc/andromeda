@@ -1,7 +1,5 @@
 //! Snapshot lifecycle, preparation, frozen-read ports, and expiry policy.
 
-#![deny(missing_docs)]
-
 /// Whether a Snapshot's stored branch can be served by this binary.
 pub mod branch_condition;
 /// Snapshot operation configuration.
@@ -24,11 +22,6 @@ pub mod status_delivery_signal;
 pub mod store;
 /// An in-memory store double for the policy tests.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod store_double;
 
 #[cfg(test)]

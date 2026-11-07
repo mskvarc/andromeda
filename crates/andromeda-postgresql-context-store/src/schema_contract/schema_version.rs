@@ -50,10 +50,6 @@ pub enum SchemaVersionError {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::schema_contract::schema_version::{SchemaVersion, SchemaVersionError};
 

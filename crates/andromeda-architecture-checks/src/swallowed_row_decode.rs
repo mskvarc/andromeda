@@ -236,10 +236,6 @@ fn is_decode_function(call: &ExprCall) -> bool {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::swallowed_row_decode::SwallowedRowDecodeVisitor;
     use pretty_assertions::assert_eq;

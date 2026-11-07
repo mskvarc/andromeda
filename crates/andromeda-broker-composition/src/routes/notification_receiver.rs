@@ -18,14 +18,18 @@ use std::sync::Arc;
 
 /// Resolves the tenant that minted a subscription identifier and projects its
 /// forwarding service.
-pub struct BrokerNotificationReceiverResolver {
+pub(crate) struct BrokerNotificationReceiverResolver {
+    /// The process tenant runtimes; each resolution leases the tenant's state
+    /// for the lifetime of the request.
     tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
+    /// The platform route table mapping a minted subscription identifier to
+    /// the tenant that minted it.
     router: Arc<dyn ForwardedSubscriptionRouter>,
 }
 
 impl BrokerNotificationReceiverResolver {
     /// Construct a resolver over the tenant runtime manager and the platform route table.
-    pub const fn new(
+    pub(crate) const fn new(
         tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
         router: Arc<dyn ForwardedSubscriptionRouter>,
     ) -> BrokerNotificationReceiverResolver {

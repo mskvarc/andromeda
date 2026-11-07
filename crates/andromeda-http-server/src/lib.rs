@@ -1,9 +1,6 @@
 //! Generic listener, connection execution and graceful HTTP draining, over
 //! plaintext TCP or TLS terminated in process.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 mod announced_close;
 pub mod close_policy;
 mod connection_builder;

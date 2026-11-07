@@ -1,8 +1,5 @@
 //! Focused HTTP serialization and routing for active broker component reports.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod error;
 pub mod handler;
 pub mod report;

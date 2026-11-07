@@ -1,7 +1,5 @@
 //! HTTP binding for current and temporal Entity Map lifecycle operations.
 
-#![deny(missing_docs)]
-
 mod creation;
 pub mod error;
 mod expiry_update_refusal;

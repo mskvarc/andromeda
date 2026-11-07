@@ -108,10 +108,6 @@ fn is_json_ld(media_type: &MediaTypeBuf) -> bool {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::loader::alternate_link::{JsonLdAlternate, UnusableLink, json_ld_alternate, parsed_link};
     use iri_rs::IriBuf;

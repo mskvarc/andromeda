@@ -7,9 +7,6 @@
 //! opens no connection, holds no pool, and returns `sea_query` statement trees
 //! for the store to run through the SQL adapter.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 mod attribute_value_datatype;
 mod attribute_value_holder;
 pub mod attribute_value_order;

@@ -34,10 +34,6 @@ pub fn core_term_aliases(context: &Context<IriBuf, BlankIdBuf>) -> CoreTermAlias
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{context_spec::ContextSpec, core_term_aliases::core_term_aliases, engine::processor::JsonLdEngine, test_documents::literal};
     use andromeda_ngsi_ld_representation::core_term_aliases::CoreTermAliases;

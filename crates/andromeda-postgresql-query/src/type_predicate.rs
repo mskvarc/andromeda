@@ -33,10 +33,6 @@ pub fn condition(expr: &TypeExpr, entity_type_name_keys: &SimpleExpr, types: &Re
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey, type_predicate::condition};
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;

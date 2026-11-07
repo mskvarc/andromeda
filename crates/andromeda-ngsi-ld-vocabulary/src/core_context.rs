@@ -84,10 +84,6 @@ pub const NGSI_LD_CORE_CONTEXT_RELEASES: [CoreContextRelease; 8] = [
 ];
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::core_context::{NGSI_LD_CORE_CONTEXT_RELEASES, NGSI_LD_CORE_CONTEXT_V10, NGSI_LD_CORE_CONTEXT_V19};
     use iri_rs::Iri;

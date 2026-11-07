@@ -161,10 +161,6 @@ impl Serialize for OrdinateOut {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{codec::geometry_encode::GeoValueOut, geo_value::GeoValue, geometry_value::GeometryValue};
     use andromeda_ngsi_ld_geometry::geometry::Geometry;

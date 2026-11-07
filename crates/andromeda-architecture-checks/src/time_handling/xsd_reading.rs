@@ -59,10 +59,6 @@ pub(crate) fn xsd_dependency_findings(manifest: &str) -> Vec<String> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::time_handling::xsd_reading::{xsd_dependency_findings, xsd_names};
 

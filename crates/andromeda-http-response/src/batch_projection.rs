@@ -106,10 +106,6 @@ const fn classification_for_remote_status(status: u16) -> ProblemClassification 
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         batch_projection::{batch_operation_result, forwarded_write_error},

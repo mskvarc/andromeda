@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use typed_builder::TypedBuilder;
 
-constant_string!(EntityMapType, "EntityMap");
+constant_string!(pub EntityMapType, "EntityMap");
 
 /// Where one entity of a map is held: locally, or in a registered context source
 /// (Table 5.2.39-2 `entityMap` values).
@@ -200,10 +200,6 @@ impl EntityMap {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         entity_map::{EntityMap, EntityMapSource},

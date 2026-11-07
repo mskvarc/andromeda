@@ -79,10 +79,6 @@ fn settle(path: &Path, relative_path: &str, checked_in: &str, generated: &str) -
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::generated_artifact::assert_checked_in;
     use std::{env, fs, process};

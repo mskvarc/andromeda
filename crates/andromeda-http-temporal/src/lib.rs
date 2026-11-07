@@ -1,7 +1,5 @@
 //! Focused NGSI-LD temporal HTTP route binding.
 
-#![deny(missing_docs)]
-
 pub mod error;
 pub mod extension_gate;
 mod forwarded_evolution_content;
@@ -15,11 +13,6 @@ mod temporal;
 mod temporal_answer;
 /// The expanded history of an entity, for tests.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod test_history;
 mod written_evolution_admission;
 

@@ -21,7 +21,7 @@ use andromeda_ngsi_ld_vocabulary::{expanded::properties, ngsi_ld_null::is_ngsi_l
 
 /// Whether one expanded item is the NGSI-LD Null.
 #[must_use]
-pub fn is_null(item: &ExpandedItem) -> bool {
+pub(crate) fn is_null(item: &ExpandedItem) -> bool {
     match item {
         ExpandedItem::Value(value) => value.as_str().is_some_and(is_ngsi_ld_null),
         ExpandedItem::Node(node) => node.is_reference() && node.id.as_deref().is_some_and(is_ngsi_ld_null),
@@ -33,20 +33,20 @@ pub fn is_null(item: &ExpandedItem) -> bool {
 /// Whether one `objectList` item is the NGSI-LD Null, bare or wrapped in
 /// `object`.
 #[must_use]
-pub fn is_list_object_null(item: &ExpandedItem) -> bool {
+pub(crate) fn is_list_object_null(item: &ExpandedItem) -> bool {
     is_null(item) || is_wrapped_null(item)
 }
 
 /// Whether a member's values are the NGSI-LD Null alone.
 #[must_use]
-pub fn is_sole_null(items: &[ExpandedItem]) -> bool {
+pub(crate) fn is_sole_null(items: &[ExpandedItem]) -> bool {
     matches!(items, [item] if is_null(item))
 }
 
 /// Whether the values of the value member `carrier` are the family's deletion
 /// encoding.
 #[must_use]
-pub fn is_deletion(carrier: ValueCarrier, items: &[ExpandedItem]) -> bool {
+pub(crate) fn is_deletion(carrier: ValueCarrier, items: &[ExpandedItem]) -> bool {
     match (carrier, items) {
         (ValueCarrier::ValueList | ValueCarrier::ObjectList, [ExpandedItem::List(members)]) => {
             matches!(members.as_slice(), [member] if is_list_object_null(member))
@@ -80,10 +80,6 @@ fn is_wrapped_null(member: &ExpandedItem) -> bool {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         assembly::null_sentinel::{is_deletion, is_null},

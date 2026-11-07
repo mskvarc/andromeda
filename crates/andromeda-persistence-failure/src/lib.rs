@@ -8,9 +8,6 @@
 //! classification, while the adapter's own error is recorded for operators at
 //! the point it is classified.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 /// The closed classification of a store failure and its operator record.
 pub mod persistence_failure;
 /// Whether a store failure can be retried unchanged, and why.

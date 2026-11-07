@@ -3,7 +3,11 @@ name = "andromeda-sql"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish = false
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+description = "The tooling around the SQL migrations, the schema contract of every release"
 
 [lints]
 workspace = true

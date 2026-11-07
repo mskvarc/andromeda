@@ -121,6 +121,9 @@ impl RegistrationService {
         })
     }
 
+    /// Expand the terms of `params` against `context`. The attributes the `q`
+    /// filter and the geoquery name join `attrs`, since clause 5.10.2.4 matches
+    /// registrations on them as it does on `attrs`.
     async fn compile_csr_query(
         &self,
         params: &CsrQueryParameters,
@@ -234,10 +237,6 @@ fn registration_matching_the_query(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         RegistrationService,

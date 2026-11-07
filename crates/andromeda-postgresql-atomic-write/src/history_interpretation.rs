@@ -84,11 +84,6 @@ pub(crate) fn history_recording(write: &AtomicWrite, core_write_history: CoreWri
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{attempt_failure::AttemptFailure, history_interpretation::interpret};
     use andromeda_configuration::schema::temporal::core_write_history::CoreWriteHistory;

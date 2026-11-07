@@ -28,7 +28,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 
-constant_string!(ContextSourceRegistrationType, "ContextSourceRegistration");
+constant_string!(pub ContextSourceRegistrationType, "ContextSourceRegistration");
 
 /// NGSI-LD Context Source Registration (ETSI GS CIM 009 clause 5.2.9).
 ///
@@ -86,11 +86,6 @@ pub struct ContextSourceRegistration {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode, info::RegistrationInfo, operation::CsrOperation, status::CsrStatus};
     use andromeda_json_literal::JsonLiteral;

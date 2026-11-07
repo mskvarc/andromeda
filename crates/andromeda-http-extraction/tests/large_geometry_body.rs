@@ -12,7 +12,7 @@
 #![expect(
     clippy::expect_used,
     clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+    reason = "clippy reaches only `#[test]` functions in a member crate's integration test, and these helpers fail the test by panicking"
 )]
 use andromeda_http_extraction::jsonld::JsonLd;
 use andromeda_jsonld::user_context_admission::AdmittedContext;

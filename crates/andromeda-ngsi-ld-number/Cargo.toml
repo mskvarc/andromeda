@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+description = "Exact JSON numbers in the NGSI-LD value family (ETSI GS CIM 009 clause 4.6.3)"
 
 [lints]
 workspace = true

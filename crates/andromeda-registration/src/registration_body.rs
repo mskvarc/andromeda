@@ -283,10 +283,6 @@ impl RegistrationBody {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{registration_body::RegistrationBody, store::create_params::CreateCsrParams};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::rendering::instant_text};

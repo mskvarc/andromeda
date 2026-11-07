@@ -3,6 +3,11 @@ name = "andromeda-postgresql-collation"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+description = "The ICU collation objects one tenant's PostgreSQL database holds"
 
 [lints]
 workspace = true

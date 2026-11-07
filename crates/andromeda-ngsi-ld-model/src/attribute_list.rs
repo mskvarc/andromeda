@@ -11,8 +11,8 @@ use iri_rs::IriBuf;
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 
-constant_string!(AttributeListType, "AttributeList");
-constant_string!(AttributeResourceType, "Attribute");
+constant_string!(pub AttributeListType, "AttributeList");
+constant_string!(pub AttributeResourceType, "Attribute");
 
 /// NGSI-LD `AttributeList` representation (ETSI GS CIM 009 clause 5.2.27).
 ///
@@ -90,10 +90,6 @@ pub struct AttributeDetail {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::attribute_list::{AttributeDetail, AttributeInfo, AttributeList, AttributeListType, AttributeResourceType};
     use andromeda_ngsi_ld_lexicon::{

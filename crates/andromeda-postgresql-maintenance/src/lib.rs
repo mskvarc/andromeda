@@ -4,9 +4,6 @@
 //! state, recovery and statement execution. Scheduling remains in broker
 //! composition and the task runtime remains database-neutral.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 /// Log one observation finding at its level, its decision name as the
 /// `decision` field, followed by the given fields and message. The caller
 /// imports `ObservationLevel`.
@@ -102,7 +99,6 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-seaquery",
         "andromeda-retry",
         "andromeda-telemetry",
-        "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [],
     allow_production_dependencies: ["sea-query", "sqlx", "tokio"],

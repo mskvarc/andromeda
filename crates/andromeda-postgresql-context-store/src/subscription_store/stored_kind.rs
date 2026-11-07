@@ -7,7 +7,7 @@ use sea_query::{Expr, ExprTrait, SimpleExpr};
 /// Which subscription family a repository serves; both share the `subscriptions`
 /// table and are told apart by `kind`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StoredKind {
+pub(crate) enum StoredKind {
     /// An entity subscription (clause 5.8), which narrows by `datasetId`.
     Entity,
     /// A context-source subscription (clause 5.11), which does not.
@@ -16,7 +16,7 @@ pub enum StoredKind {
 
 impl StoredKind {
     /// The registry member a row of this family carries in `kind`.
-    pub const fn code(self) -> SubscriptionKindCode {
+    pub(crate) const fn code(self) -> SubscriptionKindCode {
         match self {
             StoredKind::Entity => SubscriptionKindCode::Entity,
             StoredKind::Csource => SubscriptionKindCode::Csource,
@@ -24,13 +24,13 @@ impl StoredKind {
     }
 
     /// Whether this family stores a `datasetId` column.
-    pub const fn has_dataset_id(self) -> bool {
+    pub(crate) const fn has_dataset_id(self) -> bool {
         matches!(self, StoredKind::Entity)
     }
 }
 
 /// The predicate confining a statement to one subscription family.
-pub fn of_kind(kind: StoredKind) -> SimpleExpr {
+pub(crate) fn of_kind(kind: StoredKind) -> SimpleExpr {
     Expr::col((Subscriptions::Table, Subscriptions::Kind)).eq(kind.code().code())
 }
 

@@ -105,10 +105,6 @@ fn bad_request_data<E: Display>(error: &E, instance: &HttpUri) -> ProblemRespons
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::written_evolution_admission::{admit_added_attributes, admit_written_evolution, admit_written_instance};
     use andromeda_http_response::problem_response::ProblemResponse;

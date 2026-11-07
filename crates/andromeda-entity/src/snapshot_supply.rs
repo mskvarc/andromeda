@@ -52,10 +52,6 @@ impl SnapshotSupply<'_> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::snapshot_supply::SnapshotSupply;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;

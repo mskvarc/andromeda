@@ -212,10 +212,6 @@ fn expanded_attribute(name: &str, sub_id: &str) -> Option<IriBuf> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::compilation::{compile_temporal_q, csource_matching_attributes, notification_attributes, notification_projection};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};

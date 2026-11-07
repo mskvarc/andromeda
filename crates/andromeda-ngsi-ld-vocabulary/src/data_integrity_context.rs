@@ -16,10 +16,6 @@ pub const DATA_INTEGRITY_CONTEXT_URL: Iri<&'static str> = iri!("https://w3id.org
 pub const DATA_INTEGRITY_CONTEXT: &str = include_str!("../context/data-integrity-v2.jsonld");
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::data_integrity_context::DATA_INTEGRITY_CONTEXT;
     use sha2::{Digest, Sha256};

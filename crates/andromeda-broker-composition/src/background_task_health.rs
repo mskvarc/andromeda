@@ -129,10 +129,6 @@ fn stopped_task(snapshot: TaskHealthSnapshot, tenant: Option<TaskTenant>) -> Opt
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::background_task_health::{BackgroundTaskHealthIndicator, LoadedTenantSupervisors};
     use andromeda_health::{

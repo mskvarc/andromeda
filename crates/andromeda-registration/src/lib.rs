@@ -1,7 +1,5 @@
 //! Context-source registration policy (ETSI GS CIM 009 clause 5.9).
 
-#![deny(missing_docs)]
-
 use crate::{entity_probe::RegisteredEntityProbe, removal_hook::RegistrationRemovalHook, store::RegistrationStore};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
@@ -20,16 +18,8 @@ pub mod entity_probe;
 pub mod error;
 pub mod expiry;
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod fixed_probe;
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod fixed_store;
 mod forwarding_context;
 mod geometry;
@@ -55,10 +45,6 @@ pub mod removal_hook;
 pub mod resolved_update;
 mod retrieve;
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod service_fixture;
 /// The registration store port, and the parameter shapes it takes.
 pub mod store;
@@ -67,10 +53,15 @@ mod validation;
 
 /// Service for managing NGSI-LD context source registrations.
 pub struct RegistrationService {
+    /// Persists and reads the registrations.
     repo: Arc<dyn RegistrationStore>,
+    /// Looks into the local entity store when a proxied registration is admitted.
     entity_probe: Arc<dyn RegisteredEntityProbe>,
+    /// Expands and compacts registration terms and resolves the `@context` a response names.
     engine: JsonLdEngine,
+    /// Receives each committed registration change; `None` publishes nothing.
     change_sink: Option<Arc<dyn RegistrationChangeSink>>,
+    /// The distributed side of removing a registration; `None` until one is attached.
     removal_hook: Option<Arc<dyn RegistrationRemovalHook>>,
     /// What a discovery geo-query is admitted under; its limits also bound
     /// a geometry the registration writes.
@@ -125,6 +116,8 @@ impl RegistrationService {
         &self.engine
     }
 
+    /// Hand `event` to the change sink, waiting while its consumer catches up; does
+    /// nothing without a sink.
     async fn emit_csr_change(&self, event: CsrChangeEvent) {
         if let Some(ref sink) = self.change_sink {
             sink.publish(event).await;

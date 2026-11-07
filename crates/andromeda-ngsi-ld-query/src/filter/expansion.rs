@@ -321,11 +321,6 @@ async fn expand_rhs_values(rhs: CompareValue, expander: &impl TermExpander) -> R
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use super::*;
     use crate::filter::{predicate::OrderingOp, serialize::serialize};

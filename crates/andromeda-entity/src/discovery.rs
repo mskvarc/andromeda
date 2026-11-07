@@ -22,8 +22,11 @@ mod type_list;
 
 /// Service for NGSI-LD entity type and attribute discovery operations.
 pub struct EntityDiscoveryService {
+    /// The local store every retrieval reads.
     store: Arc<dyn EntityDiscoveryStore>,
+    /// What the Context Registry says is possibly available elsewhere (clause 5.7.11).
     registry: Arc<dyn RegistryTypeSource>,
+    /// Expands request terms and compacts reported names against the request context.
     engine: JsonLdEngine,
 }
 

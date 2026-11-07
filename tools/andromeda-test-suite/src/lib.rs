@@ -6,10 +6,6 @@
 //! [`context_source`], [`mqtt_observer`]), and compares what it reads with the matchers of [`comparison`],
 //! [`problem`] and [`wire`].
 
-#![deny(missing_docs, unreachable_pub, unused_qualifications)]
-#![deny(clippy::missing_docs_in_private_items)]
-#![forbid(unsafe_code)]
-
 pub mod aggregated_answer;
 pub mod aggregation_matcher;
 pub mod answer_warning;

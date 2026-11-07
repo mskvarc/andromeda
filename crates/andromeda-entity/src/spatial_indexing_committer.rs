@@ -205,10 +205,6 @@ impl IndexChange {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{spatial_indexing_committer::SpatialIndexingCommitter, spatial_placement::LocationPlacement};
     use andromeda_context_commit::{

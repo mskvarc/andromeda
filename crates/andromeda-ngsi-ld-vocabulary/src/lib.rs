@@ -32,9 +32,6 @@
 //! let expanded: Option<&str> = compact_to_expanded("createdAt");
 //! ```
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod core_context;
 pub mod core_context_release;
 pub mod data_integrity_context;

@@ -246,11 +246,6 @@ impl TypeExpr {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::type_selection::grammar::{TypeExpr, TypeExprRaw};
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;

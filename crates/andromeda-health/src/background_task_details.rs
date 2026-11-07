@@ -3,7 +3,7 @@
 use andromeda_ngsi_ld_lexicon::{constant_string, tenant::TenantName};
 use serde::{Deserialize, Serialize};
 
-constant_string!(UnnamedDefaultTenant, "@default");
+constant_string!(pub UnnamedDefaultTenant, "@default");
 
 /// The name a background task is registered under.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -81,10 +81,6 @@ pub struct BackgroundTaskDetails {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::background_task_details::{
         BackgroundTaskDetails,

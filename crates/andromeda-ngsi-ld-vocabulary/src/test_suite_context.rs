@@ -5,10 +5,6 @@
 pub const ETSI_TEST_SUITE_COMPOUND_CONTEXT: &str = include_str!("../context/ngsi-ld-test-suite-compound.jsonld");
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{NGSI_LD_CORE_CONTEXT_URL, test_suite_context::ETSI_TEST_SUITE_COMPOUND_CONTEXT};
 

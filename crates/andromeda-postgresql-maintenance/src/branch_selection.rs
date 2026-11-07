@@ -290,10 +290,6 @@ fn branch_churn_statement() -> SelectStatement {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::branch_selection::{BranchChurn, BranchEligibility, SnapshotRecord, branch_churn_statement, churn_order, snapshot_records_statement};
     use andromeda_context_space::snapshot_key::SnapshotKey;

@@ -54,7 +54,7 @@ use axum::{
 use std::sync::Arc;
 
 /// GET /ngsi-ld/v1/entityMaps/{entityMapId} -- Retrieve an entity map (section 5.14.1).
-pub async fn get(
+pub(crate) async fn get(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
@@ -77,7 +77,7 @@ pub async fn get(
 }
 
 /// PATCH /ngsi-ld/v1/entityMaps/{entityMapId} -- Update an entity map (section 5.14.2).
-pub async fn update(
+pub(crate) async fn update(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
@@ -103,7 +103,7 @@ pub async fn update(
 }
 
 /// DELETE /ngsi-ld/v1/entityMaps/{entityMapId} -- Delete an entity map (section 5.14.3).
-pub async fn delete(
+pub(crate) async fn delete(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
@@ -239,7 +239,7 @@ async fn create_from_temporal_query(
 }
 
 /// GET /ngsi-ld/v1/entityMaps -- Create an entity map from query entities (section 5.14.4, section 6.34.3.1).
-pub async fn create_from_query(
+pub(crate) async fn create_from_query(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
@@ -276,7 +276,7 @@ pub async fn create_from_query(
 }
 
 /// POST /ngsi-ld/v1/entityMaps -- Create an entity map from query body (section 5.14.4, section 6.34.3.2).
-pub async fn create_from_query_post(
+pub(crate) async fn create_from_query_post(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
@@ -315,7 +315,7 @@ pub async fn create_from_query_post(
 }
 
 /// GET /ngsi-ld/v1/temporal/entityMaps -- Create an entity map from temporal query (section 5.14.5, section 6.35.3.1).
-pub async fn create_temporal_from_query(
+pub(crate) async fn create_temporal_from_query(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,
@@ -352,7 +352,7 @@ pub async fn create_temporal_from_query(
 }
 
 /// POST /ngsi-ld/v1/temporal/entityMaps -- Create an entity map from temporal query body (section 5.14.5, section 6.35.3.2).
-pub async fn create_temporal_from_query_post(
+pub(crate) async fn create_temporal_from_query_post(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope { uri, incoming_via, headers }: NgsiLdRequestEnvelope,

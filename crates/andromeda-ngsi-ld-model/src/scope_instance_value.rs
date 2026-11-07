@@ -33,10 +33,6 @@ pub fn scope_instance_value(paths: &[ScopePath]) -> Option<TemporalValue> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{scope_instance_value::scope_instance_value, temporal::TemporalValue};
     use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;

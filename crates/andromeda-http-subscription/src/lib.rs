@@ -1,7 +1,5 @@
 //! HTTP binding for entity and context-source subscription lifecycle routes.
 
-#![deny(missing_docs)]
-
 mod csource_subscription;
 pub mod error;
 mod listing;

@@ -107,9 +107,13 @@ pub struct EntitySideEffectDrainOutcome {
 
 /// Durable entity side-effect delivery policy.
 pub struct EntitySideEffectDrain {
+    /// The durable side-effect jobs the drain leases and replays.
     queue: Arc<dyn SideEffectQueue>,
+    /// Commits each replayed job.
     writes: Arc<dyn ContextCommitter>,
+    /// Settles the notifications a job still owes, per the broker's delivery mode.
     notifications: SideEffectNotificationRoute,
+    /// Retry and lease settings.
     config: EntitySideEffectDrainConfig,
 }
 
@@ -343,11 +347,6 @@ impl EntitySideEffectDrain {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         NotificationWriteConfig,

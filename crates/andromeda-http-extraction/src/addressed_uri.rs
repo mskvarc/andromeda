@@ -42,10 +42,6 @@ fn original_or_routed(extensions: &Extensions, routed: &Uri) -> Uri {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::addressed_uri::{addressed_request_uri, addressed_uri};
     use axum::{

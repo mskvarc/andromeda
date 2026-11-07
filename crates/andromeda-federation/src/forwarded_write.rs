@@ -308,10 +308,6 @@ fn update_result_naming(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{forwarded_write::update_result_naming, forwarding_context::BodyPresence, multi_status_body::MultiStatusBody};
     use andromeda_jsonld::context_spec::ContextSpec;

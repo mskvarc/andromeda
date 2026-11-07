@@ -66,10 +66,6 @@ impl NotificationContext {
     /// The context of a subscription that named no `jsonldContext`, for the
     /// transports' own unit tests.
     #[cfg(test)]
-    #[expect(
-        clippy::expect_used,
-        reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-    )]
     pub(crate) fn core() -> NotificationContext {
         let core = JsonLiteral::string(NGSI_LD_CORE_CONTEXT_URL.as_str()).expect("the core context is a JSON string");
         NotificationContext::stated(None, core)
@@ -77,10 +73,6 @@ impl NotificationContext {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::notification_context::NotificationContext;
     use andromeda_jsonld::engine::processor::JsonLdEngine;

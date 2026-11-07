@@ -18,10 +18,6 @@ pub(crate) fn compacted_registration(names: &NameCompaction, mut registration: C
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::registration_compaction::compacted_registration;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};

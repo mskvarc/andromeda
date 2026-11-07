@@ -7,9 +7,6 @@
 //! mutation back. PostgreSQL statement fusion remains a private implementation
 //! detail.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 mod attempt_failure;
 /// Recording a live synchronous commit's history behind its Entities' queued
 /// history.

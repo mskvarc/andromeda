@@ -25,7 +25,7 @@ use thiserror::Error;
 
 /// A loaded table holds a value its domain refuses.
 #[derive(Debug, Error)]
-pub enum SectionAdmissionError {
+pub(crate) enum SectionAdmissionError {
     /// A CORS method or header name is not one the HTTP layer reads.
     #[error("invalid configuration: {0}")]
     HttpCors(#[from] CorsTokenError),
@@ -51,7 +51,7 @@ pub enum SectionAdmissionError {
 /// # Errors
 ///
 /// Returns the [`SectionAdmissionError`] of the first value its domain refuses.
-pub fn admit_sections(config: &BrokerConfig) -> Result<(), SectionAdmissionError> {
+pub(crate) fn admit_sections(config: &BrokerConfig) -> Result<(), SectionAdmissionError> {
     check_cors_tokens(&config.http.cors)?;
     check_security_headers(&config.http.security_headers)?;
     intent_retry_schedule(&config.temporal.history).map_err(SectionAdmissionError::TemporalIntentRetry)?;
@@ -100,8 +100,4 @@ pub(crate) fn expected_deployment(config: &BrokerConfig) -> ExpectedDeployment {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests;

@@ -69,10 +69,6 @@ pub fn hosted_context_url(api_root: &Url, identifier: &JsonLdContextId) -> Url {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::hosted_context_url::{HostedContextUrls, hosted_context_url};
     use andromeda_context_registry::hosted_context_locator::HostedContextLocator;

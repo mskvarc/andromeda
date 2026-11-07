@@ -387,10 +387,6 @@ pub(crate) fn in_listing_order(select: &mut SelectStatement, rows: impl IntoIden
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{aggregation::build_aggregation_query, history::build_temporal_history_query};
     use andromeda_ngsi_ld_lexicon::{

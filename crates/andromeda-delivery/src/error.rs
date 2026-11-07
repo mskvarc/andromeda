@@ -124,10 +124,6 @@ impl TransportError {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{connection_failure::ConnectionFailure, error::TransportError};
     use std::{error::Error, io, sync::Arc, time::Duration};

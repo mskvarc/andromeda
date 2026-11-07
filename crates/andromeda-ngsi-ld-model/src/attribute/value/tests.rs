@@ -69,6 +69,6 @@ fn an_ordinate_in_a_property_value_keeps_every_digit() {
 #[test]
 fn a_value_naming_a_member_twice_is_refused() {
     let text = RawValue::from_string(r#"{"a": 1, "a": 2}"#.to_owned()).expect("JSON text");
-    let read = NgsiLdValue::from_node(andromeda_json_literal::piece::JsonPiece::new(&text));
+    let read = NgsiLdValue::from_node(JsonPiece::new(&text));
     assert!(matches!(read, Ok(Err(_))), "{read:?}");
 }

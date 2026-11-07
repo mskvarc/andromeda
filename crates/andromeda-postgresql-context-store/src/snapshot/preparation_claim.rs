@@ -332,10 +332,6 @@ pub(crate) async fn release_preparation(pool: &PgPool, id: &Identifier, claimed_
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::snapshot::preparation_claim::{
         claim_statement,

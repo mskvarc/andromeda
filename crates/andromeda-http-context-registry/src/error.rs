@@ -47,10 +47,6 @@ impl<T> ContextRegistryResultExt<T> for Result<T, ContextRegistryError> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::error::classify_context_registry_error;
     use andromeda_context_registry::{error::ContextRegistryError, identifier::ContextIdentifier};

@@ -59,10 +59,6 @@ fn scope_history_delete(schema: Option<&DynIden>, entity_key: EntityKey) -> Dele
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::history_removal::{scope_history_delete, stream_history_delete};
     use andromeda_postgresql_codes::entity_key::EntityKey;

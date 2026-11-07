@@ -33,6 +33,8 @@ pub enum AttributeCollection {
 /// The entity types an attribute is known to belong to, across the local
 /// store and the registry.
 struct AttributeMetadata {
+    /// Types holding the attribute; empty for an attribute only the registry knows
+    /// with no type registered beside it.
     entity_types: Vec<EntityTypeName>,
 }
 

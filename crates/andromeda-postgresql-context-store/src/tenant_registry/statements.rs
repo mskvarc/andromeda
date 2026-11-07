@@ -249,10 +249,6 @@ pub(super) fn tenant_insert(name: &str, database_name: &str, status: TenantStatu
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::tenant_registry::statements::{
         advisory_lock_query,

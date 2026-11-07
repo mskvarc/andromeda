@@ -183,10 +183,6 @@ impl fmt::Display for Iso8601Duration {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::duration::{Iso8601Duration, Iso8601DurationError};
     use std::time::Duration;

@@ -46,10 +46,6 @@ pub fn entity_identifier_key(identifier: SimpleExpr, direction: SortDirection, c
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::entity_ordering::{entity_identifier_key, ordering_collation, sql_order};
     use andromeda_ngsi_ld_query::ordering::{collation::IcuCollation, sort_direction::SortDirection};

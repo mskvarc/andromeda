@@ -147,10 +147,6 @@ fn nested_names(attribute: &Attribute) -> Vec<String> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::configuration_description::source_violations;
     use pretty_assertions::assert_eq;

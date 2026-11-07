@@ -65,10 +65,6 @@ fn lock_recovering(extension: &ServerTimingExtension) -> MutexGuard<'_, ServerTi
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::stack::server_timing::apply_server_timing;
     use andromeda_configuration::schema::{

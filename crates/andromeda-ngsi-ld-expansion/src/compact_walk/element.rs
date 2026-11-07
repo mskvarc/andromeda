@@ -12,7 +12,7 @@ use jsonld::ContainerKind;
 
 /// What one element expands to.
 #[derive(Debug, PartialEq)]
-pub enum Expanded {
+pub(crate) enum Expanded {
     /// Nothing: a `null`, a dropped node or a free-floating value.
     Null,
     /// One item.
@@ -24,7 +24,7 @@ pub enum Expanded {
 impl Expanded {
     /// The items, in order.
     #[must_use]
-    pub fn into_items(self) -> Vec<ExpandedItem> {
+    pub(crate) fn into_items(self) -> Vec<ExpandedItem> {
         match self {
             Expanded::Null => Vec::new(),
             Expanded::One(item) => vec![item],
@@ -39,7 +39,7 @@ impl Expanded {
 /// # Errors
 ///
 /// Declines whatever the walk does not model.
-pub fn expand_element<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, active_property: Option<&str>, element: N) -> Result<Expanded, Decline> {
+pub(crate) fn expand_element<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, active_property: Option<&str>, element: N) -> Result<Expanded, Decline> {
     match element.shape() {
         NodeShape::Null => Ok(Expanded::Null),
         NodeShape::Array(items) => {
@@ -75,7 +75,7 @@ pub fn expand_element<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, active_prop
 /// # Errors
 ///
 /// Declines a list object past the write's value limit.
-pub fn list_or_array(scope: &TermScope<'_>, active_property: Option<&str>, items: Vec<ExpandedItem>) -> Result<Expanded, Decline> {
+pub(crate) fn list_or_array(scope: &TermScope<'_>, active_property: Option<&str>, items: Vec<ExpandedItem>) -> Result<Expanded, Decline> {
     let is_list = active_property
         .and_then(|property| scope.definition(property))
         .is_some_and(|definition| definition.container().contains(ContainerKind::List));

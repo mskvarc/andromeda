@@ -16,7 +16,7 @@ const UQ_SUBSCRIPTIONS_ID: &str = "uq_subscriptions_id";
 /// retry of the client's request under another identifier would avoid, so it
 /// stays a persistence fault rather than a 409 naming an identifier nobody
 /// used.
-pub fn create_error(error: sqlx::Error, identifier: &Identifier) -> SubscriptionError {
+pub(super) fn create_error(error: sqlx::Error, identifier: &Identifier) -> SubscriptionError {
     if violates_unique_constraint(&error, UQ_SUBSCRIPTIONS_ID) {
         SubscriptionError::already_exists(identifier)
     } else {
@@ -25,10 +25,6 @@ pub fn create_error(error: sqlx::Error, identifier: &Identifier) -> Subscription
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         migration_set::branch::branch_migrations,

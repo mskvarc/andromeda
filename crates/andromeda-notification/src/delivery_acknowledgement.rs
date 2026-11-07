@@ -140,10 +140,6 @@ pub(crate) fn acknowledgement_retry(lease: LeaseTerm) -> RetryPolicy {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{delivery_acknowledgement::acknowledgement_retry, delivery_lease::LeaseTerm};
     use andromeda_retry::retry_number::RetryNumber;

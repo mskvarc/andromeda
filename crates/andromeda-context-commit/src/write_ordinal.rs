@@ -89,10 +89,6 @@ impl TryFrom<i32> for WriteOrdinal {
 pub struct WriteOrdinalOutOfRange;
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::write_ordinal::{WriteOrdinal, WriteOrdinalOutOfRange};
     use pretty_assertions::assert_eq;

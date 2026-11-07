@@ -3,10 +3,6 @@
 //! Each test serves the example's user `@context` from a server of its own and namespaces every identifier and
 //! entity type, so every test runs in the shared default tenant beside every other.
 
-#![deny(missing_docs, unreachable_pub, unused_qualifications)]
-#![deny(clippy::missing_docs_in_private_items)]
-#![forbid(unsafe_code)]
-
 mod brand_fleet;
 mod c_10;
 mod c_11;

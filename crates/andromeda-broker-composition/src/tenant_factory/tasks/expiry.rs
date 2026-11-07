@@ -145,6 +145,10 @@ fn register_cached_context_invalidation(
         .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
+/// Register the entity expiry sweep: every `cadence`, starting at once, it
+/// expires entities and purges attributes due by the tick's cutoff, at most
+/// `expiry_batch_size` per pass. A missed tick is skipped, and a transient
+/// failure is retried after one `cadence`.
 fn register_entity_expiry(
     supervisor: &TaskSupervisor,
     pacer: Arc<BackgroundPacer>,
@@ -312,6 +316,8 @@ fn register_entity_map_expiry(
         .map_err(|error| AssemblyInvariant::from(error).into())
 }
 
+/// Classify an Entity Map expiry failure: store faults are transient, an
+/// invariant breach is reported as one, and request-level errors are permanent.
 const fn classify_entity_map_failure(error: EntityMapError) -> TaskFailure<EntityMapError> {
     let class = match &error {
         EntityMapError::Persistence(_) | EntityMapError::StoreSaturated | EntityMapError::StoreUnavailable => FailureClass::Transient,

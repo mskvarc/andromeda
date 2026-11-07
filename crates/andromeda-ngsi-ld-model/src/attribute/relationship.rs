@@ -24,11 +24,6 @@ pub struct Relationship {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::attribute::{instance::Attribute, one_or_many::OneOrMany};
     use andromeda_ngsi_ld_lexicon::coerced_term::CoercedTerm;

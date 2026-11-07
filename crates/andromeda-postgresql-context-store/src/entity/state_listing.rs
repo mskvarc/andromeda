@@ -88,10 +88,6 @@ fn keyset_page(mut statement: SelectStatement, after: Option<&Identifier>, limit
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::entity::{state_listing::keyset_page, stored_entities::heads_statement};
     use andromeda_context_space::context_target::ContextTarget;

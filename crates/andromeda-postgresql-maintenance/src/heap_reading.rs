@@ -150,10 +150,6 @@ fn heap_dead_tuples_statement(branch: Branch, heap: HeapTarget) -> SelectStateme
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         analyzed_rows::{AnalyzedRows, RowCountReading},

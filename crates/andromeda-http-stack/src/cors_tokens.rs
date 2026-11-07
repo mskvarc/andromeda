@@ -60,10 +60,6 @@ pub fn check_cors_tokens(config: &CorsConfig) -> Result<(), CorsTokenError> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::cors_tokens::{CorsTokenError, check_cors_tokens};
     use andromeda_configuration::schema::http::cors::CorsConfig;

@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 use typed_builder::TypedBuilder;
 
-constant_string!(QueryType, "Query");
+constant_string!(pub QueryType, "Query");
 
 /// A query body shared by entity queries, temporal queries, and snapshots
 /// (ETSI GS CIM 009 v1.9.1 clause 5.2.23).
@@ -172,10 +172,6 @@ pub mod projection_term_list {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::query::body::Query;
     use andromeda_ngsi_ld_query::dataset::DatasetSelector;

@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 /// The complete Context Registry route fragment.
 pub struct ContextRegistryRoutes {
+    /// The `/jsonldContexts` routes with the tenant resolver bound as state.
     router: Router,
 }
 
@@ -37,10 +38,6 @@ impl ContextRegistryRoutes {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod serve_tests;
 
 #[cfg(test)]

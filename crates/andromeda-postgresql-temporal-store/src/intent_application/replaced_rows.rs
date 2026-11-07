@@ -148,10 +148,6 @@ fn replaced_streams(rows: &[ReplacedRow]) -> Vec<i64> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::intent_application::replaced_rows::{ReplacedRow, delete_statement, replaced_streams};
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;

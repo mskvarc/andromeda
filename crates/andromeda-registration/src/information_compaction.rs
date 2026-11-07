@@ -67,10 +67,6 @@ fn compacted_attributes(names: &NameCompaction, attributes: &[AttributeName]) ->
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::information_compaction::compacted_information;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};

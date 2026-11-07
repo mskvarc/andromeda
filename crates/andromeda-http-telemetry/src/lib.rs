@@ -1,8 +1,5 @@
 //! Focused HTTP binding exposing the broker's metrics in Prometheus text format.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod error;
 pub mod exposition;
 pub mod handler;

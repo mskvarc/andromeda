@@ -1,23 +1,12 @@
 //! Entity policy for ETSI GS CIM 009 clauses 5.6 and 5.7.
 
-#![deny(missing_docs)]
-
 /// Admitting write payloads the way the transport layer does, for tests.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod admission_fixture;
 /// A single-entity write document the clause 5.5.4 admission produced.
 pub mod admitted_write;
 /// What a client's request makes of every attribute member shape.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod attribute_member_shape_tests;
 /// What the existing Entities carry of one attribute name.
 pub mod attribute_summary;
@@ -27,11 +16,6 @@ pub mod attrs;
 pub mod batch;
 /// The one Building subscription the durable-match tests match against.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod building_subscription_fixture;
 /// The notifications a committed change to current state owes, whichever API made it.
 pub mod change_notifier;
@@ -43,11 +27,6 @@ mod committed_side_effect;
 pub mod compact_geometry_admission;
 /// A Building store another writer changes mid-operation, for the compare-and-set tests.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod compare_and_set_fixture;
 /// Cache of compiled entity queries, owned by the query service.
 pub mod compiled_cache;
@@ -66,11 +45,6 @@ pub mod discovery;
 pub mod document_census;
 /// The clause 5.5.4 admission run through the entity service.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod entity_admission_tests;
 /// The invariants entity policy relies on.
 pub mod entity_invariant;
@@ -90,10 +64,6 @@ pub mod error;
 pub mod expiry;
 /// Assertions over the Temporal Evolution a recorded write carries.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod history_recording_assertions;
 /// Coalescing concurrent writers by entity identifier.
 pub mod id_lock;
@@ -102,17 +72,9 @@ pub mod id_lock;
 mod in_memory_rows;
 /// An entity service reading the in-memory store, for tests.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod in_memory_service;
 /// An in-memory store applying write preconditions, for tests.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod in_memory_store;
 /// The fragment rewrite a merge performs for the target's attribute types.
 pub mod merge_fragment;
@@ -120,10 +82,6 @@ pub mod merge_fragment;
 pub mod merge_options;
 /// History-recording tests for the whole-entity merge and replace paths.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod merge_patch_recording;
 /// The write that stores a modified entity, and the notifications it owes.
 mod modification_write;
@@ -131,32 +89,14 @@ mod modification_write;
 pub mod mutation;
 /// Compare-and-set tests for Delete Entity.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod mutation_deletion_compare_and_set;
 /// Payload-read, match and tombstone tests for Delete Entity.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod mutation_deletion_recording;
 /// Durable-match recording tests for the whole-entity merge and replace paths.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod mutation_durable_match_recording;
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod mutation_history_recording;
 /// Turning one mutation into the subscriptions it matched.
 pub mod notification_fanout;
@@ -164,11 +104,6 @@ pub mod notification_fanout;
 pub mod notification_plan;
 /// A recording notification harness shared by the durable-match tests.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod notification_recording_harness;
 /// Store-applied or policy-applied pagination state.
 pub mod pagination_outcome;
@@ -186,11 +121,6 @@ pub mod query_residual;
 pub mod read_modify_write;
 /// The ports a recording entity service is wired to.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod recording_ports;
 /// Evaluating predicates a store declined to apply.
 pub mod residual_filter;
@@ -221,19 +151,11 @@ pub mod spatial_reconciliation;
 pub mod spatial_watermark;
 /// Every write a broker process commits is visible to its next geo query.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod spatial_write_visibility;
 /// Query capabilities of one entity store.
 pub mod storage_profile;
 /// Tests that the entity value limit holds for the entity a write stores.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod stored_budget_recording;
 /// Counting what a stored entity holds against the entity value limit.
 pub mod stored_census;
@@ -242,10 +164,6 @@ pub mod write_admission;
 /// Tests that each write settles its system times at the instant its commit
 /// records the history at.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod write_instant_recording;
 /// The write operations an admitted payload is bound to, as types.
 pub mod write_kind;
@@ -253,10 +171,6 @@ pub mod write_kind;
 pub mod write_target;
 /// Type-selector tests for every entity write operation.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod write_target_recording;
 /// The members a written Entity Fragment names, as the attribute names
 /// Update Attributes and Append Attributes report.
@@ -295,16 +209,27 @@ pub struct NotificationWriteConfig {
 
 /// Policy for NGSI-LD entity CRUD and batch operations.
 pub struct EntityService {
+    /// Reads entity states and the snapshots optimistic writes compare against.
     reader: Arc<dyn EntityReader>,
+    /// Runs CPU-bound preparation off the async workers.
     blocking_executor: Arc<dyn BlockingExecutor>,
+    /// Waits between attempts of a write lost to a concurrent writer.
     retry_delay: Arc<dyn RetryDelay>,
+    /// Dataset identifiers an attribute has history for, read by attribute deletion.
     attribute_history: Arc<dyn AttributeDatasetHistory>,
+    /// Commits each mutation and its history rows atomically.
     writes: Arc<dyn ContextCommitter>,
+    /// Expands and compacts request terms against the request context.
     engine: JsonLdEngine,
+    /// Matches changes against subscriptions; shared with every policy that changes current state.
     notifier: Arc<ChangeNotifier>,
+    /// Chunking and concurrency limits of batch operations, clamped to usable values.
     batch_execution: BatchExecutionConfig,
+    /// The limits a written entity is admitted under.
     payload_budget: EntityPayloadBudget,
+    /// Reads what a deletion needs short of the payload it removes.
     deletion_outline: Arc<dyn DeletionOutlineReader>,
+    /// Per-entity mutexes serialising concurrent writers before they take a pool connection.
     id_locks: Arc<IdLockMap>,
 }
 

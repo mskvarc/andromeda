@@ -1,7 +1,5 @@
 //! Lean command-line entry point for the Andromeda broker.
 
-#![deny(missing_docs)]
-
 mod cli;
 
 use crate::cli::{Cli, Command, ConfigurationCommand, OutputFormat};
@@ -23,10 +21,12 @@ use std::process::ExitCode;
 #[cfg(not(target_env = "msvc"))]
 use tikv_jemallocator::Jemalloc;
 
+/// The process allocator: jemalloc on every target but MSVC.
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
+/// The process allocator: mimalloc on MSVC, where jemalloc does not build.
 #[cfg(target_env = "msvc")]
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;

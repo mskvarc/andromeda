@@ -69,10 +69,6 @@ pub(crate) fn record_access(url: &IriBuf) -> HitAccounting {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::operation_hit_scope::{HitAccounting, record_access, run_in_operation_scope};
     use iri_rs::IriBuf;

@@ -185,10 +185,6 @@ impl PendingSideEffectsRepository {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::pending_side_effects::repo::{enqueue_statement, settle_statement};
     use andromeda_context_commit::{lease_holder::LeaseHolder, write_record::WriteRecord};

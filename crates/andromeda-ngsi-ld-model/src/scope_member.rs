@@ -143,10 +143,6 @@ impl Serialize for ScopeMember {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::scope_member::ScopeMember;
     use andromeda_ngsi_ld_entity::{document::slot::Slot, scopes::Scopes};

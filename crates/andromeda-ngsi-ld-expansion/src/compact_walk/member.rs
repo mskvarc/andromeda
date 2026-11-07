@@ -22,7 +22,7 @@ use jsonld::{ContainerKind, Nullable, Term, Type, syntax::Keyword};
 ///
 /// Declines a reverse property, a container the walk does not model, and
 /// whatever expanding the value declines.
-pub fn expand_member<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, key: &str, value: N) -> Result<Option<Vec<ExpandedItem>>, Decline> {
+pub(crate) fn expand_member<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, key: &str, value: N) -> Result<Option<Vec<ExpandedItem>>, Decline> {
     let definition = scope.definition(key);
     if definition.is_some_and(|definition| definition.reverse_property()) {
         return Err(Decline::ReverseProperty);
@@ -59,7 +59,7 @@ pub fn expand_member<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, key: &str, v
 /// Declines a definition of `key` under which the items would not have
 /// expanded as they were: a reverse property, a `@json` or `@language` term,
 /// or any container but `@list` and `@set`.
-pub fn expanded_member(scope: &TermScope<'_>, key: &str, items: Vec<ExpandedItem>, written: Written) -> Result<Vec<ExpandedItem>, Decline> {
+pub(crate) fn expanded_member(scope: &TermScope<'_>, key: &str, items: Vec<ExpandedItem>, written: Written) -> Result<Vec<ExpandedItem>, Decline> {
     let definition = scope.definition(key);
     if definition.is_some_and(|definition| definition.reverse_property()) {
         return Err(Decline::ReverseProperty);
@@ -90,7 +90,7 @@ pub fn expanded_member(scope: &TermScope<'_>, key: &str, items: Vec<ExpandedItem
 
 /// How a member whose items were expanded already was written.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Written {
+pub(crate) enum Written {
     /// As one value.
     Single,
     /// As an array of values.

@@ -178,11 +178,6 @@ pub fn parse_pattern_string(cursor: &mut TokenCursor<'_>) -> Result<Pattern, Que
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::filter::{
         expression::Expr,

@@ -82,7 +82,7 @@ fn written_columns(
 ///
 /// Returns the persistence failure of a document that cannot be written as
 /// JSON or of an insert that cannot be assembled.
-pub fn entity_create(
+pub(super) fn entity_create(
     target: &ContextTarget,
     id: &Identifier,
     fields: &SubscriptionFields<'_>,
@@ -121,7 +121,7 @@ pub fn entity_create(
 ///
 /// Returns the persistence failure of a document that cannot be written as
 /// JSON.
-pub fn entity_update(
+pub(super) fn entity_update(
     target: &ContextTarget,
     id: &Identifier,
     fields: &SubscriptionFields<'_>,
@@ -143,10 +143,6 @@ pub fn entity_update(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::subscription_store::{
         bare_fields_fixture::bare_fields,

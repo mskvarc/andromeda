@@ -85,11 +85,6 @@ pub fn lift_comparison(scalar: &Scalar, stored: SimpleExpr, datatype: SimpleExpr
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::jsonb::lift_comparison;
     use andromeda_ngsi_ld_query::filter::scalar::{Scalar, parse_date, parse_date_time, parse_time};

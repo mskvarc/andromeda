@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+description = "The lexical layer of NGSI-LD: the grammars every named value in the API must satisfy"
 build = "build.rs"
 
 [lints]

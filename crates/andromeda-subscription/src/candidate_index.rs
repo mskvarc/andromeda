@@ -35,14 +35,24 @@ use strum::EnumCount;
 /// buckets that must move together.
 #[derive(Debug, Default)]
 pub struct CandidateIndex {
+    /// The subscriptions in force, by key.
     entries: FxHashMap<SubscriptionKey, Arc<CompiledSubscription>>,
+    /// The key of each subscription in force, by identifier.
     keys_by_id: HashMap<Identifier, SubscriptionKey>,
+    /// Selectors naming a concrete entity type, by that type.
     by_type: HashMap<EntityTypeName, FxHashSet<SelectorRef>>,
+    /// Selectors naming an entity id, by that id.
     by_entity_id: HashMap<Identifier, FxHashSet<SelectorRef>>,
+    /// Subscriptions without selectors, or with one no type or id bucket can
+    /// route, reached by every change.
     wildcard: FxHashSet<SubscriptionKey>,
+    /// Subscriptions listening to each trigger, indexed by trigger slot.
     by_trigger: [FxHashSet<SubscriptionKey>; NotificationTrigger::COUNT],
+    /// Subscriptions with `watchedAttributes`, by each attribute they watch.
     by_watched_attribute: HashMap<AttributeName, FxHashSet<SubscriptionKey>>,
+    /// Subscriptions without `watchedAttributes`, which watch every attribute.
     watch_all: FxHashSet<SubscriptionKey>,
+    /// The buckets each subscription occupies, so removal walks only those.
     membership: FxHashMap<SubscriptionKey, Membership>,
     /// The selections updates replaced while a change committed under one may
     /// still be evaluated.
@@ -158,6 +168,8 @@ impl CandidateIndex {
         compiled
     }
 
+    /// Remove the selectors of `key` from `bucket`, dropping the bucket once
+    /// it is empty.
     fn drop_selectors<K: Hash + Eq>(buckets: &mut HashMap<K, FxHashSet<SelectorRef>>, bucket: &K, key: SubscriptionKey) {
         if let Some(refs) = buckets.get_mut(bucket) {
             refs.retain(|selector| selector.subscription != key);
@@ -167,6 +179,7 @@ impl CandidateIndex {
         }
     }
 
+    /// Remove `key` from `bucket`, dropping the bucket once it is empty.
     fn drop_member<K: Hash + Eq>(buckets: &mut HashMap<K, FxHashSet<SubscriptionKey>>, bucket: &K, key: SubscriptionKey) {
         if let Some(keys) = buckets.get_mut(bucket) {
             keys.remove(&key);

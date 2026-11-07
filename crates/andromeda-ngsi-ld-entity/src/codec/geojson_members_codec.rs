@@ -204,10 +204,6 @@ impl<'de> Visitor<'de> for MembersSeed<'_> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{geometry_value::ExpandedGeoJsonMembers, refusal::EntityRefusal};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;

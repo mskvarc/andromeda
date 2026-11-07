@@ -7,9 +7,6 @@
 //! migrations declare, every finding rendered as a diagnostic that quotes the
 //! line it is on.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 /// The canonical layout of one migration.
 pub mod canonical_layout;
 /// The schema the migrations declare.

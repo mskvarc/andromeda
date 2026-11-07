@@ -200,10 +200,6 @@ const fn day_count(days: NonZeroU32) -> i32 {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         columnstore_capability::ColumnstoreSupport,

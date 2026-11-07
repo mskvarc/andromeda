@@ -83,10 +83,6 @@ fn release(queued: i64, claimable: i64, latest_lease: Option<DateTime<Utc>>, dat
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::intent_store::release_wait::release;
     use andromeda_temporal::{error::TemporalError, port::temporal_intent_queue::EntityRelease};

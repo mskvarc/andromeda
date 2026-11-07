@@ -20,18 +20,18 @@ const GEO_PROPERTY_TYPE: &str = "GeoProperty";
 /// A geometry member as a registration body writes it (clause 5.2.9): the
 /// `GeoJSON` geometry itself, or the `GeoProperty` whose `value` is one.
 #[derive(Debug, Clone, PartialEq)]
-pub struct RegistrationGeometry(Geometry);
+pub(crate) struct RegistrationGeometry(Geometry);
 
 impl RegistrationGeometry {
     /// The geometry the member spells.
     #[must_use]
-    pub fn into_geometry(self) -> Geometry {
+    pub(crate) fn into_geometry(self) -> Geometry {
         self.0
     }
 
     /// The geometry the member spells, borrowed.
     #[must_use]
-    pub const fn geometry(&self) -> &Geometry {
+    pub(crate) const fn geometry(&self) -> &Geometry {
         &self.0
     }
 }
@@ -71,7 +71,7 @@ fn geo_property_value(member: JsonPiece<'_>) -> Option<JsonPiece<'_>> {
 /// Returns [`RegistrationError::GeometryTooLarge`] naming the first member
 /// whose geometry holds more positions, or more other values, than `limits`
 /// admits.
-pub fn admit_registration_geometries<'a>(
+pub(crate) fn admit_registration_geometries<'a>(
     members: impl IntoIterator<Item = (CsrMember, &'a Geometry)>,
     limits: GeometryCensusLimits,
 ) -> Result<(), RegistrationError> {
@@ -109,10 +109,6 @@ fn foreign_values(foreign: &JsonLiteral, limits: GeometryCensusLimits) -> Result
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         csr_member::CsrMember,

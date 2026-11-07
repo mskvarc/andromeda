@@ -1,6 +1,7 @@
 //! The macro behind every NGSI-LD `type` discriminator fixed to a single token.
 
-/// Generates a type that serializes and deserializes as one fixed string constant.
+/// Generates a type that serializes and deserializes as one fixed string constant,
+/// with the visibility written before its name.
 ///
 /// The generated type is a unit struct deriving `Clone`, `Copy`, `Debug`,
 /// `Default`, `PartialEq`, `Eq` and `Hash`, plus hand-written `Display`,
@@ -18,14 +19,14 @@
 /// # Usage
 ///
 /// ```ignore
-/// constant_string!(SubscriptionType, "Subscription");
+/// constant_string!(pub SubscriptionType, "Subscription");
 /// ```
 #[macro_export]
 macro_rules! constant_string {
-    ($name:ident, $value:literal) => {
+    ($vis:vis $name:ident, $value:literal) => {
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
         #[doc = concat!("The fixed `", $value, "` type discriminator.")]
-        pub struct $name;
+        $vis struct $name;
 
         impl ::core::fmt::Display for $name {
             fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
@@ -66,10 +67,6 @@ macro_rules! constant_string {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use serde_json::Value;
 

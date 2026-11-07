@@ -52,10 +52,6 @@ fn untouched_outcomes<'writes>(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::untouched_writes::{reads_its_row, untouched_outcomes};
     use andromeda_context_commit::{

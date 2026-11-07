@@ -49,14 +49,18 @@ pub struct DeliveryDrainOutcome {
 
 /// Policy operation that advances leased notification deliveries.
 pub struct NotificationDeliveryDrain {
+    /// The delivery queue claimed from and pruned.
     store: Arc<dyn DeliveryStore>,
     /// Sends each claimed delivery and judges its outcome.
     attempts: DeliveryAttempt,
+    /// The lease holder this drain claims deliveries as.
     worker_id: LeaseHolder,
+    /// How long a claimed delivery stays leased to this drain.
     lease_term: LeaseTerm,
     /// Where the outcome of each delivery the pass leased is recorded, and
     /// its slot refilled.
     acknowledgement: DeliveryAcknowledgement,
+    /// The number of deliveries in flight at once, one per slot.
     concurrency: DeliveryConcurrency,
     /// How long a Subscription keeps a crowding one below half the slots
     /// after its last delivery was answered: `request_timeout`, the longest a
@@ -373,10 +377,6 @@ impl NotificationDeliveryDrain {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         delivery_acknowledgement::acknowledgement_retry,

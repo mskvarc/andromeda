@@ -32,6 +32,8 @@ use andromeda_entity::write_kind::BatchMerge;
 use andromeda_http_extraction::context_target;
 use andromeda_ngsi_ld_request::{local::LocalOnlyParams, query_narrowing::ExecutionScope};
 
+/// Batch Entity Merge (clause 5.6.20): 204 when every entity was merged, 207
+/// with the clause 5.2.16 result otherwise.
 pub(crate) async fn batch_merge(
     // Clause 6.3.18 is the one URL parameter the operation defines, so any
     // other is an `InvalidRequest`; it is read first, before the tenant is

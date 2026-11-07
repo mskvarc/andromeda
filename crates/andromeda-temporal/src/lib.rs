@@ -1,8 +1,5 @@
 //! NGSI-LD temporal lifecycle, query orchestration, mutation policy, and backend-neutral ports.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod aggregation_conflict;
 /// Eligibility of attributes for aggregation methods (clause 5.7.4.4).
 pub mod aggregation_eligibility;
@@ -10,11 +7,6 @@ pub mod aggregation_eligibility;
 mod answered_evolution;
 /// The temporal entities a Context Source answers with, expanded, for tests.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod answered_fixture;
 /// The instances a Context Source answered a temporal query with, as history rows.
 mod answered_history;
@@ -31,11 +23,6 @@ pub mod delete_by_query;
 /// An Entity a concurrent deletion takes the current state of while a Temporal
 /// Evolution write folds against it.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod deleted_while_folding;
 /// The streams whose older deletions a split query still has to ask its
 /// sources for.
@@ -86,10 +73,6 @@ mod read;
 mod reified_scope;
 /// The reified Scopes a Temporal Evolution is written with, refused and admitted.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod reified_scope_fixture;
 /// The non-local half of Linked Entity resolution for the temporal API.
 pub mod remote_linked;
@@ -109,11 +92,6 @@ pub mod split_settlement;
 pub mod storage_policy;
 /// A temporal service over one stubbed broker.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod stub_broker;
 /// The invariants temporal policy relies on.
 pub mod temporal_invariant;
@@ -132,11 +110,6 @@ mod written_evolution;
 mod written_instance;
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod intent_drain_tests;
 
 #[cfg(test)]

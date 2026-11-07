@@ -74,10 +74,6 @@ fn first_held_intent(reach: ScopeReach<'_>) -> SelectStatement {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::history_branch::first_held_intent;
     use andromeda_temporal::port::read_scope::ScopeReach;

@@ -42,7 +42,9 @@ pub(super) type DeleteChunkOutcome = (Vec<Identifier>, Vec<(Identifier, EntityEr
 /// Deleting each entity of a chunk as an attempt read it (clause 5.6.10.4 runs
 /// the behaviour of clause 5.6.6 per entity).
 struct DeleteRewrite<'a> {
+    /// The service whose deletion builds each write.
     service: &'a EntityService,
+    /// The branch the chunk writes.
     target: &'a ContextTarget,
 }
 
@@ -115,6 +117,8 @@ impl EntityService {
         self.notifier.subscription_matches(deleted, &deletion(removed), snapshots)
     }
 
+    /// Delete the entities `chunk` names at `now`, returning the deleted identifiers
+    /// and the per-entity failures. Fails only on a store failure that concerns the whole chunk.
     pub(super) async fn batch_delete_chunk(
         &self,
         placement: SideEffectPlacement<'_>,

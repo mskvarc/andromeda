@@ -349,10 +349,6 @@ fn map_delivery(row: &PgRow) -> Result<SnapshotStatusDelivery, SnapshotError> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::snapshot::status_outbox::{claim_statement, outbox_insert, renew_statement};
     use andromeda_context_commit::lease_holder::LeaseHolder;

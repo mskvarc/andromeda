@@ -10,9 +10,6 @@
 //! it alone knows: what is retryable, when a streak resets, where the count is
 //! stored and which timer waits.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 /// A stateful walk through a schedule for an in-memory failure streak.
 pub mod cursor;
 /// How the delay grows from one retry to the next.

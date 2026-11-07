@@ -35,7 +35,7 @@ use axum::{
 };
 
 /// POST /ngsi-ld/v1/csourceSubscriptions -- Create a context source subscription.
-pub async fn create(
+pub(crate) async fn create(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
@@ -72,7 +72,7 @@ pub async fn create(
 }
 
 /// GET /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Retrieve a context source subscription.
-pub async fn get(
+pub(crate) async fn get(
     ExistingTenantState(state): CsourceSubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     api_root: ApiRoot,
@@ -100,7 +100,7 @@ pub async fn get(
 }
 
 /// GET /ngsi-ld/v1/csourceSubscriptions -- Query context source subscriptions.
-pub async fn query(
+pub(crate) async fn query(
     ExistingTenantState(state): CsourceSubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     api_root: ApiRoot,
@@ -135,7 +135,7 @@ pub async fn query(
 }
 
 /// PATCH /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Update a context source subscription.
-pub async fn update(
+pub(crate) async fn update(
     // Clause 6.3.20: the operation defines no parameter, so any is an `InvalidRequest`.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ExistingTenantState(state): CsourceSubscriptionTenantState,
@@ -156,7 +156,7 @@ pub async fn update(
 }
 
 /// DELETE /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Delete a context source subscription.
-pub async fn delete(
+pub(crate) async fn delete(
     // Clause 6.3.20: the operation defines no parameter, so any is an `InvalidRequest`.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ExistingTenantState(state): CsourceSubscriptionTenantState,

@@ -215,10 +215,6 @@ pub(super) fn retry_statement(next_attempt_at: DateTime<Utc>, last_error: &str, 
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::intent_store::lease_statements::{
         ClaimScope,

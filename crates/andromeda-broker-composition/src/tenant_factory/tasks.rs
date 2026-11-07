@@ -88,6 +88,9 @@ pub(super) struct TenantSignals {
     /// The queue's one reader, held across restarts of the notification worker
     /// so a change queued while it restarts is still evaluated.
     pub(super) entity_receiver: Arc<Mutex<mpsc::Receiver<PendingChange>>>,
+    /// Entity Subscription lifecycle changes, keeping the notification
+    /// workers' evaluated set current; capacity 1024, and a lagging receiver
+    /// reloads its cache.
     pub(super) subscription: broadcast::Sender<SubscriptionChange>,
     /// Where committed registration changes queue for context source
     /// notification evaluation.
@@ -96,6 +99,8 @@ pub(super) struct TenantSignals {
     /// context source notification worker so a change queued while it
     /// restarts is still evaluated.
     pub(super) registration_receiver: Arc<Mutex<mpsc::Receiver<CsrChangeEvent>>>,
+    /// Context Source Registration Subscription lifecycle changes for the
+    /// context source notification workers; capacity 1024.
     pub(super) csource_subscription: broadcast::Sender<CsourceSubscriptionChange>,
 }
 
@@ -122,6 +127,8 @@ impl TenantSignals {
 
 /// Handles needed to stop the complete tenant worker set.
 pub(super) struct TaskSupervision {
+    /// Unsupervised tasks the runtime aborts and joins on shutdown: the MQTT
+    /// health probe in the unnamed default tenant, none elsewhere.
     pub(super) handles: Vec<JoinHandle<()>>,
     /// The tasks finishing the hand-off of committed changes to notification
     /// evaluation, which the runtime waits for after its tasks stop.
@@ -129,7 +136,10 @@ pub(super) struct TaskSupervision {
     /// The committed changes handed to live evaluation and not yet evaluated,
     /// which the runtime cache reads to spare a tenant with a backlog.
     pub(super) commits: Arc<PendingCommits>,
+    /// Stops the MQTT health probe; `None` in every tenant but the unnamed
+    /// default.
     pub(super) health_shutdown: Option<watch::Sender<bool>>,
+    /// Supervisor of the tenant's registered tasks, shut down first.
     pub(super) task_supervisor: TaskSupervisor,
 }
 
@@ -220,7 +230,11 @@ fn spawn_mqtt_health_probe(storage: &TenantStorage, transport: &TransportDispatc
 /// Whether entity notifications are delivered live or through the durable queue.
 #[derive(Clone, Copy)]
 enum EntityNotificationDelivery {
+    /// Changes are queued in memory and evaluated by the resident processor's
+    /// lanes after commit.
     Live,
+    /// Notifications are written in the commit and sent by the durable drain;
+    /// no evaluation lanes run.
     Durable,
 }
 

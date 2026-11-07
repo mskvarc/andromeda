@@ -34,6 +34,8 @@ use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_request::{fragment_entity_id::admit_fragment_entity_id, query_narrowing::ExecutionScope};
 use axum::http::Method;
 
+/// Append Entity Attributes (clause 5.6.3): 204 when every attribute was
+/// written, 207 with the clause 5.2.18 `UpdateResult` otherwise.
 pub(crate) async fn append_attrs(
     context_target::ExistingTargetedTenantState {
         services: state,

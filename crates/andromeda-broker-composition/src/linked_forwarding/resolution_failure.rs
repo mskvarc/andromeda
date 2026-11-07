@@ -39,10 +39,6 @@ fn resolution_failure(id: &Identifier, warning: NgsiLdWarning) -> LinkedResoluti
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::linked_forwarding::resolution_failure::resolution_failure;
     use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};

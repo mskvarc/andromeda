@@ -48,6 +48,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+/// Create Context Source Registration (clause 5.9.2): answers 201 with the
+/// new registration's `Location`, creating the tenant when it does not exist.
 pub(crate) async fn create(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
@@ -65,6 +67,8 @@ pub(crate) async fn create(
     Ok(locator.locate(StatusCode::CREATED.into_response(), ResourceCollection::ContextSourceRegistrations, &identifier))
 }
 
+/// Retrieve Context Source Registration (clause 5.10.1), rendered with the
+/// request's `options`, `pick`, `omit` and `lang`.
 pub(crate) async fn get(
     ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
@@ -91,6 +95,7 @@ pub(crate) async fn get(
     Ok(NgsiLdResponse::ok(response).into_response())
 }
 
+/// Query Context Source Registrations (clause 5.10.2), one page per request.
 pub(crate) async fn query(
     ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
@@ -190,6 +195,7 @@ pub(crate) async fn query(
     Ok(response)
 }
 
+/// Update Context Source Registration (clause 5.9.3); answers 204.
 pub(crate) async fn update(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
@@ -211,6 +217,7 @@ pub(crate) async fn update(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+/// Delete Context Source Registration (clause 5.9.4); answers 204.
 pub(crate) async fn delete(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
@@ -224,10 +231,6 @@ pub(crate) async fn delete(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use andromeda_http_extraction::jsonld::JsonLd;
     use andromeda_http_response::extraction_rejection::ExtractorRejection;

@@ -15,7 +15,9 @@ pub struct SubscriptionExpiryOutcome {
 
 /// Independently scheduled expiry operation for one subscription variant.
 pub struct SubscriptionExpiry<V: SubscriptionVariant> {
+    /// The branch whose due subscriptions are expired.
     target: ContextTarget,
+    /// Applies the expiry transition and publishes each change.
     service: Arc<SubscriptionService<V>>,
 }
 

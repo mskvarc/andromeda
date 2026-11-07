@@ -156,10 +156,6 @@ fn looks_like_media_type(value: &str) -> bool {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::raw_constant::{raw_constant, scan_items};
     use pretty_assertions::assert_eq;

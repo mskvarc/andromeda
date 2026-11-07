@@ -137,10 +137,6 @@ pub fn attribute_name_candidate<N: fmt::Display>(attribute_names: &[N]) -> Simpl
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use super::*;
     use andromeda_postgresql_seaquery::{

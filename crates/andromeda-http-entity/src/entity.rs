@@ -73,59 +73,55 @@ fn local_entity_outcome<T>(result: Result<T, EntityError>, forwarded: &[Forwarde
 }
 
 /// Attribute collection append handling.
-pub mod append_attributes;
+pub(crate) mod append_attributes;
 /// Entity creation handling.
-pub mod create;
+pub(crate) mod create;
 /// Entity deletion handling.
-pub mod delete;
+pub(crate) mod delete;
 /// Attribute deletion handling.
-pub mod delete_attribute;
+pub(crate) mod delete_attribute;
 /// Delete-by-query handling.
-pub mod delete_by_query;
+pub(crate) mod delete_by_query;
 /// Entity merge handling.
-pub mod merge;
+pub(crate) mod merge;
 /// Partial attribute update handling.
-pub mod partial_update_attribute;
+pub(crate) mod partial_update_attribute;
 /// The `EntityMap` a purge determines its entities from.
-pub mod purge_entity_map;
+pub(crate) mod purge_entity_map;
 /// Entity collection query handling.
-pub mod query;
+pub(crate) mod query;
 /// Admitting a decoded entity query before it runs.
-pub mod query_admission;
+pub(crate) mod query_admission;
 /// Which HTTP binding carried a Query Entities request.
-pub mod query_binding;
+pub(crate) mod query_binding;
 /// The forwarding phases of an entity query.
-pub mod query_forwarding;
+pub(crate) mod query_forwarding;
 /// The entities this broker holds itself for one page of an entity query.
-pub mod query_local_page;
+pub(crate) mod query_local_page;
 /// Where the page of an entity query is cut.
-pub mod query_page;
+pub(crate) mod query_page;
 /// Assembling the response an entity query answers with.
-pub mod query_response;
+pub(crate) mod query_response;
 /// The filters `splitEntities` decides after the merge.
-pub mod query_split_filters;
+pub(crate) mod query_split_filters;
 /// Entity replacement handling.
-pub mod replace;
+pub(crate) mod replace;
 /// Attribute replacement handling.
-pub mod replace_attribute;
+pub(crate) mod replace_attribute;
 /// The `EntityMap` a distributed read runs under.
-pub mod request_entity_map;
+pub(crate) mod request_entity_map;
 /// Single-entity retrieval handling.
-pub mod retrieve;
+pub(crate) mod retrieve;
 /// The forwarding phases of a single-entity retrieval.
-pub mod retrieve_forwarding;
+pub(crate) mod retrieve_forwarding;
 /// The forwarding of an attribute write, withheld from a local one.
-pub mod scoped_provision;
+pub(crate) mod scoped_provision;
 /// Attribute collection update handling.
-pub mod update_attributes;
+pub(crate) mod update_attributes;
 /// The clause 5.2.18 `UpdateResult` an attribute write answers with.
-pub mod update_result;
+pub(crate) mod update_result;
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::entity::local_entity_outcome;
     use andromeda_entity::error::EntityError;

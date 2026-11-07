@@ -21,7 +21,7 @@ use indexmap::IndexMap;
 ///
 /// Returns the refusal of the first member that is not what its expanded IRI
 /// names.
-pub fn temporal_document(node: Option<ExpandedNode>, system_times: EntitySystemTimes) -> Result<TemporalDocument, EntityRefusal> {
+pub(crate) fn temporal_document(node: Option<ExpandedNode>, system_times: EntitySystemTimes) -> Result<TemporalDocument, EntityRefusal> {
     let Some(node) = node else {
         return Ok(TemporalDocument::new(EntityDocument::default(), system_times, IndexMap::new()));
     };

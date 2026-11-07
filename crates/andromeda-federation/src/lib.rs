@@ -1,7 +1,5 @@
 //! Context-source federation policy, forwarding, and response combination.
 
-#![deny(missing_docs)]
-
 /// The error answer a forwarded operation acts on as a step of its own.
 mod acted_on_answer;
 /// How a distributed aggregated temporal query gathers the instances of entities held in more than one part.
@@ -21,10 +19,6 @@ pub mod cache;
 pub mod cooldown;
 /// A failed read's cooldown, seen by the write that follows it.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod cooldown_forwarding_tests;
 /// The broker's own cooldown after a failed forwarded request (Table 5.2.34-1, clause 6.3.17).
 pub mod cooldown_policy;
@@ -55,10 +49,6 @@ pub mod federation_invariant;
 pub mod federation_operation_unsupported;
 /// A fixed in-memory registration store for the forwarding tests.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod fixed_registration_store;
 /// The query a forwarded batch entity query sends (clause 6.23).
 mod forwarded_batch_query;
@@ -97,10 +87,6 @@ pub mod instance_budget;
 pub mod language_negotiation;
 /// An identifier list over the URL budget is forwarded as several requests.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod large_id_list_forwarding_tests;
 /// Resolving a locally-held entity's type for federated-write coverage.
 pub mod local_entity_type;
@@ -110,10 +96,6 @@ pub mod local_source;
 pub mod matched_registrations;
 /// A mock Context Source answering the forwarding tests.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod mock_source;
 /// What a 207 answer to a forwarded single-entity write carries (clause 6.3.6).
 mod multi_status_body;
@@ -125,25 +107,13 @@ pub mod ordering_admission;
 pub mod outcome;
 /// A registration naming this broker is never contacted.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod own_alias_forwarding_tests;
 /// Which registrations take part in a read.
 pub mod participating_read;
 /// The two forwarding phases of a query read the registrations once.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod phased_read_tests;
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod private_ip_forwarding_tests;
 /// Single-entity provision forwarding.
 pub mod provision;
@@ -153,10 +123,6 @@ pub mod provision_batch;
 pub mod provision_plan;
 /// How the type selector of a write narrows the registrations it is forwarded to.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod provision_plan_selector_tests;
 /// Purge forwarding.
 pub mod provision_purge;
@@ -164,10 +130,6 @@ pub mod provision_purge;
 pub mod query_forwarding_error;
 /// Purge and EntityMap creation select their registrations as a read does.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod query_selection_forwarding_tests;
 /// Choosing how a forwarded current-entity read reaches one registration.
 pub mod read_binding;
@@ -175,10 +137,6 @@ pub mod read_binding;
 pub mod read_fan_out;
 /// Entity versions in the model, for the merge tests.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod received_fixture;
 /// A context source's answer of Temporal Evolutions, decoded.
 mod received_temporal_answer;
@@ -219,10 +177,6 @@ pub mod source_walk;
 pub mod split_entities;
 /// A split read reaches a source declaring no scope.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod split_scope_forwarding_tests;
 /// Subscription forwarding to registered context sources (clause 5.8).
 pub mod subscription;
@@ -271,15 +225,19 @@ use std::{num::NonZeroU32, sync::Arc, time::Duration};
 
 /// Service for forwarding NGSI-LD operations to registered context sources.
 pub struct FederationService {
+    /// Forwarding client with the configured timeouts and automatic response
+    /// decompression disabled.
     http_client: reqwest::Client,
     /// Refuses a Context Source endpoint resolving into address space the
     /// broker will not reach on a client's behalf.
     guard: PrivateIpGuard,
+    /// The registrations forwarded operations are matched against.
     csr_repo: Arc<dyn RegistrationStore>,
     /// Resolves a locally-held entity's type so an attribute-level write whose
     /// request carries no `type` is matched against registrations by the type
     /// the entity actually has, rather than treated as covering every type.
     local_entity_types: Arc<dyn LocalEntityTypeResolver>,
+    /// Expands and compacts the names forwarded requests and answers carry.
     engine: JsonLdEngine,
     /// This broker in the tenant the service serves: the `Via` pseudonym
     /// (clause 6.3.18) and the loops it recognises (clause 4.3.6.4).
@@ -438,10 +396,6 @@ impl FederationService {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests;
 
 #[cfg(test)]

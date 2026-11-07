@@ -165,10 +165,6 @@ impl<K: Eq + Hash, F: FnOnce()> Drop for Release<'_, K, F> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::keyed_slots::{Admission, KeyedSlots};
     use std::{future, num::NonZeroUsize, time::Duration};

@@ -70,7 +70,7 @@ async fn expand_geoproperty(geoproperty: &mut NgsiLdReference, expander: &impl T
 /// does not expand to a usable name. Such a term is refused rather than kept
 /// as written, since matching runs only against expanded names and the
 /// subscription would never match on it.
-pub async fn expand_common_subscription_terms(
+pub(crate) async fn expand_common_subscription_terms(
     engine: &JsonLdEngine,
     request: &mut SubscriptionRequest,
     context: &ContextSpec,
@@ -114,10 +114,6 @@ pub async fn expand_common_subscription_terms(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{error::SubscriptionError, term_expansion::expand_common_subscription_terms};
     use andromeda_json_literal::JsonLiteral;

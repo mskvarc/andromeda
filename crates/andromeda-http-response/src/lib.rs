@@ -2,9 +2,6 @@
 //!
 //! This crate owns every Axum response adapter and HTTP wire projection, including extraction rejections, batch projection and temporal range metadata. It also owns the classifiers of the policy failures more than one route binding answers (entity, temporal, forwarding, JSON-LD, query and parameter failures), so each such failure has exactly one HTTP classification; a binding supplies its own exhaustive classifier only for the failures it alone answers.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod batch;
 pub mod batch_projection;
 pub mod classified_report;

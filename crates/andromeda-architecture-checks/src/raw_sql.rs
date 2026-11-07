@@ -331,10 +331,6 @@ fn first_string_literal(mac: &Macro) -> Option<String> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::raw_sql::{DriverTextVisitor, SqlTextVisitor, is_sanctioned};
     use pretty_assertions::assert_eq;

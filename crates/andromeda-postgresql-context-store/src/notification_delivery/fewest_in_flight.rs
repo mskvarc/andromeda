@@ -269,10 +269,6 @@ struct Position;
 struct InFlight;
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::notification_delivery::fewest_in_flight::fewest_in_flight_candidates;
     use andromeda_context_commit::lease_holder::LeaseHolder;

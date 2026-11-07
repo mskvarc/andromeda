@@ -4,9 +4,6 @@
 //! context-source registrations, notification events and deliveries. It does
 //! NOT depend on the temporal store; both stores are independent.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 /// Active PostgreSQL-family component discovery.
 pub mod component_report;
 /// PostgreSQL connection and pool configuration.

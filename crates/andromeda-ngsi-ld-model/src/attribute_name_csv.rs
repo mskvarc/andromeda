@@ -98,10 +98,6 @@ pub mod clearable {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{attribute_name_csv, clearable::Clearable};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;

@@ -89,10 +89,6 @@ fn of_selected_entity() -> HistoryOf {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::projected_members::projected_member_condition;
     use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};

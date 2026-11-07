@@ -117,7 +117,7 @@ async fn compacted_filters(compactor: &NameCompaction, mut filters: Subscription
 /// stored name compacted, a due expiration reported as such, and `localOnly`
 /// left absent unless it is `true`, which is the default Table 5.2.12-1 gives
 /// the member.
-pub async fn compact_for_response(mut subscription: Subscription, compactor: &NameCompaction) -> Subscription {
+pub(crate) async fn compact_for_response(mut subscription: Subscription, compactor: &NameCompaction) -> Subscription {
     report_expired_status(&mut subscription);
     subscription.delivery.local_only = subscription.delivery.local_only.filter(|local_only| *local_only);
     subscription.selection.entities = subscription
@@ -131,10 +131,6 @@ pub async fn compact_for_response(mut subscription: Subscription, compactor: &Na
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::response_compaction::compact_for_response;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};

@@ -32,6 +32,8 @@ use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::context_target;
 use andromeda_ngsi_ld_request::{local::LocalOnlyParams, query_narrowing::ExecutionScope};
 
+/// Batch Entity Creation (clause 5.6.7): 201 listing the created identifiers when
+/// every entity was created, 207 with the clause 5.2.16 result otherwise.
 pub(crate) async fn batch_create(
     // Clause 6.3.18 is the one URL parameter the operation defines, so any
     // other is an `InvalidRequest`; it is read first, before the tenant is

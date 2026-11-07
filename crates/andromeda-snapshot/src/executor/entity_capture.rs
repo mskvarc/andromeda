@@ -375,10 +375,6 @@ fn merge_claimed(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::executor::entity_capture::PendingSources;
     use andromeda_federation::outcome::ForwardedEntities;

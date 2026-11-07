@@ -10,7 +10,7 @@ use std::num::NonZeroUsize;
 use tokio::task::spawn_blocking;
 
 /// Runs policy-supplied CPU work on Tokio's blocking worker pool.
-pub struct TokioBlockingExecutor;
+pub(crate) struct TokioBlockingExecutor;
 
 impl BlockingExecutor for TokioBlockingExecutor {
     fn execute<'life0, 'async_trait>(

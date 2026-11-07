@@ -104,10 +104,6 @@ async fn record_failure(sub_repo: &dyn SubscriptionStore, target: &ContextTarget
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::resolved_notification_context::{UnclaimedContext, claimed_notification_context, unclaimed_notification_context};
     use andromeda_context_space::context_target::ContextTarget;

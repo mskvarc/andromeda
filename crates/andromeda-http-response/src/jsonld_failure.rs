@@ -40,10 +40,6 @@ pub fn classify_jsonld_error(error: &JsonLdError) -> ClassifiedReport {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::jsonld_failure::classify_jsonld_error;
     use andromeda_jsonld::{context_graph::ContextGraphError, error::JsonLdError};

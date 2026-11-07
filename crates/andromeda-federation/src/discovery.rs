@@ -167,10 +167,6 @@ const fn collection_of(target: DiscoveryTarget<'_>) -> &'static str {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{discovery::collection_of, request::DiscoveryTarget};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};

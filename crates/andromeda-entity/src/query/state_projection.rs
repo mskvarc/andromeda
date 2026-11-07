@@ -40,10 +40,6 @@ pub(crate) fn keeps_a_standing_attribute(state: &EntityState, now: DateTime<Utc>
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::query::state_projection::{keeps_a_standing_attribute, narrow_state};
     use andromeda_linked_retrieval::narrowing::list::ListInForce;

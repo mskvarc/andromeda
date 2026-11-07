@@ -1,7 +1,5 @@
 //! Typed reports for concrete components active in one broker profile.
 
-#![deny(missing_docs)]
-
 use derive_more::{Display, From};
 use serde::{Deserialize, Serialize};
 

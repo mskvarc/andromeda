@@ -161,6 +161,7 @@ impl TryFrom<f64> for JsonNumber {
     }
 }
 
+/// Expands to an infallible `From<integer> for JsonNumber` for each listed primitive integer type.
 macro_rules! impl_integer_conversion {
     ($($integer:ty),+ $(,)?) => {
         $(
@@ -208,7 +209,9 @@ fn validate_decimal_range(value: &BigDecimal) -> Result<(), JsonNumberError> {
 /// JSON exponent. An extent too large for `i64` saturates, which every limit
 /// refuses.
 struct DecimalShape {
+    /// Digits left of the decimal point once the exponent is applied.
     integral_digits: i64,
+    /// Digits right of the decimal point once the exponent is applied, zero for an integer.
     fractional_digits: i64,
 }
 
@@ -263,10 +266,6 @@ andromeda_architecture_checks::dependency_boundary! {
 andromeda_architecture_checks::forbid_sql!();
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{JsonNumber, JsonNumberError, MAX_FRACTIONAL_DIGITS, MAX_INTEGRAL_DIGITS};
     use std::str::FromStr;

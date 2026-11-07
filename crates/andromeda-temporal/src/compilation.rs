@@ -270,10 +270,6 @@ pub(crate) async fn compile_projection(params: &TemporalQueryParameters, expande
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         compilation::{compile_grouping, compile_instance_page, compile_representation},

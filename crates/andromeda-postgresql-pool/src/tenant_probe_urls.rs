@@ -43,10 +43,6 @@ impl TenantProbeUrls {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{database_url::DatabaseUrl, tenant_probe_urls::TenantProbeUrls};
     use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;

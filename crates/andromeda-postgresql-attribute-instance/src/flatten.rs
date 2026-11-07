@@ -149,8 +149,8 @@ fn stored_value(name: &AttributeName, family: &FamilyValue, keys: &NameKeys) -> 
             },
         }),
         FamilyValue::Relationship { objects, .. } => match objects.as_slice() {
-            [object] => Ok(StoredValue::Uri(object.clone())),              // clone: the row owns the object it binds
-            _ => self::object(&StructuredValue::Objects(objects.clone())), // clone: the codec writes the objects it owns
+            [object] => Ok(StoredValue::Uri(object.clone())),        // clone: the row owns the object it binds
+            _ => object(&StructuredValue::Objects(objects.clone())), // clone: the codec writes the objects it owns
         },
         FamilyValue::LanguageProperty { entries, .. } => object(&StructuredValue::LanguageMap(entries.to_fragment())),
         FamilyValue::VocabProperty { vocab, .. } => match vocab.as_slice() {

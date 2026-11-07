@@ -22,10 +22,6 @@ pub enum TimeProp {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::time_prop::TimeProp;
     use std::str::FromStr;

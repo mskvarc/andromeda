@@ -3,7 +3,10 @@ name = "andromeda-test-suite"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish = false
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
 description = "Black-box tests of the Andromeda NGSI-LD context broker, written against the ngsi-ld client"
 
 [lints]

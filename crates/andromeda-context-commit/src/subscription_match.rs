@@ -69,10 +69,6 @@ fn same_snapshot(left: Option<&Arc<EntityState>>, right: Option<&Arc<EntityState
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{subscription_key::SubscriptionKey, subscription_match::SubscriptionMatch};
     use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes};

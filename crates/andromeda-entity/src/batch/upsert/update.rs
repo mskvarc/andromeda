@@ -40,7 +40,9 @@ enum UpsertFragment {
 /// Updating each entity of a chunk, or creating it when an attempt finds it
 /// absent (clause 5.6.8.4, update mode).
 struct UpdateRewrite<'a> {
+    /// The service whose update or insert builds each write.
     service: &'a EntityService,
+    /// The branch the chunk writes.
     target: &'a ContextTarget,
 }
 
@@ -118,6 +120,9 @@ fn inserted(write: ChunkWrite) -> Result<PlannedWrite<UpsertFragment>, Box<(Iden
 }
 
 impl EntityService {
+    /// Update each entity of `chunk` at `now`, creating the absent ones. Per-entity
+    /// failures are pushed onto `errors`; the outcome lists the created identifiers
+    /// apart. Fails only on a store failure that concerns the whole chunk.
     pub(in crate::batch) async fn batch_upsert_update_chunk(
         &self,
         placement: SideEffectPlacement<'_>,

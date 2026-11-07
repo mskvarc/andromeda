@@ -6,19 +6,27 @@ use andromeda_ngsi_ld_request::{
     query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
 };
 
+/// The entity query parameters of a persisted Snapshot query.
+///
+/// # Errors
+///
+/// Returns the [`ParameterError`] of a query that carries temporal members or
+/// fails entity query validation.
 pub(crate) fn entity_parameters(query: Query) -> Result<EntityQueryParameters, ParameterError> {
     EntityQueryParameters::try_from(query)
 }
 
+/// The temporal query parameters of a persisted Snapshot query.
+///
+/// # Errors
+///
+/// Returns the [`ParameterError`] of a query without a temporal query or one
+/// that fails temporal query validation.
 pub(crate) fn temporal_parameters(query: Query) -> Result<TemporalQueryParameters, ParameterError> {
     TemporalQueryParameters::try_from(query)
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::executor::translation::{entity_parameters, temporal_parameters};
     use andromeda_ngsi_ld_model::query::body::Query;

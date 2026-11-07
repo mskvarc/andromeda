@@ -3,10 +3,6 @@
 //! Each test stores a vocabulary of its own and namespaces every identifier, so every test runs in the shared default
 //! tenant beside every other.
 
-#![deny(missing_docs, unreachable_pub, unused_qualifications)]
-#![deny(clippy::missing_docs_in_private_items)]
-#![forbid(unsafe_code)]
-
 mod batch_operations;
 mod building_documents;
 mod building_fixtures;

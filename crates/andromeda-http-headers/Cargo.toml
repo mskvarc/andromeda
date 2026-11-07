@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license = "EUPL-1.2 AND MIT"
 authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+description = "The typed NGSI-LD HTTP header set, and the values those headers carry"
 
 [lints]
 workspace = true

@@ -22,10 +22,6 @@ pub mod replace_attribute;
 pub mod scope_write;
 pub mod selection;
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 pub(crate) mod speed_entity;
 pub mod sub_attribute_patch;
 pub mod transient_versions;

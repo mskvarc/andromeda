@@ -246,10 +246,6 @@ const fn granted(span: Duration) -> ContextFreshness {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::loader::cache_lifetime::{CacheLifetime, ContextFreshness, ResidualLifetime, response_freshness};
     use andromeda_configuration::schema::configured_lifetime::ConfiguredLifetime;

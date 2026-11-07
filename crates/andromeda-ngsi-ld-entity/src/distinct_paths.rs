@@ -65,10 +65,6 @@ impl FromIterator<ScopePath> for DistinctPaths {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::distinct_paths::DistinctPaths;
     use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;

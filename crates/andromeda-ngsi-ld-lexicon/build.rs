@@ -1,3 +1,6 @@
+//! Composes the lexicon's ABNF grammars with their shared Unicode rules
+//! before the grammar derive macros read them.
+
 use std::{
     env,
     error::Error,
@@ -6,6 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Compose every top-level grammar; any I/O or environment failure fails the build.
 fn main() -> Result<(), Box<dyn Error>> {
     compose_grammars()
 }
@@ -47,6 +51,9 @@ fn compose_grammars() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Write `top` followed by `unicode` to `out`, adding a newline between them
+/// when `top` lacks one. An unchanged output is not rewritten, so its
+/// timestamp does not trigger another build.
 fn compose_one(top: &Path, unicode: &str, out: &Path) -> io::Result<()> {
     let top_src = fs::read_to_string(top)?;
     let mut composed = String::with_capacity(top_src.len() + unicode.len() + 1);

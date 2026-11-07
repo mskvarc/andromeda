@@ -6,7 +6,7 @@ use andromeda_subscription::{endpoint_admission::SubscriptionEndpointValidator, 
 use url::Url;
 
 /// Validates endpoint configuration against the broker's selected delivery bindings.
-pub struct DeliverySubscriptionEndpointValidator;
+pub(crate) struct DeliverySubscriptionEndpointValidator;
 
 impl SubscriptionEndpointValidator for DeliverySubscriptionEndpointValidator {
     fn validate(&self, endpoint: &Url, notifier_info: Option<&[KeyValuePair]>, receiver_info: Option<&[KeyValuePair]>) -> Result<(), EndpointRefusal> {

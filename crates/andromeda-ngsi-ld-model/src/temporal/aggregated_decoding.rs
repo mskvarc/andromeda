@@ -236,11 +236,6 @@ fn instant<'n, N: CompactNode<'n>>(node: N) -> Result<Option<DateTime<Utc>>, Rea
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::temporal::aggregated_entity::{AggregateValue, AggregatedTemporalEntity, AggregatedValues};
     use andromeda_json_literal::piece::JsonPiece;

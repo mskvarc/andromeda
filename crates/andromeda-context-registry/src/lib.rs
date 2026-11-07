@@ -1,8 +1,5 @@
 //! Hosted and cached JSON-LD Context lifecycle policy and persistence ports.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 /// The narrow port for periodically invalidating cached contexts.
 pub mod cached_context_invalidation;
 /// The RFC 8785 canonical form of a stored `@context` document.

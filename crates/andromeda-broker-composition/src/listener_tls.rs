@@ -21,7 +21,7 @@ use thiserror::Error;
 
 /// The shared identity could not be loaded or turned into a listener's configuration.
 #[derive(Debug, Error)]
-pub enum ListenerTlsError {
+pub(crate) enum ListenerTlsError {
     /// The `[tls]` identity could not be loaded or watched.
     #[error(transparent)]
     Identity(#[from] TlsWatchError),
@@ -32,7 +32,7 @@ pub enum ListenerTlsError {
 
 /// The `[tls]` identity the listeners share, loaded the first time a listener
 /// asks for it and watched for as long as this value lives.
-pub struct SharedTlsIdentity<'config> {
+pub(crate) struct SharedTlsIdentity<'config> {
     /// The identity section.
     config: &'config TlsConfig,
     /// The loaded, watched material, once some listener has asked for it.
@@ -42,7 +42,7 @@ pub struct SharedTlsIdentity<'config> {
 impl<'config> SharedTlsIdentity<'config> {
     /// An identity that loads `config` on first use.
     #[must_use]
-    pub const fn new(config: &'config TlsConfig) -> SharedTlsIdentity<'config> {
+    pub(crate) const fn new(config: &'config TlsConfig) -> SharedTlsIdentity<'config> {
         SharedTlsIdentity { config, watch: None }
     }
 
@@ -52,7 +52,7 @@ impl<'config> SharedTlsIdentity<'config> {
     ///
     /// Returns a [`ListenerTlsError`] when `transport` is TLS and the identity
     /// cannot be loaded or configured.
-    pub fn tcp_security(&mut self, transport: ListenerTransport) -> Result<ListenerSecurity, ListenerTlsError> {
+    pub(crate) fn tcp_security(&mut self, transport: ListenerTransport) -> Result<ListenerSecurity, ListenerTlsError> {
         match transport {
             ListenerTransport::Plaintext => Ok(ListenerSecurity::Plaintext),
             ListenerTransport::Tls => Ok(ListenerSecurity::Tls {
@@ -68,7 +68,7 @@ impl<'config> SharedTlsIdentity<'config> {
     ///
     /// Returns a [`ListenerTlsError`] when the identity cannot be loaded or
     /// configured for QUIC.
-    pub fn quic_feed(&mut self) -> Result<ServerConfigFeed, ListenerTlsError> {
+    pub(crate) fn quic_feed(&mut self) -> Result<ServerConfigFeed, ListenerTlsError> {
         Ok(self.watch()?.feed(QUIC_HANDSHAKE_POLICY)?)
     }
 
@@ -85,7 +85,7 @@ impl<'config> SharedTlsIdentity<'config> {
 /// The scheme a listener speaking `transport` mints its URLs with, installed
 /// on its service as a request extension.
 #[must_use]
-pub const fn listener_scheme(transport: ListenerTransport) -> ListenerScheme {
+pub(crate) const fn listener_scheme(transport: ListenerTransport) -> ListenerScheme {
     match transport {
         ListenerTransport::Plaintext => ListenerScheme::new(ApiRootScheme::Http),
         ListenerTransport::Tls => ListenerScheme::new(ApiRootScheme::Https),

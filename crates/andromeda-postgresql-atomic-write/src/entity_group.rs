@@ -118,10 +118,6 @@ pub(crate) fn take_returned<T>(returned: &mut HashMap<Identifier, RowReturned<T>
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::entity_group::{RowReturned, delete_outcome, group, insert_outcome, returned_rows, take_returned, update_outcome};
     use andromeda_context_commit::{

@@ -15,8 +15,7 @@
 //! The rules apply to `[dependencies]`, `[dev-dependencies]`,
 //! `[build-dependencies]`, and their `[target.'…'.…]` forms alike.
 
-use crate::dependencies::workspace_manifest_paths;
-use std::{fs, path::Path};
+use crate::workspace_manifest::check_workspace_manifests;
 use toml_edit::{DocumentMut, Item, TableLike};
 
 /// Assert that every workspace manifest satisfies the hygiene rules.
@@ -25,24 +24,7 @@ use toml_edit::{DocumentMut, Item, TableLike};
 ///
 /// Panics on any hygiene violation, or when a manifest cannot be read or parsed.
 pub fn assert_manifest_hygiene(workspace_root: &str) {
-    let root = Path::new(workspace_root);
-    let mut violations = Vec::new();
-    for path in workspace_manifest_paths(root) {
-        let relative = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
-        let manifest = match fs::read_to_string(&path) {
-            Ok(manifest) => manifest,
-            Err(error) => {
-                violations.push(format!("{relative} could not be read: {error}"));
-                continue;
-            }
-        };
-        match manifest.parse::<DocumentMut>() {
-            Ok(document) => check_document(&relative, &document, &mut violations),
-            Err(error) => violations.push(format!("{relative} does not parse as TOML: {error}")),
-        }
-    }
-    violations.sort();
-    violations.dedup();
+    let violations = check_workspace_manifests(workspace_root, check_document);
     assert!(violations.is_empty(), "Cargo manifest hygiene violations:\n{}", violations.join("\n"));
 }
 
@@ -176,10 +158,6 @@ fn is_full_semver(version: &str) -> bool {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::manifest_hygiene::{check_document, is_full_semver};
     use pretty_assertions::assert_eq;

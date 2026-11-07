@@ -227,6 +227,8 @@ impl ForwardedQuery {
         Ok(Some(query))
     }
 
+    /// Write the page `source_page` asks each source for, leaving out a zero
+    /// offset, or the page-size hint of a walk that follows `next` to the end.
     fn push_source_page(&mut self, source_page: Option<SourcePage>) {
         match source_page {
             Some(page) => {
@@ -257,10 +259,12 @@ impl ForwardedQuery {
         serializer.finish()
     }
 
+    /// Append one parameter after the ones already written.
     fn push(&mut self, parameter: ForwardedParameter, value: String) {
         self.pairs.push((parameter, value));
     }
 
+    /// Append `parameter` only when `value` is present.
     fn push_optional(&mut self, parameter: ForwardedParameter, value: Option<String>) {
         if let Some(value) = value {
             self.push(parameter, value);
@@ -296,6 +300,7 @@ impl ForwardedQuery {
         }
     }
 
+    /// Write the `datasetId` selectors comma-separated; an absent or empty list writes nothing.
     fn push_dataset_ids(&mut self, selectors: Option<&[DatasetSelector]>) {
         if let Some(selectors) = selectors.filter(|selectors| !selectors.is_empty()) {
             self.push(
@@ -305,6 +310,7 @@ impl ForwardedQuery {
         }
     }
 
+    /// Write the `lang` preferences comma-separated, when the client gave a filter.
     fn push_lang(&mut self, lang: Option<&LanguageFilter>) {
         if let Some(lang) = lang {
             self.push(
@@ -337,11 +343,6 @@ impl ForwardedQuery {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         forwarded_names::ForwardedNames,

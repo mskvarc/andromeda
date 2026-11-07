@@ -183,10 +183,6 @@ pub(super) fn catch_up_order(candidates: Vec<CatchUpCandidate>) -> Vec<TenantNam
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         schema_contract::server_requirements::{ExtensionPresence, ExtensionVersion},

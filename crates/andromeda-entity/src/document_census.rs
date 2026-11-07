@@ -167,11 +167,6 @@ impl DocumentCensus {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::document_census::{admit_entity_document, admit_instance_document};
     use andromeda_ngsi_ld_entity::document::{EntityDocument, instance_document::InstanceDocument};

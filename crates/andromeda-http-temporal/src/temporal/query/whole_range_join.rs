@@ -40,10 +40,6 @@ fn aggregates_mut(histories: &mut [TemporalHistory]) -> impl Iterator<Item = &mu
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::temporal::query::whole_range_join::close_hub_aggregates;
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, attribute_type::AttributeType};

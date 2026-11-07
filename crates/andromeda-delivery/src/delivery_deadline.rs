@@ -27,10 +27,6 @@ pub fn delivery_deadline(endpoint_timeout: Option<PositiveMilliseconds>, system:
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::delivery_deadline::delivery_deadline;
     use andromeda_ngsi_ld_lexicon::positive_milliseconds::PositiveMilliseconds;

@@ -39,8 +39,11 @@ fn names_a_member(fragment: &EntityDocument) -> bool {
 /// Updating each entity of a chunk as an attempt read it (clause 5.6.9.4 runs
 /// the behaviour of clause 5.6.3 per entity).
 struct UpdateRewrite<'a> {
+    /// The service whose append builds each write.
     service: &'a EntityService,
+    /// The branch the chunk writes.
     target: &'a ContextTarget,
+    /// Whether an attribute the entity already holds is overwritten or kept.
     overwrite: OverwritePolicy,
 }
 
@@ -98,6 +101,8 @@ impl ChunkRewrite for UpdateRewrite<'_> {
 }
 
 impl EntityService {
+    /// Append the attributes of each fragment of `chunk` to its entity at `now`.
+    /// Fails only on a store failure that concerns the whole chunk.
     pub(super) async fn batch_update_chunk(
         &self,
         placement: SideEffectPlacement<'_>,
@@ -132,10 +137,6 @@ impl EntityService {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         admission_fixture::admitted_batch,

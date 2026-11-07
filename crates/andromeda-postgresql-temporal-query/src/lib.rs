@@ -10,9 +10,6 @@
 //! backend that is not PostgreSQL a wiring choice: a `ClickHouse` profile
 //! replaces this crate and reuses the context statements unchanged.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 mod aggregated_page;
 pub mod aggregated_value;
 pub mod aggregation;

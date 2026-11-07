@@ -23,7 +23,9 @@ use std::sync::Arc;
 /// Replacing each entity of a chunk, or creating it when an attempt finds it
 /// absent (clause 5.6.8.4, replace mode).
 struct ReplaceRewrite<'a> {
+    /// The service whose replacement builds each write.
     service: &'a EntityService,
+    /// The branch the chunk writes.
     target: &'a ContextTarget,
 }
 
@@ -48,6 +50,9 @@ impl ChunkRewrite for ReplaceRewrite<'_> {
 }
 
 impl EntityService {
+    /// Replace each entity of `chunk` at `now`, creating the absent ones. Per-entity
+    /// failures are pushed onto `errors`; the outcome lists the created identifiers
+    /// apart. Fails only on a store failure that concerns the whole chunk.
     pub(in crate::batch) async fn batch_upsert_replace_chunk(
         &self,
         placement: SideEffectPlacement<'_>,

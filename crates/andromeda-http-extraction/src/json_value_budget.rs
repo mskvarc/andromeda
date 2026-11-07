@@ -57,10 +57,6 @@ pub fn refuse_values_past_budget(payload: &[u8], limit: Option<RequestJsonValueL
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{json_value_budget::refuse_values_past_budget, request_json_value_limit::RequestJsonValueLimit};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;

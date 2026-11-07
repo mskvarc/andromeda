@@ -110,10 +110,6 @@ fn entities_with_expired_attributes_statement(target: &ContextTarget, cutoff: Da
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::entity::expiry::{entities_due_for_expiry_statement, entities_with_expired_attributes_statement};
     use andromeda_context_space::context_target::ContextTarget;

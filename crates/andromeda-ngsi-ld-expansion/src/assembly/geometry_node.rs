@@ -42,7 +42,7 @@ use indexmap::IndexMap;
 /// naming no geometry type, [`GeometryError::MissingCoordinates`], the
 /// nesting, line, ring and position refusals of the coordinates, and
 /// [`GeometryError::InvalidBbox`] for a `bbox` RFC 7946 section 5 refuses.
-pub fn geometry_of(node: ExpandedNode) -> Result<ExpandedGeometry, GeometryError> {
+pub(crate) fn geometry_of(node: ExpandedNode) -> Result<ExpandedGeometry, GeometryError> {
     let form = geometry_form(&node)?;
     let mut bbox = None;
     let mut foreign = Vec::new();
@@ -77,7 +77,7 @@ fn bounding_box(items: &[ExpandedItem]) -> Result<BoundingBox, GeometryError> {
 /// Returns [`EntityRefusal::ExpandedMemberName`] for a foreign member name
 /// that expansion never keeps, and the refusals of an expanded value for its values, the
 /// NGSI-LD Null among them.
-pub fn geometry_value(attribute: &AttributeName, geometry: ExpandedGeometry) -> Result<GeometryValue, EntityRefusal> {
+pub(crate) fn geometry_value(attribute: &AttributeName, geometry: ExpandedGeometry) -> Result<GeometryValue, EntityRefusal> {
     let ExpandedGeometry { form, bbox, foreign } = geometry;
     let foreign = foreign
         .into_iter()

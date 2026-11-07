@@ -29,9 +29,6 @@
 //!
 //! See [`registry`] for the pattern every code domain is declared with.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 /// The persisted transition of one Attribute instance a notification event
 /// records.
 pub mod attribute_change_kind;

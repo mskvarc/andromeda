@@ -80,7 +80,7 @@ fn written_columns(
 ///
 /// Returns the persistence failure of a document that cannot be written as
 /// JSON or of an insert that cannot be assembled.
-pub fn csource_create(
+pub(super) fn csource_create(
     target: &ContextTarget,
     id: &Identifier,
     fields: &SubscriptionFields<'_>,
@@ -120,7 +120,7 @@ pub fn csource_create(
 ///
 /// Returns the persistence failure of a document that cannot be written as
 /// JSON.
-pub fn csource_update(
+pub(super) fn csource_update(
     target: &ContextTarget,
     id: &Identifier,
     fields: &SubscriptionFields<'_>,
@@ -140,10 +140,6 @@ pub fn csource_update(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::subscription_store::{
         bare_fields_fixture::bare_fields,

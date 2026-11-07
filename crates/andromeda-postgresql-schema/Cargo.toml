@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+description = "The physical-schema iden catalogue: the single source of truth for every table, column and shared alias the PostgreSQL statements name"
 
 [lints]
 workspace = true

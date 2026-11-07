@@ -112,10 +112,6 @@ impl TemporalHistoryCommitMode {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::history_mode::{CommitResponse, HistoryPlacement, InlineRecording, TemporalHistoryCommitMode};
     use andromeda_configuration::schema::database::{name_cache::NameCacheConfig, write_reserve::WriteReserve};

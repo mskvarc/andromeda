@@ -257,10 +257,6 @@ pub(crate) async fn read_links(pool: &PgPool, id: &Identifier) -> Result<Vec<(St
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         entity_map::entries::{entries_delete, entries_insert_statement, link_upsert, links_insert_statement},

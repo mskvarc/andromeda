@@ -91,6 +91,7 @@ fn local_entity_for_forwarding<T>(result: Result<T, EntityError>) -> Result<Opti
     }
 }
 
+/// Retrieve Entity (clause 5.7.1); a clause 4.5.23 flat join answers a collection instead.
 pub(crate) async fn get(
     context_target::ExistingTargetedTenantState {
         services: state,
@@ -234,10 +235,6 @@ pub(crate) async fn get(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::entity::retrieve::local_entity_for_forwarding;
     use andromeda_entity::error::EntityError;

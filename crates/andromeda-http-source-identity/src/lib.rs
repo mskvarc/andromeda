@@ -1,8 +1,5 @@
 //! Focused HTTP binding for the NGSI-LD context source identity resource.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 /// Context Source identity configuration.
 /// The default tenant's context resolution and hosting.
 pub mod default_tenant_contexts;

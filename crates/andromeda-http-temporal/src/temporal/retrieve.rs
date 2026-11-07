@@ -50,7 +50,9 @@ use andromeda_ngsi_ld_render::structural_projection::StructuralProjection;
 use andromeda_ngsi_ld_request::query::temporal::{operation::TemporalQueryOperation, retrieve_parameters::TemporalRetrieveParameters};
 use andromeda_temporal::{error::TemporalError, service::TemporalRange, temporal_invariant::TemporalInvariant};
 
-pub async fn get(
+/// Retrieve Temporal Evolution of an Entity (clause 5.7.3): 201 when an
+/// `EntityMap` was created, 206 when the history was truncated, 200 otherwise.
+pub(crate) async fn get(
     context_target::ExistingTargetedTenantState {
         services: state,
         target,

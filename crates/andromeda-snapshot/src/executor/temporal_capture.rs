@@ -62,6 +62,14 @@ pub(super) struct TemporalCapture<'q> {
 }
 
 impl SnapshotExecutor {
+    /// Execute one snapshot temporal query and capture its whole result,
+    /// paging the local history and the forwarded sources side by side.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transient failure a local page read or a history write met,
+    /// on which the preparation restarts; the query's own failures are
+    /// recorded in the returned details.
     pub(crate) async fn run_temporal_query(
         &self,
         target: &ContextTarget,

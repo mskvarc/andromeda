@@ -363,10 +363,6 @@ fn notification_status_from_timestamps(last_success: Option<DateTime<Utc>>, last
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         json_text::JsonText,

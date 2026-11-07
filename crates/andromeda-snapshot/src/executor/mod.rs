@@ -53,9 +53,14 @@ use tracing::{debug, info, warn};
 
 /// Executes a snapshot's typed queries and persists their frozen results.
 pub struct SnapshotExecutor {
+    /// The live branch and the entity, temporal and forwarding queries the
+    /// captured results are read from.
     sources: SnapshotCaptureSources,
+    /// Records the final status and execution details of each capture.
     snapshot_repo: Arc<dyn SnapshotStore>,
+    /// Commits the captured entities and history into the Snapshot's branch.
     writes: Arc<dyn ContextCommitter>,
+    /// Entities read per local page and per forwarded source page.
     capture_page_size: u32,
     /// The deepest nesting an attribute a Context Source answered may have to
     /// be captured.
@@ -165,12 +170,20 @@ impl SnapshotPreparationOutcome {
 
 /// Bounded operation that executes the next persisted preparing snapshot.
 pub struct SnapshotPreparation {
+    /// Claims, renews, releases and promotes preparations, and enforces the
+    /// tenant quotas after each round.
     store: Arc<dyn SnapshotStore>,
+    /// Runs the queries of each claimed preparation that is not a clone.
     executor: SnapshotExecutor,
+    /// Preparations claimed per round, at least one.
     max_per_pass: usize,
+    /// The lease holder every claim of this preparation is taken as.
     worker_id: LeaseHolder,
+    /// How long a claim lasts before it is renewed or another worker takes it.
     lease_duration: Duration,
+    /// Snapshots a tenant may keep, `None` for no limit.
     tenant_count_quota: Option<usize>,
+    /// Materialized bytes a tenant's Snapshots may hold, `None` for no limit.
     tenant_byte_quota: Option<u64>,
 }
 
@@ -330,10 +343,6 @@ fn lease_deadline(lease: Duration) -> Result<chrono::DateTime<Utc>, SnapshotErro
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::executor::persisted_query_context;
     use andromeda_json_literal::JsonLiteral;

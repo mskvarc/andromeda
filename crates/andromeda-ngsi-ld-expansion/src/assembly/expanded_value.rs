@@ -30,7 +30,7 @@ use indexmap::IndexMap;
 use langtag::LangTagBuf;
 
 /// How one member of a structured value is held in a value mode.
-pub trait MemberMode: ValueMode {
+pub(crate) trait MemberMode: ValueMode {
     /// The member holding `values`.
     fn values(values: Vec<ExpandedValue<Self>>) -> Self::Member;
 
@@ -71,7 +71,7 @@ impl MemberMode for Fragment {
 /// # Errors
 ///
 /// As [`expanded_value`].
-pub fn expanded_values<M: MemberMode>(attribute: &AttributeName, items: Vec<ExpandedItem>) -> Result<Vec<ExpandedValue<M>>, EntityRefusal> {
+pub(crate) fn expanded_values<M: MemberMode>(attribute: &AttributeName, items: Vec<ExpandedItem>) -> Result<Vec<ExpandedValue<M>>, EntityRefusal> {
     items.into_iter().map(|item| expanded_value(attribute, item)).collect()
 }
 
@@ -85,7 +85,7 @@ pub fn expanded_values<M: MemberMode>(attribute: &AttributeName, items: Vec<Expa
 /// stands only for a `GeoProperty` value (clause 4.7.1), and
 /// [`EntityRefusal::ExpandedMemberName`] for a member name or a node type
 /// expansion never keeps.
-pub fn expanded_value<M: MemberMode>(attribute: &AttributeName, item: ExpandedItem) -> Result<ExpandedValue<M>, EntityRefusal> {
+pub(crate) fn expanded_value<M: MemberMode>(attribute: &AttributeName, item: ExpandedItem) -> Result<ExpandedValue<M>, EntityRefusal> {
     if is_null(&item) {
         return Err(null_beside_data(attribute));
     }
@@ -103,7 +103,7 @@ pub fn expanded_value<M: MemberMode>(attribute: &AttributeName, item: ExpandedIt
 /// # Errors
 ///
 /// Returns [`EntityRefusal::Malformed`] for a part that is not what it names.
-pub fn literal(attribute: &AttributeName, value: ValueObject) -> Result<Literal, EntityRefusal> {
+pub(crate) fn literal(attribute: &AttributeName, value: ValueObject) -> Result<Literal, EntityRefusal> {
     let malformed = || nested_malformed(attribute);
     let scalar = match value.scalar {
         Scalar::Number(text) => LiteralValue::Number(text.parse::<JsonNumber>().map_err(|_| malformed())?),
@@ -147,7 +147,7 @@ fn value_node<M: MemberMode>(attribute: &AttributeName, node: ExpandedNode) -> R
 /// # Errors
 ///
 /// As [`expanded_value`], and the refusal of a mode that holds no deletion.
-pub fn node_member<M: MemberMode>(attribute: &AttributeName, items: Vec<ExpandedItem>) -> Result<M::Member, EntityRefusal> {
+pub(crate) fn node_member<M: MemberMode>(attribute: &AttributeName, items: Vec<ExpandedItem>) -> Result<M::Member, EntityRefusal> {
     if is_sole_null(&items) {
         Ok(M::deletion(attribute)?)
     } else {
@@ -164,11 +164,6 @@ fn nested_malformed(attribute: &AttributeName) -> EntityRefusal {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         assembly::expanded_value::expanded_value,

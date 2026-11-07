@@ -29,12 +29,12 @@ use tokio::time::timeout;
 
 /// The longest one request may run before it is answered as failed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RequestDeadline(Duration);
+pub(super) struct RequestDeadline(Duration);
 
 impl RequestDeadline {
     /// A deadline of `limit` from the moment the request reaches the layer.
     #[must_use]
-    pub const fn new(limit: Duration) -> RequestDeadline {
+    pub(super) const fn new(limit: Duration) -> RequestDeadline {
         RequestDeadline(limit)
     }
 }
@@ -52,7 +52,7 @@ struct BodyLate(Duration);
 /// Run the rest of the stack, answering once the deadline passes first: 408
 /// `RequestTimeout` while the stack waits on the client for more of the body,
 /// 500 `InternalError` otherwise.
-pub async fn answer_within_deadline(State(deadline): State<RequestDeadline>, request: Request, next: Next) -> Response {
+pub(super) async fn answer_within_deadline(State(deadline): State<RequestDeadline>, request: Request, next: Next) -> Response {
     let instance = addressed_request_uri(&request);
     let version = request.version();
     let (request, arrival) = BodyArrival::watch(request);

@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 /// Independently scheduled deletion of expired snapshots.
 pub struct SnapshotExpiry {
+    /// Deletes the Snapshots whose expiry has passed.
     store: Arc<dyn SnapshotStore>,
 }
 

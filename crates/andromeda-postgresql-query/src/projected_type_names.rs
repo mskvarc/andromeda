@@ -71,10 +71,6 @@ fn collect_path_guards(path: &QueryPath, out: &mut Vec<EntityTypeName>) {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::projected_type_names::projected_type_names;
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;

@@ -61,7 +61,7 @@ fn local_temporal_outcome<T>(result: Result<T, TemporalError>, forwarded: &[Forw
 }
 
 /// Temporal add attributes handling.
-pub mod add_attributes;
+pub(crate) mod add_attributes;
 /// How far the merged history of a federated temporal read is complete
 /// (clause 6.3.10).
 mod complete_history;
@@ -69,33 +69,29 @@ mod complete_history;
 ///
 /// Creates a new temporal entity or updates an existing one from the request payload.
 /// Temporal create or update handling.
-pub mod create_or_update;
+pub(crate) mod create_or_update;
 /// Temporal delete handling.
-pub mod delete;
+pub(crate) mod delete;
 /// Temporal delete attribute handling.
-pub mod delete_attribute;
+pub(crate) mod delete_attribute;
 /// Temporal delete attribute instance handling.
-pub mod delete_attribute_instance;
+pub(crate) mod delete_attribute_instance;
 /// Temporal history delete-by-query handling (the delete-by-query extension).
-pub mod delete_by_query;
+pub(crate) mod delete_by_query;
 /// Where the entities a temporal `EntityMap` attributes to this broker come from.
-pub mod local_map_entities;
+pub(crate) mod local_map_entities;
 /// Temporal query handling.
-pub mod query;
+pub(crate) mod query;
 /// Temporal retrieve handling.
-pub mod retrieve;
+pub(crate) mod retrieve;
 /// Aggregating at this broker the entity of a federated temporal retrieval.
 mod retrieve_aggregation;
 /// The distributed half of a temporal retrieval.
 mod retrieve_forwarding;
 /// Temporal update attribute instance handling.
-pub mod update_attribute_instance;
+pub(crate) mod update_attribute_instance;
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::temporal::local_temporal_outcome;
     use andromeda_federation::{

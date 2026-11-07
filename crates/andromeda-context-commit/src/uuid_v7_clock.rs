@@ -22,10 +22,6 @@ pub(crate) fn mint() -> Uuid {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::uuid_v7_clock;
     use pretty_assertions::assert_eq;
@@ -55,7 +51,7 @@ mod tests {
 
     #[test]
     fn values_minted_within_one_millisecond_keep_mint_order_and_stay_distinct() {
-        let minted: Vec<uuid::Uuid> = (0..1024).map(|_| uuid_v7_clock::mint()).collect();
+        let minted: Vec<Uuid> = (0..1024).map(|_| uuid_v7_clock::mint()).collect();
         let mut sorted = minted.clone(); // clone: the comparison needs both the mint order and the sorted order.
         sorted.sort_unstable();
         assert_eq!(minted, sorted);

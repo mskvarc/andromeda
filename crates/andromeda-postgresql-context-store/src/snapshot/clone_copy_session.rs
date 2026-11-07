@@ -176,10 +176,6 @@ pub(crate) async fn end_copy_sessions(transaction: &mut Transaction<'_, Postgres
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::snapshot::clone_copy_session::{CopySession, end_statement, forget_statement, own_session_statement, record_statement};
     use andromeda_context_space::snapshot_key::SnapshotKey;

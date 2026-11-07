@@ -34,10 +34,6 @@ impl From<&NgsiLdReference> for AttributeName {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{attribute_name::AttributeName, identifier_length::IDENTIFIER_BYTE_LIMIT, reference::NgsiLdReferenceError};
     use indexmap::IndexMap;

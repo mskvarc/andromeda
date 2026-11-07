@@ -34,10 +34,6 @@ pub fn single_source_declined(status: u16, instance: &Uri) -> ProblemResponse {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::declined_representation::single_source_declined;
     use andromeda_ngsi_ld_problem_details::problem_detail::ProblemClassification;

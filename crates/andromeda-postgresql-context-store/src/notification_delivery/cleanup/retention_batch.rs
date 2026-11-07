@@ -135,10 +135,6 @@ fn batch_statement(target: &ContextTarget, clock: RetentionClock, cutoff: DateTi
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::notification_delivery::cleanup::retention_batch::{RetentionClock, RetentionCursor, batch_statement};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};

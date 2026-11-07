@@ -26,10 +26,6 @@ pub(crate) fn sort_members(value: &mut Value) {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::engine::member_order::sort_members;
     use jstrict::{Print, parse::parse_str_value};

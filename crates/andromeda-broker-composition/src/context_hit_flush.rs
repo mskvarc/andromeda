@@ -10,14 +10,16 @@ use tokio::{
 };
 
 /// A tenant-owned flush worker with an orderly final-drain protocol.
-pub struct ContextHitFlushWorker {
+pub(crate) struct ContextHitFlushWorker {
+    /// Signals the worker to stop ticking and run the final bounded drain.
     shutdown: watch::Sender<()>,
+    /// The worker task, joined on shutdown so the final drain completes first.
     handle: JoinHandle<()>,
 }
 
 impl ContextHitFlushWorker {
     /// Start periodically transferring accumulated hits into the durable store.
-    pub fn spawn(counter: Arc<HitCounter>, store: Arc<dyn ContextHitStore>, interval: Duration) -> ContextHitFlushWorker {
+    pub(crate) fn spawn(counter: Arc<HitCounter>, store: Arc<dyn ContextHitStore>, interval: Duration) -> ContextHitFlushWorker {
         let (shutdown, mut shutdown_rx) = watch::channel(());
         let handle = tokio::spawn(async move {
             let mut ticker = tokio_interval(interval);
@@ -39,7 +41,7 @@ impl ContextHitFlushWorker {
     }
 
     /// Stop periodic work and wait until the final durable flush succeeds.
-    pub async fn shutdown(self) {
+    pub(crate) async fn shutdown(self) {
         let _receivers = self.shutdown.send(());
         if let Err(error) = self.handle.await {
             tracing::error!(error = %error, event = "context_hit_flush_worker_join_failed");
@@ -110,10 +112,6 @@ fn restore(counter: &HitCounter, pending: Vec<HitDelta>) {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::context_hit_flush::{FINAL_FLUSH_ATTEMPTS, flush_until_durable};
     use andromeda_context_registry::{

@@ -219,10 +219,6 @@ fn keeps_scope<'a, E: SelectedEntity<'a>>(scope: ScopeRetention, entity: E) -> b
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{query_residual::ResidualFilter, residual_filter::matches};
     use andromeda_ngsi_ld_entity::entity_state::EntityState;

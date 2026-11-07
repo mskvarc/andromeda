@@ -276,11 +276,6 @@ fn csr_ordering_condition(path: &AttrPath, op: OrderingOp, rhs: &Scalar) -> Cond
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;

@@ -18,19 +18,11 @@ mod fallback_plan;
 mod narrowing;
 /// The registrations and entities the batch forwarding tests share.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod registration_fixture;
 /// The request a single-entity fallback write sends.
 mod single_write;
 /// The clause 5.6.8.4 follow-up of an upsert, against a source that holds itself back after a failure.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod upsert_follow_up_tests;
 
 use crate::{
@@ -384,11 +376,6 @@ const fn entity_payload<'a>(body: Option<&'a EntityDocument>, context: &'a Conte
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         outcome::ForwardedWriteOutcome,

@@ -66,10 +66,6 @@ pub struct DeleteParams {
 query_parameter_set!(DeleteParams { Reload });
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         jsonld_context::{CONTEXT_PAGE_SIZE, DeleteParams, ListParams, ServeParams},

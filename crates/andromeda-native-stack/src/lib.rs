@@ -4,9 +4,6 @@
 //!
 //! A recursion point runs its callee through [`on_sufficient_stack`], which moves it to a freshly allocated segment when little of the current stack is left. What bounds a recursion stays what bounds it; this only lets the bound be reached on any thread, as `jsonld_syntax::native_stack` does for the JSON-LD algorithms.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 /// Stack left below which a recursion level moves to a fresh segment: well above what one level of the readings takes in an unoptimized build.
 const RED_ZONE: usize = 128 * 1024;
 
@@ -27,10 +24,6 @@ andromeda_architecture_checks::dependency_boundary! {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::on_sufficient_stack;
     use std::{hint::black_box, thread};

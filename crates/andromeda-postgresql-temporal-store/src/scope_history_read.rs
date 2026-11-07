@@ -193,10 +193,6 @@ fn decode_scope_value(row: &PgRow) -> Result<ScopeHistoryValue, TemporalStoreErr
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         scope_history_read::{StoredScopeRow, fold_event},

@@ -2,13 +2,13 @@
 //!
 //! This crate owns the handlers, entity-specific extraction, focused tenant state, route inventory, batch projection, and exhaustive classification of the focused errors consumed by clauses 5.6.1 through 5.6.10.
 
-#![deny(missing_docs)]
-
 pub mod attribute;
 mod batch_payload_admission;
 mod compact_screening;
 mod discovered_response;
+/// Handlers of the `/entities` resources: single-entity and attribute writes, retrieval, Query Entities and Purge Entities.
 mod entity;
+/// Handlers of the `/entityOperations` resources: the batch writes and the POST binding of Query Entities.
 mod entity_operations;
 pub mod entity_type;
 pub mod error;

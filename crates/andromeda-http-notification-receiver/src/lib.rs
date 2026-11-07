@@ -2,9 +2,6 @@
 //! notifies this broker at for the subscriptions it forwarded (clauses 5.8.1.4
 //! and 5.8.6).
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod error;
 mod handler;
 pub mod routes;

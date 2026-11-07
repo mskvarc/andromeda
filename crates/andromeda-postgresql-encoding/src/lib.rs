@@ -11,9 +11,6 @@
 //! so the store binds [`ewkb::Ewkb::as_bytes`] directly and this crate stays
 //! usable by the query renderers, which must not see a database driver.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod array_literal;
 pub mod copy;
 pub mod ewkb;

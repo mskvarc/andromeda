@@ -121,10 +121,6 @@ pub(super) fn listing_page(kind: StoredKind, target: &ContextTarget, window: &Pa
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::subscription_store::{
         projection::{listing_page, projected_select},

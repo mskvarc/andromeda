@@ -3,26 +3,38 @@
 use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, ExecutionResultStatus, SnapshotStatus};
 use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemDetail};
 
+/// The execution result details of every query of one Snapshot, from which
+/// its final status is decided (ETSI GS CIM 009 v1.9.1 clause 5.16.1.4).
 #[derive(Default)]
 pub(crate) struct ExecutionAggregate {
+    /// One detail per entity query, in query order.
     query_details: Vec<ExecutionResultDetails>,
+    /// One detail per temporal query, in query order.
     temporal_query_details: Vec<ExecutionResultDetails>,
+    /// Some query succeeded, with or without results.
     any_success: bool,
+    /// Some query succeeded and captured at least one entity.
     any_success_with_results: bool,
+    /// Some query failed.
     any_failure: bool,
 }
 
 impl ExecutionAggregate {
+    /// Record the outcome of the next entity query.
     pub(crate) fn push_entity(&mut self, detail: ExecutionResultDetails) {
         self.update_flags(&detail);
         self.query_details.push(detail);
     }
 
+    /// Record the outcome of the next temporal query.
     pub(crate) fn push_temporal(&mut self, detail: ExecutionResultDetails) {
         self.update_flags(&detail);
         self.temporal_query_details.push(detail);
     }
 
+    /// `success` when one query captured data and none failed, `partial` when
+    /// one captured data and another failed, `empty` when queries succeeded
+    /// without data, `failure` when none succeeded or none ran.
     pub(crate) const fn final_status(&self) -> SnapshotStatus {
         if self.any_success_with_results && !self.any_failure {
             SnapshotStatus::Success
@@ -35,12 +47,15 @@ impl ExecutionAggregate {
         }
     }
 
+    /// The entity and temporal query details, each `None` when no query of
+    /// that kind ran.
     pub(crate) fn detail_slices(&self) -> (Option<&[ExecutionResultDetails]>, Option<&[ExecutionResultDetails]>) {
         let query_details = (!self.query_details.is_empty()).then_some(self.query_details.as_slice());
         let temporal_query_details = (!self.temporal_query_details.is_empty()).then_some(self.temporal_query_details.as_slice());
         (query_details, temporal_query_details)
     }
 
+    /// Fold one detail's status into the success and failure flags.
     const fn update_flags(&mut self, detail: &ExecutionResultDetails) {
         match detail.result_status {
             ExecutionResultStatus::Success => {
@@ -53,6 +68,8 @@ impl ExecutionAggregate {
     }
 }
 
+/// The detail of a query that ran: `success` when it captured `count > 0`
+/// entities, `empty` otherwise.
 pub(crate) const fn success_detail(count: usize) -> ExecutionResultDetails {
     ExecutionResultDetails {
         result_status: if count > 0 {
@@ -64,6 +81,8 @@ pub(crate) const fn success_detail(count: usize) -> ExecutionResultDetails {
     }
 }
 
+/// The detail of a failed query, carrying `message` as the detail of an
+/// `InternalError` problem.
 pub(crate) fn failure_detail(message: impl Into<String>) -> ExecutionResultDetails {
     ExecutionResultDetails {
         result_status: ExecutionResultStatus::Failure,

@@ -184,6 +184,12 @@ macro_rules! workspace_architecture {
                 $crate::manifest_hygiene::assert_manifest_hygiene(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
+            /// Every package inherits version, edition, publishing and lints from the workspace and describes itself.
+            #[test]
+            fn manifests_inherit_package_metadata() {
+                $crate::package_metadata::assert_package_metadata(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
             /// Configuration types are defined in the configuration crate, and only the composition reads the root.
             #[test]
             fn configuration_has_one_owner() {

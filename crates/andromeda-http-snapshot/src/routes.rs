@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 /// The complete snapshot route fragment.
 pub struct SnapshotRoutes {
+    /// The `/snapshots` routes with the tenant resolver bound as state.
     router: Router,
 }
 

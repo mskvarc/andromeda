@@ -47,10 +47,6 @@ pub fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::temporal_failure::classify_temporal_error;
     use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};

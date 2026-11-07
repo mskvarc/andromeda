@@ -13,10 +13,6 @@ pub(crate) fn stored_conformance(version: Option<SpecVersion>) -> Option<String>
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::subscription_store::conformance_text::stored_conformance;
     use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;

@@ -130,10 +130,6 @@ pub(crate) fn narrowed_document<'d>(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::attribute_coverage::{covered_attributes, matching_attributes, narrowed_document};
     use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};

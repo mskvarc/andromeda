@@ -60,10 +60,6 @@ async fn vetted_addrs(host: String, policy: AddressPolicy) -> ResolveResult {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{address_policy::AddressPolicy, endpoint_refusal::EndpointRefusal, resolver::vetted_addrs};
     use andromeda_configuration::{address_rule::AddressRule, schema::private_addresses::PrivateAddresses};

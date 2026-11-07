@@ -21,7 +21,7 @@ use jsonld::{Direction as JsonLdDirection, Id, Term, ValidId, syntax::Keyword};
 /// # Errors
 ///
 /// Declines every combination the algorithm refuses, and `@index`.
-pub fn expand_value_object<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, entries: &[KeyedEntry<'_, N>]) -> Result<Expanded, Decline> {
+pub(crate) fn expand_value_object<'n, N: CompactNode<'n>>(scope: &TermScope<'_>, entries: &[KeyedEntry<'_, N>]) -> Result<Expanded, Decline> {
     let mut value = None;
     let mut datatype = None;
     let mut json = false;

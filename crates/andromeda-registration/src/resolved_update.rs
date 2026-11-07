@@ -156,10 +156,6 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{resolved_update::apply_fragment, store::update_fragment::CsrUpdateFragment};
     use andromeda_json_literal::JsonLiteral;

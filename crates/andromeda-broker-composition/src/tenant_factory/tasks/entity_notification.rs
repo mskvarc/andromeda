@@ -302,6 +302,10 @@ struct EvaluationLimits {
     shutdown_drain: Duration,
 }
 
+/// Register the resident entity notification worker. Under live delivery it
+/// dispatches each queued change to its entity's lane and settles the queue on
+/// cancellation; under durable delivery it follows only Subscription changes.
+/// A lagged stream reloads the cache; a closed channel fails the attempt.
 fn register_notification_processor(
     supervisor: &TaskSupervisor,
     streams: EntityNotificationStreams,

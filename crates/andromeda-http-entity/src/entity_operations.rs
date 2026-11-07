@@ -48,6 +48,7 @@ use axum::{
 };
 use headers::HeaderMapExt;
 
+/// Mark `response` with `Preference-Applied: respond-async` when its side effects were deferred to a background worker.
 fn apply_preference_applied(mut response: Response, placement: SideEffectPlacement<'_>) -> Response {
     if matches!(placement, SideEffectPlacement::DeferredOnLive) {
         response.headers_mut().typed_insert(PreferenceApplied::respond_async());
@@ -55,6 +56,7 @@ fn apply_preference_applied(mut response: Response, placement: SideEffectPlaceme
     response
 }
 
+/// Whether the `Prefer` header asks for `respond-async` processing.
 const fn async_preference(prefer: PreferHeader) -> AsyncPreference {
     match prefer.respond_mode {
         Some(RespondMode::Async) => AsyncPreference::Requested,
@@ -99,16 +101,16 @@ async fn created_response(
 }
 
 /// Batch entity creation handling.
-pub mod create;
+pub(crate) mod create;
 /// Batch entity deletion handling.
-pub mod delete;
+pub(crate) mod delete;
 /// The forwarded half shared by every batch operation.
 mod forwarded;
 /// Batch entity merge handling.
-pub mod merge;
+pub(crate) mod merge;
 /// POST entity query handling.
-pub mod query;
+pub(crate) mod query;
 /// Batch entity update handling.
-pub mod update;
+pub(crate) mod update;
 /// Batch entity upsert handling.
-pub mod upsert;
+pub(crate) mod upsert;

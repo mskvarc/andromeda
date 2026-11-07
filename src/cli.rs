@@ -1,4 +1,11 @@
-#![expect(clippy::absolute_paths, reason = "shadow generates absolute standard-library paths")]
+//! The broker's command-line interface: global listener and configuration
+//! overrides and the subcommands that run instead of the broker.
+
+#![expect(
+    clippy::absolute_paths,
+    unreachable_pub,
+    reason = "shadow generates absolute standard-library paths, and its constants as `pub` inside this private module"
+)]
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use shadow_rs::shadow;
@@ -16,7 +23,7 @@ shadow!(build);
 #[command(version = build::CLAP_LONG_VERSION, about, long_about = None)]
 #[command(disable_help_subcommand = true)]
 #[clap(styles = clap_themes::CLAP_V3)]
-pub struct Cli {
+pub(crate) struct Cli {
     /// Configuration file to load. When omitted, the default file under the
     /// platform configuration directory is read if present; otherwise the
     /// broker runs from built-in defaults and the environment alone.
@@ -33,12 +40,14 @@ pub struct Cli {
     #[arg(short = 'p', long, value_name = "PORT")]
     pub port: Option<u16>,
 
+    /// The subcommand to run instead of the broker; `None` starts the broker.
     #[command(subcommand)]
     pub command: Option<Command>,
 }
 
+/// A subcommand that runs instead of starting the broker.
 #[derive(Subcommand)]
-pub enum Command {
+pub(crate) enum Command {
     /// Inspect, validate, or generate broker configuration.
     #[command(alias = "config")]
     Configuration(ConfigurationArgs),
@@ -48,14 +57,17 @@ pub enum Command {
     Health,
 }
 
+/// Arguments of the configuration subcommand.
 #[derive(Args)]
-pub struct ConfigurationArgs {
+pub(crate) struct ConfigurationArgs {
+    /// The configuration operation to run.
     #[command(subcommand)]
     pub command: ConfigurationCommand,
 }
 
+/// An operation on the effective or default configuration.
 #[derive(Subcommand)]
-pub enum ConfigurationCommand {
+pub(crate) enum ConfigurationCommand {
     /// Load and validate the effective configuration, then report and exit.
     Validate,
 
@@ -73,23 +85,28 @@ pub enum ConfigurationCommand {
     Describe(OutputArgs),
 }
 
+/// Arguments of the show operation.
 #[derive(Args)]
-pub struct ShowArgs {
+pub(crate) struct ShowArgs {
     /// Output format for the redacted effective configuration.
     #[arg(short = 'f', long, value_enum, default_value_t = OutputFormat::Toml)]
     pub format: OutputFormat,
 }
 
+/// Destination of an operation that writes a generated document.
 #[derive(Args)]
-pub struct OutputArgs {
+pub(crate) struct OutputArgs {
     /// File to write to. Printed to standard output when omitted.
     #[arg(short = 'o', long, value_name = "FILE")]
     pub output: Option<PathBuf>,
 }
 
+/// Serialisation of the printed effective configuration.
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
-pub enum OutputFormat {
+pub(crate) enum OutputFormat {
+    /// JSON.
     Json,
+    /// TOML, the configuration file's own format.
     #[default]
     Toml,
 }

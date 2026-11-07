@@ -58,10 +58,6 @@ pub(super) fn interval_anchors_select(kind: StoredKind, target: &ContextTarget, 
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::subscription_store::{
         periodic_due::{due_interval_select, interval_anchors_select},

@@ -151,7 +151,10 @@ impl LinkedKey {
 /// and every notification then reading the entry that won.
 #[derive(Default)]
 pub(crate) struct NotificationCompactionCache {
+    /// Compacted renderings of the notified state, one per distinct key.
     renderings: DashMap<RenderingKey, Arc<Entity>>,
+    /// Linked entities resolved for `join`, one traversal per rendering and
+    /// join level.
     linked_entities: DashMap<LinkedKey, LinkedEntities>,
 }
 
@@ -199,10 +202,6 @@ pub(super) async fn cached_linked_graph(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::processor::payload::{
         cache::{LinkedKey, NotificationCompactionCache, NotifiedSource, Reading, RenderingKey},

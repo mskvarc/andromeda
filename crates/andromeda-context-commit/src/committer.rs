@@ -102,10 +102,6 @@ pub const fn consequences_land(outcome: &WriteOutcome) -> bool {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         atomic_write::AtomicWrite,

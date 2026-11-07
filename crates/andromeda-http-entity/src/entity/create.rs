@@ -38,6 +38,9 @@ use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use axum::http::{HeaderMap, Method};
 
+/// Create Entity (clause 5.6.1): 201 with the entity's `Location` when every
+/// part succeeded, 207 with the clause 5.2.16 result when only some did. A
+/// tenant that does not exist is created.
 pub(crate) async fn create(
     context_target::ProvisionableTargetedTenantState {
         services: state,
@@ -143,11 +146,6 @@ fn located(locator: &ResourceLocator, response: Response, id: &Identifier) -> Re
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::entity::create::distributed_create_response;
     use andromeda_federation::{

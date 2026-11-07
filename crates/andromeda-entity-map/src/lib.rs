@@ -1,8 +1,5 @@
 //! NGSI-LD Entity Map lifecycle policy and its replaceable storage port.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 /// What one context source contributed to the Entity Map of a read.
 pub mod contribution;
 /// The invariants Entity Map policy relies on.

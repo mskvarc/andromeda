@@ -16,9 +16,6 @@
 //! and no store, so both stores can share it without either depending on the
 //! other.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 /// Returning a connection to its pool after its request let go of it.
 pub mod connection_release;
 /// The base URL every tenant database connection is derived from.

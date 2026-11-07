@@ -10,7 +10,7 @@ use andromeda_postgresql_codes::change_origin::ChangeOriginCode;
 
 /// The registry member the schema persists for an origin.
 #[must_use]
-pub const fn stored_origin(origin: ChangeOrigin) -> ChangeOriginCode {
+pub(crate) const fn stored_origin(origin: ChangeOrigin) -> ChangeOriginCode {
     match origin {
         ChangeOrigin::Local => ChangeOriginCode::Local,
         ChangeOrigin::Forwarded => ChangeOriginCode::Forwarded,
@@ -19,7 +19,7 @@ pub const fn stored_origin(origin: ChangeOrigin) -> ChangeOriginCode {
 
 /// The origin a stored registry member names.
 #[must_use]
-pub const fn origin_of(code: ChangeOriginCode) -> ChangeOrigin {
+pub(crate) const fn origin_of(code: ChangeOriginCode) -> ChangeOrigin {
     match code {
         ChangeOriginCode::Local => ChangeOrigin::Local,
         ChangeOriginCode::Forwarded => ChangeOrigin::Forwarded,

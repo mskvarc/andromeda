@@ -1,7 +1,5 @@
 //! Concrete Andromeda broker composition and process lifecycle.
 
-#![deny(missing_docs)]
-
 mod background_task_health;
 mod blocking_executor;
 mod broker;

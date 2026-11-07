@@ -38,10 +38,6 @@ pub async fn narrow_compact_entity(entity: &mut Entity, list: ListInForce<'_>, e
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::query::{attribute_expansion::AttributeExpansions, attribute_projection::narrow_compact_entity};
     use andromeda_json_literal::JsonLiteral;

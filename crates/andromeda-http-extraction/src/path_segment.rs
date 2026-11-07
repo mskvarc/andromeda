@@ -184,10 +184,6 @@ impl<A: PathSegment, B: PathSegment, C: PathSegment> PathSegments for (A, B, C) 
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::path_segment::{AttrId, EntityId, EntityType, InstanceId, PathParameter, PathSegment, PathSegments};
 

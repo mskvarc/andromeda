@@ -23,9 +23,6 @@
 //! temporal evolution. Both port groups render the same fragments, which is why
 //! the fragments are here and not in either of them.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod attribute_instance_correlation;
 pub mod attribute_name_key;
 pub mod dataset_key;

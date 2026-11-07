@@ -24,7 +24,7 @@ use cefact_units::UnitCode;
 
 /// The refusal of a member not shaped as its expanded form shapes it.
 #[must_use]
-pub fn malformed(attribute: &AttributeName, member: MemberShape) -> EntityRefusal {
+pub(crate) fn malformed(attribute: &AttributeName, member: MemberShape) -> EntityRefusal {
     EntityRefusal::Malformed {
         attribute: Some(attribute.clone()), // clone: the refusal names the attribute the caller keeps
         member,
@@ -37,7 +37,7 @@ pub fn malformed(attribute: &AttributeName, member: MemberShape) -> EntityRefusa
 /// single NGSI-LD Null"; beside other values it neither deletes the member nor
 /// is data, since "null cannot be used as a value in NGSI-LD".
 #[must_use]
-pub fn null_beside_data(attribute: &AttributeName) -> EntityRefusal {
+pub(crate) fn null_beside_data(attribute: &AttributeName) -> EntityRefusal {
     EntityRefusal::NullBesideData {
         attribute: Some(attribute.clone()), // clone: the refusal names the attribute the caller keeps
     }
@@ -61,7 +61,7 @@ fn single_reference<'a>(items: &'a [ExpandedItem], attribute: &AttributeName, me
 
 /// The identifier of a node reference.
 #[must_use]
-pub fn reference_id(node: &ExpandedNode) -> Option<&str> {
+pub(crate) fn reference_id(node: &ExpandedNode) -> Option<&str> {
     if node.is_reference() { node.id.as_deref() } else { None }
 }
 
@@ -70,7 +70,7 @@ pub fn reference_id(node: &ExpandedNode) -> Option<&str> {
 /// # Errors
 ///
 /// Returns [`EntityRefusal::DateTime`] for a text that is not RFC 3339.
-pub fn date_time_slot(items: &[ExpandedItem], attribute: &AttributeName, member: MemberShape) -> Result<Slot<NgsiLdDateTime>, EntityRefusal> {
+pub(crate) fn date_time_slot(items: &[ExpandedItem], attribute: &AttributeName, member: MemberShape) -> Result<Slot<NgsiLdDateTime>, EntityRefusal> {
     if is_sole_null(items) {
         return Ok(Slot::Remove);
     }
@@ -82,7 +82,7 @@ pub fn date_time_slot(items: &[ExpandedItem], attribute: &AttributeName, member:
 /// # Errors
 ///
 /// Returns [`EntityRefusal::DateTime`] for a text that is not RFC 3339.
-pub fn date_time(items: &[ExpandedItem], attribute: &AttributeName, member: MemberShape) -> Result<NgsiLdDateTime, EntityRefusal> {
+pub(crate) fn date_time(items: &[ExpandedItem], attribute: &AttributeName, member: MemberShape) -> Result<NgsiLdDateTime, EntityRefusal> {
     single_text(items, attribute, member)?
         .parse::<NgsiLdDateTime>()
         .map_err(|_| EntityRefusal::DateTime {
@@ -96,7 +96,7 @@ pub fn date_time(items: &[ExpandedItem], attribute: &AttributeName, member: Memb
 /// # Errors
 ///
 /// Returns [`EntityRefusal::DateTime`] for a text that is not RFC 3339.
-pub fn system_instant(items: &[ExpandedItem], attribute: &AttributeName, member: MemberShape) -> Result<SystemInstant, EntityRefusal> {
+pub(crate) fn system_instant(items: &[ExpandedItem], attribute: &AttributeName, member: MemberShape) -> Result<SystemInstant, EntityRefusal> {
     single_text(items, attribute, member)?
         .parse::<SystemInstant>()
         .map_err(|_| EntityRefusal::DateTime {
@@ -116,7 +116,7 @@ pub fn system_instant(items: &[ExpandedItem], attribute: &AttributeName, member:
 /// Returns [`EntityRefusal::DatasetIdSentinel`] for the NGSI-LD Null and
 /// [`EntityRefusal::DatasetId`] for a text that is neither `@none` nor an
 /// identifier.
-pub fn dataset_id(items: &[ExpandedItem], attribute: &AttributeName) -> Result<Option<Identifier>, EntityRefusal> {
+pub(crate) fn dataset_id(items: &[ExpandedItem], attribute: &AttributeName) -> Result<Option<Identifier>, EntityRefusal> {
     if items.iter().any(is_null) {
         return Err(EntityRefusal::DatasetIdSentinel {
             attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
@@ -138,7 +138,7 @@ pub fn dataset_id(items: &[ExpandedItem], attribute: &AttributeName) -> Result<O
 ///
 /// Returns [`EntityRefusal::ReservedNullValue`] for the NGSI-LD Null and
 /// [`EntityRefusal::InstanceId`] for a text that is not an identifier.
-pub fn instance_id(items: &[ExpandedItem], attribute: &AttributeName) -> Result<Identifier, EntityRefusal> {
+pub(crate) fn instance_id(items: &[ExpandedItem], attribute: &AttributeName) -> Result<Identifier, EntityRefusal> {
     if items.iter().any(is_null) {
         return Err(EntityRefusal::ReservedNullValue {
             attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
@@ -158,7 +158,7 @@ pub fn instance_id(items: &[ExpandedItem], attribute: &AttributeName) -> Result<
 ///
 /// Returns [`EntityRefusal::UnitCodeUnusable`] for a member that is not one
 /// UN/CEFACT common code.
-pub fn unit_code_slot(items: &[ExpandedItem], attribute: &AttributeName) -> Result<Slot<UnitCode>, EntityRefusal> {
+pub(crate) fn unit_code_slot(items: &[ExpandedItem], attribute: &AttributeName) -> Result<Slot<UnitCode>, EntityRefusal> {
     if is_sole_null(items) {
         return Ok(Slot::Remove);
     }
@@ -175,7 +175,7 @@ pub fn unit_code_slot(items: &[ExpandedItem], attribute: &AttributeName) -> Resu
 /// # Errors
 ///
 /// Returns [`EntityRefusal::Reference`] for a reference that is not a name.
-pub fn reference_slot(items: &[ExpandedItem], attribute: &AttributeName, member: MemberShape) -> Result<Slot<NgsiLdReference>, EntityRefusal> {
+pub(crate) fn reference_slot(items: &[ExpandedItem], attribute: &AttributeName, member: MemberShape) -> Result<Slot<NgsiLdReference>, EntityRefusal> {
     if is_sole_null(items) {
         return Ok(Slot::Remove);
     }
@@ -187,7 +187,7 @@ pub fn reference_slot(items: &[ExpandedItem], attribute: &AttributeName, member:
 /// # Errors
 ///
 /// Returns [`EntityRefusal::Reference`] for a reference that is not a name.
-pub fn references_slot(items: &[ExpandedItem], attribute: &AttributeName, member: MemberShape) -> Result<Slot<Vec<NgsiLdReference>>, EntityRefusal> {
+pub(crate) fn references_slot(items: &[ExpandedItem], attribute: &AttributeName, member: MemberShape) -> Result<Slot<Vec<NgsiLdReference>>, EntityRefusal> {
     if is_sole_null(items) {
         return Ok(Slot::Remove);
     }

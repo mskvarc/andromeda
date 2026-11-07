@@ -74,7 +74,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-broker-composition",
  "andromeda-configuration",
@@ -89,7 +89,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-architecture-checks"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-ngsi-ld-vocabulary",
  "pretty_assertions",
@@ -103,7 +103,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-broker-composition"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-component-report",
@@ -204,7 +204,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-component-report"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "derive_more",
@@ -215,7 +215,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-configuration"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "bytesize",
@@ -233,6 +233,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "strum",
+ "temp-env",
  "textwrap",
  "thiserror 2.0.21",
  "toml",
@@ -243,7 +244,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-context-commit"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-space",
@@ -266,7 +267,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-context-registry"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-json-literal",
@@ -291,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-context-space"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
@@ -301,7 +302,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-delivery"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -341,7 +342,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-entity"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -392,7 +393,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-entity-map"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
@@ -411,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-extensions"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -425,7 +426,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-federation"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -478,7 +479,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-health"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
@@ -492,7 +493,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-api"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-component-report",
@@ -534,7 +535,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-component-report"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-component-report",
@@ -550,7 +551,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-context-registry"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-registry",
@@ -588,7 +589,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-entity"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-space",
@@ -632,7 +633,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-entity-map"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-space",
@@ -670,7 +671,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-extraction"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "allocation-counter",
  "andromeda-architecture-checks",
@@ -712,7 +713,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-headers"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -734,7 +735,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-health"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-health",
@@ -751,7 +752,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-notification-receiver"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-http-extraction",
@@ -774,7 +775,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-registration"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-http-context-registry",
@@ -801,7 +802,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-response"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-commit",
@@ -843,7 +844,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-server"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -865,7 +866,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-snapshot"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-http-extraction",
@@ -887,7 +888,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-source-identity"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-registry",
@@ -917,7 +918,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-stack"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -949,7 +950,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-subscription"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-space",
@@ -978,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-telemetry"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-telemetry",
@@ -993,7 +994,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-temporal"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-space",
@@ -1031,7 +1032,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http-tenancy"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-http-extraction",
@@ -1057,7 +1058,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-http3-server"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -1082,7 +1083,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-json-literal"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -1098,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-jsonld"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -1137,7 +1138,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-linked-retrieval"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
@@ -1157,7 +1158,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-native-stack"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "pretty_assertions",
@@ -1166,7 +1167,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-ngsi-ld-compaction"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "allocation-counter",
  "andromeda-architecture-checks",
@@ -1196,7 +1197,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-ngsi-ld-entity"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "allocation-counter",
  "andromeda-architecture-checks",
@@ -1225,7 +1226,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-ngsi-ld-expansion"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "allocation-counter",
  "andromeda-architecture-checks",
@@ -1258,7 +1259,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-ngsi-ld-geometry"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-json-literal",
@@ -1276,7 +1277,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-ngsi-ld-lexicon"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -1305,7 +1306,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-ngsi-ld-model"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "allocation-counter",
  "andromeda-architecture-checks",
@@ -1342,7 +1343,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-ngsi-ld-number"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "bigdecimal",
@@ -1356,7 +1357,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-ngsi-ld-problem-details"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
@@ -1371,7 +1372,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-ngsi-ld-query"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-json-literal",
@@ -1400,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-ngsi-ld-render"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "allocation-counter",
  "andromeda-architecture-checks",
@@ -1432,7 +1433,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-ngsi-ld-representation"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -1452,7 +1453,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-ngsi-ld-request"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -1482,7 +1483,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-ngsi-ld-vocabulary"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "hex",
@@ -1498,7 +1499,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-notification"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -1544,7 +1545,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-outbound-http"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -1559,7 +1560,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-persistence-failure"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "derive_more",
@@ -1570,7 +1571,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-postgresql-atomic-write"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -1606,7 +1607,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-postgresql-attribute-instance"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-entity",
@@ -1632,7 +1633,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-postgresql-branch"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-space",
@@ -1643,7 +1644,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-postgresql-codes"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
@@ -1657,7 +1658,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-postgresql-collation"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-query",
@@ -1671,7 +1672,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-postgresql-context-query"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-space",
@@ -1696,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-postgresql-context-store"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-component-report",
@@ -1761,7 +1762,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-postgresql-encoding"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-geometry",
@@ -1776,7 +1777,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-postgresql-maintenance"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -1790,7 +1791,6 @@ dependencies = [
  "andromeda-postgresql-seaquery",
  "andromeda-retry",
  "andromeda-telemetry",
- "andromeda-tenancy",
  "chrono",
  "dashmap",
  "derive_more",
@@ -1806,7 +1806,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-postgresql-name-dictionary"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -1830,7 +1830,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-postgresql-pool"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -1851,7 +1851,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-postgresql-query"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-geometry",
@@ -1881,7 +1881,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-postgresql-schema"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "derive_more",
@@ -1892,7 +1892,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-postgresql-seaquery"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "derive_more",
@@ -1906,7 +1906,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-postgresql-temporal-query"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-geometry",
@@ -1930,7 +1930,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-postgresql-temporal-store"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-commit",
@@ -1978,7 +1978,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-registration"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-json-literal",
@@ -2012,7 +2012,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-retry"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "derive_more",
@@ -2025,7 +2025,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-server-tls"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -2042,7 +2042,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-snapshot"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-commit",
@@ -2077,7 +2077,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-spatial-index"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-geometry",
@@ -2093,7 +2093,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-sql"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
@@ -2123,7 +2123,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-subscription"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-commit",
@@ -2166,7 +2166,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-subscription-forwarding"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -2211,7 +2211,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-task-runtime"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-retry",
@@ -2229,7 +2229,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-telemetry"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "dashmap",
@@ -2245,7 +2245,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-temporal"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -2288,7 +2288,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-tenancy"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
@@ -2298,7 +2298,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "dashmap",
- "derive_more",
  "pretty_assertions",
  "strum",
  "thiserror 2.0.21",
@@ -2308,7 +2307,7 @@ dependencies = [
 
 [[package]]
 name = "andromeda-test-suite"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "andromeda-postgresql-seaquery",
  "bytes",
@@ -9010,6 +9009,15 @@ name = "tagptr"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b2093cf4c8eb1e67749a6762251bc9cd836b6fc171623bd0a9d324d37af2417"
+
+[[package]]
+name = "temp-env"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96374855068f47402c3121c6eed88d29cb1de8f3ab27090e273e420bdabcf050"
+dependencies = [
+ "parking_lot 0.12.5",
+]
 
 [[package]]
 name = "tempfile"

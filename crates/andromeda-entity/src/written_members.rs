@@ -49,10 +49,6 @@ pub(crate) fn member_attribute_names<'a>(members: impl IntoIterator<Item = Membe
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::written_members::written_member_names;
     use andromeda_ngsi_ld_entity::document::EntityDocument;

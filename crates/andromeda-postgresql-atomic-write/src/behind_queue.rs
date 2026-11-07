@@ -72,10 +72,6 @@ fn split_behind(intents: Vec<TemporalAppendIntent>, queued: &HashSet<Identifier>
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::behind_queue::{EntitySplit, split_behind};
     use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};

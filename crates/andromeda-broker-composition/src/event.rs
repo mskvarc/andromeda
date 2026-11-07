@@ -6,10 +6,10 @@
 //! [`andromeda_ngsi_ld_model::notification::CsourceNotification`]) are the
 //! serialisable shapes and stay in the model crate.
 
-pub mod entity_change_sink;
+pub(crate) mod entity_change_sink;
 pub(crate) mod queued_handoff;
-pub mod registration_change_sink;
-pub mod snapshot_notification_sink;
-pub mod snapshot_status_queue;
-pub mod subscription_change_sink;
-pub mod subscription_endpoint_validator;
+pub(crate) mod registration_change_sink;
+pub(crate) mod snapshot_notification_sink;
+pub(crate) mod snapshot_status_queue;
+pub(crate) mod subscription_change_sink;
+pub(crate) mod subscription_endpoint_validator;

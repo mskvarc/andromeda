@@ -243,10 +243,6 @@ pub(crate) async fn delete_control_record(transaction: &mut Transaction<'_, Post
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::snapshot::reap::{branch_lock_statement, orphan_branch_keys_statement};
     use andromeda_context_space::snapshot_key::SnapshotKey;

@@ -25,10 +25,6 @@ pub async fn reject_snapshot_scope(request: Request, next: Next) -> Response {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::snapshot_scope_guard::reject_snapshot_scope;
     use axum::{

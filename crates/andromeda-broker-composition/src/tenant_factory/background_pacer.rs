@@ -398,11 +398,6 @@ impl RuntimeActivity for BackgroundPacer {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::tenant_factory::background_pacer::{BackgroundPacer, ObligationSource, PassAdmission, QUIET_CEILING_CADENCES};
     use andromeda_postgresql_context_store::error::ContextStoreError;

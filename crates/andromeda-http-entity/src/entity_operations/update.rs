@@ -35,6 +35,8 @@ use andromeda_entity::write_kind::BatchUpdate;
 use andromeda_http_extraction::context_target;
 use andromeda_ngsi_ld_request::query_narrowing::ExecutionScope;
 
+/// Batch Entity Update (clause 5.6.9): 204 when every entity was updated, 207
+/// with the clause 5.2.16 result otherwise.
 pub(crate) async fn batch_update(
     context_target::ExistingTargetedTenantState {
         services: state,

@@ -12,7 +12,7 @@ use sea_query::{Expr, ExprTrait, SimpleExpr};
 
 /// The registry member the store persists for a lifecycle state.
 #[must_use]
-pub const fn stored_status(status: SubscriptionStatus) -> SubscriptionStatusCode {
+pub(crate) const fn stored_status(status: SubscriptionStatus) -> SubscriptionStatusCode {
     match status {
         SubscriptionStatus::Active => SubscriptionStatusCode::Active,
         SubscriptionStatus::Paused => SubscriptionStatusCode::Paused,
@@ -22,7 +22,7 @@ pub const fn stored_status(status: SubscriptionStatus) -> SubscriptionStatusCode
 
 /// The lifecycle state a stored registry member names.
 #[must_use]
-pub const fn status_of(code: SubscriptionStatusCode) -> SubscriptionStatus {
+pub(crate) const fn status_of(code: SubscriptionStatusCode) -> SubscriptionStatus {
     match code {
         SubscriptionStatusCode::Active => SubscriptionStatus::Active,
         SubscriptionStatusCode::Paused => SubscriptionStatus::Paused,

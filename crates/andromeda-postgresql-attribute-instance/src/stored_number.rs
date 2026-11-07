@@ -229,10 +229,6 @@ impl Decode<'_, Postgres> for StoredNumber {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::stored_number::{BinaryShape, StoredNumber, StoredNumberError, binary_shape, non_finite_header, text_shape};
     use andromeda_ngsi_ld_number::{

@@ -11,13 +11,14 @@ use tokio::sync::broadcast;
 use tracing::{error, warn};
 
 /// Publishes subscription lifecycle changes through one tenant runtime channel.
-pub struct BroadcastSubscriptionChangeSink<C> {
+pub(crate) struct BroadcastSubscriptionChangeSink<C> {
+    /// The tenant runtime channel; a send with no receiver is dropped.
     sender: broadcast::Sender<C>,
 }
 
 impl<C> BroadcastSubscriptionChangeSink<C> {
     /// Bind a subscription change sink to the supplied broadcast sender.
-    pub const fn new(sender: broadcast::Sender<C>) -> BroadcastSubscriptionChangeSink<C> {
+    pub(crate) const fn new(sender: broadcast::Sender<C>) -> BroadcastSubscriptionChangeSink<C> {
         BroadcastSubscriptionChangeSink { sender }
     }
 }
@@ -39,14 +40,20 @@ where
 /// The sink is the one writer of the cache for a subscription change and makes
 /// a single read: a request waits on it, so a read whose store cannot be
 /// reached is left to the cache's reconcile pass instead of being retried here.
-pub struct CoherentSubscriptionChangeSink {
+pub(crate) struct CoherentSubscriptionChangeSink {
+    /// The tenant runtime channel the remaining notification tasks receive
+    /// changes on, sent after the cache is updated.
     sender: broadcast::Sender<SubscriptionChange>,
+    /// The entity-subscription matcher's cache, updated before each send.
     cache: Arc<SubscriptionCache>,
+    /// The store the cache reads a changed subscription from.
     repository: Arc<dyn SubscriptionStore>,
 }
 
 impl CoherentSubscriptionChangeSink {
-    pub const fn new(
+    /// Bind the sink to the tenant's change channel, its subscription cache and
+    /// the store the cache reads from.
+    pub(crate) const fn new(
         sender: broadcast::Sender<SubscriptionChange>,
         cache: Arc<SubscriptionCache>,
         repository: Arc<dyn SubscriptionStore>,

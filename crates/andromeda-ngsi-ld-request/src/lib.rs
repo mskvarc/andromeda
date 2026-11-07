@@ -16,9 +16,6 @@
 //! validates requests strictly and rejects one it does not fully understand, so
 //! a silently ignored `?limitt=1000` is a wrong answer rather than a slow one.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod attribute_deletion;
 mod attribute_selection;
 pub mod body;

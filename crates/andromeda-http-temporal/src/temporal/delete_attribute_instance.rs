@@ -31,7 +31,9 @@ use andromeda_http_extraction::{
     path_segment::{AttrId, EntityId, InstanceId},
 };
 
-pub async fn delete_attr_instance(
+/// Delete Attribute instance from Temporal Evolution (clause 5.6.15): 204 when
+/// every part succeeded, 207 with the clause 5.2.16 result when only some did.
+pub(crate) async fn delete_attr_instance(
     // Clause 6.3.20: the parameters are read first, before the tenant is
     // resolved, so an undefined one is an `InvalidRequest` on any tenant.
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,

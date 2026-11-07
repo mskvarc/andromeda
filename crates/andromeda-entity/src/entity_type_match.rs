@@ -21,10 +21,6 @@ pub(crate) fn types_satisfy(types: &[EntityTypeName], selector: &TypeExpr) -> bo
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::entity_type_match::entity_satisfies;
     use andromeda_ngsi_ld_entity::entity_state::EntityState;

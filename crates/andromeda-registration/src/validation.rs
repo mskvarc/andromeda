@@ -47,10 +47,6 @@ pub(super) fn validate_shape(shape: &RegistrationShape<'_>) -> Result<ContextSou
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::validation::{RegistrationShape, validate_shape};
     use andromeda_ngsi_ld_model::{

@@ -15,9 +15,6 @@
 //! resolve names through the same tenant dictionaries, and none of them is the
 //! right owner of the other two's access to them.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod attribute_names;
 mod bounded_keys;
 pub mod dictionary_relation;

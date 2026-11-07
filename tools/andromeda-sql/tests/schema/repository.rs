@@ -18,7 +18,7 @@ use std::{fs, io, ops::Range, path::Path, sync::Arc};
 
 /// Why a pin test could not find what it pins.
 #[derive(Debug, thiserror::Error)]
-pub enum PinError {
+pub(crate) enum PinError {
     /// The migrations could not be listed.
     #[error(transparent)]
     Tree(#[from] MigrationTreeError),
@@ -34,7 +34,7 @@ pub enum PinError {
 }
 
 /// The schema the committed migrations declare.
-pub fn schema() -> Result<DeclaredSchema, PinError> {
+pub(crate) fn schema() -> Result<DeclaredSchema, PinError> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let migrations = MigrationTree::read(&root)?
         .into_files()
@@ -47,18 +47,18 @@ pub fn schema() -> Result<DeclaredSchema, PinError> {
 }
 
 /// `text` with every run of whitespace collapsed to one space.
-pub fn normalized(text: &str) -> String {
+pub(crate) fn normalized(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// The text of `bytes` of the migration `origin` is in, its whitespace
 /// collapsed.
-pub fn written(schema: &DeclaredSchema, origin: Origin, bytes: Range<usize>) -> String {
+pub(crate) fn written(schema: &DeclaredSchema, origin: Origin, bytes: Range<usize>) -> String {
     normalized(schema.text(origin, bytes))
 }
 
 /// The constraint `name`.
-pub fn constraint<'schema>(schema: &'schema DeclaredSchema, name: &str) -> Result<&'schema DeclaredConstraint, PinError> {
+pub(crate) fn constraint<'schema>(schema: &'schema DeclaredSchema, name: &str) -> Result<&'schema DeclaredConstraint, PinError> {
     schema
         .constraints()
         .iter()
@@ -67,13 +67,13 @@ pub fn constraint<'schema>(schema: &'schema DeclaredSchema, name: &str) -> Resul
 }
 
 /// The definition of the constraint `name` after its name.
-pub fn constraint_definition(schema: &DeclaredSchema, name: &str) -> Result<String, PinError> {
+pub(crate) fn constraint_definition(schema: &DeclaredSchema, name: &str) -> Result<String, PinError> {
     let constraint = constraint(schema, name)?;
     Ok(written(schema, constraint.origin(), constraint.definition()))
 }
 
 /// The index `name`.
-pub fn index<'schema>(schema: &'schema DeclaredSchema, name: &str) -> Result<&'schema DeclaredIndex, PinError> {
+pub(crate) fn index<'schema>(schema: &'schema DeclaredSchema, name: &str) -> Result<&'schema DeclaredIndex, PinError> {
     schema
         .indexes()
         .iter()
@@ -82,13 +82,13 @@ pub fn index<'schema>(schema: &'schema DeclaredSchema, name: &str) -> Result<&'s
 }
 
 /// The definition of the index `name` after its name.
-pub fn index_definition(schema: &DeclaredSchema, name: &str) -> Result<String, PinError> {
+pub(crate) fn index_definition(schema: &DeclaredSchema, name: &str) -> Result<String, PinError> {
     let index = index(schema, name)?;
     Ok(written(schema, index.origin(), index.definition()))
 }
 
 /// The trigger `name`.
-pub fn trigger<'schema>(schema: &'schema DeclaredSchema, name: &str) -> Result<&'schema DeclaredTrigger, PinError> {
+pub(crate) fn trigger<'schema>(schema: &'schema DeclaredSchema, name: &str) -> Result<&'schema DeclaredTrigger, PinError> {
     schema
         .triggers()
         .iter()
@@ -98,14 +98,14 @@ pub fn trigger<'schema>(schema: &'schema DeclaredSchema, name: &str) -> Result<&
 
 /// The definition of the trigger `name` after its name, which must fire on
 /// `table`.
-pub fn trigger_definition_on(schema: &DeclaredSchema, name: &str, table: &str) -> Result<String, PinError> {
+pub(crate) fn trigger_definition_on(schema: &DeclaredSchema, name: &str, table: &str) -> Result<String, PinError> {
     let trigger = trigger(schema, name)?;
     pretty_assertions::assert_eq!(trigger.table(), table, "{name} fires on the wrong table");
     Ok(written(schema, trigger.origin(), trigger.definition()))
 }
 
 /// The one function named `name`.
-pub fn function<'schema>(schema: &'schema DeclaredSchema, name: &str) -> Result<&'schema DeclaredFunction, PinError> {
+pub(crate) fn function<'schema>(schema: &'schema DeclaredSchema, name: &str) -> Result<&'schema DeclaredFunction, PinError> {
     let mut named = schema.functions().iter().filter(|function| function.name().name() == name);
     match (named.next(), named.next()) {
         (Some(function), None) => Ok(function),
@@ -114,13 +114,13 @@ pub fn function<'schema>(schema: &'schema DeclaredSchema, name: &str) -> Result<
 }
 
 /// The definition of the one function named `name` after its name.
-pub fn function_definition(schema: &DeclaredSchema, name: &str) -> Result<String, PinError> {
+pub(crate) fn function_definition(schema: &DeclaredSchema, name: &str) -> Result<String, PinError> {
     let function = function(schema, name)?;
     Ok(written(schema, function.origin(), function.definition()))
 }
 
 /// The value `table` declares for storage parameter `name`, if any.
-pub fn parameter<'schema>(schema: &'schema DeclaredSchema, table: &str, name: &str) -> Option<&'schema str> {
+pub(crate) fn parameter<'schema>(schema: &'schema DeclaredSchema, table: &str, name: &str) -> Option<&'schema str> {
     schema
         .storage_parameters()
         .iter()

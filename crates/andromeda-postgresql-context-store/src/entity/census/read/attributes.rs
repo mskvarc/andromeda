@@ -133,10 +133,6 @@ impl EntityRepository {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::entity::census::read::attributes::{attribute_entity_types_statement, attribute_summary_of, attribute_summary_statement};
     use andromeda_context_space::context_target::ContextTarget;

@@ -39,7 +39,7 @@ use std::num::{NonZeroU32, NonZeroU64};
 use strum::{Display, EnumIter, EnumString, IntoStaticStr};
 use typed_builder::TypedBuilder;
 
-constant_string!(SubscriptionType, "Subscription");
+constant_string!(pub SubscriptionType, "Subscription");
 
 /// Lifecycle status of a subscription (ETSI GS CIM 009 clause 5.2.12, status member).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, EnumIter, IntoStaticStr)]
@@ -384,11 +384,6 @@ pub struct Subscription {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use super::*;
     use chrono::TimeZone;

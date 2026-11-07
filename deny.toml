@@ -43,8 +43,9 @@ ignore = [
 
 [bans]
 multiple-versions = "warn"
-# Workspace path deps read as wildcards.
-wildcards = "warn"
+# Every workspace crate is unpublished, so its path dependencies are not wildcards.
+allow-wildcard-paths = true
+wildcards = "deny"
 
 [sources]
 unknown-registry = "deny"

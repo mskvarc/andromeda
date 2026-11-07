@@ -14,7 +14,7 @@ use sea_query::{Expr, Func, IntoIden, SimpleExpr};
 /// The value of the attribute history row under `row`, as text; SQL `NULL` for
 /// a tombstone.
 #[must_use]
-pub fn value_text(row: impl IntoIden) -> SimpleExpr {
+pub(crate) fn value_text(row: impl IntoIden) -> SimpleExpr {
     let row = row.into_iden();
     let mut columns: Vec<AttributeHistory> = Vec::new();
     for column in ValueKind::ALL.iter().filter_map(|kind| kind.history_column()) {

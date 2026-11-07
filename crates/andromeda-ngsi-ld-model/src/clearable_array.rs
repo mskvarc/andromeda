@@ -153,10 +153,6 @@ fn element<'de, E: Deserialize<'de>, Er: DeserializeError>(read: Clearable<E>) -
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{clearable::Clearable, clearable_array};
     use serde::{Deserialize, Serialize};

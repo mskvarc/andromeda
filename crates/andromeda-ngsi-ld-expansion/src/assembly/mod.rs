@@ -5,13 +5,13 @@
 //! document is read from it by these rules, so a typed expansion and the
 //! processor's can differ only where their trees do.
 
-pub mod expanded_value;
-pub mod geometry_node;
-pub mod instance;
-pub mod member_value;
-pub mod null_sentinel;
-pub mod temporal_document;
-pub mod written_value;
+pub(crate) mod expanded_value;
+pub(crate) mod geometry_node;
+pub(crate) mod instance;
+pub(crate) mod member_value;
+pub(crate) mod null_sentinel;
+pub(crate) mod temporal_document;
+pub(crate) mod written_value;
 
 use crate::{
     assembly::{
@@ -41,7 +41,7 @@ use indexmap::IndexMap;
 ///
 /// Returns the refusal of the first member that is not what its expanded IRI
 /// names.
-pub fn entity_document(node: Option<ExpandedNode>) -> Result<EntityDocument, EntityRefusal> {
+pub(crate) fn entity_document(node: Option<ExpandedNode>) -> Result<EntityDocument, EntityRefusal> {
     let Some(node) = node else {
         return Ok(EntityDocument::default());
     };
@@ -88,7 +88,7 @@ pub fn entity_document(node: Option<ExpandedNode>) -> Result<EntityDocument, Ent
 ///
 /// Returns [`EntityRefusal::Malformed`] when the fragment is not one instance,
 /// and the refusal of the instance's first malformed member.
-pub fn attribute_fragment(name: &str, items: Vec<ExpandedItem>) -> Result<AttributeFragment, EntityRefusal> {
+pub(crate) fn attribute_fragment(name: &str, items: Vec<ExpandedItem>) -> Result<AttributeFragment, EntityRefusal> {
     let name = name.parse::<AttributeName>().map_err(EntityRefusal::ExpandedAttributeName)?;
     let mut items = items.into_iter();
     let (Some(ExpandedItem::Node(node)), None) = (items.next(), items.next()) else {
@@ -106,7 +106,7 @@ pub fn attribute_fragment(name: &str, items: Vec<ExpandedItem>) -> Result<Attrib
 /// Returns [`EntityRefusal::NullBesideData`] for a Null beside instances,
 /// [`EntityRefusal::Malformed`] for a value that is no instance, and the
 /// refusal of an instance's first malformed member.
-pub fn attribute_member(name: &AttributeName, items: Vec<ExpandedItem>) -> Result<AttributeMember, EntityRefusal> {
+pub(crate) fn attribute_member(name: &AttributeName, items: Vec<ExpandedItem>) -> Result<AttributeMember, EntityRefusal> {
     if is_sole_null(&items) {
         return Ok(AttributeMember::Remove);
     }

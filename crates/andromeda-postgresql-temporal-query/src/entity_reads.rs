@@ -78,11 +78,6 @@ pub const fn entity_read_planning(entity_ids: &[Identifier]) -> StatementPlannin
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::entity_reads::{each_entity, entity_read_planning};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;

@@ -36,10 +36,6 @@ pub(crate) fn recorded_elements<'de, T: Deserialize<'de>, A: SeqAccess<'de>>(mut
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::attribute::recorded_elements::recorded_elements;
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;

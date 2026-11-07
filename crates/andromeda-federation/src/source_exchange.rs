@@ -162,10 +162,6 @@ fn classify_transport_failure(error: reqwest::Error, timeout: Duration) -> Trans
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         acted_on_answer::ActedOnAnswer,

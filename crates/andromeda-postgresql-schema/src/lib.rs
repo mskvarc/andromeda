@@ -14,9 +14,6 @@
 //! replaces the statement crates above; the identifiers a physical schema is
 //! made of live here so a rename moves every reference with it.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod branch_schema_version;
 pub mod census;
 pub mod context_source_change_clock;

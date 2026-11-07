@@ -120,10 +120,6 @@ impl<'a> ResponseContextSource<'a> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::response_rendering::{ResponseContextError, classify_response_context_error};
     use andromeda_jsonld::{compound_context_host::ContextHostingError, error::JsonLdError};

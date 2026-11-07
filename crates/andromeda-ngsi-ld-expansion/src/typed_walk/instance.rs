@@ -80,7 +80,7 @@ pub(crate) fn null_property(scope: &TermScope<'_>, key: &str) -> Result<Option<(
 }
 
 /// Add the member `key` of `scope` to `node`, as its expansion reads it.
-pub fn add_member<M: WrittenMember>(node: &mut NodeBuilder, scope: &TermScope<'_>, key: &str, member: &M) -> Result<(), Decline> {
+pub(crate) fn add_member<M: WrittenMember>(node: &mut NodeBuilder, scope: &TermScope<'_>, key: &str, member: &M) -> Result<(), Decline> {
     if let Some((name, items)) = expanded(member, scope, key)? {
         node.add_expanded(name, items);
     }
@@ -283,7 +283,7 @@ pub(crate) fn member_name(scope: &TermScope<'_>, key: &str) -> Result<Option<Str
 }
 
 /// A typed member written when present.
-pub fn add_optional<T: Serialize + ?Sized>(node: &mut NodeBuilder, scope: &TermScope<'_>, key: &str, value: Option<&T>) -> Result<(), Decline> {
+pub(crate) fn add_optional<T: Serialize + ?Sized>(node: &mut NodeBuilder, scope: &TermScope<'_>, key: &str, value: Option<&T>) -> Result<(), Decline> {
     value.map_or(Ok(()), |value| add_serialized(node, scope, key, value))
 }
 
@@ -296,7 +296,7 @@ pub(crate) fn add_counted<T: Serialize + ?Sized>(node: &mut NodeBuilder, scope: 
 }
 
 /// A typed member, expanded as the JSON text it serializes to.
-pub fn add_serialized<T: Serialize + ?Sized>(node: &mut NodeBuilder, scope: &TermScope<'_>, key: &str, value: &T) -> Result<(), Decline> {
+pub(crate) fn add_serialized<T: Serialize + ?Sized>(node: &mut NodeBuilder, scope: &TermScope<'_>, key: &str, value: &T) -> Result<(), Decline> {
     let text = written_text(value)?;
     add_json(node, scope, key, JsonPiece::new(&text))
 }
@@ -309,7 +309,7 @@ fn written_text<T: Serialize + ?Sized>(value: &T) -> Result<Box<RawValue>, Decli
 }
 
 /// A member held as JSON, expanded in place.
-pub fn add_json<'n, N: CompactNode<'n>>(node: &mut NodeBuilder, scope: &TermScope<'_>, key: &str, value: N) -> Result<(), Decline> {
+pub(crate) fn add_json<'n, N: CompactNode<'n>>(node: &mut NodeBuilder, scope: &TermScope<'_>, key: &str, value: N) -> Result<(), Decline> {
     node.add_json(
         scope,
         &KeyedEntry {

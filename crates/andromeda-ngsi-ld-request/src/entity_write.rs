@@ -39,10 +39,6 @@ pub struct UpdateAttributesParams {
 query_parameter_set!(UpdateAttributesParams { Type, Local });
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::entity_write::{EntityWriteParams, UpdateAttributesParams};
 

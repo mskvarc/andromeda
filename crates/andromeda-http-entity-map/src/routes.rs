@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 /// Current and temporal Entity Map route fragments.
 pub struct EntityMapRoutes {
+    /// The `/entityMaps` and `/temporal/entityMaps` routes with the tenant resolver bound as state.
     router: Router,
 }
 

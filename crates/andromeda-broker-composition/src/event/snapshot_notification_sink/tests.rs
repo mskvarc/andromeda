@@ -142,10 +142,6 @@ impl SnapshotStatusTransport for SlowReceiver {
     }
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 fn delivery(id: u128) -> SnapshotStatusDelivery {
     SnapshotStatusDelivery {
         id: Uuid::from_u128(id),
@@ -157,10 +153,6 @@ fn delivery(id: u128) -> SnapshotStatusDelivery {
     }
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 fn config(concurrent: u32) -> DeliveryConfig {
     DeliveryConfig {
         mode: DeliveryMode::Durable,
@@ -255,8 +247,8 @@ fn a_delivery_pass_issues_no_cleanup() -> Result<(), &'static str> {
     // outbox cleanup call sits inside the cleanup pass, so a wake-driven
     // delivery pass issues no retention DELETE.
     let source = include_str!("../snapshot_notification_sink.rs");
-    let execute = source.find("pub async fn execute").ok_or("delivery pass missing")?;
-    let cleanup_fn = source.find("pub async fn cleanup").ok_or("cleanup pass missing")?;
+    let execute = source.find("async fn execute(").ok_or("delivery pass missing")?;
+    let cleanup_fn = source.find("async fn cleanup(").ok_or("cleanup pass missing")?;
     let cleanup_call = source.find("self.outbox.cleanup(").ok_or("outbox cleanup call missing")?;
     assert!(execute < cleanup_fn, "the delivery pass is defined before the cleanup pass");
     assert!(cleanup_call > cleanup_fn, "the outbox cleanup is issued only from the cleanup pass");

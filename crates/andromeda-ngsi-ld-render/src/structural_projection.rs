@@ -58,10 +58,6 @@ impl<'a> From<&'a Projection> for StructuralProjection<'a> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::structural_projection::StructuralProjection;
     use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};

@@ -13,6 +13,7 @@ use async_trait::async_trait;
 
 /// CSR-subscription-specific behaviour.
 pub struct CsrSubscriptionVariant {
+    /// Expands the request's terms under its `@context`.
     engine: JsonLdEngine,
 }
 
@@ -63,10 +64,6 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         csource::CsrSubscriptionVariant,

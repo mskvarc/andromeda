@@ -47,7 +47,10 @@ fn success_response(locator: &ResourceLocator, result: &Result<CreateOrUpdateRes
     }
 }
 
-pub async fn create_or_update(
+/// Create or Update Temporal Evolution of an Entity (clause 5.6.11): 201 with
+/// the `Location` when the entity was created, 204 when it was updated, 207 with
+/// the clause 5.2.16 result when only some part succeeded.
+pub(crate) async fn create_or_update(
     // Clause 6.3.20: the parameters are read first, before the tenant is
     // resolved, so an undefined one is an `InvalidRequest` on any tenant.
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,

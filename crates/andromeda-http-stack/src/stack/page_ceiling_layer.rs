@@ -15,7 +15,7 @@ use axum::{
 
 /// Run the rest of the stack, answering `TooManyResults` (clause 5.5.6) in place
 /// of a collection page that renders to more bytes than `ceiling` admits.
-pub async fn refuse_oversized_page(State(ceiling): State<PageByteCeiling>, request: Request, next: Next) -> Response {
+pub(super) async fn refuse_oversized_page(State(ceiling): State<PageByteCeiling>, request: Request, next: Next) -> Response {
     let instance = addressed_request_uri(&request);
     let response = next.run(request).await;
     match response.extensions().get::<RenderedPageSize>().copied().map(|size| ceiling.admit(size)) {

@@ -46,10 +46,6 @@ pub fn admit_fragment_entity_id(written: Option<&Identifier>, target: &Identifie
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::fragment_entity_id::{FragmentEntityIdError, admit_fragment_entity_id};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;

@@ -22,16 +22,24 @@ use tokio_util::task::TaskTracker;
 use tracing::{error, info};
 
 /// Everything one tenant's runtime holds open.
-pub struct BrokerTenantRuntime {
+pub(crate) struct BrokerTenantRuntime {
+    /// Context hit flush, stopped after the transport so its final drain runs last
+    /// before the pool closes.
     context_workers: TenantContextWorkers,
+    /// Unsupervised tasks, aborted and joined after the hand-offs finish.
     background_handles: Vec<JoinHandle<()>>,
     /// The hand-offs of committed changes to notification evaluation.
     handoffs: Vec<TaskTracker>,
     /// The committed changes handed to live evaluation and not yet evaluated.
     commits: Arc<PendingCommits>,
+    /// The tenant's notification transports, shut down once no task can send.
     transport: Arc<TransportDispatcher>,
+    /// The tenant's serving pool, closed last.
     pool: PgPool,
+    /// Stops the MQTT health probe; `None` in every tenant but the unnamed
+    /// default.
     health_shutdown: Option<watch::Sender<bool>>,
+    /// Supervisor of the tenant's registered tasks, shut down first.
     task_supervisor: TaskSupervisor,
     /// Paces the tenant's sweeps; told of every use of the runtime.
     pacer: Arc<BackgroundPacer>,
@@ -40,6 +48,8 @@ pub struct BrokerTenantRuntime {
 }
 
 impl BrokerTenantRuntime {
+    /// Assemble the runtime from the tenant's started workers and the
+    /// resources they share.
     pub(super) fn new(
         context_workers: TenantContextWorkers,
         supervision: TaskSupervision,

@@ -7,9 +7,6 @@
 //! persistence, or the broker runtime, and every layer above it depends on
 //! these types rather than on each other's.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod attribute;
 pub mod attribute_list;
 pub mod attribute_name_csv;

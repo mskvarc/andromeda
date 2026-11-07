@@ -55,9 +55,6 @@
 //! `andromeda-http-headers` beside those headers rather than being
 //! split from them.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod aliased_deserializer;
 pub mod attribute_nesting;
 pub mod attribute_type_validation;
@@ -79,10 +76,6 @@ pub mod sys_attrs;
 pub mod value_budget;
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod written_json;
 
 #[cfg(test)]

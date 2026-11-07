@@ -14,8 +14,8 @@ use thiserror::Error;
 use typed_builder::TypedBuilder;
 use url::Url;
 
-constant_string!(SnapshotNotificationType, "SnapshotNotification");
-constant_string!(SnapshotType, "Snapshot");
+constant_string!(pub SnapshotNotificationType, "SnapshotNotification");
+constant_string!(pub SnapshotType, "Snapshot");
 
 /// Status of a snapshot operation (ETSI GS CIM 009 clause 5.2.41, `snapshotStatus`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, StrumDisplay, EnumString, EnumIter, IntoStaticStr)]
@@ -244,12 +244,6 @@ impl Snapshot {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    clippy::unwrap_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         query::{body::Query, temporal_query::TemporalQuery},

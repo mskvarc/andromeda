@@ -1,8 +1,5 @@
 //! `andromeda-sql`: format, lint, seal and verify the SQL migrations.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 use andromeda_sql::{
     canonical_layout::CanonicalLayout,
     executable_lookup::ExecutableLookup,

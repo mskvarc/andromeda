@@ -13,13 +13,15 @@ use futures::future::BoxFuture;
 use std::sync::Arc;
 
 /// Resolves one broker tenant and projects only Entity Map capabilities.
-pub struct BrokerEntityMapStateResolver {
+pub(crate) struct BrokerEntityMapStateResolver {
+    /// The process tenant runtimes; each resolution leases the tenant's state
+    /// for the lifetime of the request.
     tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
 }
 
 impl BrokerEntityMapStateResolver {
     /// Construct a focused resolver over the tenant runtime manager.
-    pub const fn new(tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>) -> BrokerEntityMapStateResolver {
+    pub(crate) const fn new(tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>) -> BrokerEntityMapStateResolver {
         BrokerEntityMapStateResolver { tenants }
     }
 }

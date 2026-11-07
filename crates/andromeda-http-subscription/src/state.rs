@@ -70,10 +70,12 @@ pub trait SubscriptionStateResolver: Send + Sync {
 /// Axum state for the complete subscription route fragment.
 #[derive(Clone)]
 pub(crate) struct SubscriptionRouteState {
+    /// Resolves or creates the request's tenant with its subscription capabilities.
     resolver: Arc<dyn SubscriptionStateResolver>,
 }
 
 impl SubscriptionRouteState {
+    /// Route state resolving tenants through `resolver`.
     pub(crate) const fn new(resolver: Arc<dyn SubscriptionStateResolver>) -> SubscriptionRouteState {
         SubscriptionRouteState { resolver }
     }

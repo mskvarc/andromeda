@@ -111,11 +111,6 @@ impl SelectedInstances {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::processor::payload::selected_instances::{AttributeSelection, Kept, Narrowed, SelectedInstances};
     use andromeda_ngsi_ld_entity::{attribute_instances::AttributeInstances, entity_state::EntityState};

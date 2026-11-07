@@ -22,9 +22,6 @@
 //! whether MQTT delivery is working, so the probe lives here and the word
 //! "healthy" lives there.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod connection_failure;
 pub mod delivery_deadline;
 pub mod dispatch;

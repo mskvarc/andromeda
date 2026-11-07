@@ -12,9 +12,6 @@
 //! the redirect policy that vets every hop of a client that follows them
 //! ([`redirect_policy`]).
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod address_class;
 pub mod address_policy;
 pub mod client;

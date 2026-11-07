@@ -41,7 +41,7 @@ type ListenerFuture<'a> = Pin<Box<dyn Future<Output = Result<(), ListenerError>>
 
 /// Failure to serve one of the broker's HTTP listeners.
 #[derive(Debug, Error)]
-pub enum ListenerError {
+pub(crate) enum ListenerError {
     /// The TCP (HTTP/1.1 and HTTP/2) listener failed.
     #[error(transparent)]
     Tcp(#[from] HttpServerError),
@@ -78,7 +78,7 @@ pub enum ListenerError {
 /// Returns a [`ListenerError`] when the shared TLS identity cannot be loaded,
 /// when any listener cannot be bound or fails while serving, or when the
 /// HTTP/3 advertisement cannot be built.
-pub async fn serve(
+pub(crate) async fn serve(
     config: &BrokerConfig,
     api: HttpApi,
     management: Option<ManagementApi>,

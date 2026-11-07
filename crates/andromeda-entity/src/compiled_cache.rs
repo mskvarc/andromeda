@@ -251,6 +251,8 @@ fn context_digest(context: &ContextSpec) -> u64 {
 /// Cloning is cheap: the underlying moka cache is `Arc`-shared internally.
 #[derive(Debug, Clone)]
 pub struct CompiledQueryCache {
+    /// Compiled queries keyed on parameters, context fingerprint and language
+    /// targeting, bounded by capacity and TTL.
     inner: Cache<CompiledQueryKey, Arc<CompiledEntityQuery>>,
 }
 
@@ -297,10 +299,6 @@ impl Default for CompiledQueryCache {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::compiled_cache::{CompiledQueryKey, context_digest};
     use andromeda_json_literal::JsonLiteral;

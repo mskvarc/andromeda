@@ -185,10 +185,6 @@ fn installed_admission<A: TemporalQueryAdmission>(parts: &Parts) -> Result<A, Ex
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::admitted_temporal_query::{AdmittedTemporalPostQuery, AdmittedTemporalQuery, TemporalQueryAdmission, TemporalQueryBinding};
     use andromeda_http_response::{classified_report::ClassifiedReport, extraction_rejection::ExtractorRejection};

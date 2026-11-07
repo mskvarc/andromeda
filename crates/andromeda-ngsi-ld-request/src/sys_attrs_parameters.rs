@@ -40,10 +40,6 @@ impl SysAttrsParams {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::sys_attrs_parameters::SysAttrsParams;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;

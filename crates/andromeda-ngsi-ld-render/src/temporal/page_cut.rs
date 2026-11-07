@@ -165,10 +165,6 @@ pub fn largest_simultaneous_group<'a>(rows: impl IntoIterator<Item = &'a Tempora
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::temporal::page_cut::{PageCut, largest_simultaneous_group};
     use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, time_prop::TimeProp};

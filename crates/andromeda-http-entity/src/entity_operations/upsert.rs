@@ -39,6 +39,9 @@ use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::context_target;
 use andromeda_ngsi_ld_request::query_narrowing::ExecutionScope;
 
+/// Batch Entity Upsert (clause 5.6.8): 204 when every entity already existed,
+/// 201 listing the created identifiers when some were created, 207 with the
+/// clause 5.2.16 result on any failure.
 pub(crate) async fn batch_upsert(
     context_target::ExistingTargetedTenantState {
         services: state,

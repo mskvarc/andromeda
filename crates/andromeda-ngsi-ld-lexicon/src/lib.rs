@@ -13,9 +13,6 @@
 //! HTTP binding and the stores all name these types without depending on the
 //! resources of clause 5.2.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 #[macro_use]
 mod validated_name;
 

@@ -13,6 +13,7 @@ use async_trait::async_trait;
 
 /// Entity-subscription-specific behaviour.
 pub struct EntitySubscriptionVariant {
+    /// Expands the request's terms under its `@context`.
     engine: JsonLdEngine,
 }
 
@@ -75,10 +76,6 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         entity::EntitySubscriptionVariant,

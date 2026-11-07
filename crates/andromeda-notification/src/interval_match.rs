@@ -57,10 +57,6 @@ fn admitted(sub: &CompiledSubscription, entities: Vec<EntityState>, linked: &Lin
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::interval_match::{admitted, standing_at};
     use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};

@@ -33,7 +33,7 @@ use chrono::Utc;
 /// past the `geoQ` limits, and [`SubscriptionError::Query`] for a `q` too
 /// complex to resolve (clause 5.5.6) or a target language the level does not
 /// admit.
-pub fn validate_create_request(request: &SubscriptionRequest, admission: SubscriptionFilterAdmission) -> Result<(), SubscriptionError> {
+pub(crate) fn validate_create_request(request: &SubscriptionRequest, admission: SubscriptionFilterAdmission) -> Result<(), SubscriptionError> {
     // Clause 5.2.1: an NGSI-LD Null is refused outside clauses 5.5.8 and 5.5.12,
     // and a create deletes nothing (clause 5.8.1.4, bullet 1). A JSON `null` is
     // no value of any member and never reads into the request.
@@ -100,7 +100,7 @@ fn validate_subscribed_scope(request: &SubscriptionRequest) -> Result<(), Subscr
 ///
 /// Returns [`SubscriptionValidationReason::ExpiresAtInPast`] for an
 /// `expiresAt` that is not after the present instant.
-pub fn validate_expires_at_not_in_past(request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
+pub(crate) fn validate_expires_at_not_in_past(request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
     match request.expires_at.as_set() {
         Some(expires_at) if !SubscriptionStanding::unexpired_at(Some(*expires_at), Utc::now()) => {
             Err(SubscriptionError::Validation(SubscriptionValidationReason::ExpiresAtInPast))
@@ -118,7 +118,7 @@ pub fn validate_expires_at_not_in_past(request: &SubscriptionRequest) -> Result<
 /// breaks, [`SubscriptionError::GeoQTooLarge`] for a reference geometry past
 /// the `geoQ` limits, and [`SubscriptionError::Query`] for a `q` too complex
 /// to resolve (clause 5.5.6) or a target language the level does not admit.
-pub fn validate_common_members(request: &SubscriptionRequest, admission: SubscriptionFilterAdmission) -> Result<(), SubscriptionError> {
+pub(crate) fn validate_common_members(request: &SubscriptionRequest, admission: SubscriptionFilterAdmission) -> Result<(), SubscriptionError> {
     if request.time_interval.as_set().is_some() && request.watched_attributes.as_set().is_some() {
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::TimeIntervalWithWatchedAttributes));
     }
@@ -198,7 +198,7 @@ pub fn validate_common_members(request: &SubscriptionRequest, admission: Subscri
 ///
 /// Returns [`SubscriptionValidationReason::TemporalQNotForEntitySubscription`]
 /// when the request sets a `temporalQ`.
-pub const fn validate_no_temporal_q(request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
+pub(crate) const fn validate_no_temporal_q(request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
     if request.temporal_q.as_set().is_some() {
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::TemporalQNotForEntitySubscription));
     }
@@ -213,7 +213,7 @@ pub const fn validate_no_temporal_q(request: &SubscriptionRequest) -> Result<(),
 ///
 /// Returns [`SubscriptionValidationReason::GeoJsonForCsourceSubscription`] when
 /// the request's endpoint accepts `application/geo+json`.
-pub fn validate_no_geo_json_accept(request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
+pub(crate) fn validate_no_geo_json_accept(request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
     let accept = request
         .notification
         .as_ref()
@@ -232,16 +232,11 @@ pub fn validate_no_geo_json_accept(request: &SubscriptionRequest) -> Result<(), 
 ///
 /// Returns [`SubscriptionValidationReason::EndpointRequired`] when the
 /// fragment's notification carries no `endpoint`.
-pub fn validate_notification_fragment(request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
+pub(crate) fn validate_notification_fragment(request: &SubscriptionRequest) -> Result<(), SubscriptionError> {
     request.notification.as_ref().map_or(Ok(()), validate_endpoint_present)
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         error::SubscriptionError,

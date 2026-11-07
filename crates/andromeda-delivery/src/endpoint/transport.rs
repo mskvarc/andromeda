@@ -164,11 +164,6 @@ fn parse_mqtt_endpoint(parsed: &Url, notifier_info: Option<&[KeyValuePair]>) -> 
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::endpoint::{
         error::EndpointParseError,

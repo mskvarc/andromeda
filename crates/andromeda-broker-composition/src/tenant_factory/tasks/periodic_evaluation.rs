@@ -161,10 +161,6 @@ pub(super) fn register_periodic_evaluations(supervisor: &TaskSupervisor) -> Resu
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::tenant_factory::tasks::periodic_evaluation::{PeriodicEvaluation, periodic_pass, register_periodic_evaluations};
     use andromeda_context_commit::subscription_key::SubscriptionKey;

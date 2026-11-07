@@ -15,7 +15,7 @@ use andromeda_postgresql_codes::{attribute_change_kind::AttributeChangeKindCode,
 
 /// The registry member the schema persists for a lifecycle transition.
 #[must_use]
-pub const fn stored_lifecycle(lifecycle: EntityLifecycle) -> EntityLifecycleCode {
+pub(crate) const fn stored_lifecycle(lifecycle: EntityLifecycle) -> EntityLifecycleCode {
     match lifecycle {
         EntityLifecycle::Created => EntityLifecycleCode::Created,
         EntityLifecycle::Modified => EntityLifecycleCode::Modified,
@@ -25,7 +25,7 @@ pub const fn stored_lifecycle(lifecycle: EntityLifecycle) -> EntityLifecycleCode
 
 /// The lifecycle transition a stored registry member names.
 #[must_use]
-pub const fn lifecycle_of(code: EntityLifecycleCode) -> EntityLifecycle {
+pub(crate) const fn lifecycle_of(code: EntityLifecycleCode) -> EntityLifecycle {
     match code {
         EntityLifecycleCode::Created => EntityLifecycle::Created,
         EntityLifecycleCode::Modified => EntityLifecycle::Modified,
@@ -35,7 +35,7 @@ pub const fn lifecycle_of(code: EntityLifecycleCode) -> EntityLifecycle {
 
 /// The registry member the schema persists for an instance transition.
 #[must_use]
-pub const fn stored_change_kind(kind: AttributeChangeKind) -> AttributeChangeKindCode {
+pub(crate) const fn stored_change_kind(kind: AttributeChangeKind) -> AttributeChangeKindCode {
     match kind {
         AttributeChangeKind::Created => AttributeChangeKindCode::Created,
         AttributeChangeKind::Updated => AttributeChangeKindCode::Updated,
@@ -45,7 +45,7 @@ pub const fn stored_change_kind(kind: AttributeChangeKind) -> AttributeChangeKin
 
 /// The instance transition a stored registry member names.
 #[must_use]
-pub const fn change_kind_of(code: AttributeChangeKindCode) -> AttributeChangeKind {
+pub(crate) const fn change_kind_of(code: AttributeChangeKindCode) -> AttributeChangeKind {
     match code {
         AttributeChangeKindCode::Created => AttributeChangeKind::Created,
         AttributeChangeKindCode::Updated => AttributeChangeKind::Updated,

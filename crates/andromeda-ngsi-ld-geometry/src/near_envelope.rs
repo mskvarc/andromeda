@@ -102,11 +102,6 @@ fn rect(west: f64, south: f64, east: f64, north: f64) -> Rect<f64> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{great_circle_reach::REACH_TOLERANCE_DEGREES, near_envelope::NearEnvelope, positive_distance::PositiveDistance};
     use geo::{Destination, Geodesic, Point, Rect};

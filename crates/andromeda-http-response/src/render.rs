@@ -176,10 +176,6 @@ async fn response_context(context: PresentedContext, host: &dyn CompoundContextH
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::render::{ContextCarrier, RenderingPreferences, response_context, start_rendering_core, start_rendering_partial_success};
     use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType};

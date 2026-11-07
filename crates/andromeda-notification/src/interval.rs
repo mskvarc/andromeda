@@ -33,13 +33,22 @@ use tracing::{debug, error};
 /// Evaluation of due entity interval subscriptions, one subscription at a
 /// time; how many run at once is the caller's to bound.
 pub struct IntervalNotificationOperation {
+    /// The branch the due subscriptions are read, claimed and evaluated on;
+    /// its Snapshot, when it has one, is stamped on each delivery.
     target: ContextTarget,
+    /// Due-subscription reads, slot claims, outcome and tick records.
     sub_repo: Arc<dyn SubscriptionStore>,
+    /// System-attribute reads of the matched entities.
     entity_reader: Arc<dyn EntityReader>,
+    /// Paged reads of the candidate entities a subscription matches.
     entity_pages: Arc<dyn EntityPayloadPages>,
+    /// Language targeting and linked-entity resolution for the payload.
     entity_query: Arc<EntityQueryService>,
+    /// Sends each notification over its endpoint's binding.
     transport: Arc<TransportDispatcher>,
+    /// Compacts the notification payload.
     engine: JsonLdEngine,
+    /// The tenant named in each delivery request.
     tenant: TenantRef,
 }
 
@@ -281,10 +290,6 @@ impl IntervalNotificationOperation {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         interval::{IntervalNotificationDeps, IntervalNotificationOperation},

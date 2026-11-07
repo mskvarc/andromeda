@@ -91,10 +91,6 @@ impl TryFrom<TimeIntervalWire> for TimeInterval {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::time_interval::TimeInterval;
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;

@@ -79,10 +79,6 @@ pub fn metadata_by_identifier_query(identifier: &str) -> SelectStatement {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::jsonld_context::listing_statement::listing_page_query;
     use andromeda_context_registry::detail_level::ContextDetailLevel;

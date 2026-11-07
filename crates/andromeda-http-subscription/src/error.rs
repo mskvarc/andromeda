@@ -100,10 +100,6 @@ pub(crate) fn internal_problem(error: &impl Display, summary: InternalFailureSum
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::error::SubscriptionHttpClassify;
     use andromeda_jsonld::compound_context_host::ContextHostingError;

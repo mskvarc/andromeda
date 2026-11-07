@@ -21,7 +21,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 
-constant_string!(TenantType, "Tenant");
+constant_string!(pub TenantType, "Tenant");
 
 /// The read-only lifecycle status a tenant resource reports.
 ///
@@ -129,10 +129,6 @@ pub fn tenant_name_from_id(id: &Identifier) -> Option<TenantName> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::tenant::{Tenant, TenantState, TenantUsage, tenant_id, tenant_name_from_id};
     use andromeda_ngsi_ld_lexicon::{

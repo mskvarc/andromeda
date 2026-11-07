@@ -42,10 +42,6 @@ impl EntityState {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{entity_state::EntityState, reads::member_name::MemberName};
     use serde_json::json;

@@ -30,7 +30,9 @@ use andromeda_http_extraction::{
     path_segment::{AttrId, EntityId},
 };
 
-pub async fn delete_attr(
+/// Delete Attribute from Temporal Evolution (clause 5.6.13): 204 when every
+/// part succeeded, 207 with the clause 5.2.16 result when only some did.
+pub(crate) async fn delete_attr(
     context_target::ExistingTargetedTenantState {
         services: state,
         target,

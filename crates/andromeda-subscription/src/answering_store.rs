@@ -36,7 +36,9 @@ pub enum StoredAnswer {
 /// reads; every other operation is refused as a saturated store.
 #[derive(Debug)]
 pub struct AnsweringStore {
+    /// How every `get` is answered.
     answer: StoredAnswer,
+    /// The `get` calls answered so far.
     reads: AtomicU32,
 }
 
@@ -58,18 +60,21 @@ impl AnsweringStore {
 }
 
 /// A stored Vehicle subscription named `id` that is active and never expires.
-fn stored(id: &Identifier) -> StoredSubscription {
+///
+/// The fixture fails the way a store decoding a bad row does, so a key or body
+/// the store would refuse reads as undecodable rather than panicking.
+fn stored(id: &Identifier) -> Result<StoredSubscription, SubscriptionError> {
     let text = format!(
         r#"{{"id":"{id}","type":"Subscription","entities":[{{"type":"https://example.org/Vehicle"}}],"notification":{{"endpoint":{{"uri":"http://subscriber.example.org/notify","accept":"application/json"}}}},"status":"active","createdAt":"2024-01-01T00:00:00Z","modifiedAt":"2024-01-01T00:00:00Z"}}"#
     );
-    StoredSubscription {
-        key: SubscriptionKey::try_from(1).expect("a valid key"),
-        subscription: serde_json::from_str(&text).expect("a valid stored subscription"),
+    Ok(StoredSubscription {
+        key: SubscriptionKey::try_from(1).map_err(|_| SubscriptionError::from(PersistenceFailure::Undecodable))?,
+        subscription: serde_json::from_str(&text)?,
         notifying_since: NotifyingSince {
             active: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
             selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
         },
-    }
+    })
 }
 
 #[async_trait]
@@ -79,11 +84,11 @@ impl SubscriptionStore for AnsweringStore {
         match self.answer {
             StoredAnswer::Unreadable => Err(SubscriptionError::from(PersistenceFailure::Unavailable)),
             StoredAnswer::UnreadableForReads(failing) if read < failing => Err(SubscriptionError::from(PersistenceFailure::Unavailable)),
-            StoredAnswer::UndecodableRow => Err(SubscriptionError::Representation(
-                serde_json::from_str::<u8>("not a number").expect_err("text is not a number"),
-            )),
+            StoredAnswer::UndecodableRow => serde_json::from_str::<u8>("not a number")
+                .map(|_| None)
+                .map_err(SubscriptionError::Representation),
             StoredAnswer::Absent => Ok(None),
-            StoredAnswer::UnreadableForReads(_) => Ok(Some(stored(id))),
+            StoredAnswer::UnreadableForReads(_) => stored(id).map(Some),
         }
     }
 

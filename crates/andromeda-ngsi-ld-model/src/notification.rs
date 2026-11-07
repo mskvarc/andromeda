@@ -9,8 +9,8 @@ use serde_json::value::RawValue;
 use strum::{Display, EnumCount, EnumIter, EnumString};
 use typed_builder::TypedBuilder;
 
-constant_string!(NotificationType, "Notification");
-constant_string!(CsourceNotificationType, "ContextSourceNotification");
+constant_string!(pub NotificationType, "Notification");
+constant_string!(pub CsourceNotificationType, "ContextSourceNotification");
 
 /// Origin of an entity change event (ETSI GS CIM 009 v1.9.1, clause 5.5.13).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
@@ -235,10 +235,6 @@ pub struct CsourceNotification<'a> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         notification::{CsourceNotification, CsrTriggerReason, Notification, NotificationData, NotificationTrigger, effective_notification_triggers},

@@ -52,10 +52,6 @@ pub fn append_continuation_link(response: &mut Response, uri: &Uri, next: &Tempo
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::temporal_continuation::append_continuation_link;
     use andromeda_http_headers::media_type::ResponseMediaType;

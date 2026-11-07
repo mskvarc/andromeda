@@ -9,13 +9,15 @@ use futures::future::BoxFuture;
 use std::sync::Arc;
 
 /// Resolves a Snapshot URI to the branch owned by its durable control resource.
-pub struct BrokerSnapshotTargetResolver {
+pub(super) struct BrokerSnapshotTargetResolver {
+    /// The tenant's Snapshot service, whose control records map a Snapshot to
+    /// its branch.
     snapshots: Arc<SnapshotService>,
 }
 
 impl BrokerSnapshotTargetResolver {
     /// Construct a target resolver over one tenant's Snapshot service.
-    pub const fn new(snapshots: Arc<SnapshotService>) -> BrokerSnapshotTargetResolver {
+    pub(super) const fn new(snapshots: Arc<SnapshotService>) -> BrokerSnapshotTargetResolver {
         BrokerSnapshotTargetResolver { snapshots }
     }
 }

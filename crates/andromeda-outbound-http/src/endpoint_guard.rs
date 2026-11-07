@@ -103,10 +103,6 @@ async fn vet(policy: &AddressPolicy, authority: &Authority) -> Result<(), Endpoi
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{address_policy::AddressPolicy, endpoint_guard::PrivateIpGuard, endpoint_refusal::EndpointRefusal};
     use andromeda_configuration::{address_rule::AddressRule, schema::private_addresses::PrivateAddresses};

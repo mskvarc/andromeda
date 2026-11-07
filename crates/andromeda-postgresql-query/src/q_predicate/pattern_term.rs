@@ -93,11 +93,6 @@ pub(crate) fn pattern_value(pred: &Predicate, pattern: &Pattern, polarity: Patte
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::q_predicate::{
         instance_row::InstanceRow,

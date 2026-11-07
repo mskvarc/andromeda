@@ -54,10 +54,12 @@ pub trait RegistrationStateResolver: Send + Sync {
 /// Axum state for the complete registration route fragment.
 #[derive(Clone)]
 pub(crate) struct RegistrationRouteState {
+    /// Resolves or creates the request's tenant with its registration capabilities.
     resolver: Arc<dyn RegistrationStateResolver>,
 }
 
 impl RegistrationRouteState {
+    /// Route state resolving tenants through `resolver`.
     pub(crate) const fn new(resolver: Arc<dyn RegistrationStateResolver>) -> RegistrationRouteState {
         RegistrationRouteState { resolver }
     }

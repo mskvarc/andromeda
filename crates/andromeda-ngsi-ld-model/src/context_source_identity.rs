@@ -11,7 +11,7 @@ use andromeda_ngsi_ld_lexicon::{
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-constant_string!(ContextSourceIdentityType, "ContextSourceIdentity");
+constant_string!(pub ContextSourceIdentityType, "ContextSourceIdentity");
 
 /// The response body of the Context Source identity endpoint (Table 5.2.40-1).
 ///
@@ -43,10 +43,6 @@ pub struct ContextSourceIdentity {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::context_source_identity::{ContextSourceIdentity, ContextSourceIdentityType};
     use andromeda_json_literal::JsonLiteral;

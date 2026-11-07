@@ -100,10 +100,6 @@ impl FederationService {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::ordering_admission::{OrderingAdmission, admission_of_participation, admission_without_the_registry};
     use andromeda_ngsi_ld_query::ordering::{parameters::OrderingParameters, term::OrderTerm};

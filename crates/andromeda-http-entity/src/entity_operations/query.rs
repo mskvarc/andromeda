@@ -21,6 +21,7 @@ use crate::{
 use andromeda_http_extraction::{context_target, entity_post_query::EntityPostQuery, pagination_policy::RequestPagination};
 use andromeda_jsonld::user_context_admission::admit_user_context;
 
+/// Query Entities through its POST binding, the query read from the clause 5.2.23 body.
 pub(crate) async fn query(
     context_target::ExistingTargetedTenantState { services, target, snapshot: _ }: EntityTenantState,
     accept: AcceptFormat,

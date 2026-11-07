@@ -268,10 +268,6 @@ fn member_text(scalar: &Scalar) -> MemberText {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::q_predicate::structured_target::carries_operand;
     use andromeda_ngsi_ld_number::JsonNumber;

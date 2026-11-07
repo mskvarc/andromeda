@@ -311,24 +311,12 @@ fn hosted_context_subtree(payload: &JsonLiteral) -> Result<JsonLiteral, ContextR
 mod core_url_tests;
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod identity_tests;
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod memory_store;
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{error::ContextRegistryError, service::hosted_context_subtree};
     use andromeda_json_literal::JsonLiteral;

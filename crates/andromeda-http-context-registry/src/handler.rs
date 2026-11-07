@@ -175,6 +175,8 @@ pub(crate) async fn get(
     served_response(served, if_none_match.as_ref()).map_err(|report| report.with_instance(uri))
 }
 
+/// Delete a stored `@context`, or reload a cached one from its source when
+/// `reload=true` (clause 5.13.5); answers 204.
 pub(crate) async fn delete(
     ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,

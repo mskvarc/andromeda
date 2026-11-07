@@ -6,9 +6,6 @@
 //! `/tenants` routes and turns its domain views into the fixed-JSON `Tenant`
 //! resource; no route here ever drops a tenant's physical database.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod error;
 pub mod handler;
 pub mod options;

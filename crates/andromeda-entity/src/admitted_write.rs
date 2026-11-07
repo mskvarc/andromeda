@@ -195,10 +195,6 @@ impl<M: WrittenMember + Sync> WritePayload for &EntityPatch<M> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::admitted_write::WritePayload;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};

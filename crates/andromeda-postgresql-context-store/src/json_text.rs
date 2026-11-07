@@ -106,10 +106,6 @@ impl<'r> Decode<'r, Postgres> for JsonText<'r> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::json_text::{JsonText, JsonTextError, column_text, optional_json_text};
     use pretty_assertions::assert_eq;

@@ -23,16 +23,7 @@ pub mod update;
 
 /// Durable-match recording tests for the attribute-level writes.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod durable_match_recording;
 /// History-recording tests for the attribute-level writes.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod history_recording;

@@ -195,10 +195,6 @@ fn deleting<T>(member: Clearable<T>, kind: DeletableMember, deleted: &DeletedMem
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         receiver::ReceiverEndpoint,
@@ -221,7 +217,7 @@ mod tests {
     const COLOUR: &str = "https://example.org/colour";
 
     /// The stored term tree of a projection member naming one attribute.
-    fn stored_projection(name: &str) -> serde_json::Value {
+    fn stored_projection(name: &str) -> Value {
         json!([[{"name": name, "linked": []}]])
     }
 
@@ -245,7 +241,7 @@ mod tests {
         .expect("valid subscription")
     }
 
-    fn registration(information: &serde_json::Value) -> ContextSourceRegistration {
+    fn registration(information: &Value) -> ContextSourceRegistration {
         serde_json::from_value(json!({
             "id": "urn:ngsi-ld:ContextSourceRegistration:b",
             "type": "ContextSourceRegistration",
@@ -284,7 +280,7 @@ mod tests {
     }
 
     /// A subscription selecting the given entity selectors and nothing else.
-    fn subscription_selecting(entities: &serde_json::Value) -> Subscription {
+    fn subscription_selecting(entities: &Value) -> Subscription {
         serde_json::from_value(json!({
             "id": "urn:ngsi-ld:Subscription:local",
             "type": "Subscription",
@@ -438,7 +434,7 @@ mod tests {
 
     /// The fragment a local update of `local` produces for `registration`, with
     /// the members `update` deleted.
-    fn fragment_after(local: &Subscription, update: &serde_json::Value, carriage: FilterCarriage) -> Value {
+    fn fragment_after(local: &Subscription, update: &Value, carriage: FilterCarriage) -> Value {
         let registration = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
         let deleted = DeletedMembers::of(&serde_json::from_value(update.clone()).expect("a readable fragment")); // clone: the fixture is borrowed
         written(&ReducedSubscription::reduce(local, &registration, &receiver(), &minted(), carriage).as_fragment(&deleted, carriage))

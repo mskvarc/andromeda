@@ -37,7 +37,7 @@ use tracing_subscriber::{
 
 /// Failure while installing composition-owned tracing.
 #[derive(Debug, Error)]
-pub enum TracingInitError {
+pub(crate) enum TracingInitError {
     /// The configured log directory could not be created.
     #[error("the log directory {} could not be created: {source}", .directory.display())]
     LogDirectory {
@@ -64,7 +64,7 @@ pub enum TracingInitError {
 /// Returns [`TracingInitError::LogDirectory`] when the file sink's directory
 /// cannot be created, and [`TracingInitError::Install`] when a subscriber is
 /// already installed for the process.
-pub fn initialize(config: &BrokerConfig) -> Result<Option<WorkerGuard>, TracingInitError> {
+pub(crate) fn initialize(config: &BrokerConfig) -> Result<Option<WorkerGuard>, TracingInitError> {
     let log = &config.observability.log;
     let stdout_layer = fmt::layer().compact().with_filter(stdout_env_filter(log.level));
 

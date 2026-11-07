@@ -98,10 +98,6 @@ fn order_subject(geoproperty: &AttributeName, attribute_names: &ResolvedNames<At
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::order_geography::geo_order_distance;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;

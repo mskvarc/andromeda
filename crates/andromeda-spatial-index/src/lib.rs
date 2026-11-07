@@ -21,9 +21,6 @@
 //! subscription index scans its partition in full for them; the entity index
 //! scans it for `disjoint` and declines to narrow such a `near` at all.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod entity;
 pub mod key;
 pub mod partitioned_rtree;

@@ -78,11 +78,6 @@ pub fn notification_data(entities: &[NotificationEntity<'_>], shape: DataShape<'
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         geometry_selection::GeometrySelection,

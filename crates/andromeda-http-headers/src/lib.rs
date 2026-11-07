@@ -21,9 +21,6 @@
 //! the server, the notification transports and the forwarding client without
 //! any of them depending on a web framework.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod accept;
 pub mod alt_svc;
 pub mod geo_json_body;

@@ -44,10 +44,6 @@ impl EntitySelectorParams {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::query::entity_selector::EntitySelectorParams;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;

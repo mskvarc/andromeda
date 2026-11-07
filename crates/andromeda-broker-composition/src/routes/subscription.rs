@@ -14,13 +14,15 @@ use futures::future::BoxFuture;
 use std::sync::Arc;
 
 /// Resolves one broker tenant and projects only subscription capabilities.
-pub struct BrokerSubscriptionStateResolver {
+pub(crate) struct BrokerSubscriptionStateResolver {
+    /// The process tenant runtimes; each resolution leases the tenant's state
+    /// for the lifetime of the request.
     tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
 }
 
 impl BrokerSubscriptionStateResolver {
     /// Construct a focused resolver over the tenant runtime manager.
-    pub const fn new(tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>) -> BrokerSubscriptionStateResolver {
+    pub(crate) const fn new(tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>) -> BrokerSubscriptionStateResolver {
         BrokerSubscriptionStateResolver { tenants }
     }
 }

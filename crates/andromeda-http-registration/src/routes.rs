@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 /// The complete context-source registration route fragment.
 pub struct RegistrationRoutes {
+    /// The `/csourceRegistrations` routes with the tenant resolver bound as state.
     router: Router,
 }
 

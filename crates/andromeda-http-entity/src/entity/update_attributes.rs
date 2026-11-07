@@ -33,6 +33,8 @@ use andromeda_jsonld::user_context_admission::admit_user_context;
 use andromeda_ngsi_ld_request::{fragment_entity_id::admit_fragment_entity_id, query_narrowing::ExecutionScope};
 use axum::http::{HeaderMap, Method};
 
+/// Update Attributes (clause 5.6.2): 204 when every attribute was written, 207
+/// with the clause 5.2.18 `UpdateResult` otherwise.
 pub(crate) async fn update_attrs(
     // Clause 6.3.20: the operation defines `type` alone (Table 6.6.3.2-1), so
     // any other parameter is an `InvalidRequest`; it is read first, before the

@@ -13,7 +13,7 @@ use std::num::NonZeroU32;
 /// still held it, so a worker whose lease lapsed and was taken over learns that
 /// the delivery is no longer its own.
 #[async_trait]
-pub trait SnapshotStatusQueue: Send + Sync + 'static {
+pub(crate) trait SnapshotStatusQueue: Send + Sync + 'static {
     /// Claim up to `limit` due deliveries under a lease that runs to `lease_until`.
     async fn claim(&self, worker: LeaseHolder, lease_until: DateTime<Utc>, limit: NonZeroU32) -> Result<Vec<SnapshotStatusDelivery>, SnapshotError>;
 

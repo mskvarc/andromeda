@@ -222,10 +222,6 @@ fn coordinates_member(token: &str) -> Option<&'static str> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         compact_node::{CompactNode, NodeShape},

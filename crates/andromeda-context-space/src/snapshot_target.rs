@@ -10,8 +10,11 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 /// a notification carries in its `NGSILD-Snapshot` header.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SnapshotTarget {
+    /// Names the Snapshot's branch schemas.
     key: SnapshotKey,
+    /// Whether the published or the staging branch is addressed.
     branch: SnapshotBranch,
+    /// The validated Snapshot URI a notification carries in its `NGSILD-Snapshot` header.
     snapshot_id: Identifier,
 }
 

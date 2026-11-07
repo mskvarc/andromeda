@@ -15,9 +15,6 @@
 //! primitives) and it names no broker relation, which is
 //! `andromeda-postgresql-schema`.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod advisory_lock;
 pub mod aggregate;
 pub mod bit_string;

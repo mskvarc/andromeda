@@ -57,10 +57,6 @@ pub fn apply_identifier_window(select: &mut SelectStatement, identifier: SimpleE
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::page_window::apply_identifier_window;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;

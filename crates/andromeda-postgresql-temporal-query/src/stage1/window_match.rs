@@ -86,10 +86,6 @@ fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery, alias: &Dy
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::stage1::{
         build_stage1_entity_ids,

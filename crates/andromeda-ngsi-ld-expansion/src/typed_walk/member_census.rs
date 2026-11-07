@@ -48,10 +48,6 @@ pub(crate) fn scope(member: &ScopeMember) -> usize {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::typed_walk::member_census::{language_map, language_map_patch, listed, object_list, scope};
     use andromeda_ngsi_ld_model::{

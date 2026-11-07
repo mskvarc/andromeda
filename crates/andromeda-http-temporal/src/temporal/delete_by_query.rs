@@ -28,7 +28,9 @@ struct WouldDelete {
     deleted: u64,
 }
 
-pub async fn delete_by_query(
+/// Delete the local history a query matches: 200 with the would-delete count
+/// for `dryRun`, 204 once deleted.
+pub(crate) async fn delete_by_query(
     ExistingTargetedTenantState {
         services: state,
         target,

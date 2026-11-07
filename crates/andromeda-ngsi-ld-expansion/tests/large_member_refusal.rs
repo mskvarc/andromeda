@@ -16,7 +16,7 @@
 #![expect(
     clippy::expect_used,
     clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
+    reason = "clippy reaches only `#[test]` functions in a member crate's integration test, and these helpers fail the test by panicking"
 )]
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_expansion::{error::ExpansionError, normalization::Normalization, typed_expander::TypedExpander};

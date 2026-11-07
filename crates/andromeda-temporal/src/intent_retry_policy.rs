@@ -56,10 +56,6 @@ impl TemporalIntentRetryPolicy {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::intent_retry_policy::TemporalIntentRetryPolicy;
     use andromeda_context_commit::failure_summary::FAILURE_SUMMARY_MAX_CHARACTERS;

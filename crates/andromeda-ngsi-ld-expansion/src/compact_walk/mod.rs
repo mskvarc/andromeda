@@ -8,8 +8,8 @@
 //! scalar ([`literal`]) and the value of one member ([`member`]). Whatever the
 //! algorithm would do that these steps do not model, they decline.
 
-pub mod element;
-pub mod literal;
-pub mod member;
-pub mod object;
-pub mod value_object;
+pub(crate) mod element;
+pub(crate) mod literal;
+pub(crate) mod member;
+pub(crate) mod object;
+pub(crate) mod value_object;

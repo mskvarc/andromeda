@@ -25,20 +25,21 @@ use futures::future::join_all;
 use std::{num::NonZeroU32, sync::Arc};
 
 /// Delivers snapshot status notifications through the configured transport dispatcher.
-pub struct DeliverySnapshotNotificationSink {
+pub(crate) struct DeliverySnapshotNotificationSink {
+    /// Shared dispatcher; every status notification goes out over HTTP.
     transport: Arc<TransportDispatcher>,
 }
 
 /// Sends one leased Snapshot status notification.
 #[async_trait]
-pub trait SnapshotStatusTransport: Send + Sync + 'static {
+pub(crate) trait SnapshotStatusTransport: Send + Sync + 'static {
     /// Send the notification of one claimed delivery and classify the answer.
     async fn deliver_status(&self, delivery: &SnapshotStatusDelivery) -> DeliveryResult;
 }
 
 /// What one pass over the Snapshot status outbox did.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SnapshotStatusPassOutcome {
+pub(crate) struct SnapshotStatusPassOutcome {
     /// Number of deliveries claimed during the pass.
     pub claimed: usize,
     /// Number of claimed deliveries another worker owned by the time this one
@@ -47,25 +48,38 @@ pub struct SnapshotStatusPassOutcome {
 }
 
 /// Bounded, leased delivery pass over one tenant's Snapshot status outbox.
-pub struct SnapshotStatusDeliveryDrain {
+pub(crate) struct SnapshotStatusDeliveryDrain {
+    /// The tenant's durable Snapshot status outbox the pass claims from.
     outbox: Arc<dyn SnapshotStatusQueue>,
+    /// Sends each claimed delivery and classifies the answer.
     transport: Arc<dyn SnapshotStatusTransport>,
+    /// Lease owner identity minted once per drain; claims, renewals and
+    /// acknowledgements are all made under it.
     worker: LeaseHolder,
+    /// How long a claim or renewal holds a delivery:
+    /// `notifications.delivery.queue.lease_timeout`, saturated at `i64::MAX` seconds.
     lease: Duration,
+    /// Attempts after which a failed delivery is dead:
+    /// `notifications.delivery.max_attempts`, saturated at `i32::MAX`.
     max_attempts: i32,
     /// The wait before a failed status notification is due again.
     retry_schedule: BackoffSchedule,
     /// Deliveries one pass claims and sends at once at most:
     /// `notifications.delivery.max_concurrent`.
     claim_width: NonZeroU32,
+    /// Bound applied to the failure detail recorded on a delivery row.
     error_bound: DeliveryErrorBound,
+    /// How long an acknowledged delivery stays before cleanup removes it:
+    /// `notifications.delivery.retention.acknowledged_after`.
     delivered_retention: Duration,
+    /// How long an exhausted delivery stays before cleanup removes it:
+    /// `notifications.delivery.retention.dead_letter_after`.
     dead_retention: Duration,
 }
 
 impl SnapshotStatusDeliveryDrain {
     /// Construct a drain from the same durable-delivery policy subscriptions use.
-    pub fn new(
+    pub(crate) fn new(
         outbox: Arc<dyn SnapshotStatusQueue>,
         transport: Arc<dyn SnapshotStatusTransport>,
         config: &DeliveryConfig,
@@ -109,7 +123,7 @@ impl SnapshotStatusDeliveryDrain {
     /// acknowledgement reports, after every claimed delivery has been settled.
     /// A lease another worker took over is counted in
     /// [`SnapshotStatusPassOutcome::lease_lost`] rather than surfaced as an error.
-    pub async fn execute(&self, now: DateTime<Utc>) -> Result<SnapshotStatusPassOutcome, SnapshotError> {
+    pub(crate) async fn execute(&self, now: DateTime<Utc>) -> Result<SnapshotStatusPassOutcome, SnapshotError> {
         let clock = LeasePassClock::starting_at(now);
         let entries = self.outbox.claim(self.worker, self.lease_deadline(clock.now())?, self.claim_width).await?;
         let claimed = entries.len();
@@ -128,7 +142,7 @@ impl SnapshotStatusDeliveryDrain {
     /// A pass that claimed that many may have more waiting, which is what
     /// lets the drain driver run another pass immediately rather than sleep.
     #[must_use]
-    pub const fn claim_width(&self) -> NonZeroU32 {
+    pub(crate) const fn claim_width(&self) -> NonZeroU32 {
         self.claim_width
     }
 
@@ -136,7 +150,7 @@ impl SnapshotStatusDeliveryDrain {
     ///
     /// Runs on its own cadence rather than inside a delivery pass, so widening a
     /// tenant's idle delivery interval does not also stop it reclaiming rows.
-    pub async fn cleanup(&self, now: DateTime<Utc>) -> Result<(), SnapshotError> {
+    pub(crate) async fn cleanup(&self, now: DateTime<Utc>) -> Result<(), SnapshotError> {
         let delivered_before = now.checked_sub_signed(self.delivered_retention).unwrap_or(DateTime::<Utc>::MIN_UTC);
         let exhausted_before = now.checked_sub_signed(self.dead_retention).unwrap_or(DateTime::<Utc>::MIN_UTC);
         self.outbox.cleanup(delivered_before, exhausted_before).await?;
@@ -197,7 +211,7 @@ impl SnapshotStatusDeliveryDrain {
 
 impl DeliverySnapshotNotificationSink {
     /// Construct the notification binding.
-    pub const fn new(transport: Arc<TransportDispatcher>) -> DeliverySnapshotNotificationSink {
+    pub(crate) const fn new(transport: Arc<TransportDispatcher>) -> DeliverySnapshotNotificationSink {
         DeliverySnapshotNotificationSink { transport }
     }
 }

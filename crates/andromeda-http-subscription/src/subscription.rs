@@ -35,7 +35,7 @@ use axum::{
 };
 
 /// POST /ngsi-ld/v1/subscriptions -- Create a new subscription.
-pub async fn create(
+pub(crate) async fn create(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
@@ -70,7 +70,7 @@ pub async fn create(
 }
 
 /// GET /ngsi-ld/v1/subscriptions/{subscription_id} -- Retrieve a subscription.
-pub async fn get(
+pub(crate) async fn get(
     ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     api_root: ApiRoot,
@@ -102,7 +102,7 @@ pub async fn get(
 }
 
 /// GET /ngsi-ld/v1/subscriptions -- Query subscriptions.
-pub async fn query(
+pub(crate) async fn query(
     ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     api_root: ApiRoot,
@@ -137,7 +137,7 @@ pub async fn query(
 }
 
 /// PATCH /ngsi-ld/v1/subscriptions/{subscription_id} -- Update a subscription.
-pub async fn update(
+pub(crate) async fn update(
     // Clause 6.3.20: the operation defines no parameter, so any is an `InvalidRequest`.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,
@@ -158,7 +158,7 @@ pub async fn update(
 }
 
 /// DELETE /ngsi-ld/v1/subscriptions/{subscription_id} -- Delete a subscription.
-pub async fn delete(
+pub(crate) async fn delete(
     // Clause 6.3.20: the operation defines no parameter, so any is an `InvalidRequest`.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
     ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,

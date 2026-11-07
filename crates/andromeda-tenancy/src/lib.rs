@@ -16,9 +16,6 @@
 //! every service the broker has. Neither is named here, which is what keeps
 //! this crate from being the composition root itself.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 pub mod administration;
 pub mod catch_up;
 pub mod context_source_alias;

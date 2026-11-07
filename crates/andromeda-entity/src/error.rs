@@ -304,10 +304,6 @@ impl EntityError {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{entity_validation_reason::EntityValidationReason, error::EntityError};
     use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};

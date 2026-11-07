@@ -272,7 +272,7 @@ mod dataset_step;
 /// Whether a projection leaves a history an Entity member.
 mod entity_members;
 /// Rendering the contributed entities of a split query over their merged instances.
-pub mod merged_rendering;
+pub(crate) mod merged_rendering;
 /// Query Temporal Evolution of Entities (clause 5.7.4).
 mod query;
 /// Rendering the temporal evolution of one entity over a compiled window.
@@ -284,23 +284,9 @@ mod unread_entity;
 
 /// What a listing of the identifiers a temporal query matches holds them to.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod candidate_listing_tests;
 /// Whose instances decide the aggregation eligibility of a temporal read.
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod eligibility_tests;
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests;

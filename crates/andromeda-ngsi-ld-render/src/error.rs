@@ -60,10 +60,6 @@ impl RenderError {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::error::{RenderError, RenderedShape};
 

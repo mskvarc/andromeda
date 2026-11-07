@@ -1,7 +1,5 @@
 //! HTTP binding for NGSI-LD context-source registration lifecycle operations.
 
-#![deny(missing_docs)]
-
 pub mod error;
 mod handler;
 pub mod routes;

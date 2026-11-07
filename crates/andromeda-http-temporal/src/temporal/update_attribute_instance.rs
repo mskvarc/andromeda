@@ -34,7 +34,9 @@ use andromeda_http_extraction::{
 };
 use andromeda_ngsi_ld_model::temporal::written_temporal_entity::WrittenTemporalEntity;
 
-pub async fn update_attr_instance(
+/// Modify Attribute instance in Temporal Evolution (clause 5.6.14): 204 when
+/// every part succeeded, 207 with the clause 5.2.16 result when only some did.
+pub(crate) async fn update_attr_instance(
     // Clause 6.3.20: the parameters are read first, before the tenant is
     // resolved, so an undefined one is an `InvalidRequest` on any tenant.
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,

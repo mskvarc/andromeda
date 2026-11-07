@@ -29,10 +29,6 @@ pub fn retry_due_at(schedule: &BackoffSchedule, attempt_count: i32, now: DateTim
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::delivery_backoff::retry_due_at;
     use andromeda_retry::{growth::Growth, retry_number::RetryNumber, schedule::BackoffSchedule};

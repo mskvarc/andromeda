@@ -16,10 +16,6 @@ pub(crate) fn stays_local(subscription: &Subscription, at: DateTime<Utc>) -> boo
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::participation::stays_local;
     use andromeda_ngsi_ld_model::subscription::Subscription;

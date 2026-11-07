@@ -2,9 +2,6 @@
 //!
 //! This crate owns runtime mechanics only. Policy operations and concrete adapters remain independent and are adapted into these execution forms by broker composition.
 
-#![deny(missing_docs)]
-#![deny(clippy::missing_docs_in_private_items)]
-
 mod bounded_driver;
 /// Cancellation and scheduled-task control handles.
 pub mod control;
@@ -144,8 +141,4 @@ mod boundary_tests {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests;

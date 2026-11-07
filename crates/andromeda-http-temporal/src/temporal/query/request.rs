@@ -84,7 +84,7 @@ pub(crate) struct TemporalQueryRequest {
 ///
 /// The classified refusal of a grouping the deployment does not enable, and
 /// every failure clause 5.7.4 raises while the query runs.
-pub async fn query(
+pub(crate) async fn query(
     context_target::ExistingTargetedTenantState { services, target, snapshot: _ }: TenantState,
     accept: AcceptFormatNoGeo,
     NgsiLdRequestEnvelope { uri, incoming_via: _, headers }: NgsiLdRequestEnvelope,

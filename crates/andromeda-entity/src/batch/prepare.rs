@@ -176,6 +176,8 @@ fn screened<M>(entity: Entity<M>, document: EntityDocument, screening: Screening
 }
 
 impl EntityService {
+    /// Whether preparing `len` entities runs inline or on the blocking pool, and
+    /// with how many concurrent walks.
     pub(super) fn batch_execution(&self, len: usize) -> BatchExecution {
         decide_batch_execution(len, self.batch_execution.prepare_blocking_threshold, self.batch_execution.chunk_concurrency)
     }
@@ -313,11 +315,6 @@ impl EntityService {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "test code unwraps, expects and panics on purpose; migrating it to typed assertions is pending"
-)]
 mod tests {
     use crate::{
         EntityService,
