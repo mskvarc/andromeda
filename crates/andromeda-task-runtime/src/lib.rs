@@ -40,6 +40,7 @@ mod scheduled_registration;
 /// Periodically triggered bounded task execution.
 pub mod scheduled_task;
 /// Grace periods for cooperative task shutdown.
+mod shutdown_cutoff;
 pub mod shutdown_policy;
 /// Named task supervision on a supplied Tokio execution host.
 pub mod supervisor;
@@ -140,5 +141,7 @@ mod boundary_tests {
     }
 }
 
+#[cfg(test)]
+mod shutdown_deadline_tests;
 #[cfg(test)]
 mod tests;

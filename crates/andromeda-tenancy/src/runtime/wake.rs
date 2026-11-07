@@ -8,6 +8,7 @@ use crate::{
     runtime::{TenantRuntimeManager, cached_runtime::CachedRuntime},
     state_factory::{TenantRuntime, TenantStateFactory},
     status::TenantStatus,
+    teardown_bound::TeardownBound,
     tenant_existence::TenantExistence,
     tenant_ref::TenantRef,
 };
@@ -267,7 +268,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         match insertion {
             // A request cold-loaded the tenant while we built; discard ours.
             WokenInsertion::Lost(runtime) => {
-                runtime.shutdown().await;
+                runtime.shutdown(TeardownBound::GracePeriods).await;
                 self.settle_schedule(tenant, now, None).await;
                 WakeOutcome::AlreadyCached
             }

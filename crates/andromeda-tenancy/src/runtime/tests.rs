@@ -16,6 +16,7 @@ use crate::{
     saturated_wait::SaturatedWait,
     state_factory::{RuntimeActivity, TenantRuntime, TenantStateFactory},
     status::TenantStatus,
+    teardown_bound::TeardownBound,
     tenant_existence::TenantExistence,
     tenant_page_start::TenantPageStart,
     tenant_record::TenantRecord,
@@ -54,6 +55,7 @@ mod backlog_eviction;
 mod overdue_wakes;
 mod periodic_eviction;
 mod reconcile;
+mod shutdown;
 mod wake_pass;
 mod wake_room;
 mod wake_timing;
@@ -547,7 +549,7 @@ impl FakeRuntime {
 
 #[async_trait]
 impl TenantRuntime for FakeRuntime {
-    async fn shutdown(self) {
+    async fn shutdown(self, _bound: TeardownBound) {
         self.shutdowns.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -1411,7 +1413,7 @@ struct ShutdownConcurrencyProbe {
 
 #[async_trait]
 impl TenantRuntime for ShutdownConcurrencyProbe {
-    async fn shutdown(self) {
+    async fn shutdown(self, _bound: TeardownBound) {
         let concurrent = self.active.fetch_add(1, Ordering::SeqCst) + 1;
         self.peak.fetch_max(concurrent, Ordering::SeqCst);
         sleep(self.hold).await;
@@ -1518,7 +1520,7 @@ struct GatedShutdownRuntime {
 
 #[async_trait]
 impl TenantRuntime for GatedShutdownRuntime {
-    async fn shutdown(self) {
+    async fn shutdown(self, _bound: TeardownBound) {
         self.gate.notified().await;
         self.shutdowns.fetch_add(1, Ordering::SeqCst);
     }
@@ -2134,7 +2136,7 @@ struct CommitOnShutdownRuntime {
 
 #[async_trait]
 impl TenantRuntime for CommitOnShutdownRuntime {
-    async fn shutdown(self) {
+    async fn shutdown(self, _bound: TeardownBound) {
         // A brief drain, so a probe that ran before this shutdown would observe
         // the obligation as not yet committed.
         sleep(Duration::from_millis(20)).await;
@@ -2266,7 +2268,7 @@ struct LatchedShutdownRuntime {
 
 #[async_trait]
 impl TenantRuntime for LatchedShutdownRuntime {
-    async fn shutdown(self) {
+    async fn shutdown(self, _bound: TeardownBound) {
         // The latch never carries a permit; closing it is what releases the
         // waiting teardowns.
         let _closed = self.latch.acquire().await;

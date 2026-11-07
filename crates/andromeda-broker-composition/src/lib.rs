@@ -25,6 +25,7 @@ mod registered_entity_probe;
 mod routes;
 mod shutdown_signal;
 mod startup_report;
+mod stop_deadline;
 mod tenant_factory;
 mod tenant_state;
 mod tenant_waker;

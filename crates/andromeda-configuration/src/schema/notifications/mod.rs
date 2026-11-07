@@ -46,7 +46,7 @@ pub struct EvaluationConfig {
     /// stretch that; past this bound the evaluation is abandoned and the
     /// changes still waiting are dropped, counted and logged.
     #[schemars(
-        description = "The longest a stopping tenant spends evaluating the committed changes it already holds for live delivery, at process shutdown or when the tenant is unloaded. Evaluation that is not finished by then is abandoned and the changes still waiting are dropped, logged and counted. Set it below the grace period your orchestrator gives the broker to stop, or the process is killed before the bound applies. `\"durable\"` delivery records notifications in the commit and is not affected."
+        description = "The longest a stopping tenant spends evaluating the committed changes it already holds for live delivery, at process shutdown or when the tenant is unloaded. Evaluation that is not finished by then is abandoned and the changes still waiting are dropped, logged and counted. At process shutdown the whole broker stops within `server.graceful_drain_timeout` plus this, 60 seconds by default, so give it the two together plus 10 seconds before your orchestrator kills it. `\"durable\"` delivery records notifications in the commit and is not affected."
     )]
     pub drain_timeout: HumanDuration,
 }

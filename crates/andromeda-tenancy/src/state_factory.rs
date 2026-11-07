@@ -1,6 +1,6 @@
 //! Building one tenant's runtime, which this crate asks for and cannot do.
 
-use crate::{due_work::DueWorkSource, error::TenancyError, tenant_ref::TenantRef};
+use crate::{due_work::DueWorkSource, error::TenancyError, teardown_bound::TeardownBound, tenant_ref::TenantRef};
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use async_trait::async_trait;
 use std::{sync::Arc, time::SystemTime};
@@ -12,14 +12,14 @@ use std::{sync::Arc, time::SystemTime};
 /// All it needs is the ability to let go of them.
 #[async_trait]
 pub trait TenantRuntime: Send + Sync + 'static {
-    /// Release everything the runtime holds: stop the workers, close the
-    /// transports, return the connections.
+    /// Release everything the runtime holds: stop the workers within
+    /// `bound`, close the transports, return the connections.
     ///
     /// Takes `self` because a released runtime must not be reachable
     /// afterwards, and returning it to the cache is the bug this signature
     /// makes unwritable.
     #[must_use = "runtime shutdown must be awaited"]
-    async fn shutdown(self);
+    async fn shutdown(self, bound: TeardownBound);
 
     /// Where the cache reports use of this runtime.
     ///

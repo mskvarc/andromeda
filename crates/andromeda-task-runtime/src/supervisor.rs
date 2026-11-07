@@ -4,6 +4,7 @@ use crate::{
     failure_report::FailureReport,
     lifecycle_event::TaskLifecycleEvent,
     registration::{TaskRegistration, TaskRegistrationError},
+    shutdown_cutoff::ShutdownCutoff,
     task_health::{TaskHealth, TaskHealthSnapshot},
     task_name::TaskName,
     task_observer::{DriverTerminal, TerminatedTask, join_failure, observe_terminal},
@@ -12,6 +13,7 @@ use dashmap::{DashMap, mapref::entry::Entry};
 use std::{
     sync::{
         Arc,
+        OnceLock,
         Weak,
         atomic::{AtomicBool, Ordering},
     },
@@ -24,6 +26,7 @@ use tokio::{
     time::{Instant, sleep},
 };
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 /// Cloneable process- or tenant-scoped supervisor handle.
 #[derive(Clone)]
@@ -46,6 +49,9 @@ pub(crate) struct SupervisorInner {
     pub(crate) host: Handle,
     /// Cancellation root for this process or tenant scope.
     pub(crate) cancellation: CancellationToken,
+    /// When cancellation of this scope was first requested; every task's
+    /// grace period counts from it.
+    cancellation_requested_at: OnceLock<Instant>,
     /// Process root used only for process-fatal escalation.
     process_cancellation: CancellationToken,
     /// Seed folded into each scheduled task's jitter so this scope's tasks do not
@@ -124,6 +130,7 @@ impl TaskSupervisor {
             inner: Arc::new(SupervisorInner {
                 host,
                 cancellation,
+                cancellation_requested_at: OnceLock::new(),
                 process_cancellation,
                 scope_seed,
                 scope_default_jitter,
@@ -148,8 +155,10 @@ impl TaskSupervisor {
         self.inner.cancellation.clone() // clone: callers receive another handle to the same hierarchical cancellation state.
     }
 
-    /// Request cooperative cancellation for this scope.
+    /// Request cooperative cancellation for this scope. The first request
+    /// starts every task's grace period.
     pub fn request_cancellation(&self) {
+        self.inner.cancellation_requested_at.get_or_init(Instant::now);
         self.inner.cancellation.cancel();
     }
 
@@ -179,23 +188,42 @@ impl TaskSupervisor {
         failed
     }
 
-    /// Cooperatively stop every active task and forcibly terminate deadline violators.
+    /// Cooperatively stop every active task, and abort each one still
+    /// running when its grace period, counted from the first cancellation
+    /// request, runs out.
     pub async fn shutdown(&self) {
+        self.stop(None).await;
+    }
+
+    /// [`shutdown`](Self::shutdown), and abort every task still running at
+    /// `deadline`, however much of its grace period is left.
+    pub async fn shutdown_by(&self, deadline: Instant) {
+        self.stop(Some(deadline)).await;
+    }
+
+    /// Stop every active task within its grace period and, when given, by
+    /// `deadline`, logging each task cut off and the bound that cut it.
+    async fn stop(&self, deadline: Option<Instant>) {
         self.request_cancellation();
-        let tasks: Vec<_> = self.inner.active.iter().map(|entry| Arc::clone(entry.value())).collect(); // collect: shutdown awaits without retaining DashMap guards.
-        let started = Instant::now();
+        let started = *self.inner.cancellation_requested_at.get_or_init(Instant::now);
+        let tasks: Vec<_> = self.inner.active.iter().map(|entry| (entry.key().clone(), Arc::clone(entry.value()))).collect(); // collect: shutdown awaits without retaining DashMap guards; clone: each task is named in the log of its cutoff.
         loop {
             let mut pending = 0usize;
             let mut nearest_deadline: Option<Duration> = None;
-            for task in &tasks {
+            for (name, task) in &tasks {
                 if task.health.read().await.is_terminal() {
                     continue;
                 }
                 pending += 1;
-                // A saturated remainder of zero is exactly the expired grace period, so the deadline test stays total.
-                let remaining = task.grace_period.saturating_sub(started.elapsed());
+                // A saturated remainder of zero is exactly the expired bound, so the deadline test stays total.
+                let (remaining, cutoff) = ShutdownCutoff::remaining(
+                    task.grace_period.saturating_sub(started.elapsed()),
+                    deadline.map(|deadline| deadline.saturating_duration_since(Instant::now())),
+                );
                 if remaining.is_zero() {
-                    task.forced.store(true, Ordering::Release);
+                    if !task.forced.swap(true, Ordering::AcqRel) {
+                        warn!(event = "task_shutdown_cut_off", task = %name, cutoff = %cutoff, "a stopping task was aborted before it stopped on its own");
+                    }
                     task.abort.abort();
                 } else {
                     nearest_deadline = Some(nearest_deadline.map_or(remaining, |nearest| nearest.min(remaining)));
@@ -210,7 +238,7 @@ impl TaskSupervisor {
                 () = sleep(delay) => {}
             }
         }
-        for task in tasks {
+        for (_, task) in tasks {
             let observer = task.observer.lock().await.take();
             if let Some(observer) = observer
                 && let Err(error) = observer.await

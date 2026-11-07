@@ -22,6 +22,7 @@ use crate::{
     runtime::{TenantRuntimeManager, lease::LeasedState},
     state_factory::{RuntimeActivity, TenantRuntime, TenantStateFactory},
     status::TenantStatus,
+    teardown_bound::TeardownBound,
     tenant_existence::TenantExistence,
     tenant_page_start::TenantPageStart,
     tenant_record::TenantRecord,
@@ -154,7 +155,7 @@ struct InertRuntime;
 
 #[async_trait]
 impl TenantRuntime for InertRuntime {
-    async fn shutdown(self) {}
+    async fn shutdown(self, _bound: TeardownBound) {}
 
     fn activity(&self) -> Arc<dyn RuntimeActivity> {
         Arc::new(InertRuntime)

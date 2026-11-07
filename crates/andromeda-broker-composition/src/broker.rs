@@ -25,8 +25,8 @@ use crate::{
         subscription::BrokerSubscriptionStateResolver,
         temporal::BrokerTemporalStateResolver,
     },
-    shutdown_signal::shutdown_signal,
     startup_report::report_startup,
+    stop_deadline::StopClock,
     tenant_factory::BrokerTenantFactory,
     tenant_waker::{TenantWakerRegistrationError, register_tenant_waker},
 };
@@ -172,14 +172,18 @@ pub(crate) async fn run(loaded: LoadedConfiguration) -> ProcessExitOutcome {
             return ProcessExitOutcome::StartupFailure;
         }
     };
-    let serve_result = listeners::serve(config.as_ref(), api, management, shutdown_signal()).await;
+    let stop = StopClock::default();
+    let serve_result = listeners::serve(config.as_ref(), api, management, stop.signal()).await;
     match &serve_result {
         Ok(()) => info!(event = "http_traffic_drained", "HTTP listener stopped after draining accepted requests"),
         Err(server_error) => error!(error = %server_error, event = "http_server_failed"),
     }
+    let deadline = stop.deadline(config.server.graceful_drain_timeout.duration(), config.notifications.evaluation.drain_timeout());
+    // Cancelling the process scope cancels every tenant's tasks too, so the
+    // tenants and the process tasks all count their grace from here and share
+    // the one deadline.
     process_tasks.request_cancellation();
-    tenants.shutdown_all().await;
-    process_tasks.shutdown().await;
+    tokio::join!(tenants.shutdown_all(deadline), process_tasks.shutdown_by(deadline));
     info!(
         event = "broker_resources_closed",
         "Tenant tasks, transports, context flushers, and pools are closed"

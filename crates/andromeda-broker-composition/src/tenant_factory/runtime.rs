@@ -13,6 +13,7 @@ use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_tenancy::{
     due_work::DueWorkSource,
     state_factory::{RuntimeActivity, TenantRuntime},
+    teardown_bound::TeardownBound,
 };
 use async_trait::async_trait;
 use sqlx::PgPool;
@@ -97,11 +98,11 @@ impl BrokerTenantRuntime {
 
 #[async_trait]
 impl TenantRuntime for BrokerTenantRuntime {
-    async fn shutdown(self) {
+    async fn shutdown(self, bound: TeardownBound) {
         if let Some(shutdown) = self.health_shutdown {
             let _ = shutdown.send(true);
         }
-        self.task_supervisor.shutdown().await;
+        stop_supervised_tasks(&self.task_supervisor, bound).await;
         wait_for_handoffs(&self.handoffs).await;
         stop_background_tasks(self.background_handles).await;
         info!(event = "tenant_background_tasks_stopped");
@@ -129,6 +130,15 @@ impl TenantRuntime for BrokerTenantRuntime {
             Arc::new(TenantObligations::new(&self.pool)),
             Arc::clone(&self.commits), // clone: the answer reads the changes this runtime still holds.
         ))
+    }
+}
+
+/// Stop the tenant's supervised tasks, each within its grace period and by
+/// the deadline when the broker is stopping.
+async fn stop_supervised_tasks(supervisor: &TaskSupervisor, bound: TeardownBound) {
+    match bound {
+        TeardownBound::GracePeriods => supervisor.shutdown().await,
+        TeardownBound::Deadline(deadline) => supervisor.shutdown_by(deadline).await,
     }
 }
 
@@ -162,7 +172,9 @@ mod tests {
     #[test]
     fn shutdown_awaits_tasks_before_transport_and_pool_closure() -> Result<(), &'static str> {
         let source = include_str!("runtime.rs");
-        let task_shutdown = source.find("self.task_supervisor.shutdown().await").ok_or("task shutdown call missing")?;
+        let task_shutdown = source
+            .find("stop_supervised_tasks(&self.task_supervisor, bound).await")
+            .ok_or("task shutdown call missing")?;
         let background_shutdown = source
             .find("stop_background_tasks(self.background_handles).await")
             .ok_or("background task shutdown call missing")?;

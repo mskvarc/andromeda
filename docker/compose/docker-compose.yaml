@@ -26,6 +26,9 @@ services:
   andromeda:
     image: ghcr.io/mskvarc/andromeda:1.0.0
     restart: unless-stopped
+    # The broker stops within server.graceful_drain_timeout plus notifications.evaluation.drain_timeout,
+    # 60 seconds by default; Docker waits only 10 seconds before it kills a container.
+    stop_grace_period: 70s
     # A broker that can't reach the database within a few seconds of starting stops with an error.
     depends_on:
       postgresql:

@@ -16,6 +16,7 @@ use crate::{
     saturated_wait::SaturatedWait,
     state_factory::{TenantRuntime, TenantStateFactory},
     status::TenantStatus,
+    teardown_bound::TeardownBound,
     tenant_existence::TenantExistence,
     tenant_ref::TenantRef,
 };
@@ -213,7 +214,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 let state = Arc::clone(&entry.get().state);
                 let lease = RuntimeLease::clone_from(&entry.get().origin);
                 drop(entry);
-                runtime.shutdown().await;
+                runtime.shutdown(TeardownBound::GracePeriods).await;
                 Ok(LeasedState { state, lease })
             }
             Entry::Vacant(vacant) => {

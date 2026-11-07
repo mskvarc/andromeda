@@ -41,7 +41,9 @@ pub struct ServerConfig {
     pub public_url: Option<Url>,
     /// How long accepted connections may take to drain once shutdown begins,
     /// in human-readable form (`"30s"`).
-    #[schemars(description = "How long open connections get to finish their requests once shutdown begins. Connections still open after it are closed.")]
+    #[schemars(
+        description = "How long open connections get to finish their requests once shutdown begins. Connections still open after it are closed. The whole stop takes at most this plus `notifications.evaluation.drain_timeout` from the stop signal, 60 seconds by default, however many tenants are loaded: the tenants and the background tasks share what the connections leave, and whatever still runs then is abandoned and logged. Give the broker the two together plus 10 seconds to stop before your orchestrator kills it; Docker and Podman wait only 10 seconds unless told otherwise."
+    )]
     pub graceful_drain_timeout: HumanDuration,
     /// How long a connection stays half-closed, unread, after a response
     /// announced `Connection: close` (an HTTP/1.1 refusal of an upload the

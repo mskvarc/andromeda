@@ -7,14 +7,19 @@ use crate::{
     pending_work::{PendingWork, PendingWorkError},
     runtime::{TenantRuntimeManager, cached_runtime::CachedRuntime, last_used::LastUsed},
     state_factory::{TenantRuntime, TenantStateFactory},
+    teardown_bound::TeardownBound,
     tenant_ref::TenantRef,
     waker::WakerPolicy,
 };
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use andromeda_telemetry::tenancy::{EvictionReason, record_eviction};
-use std::{sync::Arc, time::SystemTime};
-use tokio::{sync::OwnedSemaphorePermit, task::JoinSet};
-use tracing::debug;
+use std::{collections::HashMap, sync::Arc, time::SystemTime};
+use tokio::{
+    sync::OwnedSemaphorePermit,
+    task::JoinSet,
+    time::{Instant, timeout_at},
+};
+use tracing::{Instrument, debug, info_span, warn};
 
 /// When a tenant should next be woken given what its probe found: the policy's
 /// due instant when it read cleanly, or a retry instant when the probe failed
@@ -27,22 +32,45 @@ pub(super) fn next_wake_at(waker: &WakerPolicy, work: &Result<PendingWork, Pendi
 }
 
 impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
-    /// Remove and orderly shut down every cached tenant runtime.
+    /// Remove every cached tenant runtime and shut them all down at once, by
+    /// `deadline`.
     ///
     /// Called after the HTTP server stops accepting traffic, so no new runtime
-    /// can be resolved while the cache is drained. Each runtime's teardown is
-    /// detached under its teardown slot and then the whole eviction set is
-    /// awaited, so this also joins any teardown a request-path trim left
-    /// running.
-    pub async fn shutdown_all(&self) {
+    /// can be resolved while the cache is drained. The teardown slots bound
+    /// how many runtimes a running broker tears down beside its traffic; a
+    /// stopping broker has no traffic left to protect, and tearing its
+    /// runtimes down a slot at a time would make its stop time grow with the
+    /// number loaded. Each runtime stops its tasks by `deadline`, and a
+    /// teardown still running then is abandoned and logged with its tenant.
+    /// Teardowns a request-path trim left running are joined by the same
+    /// deadline.
+    pub async fn shutdown_all(&self, deadline: Instant) {
         let tenants = self.runtimes.iter().map(|entry| entry.key().clone()).collect::<Vec<_>>();
+        let mut teardowns = JoinSet::new();
+        let mut stopping = HashMap::with_capacity(tenants.len());
         for tenant in tenants {
-            let permit = self.teardown_slot().await;
-            if let Some((_tenant, cached)) = self.runtimes.remove(&tenant) {
-                self.detach_shutdown(permit, cached.runtime).await;
+            if let Some((tenant, cached)) = self.runtimes.remove(&tenant) {
+                let span = info_span!("tenant_shutdown", tenant = %tenant);
+                let teardown = teardowns.spawn(cached.runtime.shutdown(TeardownBound::Deadline(deadline)).instrument(span));
+                stopping.insert(teardown.id(), tenant);
             }
         }
-        self.await_evictions().await;
+        self.record_cache_size();
+        let loaded = async {
+            let settled = timeout_at(deadline, async {
+                while let Some(joined) = teardowns.join_next_with_id().await {
+                    stopping.remove(&joined.map_or_else(|error| error.id(), |(id, ())| id));
+                }
+            })
+            .await;
+            if settled.is_err() {
+                for tenant in stopping.values() {
+                    warn!(event = "tenant_shutdown_cut_off", tenant = %tenant, "a tenant was still shutting down when the broker's stop deadline passed");
+                }
+                teardowns.abort_all();
+            }
+        };
+        tokio::join!(loaded, self.await_evictions_by(deadline));
     }
 
     /// Remove and release each named runtime that is still idle and unleased
@@ -212,19 +240,33 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         while set.try_join_next().is_some() {}
     }
 
-    /// Shut one runtime down while holding its teardown slot.
+    /// Shut one unloaded runtime down while holding its teardown slot.
     async fn shutdown_holding(permit: Option<OwnedSemaphorePermit>, runtime: F::Runtime) {
-        runtime.shutdown().await;
+        runtime.shutdown(TeardownBound::GracePeriods).await;
         drop(permit);
     }
 
     /// Await every detached teardown the manager still holds.
     ///
-    /// Used by [`shutdown_all`](Self::shutdown_all), and by tests that need the
-    /// request-path teardown to have settled before they inspect the shutdown
-    /// count.
+    /// Used by tests that need the request-path teardown to have settled
+    /// before they inspect the shutdown count.
+    #[cfg(test)]
     pub(super) async fn await_evictions(&self) {
         let mut set = self.eviction_set.lock().await;
         while set.join_next().await.is_some() {}
+    }
+
+    /// Await every detached teardown and wake probe the manager still holds,
+    /// abandoning those still running at `deadline`.
+    async fn await_evictions_by(&self, deadline: Instant) {
+        let mut set = self.eviction_set.lock().await;
+        if timeout_at(deadline, async { while set.join_next().await.is_some() {} }).await.is_err() {
+            warn!(
+                event = "eviction_teardown_cut_off",
+                remaining = set.len(),
+                "unloaded tenants were still shutting down when the broker's stop deadline passed"
+            );
+            set.abort_all();
+        }
     }
 }
