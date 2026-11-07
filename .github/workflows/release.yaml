@@ -103,6 +103,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Dependabot bumps the runtime FROM, so the base labels follow it.
+      - name: Resolve the commit-dependent labels
+        run: |
+          set -euo pipefail
+          from="$(sed -n 's/^FROM \(.*\) AS runtime$/\1/p' docker/images/andromeda/Dockerfile)"
+          case "$from" in
+            *@sha256:*) ;;
+            *) echo "no digest-pinned runtime FROM line in docker/images/andromeda/Dockerfile" >&2; exit 1 ;;
+          esac
+          {
+            echo "BASE_NAME=${from%@*}"
+            echo "BASE_DIGEST=${from#*@}"
+            echo "VERSION=${GITHUB_REF_NAME#v}"
+            echo "CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_ENV"
+
       # The layer cache lives in the registry, which keeps it out of the Actions cache.
       - name: Build and push by digest
         id: build
@@ -114,6 +130,13 @@ jobs:
           cache-from: type=registry,ref=${{ env.BUILDCACHE }}:${{ env.PLATFORM_SLUG }}
           cache-to: type=registry,ref=${{ env.BUILDCACHE }}:${{ env.PLATFORM_SLUG }},mode=max,image-manifest=true,oci-mediatypes=true
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.created=${{ env.CREATED }}
+            org.opencontainers.image.base.name=${{ env.BASE_NAME }}
+            org.opencontainers.image.base.digest=${{ env.BASE_DIGEST }}
 
       - name: Export digest
         run: |
@@ -194,7 +217,13 @@ jobs:
           while IFS= read -r tag; do
             [ -n "$tag" ] && tag_args+=(-t "$tag")
           done <<< "$TAGS"
-          docker buildx imagetools create "${tag_args[@]}" "${refs[@]}"
+          # A registry reads a multi-platform image's description from the index, so the index carries the platform
+          # image's labels as annotations.
+          annotation_args=()
+          while IFS= read -r annotation; do
+            annotation_args+=(--annotation "index:${annotation}")
+          done < <(docker buildx imagetools inspect "${refs[0]}" --format '{{json .Image.Config.Labels}}' | jq -r '(. // {}) | to_entries[] | "\(.key)=\(.value)"')
+          docker buildx imagetools create "${annotation_args[@]}" "${tag_args[@]}" "${refs[@]}"
 
       - name: Resolve manifest list digest
         id: digest

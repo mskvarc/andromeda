@@ -83,8 +83,13 @@ EXPOSE 1056
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD ["andromeda", "health"]
 
+# The release build adds the labels that depend on the commit: source, revision, version, creation time and base image.
 LABEL org.opencontainers.image.title="Andromeda" \
-      org.opencontainers.image.description="High-performance NGSI-LD context broker (ETSI GS CIM 009 v1.9.1)" \
-      org.opencontainers.image.licenses="EUPL-1.2 AND MIT AND BSD-3-Clause AND W3C-20150513"
+      org.opencontainers.image.description="NGSI-LD context broker written in Rust. Implements the ETSI GS CIM 009 v1.9.1 API, from entities and subscriptions to temporal history and federation, and checks every request against the semantics of the standard. Multi-tenant on PostgreSQL." \
+      org.opencontainers.image.url="https://andromeda.skvarc.com" \
+      org.opencontainers.image.documentation="https://andromeda.skvarc.com/docs/getting-started/installation/docker" \
+      org.opencontainers.image.licenses="EUPL-1.2 AND MIT AND BSD-3-Clause AND W3C-20150513" \
+      org.opencontainers.image.authors="Matej Škvarč <matej@skvarc.com>" \
+      org.opencontainers.image.vendor="Matej Škvarč"
 
 ENTRYPOINT ["andromeda"]

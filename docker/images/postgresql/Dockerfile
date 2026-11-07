@@ -86,7 +86,7 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=2m --start-interval=1s --
 # CI overrides licenses per edition.
 LABEL org.opencontainers.image.title="PostgreSQL with PostGIS and TimescaleDB" \
       org.opencontainers.image.description="PostgreSQL 18 with PostGIS 3 and TimescaleDB 2, tuned for high-throughput time-series ingest" \
-      org.opencontainers.image.authors="Matej Škvarč <matej.skvarc@senlab.io>" \
+      org.opencontainers.image.authors="Matej Škvarč <matej@skvarc.com>" \
       org.opencontainers.image.vendor="Matej Škvarč" \
       org.opencontainers.image.base.name="docker.io/library/postgres:18.6-trixie" \
       org.opencontainers.image.licenses="PostgreSQL AND GPL-2.0-or-later AND Apache-2.0 AND LicenseRef-Timescale"

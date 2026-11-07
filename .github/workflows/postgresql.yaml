@@ -79,7 +79,7 @@ jobs:
           labels: |
             org.opencontainers.image.title=PostgreSQL with PostGIS and TimescaleDB
             org.opencontainers.image.description=PostgreSQL 18 with PostGIS 3 and TimescaleDB 2, tuned for high-throughput time-series ingest
-            org.opencontainers.image.documentation=${{ github.server_url }}/${{ github.repository }}/blob/main/docs/deployment/postgresql-image.md
+            org.opencontainers.image.documentation=https://andromeda.skvarc.com/docs/deployment/database/postgresql-image
             org.opencontainers.image.base.name=docker.io/library/${{ env.BASE_IMAGE }}
             org.opencontainers.image.base.digest=${{ env.BASE_DIGEST }}
             org.opencontainers.image.licenses=${{ matrix.edition == 'tsl' && 'PostgreSQL AND GPL-2.0-or-later AND Apache-2.0 AND LicenseRef-Timescale' || 'PostgreSQL AND GPL-2.0-or-later AND Apache-2.0' }}
@@ -257,7 +257,13 @@ jobs:
           while IFS= read -r tag; do
             tag_args+=(-t "$tag")
           done < tags.txt
-          docker buildx imagetools create "${tag_args[@]}" "${refs[@]}"
+          # A registry reads a multi-platform image's description from the index, so the index carries the platform
+          # image's labels as annotations.
+          annotation_args=()
+          while IFS= read -r annotation; do
+            annotation_args+=(--annotation "index:${annotation}")
+          done < <(docker buildx imagetools inspect "${refs[0]}" --format '{{json .Image.Config.Labels}}' | jq -r '(. // {}) | to_entries[] | "\(.key)=\(.value)"')
+          docker buildx imagetools create "${annotation_args[@]}" "${tag_args[@]}" "${refs[@]}"
 
       - name: Resolve manifest list digest
         id: digest
