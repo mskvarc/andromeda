@@ -82,6 +82,13 @@ lto = "thin"
 codegen-units = 1
 opt-level = 3
 
+# The shipped image's build. The symbol table is a quarter of the binary and nothing in production reads it; local
+# release builds keep it for profilers, and a rebuild of the same commit with `--release` symbolises a dist binary's
+# addresses.
+[profile.dist]
+inherits = "release"
+strip = "symbols"
+
 [workspace.dependencies]
 andromeda-architecture-checks = { path = "crates/andromeda-architecture-checks" }
 andromeda-broker-composition = { path = "crates/andromeda-broker-composition" }

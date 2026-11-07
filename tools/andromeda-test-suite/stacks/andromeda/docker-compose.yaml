@@ -128,8 +128,6 @@ services:
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-tls"
     volumes:
       - ./tls:/etc/andromeda/tls:ro
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- --ca-certificate=/etc/andromeda/tls/ca.crt https://localhost:1074/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
 
   # Copies the initial identities of the brokers whose identity tests rewrite into volumes the runner writes too: the
   # repository is mounted read-only, and a broker reloads the files it watches.
@@ -181,9 +179,6 @@ services:
     volumes:
       - ./tls:/etc/andromeda/tls:ro
       - mutual-identity:/etc/andromeda/identity:ro
-    healthcheck:
-      # The plaintext management listener answers without a client certificate.
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:1086/readyz >/dev/null 2>&1 || exit 1"]
 
   postgres-rotating:
     extends:
@@ -212,8 +207,6 @@ services:
       ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-rotating"
     volumes:
       - rotating-identity:/etc/andromeda/identity:ro
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:1086/readyz >/dev/null 2>&1 || exit 1"]
 
   postgres-durable:
     extends:

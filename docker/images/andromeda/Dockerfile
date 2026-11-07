@@ -53,38 +53,35 @@ COPY --from=planner /build/recipe.json recipe.json
 RUN --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=ACTIONS_RUNTIME_TOKEN,env=ACTIONS_RUNTIME_TOKEN \
     --mount=type=cache,id=andromeda-sccache,target=/var/cache/sccache,sharing=locked \
-    with-sccache cargo chef cook --release --locked --recipe-path recipe.json
+    with-sccache cargo chef cook --profile dist --locked --recipe-path recipe.json
 
 # .git for shadow-rs.
 COPY . .
 RUN --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=ACTIONS_RUNTIME_TOKEN,env=ACTIONS_RUNTIME_TOKEN \
     --mount=type=cache,id=andromeda-sccache,target=/var/cache/sccache,sharing=locked \
-    with-sccache cargo build --release --locked --bin andromeda
+    with-sccache cargo build --profile dist --locked --bin andromeda
 
-FROM debian:trixie-20261027-slim AS runtime
+# Owned by the broker's user in the runtime image, which has no shell to create them.
+RUN mkdir -p /rootfs/etc/andromeda /rootfs/var/lib/andromeda
 
-# wget: compose healthchecks use it too.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates wget \
-    && rm -rf /var/lib/apt/lists/*
+# glibc and libgcc_s are all the broker links dynamically. No shell, no package manager.
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1 AS runtime
 
-RUN groupadd --system --gid 10001 andromeda \
-    && useradd --system --uid 10001 --gid andromeda --home-dir /var/lib/andromeda --create-home andromeda \
-    && mkdir -p /etc/andromeda \
-    && chown -R andromeda:andromeda /etc/andromeda /var/lib/andromeda
-
-COPY --from=builder /build/target/release/andromeda /usr/local/bin/andromeda
+COPY --from=builder --chown=10001:10001 /rootfs/ /
+COPY --from=builder /build/target/dist/andromeda /usr/local/bin/andromeda
 
 COPY LICENSE.md crates/andromeda-ngsi-ld-vocabulary/context/LICENSE-*.md crates/andromeda-http-headers/LICENSE-MIT.md /usr/share/doc/andromeda/
 
-USER andromeda
+# 10001 has no passwd entry, so HOME is set here: the default configuration file and log directory resolve under it.
+ENV HOME=/var/lib/andromeda
+USER 10001:10001
 WORKDIR /var/lib/andromeda
 
 EXPOSE 1056
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD wget -qO- http://127.0.0.1:1056/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1
+    CMD ["andromeda", "health"]
 
 LABEL org.opencontainers.image.title="Andromeda" \
       org.opencontainers.image.description="High-performance NGSI-LD context broker (ETSI GS CIM 009 v1.9.1)" \

@@ -34,8 +34,8 @@ services:
       ANDROMEDA__EXPIRY__SWEEP_INTERVAL: "1s"
       ANDROMEDA__JSONLD__CACHE__HOSTED_REVALIDATION_INTERVAL: "2s"
     healthcheck:
-      # localhost resolves to ::1 first.
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${ANDROMEDA__SERVER__PORT}/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
+      # Probes the listener the environment configures: the management listener unless a stack disables it.
+      test: ["CMD", "andromeda", "health"]
       interval: 2s
       timeout: 3s
       retries: 60
