@@ -175,7 +175,7 @@ pub enum Rule {
     #[strum(message = "name the boolean `is_<what>`")]
     BooleanNotPredicate,
     /// A trigger is named `trg_<table>_<what>`.
-    #[strum(message = "name the trigger `trg_<table>_<what>` after the full table name")]
+    #[strum(message = "name the trigger `trg_<table or its abbreviation>_<what>`")]
     TriggerName,
     /// A foreign key or check added to a sealed table is validated later.
     #[strum(message = "add it as a named table constraint `not valid`, and `validate constraint` it in a later migration")]

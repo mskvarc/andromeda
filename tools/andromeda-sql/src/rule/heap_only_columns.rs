@@ -24,6 +24,7 @@ const HEAP_ONLY_COLUMNS: &[(&str, &str)] = &[
     ("snapshot_preparation", "claimed_by"),
     ("snapshot_notification_outbox", "claimed_by"),
     ("pending_side_effects", "claimed_by"),
+    ("temporal_append_intents", "claimed_by"),
 ];
 
 /// An index naming a heap-only column.
