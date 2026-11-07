@@ -24,7 +24,7 @@ async fn a_obs_rdy_0001_health_reports_the_aggregate_and_each_active_component()
         some(eq("application/json"))
     );
     // The document type refuses a member beside id, type and healthCheck, `@context` included, and an indicator
-    // of any component but background-tasks, mqtt and postgresql.
+    // of any component but backgroundTasks, mqtt and postgresql.
     let health: HealthDocument = serde_json::from_slice(answer.body())?;
     expect_that!(health.id.as_str(), contains_regex("^urn:ngsi-ld:HealthCheck:."));
     expect_that!(health.health_type, eq(HealthType::HealthCheck));

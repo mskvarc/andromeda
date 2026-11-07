@@ -10,12 +10,11 @@ use serde::{Deserialize, Serialize};
 /// than a free string: a component that cannot name itself here has no
 /// business claiming a place in the report.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "camelCase")]
 pub enum ComponentName {
     /// The background tasks of the broker and of its loaded tenants.
-    #[serde(rename = "background-tasks")]
     BackgroundTasks,
     /// MQTT notification transport.
-    #[serde(rename = "mqtt")]
     Mqtt,
     /// PostgreSQL database backend.
     #[serde(rename = "postgresql")]
@@ -24,6 +23,7 @@ pub enum ComponentName {
 
 /// Health details for a single component.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ComponentDetail {
     /// Health status of this component.
     pub status: HealthStatus,
@@ -57,7 +57,7 @@ mod tests {
         pretty_assertions::assert_eq!(serde_json::to_value(ComponentName::Mqtt).expect("serialises"), Value::String("mqtt".to_owned()));
         pretty_assertions::assert_eq!(
             serde_json::to_value(ComponentName::BackgroundTasks).expect("serialises"),
-            Value::String("background-tasks".to_owned())
+            Value::String("backgroundTasks".to_owned())
         );
     }
 

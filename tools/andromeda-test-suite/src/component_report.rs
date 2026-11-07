@@ -14,7 +14,7 @@ pub enum ReportType {
 
 /// A component the version endpoint reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "camelCase")]
 pub enum ComponentName {
     /// The broker itself.
     Andromeda,

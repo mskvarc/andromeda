@@ -59,7 +59,7 @@ report_text!(
 /// Whether the server holds enough connections for every pool the broker may
 /// open at once.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "camelCase")]
 pub enum CapacityVerdict {
     /// The broker's pools fit in the connections it may use.
     Sufficient,
@@ -107,10 +107,9 @@ impl ConnectionCapacity {
 
 /// One active runtime or build component.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "component")]
+#[serde(tag = "component", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ComponentReport {
     /// Andromeda build metadata.
-    #[serde(rename = "andromeda", rename_all = "camelCase")]
     Andromeda {
         /// Andromeda package version.
         version: ComponentVersion,

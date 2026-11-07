@@ -4,10 +4,9 @@ use serde::{Deserialize, Serialize};
 
 /// The outcome of pinging the database through its pool.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(untagged)]
+#[serde(untagged, rename_all_fields = "camelCase")]
 pub enum PostgreSqlDetails {
     /// The ping was answered.
-    #[serde(rename_all = "camelCase")]
     Reachable {
         /// Idle connections in the pool.
         idle_connections: usize,

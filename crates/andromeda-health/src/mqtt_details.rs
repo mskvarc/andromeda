@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// Health of an MQTT connection, as the response names it.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "camelCase")]
 pub enum MqttConnectionState {
     /// The broker is answering.
     Healthy,

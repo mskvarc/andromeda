@@ -10,15 +10,13 @@ use serde::{Deserialize, Serialize};
 /// conditionals, and it is why a third status would have to be inserted at the
 /// right rank rather than appended.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "camelCase")]
 pub enum HealthStatus {
     /// Component is healthy and operational.
-    #[serde(rename = "up")]
     Up,
     /// Component is answering but has reduced capability.
-    #[serde(rename = "degraded")]
     Degraded,
     /// Component is unhealthy or unreachable.
-    #[serde(rename = "down")]
     Down,
 }
 

@@ -34,7 +34,7 @@ pub enum TaskTenant {
 /// What a stopped task's exhaustion does to its scope, for the criticalities
 /// that leave the tenant serving.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "camelCase")]
 pub enum StoppedTaskCriticality {
     /// The failure is reported and nothing else changes.
     Observed,
@@ -44,7 +44,7 @@ pub enum StoppedTaskCriticality {
 
 /// How the failure that stopped a task was classified.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "camelCase")]
 pub enum StoppedTaskFailureClass {
     /// A retry could have succeeded, but the restart policy ran out.
     Transient,
@@ -115,8 +115,8 @@ mod tests {
             json!({
                 "name": "notification-delivery",
                 "tenant": "@default",
-                "criticality": "tenant-degrading",
-                "failureClass": "invariant-violation",
+                "criticality": "tenantDegrading",
+                "failureClass": "invariantViolation",
                 "failureSummary": "task stopped"
             })
         );

@@ -30,6 +30,7 @@ pub struct HealthCheckResponse {
 
 /// Aggregated health status with per-component breakdown.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct HealthCheckDetails {
     /// Overall health status (worst across all components).
     pub status: HealthStatus,

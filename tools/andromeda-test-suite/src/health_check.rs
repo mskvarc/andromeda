@@ -15,7 +15,7 @@ pub enum HealthType {
 
 /// The aggregate state of the broker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "camelCase")]
 pub enum AggregateStatus {
     /// Every active component is up.
     Up,
@@ -25,10 +25,9 @@ pub enum AggregateStatus {
 
 /// A component with a health indicator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "camelCase")]
 pub enum IndicatorName {
     /// The background tasks of the broker and of its loaded tenants.
-    #[serde(rename = "background-tasks")]
     BackgroundTasks,
     /// The MQTT connections of the notification endpoints.
     Mqtt,
@@ -56,9 +55,9 @@ pub struct StoppedTask {
     pub name: String,
     /// `tenant`: the tenant's name, `@default` for the unnamed default tenant, absent for a task of the whole broker.
     pub tenant: Option<String>,
-    /// `criticality`: `observed` or `tenant-degrading`.
+    /// `criticality`: `observed` or `tenantDegrading`.
     pub criticality: String,
-    /// `failureClass`: `transient`, `permanent` or `invariant-violation`.
+    /// `failureClass`: `transient`, `permanent` or `invariantViolation`.
     pub failure_class: String,
     /// `failureSummary`.
     pub failure_summary: String,
@@ -128,7 +127,7 @@ mod tests {
     use crate::health_check::{AggregateStatus, HealthDocument, IndicatorName};
     use googletest::prelude::*;
 
-    const DOCUMENT: &str = r#"{"id":"urn:ngsi-ld:HealthCheck:1","type":"HealthCheck","healthCheck":{"status":"up","components":{"background-tasks":{"status":"up","details":{"stoppedTasks":[]}},"mqtt":{"status":"up","details":{"activeConnections":0}},"postgresql":{"status":"up","details":{"idleConnections":6,"pingLatencyMs":0,"poolSize":7}}}}}"#;
+    const DOCUMENT: &str = r#"{"id":"urn:ngsi-ld:HealthCheck:1","type":"HealthCheck","healthCheck":{"status":"up","components":{"backgroundTasks":{"status":"up","details":{"stoppedTasks":[]}},"mqtt":{"status":"up","details":{"activeConnections":0}},"postgresql":{"status":"up","details":{"idleConnections":6,"pingLatencyMs":0,"poolSize":7}}}}}"#;
 
     #[gtest]
     fn a_document_reads_its_aggregate_and_its_indicators() -> Result<()> {
