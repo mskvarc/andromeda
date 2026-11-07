@@ -1,6 +1,6 @@
 name: release
 
-# "-" in the tag = pre-release: no latest, no X.Y.
+# "-" in the tag = pre-release: only its full version is pushed, with no latest, X.Y or X.
 on:
   push:
     tags:
@@ -180,28 +180,27 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve version and minor line
+      - name: Resolve version
         id: version
         run: |
           set -euo pipefail
           ref="${{ github.ref_name }}"
-          version="${ref#v}"
-          base="${version%%-*}"
-          minor="${base%.*}"
-          {
-            echo "version=${version}"
-            echo "minor=${minor}"
-          } >> "$GITHUB_OUTPUT"
+          echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
 
+      # X.Y.Z never moves; X.Y follows patch releases, X follows minor and patch releases, latest follows every stable
+      # release. A pre-release renders only its full version for each pattern, and latest is left off it. A 0.y.z
+      # release gets no X tag, since a 0.y minor release may break.
       - name: Image metadata
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
+          flavor: |
+            latest=auto
           tags: |
-            type=raw,value=${{ steps.version.outputs.version }}
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
-            type=raw,value=${{ steps.version.outputs.minor }},enable=${{ !contains(github.ref_name, '-') }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref_name, 'v0.') }}
 
       # Via env: never parsed as shell.
       - name: Create manifest list and push
