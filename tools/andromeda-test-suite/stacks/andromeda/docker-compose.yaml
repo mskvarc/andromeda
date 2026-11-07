@@ -511,10 +511,12 @@ services:
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-oversized:1087"
       ANDROMEDA__OBSERVABILITY__METRICS__PROMETHEUS__MODE: "enabled"
       # A packet limit above mosquitto-capped's 1 MiB, so an MQTT 5 notification between the two is refused under the
-      # announced maximum and an MQTT 3.1.1 one, which no server bounds, under max_mqtt_packet. max_mqtt_packet must
-      # stay above max_body.
+      # announced maximum and an MQTT 3.1.1 one, which no server bounds, under max_mqtt_packet. An HTTP body limit
+      # just above max_body, which an entity grown by two writes passes. max_mqtt_packet and max_http_body must stay
+      # above max_body.
       ANDROMEDA__REQUEST_LIMITS__MAX_BODY: "1800 KiB"
       ANDROMEDA__NOTIFICATIONS__DELIVERY__MAX_MQTT_PACKET: "2 MiB"
+      ANDROMEDA__NOTIFICATIONS__DELIVERY__MAX_HTTP_BODY: "1900 KiB"
 
   runner:
     extends:
