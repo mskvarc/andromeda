@@ -4,7 +4,7 @@ FROM postgres:18.6-trixie
 
 # The key packagecloud serves for the TimescaleDB repository, checked by
 # fingerprint so a key swapped at the source fails the build.
-ARG TIMESCALEDB_KEY_FINGERPRINT=1005FB68604CE9B8F6879CF759F18EDF47F24417
+ARG TIMESCALEDB_SIGNER_FINGERPRINT=1005FB68604CE9B8F6879CF759F18EDF47F24417
 # The PGDG archive keeps every version PGDG main has dropped, so the pinned
 # PostGIS and pg_repack versions stay installable after a newer release.
 RUN set -eux; \
@@ -13,8 +13,8 @@ RUN set -eux; \
     key="$(mktemp)"; \
     curl -fsSL https://packagecloud.io/timescale/timescaledb/gpgkey -o "$key"; \
     fingerprint="$(gpg --show-keys --with-colons "$key" | awk -F: '$1 == "fpr" { print $10; exit }')"; \
-    if [ "$fingerprint" != "$TIMESCALEDB_KEY_FINGERPRINT" ]; then \
-        echo "TimescaleDB key fingerprint is '$fingerprint', expected '$TIMESCALEDB_KEY_FINGERPRINT'" >&2; \
+    if [ "$fingerprint" != "$TIMESCALEDB_SIGNER_FINGERPRINT" ]; then \
+        echo "TimescaleDB key fingerprint is '$fingerprint', expected '$TIMESCALEDB_SIGNER_FINGERPRINT'" >&2; \
         exit 1; \
     fi; \
     gpg --dearmor -o /usr/share/keyrings/timescaledb.gpg "$key"; \
@@ -76,6 +76,12 @@ RUN chmod +x /usr/local/bin/andromeda-entrypoint.sh
 # A new ENTRYPOINT clears the CMD the base image declares.
 ENTRYPOINT ["andromeda-entrypoint.sh"]
 CMD ["postgres"]
+
+# Probes over TCP: the server the entrypoint starts to initialise a new data
+# directory listens on no TCP address, so the check passes only once the real
+# server accepts connections. pg_isready needs no valid role or database.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=2m --start-interval=1s --retries=3 \
+    CMD pg_isready -q -h 127.0.0.1 || exit 1
 
 # CI overrides licenses per edition.
 LABEL org.opencontainers.image.title="PostgreSQL with PostGIS and TimescaleDB" \

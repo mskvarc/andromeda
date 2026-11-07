@@ -1,0 +1,39 @@
+# Andromeda and its PostgreSQL server. Generate the database password into .env first, which Compose reads by itself:
+#
+#   echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" > .env
+#
+# Hexadecimal needs no escaping in the database URL below.
+
+name: andromeda
+
+services:
+  postgresql:
+    image: ghcr.io/mskvarc/postgresql:18.6-timescaledb2.31.0-postgis3.6.4-tsl
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: andromeda
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: andromeda
+    # The image tunes PostgreSQL to these limits; without them it tunes for the whole host.
+    mem_limit: 4g
+    cpus: 2
+    # Dynamic shared memory grows with the tenant databases, and Docker's default /dev/shm is 64 MB.
+    shm_size: 1gb
+    # PostgreSQL 18 images keep their data under /var/lib/postgresql, not /var/lib/postgresql/data.
+    volumes:
+      - postgresql-data:/var/lib/postgresql
+
+  andromeda:
+    image: ghcr.io/mskvarc/andromeda:1.0.0
+    restart: unless-stopped
+    # A broker that can't reach the database within a few seconds of starting stops with an error.
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    environment:
+      ANDROMEDA__DATABASE__URL: postgres://andromeda:${POSTGRES_PASSWORD}@postgresql:5432/andromeda
+    ports:
+      - "1056:1056"
+
+volumes:
+  postgresql-data:
