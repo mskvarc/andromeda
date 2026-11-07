@@ -282,7 +282,8 @@ impl MaintenanceController {
         freeze: FreezePressure,
     ) -> Result<RepackInputs, MaintenanceError> {
         let inputs = RepackInputs {
-            config: self.config.repack,
+            policy: self.config.repack,
+            max_size: self.config.max_repack_size,
             capability: capability::repack_capability(connection).await?,
             retained_wal_bytes,
             freeze,

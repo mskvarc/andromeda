@@ -153,7 +153,7 @@ impl HttpStack {
                 GeometryPositionLimit::new(limits.max_geometry_positions),
                 JsonValueLimit::new(limits.max_entity_json_values),
             ),
-            page_byte_ceiling: PageByteCeiling::new(limits.max_page_ceiling_bytes()?),
+            page_byte_ceiling: PageByteCeiling::new(limits.max_page_body_bytes()?),
             blocking_decode,
             forwarded_trust: ForwardedTrustPolicy::from(&config.forwarded),
             link_field: config.link_field,

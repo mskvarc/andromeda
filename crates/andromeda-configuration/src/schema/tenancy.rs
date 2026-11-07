@@ -107,7 +107,7 @@ pub struct ResidencyConfig {
     /// When it does not (see `max_resident`), notifications fall behind
     /// without bound.
     #[schemars(
-        description = "The shortest wait before a tenant that was just unloaded is loaded again for due work, such as an expiry or a periodic notification. A due time sooner than this is pushed back to it, so a tenant that is only a little overdue is not unloaded and reloaded in a loop. A failed check for due work is retried this far out. A tenant with a periodic notification due within this interval is the last to be unloaded to make room. If it is unloaded all the same, that notification can be late by up to this interval, as long as the broker loads tenants as fast as their work falls due. When the tenants with periodic notifications need more places than `tenancy.residency.max_resident` leaves (see there), notifications fall behind without bound instead, and the broker reports it in its log and in `andromeda_tenant_overdue_wakes`."
+        description = "The shortest wait before a tenant that was just unloaded is loaded again for due work, such as an expiry or a periodic notification. A due time sooner than this is pushed back to it, so a tenant that is only a little overdue is not unloaded and reloaded in a loop. A failed check for due work is retried this far out. A tenant with a periodic notification due within this interval is the last to be unloaded to make room. If it is unloaded all the same, that notification can be late by up to this interval, unless the tenants with due work need more places than `tenancy.residency.max_resident` leaves, as described there."
     )]
     pub min_wake_interval: HumanDuration,
     /// How long a runtime woken for its due work stays open, in

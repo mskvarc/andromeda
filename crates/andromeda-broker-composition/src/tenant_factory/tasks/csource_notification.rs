@@ -72,7 +72,7 @@ pub(super) struct CsourceNotificationStreams {
     pub(super) subscriptions: broadcast::Sender<CsourceSubscriptionChange>,
     /// The longest a stop spends evaluating what the tenant holds; it is the
     /// worker's shutdown grace.
-    pub(super) shutdown_drain: Duration,
+    pub(super) drain_timeout: Duration,
 }
 
 /// Everything a context source notification worker addresses, gathered so a
@@ -183,7 +183,7 @@ fn register_csource_notification_processor(
         registrations: registration_changes,
         handoffs,
         subscriptions: subscription_changes,
-        shutdown_drain,
+        drain_timeout,
     } = streams;
     let CsourceNotificationPorts {
         target,
@@ -201,7 +201,7 @@ fn register_csource_notification_processor(
         name,
         TaskCriticality::TenantDegrading,
         RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(restart_delay)),
-        ShutdownPolicy::new(shutdown_drain),
+        ShutdownPolicy::new(drain_timeout),
     );
     let task = ResidentTask::new(registration, move |execution| {
         let registration_changes = Arc::clone(&registration_changes); // clone: every resident attempt takes the one queue reader in turn.

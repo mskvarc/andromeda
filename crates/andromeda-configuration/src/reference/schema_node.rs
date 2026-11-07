@@ -42,6 +42,16 @@ pub(crate) struct Choice {
     pub(crate) description: String,
 }
 
+/// Whether a key takes only the values its choices list, or other values
+/// beside them, as a limit that may also be `"unlimited"` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChoiceRange {
+    /// Only the listed values.
+    Closed,
+    /// The listed values and values of another shape.
+    Open,
+}
+
 /// One schema node, read back from the schema's JSON text.
 ///
 /// Every member the reference does not read, such as a node's type or its
@@ -171,6 +181,15 @@ impl SchemaNode {
                 })
         });
         listed.chain(described).chain(self.any_of.iter().flat_map(SchemaNode::choices)).collect()
+    }
+
+    /// Whether the value takes other shapes beside its listed choices.
+    pub(crate) fn choice_range(&self) -> ChoiceRange {
+        if self.any_of.iter().any(|shape| shape.choices().is_empty()) {
+            ChoiceRange::Open
+        } else {
+            ChoiceRange::Closed
+        }
     }
 
     /// The node of the key `name` in this table, of a table among the shapes

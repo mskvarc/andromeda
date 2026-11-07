@@ -24,7 +24,7 @@ pub struct EvaluationConfig {
     /// kilobyte a slot, a full buffer at the default holds under 4 MB per
     /// tenant.
     #[schemars(
-        description = "The most committed entity changes each tenant buffers for live evaluation. While the broker runs no change is dropped: once the buffer is full, a write waits after its commit until evaluation makes room, so a burst larger than the buffer slows the tenant's writes instead of losing notifications. Changes still waiting when the broker stops or the tenant is unloaded are evaluated first, within `shutdown_drain`. A full buffer holds under 4 MB per tenant at the default. `\"durable\"` delivery does not use the buffer."
+        description = "The most committed entity changes each tenant buffers for live evaluation. While the broker runs no change is dropped: once the buffer is full, a write waits after its commit until evaluation makes room, so a burst larger than the buffer slows the tenant's writes instead of losing notifications. Changes still waiting when the broker stops or the tenant is unloaded are evaluated first, within `notifications.evaluation.drain_timeout`. A full buffer holds under 4 MB per tenant at the default. `\"durable\"` delivery does not use the buffer."
     )]
     pub max_queued_changes: NonZeroUsize,
     /// The most committed entity changes evaluated at once.
@@ -46,33 +46,16 @@ pub struct EvaluationConfig {
     /// stretch that; past this bound the evaluation is abandoned and the
     /// changes still waiting are dropped, counted and logged.
     #[schemars(
-        description = "The longest a stopping tenant spends evaluating the committed changes it already holds for live delivery, at process shutdown or when the tenant is unloaded. Evaluation that is not finished by then is abandoned and the changes still waiting are dropped, logged and counted. Must be at least `notifications.delivery.request_timeout`. Set it below the grace period your orchestrator gives the broker to stop, or the process is killed before the bound applies. `\"durable\"` delivery records notifications in the commit and is not affected."
+        description = "The longest a stopping tenant spends evaluating the committed changes it already holds for live delivery, at process shutdown or when the tenant is unloaded. Evaluation that is not finished by then is abandoned and the changes still waiting are dropped, logged and counted. Set it below the grace period your orchestrator gives the broker to stop, or the process is killed before the bound applies. `\"durable\"` delivery records notifications in the commit and is not affected."
     )]
-    pub shutdown_drain: HumanDuration,
-    /// How often a tenant reads again the subscriptions whose change it could
-    /// not read, in human-readable form (`"5s"`).
-    ///
-    /// A subscription change is applied to the matching cache with one read
-    /// of the store. When that read fails, the subscription is marked and
-    /// matches nothing new until a later pass reads it again; this is the
-    /// cadence of that pass, which retries only transient store failures.
-    #[schemars(
-        description = "How often a tenant reads again the subscriptions whose change it could not read from the database. A subscription changed while the database was unreachable is not matched against new entity changes until this pass reads it again, so this bounds that gap. A pass with nothing to retry reads nothing."
-    )]
-    pub subscription_reconcile_interval: HumanDuration,
+    pub drain_timeout: HumanDuration,
 }
 
 impl EvaluationConfig {
     /// The longest a stopping tenant spends evaluating the changes it holds.
     #[must_use]
-    pub const fn shutdown_drain(&self) -> Duration {
-        self.shutdown_drain.duration()
-    }
-
-    /// How often subscriptions whose change could not be read are read again.
-    #[must_use]
-    pub const fn subscription_reconcile_interval(&self) -> Duration {
-        self.subscription_reconcile_interval.duration()
+    pub const fn drain_timeout(&self) -> Duration {
+        self.drain_timeout.duration()
     }
 }
 
@@ -81,8 +64,7 @@ impl Default for EvaluationConfig {
         EvaluationConfig {
             max_queued_changes: NonZeroUsize::MIN.saturating_add(8191),
             max_concurrent_changes: NonZeroUsize::MIN.saturating_add(31),
-            shutdown_drain: HumanDuration::from_secs(30),
-            subscription_reconcile_interval: HumanDuration::from_secs(5),
+            drain_timeout: HumanDuration::from_secs(30),
         }
     }
 }
@@ -142,7 +124,7 @@ mod tests {
     }
 
     #[test]
-    fn the_default_shutdown_drain_is_thirty_seconds() {
-        assert_eq!(NotificationsConfig::default().evaluation.shutdown_drain(), Duration::from_secs(30));
+    fn the_default_drain_timeout_is_thirty_seconds() {
+        assert_eq!(NotificationsConfig::default().evaluation.drain_timeout(), Duration::from_secs(30));
     }
 }

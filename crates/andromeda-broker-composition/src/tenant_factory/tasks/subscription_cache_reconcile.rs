@@ -17,8 +17,13 @@ use andromeda_task_runtime::{
 };
 use std::{convert::Infallible, sync::Arc, time::Duration};
 
-/// Register the task that, every `interval`, reads again each subscription the
-/// cache marked dirty after a failed read.
+/// How often the cache reads again the subscriptions it could not read: the
+/// longest a subscription changed while the store was unreachable goes
+/// unmatched once the store is back.
+const RECONCILE_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Register the task that, every [`RECONCILE_INTERVAL`], reads again each
+/// subscription the cache marked dirty after a failed read.
 ///
 /// A pass with nothing dirty reads nothing. The task is observed, not
 /// tenant-degrading: a subscription it could not reach stays marked and the
@@ -26,20 +31,16 @@ use std::{convert::Infallible, sync::Arc, time::Duration};
 ///
 /// # Errors
 ///
-/// Returns [`TenantAssemblyError`] when the interval or the name is rejected,
+/// Returns [`TenantAssemblyError`] when the schedule or the name is rejected,
 /// or when the supervisor refuses the registration.
-pub(super) fn register_subscription_cache_reconcile(
-    supervisor: &TaskSupervisor,
-    processor: Arc<NotificationProcessor>,
-    interval: Duration,
-) -> Result<(), TenantAssemblyError> {
-    let schedule = PeriodicSchedule::new(interval, InitialExecution::AfterCadence, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
+pub(super) fn register_subscription_cache_reconcile(supervisor: &TaskSupervisor, processor: Arc<NotificationProcessor>) -> Result<(), TenantAssemblyError> {
+    let schedule = PeriodicSchedule::new(RECONCILE_INTERVAL, InitialExecution::AfterCadence, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
     let name = TaskName::try_from("subscription-cache-reconcile").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(interval)),
-        ShutdownPolicy::new(interval),
+        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(RECONCILE_INTERVAL)),
+        ShutdownPolicy::new(RECONCILE_INTERVAL),
     );
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
         let processor = Arc::clone(&processor); // clone: each pass owns the shared processor while running.

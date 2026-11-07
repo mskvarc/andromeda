@@ -174,13 +174,12 @@ pub(super) fn register_notification_workers(
         delivery,
         EvaluationLimits {
             lanes: config.evaluation.max_concurrent_changes,
-            shutdown_drain: config.evaluation.shutdown_drain(),
+            drain_timeout: config.evaluation.drain_timeout(),
         },
     )?;
     register_subscription_cache_reconcile(
         supervisor,
         Arc::clone(&processor), // clone: the resident processor is also the reconcile pass's reader of the cache.
-        config.evaluation.subscription_reconcile_interval(),
     )?;
     register_notification_delivery(supervisor, store, &config.delivery, processor, drive)
 }
@@ -299,7 +298,7 @@ struct EvaluationLimits {
     /// The longest a stop spends evaluating what the tenant holds; it is the
     /// processor's shutdown grace, and the configuration holds it to at least
     /// one notification's delivery deadline.
-    shutdown_drain: Duration,
+    drain_timeout: Duration,
 }
 
 /// Register the resident entity notification worker. Under live delivery it
@@ -319,14 +318,14 @@ fn register_notification_processor(
         commits,
         subscription_changes,
     } = streams;
-    let EvaluationLimits { lanes, shutdown_drain } = limits;
+    let EvaluationLimits { lanes, drain_timeout } = limits;
     let restart_delay = Duration::from_secs(1);
     let name = TaskName::try_from("notification-events").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::TenantDegrading,
         RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(restart_delay)),
-        ShutdownPolicy::new(shutdown_drain),
+        ShutdownPolicy::new(drain_timeout),
     );
     let task = ResidentTask::new(registration, move |execution| {
         let commits = Arc::clone(&commits); // clone: every resident attempt reports the changes it gives up on.

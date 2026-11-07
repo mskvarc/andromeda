@@ -3,6 +3,7 @@
 use crate::reference::{
     ReferenceError,
     key_listing::{ReferenceEntry, key_listing},
+    schema_node::ChoiceRange,
 };
 use textwrap::{Options, WordSeparator, WrapAlgorithm};
 
@@ -39,7 +40,12 @@ pub fn configuration_template() -> Result<String, ReferenceError> {
             ReferenceEntry::Key(key) => {
                 let limits: Vec<String> = key.limits.iter().map(ToString::to_string).collect();
                 let rules = (!limits.is_empty()).then(|| format!("Must be {}.", limits.join(", and ")));
-                let values: Vec<&str> = key.choices.iter().map(|choice| choice.value.as_str()).collect();
+                // A key that also takes a value of another shape names its
+                // keywords in its own description.
+                let values: Vec<&str> = match key.choice_range {
+                    ChoiceRange::Closed => key.choices.iter().map(|choice| choice.value.as_str()).collect(),
+                    ChoiceRange::Open => Vec::new(),
+                };
                 let choices = (!values.is_empty()).then(|| format!("One of {}.", values.join(", ")));
                 let paragraphs: Vec<&str> = key
                     .description

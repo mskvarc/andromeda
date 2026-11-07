@@ -7,7 +7,7 @@ use crate::{
     reference::{
         ReferenceError,
         example::example_configuration,
-        schema_node::{Choice, SchemaNode},
+        schema_node::{Choice, ChoiceRange, SchemaNode},
     },
     validate::{
         compound_rules,
@@ -147,6 +147,8 @@ pub(crate) struct KeyEntry {
     /// The values it allows, with what each means; empty for a key that is
     /// no choice.
     pub(crate) choices: Vec<Choice>,
+    /// Whether it takes other values beside its choices.
+    pub(crate) choice_range: ChoiceRange,
     /// Every condition its value meets: the comparisons the validator holds
     /// it to, and a floor its type holds.
     pub(crate) limits: Vec<KeyLimit>,
@@ -230,6 +232,7 @@ fn list_table(entries: &mut Vec<ReferenceEntry>, path: &KeyPath, example: &Table
             value: literal(default.unwrap_or(value)),
             description: described(schema.child(name)),
             choices: schema.child(name).map(SchemaNode::choices).unwrap_or_default(),
+            choice_range: schema.child(name).map_or(ChoiceRange::Closed, SchemaNode::choice_range),
             limits: Vec::new(),
             conditions: Vec::new(),
         }));

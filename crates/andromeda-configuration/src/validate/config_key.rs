@@ -75,6 +75,9 @@ pub enum ConfigKey {
     /// `request_limits.max_body`.
     #[display("request_limits.max_body")]
     RequestLimitsMaxBody,
+    /// `request_limits.max_page_body`.
+    #[display("request_limits.max_page_body")]
+    RequestLimitsMaxPageBody,
     /// `request_limits.max_header_section`.
     #[display("request_limits.max_header_section")]
     RequestLimitsMaxHeaderSection,
@@ -135,9 +138,9 @@ pub enum ConfigKey {
     /// `database.name_cache.idle_eviction_after`.
     #[display("database.name_cache.idle_eviction_after")]
     DatabaseNameCacheIdleEvictionAfter,
-    /// `database.maintenance.repack.max_relation_size`.
-    #[display("database.maintenance.repack.max_relation_size")]
-    DatabaseMaintenanceRepackMaxRelationSize,
+    /// `database.maintenance.max_repack_size`.
+    #[display("database.maintenance.max_repack_size")]
+    DatabaseMaintenanceMaxRepackSize,
     /// `tenancy.provisional_tenant_lifetime`.
     #[display("tenancy.provisional_tenant_lifetime")]
     TenancyProvisionalTenantLifetime,
@@ -225,12 +228,9 @@ pub enum ConfigKey {
     /// `notifications.delivery.request_timeout`.
     #[display("notifications.delivery.request_timeout")]
     NotificationsDeliveryRequestTimeout,
-    /// `notifications.evaluation.shutdown_drain`.
-    #[display("notifications.evaluation.shutdown_drain")]
-    NotificationsEvaluationShutdownDrain,
-    /// `notifications.evaluation.subscription_reconcile_interval`.
-    #[display("notifications.evaluation.subscription_reconcile_interval")]
-    NotificationsEvaluationSubscriptionReconcileInterval,
+    /// `notifications.evaluation.drain_timeout`.
+    #[display("notifications.evaluation.drain_timeout")]
+    NotificationsEvaluationDrainTimeout,
     /// `notifications.delivery.max_http_body`.
     #[display("notifications.delivery.max_http_body")]
     NotificationsDeliveryMaxHttpBody,

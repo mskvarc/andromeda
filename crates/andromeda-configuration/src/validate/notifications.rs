@@ -41,7 +41,7 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
                 limit: Limit::KeyPlusMargin(ConfigKey::NotificationsDeliveryRequestTimeout, DELIVERY_LEASE_MARGIN),
             },
             Rule::Ordered {
-                key: ConfigKey::NotificationsEvaluationShutdownDrain,
+                key: ConfigKey::NotificationsEvaluationDrainTimeout,
                 relation: Relation::AtLeast,
                 limit: Limit::Key(ConfigKey::NotificationsDeliveryRequestTimeout),
             },
@@ -50,7 +50,6 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
             Rule::Positive(ConfigKey::NotificationsDeliveryOrphanEventAfter),
             Rule::Positive(ConfigKey::NotificationsDeliveryRetentionSweepInterval),
             Rule::Positive(ConfigKey::NotificationsPeriodicMaxPollInterval),
-            Rule::Positive(ConfigKey::NotificationsEvaluationSubscriptionReconcileInterval),
             Rule::Ordered {
                 key: ConfigKey::Queue(QueueName::NotificationDelivery, QueueKey::LeaseTimeout),
                 relation: Relation::AtMost,
@@ -165,10 +164,6 @@ mod tests {
         assert_positive_duration(
             |config, value| config.notifications.periodic.max_poll_interval = value,
             ConfigKey::NotificationsPeriodicMaxPollInterval,
-        );
-        assert_positive_duration(
-            |config, value| config.notifications.evaluation.subscription_reconcile_interval = value,
-            ConfigKey::NotificationsEvaluationSubscriptionReconcileInterval,
         );
     }
 

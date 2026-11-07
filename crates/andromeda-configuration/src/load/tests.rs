@@ -315,30 +315,26 @@ fn maintenance_modes_and_profiles_load_from_the_database_table() {
 
 #[test]
 #[serial]
-fn repack_modes_and_an_unlimited_relation_size_load_from_the_maintenance_table() {
-    for mode in ["disabled", "observe", "automatic"] {
-        let config = load_file(&format!(
-            "[database.maintenance.repack]\nmode = \"{mode}\"\nmax_relation_size = \"unlimited\"\n"
-        ))
-        .expect("repack config should load");
-        pretty_assertions::assert_eq!(config.database.maintenance.repack.mode.to_string(), mode);
-        pretty_assertions::assert_eq!(config.database.maintenance.repack.max_relation_size.limit(), None);
+fn repack_policies_and_an_unlimited_repack_size_load_from_the_maintenance_table() {
+    for repack in ["reported", "performed"] {
+        let config =
+            load_file(&format!("[database.maintenance]\nrepack = \"{repack}\"\nmax_repack_size = \"unlimited\"\n")).expect("repack config should load");
+        pretty_assertions::assert_eq!(config.database.maintenance.repack.to_string(), repack);
+        pretty_assertions::assert_eq!(config.database.maintenance.max_repack_size.limit(), None);
     }
-    let sized = load_file("[database.maintenance.repack]\nmax_relation_size = \"16 GiB\"\n").expect("repack config should load");
-    pretty_assertions::assert_eq!(
-        sized.database.maintenance.repack.max_relation_size.limit().map(HumanByteSize::as_u64),
-        Some(16 << 30)
-    );
-    pretty_assertions::assert_eq!(sized.database.maintenance.repack.mode.to_string(), "observe");
+    let sized = load_file("[database.maintenance]\nmax_repack_size = \"16 GiB\"\n").expect("repack config should load");
+    pretty_assertions::assert_eq!(sized.database.maintenance.max_repack_size.limit().map(HumanByteSize::as_u64), Some(16 << 30));
+    pretty_assertions::assert_eq!(sized.database.maintenance.repack.to_string(), "reported");
+    assert!(load_file("[database.maintenance]\nrepack = \"automatic\"\n").is_err());
 }
 
 #[test]
 #[serial]
-fn a_repack_relation_size_of_no_bytes_is_refused_as_the_file_loads() {
+fn a_repack_size_of_no_bytes_is_refused_as_the_file_loads() {
     pretty_assertions::assert_eq!(
-        violations_of("[database.maintenance.repack]\nmax_relation_size = 0\n"),
+        violations_of("[database.maintenance]\nmax_repack_size = 0\n"),
         Some(vec![ConfigurationViolation::Zero {
-            key: ConfigKey::DatabaseMaintenanceRepackMaxRelationSize
+            key: ConfigKey::DatabaseMaintenanceMaxRepackSize
         }])
     );
 }
@@ -372,12 +368,12 @@ fn a_delivery_lease_is_refused_below_its_margin_over_the_request_timeout_and_loa
 /// exactly loads.
 #[test]
 #[serial]
-fn a_shutdown_drain_is_refused_below_the_request_timeout_and_loads_at_it() {
-    let refused = violations_of("[notifications.delivery]\nrequest_timeout = \"10s\"\n[notifications.evaluation]\nshutdown_drain = \"9999ms\"\n");
+fn a_drain_timeout_is_refused_below_the_request_timeout_and_loads_at_it() {
+    let refused = violations_of("[notifications.delivery]\nrequest_timeout = \"10s\"\n[notifications.evaluation]\ndrain_timeout = \"9999ms\"\n");
     assert_eq!(
         refused,
         Some(vec![ConfigurationViolation::OutOfRange {
-            key: ConfigKey::NotificationsEvaluationShutdownDrain,
+            key: ConfigKey::NotificationsEvaluationDrainTimeout,
             value: Quantity::Duration(Duration::from_millis(9_999)),
             relation: Relation::AtLeast,
             bound: Bound::Setting {
@@ -386,7 +382,7 @@ fn a_shutdown_drain_is_refused_below_the_request_timeout_and_loads_at_it() {
             },
         }])
     );
-    let loaded = violations_of("[notifications.delivery]\nrequest_timeout = \"10s\"\n[notifications.evaluation]\nshutdown_drain = \"10s\"\n");
+    let loaded = violations_of("[notifications.delivery]\nrequest_timeout = \"10s\"\n[notifications.evaluation]\ndrain_timeout = \"10s\"\n");
     assert_eq!(loaded, Some(Vec::new()));
 }
 
@@ -571,7 +567,6 @@ an_unknown_key_is_ignored_and_reported_with_its_path! {
     an_unknown_database_key_is_ignored: "database",
     an_unknown_database_name_cache_key_is_ignored: "database.name_cache",
     an_unknown_database_maintenance_key_is_ignored: "database.maintenance",
-    an_unknown_database_maintenance_repack_key_is_ignored: "database.maintenance.repack",
     an_unknown_tenancy_key_is_ignored: "tenancy",
     an_unknown_tenancy_databases_key_is_ignored: "tenancy.databases",
     an_unknown_tenancy_default_tenant_key_is_ignored: "tenancy.default_tenant",

@@ -53,7 +53,7 @@ pub(crate) async fn probe_heap(
     };
     let row = BranchTarget::new(branch, MaintenanceTarget::Repack(heap))?;
     let mode = repack_context::repack_decision_mode(connection, row, branch_mode, inputs).await?;
-    if mode != repack_mode(branch_mode, inputs.config.mode) {
+    if mode != repack_mode(branch_mode, inputs.policy) {
         report_withheld(platform, tenant, row, heap, inputs).await?;
     }
     let now = Utc::now();

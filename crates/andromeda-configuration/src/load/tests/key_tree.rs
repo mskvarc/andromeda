@@ -9,8 +9,9 @@ use pretty_assertions::assert_eq;
 use serial_test::serial;
 use url_macro::url;
 
-/// Every key that moved, as the file spelling it once had, the path of the
-/// setting the load ignores in it, and the file spelling it has now.
+/// Every key that moved or was removed, as the file spelling it once had, the
+/// path of the setting the load ignores in it, and the file spelling it has
+/// now, empty for a removed key.
 const MOVED: &[(&str, &str, &str)] = &[
     (
         "[database]\nurl = \"postgres://p/db\"\n",
@@ -21,6 +22,21 @@ const MOVED: &[(&str, &str, &str)] = &[
         "[database]\nmax_connections = 8\n",
         "database.max_connections",
         "[database]\nplatform_max_connections = 8\n\n[tenancy.default_tenant]\nmax_connections = 8\n",
+    ),
+    (
+        "[request_limits]\nmax_page_bytes = \"8 MiB\"\n",
+        "request_limits.max_page_bytes",
+        "[request_limits]\nmax_page_body = \"8 MiB\"\n",
+    ),
+    (
+        "[notifications.evaluation]\nshutdown_drain = \"30s\"\n",
+        "notifications.evaluation.shutdown_drain",
+        "[notifications.evaluation]\ndrain_timeout = \"30s\"\n",
+    ),
+    (
+        "[notifications.evaluation]\nsubscription_reconcile_interval = \"5s\"\n",
+        "notifications.evaluation.subscription_reconcile_interval",
+        "",
     ),
     (
         "[server]\ngraceful_drain = \"30s\"\n",
@@ -709,10 +725,21 @@ fn every_moved_key_loads_at_its_new_path_and_its_old_path_is_ignored_with_a_warn
 
 /// Every earlier spelling no file loads with, as the file spelling it once
 /// had, the name its refusal must give, and the file spelling it has now: a
-/// value a defined key no longer defines, or a key renamed in a table that
-/// requires it under its new name, which the refusal names as missing.
+/// value a defined key no longer defines, a key renamed in a table that
+/// requires it under its new name, which the refusal names as missing, or a
+/// table whose name a key of another type now holds.
 const REFUSED_OLD_SPELLINGS: &[(&str, &str, &str)] = &[
     ("[management]\nmode = \"merged\"\n", "merged", "[management]\nmode = \"shared-port\"\n"),
+    (
+        "[database.maintenance.repack]\nmode = \"automatic\"\n",
+        "database.maintenance.repack",
+        "[database.maintenance]\nrepack = \"performed\"\n",
+    ),
+    (
+        "[database.maintenance.repack]\nmax_relation_size = \"8 GiB\"\n",
+        "database.maintenance.repack",
+        "[database.maintenance]\nmax_repack_size = \"8 GiB\"\n",
+    ),
     (
         "[database.pooler]\nconnection = \"postgres://p/db\"\ntenant_max_connections = 2\n",
         "max_connections_per_tenant",
@@ -781,7 +808,6 @@ fn every_mode_refuses_a_value_it_does_not_define() {
         "http.security_headers",
         "http.csrf",
         "database.maintenance",
-        "database.maintenance.repack",
         "tenancy",
         "jsonld.fetch",
         "temporal.storage.retention",

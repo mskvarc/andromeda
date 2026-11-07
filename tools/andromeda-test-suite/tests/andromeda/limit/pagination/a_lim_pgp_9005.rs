@@ -25,7 +25,7 @@ const BLOB_BYTES: usize = 935_000;
 /// 8.4 MB over it
 /// Clause: 5.5.6, 5.5.9.1
 /// Recorded: clause 5.5.6 leaves the `TooManyResults` threshold to the broker; Andromeda refuses a page whose
-/// rendered body exceeds `request_limits.max_page_bytes` (8 MiB on this stack), and clause 5.5.9.1 makes the page size
+/// rendered body exceeds `request_limits.max_page_body` (8 MiB on this stack), and clause 5.5.9.1 makes the page size
 /// the requested limit, so a page over the ceiling is refused rather than served smaller
 #[gtest]
 #[tokio::test]

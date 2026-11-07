@@ -45,12 +45,7 @@ async fn a_obs_nsz_9003_an_http_notification_over_max_http_body_is_refused_under
         .entities([building_type.as_str()])
         .watched_attributes(["annex"])
         .notification_triggers([NotificationTrigger::AttributeCreated])
-        .notification(
-            NotificationParams::builder(
-                Endpoint::builder(sink.endpoint("configured")?).accept(NgsiLdMediaType::Json).build()?,
-            )
-            .build()?,
-        )
+        .notification(NotificationParams::builder(Endpoint::builder(sink.endpoint("configured")?).accept(NgsiLdMediaType::Json).build()?).build()?)
         .build()?;
     broker.subscriptions().create(&subscription).send().await?;
     let building = Entity::builder()

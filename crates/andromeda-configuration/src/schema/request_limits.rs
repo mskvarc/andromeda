@@ -126,14 +126,14 @@ pub struct RequestLimitsConfig {
     )]
     #[schemars(extend("x-andromeda-replica-consistent" = true))]
     pub max_q_nesting: NonZeroUsize,
-    /// The most bytes one page of a collection may render to, in
+    /// The largest body one page of a collection may render to, in
     /// human-readable form (`"64 MiB"`). A page that renders larger is answered
     /// 403 `TooManyResults` and nothing of it is sent.
     #[schemars(
-        description = "The most bytes one page of a collection may render to, before any compression. A page that renders to more is answered `403` `TooManyResults` naming the size and the ceiling, and none of it is sent; the client asks for a smaller `limit` and follows the next page pointer."
+        description = "The largest body one page of a collection may render to, before any compression. A page that renders to more is answered `403` `TooManyResults` naming the size and the ceiling, and none of it is sent; the client asks for a smaller `limit` and follows the next page pointer."
     )]
     #[schemars(extend("x-andromeda-replica-consistent" = true))]
-    pub max_page_bytes: HumanByteSize,
+    pub max_page_body: HumanByteSize,
 }
 
 impl Default for RequestLimitsConfig {
@@ -148,7 +148,7 @@ impl Default for RequestLimitsConfig {
             max_attribute_nesting: DEFAULT_MAX_ATTRIBUTE_NESTING,
             max_q_comparisons: DEFAULT_MAX_Q_COMPARISONS,
             max_q_nesting: DEFAULT_MAX_Q_NESTING,
-            max_page_bytes: HumanByteSize::mib(64),
+            max_page_body: HumanByteSize::mib(64),
         }
     }
 }
@@ -160,8 +160,8 @@ pub enum RequestLimitsConfigError {
     #[error("request_limits.max_body does not fit the platform address width")]
     MaxBodyExceedsAddressWidth,
     /// A ceiling beyond the platform address width would admit every page.
-    #[error("request_limits.max_page_bytes does not fit the platform address width")]
-    MaxPageExceedsAddressWidth,
+    #[error("request_limits.max_page_body does not fit the platform address width")]
+    MaxPageBodyExceedsAddressWidth,
 }
 
 impl RequestLimitsConfig {
@@ -180,11 +180,11 @@ impl RequestLimitsConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`RequestLimitsConfigError::MaxPageExceedsAddressWidth`] when
-    /// `max_page_bytes` does not fit a `usize`, for the reason
+    /// Returns [`RequestLimitsConfigError::MaxPageBodyExceedsAddressWidth`]
+    /// when `max_page_body` does not fit a `usize`, for the reason
     /// [`RequestLimitsConfig::max_body_bytes`] gives.
-    pub fn max_page_ceiling_bytes(&self) -> Result<usize, RequestLimitsConfigError> {
-        usize::try_from(self.max_page_bytes.as_u64()).map_err(|_| RequestLimitsConfigError::MaxPageExceedsAddressWidth)
+    pub fn max_page_body_bytes(&self) -> Result<usize, RequestLimitsConfigError> {
+        usize::try_from(self.max_page_body.as_u64()).map_err(|_| RequestLimitsConfigError::MaxPageBodyExceedsAddressWidth)
     }
 }
 
@@ -203,7 +203,7 @@ mod tests {
         assert_eq!(limits.max_attribute_nesting.get(), 32);
         assert_eq!(limits.max_q_comparisons.get(), 1000);
         assert_eq!(limits.max_q_nesting.get(), 16);
-        assert_eq!(limits.max_page_ceiling_bytes(), Ok(67_108_864));
+        assert_eq!(limits.max_page_body_bytes(), Ok(67_108_864));
         assert_eq!(limits.max_header_section, HeaderSectionLimit::MAXIMUM);
     }
 

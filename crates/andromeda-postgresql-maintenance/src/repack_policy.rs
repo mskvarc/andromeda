@@ -27,7 +27,7 @@ use crate::{
     policy::{DeferralReason, DegradationSample, PolicyDecision, PolicyProfile, SafetyGates, TargetState, held, newly_qualified, pending_decision},
     repack::phase_budget::phase_budget,
 };
-use andromeda_configuration::schema::database::maintenance::MaintenanceMode;
+use andromeda_configuration::schema::database::maintenance::{MaintenanceMode, RepackPolicy};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 
 /// The thresholds one profile qualifies a repack on.
@@ -194,16 +194,15 @@ fn run_lifetime(relation_bytes: u64) -> ChronoDuration {
     ChronoDuration::from_std(phase_budget(relation_bytes)).map_or(ChronoDuration::MAX, |budget| budget + EXPIRY_MARGIN)
 }
 
-/// The mode a repack is decided under: the stricter of the controller's mode
-/// and the repack's own, since either may hold a repack back.
-pub(crate) const fn repack_mode(controller: MaintenanceMode, repack: MaintenanceMode) -> MaintenanceMode {
-    match (controller, repack) {
-        (MaintenanceMode::Disabled, MaintenanceMode::Disabled | MaintenanceMode::Observe | MaintenanceMode::Automatic)
-        | (MaintenanceMode::Observe | MaintenanceMode::Automatic, MaintenanceMode::Disabled) => MaintenanceMode::Disabled,
-        (MaintenanceMode::Observe, MaintenanceMode::Observe | MaintenanceMode::Automatic) | (MaintenanceMode::Automatic, MaintenanceMode::Observe) => {
+/// The mode a repack is decided under: the controller's, except that an
+/// automatic controller only reports repacks unless they are performed.
+pub(crate) const fn repack_mode(controller: MaintenanceMode, policy: RepackPolicy) -> MaintenanceMode {
+    match (controller, policy) {
+        (MaintenanceMode::Disabled, RepackPolicy::Reported | RepackPolicy::Performed) => MaintenanceMode::Disabled,
+        (MaintenanceMode::Observe, RepackPolicy::Reported | RepackPolicy::Performed) | (MaintenanceMode::Automatic, RepackPolicy::Reported) => {
             MaintenanceMode::Observe
         }
-        (MaintenanceMode::Automatic, MaintenanceMode::Automatic) => MaintenanceMode::Automatic,
+        (MaintenanceMode::Automatic, RepackPolicy::Performed) => MaintenanceMode::Automatic,
     }
 }
 
@@ -249,7 +248,7 @@ mod tests {
         policy::{DeferralReason, PolicyDecision, PolicyProfile, SafetyGates, TargetState, decide},
         repack_policy::{RepackContext, RepackRunState, RepackSample, decide_repack, repack_mode},
     };
-    use andromeda_configuration::schema::database::maintenance::{MaintenanceMode, MaintenanceProfile};
+    use andromeda_configuration::schema::database::maintenance::{MaintenanceMode, MaintenanceProfile, RepackPolicy};
     use chrono::{DateTime, Duration, Utc};
     use pretty_assertions::assert_eq;
 
@@ -332,7 +331,7 @@ mod tests {
     #[test]
     fn a_heap_free_for_a_day_is_queued_in_automatic_mode() {
         let now = Utc::now();
-        let mode = repack_mode(MaintenanceMode::Automatic, MaintenanceMode::Automatic);
+        let mode = repack_mode(MaintenanceMode::Automatic, RepackPolicy::Performed);
         assert_eq!(
             decide_repack(
                 mode,
@@ -348,11 +347,11 @@ mod tests {
     }
 
     #[test]
-    fn either_mode_in_observe_only_reports_the_repack() {
+    fn an_observing_controller_or_reported_repacks_only_report_the_repack() {
         let now = Utc::now();
         for (controller, repack) in [
-            (MaintenanceMode::Automatic, MaintenanceMode::Observe),
-            (MaintenanceMode::Observe, MaintenanceMode::Automatic),
+            (MaintenanceMode::Automatic, RepackPolicy::Reported),
+            (MaintenanceMode::Observe, RepackPolicy::Performed),
         ] {
             let mode = repack_mode(controller, repack);
             assert_eq!(
@@ -372,13 +371,13 @@ mod tests {
     }
 
     #[test]
-    fn the_stricter_mode_wins() {
-        for controller in [MaintenanceMode::Disabled, MaintenanceMode::Observe, MaintenanceMode::Automatic] {
-            assert_eq!(repack_mode(controller, MaintenanceMode::Disabled), MaintenanceMode::Disabled);
-            assert_eq!(repack_mode(MaintenanceMode::Disabled, controller), MaintenanceMode::Disabled);
-            assert_eq!(repack_mode(controller, MaintenanceMode::Automatic), controller);
+    fn only_an_automatic_controller_performing_repacks_runs_them() {
+        for policy in [RepackPolicy::Reported, RepackPolicy::Performed] {
+            assert_eq!(repack_mode(MaintenanceMode::Disabled, policy), MaintenanceMode::Disabled);
+            assert_eq!(repack_mode(MaintenanceMode::Observe, policy), MaintenanceMode::Observe);
         }
-        assert_eq!(repack_mode(MaintenanceMode::Automatic, MaintenanceMode::Observe), MaintenanceMode::Observe);
+        assert_eq!(repack_mode(MaintenanceMode::Automatic, RepackPolicy::Reported), MaintenanceMode::Observe);
+        assert_eq!(repack_mode(MaintenanceMode::Automatic, RepackPolicy::Performed), MaintenanceMode::Automatic);
     }
 
     #[test]

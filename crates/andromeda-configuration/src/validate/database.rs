@@ -23,7 +23,7 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
         },
         Rule::Positive(ConfigKey::DatabaseNameCacheMaxSizePerDictionary),
         Rule::Positive(ConfigKey::DatabaseNameCacheIdleEvictionAfter),
-        Rule::Positive(ConfigKey::DatabaseMaintenanceRepackMaxRelationSize),
+        Rule::Positive(ConfigKey::DatabaseMaintenanceMaxRepackSize),
     ]
     .into_iter()
 }
@@ -75,16 +75,16 @@ mod tests {
     #[test]
     fn a_repack_ceiling_of_no_bytes_is_refused_and_one_byte_and_unlimited_accepted() {
         let mut config = BrokerConfig::local();
-        config.database.maintenance.repack.max_relation_size = Ceiling::At(HumanByteSize::b(0));
+        config.database.maintenance.max_repack_size = Ceiling::At(HumanByteSize::b(0));
         assert_eq!(
             refusals(&config),
             [ConfigurationViolation::Zero {
-                key: ConfigKey::DatabaseMaintenanceRepackMaxRelationSize
+                key: ConfigKey::DatabaseMaintenanceMaxRepackSize
             }]
         );
-        config.database.maintenance.repack.max_relation_size = Ceiling::At(HumanByteSize::b(1));
+        config.database.maintenance.max_repack_size = Ceiling::At(HumanByteSize::b(1));
         assert_accepted(&config);
-        config.database.maintenance.repack.max_relation_size = Ceiling::Unlimited(Unlimited::Unlimited);
+        config.database.maintenance.max_repack_size = Ceiling::Unlimited(Unlimited::Unlimited);
         assert_accepted(&config);
     }
 }

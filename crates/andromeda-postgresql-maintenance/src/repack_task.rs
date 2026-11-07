@@ -131,7 +131,7 @@ pub struct RepackTask {
     platform_pool: PgPool,
     /// The straight-to-PostgreSQL base URL tenant database URLs derive from.
     direct_url: DatabaseUrl,
-    /// The controller's configuration, the repack's section within it.
+    /// The controller's configuration, the repack policy and size among it.
     config: MaintenanceConfig,
     /// How long a tenant session waits for its connection.
     acquire_timeout: Duration,
@@ -168,7 +168,7 @@ impl RepackTask {
     /// statement fails. A repack that is deferred, abandoned or fails inside
     /// the tenant database is reported through [`RepackTaskOutcome`].
     pub async fn run(&self, cancellation: &CancellationToken) -> Result<RepackTaskOutcome, MaintenanceError> {
-        if repack_mode(self.config.mode, self.config.repack.mode) != MaintenanceMode::Automatic {
+        if repack_mode(self.config.mode, self.config.repack) != MaintenanceMode::Automatic {
             return Ok(RepackTaskOutcome::Observing);
         }
         let mut platform = self.platform_pool.acquire().await?;
@@ -286,7 +286,8 @@ impl RepackTask {
     async fn inputs(&self, platform: &mut PgConnection, connection: &mut PgConnection, tenant: &RegisteredTenant) -> Result<RepackInputs, MaintenanceError> {
         let fleet = fleet_observation::observe_fleet(&mut *platform).await?;
         Ok(RepackInputs {
-            config: self.config.repack,
+            policy: self.config.repack,
+            max_size: self.config.max_repack_size,
             capability: capability::repack_capability(connection).await?,
             retained_wal_bytes: replication_slot::retained_wal(platform).await?,
             freeze: fleet.database(tenant.key).map_or(FreezePressure::Normal, |database| database.freeze.pressure()),

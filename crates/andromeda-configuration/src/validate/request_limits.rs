@@ -12,7 +12,8 @@ use crate::{
     },
 };
 
-/// A request needs a positive deadline and a positive body ceiling. A header
+/// A request needs a positive deadline and a positive body ceiling, and a
+/// collection page a positive one. A header
 /// section limit outside its range is one some HTTP version cannot enforce
 /// alike, and a nesting limit past its ceiling admits what no stored value or
 /// parsed filter can hold.
@@ -20,6 +21,7 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
     [
         Rule::Positive(ConfigKey::RequestLimitsTimeout),
         Rule::Positive(ConfigKey::RequestLimitsMaxBody),
+        Rule::Positive(ConfigKey::RequestLimitsMaxPageBody),
         Rule::Ordered {
             key: ConfigKey::RequestLimitsMaxHeaderSection,
             relation: Relation::AtLeast,
@@ -47,16 +49,22 @@ fn ceiling(key: ConfigKey, ceiling: usize) -> Rule {
 
 /// What [`check_request_limits`] asks.
 pub(crate) const COMPOUND_RULES: [CompoundRule; 1] = [CompoundRule {
-    keys: &[ConfigKey::RequestLimitsMaxBody],
+    keys: &[ConfigKey::RequestLimitsMaxBody, ConfigKey::RequestLimitsMaxPageBody],
     statement: "It must fit the platform's address width.",
 }];
 
-/// A ceiling past the address width would admit every body.
+/// A ceiling past the address width would admit every body or page.
 pub(crate) fn check_request_limits(limits: &RequestLimitsConfig, log: &mut ViolationLog) {
     if limits.max_body_bytes().is_err() {
         log.record(ConfigurationViolation::ExceedsAddressWidth {
             key: ConfigKey::RequestLimitsMaxBody,
             bytes: limits.max_body.as_u64(),
+        });
+    }
+    if limits.max_page_body_bytes().is_err() {
+        log.record(ConfigurationViolation::ExceedsAddressWidth {
+            key: ConfigKey::RequestLimitsMaxPageBody,
+            bytes: limits.max_page_body.as_u64(),
         });
     }
 }
@@ -165,6 +173,39 @@ mod tests {
         );
         config.request_limits.max_body = HumanByteSize::b(1);
         assert_accepted(&config);
+    }
+
+    #[test]
+    fn a_zero_page_body_ceiling_is_refused_and_one_byte_accepted() {
+        let mut config = BrokerConfig::local();
+        config.request_limits.max_page_body = HumanByteSize::b(0);
+        assert_eq!(
+            refusals(&config),
+            [ConfigurationViolation::Zero {
+                key: ConfigKey::RequestLimitsMaxPageBody
+            }]
+        );
+        config.request_limits.max_page_body = HumanByteSize::b(1);
+        assert_accepted(&config);
+    }
+
+    /// The address width is checked only where `usize` is narrower than
+    /// `u64`, the only platforms a byte size can pass it on.
+    #[test]
+    fn a_page_body_ceiling_past_the_address_width_is_refused() {
+        let mut config = BrokerConfig::local();
+        config.request_limits.max_page_body = HumanByteSize::b(u64::MAX);
+        if usize::try_from(u64::MAX).is_ok() {
+            assert_accepted(&config);
+        } else {
+            assert_eq!(
+                refusals(&config),
+                [ConfigurationViolation::ExceedsAddressWidth {
+                    key: ConfigKey::RequestLimitsMaxPageBody,
+                    bytes: u64::MAX,
+                }]
+            );
+        }
     }
 
     /// The address width is checked only where `usize` is narrower than

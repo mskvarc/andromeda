@@ -43,7 +43,7 @@ services:
       # The position budget of runner.env, so a geometry one position over it stays a small payload.
       ANDROMEDA__REQUEST_LIMITS__MAX_GEOMETRY_POSITIONS: "100000"
       # The page ceiling of runner.env: nine entities of 935,000 bytes render past it, eight under it.
-      ANDROMEDA__REQUEST_LIMITS__MAX_PAGE_BYTES: "8 MiB"
+      ANDROMEDA__REQUEST_LIMITS__MAX_PAGE_BODY: "8 MiB"
 
   postgres-conformance:
     extends:

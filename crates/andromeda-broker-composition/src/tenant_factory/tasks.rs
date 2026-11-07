@@ -334,7 +334,7 @@ pub(super) fn supervise_tasks(
             registrations: registration_receiver,
             handoffs: registration.handoffs().clone(), // clone: the worker waits for the hand-offs the sink starts.
             subscriptions: csource_subscription,
-            shutdown_drain: config.notifications.evaluation.shutdown_drain(),
+            drain_timeout: config.notifications.evaluation.drain_timeout(),
         },
         periodic,
     )?;

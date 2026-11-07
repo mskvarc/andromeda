@@ -12,7 +12,10 @@ use crate::{
 };
 use andromeda_configuration::{
     human_byte_size::HumanByteSize,
-    schema::database::maintenance::{MaintenanceMode, RepackConfig},
+    schema::{
+        ceiling::Ceiling,
+        database::maintenance::{MaintenanceMode, RepackPolicy},
+    },
 };
 use andromeda_postgresql_schema::branch_schema_version::BranchSchemaVersion;
 use andromeda_postgresql_seaquery::{repack_catalog::triggered_tables, statement::Statement};
@@ -23,8 +26,10 @@ use sqlx::PgConnection;
 /// decides: the configuration, the extension, and the cluster's state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RepackInputs {
-    /// The repack's own configuration.
-    pub(crate) config: RepackConfig,
+    /// Whether automatic mode runs repacks or only reports them.
+    pub(crate) policy: RepackPolicy,
+    /// The largest table a repack copies.
+    pub(crate) max_size: Ceiling<HumanByteSize>,
     /// Whether a repack may run in the tenant database.
     pub(crate) capability: RepackCapability,
     /// The most WAL any replication slot keeps on disk.
@@ -39,21 +44,21 @@ impl RepackInputs {
     /// The configured largest relation a repack copies, `None` when
     /// unlimited.
     pub(crate) fn max_relation_bytes(self) -> Option<u64> {
-        self.config.max_relation_size.limit().map(HumanByteSize::as_u64)
+        self.max_size.limit().map(HumanByteSize::as_u64)
     }
 }
 
 /// The mode a repack of `row` is decided under in a branch decided under
-/// `branch_mode`: the stricter of that and the repack's configured mode,
-/// observe when the extension cannot run a repack or the role does not own
-/// the table.
+/// `branch_mode`: observe unless the branch is automatic and repacks are
+/// performed, and observe when the extension cannot run a repack or the role
+/// does not own the table.
 pub(crate) async fn repack_decision_mode(
     connection: &mut PgConnection,
     row: BranchTarget,
     branch_mode: MaintenanceMode,
     inputs: RepackInputs,
 ) -> Result<MaintenanceMode, MaintenanceError> {
-    let mode = repack_mode(branch_mode, inputs.config.mode);
+    let mode = repack_mode(branch_mode, inputs.policy);
     if mode != MaintenanceMode::Automatic {
         return Ok(mode);
     }

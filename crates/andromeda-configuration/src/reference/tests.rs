@@ -3,7 +3,7 @@ use crate::{
         ReferenceError,
         descriptor::configuration_descriptor,
         key_listing::{ReferenceEntry, key_listing},
-        schema_node::SchemaNode,
+        schema_node::{ChoiceRange, SchemaNode},
         template::configuration_template,
     },
     validate::{compound_rules, declared_rules, rule::Rule},
@@ -146,5 +146,28 @@ fn every_key_typed_above_zero_lists_the_floor() -> Result<(), ReferenceError> {
     assert_eq!(unlisted, [] as [String; 0]);
     let template = configuration_template()?;
     assert!(template.contains("# Must be above zero.\nmax_retained_files = 7\n"), "{template}");
+    Ok(())
+}
+
+/// The template lists no choices for a key that also takes a value of another
+/// shape, since "one of" would hide that value, so its description names each
+/// keyword it takes.
+#[test]
+fn every_key_open_to_other_values_names_its_keywords_in_its_description() -> Result<(), ReferenceError> {
+    let unnamed: Vec<String> = key_listing()?
+        .iter()
+        .filter_map(|entry| match entry {
+            ReferenceEntry::Key(key) if key.choice_range == ChoiceRange::Open => Some(key),
+            ReferenceEntry::Key(_) | ReferenceEntry::Table(_) => None,
+        })
+        .flat_map(|key| {
+            let description = key.description.as_deref().unwrap_or_default();
+            key.choices
+                .iter()
+                .filter(move |choice| !description.contains(&format!("`{}`", choice.value)))
+                .map(move |choice| format!("{} = {}", key.path.dotted(), choice.value))
+        })
+        .collect();
+    assert_eq!(unnamed, [] as [String; 0]);
     Ok(())
 }

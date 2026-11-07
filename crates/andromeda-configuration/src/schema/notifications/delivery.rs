@@ -126,7 +126,7 @@ pub struct DeliveryConfig {
     /// flight that has a delivery due, and while another Subscription is
     /// active the crowding one gets no more than half.
     #[schemars(
-        description = "The most notifications sent at once, shared by every Subscription of the tenant. A delivery pass keeps this many in flight for as long as the queue holds due deliveries. Once one Subscription holds half of them, each slot that frees goes to the Subscription with the fewest notifications in flight that has one due, and while another Subscription has a notification in flight, or had one answered within `request_timeout`, a Subscription holding half the slots gets no more. An endpoint that answers slowly therefore leaves the other Subscriptions at least half the slots, and one that fails holds a single slot for its retry. A Subscription with no other active beside it uses every slot."
+        description = "The most notifications one tenant sends at once, shared by all its Subscriptions. A delivery pass keeps this many in flight while the queue holds due deliveries. Once one Subscription holds half the slots, a freed slot goes to the due Subscription with the fewest in flight, and while another Subscription is active, with a notification in flight or one answered within `notifications.delivery.request_timeout`, the one holding half gets no more. A slow endpoint therefore leaves the others at least half the slots, and a failing one holds a single slot for its retry. A Subscription active on its own uses every slot."
     )]
     pub max_concurrent: NonZeroU32,
     /// The most characters of a failure diagnostic kept when a failed attempt
