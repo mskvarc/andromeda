@@ -48,12 +48,21 @@ pub enum ConfigKey {
     /// `server.announced_close_timeout`.
     #[display("server.announced_close_timeout")]
     ServerAnnouncedCloseTimeout,
+    /// `server.transport`.
+    #[display("server.transport")]
+    ServerTransport,
+    /// `server.http3.mode`.
+    #[display("server.http3.mode")]
+    ServerHttp3Mode,
     /// `management.port`.
     #[display("management.port")]
     ManagementPort,
     /// `management.mode`.
     #[display("management.mode")]
     ManagementMode,
+    /// `management.transport`.
+    #[display("management.transport")]
+    ManagementTransport,
     /// `tls.certificate`.
     #[display("tls.certificate")]
     TlsCertificate,
@@ -90,6 +99,9 @@ pub enum ConfigKey {
     /// `http.body_decoding.blocking_threshold`.
     #[display("http.body_decoding.blocking_threshold")]
     HttpBodyDecodingBlockingThreshold,
+    /// `http.cors.mode`.
+    #[display("http.cors.mode")]
+    HttpCorsMode,
     /// `http.cors.allow_origins`.
     #[display("http.cors.allow_origins")]
     HttpCorsAllowOrigins,

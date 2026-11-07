@@ -6,14 +6,17 @@
 
 use crate::{
     human_duration::HumanDuration,
-    schema::{http::forwarded::ForwardedTrust, tls::ClientAuthenticationMode},
     validate::{
         bound::{Bound, Quantity, Relation},
+        choice_value::ChoiceValue,
         config_key::ConfigKey,
     },
 };
 use derive_more::Display;
-use std::time::Duration;
+use std::{
+    fmt::{self, Formatter},
+    time::Duration,
+};
 use url::Url;
 
 /// One rule a loaded configuration breaks.
@@ -54,87 +57,109 @@ pub enum ConfigurationViolation {
         /// The size it holds, in bytes.
         bytes: u64,
     },
-    /// A key another setting makes necessary is left out.
-    #[display("{key} must be set while {required_by}")]
+    /// A key the settings in force make necessary is left out.
+    #[display("{key} must be set{required_by}")]
     Unset {
         /// The key left out.
         key: ConfigKey,
-        /// The setting that needs it.
+        /// The settings that need it.
         required_by: Requirement,
     },
-    /// A client CA bundle is configured while no client certificate is asked
-    /// for, so nothing would read it.
-    #[display("tls.client_authentication.ca is set but tls.client_authentication.mode is \"disabled\"; set the mode or remove the bundle")]
-    ClientCaWithoutClientAuthentication,
-    /// A separate management plane binds the data-plane port. A wildcard host
-    /// overlaps every host, so the planes are compared on port alone.
-    #[display("management.port ({port}) must differ from server.port while management.mode is \"separate-port\"")]
-    ManagementPortCollision {
-        /// The port both planes bind.
-        port: u16,
+    /// A key is set while the settings in force make nothing read it.
+    #[display("{key} must be left out{required_by}")]
+    Unread {
+        /// The key set.
+        key: ConfigKey,
+        /// The settings under which nothing reads it.
+        required_by: Requirement,
     },
-    /// Metrics are enabled while no management plane exists to serve them.
-    #[display(
-        "observability.metrics.prometheus.mode is \"enabled\" but management.mode is \"disabled\"; set management.mode to \"separate-port\" or \"shared-port\", or disable metrics"
-    )]
-    MetricsWithoutManagementPlane,
-    /// The CORS policy allows credentials beside an `any` wildcard, which the
-    /// Fetch standard forbids and the CORS layer cannot build.
-    #[display("http.cors: credentials = \"allowed\" cannot be combined with an `any` wildcard on origins, methods, headers or exposed headers")]
-    CorsCredentialsWithWildcard,
-    /// Proxies are listed while the trust believes no list, so nothing would
-    /// read them.
-    #[display("http.forwarded.proxies is set but http.forwarded.trust is \"{trust}\"; set the trust to \"proxies\" or remove the list")]
-    ProxiesWithoutProxyTrust {
-        /// The trust that reads no list.
-        trust: ForwardedTrust,
+    /// A key holds a keyword the settings in force refuse.
+    #[display("{key} must not be \"{choice}\"{required_by}")]
+    ChoiceRefused {
+        /// The key holding the keyword.
+        key: ConfigKey,
+        /// The keyword it holds.
+        choice: ChoiceValue,
+        /// The settings that refuse it.
+        required_by: Requirement,
     },
-    /// Two preloaded contexts name one URL, so which file serves it would be
-    /// decided by their order.
-    #[display("jsonld.preloaded_contexts names {url} more than once")]
-    DuplicatePreloadedContext {
-        /// The URL named more than once.
+    /// Two keys that must differ hold the same value. A wildcard host
+    /// overlaps every host, so two listeners are compared on port alone.
+    #[display("{key} ({value}) must differ from {other}{required_by}")]
+    Collision {
+        /// The key read.
+        key: ConfigKey,
+        /// The key it must differ from.
+        other: ConfigKey,
+        /// The value both hold.
+        value: Quantity,
+        /// The settings under which they must differ.
+        required_by: Requirement,
+    },
+    /// Two entries of a list of tables hold the same URL, so which of them
+    /// applies would be decided by their order.
+    #[display("{key} is {url} in more than one entry")]
+    Duplicate {
+        /// The key the entries share.
+        key: ConfigKey,
+        /// The URL held more than once.
         url: Url,
     },
 }
 
-/// The setting that makes a left-out key necessary.
+/// A keyword a key holds, as a refusal names it.
 #[derive(Clone, Copy, Debug, Display, Eq, PartialEq)]
-pub enum Requirement {
-    /// The data-plane listener terminates TLS.
-    #[display("server.transport is \"tls\"")]
-    ServerTls,
-    /// The HTTP/3 listener is enabled, and QUIC always terminates TLS.
-    #[display("server.http3.mode is \"enabled\"")]
-    Http3,
-    /// The separate management listener terminates TLS.
-    #[display("management.transport is \"tls\" and management.mode is \"separate-port\"")]
-    ManagementTls,
-    /// Client certificates are asked for.
-    #[display("tls.client_authentication.mode is \"{_0}\"")]
-    ClientAuthentication(ClientAuthenticationMode),
-    /// History retention is enabled.
-    #[display("temporal.storage.retention.mode is \"enabled\"")]
-    Retention,
-    /// Forwarded fields are believed only from listed proxies.
-    #[display("http.forwarded.trust is \"proxies\"")]
-    ProxyTrust,
-    /// Responses are compressed.
-    #[display("http.compression.mode is \"enabled\"")]
-    ResponseCompression,
-    /// Request bodies are decoded.
-    #[display("http.decompression.mode is \"enabled\"")]
-    RequestDecompression,
+#[display("{key} is \"{choice}\"")]
+pub struct HeldChoice {
+    /// The key.
+    pub key: ConfigKey,
+    /// The keyword it holds.
+    pub choice: ChoiceValue,
+}
+
+impl HeldChoice {
+    /// `key` holding `choice`.
+    #[must_use]
+    pub fn new(key: ConfigKey, choice: impl Into<ChoiceValue>) -> HeldChoice {
+        HeldChoice { key, choice: choice.into() }
+    }
+}
+
+/// The settings under which a broken rule applies, as the configuration holds
+/// them; empty for a rule that always applies.
+///
+/// Displayed as the clause a refusal ends with, ` while` and every setting
+/// joined by `and`, and as nothing when empty.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Requirement(Vec<HeldChoice>);
+
+impl Requirement {
+    /// The settings `held`, in the order the rule names them.
+    #[must_use]
+    pub fn new(held: impl IntoIterator<Item = HeldChoice>) -> Requirement {
+        Requirement(held.into_iter().collect())
+    }
+}
+
+// Manual: a derived `Display` formats fixed fields, and the clause joins a
+// list of any length, or is nothing.
+impl fmt::Display for Requirement {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        self.0.iter().enumerate().try_for_each(|(index, held)| {
+            let joiner = if index == 0 { " while" } else { " and" };
+            write!(formatter, "{joiner} {held}")
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        schema::tls::ClientAuthenticationMode,
+        schema::{listener_transport::ListenerTransport, management::ManagementMode, tls::ClientAuthenticationMode},
         validate::{
             bound::{Bound, Quantity, Relation},
             config_key::ConfigKey,
-            violation::{ConfigurationViolation, Requirement},
+            violation::{ConfigurationViolation, HeldChoice, Requirement},
         },
     };
     use pretty_assertions::assert_eq;
@@ -158,11 +183,35 @@ mod tests {
     fn an_unset_key_names_the_setting_that_needs_it() {
         let violation = ConfigurationViolation::Unset {
             key: ConfigKey::TlsClientAuthenticationCa,
-            required_by: Requirement::ClientAuthentication(ClientAuthenticationMode::Required),
+            required_by: Requirement::new([HeldChoice::new(ConfigKey::TlsClientAuthenticationMode, ClientAuthenticationMode::Required)]),
         };
         assert_eq!(
             violation.to_string(),
             "tls.client_authentication.ca must be set while tls.client_authentication.mode is \"required\""
         );
+    }
+
+    #[test]
+    fn a_refusal_names_every_setting_it_applies_under_joined_by_and() {
+        let violation = ConfigurationViolation::Unset {
+            key: ConfigKey::TlsCertificate,
+            required_by: Requirement::new([
+                HeldChoice::new(ConfigKey::ManagementTransport, ListenerTransport::Tls),
+                HeldChoice::new(ConfigKey::ManagementMode, ManagementMode::SeparatePort),
+            ]),
+        };
+        assert_eq!(
+            violation.to_string(),
+            "tls.certificate must be set while management.transport is \"tls\" and management.mode is \"separate-port\""
+        );
+    }
+
+    #[test]
+    fn a_rule_that_always_applies_names_no_setting() {
+        let violation = ConfigurationViolation::Unset {
+            key: ConfigKey::TlsCertificate,
+            required_by: Requirement::default(),
+        };
+        assert_eq!(violation.to_string(), "tls.certificate must be set");
     }
 }

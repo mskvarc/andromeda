@@ -3,7 +3,7 @@
 
 use crate::{
     load::tests::{ignored_in, in_file, load_file, violations_of},
-    validate::violation::ConfigurationViolation,
+    validate::{config_key::ConfigKey, violation::ConfigurationViolation},
 };
 use pretty_assertions::assert_eq;
 use serial_test::serial;
@@ -841,7 +841,8 @@ fn a_url_preloaded_twice_is_refused() {
     );
     assert_eq!(
         refused,
-        Some(vec![ConfigurationViolation::DuplicatePreloadedContext {
+        Some(vec![ConfigurationViolation::Duplicate {
+            key: ConfigKey::JsonLdPreloadedContextUrl,
             url: url!("https://example.com/c.jsonld")
         }])
     );

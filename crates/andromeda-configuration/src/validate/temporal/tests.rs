@@ -6,7 +6,7 @@ use crate::{
         bound::{Bound, Quantity, Relation},
         config_key::ConfigKey,
         rule_tests::{assert_accepted, assert_positive_duration, refusals},
-        violation::{ConfigurationViolation, Requirement},
+        violation::{ConfigurationViolation, HeldChoice, Requirement},
     },
 };
 use pretty_assertions::assert_eq;
@@ -203,7 +203,7 @@ fn enabled_retention_without_an_age_is_refused_and_with_one_accepted() {
         refusals(&config),
         [ConfigurationViolation::Unset {
             key: ConfigKey::TemporalStorageDeleteAfter,
-            required_by: Requirement::Retention,
+            required_by: Requirement::new([HeldChoice::new(ConfigKey::TemporalStorageRetentionMode, FeatureMode::Enabled)]),
         }]
     );
     config.temporal.storage.retention.delete_after = Some(HumanDuration::from_days(365));

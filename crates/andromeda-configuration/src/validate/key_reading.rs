@@ -29,11 +29,15 @@ impl ConfigKey {
                 ManagementMode::SeparatePort => Some(count(config.management.port)),
                 ManagementMode::SharedPort | ManagementMode::Disabled => None,
             },
-            ConfigKey::ManagementMode
+            ConfigKey::ServerTransport
+            | ConfigKey::ServerHttp3Mode
+            | ConfigKey::ManagementMode
+            | ConfigKey::ManagementTransport
             | ConfigKey::TlsCertificate
             | ConfigKey::TlsPrivateKey
             | ConfigKey::TlsClientAuthenticationCa
             | ConfigKey::TlsClientAuthenticationMode
+            | ConfigKey::HttpCorsMode
             | ConfigKey::HttpCorsAllowOrigins
             | ConfigKey::HttpCorsAllowMethods
             | ConfigKey::HttpCorsAllowHeaders

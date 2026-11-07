@@ -4,8 +4,9 @@
 //! The descriptor is the configuration's own vocabulary, not a schema: each
 //! key's type under the name an operator reads, its exact default, the choices
 //! it allows with their meaning, its environment variable, and every rule the
-//! validator holds it to. A documentation site renders it however it presents
-//! settings.
+//! validator holds it to. The rules that are no single comparison are written
+//! once more as data, so a tool can check a configuration as the validator
+//! does. A documentation site renders it however it presents settings.
 
 use crate::{
     human_byte_size::HumanByteSize,
@@ -15,6 +16,7 @@ use crate::{
     reference::{
         ReferenceError,
         key_listing::{KeyEntry, KeyLimit, KeyState, ReferenceEntry, TableEntry, TableShape, key_listing},
+        rule_descriptor::{RuleDescriptor, rule_descriptors},
         schema_node::{Choice, SchemaNode},
     },
     schema::apply_mode::ApplyMode,
@@ -33,6 +35,9 @@ pub struct ConfigurationDescriptor {
     tables: Vec<TableDescriptor>,
     /// Every key the configuration names.
     keys: Vec<KeyDescriptor>,
+    /// Every rule that is no single comparison, in the order the validator
+    /// runs them.
+    rules: Vec<RuleDescriptor>,
 }
 
 /// One table.
@@ -81,7 +86,7 @@ struct KeyDescriptor {
 
 /// One comparison a key passes.
 #[derive(Debug, Serialize)]
-struct LimitDescriptor {
+pub(crate) struct LimitDescriptor {
     /// The comparison as a phrase, such as `at least 1s`.
     statement: String,
     /// The comparison as data.
@@ -155,6 +160,7 @@ pub fn configuration_descriptor() -> Result<ConfigurationDescriptor, ReferenceEr
             })
             .collect(),
         keys,
+        rules: rule_descriptors(),
     })
 }
 
@@ -212,7 +218,7 @@ fn type_name(name: String, limits: &[KeyLimit]) -> String {
 }
 
 /// One limit as the descriptor writes it.
-fn limit_descriptor(limit: KeyLimit) -> LimitDescriptor {
+pub(crate) fn limit_descriptor(limit: KeyLimit) -> LimitDescriptor {
     let shape = match limit {
         KeyLimit::PositiveByType => LimitShape::Positive,
         KeyLimit::Declared(rule) => declared_shape(rule),

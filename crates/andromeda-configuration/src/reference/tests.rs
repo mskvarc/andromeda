@@ -6,7 +6,12 @@ use crate::{
         schema_node::{ChoiceRange, SchemaNode},
         template::configuration_template,
     },
-    validate::{compound_rules, declared_rules, rule::Rule},
+    validate::{
+        compound_rule::{Condition, TLS_LISTENERS},
+        compound_rules,
+        declared_rules,
+        rule::Rule,
+    },
 };
 use pretty_assertions::assert_eq;
 use std::collections::BTreeSet;
@@ -94,7 +99,16 @@ fn every_rule_names_a_key_of_the_file() -> Result<(), ReferenceError> {
         .collect();
     let unknown: Vec<String> = declared_rules()
         .map(Rule::key)
-        .chain(compound_rules().flat_map(|rule| rule.keys.iter().copied()))
+        .chain(compound_rules().flat_map(|rule| rule.keys()))
+        .chain(
+            TLS_LISTENERS
+                .iter()
+                .flat_map(|listener| listener.iter())
+                .filter_map(|condition| match condition {
+                    Condition::Is { key, .. } | Condition::IsNot { key, .. } => Some(*key),
+                    Condition::TlsListener => None,
+                }),
+        )
         .map(|key| key.to_string())
         .filter(|path| !paths.contains(path))
         .collect();
@@ -169,5 +183,45 @@ fn every_key_open_to_other_values_names_its_keywords_in_its_description() -> Res
         })
         .collect();
     assert_eq!(unnamed, [] as [String; 0]);
+    Ok(())
+}
+
+/// Every `key` and `other` member under `value`, as dotted paths, outside
+/// the listener conditions a `tls-listener` condition spells out.
+fn named_keys(value: &serde_json::Value, keys: &mut BTreeSet<String>) {
+    match value {
+        serde_json::Value::Object(members) => members.iter().for_each(|(name, member)| match (name.as_str(), member.as_str()) {
+            ("key" | "other", Some(path)) => {
+                keys.insert(path.to_owned());
+            }
+            ("any_of", _) => {}
+            _ => named_keys(member, keys),
+        }),
+        serde_json::Value::Array(items) => items.iter().for_each(|item| named_keys(item, keys)),
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => {}
+    }
+}
+
+/// A tool reads which keys a rule involves from `keys`, so a key its
+/// conditions or obligations name and `keys` leaves out would be a rule the
+/// tool shows under too few keys. The keys of a TLS listener are named once,
+/// in the listener conditions.
+#[test]
+fn the_descriptor_holds_every_compound_rule_with_every_key_it_names() -> Result<(), ReferenceError> {
+    let value = serde_json::to_value(configuration_descriptor()?)?;
+    let rules = value["rules"].as_array().map(Vec::as_slice).unwrap_or_default();
+    assert_eq!(rules.len(), 16);
+    for rule in rules {
+        let listed: BTreeSet<String> = rule["keys"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|key| key.as_str().map(str::to_owned))
+            .collect();
+        let mut named = BTreeSet::new();
+        named_keys(&rule["when"], &mut named);
+        named_keys(&rule["then"], &mut named);
+        assert_eq!(named, listed, "{}", rule["statement"]);
+    }
     Ok(())
 }

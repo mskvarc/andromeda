@@ -9,11 +9,7 @@ use crate::{
         example::example_configuration,
         schema_node::{Choice, ChoiceRange, SchemaNode},
     },
-    validate::{
-        compound_rules,
-        declared_rules,
-        rule::{CompoundRule, Rule},
-    },
+    validate::{compound_rule::CompoundRule, compound_rules, declared_rules, rule::Rule},
 };
 use derive_more::Display;
 use serde::Serialize;
@@ -201,7 +197,7 @@ pub(crate) fn key_listing() -> Result<Vec<ReferenceEntry>, ReferenceError> {
                 .collect();
             key.conditions = compound
                 .iter()
-                .filter(|rule| rule.keys.iter().any(|named| named.to_string() == path))
+                .filter(|rule| rule.keys().iter().any(|named| named.to_string() == path))
                 .map(|rule| rule.statement)
                 .collect();
         }

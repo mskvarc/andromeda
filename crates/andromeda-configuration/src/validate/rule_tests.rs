@@ -4,13 +4,30 @@
 use crate::{
     broker_config::BrokerConfig,
     human_duration::HumanDuration,
-    validate::{InvalidConfiguration, config_key::ConfigKey, declared_rules, validate, violation::ConfigurationViolation},
+    validate::{
+        InvalidConfiguration,
+        address_width::AddressWidth,
+        compound_rules,
+        config_key::ConfigKey,
+        declared_rules,
+        validate,
+        violation::ConfigurationViolation,
+        violation_log::ViolationLog,
+    },
 };
 use pretty_assertions::assert_eq;
 
 /// Every violation `config` is refused for, empty when it is valid.
 pub(crate) fn refusals(config: &BrokerConfig) -> Vec<ConfigurationViolation> {
     validate(config).map_or_else(InvalidConfiguration::into_violations, |()| Vec::new())
+}
+
+/// Every violation the compound rules alone find in `config`, with byte sizes
+/// checked against `width`.
+pub(crate) fn compound_refusals(config: &BrokerConfig, width: AddressWidth) -> Vec<ConfigurationViolation> {
+    let mut log = ViolationLog::default();
+    compound_rules().for_each(|rule| log.check(&rule, config, width));
+    log.into_result().map_or_else(InvalidConfiguration::into_violations, |()| Vec::new())
 }
 
 /// Assert that `config` breaks no rule.

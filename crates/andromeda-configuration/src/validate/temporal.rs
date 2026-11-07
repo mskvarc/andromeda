@@ -3,18 +3,15 @@
 use crate::{
     schema::{
         feature_mode::FeatureMode,
-        temporal::{
-            query::{MAX_AGGREGATION_INSTANCES_CEILING, MAX_EDGE_GROUP_CEILING, MAX_LAST_N_CEILING},
-            storage::TemporalStorageConfig,
-        },
+        temporal::query::{MAX_AGGREGATION_INSTANCES_CEILING, MAX_EDGE_GROUP_CEILING, MAX_LAST_N_CEILING},
     },
     validate::{
         bound::{Quantity, Relation},
+        choice_value::ChoiceValue,
+        compound_rule::{CompoundRule, Condition, Obligation},
         config_key::{ConfigKey, QueueName},
         durable_queue::queue_rules,
-        rule::{CompoundRule, Limit, Rule},
-        violation::{ConfigurationViolation, Requirement},
-        violation_log::ViolationLog,
+        rule::{Limit, Rule},
     },
 };
 
@@ -77,21 +74,15 @@ const fn storage_rules() -> [Rule; 6] {
     ]
 }
 
-/// What [`check_retention`] asks.
-pub(crate) const COMPOUND_RULES: [CompoundRule; 1] = [CompoundRule {
-    keys: &[ConfigKey::TemporalStorageDeleteAfter, ConfigKey::TemporalStorageRetentionMode],
-    statement: "`temporal.storage.retention.delete_after` is required while `temporal.storage.retention.mode` is `\"enabled\"`.",
-}];
-
 /// Retention needs an age to delete at.
-pub(crate) fn check_retention(storage: &TemporalStorageConfig, log: &mut ViolationLog) {
-    if matches!(storage.retention.mode, FeatureMode::Enabled) && storage.retention.delete_after.is_none() {
-        log.record(ConfigurationViolation::Unset {
-            key: ConfigKey::TemporalStorageDeleteAfter,
-            required_by: Requirement::Retention,
-        });
-    }
-}
+pub(crate) const COMPOUND_RULES: [CompoundRule; 1] = [CompoundRule {
+    statement: "`temporal.storage.retention.delete_after` is required while `temporal.storage.retention.mode` is `\"enabled\"`.",
+    when: &[Condition::Is {
+        key: ConfigKey::TemporalStorageRetentionMode,
+        choices: &[ChoiceValue::Feature(FeatureMode::Enabled)],
+    }],
+    then: &[Obligation::Present(ConfigKey::TemporalStorageDeleteAfter)],
+}];
 
 #[cfg(test)]
 mod tests;

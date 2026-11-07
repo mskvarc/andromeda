@@ -14,9 +14,10 @@ use crate::{
     },
     validate::{
         bound::{Bound, Quantity, Relation},
+        choice_value::ChoiceValue,
         config_key::{ConfigKey, QueueKey, QueueName},
         rule_tests::{assert_accepted, refusals},
-        violation::{ConfigurationViolation, Requirement},
+        violation::{ConfigurationViolation, HeldChoice, Requirement},
     },
 };
 use pretty_assertions::assert_eq;
@@ -45,13 +46,18 @@ fn missing_key_pair(listener: Requirement) -> [ConfigurationViolation; 2] {
     [
         ConfigurationViolation::Unset {
             key: ConfigKey::TlsCertificate,
-            required_by: listener,
+            required_by: listener.clone(),
         },
         ConfigurationViolation::Unset {
             key: ConfigKey::TlsPrivateKey,
             required_by: listener,
         },
     ]
+}
+
+/// The data-plane listener terminating TLS, as a refusal names it.
+fn server_tls() -> HeldChoice {
+    HeldChoice::new(ConfigKey::ServerTransport, ListenerTransport::Tls)
 }
 
 /// The side-effect and history leases are lengthened so only the acquire rule
@@ -254,7 +260,12 @@ fn a_separate_management_port_equal_to_the_server_port_is_refused_and_the_next_p
     config.management.port = config.server.port;
     assert_eq!(
         refusals(&config),
-        [ConfigurationViolation::ManagementPortCollision { port: config.server.port }]
+        [ConfigurationViolation::Collision {
+            key: ConfigKey::ManagementPort,
+            other: ConfigKey::ServerPort,
+            value: Quantity::Count(u64::from(config.server.port)),
+            required_by: Requirement::new([HeldChoice::new(ConfigKey::ManagementMode, ManagementMode::SeparatePort)]),
+        }]
     );
     config.management.port = config.server.port + 1;
     assert_accepted(&config);
@@ -274,7 +285,14 @@ fn metrics_without_a_management_plane_are_refused_and_on_a_shared_port_accepted(
     let mut config = BrokerConfig::local();
     config.observability.metrics.prometheus.mode = FeatureMode::Enabled;
     config.management.mode = ManagementMode::Disabled;
-    assert_eq!(refusals(&config), [ConfigurationViolation::MetricsWithoutManagementPlane]);
+    assert_eq!(
+        refusals(&config),
+        [ConfigurationViolation::ChoiceRefused {
+            key: ConfigKey::ManagementMode,
+            choice: ChoiceValue::from(ManagementMode::Disabled),
+            required_by: Requirement::new([HeldChoice::new(ConfigKey::ObservabilityMetricsPrometheusMode, FeatureMode::Enabled)]),
+        }]
+    );
     config.management.mode = ManagementMode::SharedPort;
     assert_accepted(&config);
 }
@@ -283,7 +301,7 @@ fn metrics_without_a_management_plane_are_refused_and_on_a_shared_port_accepted(
 fn a_tls_listener_without_a_key_pair_is_refused_for_both_files_and_with_one_accepted() {
     let mut config = BrokerConfig::local();
     config.server.transport = ListenerTransport::Tls;
-    assert_eq!(refusals(&config), missing_key_pair(Requirement::ServerTls));
+    assert_eq!(refusals(&config), missing_key_pair(Requirement::new([server_tls()])));
     with_key_pair(&mut config);
     assert_accepted(&config);
 }
@@ -292,7 +310,10 @@ fn a_tls_listener_without_a_key_pair_is_refused_for_both_files_and_with_one_acce
 fn an_enabled_http3_listener_asks_for_the_key_pair() {
     let mut config = BrokerConfig::local();
     config.server.http3.mode = Http3Mode::Enabled;
-    assert_eq!(refusals(&config), missing_key_pair(Requirement::Http3));
+    assert_eq!(
+        refusals(&config),
+        missing_key_pair(Requirement::new([HeldChoice::new(ConfigKey::ServerHttp3Mode, Http3Mode::Enabled)]))
+    );
 }
 
 #[test]
@@ -300,7 +321,13 @@ fn a_separate_port_tls_management_listener_asks_for_the_key_pair() {
     let mut config = BrokerConfig::local();
     config.management.mode = ManagementMode::SeparatePort;
     config.management.transport = ListenerTransport::Tls;
-    assert_eq!(refusals(&config), missing_key_pair(Requirement::ManagementTls));
+    assert_eq!(
+        refusals(&config),
+        missing_key_pair(Requirement::new([
+            HeldChoice::new(ConfigKey::ManagementTransport, ListenerTransport::Tls),
+            HeldChoice::new(ConfigKey::ManagementMode, ManagementMode::SeparatePort),
+        ]))
+    );
 }
 
 /// The management `transport` is read only in `separate-port` mode, so it
@@ -324,7 +351,7 @@ fn client_authentication_without_a_ca_is_refused_and_with_one_accepted() {
             refusals(&config),
             [ConfigurationViolation::Unset {
                 key: ConfigKey::TlsClientAuthenticationCa,
-                required_by: Requirement::ClientAuthentication(mode),
+                required_by: Requirement::new([server_tls(), HeldChoice::new(ConfigKey::TlsClientAuthenticationMode, mode)]),
             }]
         );
         config.tls.client_authentication.ca = Some(PathBuf::from("/etc/andromeda/clients.pem"));
@@ -338,7 +365,16 @@ fn a_ca_without_client_authentication_is_refused() {
     config.server.transport = ListenerTransport::Tls;
     with_key_pair(&mut config);
     config.tls.client_authentication.ca = Some(PathBuf::from("/etc/andromeda/clients.pem"));
-    assert_eq!(refusals(&config), [ConfigurationViolation::ClientCaWithoutClientAuthentication]);
+    assert_eq!(
+        refusals(&config),
+        [ConfigurationViolation::Unread {
+            key: ConfigKey::TlsClientAuthenticationCa,
+            required_by: Requirement::new([
+                server_tls(),
+                HeldChoice::new(ConfigKey::TlsClientAuthenticationMode, ClientAuthenticationMode::Disabled),
+            ]),
+        }]
+    );
 }
 
 /// The `[tls]` table is inert until a listener terminates TLS.

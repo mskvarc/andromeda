@@ -293,29 +293,9 @@ impl Default for CorsConfig {
     }
 }
 
-impl CorsConfig {
-    /// Whether this policy pairs credentials with a wildcard the Fetch standard
-    /// forbids and `tower-http`'s CORS layer panics on.
-    ///
-    /// Only the literal `any` wildcard conflicts: `mirror` reflects a concrete
-    /// value per request and is valid with credentials, matching the CORS layer's
-    /// own `is_wildcard` test. The check applies only to `mode = configured`, since
-    /// the profile modes never read these fields.
-    #[must_use]
-    pub const fn has_credentialed_wildcard(&self) -> bool {
-        if !matches!(self.mode, CorsMode::Configured) || matches!(self.credentials, CorsPermission::Refused) {
-            return false;
-        }
-        matches!(self.allow_origins, OriginRule::Any)
-            || matches!(self.allow_methods, MethodRule::Any)
-            || matches!(self.allow_headers, HeaderRule::Any)
-            || matches!(self.expose_headers, ExposeRule::Any)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::schema::http::cors::{CorsConfig, CorsMode, CorsPermission, ExposeRule, HeaderRule, MethodRule, OriginRule};
+    use crate::schema::http::cors::{CorsMode, ExposeRule, HeaderRule, MethodRule, OriginRule};
 
     #[derive(serde::Deserialize)]
     struct RuleHolder {
@@ -364,43 +344,5 @@ expose = ["x-trace-id"]
             ExposeRule::List(headers) => pretty_assertions::assert_eq!(headers.len(), 1),
             ExposeRule::Any => panic!("expose should have parsed as a list"),
         }
-    }
-
-    #[test]
-    fn cors_configured_credentials_with_wildcard_is_flagged() {
-        let config = CorsConfig {
-            mode: CorsMode::Configured,
-            credentials: CorsPermission::Allowed,
-            allow_origins: OriginRule::Any,
-            ..CorsConfig::default()
-        };
-        assert!(config.has_credentialed_wildcard());
-    }
-
-    #[test]
-    fn cors_configured_credentials_with_explicit_origins_is_not_flagged() {
-        let config = CorsConfig {
-            mode: CorsMode::Configured,
-            credentials: CorsPermission::Allowed,
-            allow_origins: OriginRule::List(vec!["https://ui.example".parse().expect("origin URL")]),
-            allow_methods: MethodRule::List(Vec::new()),
-            allow_headers: HeaderRule::List(Vec::new()),
-            expose_headers: ExposeRule::List(Vec::new()),
-            ..CorsConfig::default()
-        };
-        assert!(!config.has_credentialed_wildcard());
-    }
-
-    #[test]
-    fn permissive_mode_never_flags_a_credentialed_wildcard() {
-        // The profile modes ignore the credential and wildcard fields entirely,
-        // so a combination that is invalid under `configured` is inert under them.
-        let config = CorsConfig {
-            mode: CorsMode::Permissive,
-            credentials: CorsPermission::Allowed,
-            allow_origins: OriginRule::Any,
-            ..CorsConfig::default()
-        };
-        assert!(!config.has_credentialed_wildcard());
     }
 }

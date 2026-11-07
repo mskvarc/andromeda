@@ -2,13 +2,12 @@
 
 use crate::{
     header_section_limit::HeaderSectionLimit,
-    schema::request_limits::{MAX_ATTRIBUTE_NESTING_CEILING, MAX_Q_NESTING_CEILING, RequestLimitsConfig},
+    schema::request_limits::{MAX_ATTRIBUTE_NESTING_CEILING, MAX_Q_NESTING_CEILING},
     validate::{
         bound::{Quantity, Relation},
+        compound_rule::{CompoundRule, Obligation},
         config_key::ConfigKey,
-        rule::{CompoundRule, Limit, Rule},
-        violation::ConfigurationViolation,
-        violation_log::ViolationLog,
+        rule::{Limit, Rule},
     },
 };
 
@@ -47,27 +46,15 @@ fn ceiling(key: ConfigKey, ceiling: usize) -> Rule {
     }
 }
 
-/// What [`check_request_limits`] asks.
-pub(crate) const COMPOUND_RULES: [CompoundRule; 1] = [CompoundRule {
-    keys: &[ConfigKey::RequestLimitsMaxBody, ConfigKey::RequestLimitsMaxPageBody],
-    statement: "It must fit the platform's address width.",
-}];
-
 /// A ceiling past the address width would admit every body or page.
-pub(crate) fn check_request_limits(limits: &RequestLimitsConfig, log: &mut ViolationLog) {
-    if limits.max_body_bytes().is_err() {
-        log.record(ConfigurationViolation::ExceedsAddressWidth {
-            key: ConfigKey::RequestLimitsMaxBody,
-            bytes: limits.max_body.as_u64(),
-        });
-    }
-    if limits.max_page_body_bytes().is_err() {
-        log.record(ConfigurationViolation::ExceedsAddressWidth {
-            key: ConfigKey::RequestLimitsMaxPageBody,
-            bytes: limits.max_page_body.as_u64(),
-        });
-    }
-}
+pub(crate) const COMPOUND_RULES: [CompoundRule; 1] = [CompoundRule {
+    statement: "It must fit the platform's address width.",
+    when: &[],
+    then: &[
+        Obligation::FitsAddressWidth(ConfigKey::RequestLimitsMaxBody),
+        Obligation::FitsAddressWidth(ConfigKey::RequestLimitsMaxPageBody),
+    ],
+}];
 
 #[cfg(test)]
 mod tests {
@@ -76,9 +63,12 @@ mod tests {
         human_byte_size::HumanByteSize,
         human_duration::HumanDuration,
         validate::{
+            InvalidConfiguration,
+            address_width::AddressWidth,
             bound::{Bound, Quantity, Relation},
             config_key::ConfigKey,
-            rule_tests::{assert_accepted, refusals},
+            rule_tests::{assert_accepted, compound_refusals, refusals},
+            validate_for,
             violation::ConfigurationViolation,
         },
     };
@@ -189,59 +179,52 @@ mod tests {
         assert_accepted(&config);
     }
 
-    /// The address width is checked only where `usize` is narrower than
-    /// `u64`, the only platforms a byte size can pass it on.
     #[test]
-    fn a_page_body_ceiling_past_the_address_width_is_refused() {
+    fn a_body_or_page_ceiling_past_a_32_bit_address_width_is_refused_and_one_within_accepted() {
         let mut config = BrokerConfig::local();
-        config.request_limits.max_page_body = HumanByteSize::b(u64::MAX);
-        if usize::try_from(u64::MAX).is_ok() {
-            assert_accepted(&config);
-        } else {
-            assert_eq!(
-                refusals(&config),
-                [ConfigurationViolation::ExceedsAddressWidth {
+        config.request_limits.max_body = HumanByteSize::gib(5);
+        config.request_limits.max_page_body = HumanByteSize::gib(5);
+        assert_eq!(
+            compound_refusals(&config, AddressWidth::new(32)),
+            [
+                ConfigurationViolation::ExceedsAddressWidth {
+                    key: ConfigKey::RequestLimitsMaxBody,
+                    bytes: 5 << 30,
+                },
+                ConfigurationViolation::ExceedsAddressWidth {
                     key: ConfigKey::RequestLimitsMaxPageBody,
-                    bytes: u64::MAX,
-                }]
-            );
-        }
+                    bytes: 5 << 30,
+                },
+            ]
+        );
+        assert_eq!(compound_refusals(&config, AddressWidth::new(64)), []);
+        config.request_limits.max_body = HumanByteSize::mib(64);
+        config.request_limits.max_page_body = HumanByteSize::mib(64);
+        assert_eq!(compound_refusals(&config, AddressWidth::new(32)), []);
     }
 
-    /// The address width is checked only where `usize` is narrower than
-    /// `u64`, the only platforms a byte size can pass it on. No notification
-    /// body limit or MQTT packet limit is above the largest byte size, so
-    /// those rules refuse too.
+    /// No notification body limit or MQTT packet limit is above the largest
+    /// byte size, so those rules refuse it.
     #[test]
-    fn a_body_ceiling_past_the_address_width_is_refused() {
+    fn the_largest_body_ceiling_is_refused_by_the_notification_limits() {
         let mut config = BrokerConfig::local();
         config.request_limits.max_body = HumanByteSize::b(u64::MAX);
-        let notification_limit = ConfigurationViolation::OutOfRange {
-            key: ConfigKey::NotificationsDeliveryMaxHttpBody,
-            value: Quantity::Bytes(134_217_728),
-            relation: Relation::Above,
-            bound: Bound::setting(ConfigKey::RequestLimitsMaxBody, Quantity::Bytes(u64::MAX)),
-        };
-        let packet_limit = ConfigurationViolation::OutOfRange {
-            key: ConfigKey::NotificationsDeliveryMaxMqttPacket,
-            value: Quantity::Bytes(134_217_728),
-            relation: Relation::Above,
-            bound: Bound::setting(ConfigKey::RequestLimitsMaxBody, Quantity::Bytes(u64::MAX)),
-        };
-        if usize::try_from(u64::MAX).is_ok() {
-            assert_eq!(refusals(&config), [notification_limit, packet_limit]);
-        } else {
-            assert_eq!(
-                refusals(&config),
-                [
-                    ConfigurationViolation::ExceedsAddressWidth {
-                        key: ConfigKey::RequestLimitsMaxBody,
-                        bytes: u64::MAX,
-                    },
-                    notification_limit,
-                    packet_limit,
-                ]
-            );
-        }
+        assert_eq!(
+            validate_for(&config, AddressWidth::new(64)).map_err(InvalidConfiguration::into_violations),
+            Err(vec![
+                ConfigurationViolation::OutOfRange {
+                    key: ConfigKey::NotificationsDeliveryMaxHttpBody,
+                    value: Quantity::Bytes(134_217_728),
+                    relation: Relation::Above,
+                    bound: Bound::setting(ConfigKey::RequestLimitsMaxBody, Quantity::Bytes(u64::MAX)),
+                },
+                ConfigurationViolation::OutOfRange {
+                    key: ConfigKey::NotificationsDeliveryMaxMqttPacket,
+                    value: Quantity::Bytes(134_217_728),
+                    relation: Relation::Above,
+                    bound: Bound::setting(ConfigKey::RequestLimitsMaxBody, Quantity::Bytes(u64::MAX)),
+                },
+            ])
+        );
     }
 }

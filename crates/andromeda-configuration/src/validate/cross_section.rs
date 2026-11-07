@@ -1,20 +1,13 @@
 //! The rules that span more than one table, which no one table can check.
 
 use crate::{
-    broker_config::BrokerConfig,
-    schema::{
-        feature_mode::FeatureMode,
-        http3::Http3Mode,
-        listener_transport::ListenerTransport,
-        management::ManagementMode,
-        tls::{ClientAuthenticationMode, TlsConfig},
-    },
+    schema::{feature_mode::FeatureMode, management::ManagementMode, tls::ClientAuthenticationMode},
     validate::{
         bound::Relation,
+        choice_value::ChoiceValue,
+        compound_rule::{CompoundRule, Condition, Obligation},
         config_key::{ConfigKey, QueueKey, QueueName},
-        rule::{CompoundRule, Limit, Rule},
-        violation::{ConfigurationViolation, Requirement},
-        violation_log::ViolationLog,
+        rule::{Limit, Rule},
     },
 };
 use std::time::Duration;
@@ -107,80 +100,64 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
     .into_iter()
 }
 
-/// What [`check_listeners`] asks.
-pub(crate) const COMPOUND_RULES: [CompoundRule; 4] = [
-    CompoundRule {
-        keys: &[ConfigKey::ManagementPort, ConfigKey::ServerPort],
-        statement: "With `management.mode` at `\"separate-port\"`, `management.port` differs from `server.port`.",
-    },
-    CompoundRule {
-        keys: &[ConfigKey::ObservabilityMetricsPrometheusMode, ConfigKey::ManagementMode],
-        statement: "Metrics are served on the management plane, so `observability.metrics.prometheus.mode` at `\"enabled\"` needs `management.mode` other than `\"disabled\"`.",
-    },
-    CompoundRule {
-        keys: &[ConfigKey::TlsCertificate, ConfigKey::TlsPrivateKey],
-        statement: "`tls.certificate` and `tls.private_key` are required as soon as a listener terminates TLS: `server.transport` at `\"tls\"`, `server.http3.mode` at `\"enabled\"`, or `management.transport` at `\"tls\"` with `management.mode` at `\"separate-port\"`.",
-    },
-    CompoundRule {
-        keys: &[ConfigKey::TlsClientAuthenticationCa, ConfigKey::TlsClientAuthenticationMode],
-        statement: "Once a listener terminates TLS, `tls.client_authentication.ca` is required while `tls.client_authentication.mode` is `\"optional\"` or `\"required\"`, and refused while it is `\"disabled\"`.",
-    },
-];
-
 /// A separate management plane binds its own port, metrics have a management
 /// plane to be served on, and every listener that terminates TLS has an
-/// identity to present.
-pub(crate) fn check_listeners(config: &BrokerConfig, log: &mut ViolationLog) {
-    let management = &config.management;
-    if matches!(management.mode, ManagementMode::SeparatePort) && management.port == config.server.port {
-        log.record(ConfigurationViolation::ManagementPortCollision { port: management.port });
-    }
-    match (config.observability.metrics.prometheus.mode, management.mode) {
-        (FeatureMode::Enabled, ManagementMode::Disabled) => log.record(ConfigurationViolation::MetricsWithoutManagementPlane),
-        (FeatureMode::Enabled | FeatureMode::Disabled, ManagementMode::SeparatePort | ManagementMode::SharedPort | ManagementMode::Disabled) => {}
-    }
-    if let Some(listener) = first_tls_listener(config) {
-        check_tls(&config.tls, listener, log);
-    }
-}
-
-/// The first listener that terminates TLS, as the setting that makes it do
-/// so; `None` when none does.
-///
-/// The `[tls]` table is inert until a listener asks for it. QUIC is always
-/// TLS, so an enabled HTTP/3 listener always asks; the management listener
-/// asks only in `separate-port` mode, the only mode in which its `transport`
-/// is read.
-fn first_tls_listener(config: &BrokerConfig) -> Option<Requirement> {
-    let server = matches!(config.server.transport, ListenerTransport::Tls).then_some(Requirement::ServerTls);
-    let http3 = matches!(config.server.http3.mode, Http3Mode::Enabled).then_some(Requirement::Http3);
-    let management = matches!(
-        (config.management.mode, config.management.transport),
-        (ManagementMode::SeparatePort, ListenerTransport::Tls)
-    )
-    .then_some(Requirement::ManagementTls);
-    server.or(http3).or(management)
-}
-
-/// The identity a TLS listener presents, and the client CA exactly when client
-/// certificates are asked for.
-fn check_tls(tls: &TlsConfig, listener: Requirement, log: &mut ViolationLog) {
-    let unset = |key| ConfigurationViolation::Unset { key, required_by: listener };
-    if tls.certificate.is_none() {
-        log.record(unset(ConfigKey::TlsCertificate));
-    }
-    if tls.private_key.is_none() {
-        log.record(unset(ConfigKey::TlsPrivateKey));
-    }
-    match (tls.client_authentication.mode, &tls.client_authentication.ca) {
-        (mode @ (ClientAuthenticationMode::Optional | ClientAuthenticationMode::Required), None) => log.record(ConfigurationViolation::Unset {
-            key: ConfigKey::TlsClientAuthenticationCa,
-            required_by: Requirement::ClientAuthentication(mode),
-        }),
-        (ClientAuthenticationMode::Disabled, Some(_)) => log.record(ConfigurationViolation::ClientCaWithoutClientAuthentication),
-        (ClientAuthenticationMode::Disabled, None) | (ClientAuthenticationMode::Optional | ClientAuthenticationMode::Required, Some(_)) => {}
-    }
-}
+/// identity to present and reads a client CA exactly when client certificates
+/// are asked for. The `[tls]` table is inert until a listener asks for it.
+pub(crate) const COMPOUND_RULES: [CompoundRule; 5] = [
+    CompoundRule {
+        statement: "With `management.mode` at `\"separate-port\"`, `management.port` differs from `server.port`.",
+        when: &[Condition::Is {
+            key: ConfigKey::ManagementMode,
+            choices: &[ChoiceValue::Management(ManagementMode::SeparatePort)],
+        }],
+        then: &[Obligation::Differs {
+            key: ConfigKey::ManagementPort,
+            other: ConfigKey::ServerPort,
+        }],
+    },
+    CompoundRule {
+        statement: "Metrics are served on the management plane, so `observability.metrics.prometheus.mode` at `\"enabled\"` needs `management.mode` other than `\"disabled\"`.",
+        when: &[Condition::Is {
+            key: ConfigKey::ObservabilityMetricsPrometheusMode,
+            choices: &[ChoiceValue::Feature(FeatureMode::Enabled)],
+        }],
+        then: &[Obligation::IsNot {
+            key: ConfigKey::ManagementMode,
+            choice: ChoiceValue::Management(ManagementMode::Disabled),
+        }],
+    },
+    CompoundRule {
+        statement: "`tls.certificate` and `tls.private_key` are required as soon as a listener terminates TLS: `server.transport` at `\"tls\"`, `server.http3.mode` at `\"enabled\"`, or `management.transport` at `\"tls\"` with `management.mode` at `\"separate-port\"`.",
+        when: &[Condition::TlsListener],
+        then: &[Obligation::Present(ConfigKey::TlsCertificate), Obligation::Present(ConfigKey::TlsPrivateKey)],
+    },
+    CompoundRule {
+        statement: "Once a listener terminates TLS, `tls.client_authentication.ca` is required while `tls.client_authentication.mode` is `\"optional\"` or `\"required\"`.",
+        when: &[
+            Condition::TlsListener,
+            Condition::Is {
+                key: ConfigKey::TlsClientAuthenticationMode,
+                choices: &[
+                    ChoiceValue::ClientAuthentication(ClientAuthenticationMode::Optional),
+                    ChoiceValue::ClientAuthentication(ClientAuthenticationMode::Required),
+                ],
+            },
+        ],
+        then: &[Obligation::Present(ConfigKey::TlsClientAuthenticationCa)],
+    },
+    CompoundRule {
+        statement: "Once a listener terminates TLS, `tls.client_authentication.ca` is refused while `tls.client_authentication.mode` is `\"disabled\"`.",
+        when: &[
+            Condition::TlsListener,
+            Condition::Is {
+                key: ConfigKey::TlsClientAuthenticationMode,
+                choices: &[ChoiceValue::ClientAuthentication(ClientAuthenticationMode::Disabled)],
+            },
+        ],
+        then: &[Obligation::Absent(ConfigKey::TlsClientAuthenticationCa)],
+    },
+];
 
 #[cfg(test)]
 mod tests;

@@ -13,6 +13,7 @@ pub mod descriptor;
 mod example;
 pub mod json_schema;
 mod key_listing;
+mod rule_descriptor;
 mod schema_node;
 pub mod template;
 

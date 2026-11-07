@@ -1,13 +1,13 @@
 //! The `[federation]` rules.
 
 use crate::{
-    broker_config::BrokerConfig,
     schema::federation::cooldown::CooldownMode,
     validate::{
         bound::Relation,
+        choice_value::ChoiceValue,
+        compound_rule::{CompoundRule, Condition, Obligation},
         config_key::ConfigKey,
-        rule::{CompoundRule, Limit, Rule},
-        violation_log::ViolationLog,
+        rule::{Limit, Rule},
     },
 };
 
@@ -34,37 +34,31 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
     .into_iter()
 }
 
-/// What [`check_cooldown`] asks.
-pub(crate) const COMPOUND_RULES: [CompoundRule; 2] = [
-    CompoundRule {
-        keys: &[ConfigKey::FederationCooldownRetryInterval, ConfigKey::FederationCooldownMode],
-        statement: "With `federation.cooldown.mode` other than `\"disabled\"`, `federation.cooldown.retry_interval` is above zero.",
-    },
-    CompoundRule {
-        keys: &[ConfigKey::FederationCooldownMaxRetryInterval, ConfigKey::FederationCooldownMode],
-        statement: "With `federation.cooldown.mode` at `\"exponential\"`, `federation.cooldown.max_retry_interval` is at least `federation.cooldown.retry_interval`.",
-    },
-];
-
 /// A cooldown that holds sources back needs a hold to start from, and one
 /// that doubles a cap it can start below. A disabled cooldown reads neither
 /// key, and a constant one never grows to its cap.
-pub(crate) fn check_cooldown(config: &BrokerConfig, log: &mut ViolationLog) {
-    let positive_hold = Rule::Positive(ConfigKey::FederationCooldownRetryInterval);
-    let reachable_cap = Rule::Ordered {
-        key: ConfigKey::FederationCooldownMaxRetryInterval,
-        relation: Relation::AtLeast,
-        limit: Limit::Key(ConfigKey::FederationCooldownRetryInterval),
-    };
-    match config.federation.cooldown.mode {
-        CooldownMode::Disabled => {}
-        CooldownMode::Constant => log.apply(positive_hold, config),
-        CooldownMode::Exponential => {
-            log.apply(positive_hold, config);
-            log.apply(reachable_cap, config);
-        }
-    }
-}
+pub(crate) const COMPOUND_RULES: [CompoundRule; 2] = [
+    CompoundRule {
+        statement: "With `federation.cooldown.mode` other than `\"disabled\"`, `federation.cooldown.retry_interval` is above zero.",
+        when: &[Condition::IsNot {
+            key: ConfigKey::FederationCooldownMode,
+            choice: ChoiceValue::Cooldown(CooldownMode::Disabled),
+        }],
+        then: &[Obligation::Holds(Rule::Positive(ConfigKey::FederationCooldownRetryInterval))],
+    },
+    CompoundRule {
+        statement: "With `federation.cooldown.mode` at `\"exponential\"`, `federation.cooldown.max_retry_interval` is at least `federation.cooldown.retry_interval`.",
+        when: &[Condition::Is {
+            key: ConfigKey::FederationCooldownMode,
+            choices: &[ChoiceValue::Cooldown(CooldownMode::Exponential)],
+        }],
+        then: &[Obligation::Holds(Rule::Ordered {
+            key: ConfigKey::FederationCooldownMaxRetryInterval,
+            relation: Relation::AtLeast,
+            limit: Limit::Key(ConfigKey::FederationCooldownRetryInterval),
+        })],
+    },
+];
 
 #[cfg(test)]
 mod tests {

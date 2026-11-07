@@ -1,11 +1,9 @@
-//! The rules a configured value obeys, held as data.
+//! The comparisons a configured value obeys, held as data.
 //!
 //! A rule that compares one key with zero, with a fixed limit or with another
 //! key is a [`Rule`]: the validator evaluates it against a configuration, and
 //! the configuration descriptor lists it under its key, from the one
-//! declaration. A rule that is no single comparison, such as a key a mode
-//! requires, is checked by code and described by a [`CompoundRule`] beside
-//! that code.
+//! declaration.
 
 use crate::{
     human_duration::HumanDuration,
@@ -62,16 +60,6 @@ pub enum Limit {
     /// The duration another key holds, plus a margin the broker fixes.
     #[display("`{_0}` plus {}", HumanDuration::new(*_1))]
     KeyPlusMargin(ConfigKey, Duration),
-}
-
-/// A rule that is no single comparison, described for the operator: the keys
-/// it involves and what it asks of them.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CompoundRule {
-    /// Every key the rule involves; the descriptor lists the rule under each.
-    pub keys: &'static [ConfigKey],
-    /// What the rule asks, as one sentence.
-    pub statement: &'static str,
 }
 
 #[cfg(test)]

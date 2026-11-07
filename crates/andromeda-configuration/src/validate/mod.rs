@@ -1,17 +1,22 @@
 //! Every rule a loaded configuration passes before the broker reads it.
 //!
 //! Each table's own rules live in the module named after the table; the rules
-//! that span tables live in `cross_section`. A rule that compares one key with
-//! zero, a fixed limit or another key is declared as data, so the
-//! configuration descriptor lists the rules the validator runs; a rule that is
-//! no single comparison is code, described beside it. Every rule runs on every
-//! pass and records what it finds, so one run reports every rule the
-//! configuration breaks. A bound a domain type also holds is declared here
+//! that span tables live in `cross_section`. Every rule is declared as data,
+//! so the configuration descriptor lists the rules the validator runs: a
+//! comparison of one key with zero, a fixed limit or another key is a
+//! [`Rule`], and any other rule is a [`CompoundRule`], conditions under which
+//! it applies and obligations it then asks. Every rule runs on every pass and
+//! records what it finds, so one run reports every rule the configuration
+//! breaks. A bound a domain type also holds is declared here
 //! too, from a constant this crate owns, so the descriptor states it; a check
 //! that needs a domain type to decide belongs to the crate that owns the type,
 //! and the broker composition runs it on a configuration these rules accepted.
 
+mod address_width;
 pub mod bound;
+pub mod choice_value;
+mod compound_check;
+pub mod compound_rule;
 pub mod config_key;
 mod cross_section;
 mod database;
@@ -21,6 +26,7 @@ mod expiry;
 mod federation;
 mod http;
 mod jsonld;
+mod key_holding;
 mod key_reading;
 mod management;
 mod notifications;
@@ -38,17 +44,7 @@ mod violation_log;
 
 use crate::{
     broker_config::BrokerConfig,
-    validate::{
-        cross_section::check_listeners,
-        federation::check_cooldown,
-        http::check_http,
-        jsonld::check_jsonld,
-        request_limits::check_request_limits,
-        rule::{CompoundRule, Rule},
-        temporal::check_retention,
-        violation::ConfigurationViolation,
-        violation_log::ViolationLog,
-    },
+    validate::{address_width::AddressWidth, compound_rule::CompoundRule, rule::Rule, violation::ConfigurationViolation, violation_log::ViolationLog},
 };
 use std::fmt::{self, Display, Formatter};
 use thiserror::Error;
@@ -106,7 +102,8 @@ pub fn declared_rules() -> impl Iterator<Item = Rule> {
         .chain(cross_section::rules())
 }
 
-/// What every rule that is no single comparison asks.
+/// Every rule that is no single comparison, table by table, the rules
+/// spanning tables last.
 pub fn compound_rules() -> impl Iterator<Item = CompoundRule> {
     request_limits::COMPOUND_RULES
         .into_iter()
@@ -125,13 +122,14 @@ pub fn compound_rules() -> impl Iterator<Item = CompoundRule> {
 /// Returns [`InvalidConfiguration`] holding every rule the configuration
 /// breaks.
 pub fn validate(config: &BrokerConfig) -> Result<(), InvalidConfiguration> {
+    validate_for(config, AddressWidth::PLATFORM)
+}
+
+/// [`validate`] with byte sizes checked against `width` in place of the
+/// platform's address width.
+pub(crate) fn validate_for(config: &BrokerConfig, width: AddressWidth) -> Result<(), InvalidConfiguration> {
     let mut log = ViolationLog::default();
     declared_rules().for_each(|rule| log.apply(rule, config));
-    check_request_limits(&config.request_limits, &mut log);
-    check_http(&config.http, &mut log);
-    check_jsonld(&config.jsonld, &mut log);
-    check_retention(&config.temporal.storage, &mut log);
-    check_cooldown(config, &mut log);
-    check_listeners(config, &mut log);
+    compound_rules().for_each(|rule| log.check(&rule, config, width));
     log.into_result()
 }

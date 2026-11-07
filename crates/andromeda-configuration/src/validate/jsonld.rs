@@ -1,16 +1,15 @@
 //! The `[jsonld]` rules.
 
 use crate::{
-    schema::{configured_lifetime::ConfiguredLifetime, jsonld::JsonLdConfig},
+    schema::configured_lifetime::ConfiguredLifetime,
     validate::{
         bound::{Quantity, Relation},
+        compound_rule::{CompoundRule, Obligation},
         config_key::ConfigKey,
-        rule::{CompoundRule, Limit, Rule},
-        violation::ConfigurationViolation,
-        violation_log::ViolationLog,
+        rule::{Limit, Rule},
     },
 };
-use std::{collections::HashSet, time::Duration};
+use std::time::Duration;
 
 /// The shortest download deadline: below it nearly every fetch is abandoned
 /// before a remote origin server could answer.
@@ -42,23 +41,12 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
     .into_iter()
 }
 
-/// What [`check_jsonld`] asks.
-pub(crate) const COMPOUND_RULES: [CompoundRule; 1] = [CompoundRule {
-    keys: &[ConfigKey::JsonLdPreloadedContextUrl],
-    statement: "No two preloaded contexts name the same URL.",
-}];
-
 /// A preloaded URL has one file to serve it.
-pub(crate) fn check_jsonld(jsonld: &JsonLdConfig, log: &mut ViolationLog) {
-    let mut named = HashSet::with_capacity(jsonld.preloaded_contexts.len());
-    let mut reported = HashSet::new();
-    jsonld
-        .preloaded_contexts
-        .iter()
-        .map(|context| &context.url)
-        .filter(|url| !named.insert(*url) && reported.insert(*url))
-        .for_each(|url| log.record(ConfigurationViolation::DuplicatePreloadedContext { url: url.clone() })); // clone: the violation outlives the configuration it reports on
-}
+pub(crate) const COMPOUND_RULES: [CompoundRule; 1] = [CompoundRule {
+    statement: "No two preloaded contexts name the same URL.",
+    when: &[],
+    then: &[Obligation::UniqueEntries(ConfigKey::JsonLdPreloadedContextUrl)],
+}];
 
 #[cfg(test)]
 mod tests {
@@ -129,7 +117,13 @@ mod tests {
         };
         let mut config = BrokerConfig::local();
         config.jsonld.preloaded_contexts = vec![context(&url), context(&url), context(&url)];
-        assert_eq!(refusals(&config), [ConfigurationViolation::DuplicatePreloadedContext { url: url.clone() }]);
+        assert_eq!(
+            refusals(&config),
+            [ConfigurationViolation::Duplicate {
+                key: ConfigKey::JsonLdPreloadedContextUrl,
+                url: url.clone(),
+            }]
+        );
         config.jsonld.preloaded_contexts = vec![context(&url), context(&other)];
         assert_accepted(&config);
     }
