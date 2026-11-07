@@ -22,6 +22,7 @@ pub mod outcome;
 mod pending_work_probe;
 mod planes;
 mod postgresql_maintenance;
+mod readiness_probe;
 mod registered_entity_probe;
 mod routes;
 mod shutdown_signal;
@@ -31,9 +32,15 @@ mod tenant_state;
 mod tenant_waker;
 
 use crate::outcome::ProcessExitOutcome;
-use andromeda_configuration::load::LoadedConfiguration;
+use andromeda_configuration::{broker_config::BrokerConfig, load::LoadedConfiguration};
 
 /// Run the configured broker and return its already-reported process outcome.
 pub async fn run(loaded: LoadedConfiguration) -> ProcessExitOutcome {
     broker::run(loaded).await
+}
+
+/// Probe the readiness of the broker `config` describes and return the
+/// already-reported process outcome.
+pub async fn probe_readiness(config: &BrokerConfig) -> ProcessExitOutcome {
+    readiness_probe::probe_reported(&config.server, &config.management).await
 }

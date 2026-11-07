@@ -35,17 +35,19 @@ static GLOBAL: MiMalloc = MiMalloc;
 async fn main() -> ExitCode {
     let cli = Cli::parse();
     let configuration_file = cli.configuration_file;
+    let overrides = ListenerOverrides {
+        host: cli.host,
+        port: cli.port,
+    };
     let outcome = match cli.command {
-        None => {
-            let overrides = ListenerOverrides {
-                host: cli.host,
-                port: cli.port,
-            };
-            match load_reported(configuration_file, overrides) {
-                ConfigurationLoadOutcome::Ready(loaded) => andromeda_broker_composition::run(*loaded).await,
-                ConfigurationLoadOutcome::Failed(outcome) => outcome,
-            }
-        }
+        None => match load_reported(configuration_file, overrides) {
+            ConfigurationLoadOutcome::Ready(loaded) => andromeda_broker_composition::run(*loaded).await,
+            ConfigurationLoadOutcome::Failed(outcome) => outcome,
+        },
+        Some(Command::Health) => match load_reported(configuration_file, overrides) {
+            ConfigurationLoadOutcome::Ready(loaded) => andromeda_broker_composition::probe_readiness(&loaded.config).await,
+            ConfigurationLoadOutcome::Failed(outcome) => outcome,
+        },
         Some(Command::Configuration(configuration_args)) => match configuration_args.command {
             ConfigurationCommand::Validate => validate_reported(configuration_file),
             ConfigurationCommand::Show(show_args) => {
@@ -79,6 +81,7 @@ mod tests {
             ProcessExitOutcome::ConfigurationFailure,
             ProcessExitOutcome::StartupFailure,
             ProcessExitOutcome::RuntimeFailure,
+            ProcessExitOutcome::NotReady,
         ] {
             pretty_assertions::assert_eq!(ExitCode::from(outcome), ExitCode::FAILURE);
         }

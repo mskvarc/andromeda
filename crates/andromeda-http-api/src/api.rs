@@ -8,6 +8,9 @@ use andromeda_ngsi_ld_request::pagination::policy::PaginationPolicy;
 use axum::{Extension, Router, middleware::from_fn};
 use tower_http::normalize_path::NormalizePath;
 
+/// Path prefix every NGSI-LD route is served under.
+pub const API_ROOT_PATH: &str = "/ngsi-ld/v1";
+
 /// Fully assembled, state-complete public HTTP API.
 ///
 /// The NGSI-LD families live under `/ngsi-ld/v1`; metrics are served on the
@@ -43,7 +46,7 @@ impl HttpApi {
             .merge(routes.component_report.into_router());
         let ngsi = registered_on(ngsi);
         let mut api_root = Router::new().nest(
-            "/ngsi-ld/v1",
+            API_ROOT_PATH,
             stack.apply_api(ngsi_request_layers(ngsi, routes.configured_api_root, routes.pagination)),
         );
         // Merged mode mounts the management endpoints as root siblings of the

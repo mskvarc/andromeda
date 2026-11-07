@@ -4,6 +4,12 @@ use crate::{handler, state::HealthRouteState};
 use andromeda_health::aggregate::Health;
 use axum::{Router, routing::get};
 
+/// Path of the data-plane health report, relative to the NGSI-LD API root.
+pub const HEALTH_PATH: &str = "/health";
+
+/// Path of the management-plane readiness probe, at the root of the plane.
+pub const READINESS_PATH: &str = "/readyz";
+
 /// The complete health route fragment.
 ///
 /// Holds the [`Health`] aggregate rather than a prebaked router so the same
@@ -30,7 +36,7 @@ impl HealthRoutes {
     /// that always returns 200 while the process answers.
     pub fn into_router(self) -> Router {
         Router::new()
-            .route("/health", get(handler::check))
+            .route(HEALTH_PATH, get(handler::check))
             .route("/ready", get(handler::check))
             .route("/live", get(handler::live))
             .with_state(HealthRouteState::new(self.health))
@@ -44,7 +50,7 @@ impl HealthRoutes {
     pub fn into_management_router(self) -> Router {
         Router::new()
             .route("/livez", get(handler::live))
-            .route("/readyz", get(handler::check))
+            .route(READINESS_PATH, get(handler::check))
             .with_state(HealthRouteState::new(self.health))
     }
 }

@@ -10,7 +10,8 @@ shadow!(build);
 ///
 /// With no subcommand the broker starts and serves requests. The
 /// `configuration` subcommand inspects, validates, or generates configuration
-/// without starting the broker.
+/// without starting the broker, and the `health` subcommand asks a running
+/// broker whether it is ready.
 #[derive(Parser)]
 #[command(version = build::CLAP_LONG_VERSION, about, long_about = None)]
 #[command(disable_help_subcommand = true)]
@@ -23,10 +24,12 @@ pub struct Cli {
     pub configuration_file: Option<PathBuf>,
 
     /// Address the HTTP listener binds to, overriding the file and environment.
+    /// The `health` subcommand reads it to find the listener it probes.
     #[arg(short = 'H', long, value_name = "ADDRESS")]
     pub host: Option<IpAddr>,
 
     /// Port the HTTP listener binds to, overriding the file and environment.
+    /// The `health` subcommand reads it to find the listener it probes.
     #[arg(short = 'p', long, value_name = "PORT")]
     pub port: Option<u16>,
 
@@ -39,6 +42,10 @@ pub enum Command {
     /// Inspect, validate, or generate broker configuration.
     #[command(alias = "config")]
     Configuration(ConfigurationArgs),
+
+    /// Probe a running broker's readiness over its configured listener; exit
+    /// with success when it answers ready.
+    Health,
 }
 
 #[derive(Args)]
@@ -92,12 +99,16 @@ mod tests {
     use crate::cli::{Cli, Command, ConfigurationArgs, ConfigurationCommand, OutputArgs};
     use clap::Parser;
     use pretty_assertions::assert_eq;
-    use std::path::PathBuf;
+    use std::{
+        net::{IpAddr, Ipv6Addr},
+        path::PathBuf,
+    };
 
     fn subcommand(arguments: &[&str]) -> Result<Option<ConfigurationCommand>, clap::Error> {
-        Ok(Cli::try_parse_from(arguments)?
-            .command
-            .map(|Command::Configuration(ConfigurationArgs { command })| command))
+        Ok(Cli::try_parse_from(arguments)?.command.and_then(|command| match command {
+            Command::Configuration(ConfigurationArgs { command }) => Some(command),
+            Command::Health => None,
+        }))
     }
 
     /// The help text `arguments` print, split into words.
@@ -139,6 +150,15 @@ mod tests {
     fn configuration_schema_takes_an_output_file() -> Result<(), clap::Error> {
         let parsed = subcommand(&["andromeda", "configuration", "schema", "--output", "andromeda.schema.json"])?;
         assert!(matches!(parsed, Some(ConfigurationCommand::Schema(OutputArgs { output: Some(path) })) if path.as_os_str() == "andromeda.schema.json"));
+        Ok(())
+    }
+
+    #[test]
+    fn health_takes_the_listener_overrides_given_before_it() -> Result<(), clap::Error> {
+        let cli = Cli::try_parse_from(["andromeda", "--host", "::1", "--port", "2000", "health"])?;
+        assert!(matches!(cli.command, Some(Command::Health)));
+        assert_eq!(cli.host, Some(IpAddr::V6(Ipv6Addr::LOCALHOST)));
+        assert_eq!(cli.port, Some(2000));
         Ok(())
     }
 
