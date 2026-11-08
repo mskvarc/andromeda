@@ -218,9 +218,10 @@ expect 'ALTER SYSTEM work_mem from postgresql.auto.conf' "${file##*/}" postgresq
 expect 'the memory budget counts ALTER SYSTEM values' \
 	"$(logs_mention limits-2g "$budget_warning of 20288MB exceed the 2048MB available")" yes
 
-# Docker refuses a --cpus above the host's count, so the 4 CPUs come from the
-# override, which also exercises it.
-start limits-8g --memory 8g --cpus 2 -e TS_TUNE_NUM_CPUS=4 --
+# A runner can have fewer than 4 CPUs, which Docker refuses as --cpus, and less
+# than 8GB of memory, which caps the cgroup limit. The overrides give the tuner
+# both on any host.
+start limits-8g --memory 8g --cpus 2 -e TS_TUNE_MEMORY=8GB -e TS_TUNE_NUM_CPUS=4 --
 expect '8g shared_buffers' "$(setting_mb limits-8g shared_buffers)" 2048
 expect '8g max_connections defaults to 200' "$(sql limits-8g 'SHOW max_connections')" 200
 # 8192MB - 2048MB - 10 x 40MB - 1024MB leaves more than the tuner's value for 200 connections.
