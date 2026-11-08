@@ -216,6 +216,6 @@ pub(crate) fn id_text(id: &Id<IriBuf, BlankIdBuf>) -> String {
     match id {
         Id::Valid(ValidId::Iri(iri)) => iri.as_str().to_owned(),
         Id::Valid(ValidId::Blank(blank)) => blank.as_str().to_owned(),
-        Id::Invalid(text) => text.clone(), // clone: the identifier is shared by the context's memo
+        Id::Invalid(text) => text.clone(), // clone: the memo keeps the identifier, so the caller receives its own copy
     }
 }

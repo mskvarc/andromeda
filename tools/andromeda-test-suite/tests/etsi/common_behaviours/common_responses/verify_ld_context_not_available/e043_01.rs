@@ -47,7 +47,7 @@ fn non_empty(value: &Value) -> bool {
     }
 }
 
-/// Pins: Verify receiving 503 – `LdContextNotAvailable` error if remote JSON-LD @context cannot be retrieved (Create
+/// Pins: Verify receiving 503 with the `LdContextNotAvailable` error if remote JSON-LD @context cannot be retrieved (Create
 /// entity)
 /// Clause: 5.2.2
 /// Expected: `LdContextNotAvailable` answers 504, not 503 (Table 6.3.2-1)
@@ -67,7 +67,7 @@ async fn e043_01_01_create_entity() -> Result<()> {
     Ok(())
 }
 
-/// Pins: Verify receiving 503 – `LdContextNotAvailable` error if remote JSON-LD @context cannot be retrieved (Create
+/// Pins: Verify receiving 503 with the `LdContextNotAvailable` error if remote JSON-LD @context cannot be retrieved (Create
 /// subscription)
 /// Clause: 5.2.2
 /// Expected: `LdContextNotAvailable` answers 504, not 503 (Table 6.3.2-1)
@@ -95,7 +95,7 @@ async fn e043_01_02_create_subscription() -> Result<()> {
     Ok(())
 }
 
-/// Pins: Verify receiving 503 – `LdContextNotAvailable` error if remote JSON-LD @context cannot be retrieved (Create
+/// Pins: Verify receiving 503 with the `LdContextNotAvailable` error if remote JSON-LD @context cannot be retrieved (Create
 /// Temporal Representation of Entities)
 /// Clause: 5.2.2
 /// Expected: `LdContextNotAvailable` answers 504, not 503 (Table 6.3.2-1)
@@ -123,7 +123,7 @@ async fn e043_01_03_create_temporal_representation_of_entities() -> Result<()> {
     Ok(())
 }
 
-/// Pins: Verify receiving 503 – `LdContextNotAvailable` error if remote JSON-LD @context cannot be retrieved (Batch
+/// Pins: Verify receiving 503 with the `LdContextNotAvailable` error if remote JSON-LD @context cannot be retrieved (Batch
 /// entity create)
 /// Clause: 5.2.2
 /// Vocabulary: none (the @context under test is unretrievable by design)
@@ -151,7 +151,7 @@ async fn e043_01_04_batch_entity_create() -> Result<()> {
     Ok(())
 }
 
-/// Pins: Verify receiving 503 – `LdContextNotAvailable` error if remote JSON-LD @context cannot be retrieved (Create
+/// Pins: Verify receiving 503 with the `LdContextNotAvailable` error if remote JSON-LD @context cannot be retrieved (Create
 /// context source registration)
 /// Clause: 5.2.2
 /// Expected: `LdContextNotAvailable` answers 504, not 503 (Table 6.3.2-1)

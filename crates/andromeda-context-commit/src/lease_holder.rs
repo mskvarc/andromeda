@@ -6,9 +6,9 @@ use uuid::Uuid;
 /// The identity one background worker records while it holds a lease on a
 /// claimable row.
 ///
-/// Every durable queue the broker drains -- notification deliveries, pending
+/// Every durable queue the broker drains (notification deliveries, pending
 /// side effects, temporal append intents, Snapshot status notifications and
-/// Snapshot preparation -- claims its rows under the same kind of holder, and
+/// Snapshot preparation) claims its rows under the same kind of holder, and
 /// every one of them stores it in a `claimed_by UUID` column. The holder names
 /// a worker, nothing more: what the worker is working for (a tenant, a source)
 /// is reported beside it in the worker's own tracing fields, never folded into

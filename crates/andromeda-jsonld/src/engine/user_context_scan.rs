@@ -25,8 +25,8 @@ pub(crate) struct UserContextScan {
     pub(crate) scoped_context_term: Option<ContextTerm>,
     /// The remote contexts this document references rather than declares.
     ///
-    /// Recorded so a walk that resolves contexts -- which this scan cannot,
-    /// being synchronous and loader-less -- can follow them: a scoped context
+    /// Recorded so a walk that resolves contexts, which this scan cannot because
+    /// it is synchronous and loader-less, can follow them: a scoped context
     /// one hop away is as effective as one written inline.
     pub(crate) nested_references: Vec<IriBuf>,
 }
@@ -266,7 +266,7 @@ mod tests {
     }
 
     /// A context document that names another remote context records the
-    /// reference, so the clause 5.5.7 walk -- which can resolve it -- follows
+    /// reference, so the clause 5.5.7 walk, which can resolve it, follows
     /// it, beside the sibling inline declarations.
     #[test]
     fn a_nested_remote_reference_is_recorded() {

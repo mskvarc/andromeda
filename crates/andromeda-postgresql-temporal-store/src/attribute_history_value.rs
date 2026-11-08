@@ -61,15 +61,14 @@ impl AttributeHistoryValue {
         let key = |datatype: &Option<NgsiLdReference>| datatype.as_ref().map(|datatype| datatype_key(datatype, keys)).transpose();
         Ok(AttributeHistoryValue::Recorded(match value {
             TemporalValue::Number { number, datatype } => StoredValue::Number {
-                number: number.clone(), // clone: the persisted row owns its exact decimal.
+                number: number.clone(),
                 datatype: key(datatype)?,
             },
             TemporalValue::String { text, annotation } => StoredValue::String {
-                text: text.clone(), // clone: the persisted row owns the string.
+                text: text.clone(),
                 annotation: match annotation {
                     TextAnnotation::Plain => LiteralAnnotation::Plain,
                     TextAnnotation::Datatype(datatype) => LiteralAnnotation::Datatype(datatype_key(datatype, keys)?),
-                    // clone: the persisted row owns the tag.
                     TextAnnotation::Language(language) => LiteralAnnotation::Language(language.clone()),
                 },
             },
@@ -78,7 +77,7 @@ impl AttributeHistoryValue {
                 datatype: key(datatype)?,
             },
             TemporalValue::DeclaredNumber { number, datatype } => StoredValue::DeclaredNumber {
-                number: number.clone(), // clone: the persisted row owns its number.
+                number: number.clone(),
                 datatype: key(datatype)?,
             },
             TemporalValue::DeclaredBoolean { flag, datatype } => StoredValue::DeclaredBoolean {
@@ -86,7 +85,7 @@ impl AttributeHistoryValue {
                 datatype: key(datatype)?,
             },
             TemporalValue::Geometry(geometry) => StoredValue::Geometry {
-                form: geometry.form().clone(), // clone: the persisted row owns its positions.
+                form: geometry.form().clone(),
                 members: geometry
                     .members()
                     .map(to_raw_value)
@@ -107,7 +106,7 @@ impl AttributeHistoryValue {
                 time: *time,
                 datatype: key(datatype)?,
             },
-            TemporalValue::Uri(uri) => StoredValue::Uri(uri.clone()), // clone: the persisted row owns the URI.
+            TemporalValue::Uri(uri) => StoredValue::Uri(uri.clone()),
             TemporalValue::Tombstone { deleted_at } => return Ok(AttributeHistoryValue::Tombstone { deleted_at: *deleted_at }),
             TemporalValue::Scopes(_) => return Err(TemporalStoreError::ScopeHasNoAttributeRow),
         }))
@@ -155,9 +154,7 @@ impl AttributeHistoryValue {
     #[must_use]
     pub fn number(&self) -> Option<StoredNumber> {
         match self.recorded()? {
-            // clone: the bind owns the decimal it encodes, and the value gives up none.
             StoredValue::Number { number, .. } => Some(StoredNumber::from(number.clone())),
-            // clone: as above.
             StoredValue::DeclaredNumber { number, .. } => Some(StoredNumber::from(number.clone())),
             StoredValue::String { .. }
             | StoredValue::Boolean { .. }

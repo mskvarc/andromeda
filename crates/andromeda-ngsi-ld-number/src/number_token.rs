@@ -81,10 +81,10 @@ impl<'a> NumberToken<'a> {
     ///
     /// `BigDecimal` switches to exponent notation past two zero-run
     /// thresholds that are build-time configurable. Only the spellings every
-    /// configuration renders in plain notation are recognised -- no exponent,
+    /// configuration renders in plain notation are recognised: no exponent,
     /// no trailing zero, and at most one zero between the decimal point and
-    /// the first significant digit of a value below one -- so a token this
-    /// answers `false` for may still be canonical and merely gets re-rendered.
+    /// the first significant digit of a value below one. A token this answers
+    /// `false` for may still be canonical and merely gets re-rendered.
     pub(crate) fn is_canonical(&self) -> bool {
         if self.exponent == Exponent::Present {
             return false;

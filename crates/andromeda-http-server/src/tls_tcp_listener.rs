@@ -1,7 +1,7 @@
 //! A TCP listener that terminates TLS before handing connections to axum.
 //!
 //! Handshakes run concurrently and under a deadline, so a client that connects
-//! and then stalls -- or never speaks TLS at all -- cannot hold up the accept
+//! and then stalls, or never speaks TLS at all, cannot hold up the accept
 //! loop for anyone else. A failed handshake is logged at `debug`: every
 //! Kubernetes `tcpSocket` probe, load-balancer health check and port scan
 //! opens a connection and closes it without a handshake, and logging each at
@@ -60,7 +60,7 @@ impl Listener for TlsTcpListener {
 /// Treat a listener-level accept failure the way axum's own TCP listener does.
 ///
 /// A connection that was reset or aborted before it could be accepted is the
-/// peer's business and is skipped. Anything else -- typically `EMFILE` -- is
+/// peer's business and is skipped. Anything else, typically `EMFILE`, is
 /// logged and waited out, in the hope that closing connections frees what the
 /// listener needs.
 async fn back_off_after(error: io::Error) {

@@ -42,7 +42,7 @@ pub async fn expect_deferred_creation_notified_once(broker: &BrokerClient, names
     tenant.subscriptions().create(&subscription).send().await?;
     let deferred_id = namespace.urn("Device", "deferred")?;
     let deferred = [Entity::builder()
-        .id(deferred_id.clone()) // clone: the notification is matched to the Device by its id
+        .id(deferred_id.clone()) // clone: the id is compared with the notification after the Entity is built
         .entity_type(device_type)
         .property("reading", 1)
         .build()?];

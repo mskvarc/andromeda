@@ -4,8 +4,8 @@
 //! ordering parameter is present and the execution of the operation is not
 //! limited to the local scope (see clause 5.5.13) then an error of type
 //! BadRequestData shall be raised." Clause 4.23.1 states the reason from the
-//! other side -- "Sort ordering is never applied to distributed operations" --
-//! and opens by scoping the whole feature to "a Context Consumer [that] queries
+//! other side, "Sort ordering is never applied to distributed operations", and
+//! opens by scoping the whole feature to "a Context Consumer [that] queries
 //! for Entities retrieved from a single context broker".
 //!
 //! What makes an execution local is therefore read as clause 5.5.13 defines it:
@@ -20,9 +20,9 @@
 //! registration takes part, and no broker can claim a total order over a result
 //! set it only partly assembled.
 //!
-//! The narrowing bullet in the same two clauses -- a query naming no type,
+//! The narrowing bullet in the same two clauses (a query naming no type,
 //! attribute, filter or geoquery is refused "unless the execution of the
-//! request is limited to local scope" -- is deliberately not read this way, and
+//! request is limited to local scope"), is deliberately not read this way, and
 //! `andromeda_ngsi_ld_request::query_narrowing` still decides it from the
 //! request alone. That rule protects the broker from an unbounded query, and
 //! clause 5.5.13 makes the local-scope mechanism the thing that "enables

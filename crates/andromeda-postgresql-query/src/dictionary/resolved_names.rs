@@ -45,10 +45,10 @@ impl<N: InternedName> ResolvedNames<N> {
 
     /// Dictionary key for a name given as text, if the broker knows it.
     ///
-    /// The query grammars carry some names in a sibling type — a type
+    /// The query grammars carry some names in a sibling type: a type
     /// selection holds an `IriBuf`, a linked-entity guard holds attribute-name
-    /// typed tokens — and their text is the dictionary's own key form, so it
-    /// is looked up without re-validating it into `N`.
+    /// typed tokens. Their text is the dictionary's own key form, so it is
+    /// looked up without re-validating it into `N`.
     #[must_use]
     pub fn get_str(&self, name: &str) -> Option<N::Key> {
         self.keys.get::<str>(name).copied()

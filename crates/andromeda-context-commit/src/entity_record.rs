@@ -54,16 +54,16 @@ impl SearchProjection {
             match member {
                 MemberName::Attribute(name) => {
                     let families = state.member_instance_families(name.as_str());
-                    attributes.push(name.clone(), |_| families); // clone: the projection owns the names it binds
+                    attributes.push(name.clone(), |_| families);
                 }
                 MemberName::Scope | MemberName::ExpiresAt => attributes.push(reserved_member_name(member)?, |_| []),
             }
         }
         let attributes = attributes;
         Ok(SearchProjection {
-            types: state.types().as_slice().to_vec(), // clone: the store binds the names after the state is shared on
+            types: state.types().as_slice().to_vec(),
             attributes,
-            scopes: state.scope().map(|scopes| scopes.as_slice().to_vec()).unwrap_or_default(), // clone: as the types
+            scopes: state.scope().map(|scopes| scopes.as_slice().to_vec()).unwrap_or_default(),
             location_expires_at: state.location_expiry(),
         })
     }
@@ -129,7 +129,7 @@ impl EntityRecord {
     pub fn replacing(previous: &Arc<EntityState>, state: Arc<EntityState>) -> Result<EntityRecord, CommitError> {
         let mut record = EntityRecord::from_state(state)?;
         record.location_change = GeometryChange::of_location(previous, &record.state);
-        record.replaces = Some(Arc::clone(previous)); // clone: Arc ref-count bump; the writer keeps the state it read
+        record.replaces = Some(Arc::clone(previous));
         Ok(record)
     }
 
@@ -325,7 +325,7 @@ mod tests {
                 }]
             }]
         }])));
-        let current = Arc::new(EntityState::clone(&previous)); // clone: shares every attribute, as a read-modify-write does
+        let current = Arc::new(EntityState::clone(&previous));
         let replacing = EntityRecord::replacing(&previous, Arc::clone(&current)).expect("a projection");
         assert_eq!(replacing.location_change, GeometryChange::Unchanged);
         assert!(Arc::ptr_eq(&replacing.state, &current));

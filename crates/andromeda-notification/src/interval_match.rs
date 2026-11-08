@@ -297,7 +297,7 @@ mod tests {
     fn filtering_on(member: &str, filter: &Value) -> Subscription {
         let mut subscription = serde_json::to_value(speeding()).expect("the subscription serialises");
         subscription["q"] = Value::Null;
-        subscription[member] = filter.clone(); // clone: the fixture document owns the member it sets
+        subscription[member] = filter.clone();
         serde_json::from_value(subscription).expect("valid subscription")
     }
 

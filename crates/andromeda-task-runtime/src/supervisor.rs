@@ -109,9 +109,10 @@ impl TaskSupervisor {
     #[must_use]
     pub fn tenant(&self, jitter_seed: u64) -> TaskSupervisor {
         TaskSupervisor::with_tokens(
-            self.inner.host.clone(), // clone: process and tenant supervisors spawn on the same runtime handle.
+            self.inner.host.clone(),
             self.inner.process_cancellation.child_token(),
-            self.inner.process_cancellation.clone(), // clone: tenant-fatal cancellation stays local while process-fatal cancellation reaches the root.
+            // Tenant-fatal cancellation stays local while process-fatal cancellation reaches the root.
+            self.inner.process_cancellation.clone(),
             jitter_seed,
             TENANT_STARTUP_JITTER,
         )
@@ -152,7 +153,7 @@ impl TaskSupervisor {
     /// Return the cancellation token for the supervisor scope.
     #[must_use]
     pub fn cancellation_token(&self) -> CancellationToken {
-        self.inner.cancellation.clone() // clone: callers receive another handle to the same hierarchical cancellation state.
+        self.inner.cancellation.clone()
     }
 
     /// Request cooperative cancellation for this scope. The first request
@@ -164,7 +165,8 @@ impl TaskSupervisor {
 
     /// Return one task's current health, when registered.
     pub async fn health(&self, name: &TaskName) -> Option<TaskHealthSnapshot> {
-        let health = self.inner.health.get(name).map(|entry| Arc::clone(entry.value())); // clone: the lock must outlive the DashMap guard.
+        // The lock must outlive the DashMap guard.
+        let health = self.inner.health.get(name).map(|entry| Arc::clone(entry.value()));
         let health = health?;
         let mut snapshot = health.read().await.snapshot();
         snapshot.cancellation_requested = self.inner.cancellation.is_cancelled();
@@ -256,7 +258,7 @@ impl TaskSupervisor {
             Entry::Vacant(entry) => {
                 entry.insert(());
                 let health = Arc::new(RwLock::new(TaskHealth::registered(name.clone(), registration.criticality()))); // clone: the health record and lookup map both identify the task.
-                self.inner.health.insert(name, Arc::clone(&health)); // clone: task execution and health queries share the same record.
+                self.inner.health.insert(name, Arc::clone(&health));
                 Ok(health)
             }
         }
@@ -266,8 +268,9 @@ impl TaskSupervisor {
     pub(crate) fn observe(&self, name: TaskName, registration: &TaskRegistration, health: Arc<RwLock<TaskHealth>>, driver: JoinHandle<DriverTerminal>) {
         let abort = driver.abort_handle();
         let forced = Arc::new(AtomicBool::new(false));
-        let observer_forced = Arc::clone(&forced); // clone: shutdown sets the flag while the observer classifies cancellation.
-        let observer_health = Arc::clone(&health); // clone: terminal observation updates the registered health record.
+        // Shutdown sets the flag while the observer classifies cancellation.
+        let observer_forced = Arc::clone(&forced);
+        let observer_health = Arc::clone(&health);
         let inner = Arc::downgrade(&self.inner);
         let observer_name = name.clone(); // clone: the active registry keeps the same task identity.
         let criticality = registration.criticality();

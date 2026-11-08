@@ -60,7 +60,7 @@ impl AsRef<str> for AttributeType {
 
 /// Expands to the reserved compacted member names of one attribute type: the
 /// type-specific names passed in, followed by the members every attribute
-/// instance reserves whatever its type — `observedAt` and `expiresAt` (clause
+/// instance reserves whatever its type: `observedAt` and `expiresAt` (clause
 /// 4.5.1), `datasetId` and `instanceId` (clause 4.5.5), the system attributes
 /// of clause 4.8, and the `name` member a simplified representation carries.
 ///
@@ -165,7 +165,7 @@ impl AttributeType {
     /// array of two-element `[value, Temporal Property]` arrays: `values` for a
     /// Property or a `GeoProperty`, `objects` for a Relationship,
     /// `languageMaps`, `jsons` and `vocabs` for their own families, and
-    /// `valueLists` / `objectLists` for the two list families — never the
+    /// `valueLists` / `objectLists` for the two list families, never the
     /// generalized `values` / `objects` those specialize, since clauses
     /// 4.5.21.2 and 4.5.22.2 prohibit the generalization on them.
     ///
@@ -285,8 +285,8 @@ impl AttributeType {
             // Representation defined in clause 4.5.2.2, with the following
             // differences", and the differences replace `value` with
             // `valueList` without touching the `unitCode` clause 4.5.2.2 lists
-            // as Optional -- unlike the four unitless families, whose own
-            // clauses each name `unitCode` under Prohibited. Table 5.2.36-1
+            // as Optional (unlike the four unitless families, whose own
+            // clauses each name `unitCode` under Prohibited). Table 5.2.36-1
             // does not restate it; clause 4.5.21.2 is what carries it over.
             Self::ListProperty => reserved_compact_members![
                 compact_properties::VALUE_LIST,
@@ -386,7 +386,7 @@ mod tests {
 
     #[test]
     fn the_expanded_and_compacted_value_keys_group_the_variants_the_same_way() {
-        // The two are not textually related -- `value` expands to `hasValue` --
+        // The two are not textually related (`value` expands to `hasValue`),
         // so what can be checked is that they say the same thing about which
         // attribute types share a value member. Today only `Property` and
         // `GeoProperty` do; a variant added to one table under a different

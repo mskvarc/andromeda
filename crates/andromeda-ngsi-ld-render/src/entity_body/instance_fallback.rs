@@ -33,8 +33,8 @@ pub(crate) enum GeneralizationError {
     Admitted(#[source] JsonLiteralError),
 }
 
-/// The value of a family Table 4.3.6.8-1 reformats as a Property -- a
-/// language map, vocabulary terms, a JSON value or a value list -- as the JSON
+/// The value of a family Table 4.3.6.8-1 reformats as a Property (a
+/// language map, vocabulary terms, a JSON value or a value list), as the JSON
 /// it is written as, so clause 4.5.2.3 can read it the way it reads any
 /// Property value.
 #[derive(Debug)]

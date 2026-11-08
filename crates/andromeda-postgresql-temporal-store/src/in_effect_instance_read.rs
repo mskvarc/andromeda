@@ -56,7 +56,7 @@ impl TemporalRepository {
         if reads.attributes.is_empty() {
             return Ok(in_effect);
         }
-        let names: Vec<AttributeName> = reads.attributes.iter().map(|name| (*name).clone()).collect(); // clone: the dictionary is asked for owned names
+        let names: Vec<AttributeName> = reads.attributes.iter().map(|name| (*name).clone()).collect();
         let resolved = self.attribute_names.lookup(&names).await.map_err(TemporalStoreError::from)?;
         let keys = resolved.keys_of(reads.attributes.iter().map(|name| name.as_str()));
         if keys.is_empty() {

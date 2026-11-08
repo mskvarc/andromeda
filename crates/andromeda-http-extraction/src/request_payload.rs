@@ -69,15 +69,12 @@ where
 
     async fn from_request(request: Request, state: &S) -> Result<RequestPayload, ExtractorRejection> {
         let instance = addressed_request_uri(&request);
-        // clone: the precondition's refusal and the payload's each name the request.
         let declared = declared_body_length(request.headers(), request.extensions()).map_err(|error| error.into_rejection(instance.clone()))?;
         admit_content_kind(request.headers(), request.method())?;
         let value_limit = request.extensions().get::<RequestJsonValueLimit>().copied();
-        // clone: a counted payload over its limit names the request too.
         let body = buffer_payload(request, state, declared, instance.clone()).await?;
         // Counted before the operation builds a tree, so a payload of too
         // many values costs its bytes and nothing more.
-        // clone: a refused text names the request too.
         refuse_values_past_budget(&body, value_limit).map_err(|refusal| ExtractorRejection::Classified(refusal.report().with_instance(instance.clone())))?;
         // A text that is no JSON is left to the operation's parse, which words
         // that refusal itself.
@@ -96,8 +93,8 @@ where
 /// Read the payload body of a request that declared `declared` bytes.
 ///
 /// A declared length over the limit is refused before a byte of the body is
-/// read. A body that runs past the limit while it is read -- one whose framing
-/// the declared length does not bound -- is refused the same way.
+/// read. A body that runs past the limit while it is read (one whose framing
+/// the declared length does not bound) is refused the same way.
 ///
 /// # Errors
 ///

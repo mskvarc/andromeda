@@ -7,8 +7,8 @@
 //! of an `old` image counted out, and every attribute instance likewise, per
 //! type, name and family and per name alone.
 //!
-//! The images are first grouped by their whole shape — the type array and the
-//! two instance arrays — with the signed number of rows of each shape. A batch
+//! The images are first grouped by their whole shape (the type array and the
+//! two instance arrays), with the signed number of rows of each shape. A batch
 //! of entities from one producer holds a handful of shapes however many
 //! entities it holds (the instance arrays are stored in one canonical order, so
 //! entities that carry the same instances carry the same arrays), which makes
@@ -215,13 +215,13 @@ impl CensusStatements {
 /// One side of the source rows as signed shape rows:
 /// `SELECT src.<types> AS types, src.<names> AS names, src.<kinds> AS kinds, <sign> AS sign FROM src`.
 fn signed_rows(source: &DynIden, side: ImageSide, sign: i32) -> SelectStatement {
-    let column = |image: SearchImage| Expr::col((source.clone(), image)); // clone: each column names the source it comes from.
+    let column = |image: SearchImage| Expr::col((source.clone(), image));
     Query::select()
         .expr_as(column(side.types()), Shape::Types)
         .expr_as(column(side.instance_names()), Shape::Names)
         .expr_as(column(side.instance_kinds()), Shape::Kinds)
         .expr_as(int_literal(i64::from(sign)), Shape::Sign)
-        .from(source.clone()) // clone: as above.
+        .from(source.clone())
         .take()
 }
 
@@ -295,13 +295,13 @@ fn ledger_insert(
 ) -> Result<InsertStatement, ContextStoreError> {
     let total = || SimpleExpr::from(Func::sum(Expr::col((CensusCte::Shapes, Shape::Rows))));
     for (relation, key) in keys {
-        rows.column((relation.clone(), *key)).group_by_col((relation.clone(), *key)); // clone: the select and its grouping each own the relation.
+        rows.column((relation.clone(), *key)).group_by_col((relation.clone(), *key));
     }
     rows.expr(total()).and_having(total().ne(int_literal(0)));
     let mut insert = Query::insert();
     insert
         .into_table(table_of(target, ledger))
-        .columns(columns.iter().cloned()) // clone: the column list owns the idens it names.
+        .columns(columns.iter().cloned())
         .select_from(rows.take())?;
     Ok(insert)
 }

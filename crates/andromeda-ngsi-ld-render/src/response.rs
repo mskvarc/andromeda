@@ -23,10 +23,10 @@ use iri_rs::IriBuf;
 /// Configuration for writing a response, before its body.
 ///
 /// Configured by whoever answered the request, from the negotiated media type,
-/// the resolved `@context`, the client's `Prefer` tokens and -- for `GeoJSON` --
+/// the resolved `@context`, the client's `Prefer` tokens and, for `GeoJSON`,
 /// the attribute the geometry is taken from. It cannot be written on its own:
 /// only a writer that takes a body produces something that carries `render_into`,
-/// so a caller cannot forget the body -- the type system will not let it.
+/// so a caller cannot forget the body, as the type system will not let it.
 #[derive(Debug)]
 pub struct ResponseRenderer<'a> {
     /// The negotiated media type, which decides the envelope.

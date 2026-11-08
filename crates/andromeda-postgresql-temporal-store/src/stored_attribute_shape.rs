@@ -4,8 +4,8 @@
 //! Two stored codes rather than one: Tables 4.5.19.1-1 and 4.5.19.1-2 give one
 //! column per value datatype and govern the Property families, while Table
 //! 4.5.19.1-3 has a single column keyed on the family alone and governs
-//! Relationships — and, through clause 4.5.22.1's "specialized type of
-//! Relationship", `ListRelationship` with them. Reading a shape without the
+//! Relationships (and, through clause 4.5.22.1's "specialized type of
+//! Relationship", `ListRelationship` with them). Reading a shape without the
 //! family it was written under answers out of the wrong table.
 
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};

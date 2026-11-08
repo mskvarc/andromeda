@@ -59,7 +59,6 @@ where
         let Some(incoming) = accepted else {
             break;
         };
-        // clone: every connection dispatches to the one shared router.
         connections.spawn(serve_connection(
             incoming,
             router.clone(),
@@ -116,7 +115,6 @@ async fn serve_connection(incoming: Incoming, router: Router, limit: HeaderSecti
         tokio::select! {
             accepted = connection.accept() => match accepted {
                 Ok(Some(resolver)) => {
-                    // clone: every request dispatches to the one shared router.
                     requests.spawn(serve_request(resolver, router.clone(), peer));
                 }
                 Ok(None) => return,

@@ -50,7 +50,7 @@ impl SchemaContract {
     /// they are excluded from both versions as they are from the digest.
     fn over<'migration>(migrations: impl IntoIterator<Item = &'migration Migration> + Clone) -> Result<SchemaContract, SchemaContractError> {
         let highest = migrations
-            .clone() // clone: the set is walked twice, once for the version and once for the digest
+            .clone() // clone: the version walk consumes this copy, so the digest gets the original.
             .into_iter()
             .filter(|migration| !migration.migration_type.is_down_migration())
             .map(|migration| migration.version)

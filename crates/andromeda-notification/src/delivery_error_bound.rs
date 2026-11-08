@@ -4,7 +4,7 @@
 //! delivery queue constrains `last_error` to
 //! [`FAILURE_SUMMARY_MAX_CHARACTERS`], so a diagnostic longer than that would
 //! fail the write and lose the retry bookkeeping travelling with it. The bound
-//! is applied at write time — on the way into the store, never on the way out —
+//! is applied at write time, on the way into the store and never on the way out,
 //! so what is read back is exactly what was persisted. An operator may
 //! configure a tighter bound; never a looser one.
 

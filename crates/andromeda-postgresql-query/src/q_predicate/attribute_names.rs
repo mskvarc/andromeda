@@ -34,7 +34,7 @@ fn path_attribute_names(path: &QueryPath, out: &mut Vec<AttributeName>) {
             out.extend(local.sub_attrs.iter().filter(|name| MemberField::of(name).is_none()).cloned());
         }
         QueryPath::Linked { relationship, inner, .. } => {
-            // clone: as above
+            // clone: the path is borrowed, and the list outlives the expression
             out.push(relationship.clone());
             path_attribute_names(inner, out);
         }

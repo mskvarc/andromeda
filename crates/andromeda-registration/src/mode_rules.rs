@@ -35,7 +35,7 @@ const AUXILIARY_OPERATIONS: [CsrOperation; 3] = [CsrOperation::RetrieveOps, CsrO
 /// auxiliary registration would therefore make every one of them unregistrable,
 /// against clause 4.3.6.2's "Auxiliary Context Source Registrations are always
 /// accepted as there can never be a conflict". The default narrows instead to
-/// `retrieveOps` -- the widest group the auxiliary restriction admits, and a
+/// `retrieveOps`, the widest group the auxiliary restriction admits, and a
 /// subset of `federationOps`, so nothing outside auxiliary mode moves.
 pub(super) const fn default_operations(mode: ForwardingMode) -> [CsrOperation; 1] {
     match mode {
@@ -78,7 +78,7 @@ fn validate_exclusive_entry(entry: &RegistrationInfo) -> Result<(), Registration
 
 /// The expanded attribute names a block declares, on both axes.
 fn declared_attributes(entry: &RegistrationInfo) -> Vec<AttributeName> {
-    entry.attribute_names().cloned().collect() // clone: the footprint owns the names it is checked with
+    entry.attribute_names().cloned().collect()
 }
 
 /// Whether an existing registration overlaps the footprint `(entity_id,

@@ -6,7 +6,7 @@
 //! and the attribute the request path names, never the payload. A write
 //! handler therefore plans its forwarding first and has its payload compacted
 //! and written only for a registration that reads it: a write no registration
-//! covers -- the common case -- keeps its payload for the local write alone.
+//! covers (the common case) keeps its payload for the local write alone.
 
 use crate::{
     FederationService,
@@ -125,7 +125,7 @@ impl FederationService {
                 let selector = expanded.into_raw()?;
                 (selector.named_types(), Some(selector), coarse)
             } else {
-                // A write that carries no `type` in its request is matched against registrations by the local entity's actual types -- every one it carries, since clause 5.12 matches on any of them -- so a registration scoped to an unrelated type is not taken to cover the write and refuse it. A write to an entity this broker holds only at a source resolves to an empty set and falls back to id-only matching.
+                // A write that carries no `type` in its request is matched against registrations by the local entity's actual types (every one it carries, since clause 5.12 matches on any of them), so a registration scoped to an unrelated type is not taken to cover the write and refuse it. A write to an entity this broker holds only at a source resolves to an empty set and falls back to id-only matching.
                 let types = self.local_entity_types.local_entity_types(target, request.entity_id).await;
                 // A stored type name is an IRI; one that were not leaves the
                 // superset unnarrowed, which the precise match still decides.

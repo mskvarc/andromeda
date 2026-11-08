@@ -2,10 +2,10 @@
 //! and the predicate that bounds which rows one claim leases.
 //!
 //! Every lease-based queue in the schema answers the same question at claim
-//! time: is this row due, and is nobody holding it? Two columns carry that —
+//! time: is this row due, and is nobody holding it? Two columns carry that:
 //! the instant the row becomes due (`next_attempt_at`, `available_at`) and
 //! the instant the current lease expires (`lease_until`, `locked_until`, null
-//! when unleased) — and a row is claimable when the later of the two has
+//! when unleased), and a row is claimable when the later of the two has
 //! passed. Folding both into one expression turns a two-column predicate the
 //! planner can only half-serve from an index into a single ordered key that an
 //! expression index covers completely: `WHERE claimable_at <= now ORDER BY
@@ -28,8 +28,8 @@ use crate::{
 };
 use sea_query::{ExprTrait, Func, SelectStatement, SimpleExpr};
 
-/// PostgreSQL: `GREATEST(due, COALESCE(lease_until, '-infinity'::timestamptz))`
-/// — the instant from which a queue row may be claimed.
+/// PostgreSQL: `GREATEST(due, COALESCE(lease_until, '-infinity'::timestamptz))`:
+/// the instant from which a queue row may be claimed.
 ///
 /// `due` is the column holding the earliest instant the row may be attempted
 /// and `lease_until` the column holding the current lease's expiry, null when
@@ -41,7 +41,7 @@ pub fn claimable_at(due: SimpleExpr, lease_until: SimpleExpr) -> SimpleExpr {
     Func::greatest([due, or_start_of_time(lease_until)]).into()
 }
 
-/// PostgreSQL: `key = ANY(ARRAY (candidates))` — the rows a claim leases are
+/// PostgreSQL: `key = ANY(ARRAY (candidates))`: the rows a claim leases are
 /// exactly the keys its selection picked.
 ///
 /// `candidates` is the queue's own selection of one key column, ordered,

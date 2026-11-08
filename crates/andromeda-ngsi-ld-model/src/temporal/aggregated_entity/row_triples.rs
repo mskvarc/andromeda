@@ -57,7 +57,6 @@ fn triple(row: &TemporalAggregationRow, method: AggrMethod) -> AggregatedTriple 
 
 /// An exact number, or nothing.
 fn number(value: Option<&JsonNumber>) -> AggregateValue {
-    // clone: the aggregate owns the exact number the row holds
     value.map_or(AggregateValue::Absent, |number| AggregateValue::Number(number.clone()))
 }
 
@@ -67,8 +66,8 @@ fn number(value: Option<&JsonNumber>) -> AggregateValue {
 /// 2^53 is the integer and not the double nearest to it.
 fn extremum(value: &AggregationMinMax) -> AggregateValue {
     match value {
-        AggregationMinMax::Number(number) => AggregateValue::Number(number.clone()), // clone: the aggregate owns the exact number the row holds
-        AggregationMinMax::String(text) => AggregateValue::Text(text.clone()),       // clone: the aggregate owns the text the row holds
+        AggregationMinMax::Number(number) => AggregateValue::Number(number.clone()),
+        AggregationMinMax::String(text) => AggregateValue::Text(text.clone()),
         AggregationMinMax::Boolean(flag) => AggregateValue::Boolean(*flag),
         AggregationMinMax::DateTime(instant) => AggregateValue::Instant(*instant),
         AggregationMinMax::Time(time) => AggregateValue::Text(TimeValue::Time(*time).to_string()),
@@ -81,7 +80,7 @@ fn extremum(value: &AggregationMinMax) -> AggregateValue {
 /// seconds it was computed from.
 fn average(value: &AggregationAverage) -> AggregateValue {
     match value {
-        AggregationAverage::Number(number) => AggregateValue::Number(number.clone()), // clone: the aggregate owns the exact number the row holds
+        AggregationAverage::Number(number) => AggregateValue::Number(number.clone()),
         AggregationAverage::Time(time) => AggregateValue::Text(TimeValue::Time(*time).to_string()),
     }
 }

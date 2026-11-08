@@ -68,7 +68,7 @@ impl RegistrationStore for ScriptedRegistrations {
     }
 
     async fn get(&self, id: &Identifier) -> Result<Option<ContextSourceRegistration>, RegistrationError> {
-        Ok(self.registrations.iter().find(|registration| registration.id == *id).cloned()) // clone: the lookup answers its own copy
+        Ok(self.registrations.iter().find(|registration| registration.id == *id).cloned())
     }
 
     async fn query_compiled(&self, _compiled: &CompiledCsrQuery, _window: &PageWindow) -> Result<RegistrationPage, RegistrationError> {
@@ -90,7 +90,7 @@ impl RegistrationStore for ScriptedRegistrations {
         if failing {
             return Err(RegistrationError::StoreUnavailable);
         }
-        Ok(self.registrations.clone()) // clone: every query answers its own copy of the fixed list
+        Ok(self.registrations.clone())
     }
 
     async fn find_overlapping(
@@ -108,7 +108,7 @@ impl RegistrationStore for ScriptedRegistrations {
             .iter()
             .filter(|registration| after.is_none_or(|after| registration.id.as_str() > after.as_str()))
             .take(usize::try_from(limit).unwrap_or(usize::MAX))
-            .cloned() // clone: the page owns its registrations
+            .cloned()
             .collect())
     }
 

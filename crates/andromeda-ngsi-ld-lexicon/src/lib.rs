@@ -1,7 +1,7 @@
 //! The lexical layer of NGSI-LD: the grammars every named value in the API must satisfy.
 //!
 //! ETSI GS CIM 009 v1.9.1 defines its resources on top of a small set of
-//! lexical productions — the short-name grammar of clause 4.6.2, the scope
+//! lexical productions: the short-name grammar of clause 4.6.2, the scope
 //! path of clause 4.18, the dotted attribute path of clause 4.5.3, the
 //! `DateTime`, `Date` and `Time` forms of clause 4.6.3, and the URI that names
 //! every resource.

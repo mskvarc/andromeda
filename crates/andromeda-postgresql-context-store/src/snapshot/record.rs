@@ -1,7 +1,7 @@
 //! Reading and advancing a Snapshot's control record and preparation state.
 //!
-//! A Snapshot is two rows -- the immutable `snapshots` control record and the
-//! mutable `snapshot_preparation` lease row, sharing `snapshot_key` -- plus its
+//! A Snapshot is two rows: the immutable `snapshots` control record and the
+//! mutable `snapshot_preparation` lease row, sharing `snapshot_key`, plus its
 //! own branch schema named after that key. Everything here names a Snapshot by
 //! its URI; the surrogate `snapshot_key` is issued by the database and used only
 //! to name the branch schema and to key the preparation row.
@@ -213,7 +213,7 @@ fn snapshot_key_subquery(id: &Identifier) -> SelectStatement {
 }
 
 /// Move one preparing snapshot to its final status, recording the per-query
-/// details and publishing its staging branch -- emptied first on a failure, so
+/// details and publishing its staging branch, emptied first on a failure, so
 /// the failed Snapshot stays addressable over an empty dataset.
 pub(crate) async fn update_status(
     pool: &PgPool,

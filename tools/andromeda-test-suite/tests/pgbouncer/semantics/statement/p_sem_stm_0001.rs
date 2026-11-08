@@ -40,9 +40,9 @@ async fn p_sem_stm_0001_statements_evicted_from_the_poolers_cache_are_prepared_a
                 let greater = q::attr(attribute).gt(0).build()?;
                 let other = q::attr(attribute).ne(1).build()?;
                 for answer in [
-                    LoadOutcome::of(&query().q(greater.clone()).send().await), // clone: the same filter is sent with a page size
+                    LoadOutcome::of(&query().q(greater.clone()).send().await),
                     LoadOutcome::of(&query().q(greater).limit(5).send().await),
-                    LoadOutcome::of(&query().q(other.clone()).send().await), // clone: the same filter is sent with a page size
+                    LoadOutcome::of(&query().q(other.clone()).send().await),
                     LoadOutcome::of(&query().q(other).limit(5).send().await),
                 ] {
                     if !answer.is_success() {

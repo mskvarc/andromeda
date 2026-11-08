@@ -19,7 +19,7 @@ pub(crate) fn compare_observed_at(path: &DocumentPath, actual: &Value, expected:
         (actual, expected) => out.push(Difference::at(
             path,
             Discrepancy::OtherInstant {
-                actual: actual.clone(), // clone: the difference owns the values it reports
+                actual: actual.clone(), // clone: the difference outlives the answer
                 expected: expected.clone(),
             },
         )),
@@ -29,7 +29,7 @@ pub(crate) fn compare_observed_at(path: &DocumentPath, actual: &Value, expected:
 /// Requires a system timestamp to be a well-formed date.
 pub(crate) fn compare_system_timestamp(path: &DocumentPath, actual: &Value, out: &mut Vec<Difference>) {
     if actual.as_str().is_none_or(|text| DateTime::parse_from_rfc3339(text).is_err()) {
-        out.push(Difference::at(path, Discrepancy::MalformedDate(actual.clone()))); // clone: the difference owns the values it reports
+        out.push(Difference::at(path, Discrepancy::MalformedDate(actual.clone()))); // clone: the difference outlives the answer
     }
 }
 
@@ -49,14 +49,14 @@ pub(crate) fn compare_numbers(path: &DocumentPath, actual: &Number, expected: &N
         (true, false, Mode::Diff) => out.push(Difference::at(
             path,
             Discrepancy::OtherNumberType {
-                actual: actual.clone(), // clone: the difference owns the values it reports
+                actual: actual.clone(), // clone: the difference outlives the answer
                 expected: expected.clone(),
             },
         )),
         (false, _, _) => out.push(Difference::at(
             path,
             Discrepancy::Unequal {
-                actual: Value::Number(actual.clone()), // clone: the difference owns the values it reports
+                actual: Value::Number(actual.clone()), // clone: the difference outlives the answer
                 expected: Value::Number(expected.clone()),
             },
         )),

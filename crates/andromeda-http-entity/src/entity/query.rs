@@ -169,7 +169,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
 
         // Clause 5.5.14: an EntityMap "fixes the Entities to be considered for
         // subsequent requests based on it", so a request left considering none
-        // — its identifiers and the map's do not intersect — has no entity for
+        // (its identifiers and the map's do not intersect) has no entity for
         // any context source to hold, and contacting them could only widen the
         // answer the map fixes.
         let considers_nothing = matches!(ConsideredEntities::of_request(query.id.as_deref()), ConsideredEntities::NoEntity);

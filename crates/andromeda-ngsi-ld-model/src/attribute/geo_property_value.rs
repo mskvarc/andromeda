@@ -97,6 +97,5 @@ impl GeoPropertyValue {
 
 /// The geometry a node holds typed.
 fn typed(form: &GeometryForm) -> Geometry {
-    // clone: the compact value owns its geometry, the tree keeps the one it was written from
     Geometry::new(form.clone())
 }

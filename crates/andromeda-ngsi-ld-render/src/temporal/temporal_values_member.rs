@@ -2,9 +2,9 @@
 //! representation (ETSI GS CIM 009 clause 4.5.9).
 //!
 //! The attribute is one object per `datasetId`, holding the family's `type`,
-//! the `datasetId` when there is one, and a single plural member -- `values`,
-//! `objects`, `languageMaps`, `jsons`, `vocabs`, `valueLists` or `objectLists`
-//! -- whose value is the array of `[value, instant]` pairs, the instant being
+//! the `datasetId` when there is one, and a single plural member (`values`,
+//! `objects`, `languageMaps`, `jsons`, `vocabs`, `valueLists` or `objectLists`)
+//! whose value is the array of `[value, instant]` pairs, the instant being
 //! the one on the Temporal Property the query ran on (clause 4.11, `observedAt`
 //! by default). A deletion carries no instant on an observation axis, so its
 //! `deletedAt` stands in for it.
@@ -193,7 +193,7 @@ impl Serialize for Pair<'_> {
 /// `languageMaps`, `jsons` and `vocabs`); the rest carry it bare. A
 /// `ListRelationship` is the one family whose bare value is not the member it
 /// was read from: clause 4.5.9 gives its `objectLists` pairs "an ordered array
-/// of Relationship objects (URIs)" -- EXAMPLE 7 spells them as bare strings --
+/// of Relationship objects (URIs)" (EXAMPLE 7 spells them as bare strings),
 /// while its normalized `objectList` holds the `{"object": ...}` members clause
 /// 4.5.22.2 mandates, so it is written in the concise form that holds bare URIs.
 struct PairValue<'a> {

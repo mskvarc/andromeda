@@ -709,7 +709,7 @@ mod tests {
     #[test]
     fn a_selection_changed_after_the_commit_drops_only_what_is_judged_after_it() {
         let subscription = vehicle_sub_since(1_000, 2_000);
-        let id = subscription.id.clone(); // clone: the audience borrows the identifier the candidate list consumes
+        let id = subscription.id.clone();
         pretty_assertions::assert_eq!(owed_ids(ChangeAudience::Live, at(1_500), vec![Arc::clone(&subscription)]), 0);
         let decided = ChangeAudience::Queued {
             subscription: &id,
@@ -728,7 +728,7 @@ mod tests {
     #[test]
     fn a_queued_delivery_reactivated_after_its_commit_is_not_sent() {
         let subscription = vehicle_sub_since(2_000, 1_000);
-        let id = subscription.id.clone(); // clone: the audience borrows the identifier the candidate list consumes
+        let id = subscription.id.clone();
         let decided = ChangeAudience::Queued {
             subscription: &id,
             filters: CommitFilters::Decided,
@@ -766,7 +766,7 @@ mod tests {
     fn a_queued_delivery_is_addressed_to_its_subscription_however_its_selection_moved_since() {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let moved = truck_heading_sub("moved");
-        let id = moved.id.clone(); // clone: the audience borrows the identifier the cache takes
+        let id = moved.id.clone();
         cache.insert(&ContextTarget::Live, moved);
         let event = make_event("urn:ngsi-ld:Vehicle:A1", vec!["Vehicle"], AttributeChangeKind::Updated, vec!["speed"]);
         pretty_assertions::assert_eq!(addressed_ids(ChangeAudience::Live, &cache, &event), Vec::<String>::new());
@@ -788,7 +788,7 @@ mod tests {
         let mut periodic = truck_heading_sub("periodic");
         periodic.key = SubscriptionKey::try_from(2).expect("a valid subscription key");
         periodic.time_interval_secs = Some(10.0);
-        let ids: Vec<Identifier> = [&paused, &periodic].iter().map(|candidate| candidate.id.clone()).collect(); // clone: the audiences borrow the identifiers the cache takes
+        let ids: Vec<Identifier> = [&paused, &periodic].iter().map(|candidate| candidate.id.clone()).collect();
         cache.insert(&ContextTarget::Live, paused);
         cache.insert(&ContextTarget::Live, periodic);
         let gone: Identifier = "urn:ngsi-ld:Subscription:gone".parse().expect("a valid subscription URI");
@@ -964,7 +964,7 @@ mod tests {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_q = Some(parser::parse("\"https://example.com/speed\">100").expect("valid q"));
-        let subscription_id = sub.id.clone(); // clone: the audience names the subscription the candidates own
+        let subscription_id = sub.id.clone();
         let candidates = vec![Arc::new(sub)];
         let state = entity_with_geo_and_scope();
         let event = make_event(
@@ -974,7 +974,6 @@ mod tests {
             vec!["https://example.com/speed"],
         );
 
-        // clone: the same candidates are offered to both audiences
         let live = admitted_by_entity_filters(
             ChangeAudience::Live,
             &cache,
@@ -990,7 +989,6 @@ mod tests {
             subscription: &subscription_id,
             filters: CommitFilters::Decided,
         };
-        // clone: same
         let queued = admitted_by_entity_filters(
             decided,
             &cache,
@@ -1031,7 +1029,7 @@ mod tests {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
         sub.compiled_q = Some(parser::parse("\"https://example.com/isParkedIn\"{\"https://example.com/category\"}==\"commercial\"").expect("valid q"));
-        let subscription_id = sub.id.clone(); // clone: the audience names the subscription the candidates own
+        let subscription_id = sub.id.clone();
         let candidates = vec![Arc::new(sub)];
         let vehicle = EntityState::from_slice(
             &serde_json::to_vec(&serde_json::json!([{
@@ -1073,7 +1071,6 @@ mod tests {
             subscription: &subscription_id,
             filters: CommitFilters::Decided,
         };
-        // clone: the same candidates are offered to both readings
         let residential = admitted_by_entity_filters(
             decided,
             &cache,

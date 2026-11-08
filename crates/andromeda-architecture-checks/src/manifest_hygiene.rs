@@ -3,7 +3,7 @@
 //!
 //! Four rules the workspace holds, all readable from the manifests themselves:
 //!
-//! - Every external dependency pins a full `major.minor.patch` version — never a
+//! - Every external dependency pins a full `major.minor.patch` version: never a
 //!   partial `"1"` or `"1.2"`, and never a range operator.
 //! - Every dependency table is in ascending order by dependency name.
 //! - The root `[workspace.dependencies]` holds only in-tree path dependencies

@@ -2,7 +2,7 @@
 //!
 //! The walk is breadth-first: the entities the roots name are resolved first,
 //! then the entities those name, one level at a time. Each level is resolved in
-//! two halves -- the local store answers for what it holds, and the remainder
+//! two halves: the local store answers for what it holds, and the remainder
 //! of the distributed system answers for the `objectType`-annotated ids it does
 //! not (clause 4.5.23.1).
 //!

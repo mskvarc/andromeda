@@ -61,8 +61,8 @@ fn write_expr(buf: &mut String, expr: &Expr, spelling: MemberSpelling) {
 /// Write the operands of one boolean node, parenthesising any child the
 /// grammar would otherwise re-associate.
 ///
-/// Clause 4.9 makes `;` bind tighter than `|` and provides `QueryTermAssoc` —
-/// a parenthesised group — as the only way to override that. A child therefore
+/// Clause 4.9 makes `;` bind tighter than `|` and provides `QueryTermAssoc`
+/// (a parenthesised group) as the only way to override that. A child therefore
 /// needs its own parentheses unless the default precedence already reproduces
 /// it, which is true in exactly one case: a conjunction directly inside a
 /// disjunction. Without this, `(a|b);c` rendered as `a|b;c` and read back as
@@ -89,8 +89,8 @@ const fn needs_parentheses(term: &Expr, separator: char) -> bool {
         // A leaf binds tighter than every operator.
         Expr::Pred(_) => false,
         // `;` binds tighter than `|`, so a conjunction inside a disjunction
-        // reads back unchanged. Every other pairing — including one operator
-        // nested inside itself, which would otherwise flatten — does not.
+        // reads back unchanged. Every other pairing, including one operator
+        // nested inside itself (which would otherwise flatten), does not.
         Expr::And(_) => separator == ';',
         Expr::Or(_) => true,
     }
@@ -201,7 +201,7 @@ fn write_attr_path(buf: &mut String, path: &AttrPath, spelling: MemberSpelling) 
 /// A guard type needs quoting the ordinary identifier rule does not ask for: the
 /// guard's terminating colon is written straight after the last type, so a bare
 /// type that contains one of its own leaves the parser two colons and no way to
-/// tell which ends the guard — the parser rejects exactly that. Quoting closes
+/// tell which ends the guard, a case the parser rejects. Quoting closes
 /// the type before the terminator and the filter reads back unchanged.
 fn write_guard_type(buf: &mut String, s: &str) {
     if s.contains(':') {

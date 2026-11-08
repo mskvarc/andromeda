@@ -42,7 +42,7 @@ impl ProvisionedCollations {
     #[must_use]
     pub fn of_pool(pool: &PgPool) -> ProvisionedCollations {
         ProvisionedCollations {
-            pool: pool.clone(), // clone: `PgPool` shares its inner pool by reference count.
+            pool: pool.clone(),
             created: DashSet::new(),
         }
     }
@@ -82,21 +82,21 @@ impl ProvisionedCollations {
                 CreateFailure::CreatedConcurrently => {}
                 CreateFailure::LocaleRefused => {
                     return Err(CollationProvisioningError::NotAnIcuCollation {
-                        // clone: the failure owns the collation it names.
+                        // clone: the error outlives the borrowed collation it names.
                         collation: collation.clone(),
                         source,
                     });
                 }
                 CreateFailure::Statement => {
                     return Err(CollationProvisioningError::Statement {
-                        // clone: the failure owns the collation it names.
+                        // clone: the error outlives the borrowed collation it names.
                         collation: collation.clone(),
                         source,
                     });
                 }
             }
         }
-        self.created.insert(collation.clone()); // clone: the cache outlives the ordering that named the identifier.
+        self.created.insert(collation.clone());
         Ok(())
     }
 

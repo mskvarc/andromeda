@@ -33,8 +33,8 @@ pub async fn subscribe_periodic_tenants(
     for (index, member) in set.members().enumerate() {
         let subscription_id = namespace.subscription_id(index)?;
         let subscription = Subscription::builder()
-            .id(subscription_id.clone()) // clone: the cleanup removes the Subscription by the id it is built with
-            .entities([EntitySelector::new(SelectorTypeBuilder::from(&device_type).build()?).with_ids(set.device().clone())]) // clone: every tenant's Subscription selects the same Device
+            .id(subscription_id.clone()) // clone: the id is still read after the Subscription is built
+            .entities([EntitySelector::new(SelectorTypeBuilder::from(&device_type).build()?).with_ids(set.device().clone())])
             .time_interval(interval_seconds)
             .notification(NotificationParams::builder(Endpoint::builder(sink.endpoint(index)?).accept(NgsiLdMediaType::Json).build()?).build()?)
             .build()?;

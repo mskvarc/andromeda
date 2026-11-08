@@ -125,7 +125,7 @@ mod tests {
         let event = PendingChangeEvent {
             lifecycle: 2,
             entity_id: "urn:ngsi-ld:Building:1".to_owned(),
-            entity_type_name_keys: snapshot.entity_type_name_keys.clone(), // clone: the event and its state each hold the type keys.
+            entity_type_name_keys: snapshot.entity_type_name_keys.clone(),
             change_kinds: Vec::new(),
             change_attribute_name_keys: Vec::new(),
             change_dataset_ids: Vec::new(),

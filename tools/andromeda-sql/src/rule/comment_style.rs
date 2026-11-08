@@ -7,7 +7,8 @@
 //! version (the one comment that may carry a migration number), a rule line,
 //! comment lines, a closing rule line, and a `Spec:` line of the fixed form if
 //! the migration cites the specification. Every comment line fits 80 columns,
-//! uses no ` -- ` dash, carries no `TODO` or `FIXME`, and switches no linter
+//! sets no aside off with spaced double hyphens, carries no `TODO` or `FIXME`,
+//! and switches no linter
 //! off: a rule that needs an exception changes the rule.
 
 use crate::{

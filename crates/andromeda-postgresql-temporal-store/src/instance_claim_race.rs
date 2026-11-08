@@ -8,7 +8,7 @@
 //! `entity_key` and `attribute_name_key`, not on `stream_key` alone).
 //! `attribute_history` cannot carry that uniqueness itself: it is a
 //! TimescaleDB hypertable partitioned on `recorded_at`, and a unique index
-//! there must include the partitioning column, which would not even help --
+//! there must include the partitioning column, which would not even help:
 //! two rows claiming the same `instanceId` at two different write instants
 //! would still both pass it. `attribute_history_instance_claims` is an
 //! ordinary table that carries the invariant on the database's own behalf.

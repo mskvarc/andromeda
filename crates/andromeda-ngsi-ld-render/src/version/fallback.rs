@@ -112,7 +112,7 @@ impl VersionFallback {
 
     /// The family an instance of `family` is written as (Table 4.3.6.8-1):
     /// itself, or, when the target predates the version that introduced it,
-    /// the family it specializes -- every Property subclass a Property, and a
+    /// the family it specializes: every Property subclass a Property, and a
     /// `ListRelationship` a Relationship.
     #[must_use]
     pub const fn family(self, family: AttributeType) -> AttributeType {

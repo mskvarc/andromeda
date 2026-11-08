@@ -46,8 +46,8 @@ async fn walk_entity(body: Value, values: usize) -> Result<bool, ExpansionError>
 /// Assert that `body` expands within `values` values and is refused under one
 /// fewer, naming that limit.
 async fn assert_counts(body: &Value, values: usize) {
-    pretty_assertions::assert_eq!(walk_entity(body.clone(), values).await.ok(), Some(true), "{values} values admit {body}"); // clone: the body is walked under two limits
-    assert_refused(walk_entity(body.clone(), values - 1).await, values - 1); // clone: as above
+    pretty_assertions::assert_eq!(walk_entity(body.clone(), values).await.ok(), Some(true), "{values} values admit {body}");
+    assert_refused(walk_entity(body.clone(), values - 1).await, values - 1);
 }
 
 /// Assert a clause 6.3.2 refusal naming the limit of `values` values.
@@ -61,7 +61,7 @@ fn assert_refused<T: Debug>(walked: Result<T, ExpansionError>, values: usize) {
 /// An entity carrying `members` beside its identifier and type.
 fn entity(members: &Value) -> Value {
     let mut body = json!({"id": "urn:ngsi-ld:Car:1", "type": "Car"});
-    body.as_object_mut().expect("an object").extend(members.as_object().expect("members").clone()); // clone: the fixture members are borrowed
+    body.as_object_mut().expect("an object").extend(members.as_object().expect("members").clone());
     body
 }
 

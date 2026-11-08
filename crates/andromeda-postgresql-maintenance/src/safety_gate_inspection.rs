@@ -65,7 +65,7 @@ pub(crate) async fn safety_gates(connection: &mut PgConnection, scope: GateScope
             }
         }
         GateScope::Chunk { table, chunk } => (
-            chunk.relation.clone(), // clone: the gate statements bind the chunk's name as their own value
+            chunk.relation.clone(), // clone: the chunk is borrowed, so its relation name is copied into the owned tuple
             Some(Branch::Live.qualified(table.relation_name())),
             None,
         ),

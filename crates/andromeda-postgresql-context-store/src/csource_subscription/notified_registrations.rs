@@ -37,9 +37,7 @@ impl NotifiedRegistrationLedger {
     /// A ledger over the tenant database `pool` serves.
     #[must_use]
     pub fn new(pool: &PgPool) -> NotifiedRegistrationLedger {
-        NotifiedRegistrationLedger {
-            pool: pool.clone(), // clone: SQLx pools are shared reference-counted handles.
-        }
+        NotifiedRegistrationLedger { pool: pool.clone() }
     }
 }
 
@@ -169,7 +167,7 @@ fn registration_source() -> (Alias, [UnnestColumn; 1]) {
 /// refuses the insert; a deletion that commits first leaves nothing to join.
 fn claim_statement(subscription: &Identifier, registrations: &[Identifier]) -> Result<UnnestAliased<InsertStatement>, ContextStoreError> {
     let (source_alias, columns) = registration_source();
-    // clone: the aliased source names the same alias the statement reads.
+    // from_function consumes the alias, so the column mapping at the end gets a copy taken first.
     let aliased = source_alias.clone();
     let subscription_alias = Alias::new("s");
     // Sorted, so two claims of overlapping registrations for one subscription
@@ -184,8 +182,7 @@ fn claim_statement(subscription: &Identifier, registrations: &[Identifier]) -> R
         .join_as(
             JoinType::InnerJoin,
             Subscriptions::Table,
-            // clone: sea-query takes each alias occurrence by value, and the
-            // locking clause names the same alias again
+            // sea-query takes each alias by value, so the join copies it and the locking clause takes the original.
             subscription_alias.clone(),
             Expr::col((subscription_alias.clone(), Subscriptions::Id)).eq(subscription.as_str()),
         )

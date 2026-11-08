@@ -42,7 +42,7 @@ impl MqttConnectionKey {
             authority: config.authority.clone(), // clone: the key outlives the endpoint it was read from
             use_tls: config.use_tls,
             version: config.version,
-            username: config.username.clone(), // clone: same
+            username: config.username.clone(),
             password_hash,
         }
     }

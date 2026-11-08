@@ -1,10 +1,10 @@
 //! How the broker's listeners terminate TLS, and the scheme each one mints.
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 6.2 requires the API to support HTTP over TLS.
-//! Every listener that terminates it -- the data-plane TCP listener when
+//! Every listener that terminates it (the data-plane TCP listener when
 //! `server.transport = "tls"`, the HTTP/3 listener whenever it is enabled, and
-//! the `separate-port` management listener when `management.transport = "tls"`
-//! -- presents the one `[tls]` identity, reloaded from disk as it rotates. The
+//! the `separate-port` management listener when `management.transport = "tls"`)
+//! presents the one `[tls]` identity, reloaded from disk as it rotates. The
 //! identity is loaded only if some listener asks for it, so a plaintext broker
 //! behind a reverse proxy never reads a certificate.
 

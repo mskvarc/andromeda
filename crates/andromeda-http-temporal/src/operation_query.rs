@@ -29,7 +29,7 @@ use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_request::pagination::page_pointers::PagePointers;
 use axum::response::Response;
 
-/// POST /ngsi-ld/v1/temporal/entityOperations/query -- Query Temporal Evolution
+/// POST /ngsi-ld/v1/temporal/entityOperations/query: Query Temporal Evolution
 /// of Entities carried in a clause 5.2.23 `Query` body.
 ///
 /// # Errors

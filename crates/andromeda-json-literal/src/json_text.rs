@@ -1,8 +1,8 @@
 //! Writing JSON text by hand from values already admitted.
 //!
-//! A document assembled from the pieces of admitted literals -- a `@context`
+//! A document assembled from the pieces of admitted literals (a `@context`
 //! array built from the contexts a request named, a definition written without
-//! one of its members -- needs no tree: each piece is already canonical JSON
+//! one of its members) needs no tree: each piece is already canonical JSON
 //! text, and only the strings the broker supplies itself have to be quoted.
 
 /// `text` as a JSON string, quoted and escaped as IETF RFC 8259 section 7

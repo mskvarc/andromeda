@@ -6,7 +6,7 @@
 //! call"), while every entity of an `application/json` batch shares the
 //! request's `Link` context. Entities naming one and the same context are
 //! resolved, admitted, prepared and forwarded together, so a batch whose
-//! entities agree -- the common case -- does each of those once.
+//! entities agree (the common case) does each of those once.
 //!
 //! Whether two entities name the same context is decided exactly once, when the
 //! batch is parsed ([`BatchContexts`]), and recorded as a [`BatchContextId`].
@@ -101,7 +101,7 @@ impl BatchContext {
     /// This context admitted, read through `terms`.
     fn admitted(&self, terms: &Arc<ContextTerms>) -> AdmittedBatchContext {
         AdmittedBatchContext {
-            context: self.clone(), // clone: every entity naming the context holds the shared handle
+            context: self.clone(),
             terms: Arc::clone(terms),
         }
     }
@@ -180,8 +180,8 @@ impl BatchContexts {
 
     /// The context an entity is read under: the one the request named in a
     /// shared batch, or, in a batch whose entities carry their own, the one the
-    /// written `@context` member `own` gives -- the same [`BatchContext`] as
-    /// every earlier entity that wrote an equal member.
+    /// written `@context` member `own` gives, which is the same [`BatchContext`]
+    /// as every earlier entity that wrote an equal member.
     ///
     /// An entity of a shared batch carries no member of its own (clause 6.3.5
     /// refuses a body `@context` with `application/json` before this is
@@ -189,17 +189,17 @@ impl BatchContexts {
     /// none is read under the default context.
     pub fn context_of(&mut self, own: Option<JsonLiteral>) -> BatchContext {
         match &mut self.naming {
-            ContextNaming::Shared(shared) => shared.clone(), // clone: every entity holds the shared handle
+            ContextNaming::Shared(shared) => shared.clone(),
             ContextNaming::PerEntity(distinct) => {
                 let written = own.unwrap_or_else(JsonLiteral::null);
                 if let Some((_, context)) = distinct.iter().find(|(seen, _)| *seen == written) {
-                    return context.clone(); // clone: every entity naming the context holds the shared handle
+                    return context.clone();
                 }
                 let context = BatchContext {
                     id: BatchContextId(distinct.len()),
                     spec: Arc::new(ContextSpec::from_body(written.clone())), // clone: the written value stays the key later entities are compared with
                 };
-                distinct.push((written, context.clone())); // clone: the batch and the entity each hold the handle
+                distinct.push((written, context.clone()));
                 context
             }
         }
@@ -242,7 +242,7 @@ impl<T> ContextGroups<T> {
     pub fn push(&mut self, context: &BatchContext, item: T) {
         match self.groups.iter_mut().find(|(named, _)| named.id == context.id) {
             Some((_, items)) => items.push(item),
-            None => self.groups.push((context.clone(), vec![item])), // clone: the group holds the shared handle
+            None => self.groups.push((context.clone(), vec![item])),
         }
     }
 
@@ -304,7 +304,7 @@ mod tests {
     #[test]
     fn a_shared_batch_reads_every_entity_under_the_request_context() {
         let link = ContextSpec::from_link(IriBuf::new("https://example.com/ctx.jsonld".to_owned()).expect("a valid IRI"));
-        let mut contexts = BatchContexts::shared(BatchContext::shared(link.clone())); // clone: compared below
+        let mut contexts = BatchContexts::shared(BatchContext::shared(link.clone()));
         let first = contexts.context_of(None);
         let second = contexts.context_of(None);
 

@@ -16,8 +16,8 @@ use uuid::Uuid;
 ///
 /// A broker-minted identifier keeps only its [`Uuid`] and is re-rendered
 /// through the permanently stable template. A client-supplied
-/// identifier — and any older broker-minted spelling the template cannot
-/// reproduce byte for byte — is kept verbatim, because re-rendering it would
+/// identifier, and any older broker-minted spelling the template cannot
+/// reproduce byte for byte, is kept verbatim, because re-rendering it would
 /// hand a client a different identifier than the one it already holds.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -55,9 +55,9 @@ impl InstanceIdentity {
     /// An identifier is taken as [`Generated`](InstanceIdentity::Generated)
     /// only when rendering its UUID through the template reproduces
     /// the input exactly. That test, rather than a prefix match, is what makes
-    /// the split lossless: an identifier that merely resembles the template — a
+    /// the split lossless: an identifier that merely resembles the template (a
     /// non-canonical UUID spelling, a URN carrying a resolution component, a
-    /// trailing segment such as a write ordinal — is kept verbatim instead of
+    /// trailing segment such as a write ordinal) is kept verbatim instead of
     /// being silently rewritten.
     #[must_use]
     pub fn from_identifier(identifier: Identifier) -> InstanceIdentity {

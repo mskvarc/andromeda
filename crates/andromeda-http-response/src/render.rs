@@ -205,14 +205,14 @@ mod tests {
 
     impl RecordingHost {
         fn hosted(&self) -> Vec<JsonLiteral> {
-            self.hosted.lock().expect("the recording lock").clone() // clone: the assertion reads a snapshot
+            self.hosted.lock().expect("the recording lock").clone()
         }
     }
 
     impl CompoundContextHost for RecordingHost {
         fn host<'a>(&'a self, context: &'a JsonLiteral, _usage: WrapperUse) -> CompoundContextHostFuture<'a> {
             Box::pin(async move {
-                self.hosted.lock().expect("the recording lock").push(context.clone()); // clone: the record keeps its own copy
+                self.hosted.lock().expect("the recording lock").push(context.clone());
                 Ok(IriBuf::new(WRAPPER_URL.to_owned()).expect("a valid URL"))
             })
         }

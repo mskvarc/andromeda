@@ -30,7 +30,7 @@ impl From<&EntityState> for EntityDocument {
         EntityDocument::new(
             Some(state.id().clone()), // clone: the document owns what it names, the state stays shared
             state.types().as_slice().to_vec(),
-            state.scope().cloned().map(Slot::Set), // clone: as above
+            state.scope().cloned().map(Slot::Set), // clone: the state stays borrowed, so the document owns its scope
             state.expires_at().map(Slot::Set),
             state.attributes().written_members(),
         )
@@ -50,11 +50,11 @@ impl InstanceDocument {
             .observed_at(instance.observed_at().map(Slot::Set))
             .expires_at(instance.expires_at().map(Slot::Set))
             .unit_code(value.unit_code().map(Slot::Set))
-            .value_type(value.value_type().cloned().map(Slot::Set)) // clone: as above
+            .value_type(value.value_type().cloned().map(Slot::Set)) // clone: the state stays borrowed, so the document owns its value type
             .object_types((!object_types.is_empty()).then(|| Slot::Set(object_types.to_vec())))
             .created_at(instance.created_at())
             .modified_at(instance.modified_at())
-            .proof_seals(instance.proof_seals().clone()) // clone: as above
+            .proof_seals(instance.proof_seals().clone()) // clone: the state stays borrowed, so the document owns its proof seals
             .sub_attributes(instance.sub_attributes().written_members())
             .build()
     }
@@ -64,9 +64,7 @@ impl Attributes {
     /// Every stored attribute as its written member, in stored order.
     #[must_use]
     pub fn written_members(&self) -> IndexMap<AttributeName, AttributeMember> {
-        self.iter()
-            .map(|(name, instances)| (name.clone(), instance_members(instances))) // clone: the document owns its member names
-            .collect()
+        self.iter().map(|(name, instances)| (name.clone(), instance_members(instances))).collect()
     }
 }
 
@@ -82,7 +80,6 @@ fn instance_members(instances: &AttributeInstances) -> AttributeMember {
 
 /// The written value a stored family value is, under its family's carrier.
 fn written_value(value: &FamilyValue) -> WrittenValue {
-    // clone: every arm copies the stored value into the document, which owns it
     match value {
         FamilyValue::Property { values, .. } => WrittenValue::Value(values.iter().map(ExpandedValue::to_fragment).collect()),
         FamilyValue::GeoProperty { geometry, .. } => WrittenValue::Geometry(geometry.clone()),

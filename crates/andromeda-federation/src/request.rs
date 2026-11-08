@@ -217,9 +217,9 @@ pub struct ForwardTemporalQueryRequest<'a> {
 /// 6.23.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryDelivery {
-    /// `GET /entities` -- prefers `queryEntity`.
+    /// `GET /entities` (prefers `queryEntity`).
     Query,
-    /// `POST /entityOperations/query` -- prefers `queryBatch`.
+    /// `POST /entityOperations/query` (prefers `queryBatch`).
     Batch,
 }
 

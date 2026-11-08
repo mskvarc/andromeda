@@ -21,8 +21,8 @@ use sqlx::{Executor, PgConnection, PgPool, Postgres, Row};
 ///
 /// The stamp is read first, before anything is written, because a stamp that
 /// is already present is evidence about a database this process did not just
-/// create: overwriting it on sight would turn real drift — a fleet running
-/// two binaries, a tenant restored from an older backup, manual surgery —
+/// create: overwriting it on sight would turn real drift (a fleet running
+/// two binaries, a tenant restored from an older backup, manual surgery)
 /// into a silently repaired row instead of a refusal. Three cases follow from
 /// that reading:
 ///
@@ -34,8 +34,8 @@ use sqlx::{Executor, PgConnection, PgPool, Postgres, Row};
 ///   the schema forward and a stamp this call did not just write can only
 ///   agree or be ahead of what it should be.
 /// * A stamp behind the contract: [`reconcile_upgrade`] decides whether the
-///   tenant was demonstrably carried forward by an earlier binary — in which
-///   case the stamp is advanced — or the stamp is drift the migrator's own
+///   tenant was demonstrably carried forward by an earlier binary, in which
+///   case the stamp is advanced, or the stamp is drift the migrator's own
 ///   checksum check could not see, in which case it is refused exactly like
 ///   any other mismatch.
 ///
@@ -76,7 +76,7 @@ pub async fn ensure_schema_contract(pool: &PgPool, contract: &SchemaContract) ->
 /// `contract`'s version; what is still unproven is whether the *stamp* left
 /// behind by an earlier binary is trustworthy. It is trustworthy exactly when
 /// the migrations actually recorded as applied, up to and including the
-/// stamped version, digest to the value the stamp claims — proof that the
+/// stamped version, digest to the value the stamp claims. That is proof that the
 /// earlier binary's stamp described this tenant's real history rather than
 /// one inherited from an unrelated migration path that happens to name the
 /// same version.
@@ -87,8 +87,8 @@ pub async fn ensure_schema_contract(pool: &PgPool, contract: &SchemaContract) ->
 /// turn a diverged history into an accepted upgrade.
 ///
 /// The query is bounded only above, by the stamped version. The ledger holds
-/// the tenant set's history and nothing else -- the platform set the default
-/// tenant's database also carries is recorded in a ledger of its own -- so
+/// the tenant set's history and nothing else (the platform set the default
+/// tenant's database also carries is recorded in a ledger of its own), so
 /// every row up to the stamp is part of the history the stamp describes.
 ///
 /// [`migrate_tenant_db`]: crate::tenant_migration::migrate_tenant_db
@@ -174,7 +174,7 @@ fn refuse_on_mismatch(stamped: &StampedContract, contract: &SchemaContract) -> R
 /// established the row was absent, but nothing stops a concurrent tenant boot
 /// from winning the race between that read and this write. Losing the race
 /// leaves the other writer's stamp in place, which the caller's read-back then
-/// verifies like any other pre-existing stamp — a race resolves to a refusal
+/// verifies like any other pre-existing stamp, and a race resolves to a refusal
 /// on mismatch, never to two stamps clobbering each other.
 async fn stamp(pool: &PgPool, contract: &SchemaContract) -> Result<(), SchemaContractError> {
     let statement = stamp_statement(contract.version().get(), contract.digest().to_string())

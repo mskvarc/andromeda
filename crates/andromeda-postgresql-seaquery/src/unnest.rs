@@ -33,7 +33,7 @@ struct UnnestFunction;
 /// the `AS d(…)` alias, and the array element type its argument is cast to.
 ///
 /// The element type is the array form (for example [`PostgresType::BigintArray`]),
-/// so the argument renders `$n::bigint[]` — the shape `UNNEST` expects and the
+/// so the argument renders `$n::bigint[]`, the shape `UNNEST` expects and the
 /// element type the projected column carries.
 #[derive(Clone)]
 pub struct UnnestColumn {
@@ -175,7 +175,6 @@ impl<S> UnnestAliased<S> {
 
 /// The names of `columns`.
 fn column_names(columns: &[UnnestColumn]) -> Vec<DynIden> {
-    // clone: each alias owns the names it spells.
     columns.iter().map(|column| column.name.clone()).collect()
 }
 

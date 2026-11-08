@@ -44,8 +44,8 @@ pub(super) struct LatestInstant;
 pub(super) fn latest_instant(row: impl IntoIden) -> SimpleExpr {
     let row: DynIden = row.into_iden();
     Func::greatest([
-        Expr::col((row.clone(), Entities::ModifiedAt)),          // clone: the alias qualifies every column
-        Expr::col((row.clone(), Entities::EvolutionModifiedAt)), // clone: the alias qualifies every column
+        Expr::col((row.clone(), Entities::ModifiedAt)),
+        Expr::col((row.clone(), Entities::EvolutionModifiedAt)),
         Expr::col((row, Entities::DeletedOrQueuedAt)),
     ])
     .into()
@@ -63,7 +63,7 @@ pub(super) fn predates(latest: SimpleExpr, accepted_at: DateTime<Utc>) -> Simple
 /// A write a statement refuses still meets the row in its `SET` list, so each
 /// column it writes keeps the value it holds.
 pub(super) fn unless_refused(refused: &SimpleExpr, kept: SimpleExpr, value: SimpleExpr) -> SimpleExpr {
-    // clone: every column the write sets tests the one condition
+    // clone: each written column tests the same condition, so the caller's expression is copied.
     CaseStatement::new().case(refused.clone(), kept).finally(value).into()
 }
 

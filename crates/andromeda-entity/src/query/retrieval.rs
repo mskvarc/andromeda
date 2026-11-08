@@ -217,8 +217,6 @@ fn narrow_to_selection(
     if narrowing.attrs.is_empty() && narrowing.projection.is_none() {
         return Ok(state);
     }
-    // clone: a state copy shares every attribute, the narrowing only drops
-    // some of them from the copy's map.
     let mut narrowed = Arc::unwrap_or_clone(state);
     // Clause 4.21 is applied before the clause 4.5.23 traversal reads the
     // entity's Relationships, matching the query path, where the projection

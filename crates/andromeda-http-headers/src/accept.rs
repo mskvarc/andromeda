@@ -61,7 +61,7 @@ impl Accept {
     /// "the order of the list above is significant. If the Accept header can be
     /// expanded to more than one of the options of the list, the first one of
     /// the list shall be selected." The order the client wrote its entries in
-    /// therefore never enters into it -- `application/ld+json, application/json`
+    /// therefore never enters into it: `application/ld+json, application/json`
     /// negotiates to `application/json`.
     ///
     /// Filters out `GeoJSON` when `geo_json` is [`GeoJsonSupport::Disallowed`].

@@ -94,7 +94,7 @@ impl ForwardingContext {
     /// The context `Link` the forwarded request carries, if any.
     pub(crate) fn link(&self) -> Option<IriBuf> {
         match self {
-            ForwardingContext::Configured(url) | ForwardingContext::InboundLink(url) => Some(url.clone()), // clone: the payload owns its Link IRI
+            ForwardingContext::Configured(url) | ForwardingContext::InboundLink(url) => Some(url.clone()),
             ForwardingContext::CoreForCompound => Some(IriBuf::from(NGSI_LD_CORE_CONTEXT_URL)),
             ForwardingContext::InboundDefault | ForwardingContext::InlineInbound(_) | ForwardingContext::InlinePerItem | ForwardingContext::InlineCore => None,
         }
@@ -114,10 +114,10 @@ impl ForwardingContext {
     /// The context the forwarded request's names are spelled in.
     pub(crate) fn naming(&self, inbound: &ContextSpec) -> ContextSpec {
         match self {
-            ForwardingContext::Configured(url) => ContextSpec::from_link(url.clone()), // clone: the spec owns its Link IRI
+            ForwardingContext::Configured(url) => ContextSpec::from_link(url.clone()),
             ForwardingContext::CoreForCompound | ForwardingContext::InlineCore => ContextSpec::none(),
             ForwardingContext::InboundLink(_) | ForwardingContext::InboundDefault | ForwardingContext::InlineInbound(_) | ForwardingContext::InlinePerItem => {
-                inbound.clone() // clone: the names are spelled in the inbound context itself
+                inbound.clone()
             }
         }
     }
@@ -131,7 +131,7 @@ impl ForwardingContext {
     /// as a JSON string, which no IRI fails to be.
     pub(crate) fn inline_for(&self, item: &ContextSpec) -> Result<Option<JsonLiteral>, FederationError> {
         match self {
-            ForwardingContext::InlineInbound(context) => Ok(Some(context.clone())), // clone: every forwarded entity owns its inline context
+            ForwardingContext::InlineInbound(context) => Ok(Some(context.clone())),
             ForwardingContext::InlinePerItem => inline_context(item).map(Some),
             ForwardingContext::InlineCore => written_reference(NGSI_LD_CORE_CONTEXT_URL.as_str()).map(Some),
             ForwardingContext::Configured(_) | ForwardingContext::InboundLink(_) | ForwardingContext::InboundDefault | ForwardingContext::CoreForCompound => {
@@ -161,7 +161,7 @@ pub(crate) struct ForwardingDecision {
 /// [`FederationError::JsonLd`] when the inbound context cannot be written
 /// inline.
 pub(crate) fn decide(inbound: &ContextSpec, info: &ContextSourceInfo, presence: BodyPresence) -> Result<ForwardingDecision, FederationError> {
-    let configured = info.jsonld_context.clone(); // clone: the decision owns the IRI the registration keeps
+    let configured = info.jsonld_context.clone();
     // Clause 6.3.19: a configured `jsonldContext` forces `application/json`,
     // the one form that names a context in a `Link` header; otherwise
     // `contentType` decides and the default is `application/json`.
@@ -203,8 +203,8 @@ fn forwardable_media_type(content_type: &MediaTypeBuf) -> Result<ResponseMediaTy
     })
 }
 
-/// Whether every context reference in an inline `@context` -- the strings of
-/// the value or its array, and the `@import` of every definition -- is an
+/// Whether every context reference in an inline `@context` (the strings of
+/// the value or its array, and the `@import` of every definition) is an
 /// absolute IRI, so a source reads each exactly as this broker does.
 fn holds_only_absolute_references(context: JsonPiece<'_>) -> bool {
     match context.kind() {
@@ -277,7 +277,7 @@ fn decide_mixed(contexts: &[&BatchContext], info: &ContextSourceInfo) -> Result<
 fn inbound_link_context(inbound: &ContextSpec) -> ForwardingContext {
     match inbound.request_context() {
         RequestContext::Default => ForwardingContext::InboundDefault,
-        RequestContext::Link(url) => ForwardingContext::InboundLink(url.clone()), // clone: the forwarding context owns its IRI
+        RequestContext::Link(url) => ForwardingContext::InboundLink(url.clone()),
         RequestContext::Body(context) => match single_url(context.piece()) {
             Some(url) => ForwardingContext::InboundLink(url),
             None => ForwardingContext::CoreForCompound,
@@ -310,7 +310,7 @@ pub(crate) fn inline_context(inbound: &ContextSpec) -> Result<JsonLiteral, Feder
     match inbound.request_context() {
         RequestContext::Default => written_reference(NGSI_LD_CORE_CONTEXT_URL.as_str()),
         RequestContext::Link(url) => written_reference(url.as_str()),
-        RequestContext::Body(context) => Ok(context.clone()), // clone: the forwarded body owns its inline context
+        RequestContext::Body(context) => Ok(context.clone()),
     }
 }
 

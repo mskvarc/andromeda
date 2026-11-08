@@ -81,7 +81,7 @@ pub(super) fn register_columnstore_conversion(
         ShutdownPolicy::new(cadence),
     );
     let task = ScheduledTask::new(registration, schedule, move |execution| {
-        let repository = Arc::clone(&repository); // clone: each bounded pass owns the repository handle while running.
+        let repository = Arc::clone(&repository);
         async move {
             let candidates = repository
                 .columnstore_conversion_candidates(horizon, Utc::now())
@@ -175,7 +175,7 @@ mod tests {
         let visited = Mutex::new(Vec::new());
         let tally = convert_each(&due, &CancellationToken::new(), |chunk| {
             let mut seen = visited.lock().expect("the record is not poisoned");
-            seen.push(chunk.clone()); // clone: the record outlives the borrowed chunk name.
+            seen.push(chunk.clone());
             let outcome = outcomes[seen.len() - 1];
             async move { Ok::<_, Infallible>(outcome) }
         })

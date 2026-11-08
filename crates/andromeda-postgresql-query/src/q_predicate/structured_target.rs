@@ -16,10 +16,10 @@
 //! | `VocabProperty` carrying more than one term | the expanded `vocab`, `["http://example.org/Male", …]` |
 //! | a Property whose value is an array or an object | the value itself |
 //!
-//! Clause 4.9 names each of those as a target value in its own right — "a value
+//! Clause 4.9 names each of those as a target value in its own right, as in "a value
 //! from any of the key-value pairs held within the languageMap", "the valueList
 //! array associated to such a `ListProperty`", "the array of objects associated
-//! to such `ListRelationship`" — so a Query Term compared only against the scalar
+//! to such `ListRelationship`", so a Query Term compared only against the scalar
 //! columns would match none of them.
 //!
 //! # How the comparison is expressed

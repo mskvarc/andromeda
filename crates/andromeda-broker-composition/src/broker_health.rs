@@ -20,8 +20,8 @@ pub(crate) fn broker_health(
     process_tasks: &TaskSupervisor,
     tenants: &Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
 ) -> Health {
-    let database_indicator = DatabaseHealthIndicator::new(registry.main_pool().clone()); // clone: PgPool is a shared handle
-    let task_indicator = BackgroundTaskHealthIndicator::new(process_tasks.clone(), Arc::clone(tenants) as Arc<dyn LoadedTenantSupervisors>); // clone: the indicator reads the process supervisor and the manager the broker keeps
+    let database_indicator = DatabaseHealthIndicator::new(registry.main_pool().clone());
+    let task_indicator = BackgroundTaskHealthIndicator::new(process_tasks.clone(), Arc::clone(tenants) as Arc<dyn LoadedTenantSupervisors>);
     let mut health = Health::builder().with_indicator(database_indicator).with_indicator(task_indicator);
     if let Some(mqtt_pool) = factory.default_mqtt_pool() {
         health = health.with_indicator(MqttHealthIndicator::new(mqtt_pool));

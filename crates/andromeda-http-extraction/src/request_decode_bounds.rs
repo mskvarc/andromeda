@@ -16,8 +16,8 @@ use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextRead
 /// recording a geometry at the first ordinate no geometry within the bound can
 /// hold, and an entity at the first value past the entity value limit, so a
 /// payload that will be refused (clause 6.3.2) costs what the bounds cost
-/// whatever its size. A request carrying none -- a router assembled without the
-/// stack, as in a unit test -- records every payload whole.
+/// whatever its size. A request carrying none (a router assembled without the
+/// stack, as in a unit test) records every payload whole.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RequestDecodeBounds(DecodeBounds);
 

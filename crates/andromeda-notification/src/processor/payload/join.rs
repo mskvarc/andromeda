@@ -19,7 +19,6 @@ pub(super) async fn notified_linked_graph(
     params: &NotificationBuildParams<'_>,
     context: &ContextSpec,
 ) -> Option<LinkedEntities> {
-    // clone: the linked key owns the key of the rendering it starts from
     let key = LinkedKey::new(root.clone(), params.sub.notification_join_level, params.sub.notification_sys_attrs);
     match cached_linked_graph(params.target, params.entity_query, main_entity, key, context, params.cache).await {
         Ok(resolved) => Some(resolved),

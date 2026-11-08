@@ -100,7 +100,7 @@ impl CsourceMembership {
                 recorded: Vec::new(),
             });
         }
-        let identifiers: Vec<Identifier> = matching.iter().map(|registration| registration.id.clone()).collect(); // clone: the store takes the identifiers as one slice
+        let identifiers: Vec<Identifier> = matching.iter().map(|registration| registration.id.clone()).collect();
         let recorded = self.ledger.claim(&subscription.id, &identifiers).await?;
         let carried = match kind {
             UpsertKind::Created => {
@@ -151,7 +151,7 @@ impl CsourceMembership {
             match state {
                 Some(registration) if csource_subscription_selects_registration(subscription, registration) => {}
                 Some(_) | None => match self.ledger.release(&subscription.id, identifier).await {
-                    Ok(Release::Released) => withdrawn.push(identifier.clone()), // clone: the caller keeps the states it paired them with
+                    Ok(Release::Released) => withdrawn.push(identifier.clone()),
                     Ok(Release::Absent) => {}
                     Err(failure) => error!("Failed to withdraw CSR {} for subscription {}: {}", identifier, subscription.id, failure),
                 },

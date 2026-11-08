@@ -114,7 +114,7 @@ pub fn registered_types_of(pairs: &[RegisteredPair]) -> Result<Vec<RegisteredTyp
             if let Some(attribute) = &attribute
                 && !entry.attribute_names.contains(attribute)
             {
-                entry.attribute_names.push(attribute.clone()); // clone: each type owns the names registered beside it
+                entry.attribute_names.push(attribute.clone());
             }
         }
     }

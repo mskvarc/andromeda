@@ -287,7 +287,7 @@ mod tests {
         };
         pretty_assertions::assert_eq!(loaded.document_url(&resolved), &resolved);
 
-        loaded.provenance = ContextProvenance::Downloaded(final_url.clone()); // clone: the expectation compares against it
+        loaded.provenance = ContextProvenance::Downloaded(final_url.clone());
         pretty_assertions::assert_eq!(loaded.document_url(&resolved), &final_url);
 
         loaded.provenance = ContextProvenance::Broker;

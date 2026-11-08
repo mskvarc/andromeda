@@ -35,7 +35,7 @@ impl Holds {
     /// The entity the broker holds when `created` was sent, none when it holds nothing.
     fn expected(&self, created: &Entity<Input>) -> Result<Option<Entity<Input>>> {
         match self {
-            Holds::Whole => Ok(Some(created.clone())), // clone: the case keeps the created entity for its other expectations
+            Holds::Whole => Ok(Some(created.clone())),
             Holds::Only(names) => Ok(Some(keeping(created, names)?)),
             Holds::Without(names) => Ok(Some(without(created, names)?)),
             Holds::Nothing => Ok(None),

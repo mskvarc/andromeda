@@ -43,7 +43,6 @@ impl LintReport {
         if let Some(help) = finding.help() {
             diagnostic = diagnostic.with_help(help);
         }
-        // clone: the report owns its source; the clone shares the text
         let report = Report::new(diagnostic).with_source_code(NamedSource::new(file.to_string(), Arc::clone(text)));
         let mut rendered = String::new();
         self.handler.render_report(&mut rendered, report.as_ref())?;

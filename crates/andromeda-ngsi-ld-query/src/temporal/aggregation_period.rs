@@ -90,7 +90,7 @@ impl AggregationPeriod {
 /// duration.
 ///
 /// A dedicated adapter rather than a `#[serde(try_from)]` on the type itself,
-/// because clause 4.5.19 folds three distinct inputs — absent, empty and zero —
+/// because clause 4.5.19 folds three distinct inputs (absent, empty and zero)
 /// into one meaning, and only the `Option` can express that a present value
 /// deserialized to no period at all.
 pub mod optional {

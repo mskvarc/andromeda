@@ -47,7 +47,7 @@ impl ForwardedNames<'_> {
         for (parameter, key, value) in &pairs {
             let spelled = match parameter {
                 Some(parameter) => self.reworded_parameter(*parameter, value, &json_keys).await?,
-                None => value.clone(), // clone: the forwarded query owns the values it writes
+                None => value.clone(),
             };
             reworded.push((key, spelled));
         }

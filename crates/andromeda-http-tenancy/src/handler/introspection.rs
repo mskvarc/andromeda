@@ -1,4 +1,4 @@
-//! `GET /ngsi-ld/v1/tenants/{tenantName}` -- the per-tenant introspection resource.
+//! `GET /ngsi-ld/v1/tenants/{tenantName}`: the per-tenant introspection resource.
 
 use crate::{
     error::{TenancyHttpError, classify},
@@ -18,7 +18,7 @@ use axum::{
 
 /// Return one tenant's resource.
 ///
-/// Cheap by default -- a registry row and an in-memory residency read.
+/// Cheap by default: a registry row and an in-memory residency read.
 /// `?options=sysAttrs` adds the system timestamps and `?options=usage` the
 /// operational block (which queries the tenant database). An unknown tenant is
 /// answered with 404 `NonexistentTenant` on the management path, reporting its

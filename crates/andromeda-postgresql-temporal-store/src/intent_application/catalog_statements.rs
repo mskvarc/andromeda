@@ -267,7 +267,6 @@ fn gained_types() -> SimpleExpr {
 /// inserted ones among them.
 fn census_rows() -> SelectStatement {
     let evolution_of = |streams: DynIden| {
-        // clone: the join names the streams the census rows are read from.
         Query::select()
             .from(streams.clone())
             .join(
@@ -278,7 +277,6 @@ fn census_rows() -> SelectStatement {
             .take()
     };
     let inserted = |streams: DynIden, types: DynIden| {
-        // clone: the census reads the attribute key of the same streams.
         typed_rows(
             evolution_of(streams.clone()),
             Expr::col((Evolved, types)),

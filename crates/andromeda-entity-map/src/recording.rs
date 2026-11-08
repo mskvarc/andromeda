@@ -7,8 +7,8 @@
 //! filled with the entities this broker holds and the ones each source
 //! returned, then stored; and a read under no map records nothing. What differs
 //! between the operations is only how the entities this broker holds are
-//! listed, and whether the page applied the request's filters at all — the two
-//! parameters of [`EntityMapService::record_read`].
+//! listed, and whether the page applied the request's filters at all. Those two
+//! are the parameters of [`EntityMapService::record_read`].
 
 use crate::{contribution::SourceContribution, error::EntityMapError, pruning::PageCheck, reuse::EntityMapUse, service::EntityMapService};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -17,8 +17,8 @@ use std::future::Future;
 /// Lists the entities this broker itself contributes to the map a read runs
 /// under (clause 5.2.39: the `EntityMapSource` that is not a registration).
 ///
-/// Listing them is not free — a query pays a pass over its own store for it —
-/// so the recording asks only in the cases that record them, and the binding
+/// Listing them is not free, because a query pays a pass over its own store for
+/// it. The recording therefore asks only in the cases that record them, and the binding
 /// that implements this decides how the listing is made and what its failure
 /// looks like.
 pub trait LocalMapEntities {
@@ -62,7 +62,7 @@ pub enum MapListing {
 /// holds enough of an entity to decide the match. Without it, each source
 /// decided its own contribution and the broker rechecked what it holds itself;
 /// with it, the broker applied the deferred filters once over the merged result,
-/// and the survivors are the only authority on what still matches -- the raw
+/// and the survivors are the only authority on what still matches. The raw
 /// per-source answers are candidates, not matches, so pruning against them would
 /// shed nothing.
 pub enum PageMatches {
@@ -84,8 +84,8 @@ pub enum PageFiltering {
     /// to an entity before it joins a result page, so the entities it checked
     /// and found no longer matching leave the map.
     Applied,
-    /// A retrieval applies none of them — it reads the map only to learn which
-    /// context sources hold the one entity it asked for — so it checks nothing
+    /// A retrieval applies none of them: it reads the map only to learn which
+    /// context sources hold the one entity it asked for, so it checks nothing
     /// and the map keeps every identifier it holds.
     NotApplied,
 }
@@ -217,7 +217,7 @@ mod tests {
             Box::pin(async move {
                 let mut maps = self.0.lock().expect("the test store lock is not poisoned");
                 maps.retain(|stored| stored.id != map.id);
-                maps.push(map.clone()); // clone: the fake owns what it stores
+                maps.push(map.clone());
                 Ok(())
             })
         }
@@ -225,7 +225,7 @@ mod tests {
         fn get<'a>(&'a self, identifier: &'a Identifier) -> EntityMapStoreFuture<'a, Option<EntityMap>> {
             Box::pin(async move {
                 let maps = self.0.lock().expect("the test store lock is not poisoned");
-                Ok(maps.iter().find(|map| &map.id == identifier && !map.is_expired()).cloned()) // clone: the caller owns the returned map
+                Ok(maps.iter().find(|map| &map.id == identifier && !map.is_expired()).cloned())
             })
         }
 
@@ -243,7 +243,7 @@ mod tests {
                 let mut maps = self.0.lock().expect("the test store lock is not poisoned");
                 match maps.iter_mut().find(|map| &map.id == identifier && !map.is_expired()) {
                     Some(map) => {
-                        map.link(registration.clone(), linked_map.clone()); // clone: the fake owns what it stores
+                        map.link(registration.clone(), linked_map.clone());
                         Ok(EntityMapMutation::Applied)
                     }
                     None => Ok(EntityMapMutation::Missing),
@@ -288,7 +288,7 @@ mod tests {
         }
 
         fn asked_for(&self) -> Vec<MapListing> {
-            self.asked.lock().map(|asked| asked.clone()).unwrap_or_default() // clone: the assertion owns what it reads
+            self.asked.lock().map(|asked| asked.clone()).unwrap_or_default()
         }
     }
 
@@ -299,7 +299,6 @@ mod tests {
             if let Ok(mut asked) = self.asked.lock() {
                 asked.push(listing);
             }
-            // clone: the recording owns the identifiers it records
             ready(self.answer.clone())
         }
     }
@@ -347,7 +346,7 @@ mod tests {
 
     /// Clause 5.5.9.3: under `splitEntities` the survivors of the broker's own
     /// recheck over the merged result are the whole match set, so a candidate a
-    /// source returned but that no longer matched after the merge is shed -- and
+    /// source returned but that no longer matched after the merge is shed, and
     /// the broker does not ask for a per-source local recheck listing.
     #[tokio::test]
     async fn a_split_page_sheds_a_candidate_that_did_not_survive_the_merge() -> Result<(), EntityMapError> {
@@ -360,7 +359,7 @@ mod tests {
         // The source returned `urn:remote` as a candidate, but only `urn:a`
         // survived the deferred filters over the merged result.
         let contributions = vec![SourceContribution {
-            registration: registration.clone(), // clone: the map read below is by identifier, but the contribution owns its registration
+            registration: registration.clone(),
             entity_ids: vec![identifier("urn:remote")],
             linked_map: None,
         }];
@@ -416,9 +415,9 @@ mod tests {
         let registration = identifier("urn:ngsi-ld:ContextSourceRegistration:1");
         let linked = identifier("urn:ngsi-ld:EntityMap:peer");
         let contributions = vec![SourceContribution {
-            registration: registration.clone(), // clone: the assertion below reads the registration again
+            registration: registration.clone(),
             entity_ids: vec![identifier("urn:remote")],
-            linked_map: Some(linked.clone()), // clone: as above
+            linked_map: Some(linked.clone()),
         }];
 
         let local = Local::answering(Ok(vec![identifier("urn:local")]));

@@ -187,7 +187,7 @@ mod tests {
                 body: AnswerBody::Absent,
             },
         ] {
-            let read = with_full_update_result_names(&engine, &forwarding(), outcome.clone()).await; // clone: compared below
+            let read = with_full_update_result_names(&engine, &forwarding(), outcome.clone()).await;
             pretty_assertions::assert_eq!(format!("{read:?}"), format!("{outcome:?}"));
         }
         assert!(!matches!(

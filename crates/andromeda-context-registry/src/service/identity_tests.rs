@@ -56,7 +56,7 @@ async fn the_same_hosted_document_created_twice_is_two_entries() {
     let registry = service(&store);
     let document = literal(&json!({ "@context": { "Spot": "https://e.org/Spot" } }));
 
-    let first = registry.create(&document, &BrokerRoot).await.expect("created"); // clone: the same document is created twice.
+    let first = registry.create(&document, &BrokerRoot).await.expect("created");
     let second = registry.create(&document, &BrokerRoot).await.expect("created");
 
     assert_ne!(first, second);
@@ -128,16 +128,13 @@ async fn a_derived_identifier_held_by_another_kind_of_entry_falls_back_to_a_rand
     let store = Arc::new(MemoryStore::default());
     let registry = service(&store);
     let document = compound("https://e.org/a.jsonld", "https://e.org/b.jsonld");
-    let derived = registry
-        .create_implicitly(&document, &BrokerRoot, WrapperUse::Response) // clone: the same document is hosted again below.
-        .await
-        .expect("hosted");
+    let derived = registry.create_implicitly(&document, &BrokerRoot, WrapperUse::Response).await.expect("hosted");
     registry
-        .remove(&ContextIdentifier::from(Identifier::from(derived.clone())), ContextRemoval::Delete) // clone: the derived identifier is compared below.
+        .remove(&ContextIdentifier::from(Identifier::from(derived.clone())), ContextRemoval::Delete)
         .await
         .expect("deleted");
     let hosted = literal(&json!({ "@context": { "Spot": "https://e.org/Spot" } }));
-    store.hold(&derived, ContextKind::Hosted, hosted.clone()); // clone: the held document is compared below.
+    store.hold(&derived, ContextKind::Hosted, hosted.clone());
 
     let fallback = registry.create_implicitly(&document, &BrokerRoot, WrapperUse::Response).await.expect("hosted");
 
@@ -146,7 +143,7 @@ async fn a_derived_identifier_held_by_another_kind_of_entry_falls_back_to_a_rand
     pretty_assertions::assert_eq!(
         store.read(derived.as_ref(), |row| (row.kind.clone(), row.payload.clone())),
         Some((ContextKind::Hosted, hosted))
-    ); // clone: the read hands back an owned kind and document.
+    );
 }
 
 /// An `ImplicitlyCreated` entry holding different content under the derived
@@ -156,12 +153,9 @@ async fn a_derived_identifier_held_by_different_implicit_content_falls_back_to_a
     let store = Arc::new(MemoryStore::default());
     let registry = service(&store);
     let document = compound("https://e.org/a.jsonld", "https://e.org/b.jsonld");
-    let derived = registry
-        .create_implicitly(&document, &BrokerRoot, WrapperUse::Response) // clone: the same document is hosted again below.
-        .await
-        .expect("hosted");
+    let derived = registry.create_implicitly(&document, &BrokerRoot, WrapperUse::Response).await.expect("hosted");
     registry
-        .remove(&ContextIdentifier::from(Identifier::from(derived.clone())), ContextRemoval::Delete) // clone: the derived identifier is compared below.
+        .remove(&ContextIdentifier::from(Identifier::from(derived.clone())), ContextRemoval::Delete)
         .await
         .expect("deleted");
     store.hold(
@@ -183,12 +177,9 @@ async fn a_deleted_implicit_entry_comes_back_under_the_same_identifier() {
     let store = Arc::new(MemoryStore::default());
     let registry = service(&store);
     let document = compound("https://e.org/a.jsonld", "https://e.org/b.jsonld");
-    let first = registry
-        .create_implicitly(&document, &BrokerRoot, WrapperUse::Response) // clone: the same document is hosted again below.
-        .await
-        .expect("hosted");
+    let first = registry.create_implicitly(&document, &BrokerRoot, WrapperUse::Response).await.expect("hosted");
     registry
-        .remove(&ContextIdentifier::from(Identifier::from(first.clone())), ContextRemoval::Delete) // clone: the first identifier is compared below.
+        .remove(&ContextIdentifier::from(Identifier::from(first.clone())), ContextRemoval::Delete)
         .await
         .expect("deleted");
 
@@ -218,7 +209,7 @@ async fn a_compound_response_context_hosted_twice_is_one_implicit_entry() {
     pretty_assertions::assert_eq!(uuid_version(&first), Some(Version::Sha1));
     pretty_assertions::assert_eq!(store.len(), 1);
     pretty_assertions::assert_eq!(
-        store.read(first.as_ref(), |row| (row.kind.clone(), row.payload.clone())), // clone: the read hands back an owned kind and document.
+        store.read(first.as_ref(), |row| (row.kind.clone(), row.payload.clone())),
         Some((
             ContextKind::ImplicitlyCreated,
             literal(&json!({ "@context": ["https://e.org/a.jsonld", "https://e.org/b.jsonld"] }))

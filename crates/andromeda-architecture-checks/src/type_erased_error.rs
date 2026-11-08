@@ -1,8 +1,8 @@
 //! The workspace-wide ban on type-erased error values.
 //!
 //! The workspace uses typed error enums (`thiserror`) everywhere; a `dyn Error`
-//! trait object — `Box<dyn Error>`, `&dyn Error`, `Box<dyn Error + Send + Sync>`
-//! — throws that type information away. `anyhow::Error` is the same erasure by
+//! trait object (`Box<dyn Error>`, `&dyn Error`, `Box<dyn Error + Send + Sync>`)
+//! throws that type information away. `anyhow::Error` is the same erasure by
 //! another name and is barred at the manifest boundary in
 //! [`crate::dependencies`]. This guard catches the trait-object form directly in
 //! the syntax tree, so a `use`-aliased or fully-qualified spelling cannot slip

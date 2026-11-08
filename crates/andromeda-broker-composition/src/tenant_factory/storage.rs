@@ -171,7 +171,7 @@ async fn bring_schema_current(pool: &PgPool, migration_url: &Url, defaults: &Dat
 /// it replaces them.
 async fn open_serving_pool(config: &TenantFactoryConfig, serving_url: &Url, max_connections: u32) -> Result<PgPool, TenantAssemblyError> {
     let options = configure_pool_options(max_connections, config.database.acquire_timeout());
-    let pool = options.clone().connect(serving_url.as_str()).await?; // clone: the options are needed again when the pool is reopened.
+    let pool = options.clone().connect(serving_url.as_str()).await?; // clone: the options are still needed to reopen the pool.
     match reconcile_database_defaults(&pool, &config.database_defaults).await? {
         DefaultsReconciliation::Unchanged => Ok(pool),
         DefaultsReconciliation::Adjusted => {
@@ -203,9 +203,7 @@ async fn bring_pattern_forms_current(pool: &PgPool) -> Result<(), TenantAssembly
 /// Clause 5.13.1: a reference to one of this tenant's own stored contexts is
 /// resolved from its storage, never fetched over HTTP from this broker.
 fn tenant_engine(config: &TenantFactoryConfig, context_repo: &Arc<JsonLdContextRepository>) -> Result<JsonLdEngine, TenantAssemblyError> {
-    let recognizer = Arc::new(TenantHostedContexts::new(
-        config.public_url.clone(), // clone: the recogniser owns the configured apiRoot
-    ));
+    let recognizer = Arc::new(TenantHostedContexts::new(config.public_url.clone()));
     Ok(build_engine(&config.jsonld, Arc::clone(context_repo), recognizer)?)
 }
 
@@ -225,13 +223,13 @@ pub(super) async fn initialize_storage(
     let max_connections = match tenant {
         TenantRef::UnnamedDefault => config.tenancy.default_tenant.max_connections.get(),
         // Through a pooler a named tenant's serving pool holds only a couple of
-        // client connections -- the pooler does the real backend pooling -- so a
+        // client connections, since the pooler does the real backend pooling, so a
         // working set larger than the runtime cache cannot churn the host's
         // sockets into ephemeral-port exhaustion. Direct, it is the real backend
         // pool and takes the tenancy-configured size.
         TenantRef::Named(_) => config.database.named_serving_max_connections(config.tenancy.databases.max_connections.get()),
     };
-    // Open the serving pool first -- the pooler when one is configured -- and
+    // Open the serving pool first (the pooler when one is configured) and
     // migrate only when the schema is not already current. A warm-schema cold
     // load then never opens the direct migrator connection or takes its session
     // advisory lock, which a transaction-pooling proxy would break; the pooler
@@ -255,7 +253,6 @@ pub(super) async fn initialize_storage(
     // @contexts." The obligation is the broker's and not the resolver's, so the
     // pass runs unconditionally as a supervised scheduled task registered from
     // this port, whether or not a hit counter was attached.
-    // clone: the pass and every other Context capability share one repository.
     let cached_context_invalidation = Arc::clone(&context_repo) as Arc<dyn CachedContextInvalidation>;
 
     let attribute_names = Arc::new(NameCache::<AttributeName>::new(&pool, &config.database.name_cache));
@@ -282,8 +279,8 @@ pub(super) async fn initialize_storage(
     // One cache per dictionary per tenant, shared by every path that resolves
     // an attribute or type IRI: the temporal catalogue, the entity repository's
     // read path and the entity rows and projection the commit writes.
-    let attribute_names = Arc::clone(&attribute_names) as Arc<dyn NameLookup<AttributeName>>; // clone: the cache outlives each port that holds it.
-    let entity_type_names = Arc::clone(&entity_type_names) as Arc<dyn NameLookup<EntityTypeName>>; // clone: the cache outlives each port that holds it.
+    let attribute_names = Arc::clone(&attribute_names) as Arc<dyn NameLookup<AttributeName>>;
+    let entity_type_names = Arc::clone(&entity_type_names) as Arc<dyn NameLookup<EntityTypeName>>;
     // Probe the edition once: the TSL build converts aged chunks to the hypercore
     // columnstore, the Apache-2.0 core runs the hypertables uncompressed. The
     // reconciler below enables the columnstore only where this finds one, so an
@@ -294,7 +291,7 @@ pub(super) async fn initialize_storage(
     let reads = ReadShare::of(&pool, config.database.write_reserve_percent);
     let temporal_repo = Arc::new(TemporalRepository::new(
         &pool,
-        reads.clone(), // clone: the entity store's read requests draw on the same permits.
+        reads.clone(),
         Arc::clone(&attribute_names),
         Arc::clone(&entity_type_names),
         columnstore,
@@ -307,25 +304,22 @@ pub(super) async fn initialize_storage(
         Arc::clone(&entity_type_names),
     ));
     let entity_ports = EntityStoragePorts {
-        reader: Arc::clone(&entity_repository) as Arc<dyn EntityReader>, // clone: every focused port shares one repository and pool.
-        query: Arc::clone(&entity_repository) as Arc<dyn EntityQueryStore>, // clone: every focused port shares one repository and pool.
-        discovery: Arc::clone(&entity_repository) as Arc<dyn EntityDiscoveryStore>, // clone: every focused port shares one repository and pool.
-        payload_pages: Arc::clone(&entity_repository) as Arc<dyn EntityPayloadPages>, // clone: every focused port shares one repository and pool.
-        expiry: Arc::clone(&entity_repository) as Arc<dyn EntityExpirySource>, // clone: every focused port shares one repository and pool.
-        spatial_snapshots: Arc::clone(&entity_repository) as Arc<dyn EntitySpatialSnapshotSource>, // clone: every focused port shares one repository and pool.
-        deletion_outline: Arc::clone(&entity_repository) as Arc<dyn DeletionOutlineReader>, // clone: every focused port shares one repository and pool.
+        reader: Arc::clone(&entity_repository) as Arc<dyn EntityReader>,
+        query: Arc::clone(&entity_repository) as Arc<dyn EntityQueryStore>,
+        discovery: Arc::clone(&entity_repository) as Arc<dyn EntityDiscoveryStore>,
+        payload_pages: Arc::clone(&entity_repository) as Arc<dyn EntityPayloadPages>,
+        expiry: Arc::clone(&entity_repository) as Arc<dyn EntityExpirySource>,
+        spatial_snapshots: Arc::clone(&entity_repository) as Arc<dyn EntitySpatialSnapshotSource>,
+        deletion_outline: Arc::clone(&entity_repository) as Arc<dyn DeletionOutlineReader>,
         entity_types: entity_repository as Arc<dyn EntityTypeReader>,
     };
-    // clone: the registration information rows intern registered attribute names through the tenant's one dictionary.
     let registration_repository = Arc::new(PostgresRegistrationStore::new(&pool, Arc::clone(&attribute_names)));
-    // clone: the registration store and the clause 5.7.11 registry view share one repository and pool.
     let registry_type_source = Arc::clone(&registration_repository) as Arc<dyn RegistryTypeSource>;
     let registration_store = registration_repository as Arc<dyn RegistrationStore>;
     let entity_map_store = Arc::new(EntityMapRepository::new(&pool)) as Arc<dyn EntityMapStore>;
     let snapshot_store = Arc::new(SnapshotRepository::new(&pool)) as Arc<dyn SnapshotStore>;
     let stored_filter_matching = EnabledExtensions::from(&config.extensions).language_targeting().matching();
     let subscription_cache = Arc::new(SubscriptionCache::new(tenant.clone(), stored_filter_matching));
-    // clone: the cache reload reads through a repository sharing the tenant's one dictionary.
     let subscription_repository = SubscriptionRepository::new(&pool, Arc::clone(&attribute_names));
     if let Err(error) = subscription_cache.reload(&live_target, &subscription_repository).await {
         tracing::error!(%error, "failed to load subscription cache");
@@ -333,7 +327,7 @@ pub(super) async fn initialize_storage(
     load_snapshot_subscriptions(&subscription_cache, snapshot_store.as_ref(), &subscription_repository).await;
     let spatial = initialize_spatial(config.entity.spatial_index.consistency, &entity_ports.spatial_snapshots, tenant).await?;
     Ok(TenantStorage {
-        tenant: tenant.clone(), // clone: the storage graph names the tenant it was opened for.
+        tenant: tenant.clone(),
         pool,
         live_target,
         engine,

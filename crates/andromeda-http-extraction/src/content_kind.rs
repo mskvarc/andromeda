@@ -13,11 +13,11 @@ use mediatype::{MediaTypeBuf, names};
 /// Classify the Content-Type into one of the supported NGSI-LD types.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ContentKind {
-    /// `application/json` -- exact type, no suffix
+    /// `application/json` (exact type, no suffix)
     Json,
-    /// `application/ld+json` -- subtype=ld, suffix=json
+    /// `application/ld+json` (subtype=ld, suffix=json)
     LdJson,
-    /// `application/merge-patch+json` -- subtype=merge-patch, suffix=json
+    /// `application/merge-patch+json` (subtype=merge-patch, suffix=json)
     MergePatchJson,
 }
 
@@ -59,7 +59,7 @@ fn classify_content_type(raw: &str, method: &Method) -> Option<ContentKind> {
         return Some(ContentKind::MergePatchJson);
     }
 
-    // application/json -- exact, no suffix (rejects application/json-patch+json etc.)
+    // application/json matches exactly, with no suffix (rejects application/json-patch+json etc.)
     if mt.subty() == names::JSON && mt.suffix().is_none() {
         return Some(ContentKind::Json);
     }

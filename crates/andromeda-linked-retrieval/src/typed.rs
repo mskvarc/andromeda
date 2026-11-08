@@ -85,8 +85,8 @@ fn targets_of<'a>(
     eligibility: RemoteEligibility,
     out: &mut Vec<LinkedEdge>,
 ) {
-    // clone: each edge owns its target, and an object too long for an
-    // identifier is skipped
+    // clone: Identifier::try_from takes its input by value. An object too long for
+    // an identifier is skipped.
     out.extend(objects.filter_map(|object| Identifier::try_from(object.clone()).ok()).map(|target| LinkedEdge {
         from: from.clone(),           // clone: each edge owns the entity it leaves
         attribute: attribute.clone(), // clone: each edge owns its attribute key

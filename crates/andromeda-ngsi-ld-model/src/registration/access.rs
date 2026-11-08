@@ -19,7 +19,7 @@ pub struct ContextSourceAccess {
     ///
     /// Table 5.2.9-1 restricts it to "a dereferenceable URI", and clause 5.2.2
     /// has the broker serve a Context Producer's members back as they were
-    /// supplied -- so the spelling is kept rather than the canonical form a
+    /// supplied, so the spelling is kept rather than the canonical form a
     /// bare [`url::Url`] would print.
     pub endpoint: DereferenceableUri,
     /// Preferred accept media type.

@@ -12,8 +12,8 @@
 //! `pub const iri_rs::Iri<&'static str>` constants for every resolved term,
 //! partitioned into `classes` and `properties` submodules by JSON-LD casing
 //! convention (`TitleCase` classes, lowerCase properties). A handful of IRIs the
-//! core context does not declare as terms — because they appear as data
-//! values or a bare datatype rather than as `@context` term names — are
+//! core context does not declare as terms, because they appear as data
+//! values or a bare datatype rather than as `@context` term names. They are
 //! hand-written constants alongside it.
 //!
 //! This is the leaf of the workspace. It exists as its own crate so that the

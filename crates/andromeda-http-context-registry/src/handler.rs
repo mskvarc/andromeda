@@ -75,7 +75,7 @@ pub(crate) async fn create(
     let payload = serde_json::from_slice::<&RawValue>(&body)
         .map_err(|source| InadmissibleBody::NotJson(NotJsonDocument(source)))
         .and_then(|raw| JsonLiteral::admit_raw(raw).map_err(InadmissibleBody::of))
-        // clone: the refusal names the request, which the response below names too
+        // clone: the request URI is still needed by the steps after this refusal
         .map_err(|refusal| refusal.into_problem(uri.clone()))?;
     // Clause 5.13.2 records the absolute URL the entry is served under, which a
     // request naming no authority gives nothing to build on (IETF RFC 9112

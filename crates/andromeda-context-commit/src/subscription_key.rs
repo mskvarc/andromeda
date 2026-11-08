@@ -17,8 +17,8 @@ use thiserror::Error;
 /// eight-byte generated number costs a fraction of the URI text in tuples,
 /// indexes and joins.
 ///
-/// The key is assigned once by the store and never reassigned — a reused number
-/// would hand one Subscription's queued deliveries to another. It is never
+/// The key is assigned once by the store and never reassigned, since a reused
+/// number would hand one Subscription's queued deliveries to another. It is never
 /// rendered over the API and never accepted from a client; it enters the broker
 /// only on the read that loads a Subscription and leaves it only on the write
 /// that enqueues a delivery, which is why a [`SubscriptionMatch`]

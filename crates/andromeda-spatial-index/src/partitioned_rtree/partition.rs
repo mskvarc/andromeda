@@ -15,7 +15,7 @@ pub(super) struct Partition<E: RTreeObject + Indexed> {
     /// The R-tree of this partition's geometries.
     pub(super) tree: RTree<E>,
     /// The generation of the latest live mutation of each object in this
-    /// partition -- an insertion or a removal -- recorded only under
+    /// partition (an insertion or a removal) recorded only under
     /// [`WriteTracking::Recorded`](crate::partitioned_rtree::WriteTracking::Recorded).
     pub(super) written: HashMap<<E as Indexed>::Id, u64>,
 }
@@ -62,11 +62,11 @@ impl<E: RTreeObject + Indexed> Partition<E> {
                 if live.contains(entry.id()) {
                     kept.push(entry);
                 } else if !installed_ids.contains(entry.id()) {
-                    departed.insert(entry.id().clone()); // clone: the departed set outlives the tree it is read from
+                    departed.insert(entry.id().clone()); // clone: the entry is dropped at the end of this iteration, so the set owns the identifier
                 }
             }
         }
-        // clone: the back-index owns the identifier of each entry the tree takes
+        // clone: the entries move into the new tree, so the installed list owns each identifier
         let installed = entries.iter().map(|entry| (entry.id().clone(), entry.envelope())).collect();
         entries.reserve_exact(kept.len());
         entries.extend(kept);

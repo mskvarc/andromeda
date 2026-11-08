@@ -1,7 +1,7 @@
 //! Shared PostgreSQL connection-pool tuning and driver-error classification.
 //!
-//! Every pool the broker opens — the main request pool, per-tenant serving
-//! pools, and the one-connection migration and maintenance pools — is built
+//! Every pool the broker opens (the main request pool, per-tenant serving
+//! pools, and the one-connection migration and maintenance pools) is built
 //! from [`configure_pool_options`](crate::pool_options::configure_pool_options)
 //! so durability-neutral tuning (idle reclaim, no warm minimum, the acquire
 //! deadline) is decided once rather than per call site, and so is the share of

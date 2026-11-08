@@ -167,7 +167,6 @@ pub(crate) async fn analyze_branch_schema(conn: &mut PgConnection, key: Snapshot
 
 /// Every branch relation qualified by `schema`, in [`branch_tables`] order.
 pub(crate) fn branch_relations(schema: &DynIden) -> Vec<TableName> {
-    // clone: each qualified name owns its schema identifier.
     branch_tables().into_iter().map(|table| TableName::from((schema.clone(), table))).collect()
 }
 

@@ -49,7 +49,7 @@ impl TemporalRepository {
         columnstore: ColumnstoreSupport,
     ) -> TemporalRepository {
         TemporalRepository {
-            pool: pool.clone(), // clone: `PgPool` shares its inner pool by reference count.
+            pool: pool.clone(),
             reads,
             attribute_names,
             entity_type_names,

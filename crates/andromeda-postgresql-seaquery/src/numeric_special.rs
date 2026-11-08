@@ -26,7 +26,6 @@ pub fn is_not_nan(number: SimpleExpr) -> SimpleExpr {
 /// `number` when it is finite, `NULL` otherwise.
 #[must_use]
 pub fn finite_numeric(number: SimpleExpr) -> SimpleExpr {
-    // clone: the test and the result read one operand
     CaseStatement::new().case(number.clone().is_not_in(SPECIAL_VALUES.map(special)), number).into()
 }
 

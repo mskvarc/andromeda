@@ -5,15 +5,15 @@
 //! by an update or delete operation (for an example see annex C, clause
 //! C.5.16)." A `scope_history` row is therefore not a point on the time axis
 //! but the left end of an interval that runs until the entity's next scope
-//! event, and every temporal reading of scope history — the `scopeQ` of clause
-//! 4.19 and the reified scope of clause 4.5.6 alike — asks about that interval
+//! event, and every temporal reading of scope history, the `scopeQ` of clause
+//! 4.19 and the reified scope of clause 4.5.6 alike, asks about that interval
 //! rather than about the instant.
 //!
 //! The right end is never stored. Clause 4.18 gives an Entity at most one
 //! instance of the scope Property, so every write replaces the whole value and
 //! any later event closes the one before it; the interval is reconstructed from
 //! that rather than from a column, which is also why a removal need not name
-//! the scope it ended — and why `chk_scope_history_value_presence` can forbid
+//! the scope it ended, and why `chk_scope_history_value_presence` can forbid
 //! it from naming one.
 
 use crate::{
@@ -108,7 +108,7 @@ pub fn overlaps_window(axis: ScopeHistory, interval: TimeInterval, reach: Window
 ///
 /// Clause 4.18 gives an Entity at most one instance of the scope Property, so
 /// any later event replaces the whole value and ends the interval the outer
-/// event opened — whatever paths it names, and whether it names any at all. The
+/// event opened, whatever paths it names, and whether it names any at all. The
 /// comparison against the outer event is strict, which is what stops the
 /// several rows one multi-path write lands at a single instant from ending each
 /// other's interval and collapsing it to zero length.

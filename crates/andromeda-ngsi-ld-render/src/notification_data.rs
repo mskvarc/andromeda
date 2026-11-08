@@ -4,8 +4,8 @@
 //! notification.endpoint.accept field set to application/geo+json then data is
 //! returned as a `FeatureCollection` [...] If endpoint.accept is not set or holds
 //! another value then Entity[] is returned." Every sender of an entity
-//! notification -- the change-driven one, the periodic one and the one that
-//! re-assembles a forwarded copy -- writes its entities through this one
+//! notification (the change-driven one, the periodic one and the one that
+//! re-assembles a forwarded copy) writes its entities through this one
 //! function, so the three cannot answer the same subscription in two shapes.
 //!
 //! The `@context` is placed as it is written. Clause 6.3.8 puts it in the body
@@ -240,7 +240,7 @@ mod tests {
         }
         let graph = LinkedGraph {
             roots: ids,
-            nodes: nodes.into_iter().map(|node| (node.id.clone(), node)).collect(), // clone: the graph keys its nodes by owned identifiers
+            nodes: nodes.into_iter().map(|node| (node.id.clone(), node)).collect(),
             edges,
             failures: Vec::new(),
             depth: NonZeroU32::new(CHAIN).expect("a positive depth"),

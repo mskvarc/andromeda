@@ -20,8 +20,8 @@ impl TaskSupervisor {
         let health = self.reserve(&registration)?;
         let name = registration.name().clone(); // clone: the driver and supervisor registry both retain the stable task identity.
         let cancellation = self.inner.cancellation.child_token();
-        let driver_health = Arc::clone(&health); // clone: driver updates are observed through the supervisor's health registry.
-        let lifecycle = self.inner.lifecycle.clone(); // clone: each driver publishes into the same completion-ordered channel.
+        let driver_health = Arc::clone(&health);
+        let lifecycle = self.inner.lifecycle.clone();
         let driver_name = name.clone(); // clone: the asynchronous driver owns its task identity.
         let restart_policy = registration.restart_policy();
         let supervision = DriverSupervision {

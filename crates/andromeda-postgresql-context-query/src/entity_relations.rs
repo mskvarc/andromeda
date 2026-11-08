@@ -210,7 +210,7 @@ fn search_demand(selection: &EntitySelection, source: &RowSource) -> bool {
 fn join_on_key(select: &mut SelectStatement, demand: Demand, table: TableRef, key: (impl IntoIden, impl IntoIden), driving_key: &SimpleExpr) {
     match demand {
         Demand::Joined => {
-            select.join(JoinType::Join, table, Expr::col(key).eq(driving_key.clone())); // clone: every join correlates on the same key
+            select.join(JoinType::Join, table, Expr::col(key).eq(driving_key.clone()));
         }
         Demand::NotJoined => {}
     }
@@ -406,7 +406,7 @@ mod tests {
             geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         };
         let mut one = typed_query();
-        one.selection.geo = Some(geo.clone()); // clone: the second query carries the same geo-query
+        one.selection.geo = Some(geo.clone());
         let mut several = typed_query();
         several.selection.selectors.push(
             EntitySelector::builder()

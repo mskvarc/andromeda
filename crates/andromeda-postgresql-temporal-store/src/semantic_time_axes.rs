@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 /// filter reads exactly the column it names: a row that was written without an
 /// `observedAt` has none, and must therefore match no `observedAt` filter. The
 /// operational `recorded_at` the hypertable partitions on is deliberately not
-/// part of this type — it is never rendered as a Temporal Property, and folding
+/// part of this type, since it is never rendered as a Temporal Property, and folding
 /// it in as a fallback is what would invent the match the clause forbids.
 ///
 /// `deletedAt` is absent here because it is not independent: a row carries a

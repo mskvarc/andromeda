@@ -47,10 +47,10 @@ impl CacheKey {
     /// The key of one forwarded GET.
     pub(crate) fn new(registration: &ContextSourceRegistration, url: &Url, context: Option<&IriBuf>) -> CacheKey {
         CacheKey {
-            registration: registration.id.clone(), // clone: the key owns its parts
+            registration: registration.id.clone(),
             modified_at: registration.lifecycle.modified_at,
-            url: url.clone(),          // clone: same
-            context: context.cloned(), // clone: same
+            url: url.clone(),
+            context: context.cloned(),
         }
     }
 }
@@ -183,7 +183,7 @@ mod tests {
         let registration = registration(Some("PT10S"), "2024-01-01T00:00:00Z");
         let key = CacheKey::new(&registration, &url(), None);
         assert!(cache.lookup(&key).is_none());
-        cache.store(key.clone(), &response(r#"[{"id":"urn:ngsi-ld:Vehicle:1"}]"#), Duration::from_secs(10)); // clone: looked up below
+        cache.store(key.clone(), &response(r#"[{"id":"urn:ngsi-ld:Vehicle:1"}]"#), Duration::from_secs(10));
         let hit = cache.lookup(&key).expect("hit");
         pretty_assertions::assert_eq!(&*hit.body, br#"[{"id":"urn:ngsi-ld:Vehicle:1"}]"#.as_slice());
         assert!(matches!(hit.warnings.as_slice(), [warning] if warning.code() == WarnCode::ResponseIsStale));
@@ -194,7 +194,7 @@ mod tests {
         let cache = ForwardedGetCache::new(8);
         let registration = registration(Some("PT10S"), "2024-01-01T00:00:00Z");
         let key = CacheKey::new(&registration, &url(), None);
-        cache.store(key.clone(), &response("[]"), Duration::ZERO); // clone: looked up below
+        cache.store(key.clone(), &response("[]"), Duration::ZERO);
         assert!(cache.lookup(&key).is_none());
         assert!(cache.entries.is_empty());
     }
@@ -219,7 +219,7 @@ mod tests {
             None,
         );
         cache.store(first, &response("[]"), Duration::from_secs(10));
-        cache.store(second.clone(), &response("[]"), Duration::from_secs(10)); // clone: looked up below
+        cache.store(second.clone(), &response("[]"), Duration::from_secs(10));
         assert!(cache.lookup(&second).is_none());
         pretty_assertions::assert_eq!(cache.entries.len(), 1);
     }

@@ -128,7 +128,7 @@ impl FederationService {
                 .await
                 .map_err(|error| TemporalEntityReading::OwnContext(ExpansionError::Context(error)))?,
             None => match spelled_in {
-                Some(context) => Arc::clone(context), // clone: Arc ref-count bump
+                Some(context) => Arc::clone(context),
                 None => return Ok(None),
             },
         };

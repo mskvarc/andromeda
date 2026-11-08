@@ -124,7 +124,7 @@ impl<'a> AvailableLanguage<'a> {
         NegotiatedEntry {
             lang: match &self.range {
                 AvailableLanguageRange::Default => LanguageMapKey::None,
-                AvailableLanguageRange::Tag(tag) => LanguageMapKey::Tag(tag.clone()), // clone: the answer owns the tag it names
+                AvailableLanguageRange::Tag(tag) => LanguageMapKey::Tag(tag.clone()),
             },
             value: self.value,
         }

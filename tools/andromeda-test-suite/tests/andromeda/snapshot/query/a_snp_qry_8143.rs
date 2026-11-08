@@ -34,14 +34,14 @@ async fn a_snp_qry_8143_a_snapshot_scoped_subscription_is_still_notified_after_i
     let vehicle_type = namespace.entity_type("Vehicle")?;
     let snapshot_id = format!("urn:ngsi-ld:Snapshot:{namespace}-1").parse::<SnapshotId>()?;
     let snapshot = Snapshot::builder()
-        .id(snapshot_id.clone()) // clone: the Snapshot is addressed by its id after it is built
+        .id(snapshot_id.clone())
         .query(QueryDocument::builder().entities([vehicle_type.as_str()]).build()?)
         .build()?;
     private.snapshots().create(&snapshot).send().await?;
     await_status(&private, &snapshot_id, SnapshotStatus::Settled(SettledStatus::Empty)).await?;
     let subscription_id = namespace.subscription_id("scoped")?;
     let subscription = Subscription::builder()
-        .id(subscription_id.clone()) // clone: the notification is matched to the Subscription by its id
+        .id(subscription_id.clone())
         .entities([vehicle_type.as_str()])
         .notification(
             NotificationParams::builder(Endpoint::builder(sink.endpoint("scoped")?).accept(NgsiLdMediaType::Json).build()?)
@@ -66,7 +66,7 @@ async fn a_snp_qry_8143_a_snapshot_scoped_subscription_is_still_notified_after_i
     }
     let vehicle_id = namespace.urn("Vehicle", 1)?;
     let vehicle = Entity::builder()
-        .id(vehicle_id.clone()) // clone: the notification is matched to the Entity by its id
+        .id(vehicle_id.clone())
         .entity_type(vehicle_type)
         .property("speed", 1)
         .build()?;

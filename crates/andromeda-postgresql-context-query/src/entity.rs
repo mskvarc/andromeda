@@ -77,7 +77,7 @@ pub struct EntityIdsQuery {
 /// # Errors
 ///
 /// Returns [`RenderError::ReferenceGeometryEncoding`] when a reference geometry
-/// — the geoquery's, or the one a distance ordering measures from — has no
+/// (the geoquery's, or the one a distance ordering measures from) has no
 /// EWKB spelling the store can bind. Returns [`RenderError::Query`] for the two
 /// query-language rules a renderer is the first place to decide: `georel=near`
 /// naming neither `maxDistance` nor `minDistance`, which clause 4.10 requires
@@ -166,7 +166,7 @@ pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, wind
 /// 5.5.9.1) drops the `OFFSET` for the direction-appropriate predicate and
 /// ordering over the entity `id`: the same bare, C-collation `id` expression
 /// the implicit tiebreaker sorts on, which stays driven by its unique index in
-/// either direction -- an Index Scan Backward for the descending cases. The
+/// either direction (an Index Scan Backward for the descending cases). The
 /// pagination policy never pairs a cursor with a requested ordering, which a
 /// cursor's identifier position cannot walk.
 ///
@@ -992,7 +992,7 @@ mod tests {
     }
 
     /// Clause 5.5.9.1: a forward cursor pages past the boundary identifier over
-    /// the default `id` order -- `WHERE id > $x ORDER BY id ASC LIMIT n`, and no
+    /// the default `id` order (`WHERE id > $x ORDER BY id ASC LIMIT n`), with no
     /// `OFFSET`, because the keyset predicate replaces the skip.
     #[test]
     fn build_with_keyset_after_pages_forward_ascending_without_offset() {
@@ -1019,7 +1019,7 @@ mod tests {
     }
 
     /// Clause 5.5.9.1: a backward cursor pages before the boundary over the
-    /// reversed order -- `WHERE id < $x ORDER BY id DESC LIMIT n` -- which the
+    /// reversed order (`WHERE id < $x ORDER BY id DESC LIMIT n`), which the
     /// store reverses to ascending after fetching.
     #[test]
     fn build_with_keyset_before_pages_backward_descending_without_offset() {
@@ -1036,8 +1036,8 @@ mod tests {
         assert!(!built.sql.contains("OFFSET"), "{}", built.sql);
     }
 
-    /// Clause 5.5.9.1: the from-end cursor takes the final page -- `ORDER BY id
-    /// DESC LIMIT n`, no boundary predicate -- which the store reverses to
+    /// Clause 5.5.9.1: the from-end cursor takes the final page (`ORDER BY id
+    /// DESC LIMIT n`, no boundary predicate), which the store reverses to
     /// ascending. This is the Andromeda `last` anchor.
     #[test]
     fn build_with_keyset_end_takes_the_final_page_descending() {
@@ -1306,7 +1306,7 @@ mod tests {
 
         let mut flat_query = empty_query();
         flat_query.ordering.geometry = Some(OrderingGeometry::new(point(&serde_json::json!([13.3986, 52.5547]))));
-        flat_query.ordering.terms = vec![ordering_term.clone()]; // clone: the elevated query orders the same way
+        flat_query.ordering.terms = vec![ordering_term.clone()];
         let flat = build(&flat_query, &known_types());
 
         let mut elevated_query = empty_query();
@@ -1400,7 +1400,7 @@ mod tests {
         for georel in variants {
             let mut q = empty_query();
             q.selection.geo = Some(GeoQuery {
-                georel: georel.clone(), // clone: the relation names the failing case in every assertion below
+                georel: georel.clone(),
                 geometry: point(&serde_json::json!([1.0, 2.0])),
                 geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
             });
@@ -1420,8 +1420,8 @@ mod tests {
     }
 
     /// Clause 4.10: `geoproperty` selects any `GeoProperty` of the entity. A
-    /// named one is held in `current_attributes`, so the whole statement —
-    /// not just the fragment — has to reach it there.
+    /// named one is held in `current_attributes`, so the whole statement,
+    /// not just the fragment, has to reach it there.
     #[test]
     fn a_named_geoproperty_filters_through_its_attribute_instance_rows() {
         let mut q = empty_query();
@@ -1497,7 +1497,7 @@ mod tests {
         for georel in relations {
             let mut q = empty_query();
             q.selection.geo = Some(GeoQuery {
-                georel: georel.clone(), // clone: the relation is named again in the assertion
+                georel: georel.clone(),
                 geometry: point(&serde_json::json!([1.0, 2.0])),
                 geoproperty: "https://example.com/o'brien".parse().expect("valid attribute name"),
             });

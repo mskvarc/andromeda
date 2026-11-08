@@ -483,7 +483,7 @@ mod tests {
     }
 
     /// Clause 4.3.6.3: two blocks each cover a different type and attribute, so
-    /// each forwards its own query -- never one query carrying the union, which
+    /// each forwards its own query, never one query carrying the union, which
     /// would ask a source for a cross-product it never registered.
     #[tokio::test]
     async fn two_blocks_forward_two_queries_without_a_cross_product() {
@@ -818,8 +818,8 @@ mod tests {
     }
 
     /// Clause 4.3.6.3: a per-block temporal query is narrowed the same way an
-    /// entity query is -- the block's id and attribute are named even though the
-    /// client asked only for the type.
+    /// entity query is (the block's id and attribute are named even though the
+    /// client asked only for the type).
     #[tokio::test]
     async fn a_temporal_query_is_narrowed_per_block_like_an_entity_query() {
         let block = registration(&json!([{"entities": [{"id": VEHICLE_X, "type": VEHICLE}], "propertyNames": [SPEED]}]));
@@ -1074,9 +1074,9 @@ mod tests {
     }
 
     /// Clause 4.3.6.6: a registration configuring its own `jsonldContext` is
-    /// sent every name in that context -- the client's type, attributes, query
+    /// sent every name in that context (the client's type, attributes, query
     /// and filter terms reworded, and the block's supplied names compacted
-    /// against it -- never in the client's spelling.
+    /// against it), never in the client's spelling.
     #[tokio::test]
     async fn a_configured_context_rewords_every_forwarded_name() {
         let engine = offline_engine();

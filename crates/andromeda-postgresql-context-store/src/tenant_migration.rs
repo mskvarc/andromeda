@@ -103,7 +103,7 @@ pub async fn open_schema_change_pool(database_url: &Url, acquire_timeout: Durati
 /// The stamp is written here rather than by a migration because a migration
 /// cannot digest the migration set it belongs to. Verification refuses a tenant
 /// whose schema, server or extensions are not what this binary was built
-/// against, before any caller can publish the pool — except a tenant whose
+/// against, before any caller can publish the pool, except a tenant whose
 /// stamp is behind this binary's contract and whose applied migration history
 /// proves it, which [`ensure_schema_contract`] re-stamps in place: a fleet
 /// upgrade migrates every tenant's schema on this same call, and a stamp left
@@ -144,7 +144,7 @@ async fn migrate_tenant_schema(pool: &PgPool) -> Result<(), ContextStoreError> {
 /// branch version this binary embeds, over a direct one-connection pool.
 ///
 /// Called on a tenant load whose schema is already current but whose
-/// [`snapshot_branch_state`](crate::snapshot::branch_upgrade::snapshot_branch_state) probe found a Snapshot behind -- a binary that
+/// [`snapshot_branch_state`](crate::snapshot::branch_upgrade::snapshot_branch_state) probe found a Snapshot behind: a binary that
 /// appended a branch migration started against a tenant another replica had
 /// already migrated, or an earlier upgrade quarantined a Snapshot.
 ///
@@ -242,12 +242,12 @@ pub enum TenantSchemaState {
 /// the migration run's extension reconciliation installs or recreates it, and
 /// so does a schema
 /// that is simply
-/// not there yet -- unstamped, a version behind, its `schema_metadata` relation
-/// undefined, or its versioned extensions not yet installed -- so the caller
+/// not there yet (unstamped, a version behind, its `schema_metadata` relation
+/// undefined, or its versioned extensions not yet installed), so the caller
 /// runs the migrator over a direct connection. Genuine drift the migrator
-/// cannot resolve -- a digest mismatch at the same version, a stamp ahead of
+/// cannot resolve, namely a digest mismatch at the same version, a stamp ahead of
 /// the contract, or a server or installed extension below the floor with no
-/// newer version shipped -- is returned as the refusal it is, rather than
+/// newer version shipped, is returned as the refusal it is, rather than
 /// migrated over.
 ///
 /// # Errors

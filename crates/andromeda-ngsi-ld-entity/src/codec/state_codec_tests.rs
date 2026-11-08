@@ -408,7 +408,7 @@ fn located(node: &Value) -> Value {
 fn point_node(members: &Value) -> Value {
     let mut node = json!({"@type": [format!("{GEOJSON}Point")], COORDINATES: [{"@list": [{"@value": 1}, {"@value": 2}]}]});
     if let (Some(node), Some(members)) = (node.as_object_mut(), members.as_object()) {
-        node.extend(members.iter().map(|(key, value)| (key.clone(), value.clone()))); // clone: the fixture is built from borrowed parts
+        node.extend(members.iter().map(|(key, value)| (key.clone(), value.clone())));
     }
     node
 }

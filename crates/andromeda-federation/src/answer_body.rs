@@ -34,7 +34,7 @@ impl AnswerBody {
     #[must_use]
     pub fn problem(&self) -> Option<BatchProblemDetail> {
         match self {
-            AnswerBody::Problem(problem) => Some(problem.clone()), // clone: the caller owns the problem it reports
+            AnswerBody::Problem(problem) => Some(problem.clone()),
             AnswerBody::Text(text) => BatchProblemDetail::from_answer(text),
             AnswerBody::Absent | AnswerBody::UpdateResult(_) => None,
         }

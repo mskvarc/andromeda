@@ -128,6 +128,6 @@ mod tests {
         pretty_assertions::assert_eq!(
             serialize_written_members(&expanded.clone().with_written_members(&other)),
             serialize_written_members(&expanded)
-        ); // clone: the expression is compared before and after
+        );
     }
 }

@@ -84,8 +84,8 @@ impl TemporalService {
             // concerned Attributes of an Entity, does not include data
             // corresponding to the temporal query interval, then such Entity
             // shall be removed from S, thus it shall not appear in the final
-            // result set" -- the concerned Attributes being those `attrs` names,
-            // "or all if none are specified". A restriction that leaves nothing
+            // result set" (the concerned Attributes being those `attrs` names,
+            // "or all if none are specified"). A restriction that leaves nothing
             // therefore leaves no Temporal Evolution to represent (clause
             // 5.7.3.5), which is ResourceNotFound whether or not `attrs` was
             // given. With neither a window nor `attrs` nothing is removed, so an
@@ -124,8 +124,8 @@ impl TemporalService {
         result
     }
 
-    /// Whether clause 5.7.3.4 step S1 -- the temporal window and the `attrs`
-    /// selection -- leaves any of the entity's history, given the `presence`
+    /// Whether clause 5.7.3.4 step S1 (the temporal window and the `attrs`
+    /// selection) leaves any of the entity's history, given the `presence`
     /// the rendered answer reports.
     ///
     /// The `datasetId` step runs after S1 and removes "the complete Attribute
@@ -146,7 +146,6 @@ impl TemporalService {
         if presence == HistoryPresence::Present || DatasetStep::of(compiled) == DatasetStep::Absent {
             return Ok(presence);
         }
-        // clone: the S1 probe reads the same query without the dataset step that follows it
         let mut window_only = compiled.clone();
         window_only.instances.dataset_id_filter.clear();
         let window_only = window_only;

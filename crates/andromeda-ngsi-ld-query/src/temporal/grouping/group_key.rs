@@ -29,8 +29,8 @@ impl GroupKey {
     /// Parse and classify one key name.
     ///
     /// A path-free name that matches an [`EntityMember`] token classifies as
-    /// that member; every other name — including a member token that carries a
-    /// sub-attribute or bracketed path — is a [`GroupKey::Path`] value key.
+    /// that member; every other name (including a member token that carries a
+    /// sub-attribute or bracketed path) is a [`GroupKey::Path`] value key.
     ///
     /// # Errors
     ///

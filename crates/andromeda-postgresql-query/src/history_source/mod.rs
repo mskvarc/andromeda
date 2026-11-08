@@ -219,9 +219,9 @@ impl EntityHistory {
     pub fn compared_beside(&self, alias: &DynIden) -> Option<SimpleExpr> {
         match self {
             EntityHistory::Inside(_) => None,
-            // clone: the alias and the identifier stay with the read, which every source of it shares.
+            // clone: the identifier stays with the read, which every source of it shares.
             EntityHistory::BesideById(id) => Some(Expr::col((alias.clone(), HistoryGrain::EntityId)).eq(id.clone())),
-            // clone: the alias and the key stay with the read, which every source of it shares.
+            // clone: the key stays with the read, which every source of it shares.
             EntityHistory::BesideByKey(key) => Some(Expr::col((alias.clone(), HistoryGrain::EntityKey)).eq(key.clone())),
         }
     }
@@ -259,7 +259,6 @@ impl HistoryOf {
     /// [`HistoryOf::Evolution`] and the identifier otherwise.
     pub(crate) fn same_evolution_as(&self, alias: impl IntoIden) -> HistoryOf {
         let alias = alias.into_iden();
-        // clone: the identifier and the key each name the row's alias.
         let id = Expr::col((alias.clone(), HistoryGrain::EntityId));
         match self {
             HistoryOf::EveryEntity | HistoryOf::Entity(_) => HistoryOf::Entity(id),
@@ -315,7 +314,6 @@ impl HistoryStream {
 
     /// One grain column of the stream row.
     pub(crate) fn column(&self, column: HistoryGrain) -> SimpleExpr {
-        // clone: every column reference names the row's alias.
         Expr::col((self.row.clone(), column))
     }
 }

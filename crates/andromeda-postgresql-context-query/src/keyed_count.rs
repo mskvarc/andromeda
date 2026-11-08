@@ -60,7 +60,6 @@ pub(crate) fn keyed_count(
     let narrowed = filters
         .remainder
         .add(rows.entity_key_column().in_subquery(column_of(Candidates, Entities::EntityKey)));
-    // clone: both counts read the same relations
     let indexed = count_over(relations.clone(), schema, narrowed);
     let mut count = Query::select();
     match bound {

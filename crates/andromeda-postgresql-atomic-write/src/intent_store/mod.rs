@@ -63,9 +63,7 @@ impl PostgresTemporalIntentStore {
     /// Construct a pending-intent store over the tenant anchor pool.
     #[must_use]
     pub fn new(pool: &PgPool) -> PostgresTemporalIntentStore {
-        PostgresTemporalIntentStore {
-            pool: pool.clone(), // clone: SQLx pools are shared reference-counted handles.
-        }
+        PostgresTemporalIntentStore { pool: pool.clone() }
     }
 
     /// Decode one claimed row: the intent's identity, never its entries.

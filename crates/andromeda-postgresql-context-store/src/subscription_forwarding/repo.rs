@@ -13,7 +13,7 @@ impl SubscriptionForwardingRepository {
     /// Create a repository backed by the given tenant pool.
     #[must_use]
     pub fn new(pool: &PgPool) -> SubscriptionForwardingRepository {
-        SubscriptionForwardingRepository { pool: pool.clone() } // clone: `PgPool` is an atomically reference-counted pool handle.
+        SubscriptionForwardingRepository { pool: pool.clone() }
     }
 
     /// Borrow the pool for the store implementation.

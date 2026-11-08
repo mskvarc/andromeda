@@ -35,21 +35,21 @@ const JSONLD_CONTEXT_REL: Iri<&'static str> = iri!("http://www.w3.org/ns/json-ld
 /// however the client spelled its case (IETF RFC 8288 section 2.1.2).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum RelationType {
-    /// `next` -- next page in a paginated result (clause 6.3.10).
+    /// `next`: next page in a paginated result (clause 6.3.10).
     Next,
-    /// `prev` -- previous page in a paginated result (clause 6.3.10).
+    /// `prev`: previous page in a paginated result (clause 6.3.10).
     Prev,
-    /// `first` -- first page in a paginated result.
+    /// `first`: first page in a paginated result.
     First,
-    /// `last` -- last page in a paginated result.
+    /// `last`: last page in a paginated result.
     Last,
-    /// `profile` -- the target names a profile of the representation (IETF
+    /// `profile`: the target names a profile of the representation (IETF
     /// RFC 6906, clause 6.3.21).
     Profile,
-    /// `alternate` -- the target is an alternate representation of the
+    /// `alternate`: the target is an alternate representation of the
     /// resource (IETF RFC 8288 section 6.2.2, JSON-LD 1.1 section 6.2).
     Alternate,
-    /// `http://www.w3.org/ns/json-ld#context` -- the target is the JSON-LD
+    /// `http://www.w3.org/ns/json-ld#context`: the target is the JSON-LD
     /// context of the document (JSON-LD 1.1 section 6.1, clause 6.3.5).
     JsonLdContext,
     /// Any other relation type: a registered name or an extension URI.

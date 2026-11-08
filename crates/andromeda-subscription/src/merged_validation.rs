@@ -74,7 +74,7 @@ mod tests {
     fn extract_create_fields(members: &Value, policy: DatasetIdPolicy) -> Result<SubscriptionWriteValues, SubscriptionError> {
         let mut wire = json!({"notification": {"endpoint": {"uri": "https://receiver.example.com/notify"}}});
         if let (Some(target), Some(extra)) = (wire.as_object_mut(), members.as_object()) {
-            target.extend(extra.iter().map(|(key, value)| (key.clone(), value.clone()))); // clone: the fixture owns its members
+            target.extend(extra.iter().map(|(key, value)| (key.clone(), value.clone())));
         }
         let request = SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable request");
         SubscriptionWriteValues::from_create(request, policy)

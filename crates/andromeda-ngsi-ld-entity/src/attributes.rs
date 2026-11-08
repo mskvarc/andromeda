@@ -62,7 +62,6 @@ impl Attributes {
                 instances.insert(dataset_id, instance);
             }
             None => {
-                // clone: the entity owns the name of the attribute it gains.
                 self.insert(name.clone(), AttributeInstances::one(dataset_id, instance));
             }
         }

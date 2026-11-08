@@ -107,17 +107,17 @@ impl CandidateIndex {
             self.wildcard.insert(key);
         }
         for (type_name, selector) in &selectors.by_type {
-            self.by_type.entry(type_name.clone()).or_default().insert(*selector); // clone: bucket key
+            self.by_type.entry(type_name.clone()).or_default().insert(*selector); // clone: the index takes an owned key while the selectors keep theirs
         }
         for (id, selector) in &selectors.by_entity_id {
-            self.by_entity_id.entry(id.clone()).or_default().insert(*selector); // clone: bucket key
+            self.by_entity_id.entry(id.clone()).or_default().insert(*selector); // clone: the index takes an owned key while the selectors keep theirs
         }
         for trigger in &compiled.triggers {
             self.by_trigger[trigger_slot(*trigger)].insert(key);
         }
         let watched_attributes = if let Some(watched) = &compiled.watched_attrs {
             for name in watched {
-                self.by_watched_attribute.entry(name.clone()).or_default().insert(key); // clone: bucket key
+                self.by_watched_attribute.entry(name.clone()).or_default().insert(key); // clone: the index takes an owned key while the compiled subscription keeps its names
             }
             watched.iter().cloned().collect() // clone: the reverse map owns its bucket names
         } else {
@@ -133,7 +133,7 @@ impl CandidateIndex {
                 selectors,
             },
         );
-        self.keys_by_id.insert(compiled.id.clone(), key); // clone: the map owns its key
+        self.keys_by_id.insert(compiled.id.clone(), key); // clone: the map owns its key, since the compiled subscription is moved into the entries next
         self.entries.insert(key, compiled);
     }
 

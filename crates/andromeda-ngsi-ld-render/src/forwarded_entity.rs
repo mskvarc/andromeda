@@ -206,7 +206,7 @@ mod tests {
     use serde_json::{Value, json};
 
     fn patch(written: &Value) -> EntityPatch {
-        serde_json::from_value(written.clone()).expect("a partial entity") // clone: the fixture keeps its written form
+        serde_json::from_value(written.clone()).expect("a partial entity")
     }
 
     fn written(entity: &EntityPatch, conformance: Option<SpecVersion>, element: AdaptedPayload) -> Value {

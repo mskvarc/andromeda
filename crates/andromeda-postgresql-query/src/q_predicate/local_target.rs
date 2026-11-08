@@ -87,7 +87,6 @@ mod tests {
         let QueryPath::Local(local) = pred.path() else {
             panic!("a local path");
         };
-        // clone: the test owns the path beyond the parsed expression it borrows from
         local.clone()
     }
 

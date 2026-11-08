@@ -76,7 +76,7 @@ impl SpatialSubscriptionIndex {
     pub fn insert(&self, key: SpatialKey, entry: SubEntry) {
         // A subscription carries exactly one reference geometry, so it occupies
         // a partition once (clause 5.8.1 admits a single `geoQ`).
-        let id = entry.id().clone(); // clone: the back-index owns the identifier
+        let id = entry.id().clone(); // clone: the back-index takes its own copy of the identifier, which the entry keeps
         self.tree.insert_all(key, id, vec![entry]);
     }
 
@@ -108,7 +108,7 @@ fn candidates_in(tree: &RTree<SubEntry>, entity_geometry: &PlanarGeometry, envel
             && !entry.envelope.intersects(envelope)
             && matches(&entry.georel, entity_geometry, &entry.ref_geometry)
         {
-            matched.push(entry.subscription_id.clone()); // clone: same
+            matched.push(entry.subscription_id.clone()); // clone: the answer outlives the tree borrow
         }
     }
 

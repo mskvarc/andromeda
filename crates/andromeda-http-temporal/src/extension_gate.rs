@@ -5,9 +5,9 @@
 //! retrieval (`join`, `joinLevel`, `containedBy`). With an extension disabled a
 //! broker must behave exactly as one that never implemented it, which clause
 //! 6.3.12's pattern makes an `InvalidRequest` rather than a silently ignored
-//! parameter. The temporal query bindings -- `GET /temporal/entities`,
+//! parameter. The temporal query bindings (`GET /temporal/entities`,
 //! `GET /temporal/entities/{id}`, `POST /temporal/entityOperations/query` and
-//! the temporal Entity Map creations over GET and POST -- read their parameters
+//! the temporal Entity Map creations over GET and POST) read their parameters
 //! through the admitting extractors of
 //! `andromeda_http_extraction::admitted_temporal_query`, which run this gate as
 //! they read them, so a disabled broker rejects the request before any of the

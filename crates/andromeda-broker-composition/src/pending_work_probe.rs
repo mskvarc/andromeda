@@ -40,14 +40,7 @@ pub(crate) enum PendingWorkProbeError {
 pub(crate) fn pending_work_probe(urls: &TenantProbeUrls, config: &BrokerConfig) -> Result<Arc<dyn PendingWorkProbe>, PendingWorkProbeError> {
     let history = HistorySchedule::try_from(&TemporalStoragePolicy::try_from(&config.temporal.storage)?)?;
     Ok(Arc::new(PendingWorkSources::new(vec![
-        Arc::new(PostgresPendingWorkProbe::new(
-            urls.clone(), // clone: each probe derives tenant URLs from its own copy of the bases
-            config.database.acquire_timeout(),
-        )),
-        Arc::new(PostgresHistoryWorkProbe::new(
-            urls.clone(), // clone: each probe derives tenant URLs from its own copy of the bases
-            config.database.acquire_timeout(),
-            history,
-        )),
+        Arc::new(PostgresPendingWorkProbe::new(urls.clone(), config.database.acquire_timeout())),
+        Arc::new(PostgresHistoryWorkProbe::new(urls.clone(), config.database.acquire_timeout(), history)),
     ])))
 }

@@ -29,7 +29,7 @@ async fn n_att_app_0017_appends_of_distinct_attributes_sent_at_once_to_one_entit
     let broker = broker::front()?;
     let building_id = namespace.urn("Building", 1)?;
     let building = Entity::builder()
-        .id(building_id.clone()) // clone: the Building is appended to and retrieved by its id after it is built
+        .id(building_id.clone())
         .entity_type(namespace.entity_type("Building")?)
         .property("temperature", 0)
         .build()?;

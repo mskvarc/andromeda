@@ -41,7 +41,7 @@ impl DocumentPath {
 
     /// This path with `step` after its last step.
     fn followed_by(&self, step: PathStep) -> DocumentPath {
-        // clone: each path below this one owns its own steps
+        // clone: this path is borrowed, so the new path takes its own copy of the steps
         let mut steps = self.0.clone();
         steps.push(step);
         DocumentPath(steps)

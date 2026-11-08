@@ -165,8 +165,8 @@ impl HttpContextLoader {
     /// A copy derived from a document (a parsed term table) compares its source
     /// against this to tell whether the document has since lapsed and been read
     /// again: a changed or absent entry means the derived copy is stale. The
-    /// entry is looked for under the key a resolution of `url` lands under -- a
-    /// stored `@context` of the tenant under its identifier -- so the derived
+    /// entry is looked for under the key a resolution of `url` lands under (a
+    /// stored `@context` of the tenant under its identifier), so the derived
     /// copy of an own context is reused like any other.
     ///
     /// # Errors
@@ -277,17 +277,17 @@ impl HttpContextLoader {
             return Ok(loaded);
         }
         let url_iri = url.clone(); // owned: the moka key and the cache-fill future both need it
-        let registry = Arc::clone(&self.registry); // clone: Arc ref-count bump into the cache-fill future
-        let client = self.client.clone(); // clone: shares the connection pool and the guard into the cache-fill future
+        let registry = Arc::clone(&self.registry);
+        let client = self.client.clone();
         let allow_remote = self.allow_remote;
         let lifetimes = self.lifetimes;
         let max_bytes = self.max_context_bytes;
         let l2_cache = match cached_copy {
-            CachedCopy::Recorded => self.l2_cache.clone(), // clone: Arc ref-count bump into the cache-fill future
+            CachedCopy::Recorded => self.l2_cache.clone(),
             CachedCopy::Forbidden => None,
         };
         let filled_here = Arc::new(AtomicBool::new(false));
-        let fill_marker = Arc::clone(&filled_here); // clone: the cache-fill future records whether this caller filled the entry
+        let fill_marker = Arc::clone(&filled_here);
 
         let result = self
             .cache
@@ -300,8 +300,6 @@ impl HttpContextLoader {
                     // clause 5.13.3 then lists. An embedded registration (the
                     // core contexts, the W3C Data Integrity context) never carries a
                     // written copy, so it stays out of the durable cache.
-                    // clone: an Arc bump, so the entry can move into the
-                    // persisted row while `registered` outlives this block.
                     if let Some(as_written) = registered.preloaded_written().cloned()
                         && let Some(ref cache) = l2_cache
                     {
@@ -367,7 +365,7 @@ impl Loader for HttpContextLoader {
     async fn load(&self, url: Iri<&str>) -> Result<RemoteDocument<IriBuf>, LoadError<Self::Error>> {
         let url_iri = IriBuf::from(url);
         let loaded = self.load_entry(&url_iri).await.map_err(|error| {
-            LoadError::new(url_iri.clone(), (*error).clone()) // clone: the Arc is shared with the moka cache
+            LoadError::new(url_iri.clone(), (*error).clone()) // clone: the cache keeps the shared error for every other waiter, so this one is copied out
         })?;
         // The document's base is the URL it was finally read from, after
         // redirects and an alternate hop; a copy held without one is based on
@@ -432,10 +430,10 @@ mod tests {
             // is a download of the URL it is read under.
             let source = match self.residual {
                 ResidualLifetime::Unbounded => StoredDocumentSource::Broker,
-                ResidualLifetime::Bounded(_) => StoredDocumentSource::Downloaded { document_url: url.clone() }, // clone: the hit owns its document URL
+                ResidualLifetime::Bounded(_) => StoredDocumentSource::Downloaded { document_url: url.clone() },
             };
             Ok(Some(CachedContext {
-                payload: self.payload.clone(), // clone: the fixture keeps its payload for the next read
+                payload: self.payload.clone(),
                 residual: self.residual,
                 canonical_url: None,
                 source,
@@ -463,12 +461,10 @@ mod tests {
         async fn get(&self, url: &IriBuf) -> Result<Option<CachedContext>, ContextCacheError> {
             self.reads.fetch_add(1, Ordering::Relaxed);
             Ok((url == &self.url).then(|| CachedContext {
-                payload: self.payload.clone(), // clone: the fixture keeps its payload for the next read
+                payload: self.payload.clone(),
                 residual: ResidualLifetime::Bounded(CacheLifetime::from_seconds(30).expect("thirty seconds is a positive lifetime")),
                 canonical_url: None,
-                source: StoredDocumentSource::Downloaded {
-                    document_url: url.clone(), // clone: the hit owns its document URL
-                },
+                source: StoredDocumentSource::Downloaded { document_url: url.clone() },
             }))
         }
         async fn put(&self, _url: &IriBuf, _document_url: &IriBuf, _payload: &JsonLiteral, _lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
@@ -479,7 +475,7 @@ mod tests {
     /// A loader over a [`CountingL2`] holding `url`, counting hits.
     fn counting_loader(url: &IriBuf) -> (HttpContextLoader, Arc<CountingL2>, Arc<HitCounter>) {
         let l2 = Arc::new(CountingL2 {
-            url: url.clone(), // clone: the fixture owns the URL it answers for
+            url: url.clone(),
             payload: literal(&json!({ "@context": "https://example.com/terms.jsonld" })),
             reads: AtomicUsize::new(0),
         });

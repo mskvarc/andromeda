@@ -84,7 +84,7 @@ impl MentionedNames {
     /// Add the names `attributes` mentions, at every depth.
     pub fn collect(&mut self, attributes: &Attributes) {
         for (name, instances) in attributes.iter() {
-            self.attributes.push(name.clone()); // clone: the dictionary request owns the names it resolves
+            self.attributes.push(name.clone());
             for (_, instance) in instances.iter() {
                 let family = instance.value();
                 if let FamilyValue::Property { values, .. } = family

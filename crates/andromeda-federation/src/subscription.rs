@@ -102,7 +102,7 @@ impl ForwardedSubscription {
                 | ForwardedWriteOutcome::NotAdvertised
                 | ForwardedWriteOutcome::UpsertFollowUpNotAdvertised,
             )
-            | None => requested.clone(), // clone: same
+            | None => requested.clone(),
         }
     }
 

@@ -242,7 +242,6 @@ async fn core_in_force_after(context: &ContextEntry<'_>, documents: &impl Contex
             }
             ContextTail::Reference(url) => {
                 if followed.len() >= MAX_CONTEXT_REFERENCE_DEPTH || !followed.insert(url.clone()) {
-                    // clone: the set remembers the reference the lookup below reads
                     return Ok(CoreInForce::NotLast);
                 }
                 tail = documents.tail_of(&url).await?;

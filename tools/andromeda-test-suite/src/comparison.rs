@@ -142,7 +142,7 @@ impl Expectation {
             (actual, expected) => out.push(Difference::at(
                 path,
                 Discrepancy::Unequal {
-                    actual: actual.clone(), // clone: the difference owns the values it reports
+                    actual: actual.clone(), // clone: the difference outlives the compared document
                     expected: expected.clone(),
                 },
             )),
@@ -155,14 +155,14 @@ impl Expectation {
             let member = path.member(name);
             match actual.get(name) {
                 Some(actual) => self.compare(&member, Some(name), actual, expected, mode, out),
-                None => out.push(Difference::at(&member, Discrepancy::Missing(expected.clone()))), // clone: the difference owns the values it reports
+                None => out.push(Difference::at(&member, Discrepancy::Missing(expected.clone()))), // clone: the difference outlives the expectation
             }
         }
         out.extend(
             actual
                 .iter()
                 .filter(|(name, _)| !expected.contains_key(*name) && !self.hides(path, name))
-                .map(|(name, value)| Difference::at(&path.member(name), Discrepancy::Unexpected(value.clone()))), // clone: the difference owns the values it reports
+                .map(|(name, value)| Difference::at(&path.member(name), Discrepancy::Unexpected(value.clone()))), // clone: the difference outlives the answer
         );
     }
 

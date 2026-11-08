@@ -50,7 +50,7 @@ pub(crate) fn add_value<'a>(object: &mut CompactedObject<'a>, key: &str, value: 
 /// shape: an array there is the data, not a set of values to add one by one.
 /// Adding it element by element, as the add-value rule does, would write a
 /// one-element array as its element and lose what NGSI-LD keeps out of JSON-LD
-/// processing altogether -- clause 4.5.24.2 makes the `json` of a
+/// processing altogether, since clause 4.5.24.2 makes the `json` of a
 /// `JsonProperty` "a raw JSON object (or array of objects)" that is "never
 /// subject to JSON-LD term expansion or compaction", and clause 4.6.4 returns
 /// "the original content".

@@ -17,7 +17,7 @@ pub struct SpatialKey {
     pub tenant: TenantRef,
     /// Expanded entity type IRI.
     pub type_iri: IriBuf,
-    /// The `GeoProperty` the partition indexes, named by its expanded IRI — for
+    /// The `GeoProperty` the partition indexes, named by its expanded IRI, for
     /// instance `https://uri.etsi.org/ngsi-ld/location`.
     pub geoproperty: AttributeName,
 }
@@ -30,8 +30,8 @@ impl SpatialKey {
     }
 
     /// The wildcard partition for a geo subscription that names no concrete
-    /// type — an empty selector list, or a boolean type expression the per-type
-    /// partitioning cannot enumerate.
+    /// type (an empty selector list, or a boolean type expression the per-type
+    /// partitioning cannot enumerate).
     ///
     /// The subscription cache indexes such subscriptions here, and the
     /// notification worker queries this same partition, so an untyped or
@@ -54,7 +54,6 @@ impl SpatialKey {
 pub fn flatten_or_type_iris(expr: &TypeExpr) -> Option<Vec<IriBuf>> {
     match expr {
         TypeExpr::Wildcard | TypeExpr::And(_) => None,
-        // clone: the spatial key owns its IRIs and the expression is borrowed
         TypeExpr::Type(iri) => Some(vec![iri.clone()]),
         TypeExpr::Or(children) => {
             let mut out = Vec::with_capacity(children.len());
@@ -83,7 +82,6 @@ mod tests {
         // The cache writes under this key and the worker reads it; minting it
         // through one constructor is what guarantees they cannot drift.
         let geoproperty: AttributeName = "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name");
-        // clone: both keys own their own copy, which is what the equality asserts
         let written = SpatialKey::any_type(TenantRef::UnnamedDefault, geoproperty.clone());
         let read = SpatialKey::any_type(TenantRef::UnnamedDefault, geoproperty);
         pretty_assertions::assert_eq!(written, read);

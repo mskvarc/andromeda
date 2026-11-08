@@ -64,7 +64,7 @@ pub(crate) async fn add_attrs(
         .type_
         .as_ref()
         .and_then(|types| types.iter().next())
-        .map(|name| TypeExprRaw::Type(name.clone())); // clone: the one-type selector owns the type it names
+        .map(|name| TypeExprRaw::Type(name.clone()));
     let request = ForwardProvisionRequest {
         resource: ProvisionResource::TemporalEntities,
         entity_id: &id,

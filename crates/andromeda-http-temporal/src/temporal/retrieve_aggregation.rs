@@ -166,7 +166,7 @@ impl RetrievalRound<'_> {
             language_targeting: self.service.language_targeting(),
         };
         let parts = vec![EntityParts {
-            entity_id: self.request.entity_id.clone(), // clone: the rendering owns the identifier it aggregates under
+            entity_id: self.request.entity_id.clone(),
             local,
             answered,
         }];

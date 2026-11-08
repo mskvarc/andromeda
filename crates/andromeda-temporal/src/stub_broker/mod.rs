@@ -155,7 +155,7 @@ impl StubBroker {
     fn of_entities<T: Clone>(held: &HashMap<Identifier, T>, entity_ids: &[Identifier]) -> HashMap<Identifier, T> {
         entity_ids
             .iter()
-            .filter_map(|entity_id| Some((entity_id.clone(), held.get(entity_id)?.clone()))) // clone: every read answers what the broker holds
+            .filter_map(|entity_id| Some((entity_id.clone(), held.get(entity_id)?.clone())))
             .collect()
     }
 
@@ -190,7 +190,7 @@ impl StubBroker {
     /// The same graph with `entity_id` known and reading as `rows`, whatever
     /// the window, the way a store answers one page of its history.
     pub(crate) fn paging(mut self, entity_id: Identifier, rows: Vec<TemporalHistoryRow>) -> StubBroker {
-        self.links.entry(entity_id.clone()).or_default(); // clone: the graph and the page both key by the entity
+        self.links.entry(entity_id.clone()).or_default();
         self.pages.insert(entity_id, rows);
         self
     }
@@ -203,7 +203,7 @@ impl StubBroker {
     /// The entity selections the identifier listings ran under, in the order
     /// they ran.
     pub(crate) fn listed_selections(&self) -> Vec<EntitySelection> {
-        self.listed_selections.lock().expect("the recording lock is never poisoned").clone() // clone: the recording keeps what it was handed
+        self.listed_selections.lock().expect("the recording lock is never poisoned").clone()
     }
 
     /// The same graph answering every merged aggregation with `rows`.
@@ -215,13 +215,13 @@ impl StubBroker {
     /// The rows the sources answered with that merged aggregations were handed,
     /// in the order they were handed them.
     pub(crate) fn merged_answers(&self) -> Vec<TemporalHistoryRow> {
-        self.merged_answers.lock().expect("the recording lock is never poisoned").clone() // clone: the recording keeps what it was handed
+        self.merged_answers.lock().expect("the recording lock is never poisoned").clone()
     }
 
     /// Each entity a merged aggregation ran for, whether its local part joined,
     /// and the types it was named with, in the order they ran.
     pub(crate) fn merged_entities(&self) -> Vec<(Identifier, LocalPart, Vec<EntityTypeName>)> {
-        self.merged_entities.lock().expect("the recording lock is never poisoned").clone() // clone: the recording keeps what it was handed
+        self.merged_entities.lock().expect("the recording lock is never poisoned").clone()
     }
 
     /// The same graph with the current state of every entity deleted.
@@ -238,7 +238,7 @@ impl StubBroker {
     /// tests are about which entities are *reached*, not about that rule.
     pub(crate) fn rows(&self, entity_id: &Identifier) -> Vec<TemporalHistoryRow> {
         if let Some(page) = self.pages.get(entity_id) {
-            return page.clone(); // clone: every read of the entity answers the same page
+            return page.clone();
         }
         let instant = "2024-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("valid instant").get();
         let Some(targets) = self.links.get(entity_id) else {
@@ -265,7 +265,7 @@ impl StubBroker {
                 attribute_name: "https://example.com/linksTo".parse::<AttributeName>().expect("valid attribute IRI"),
                 attribute_type: AttributeType::Relationship,
                 dataset_id: None,
-                value: TemporalValue::Uri(target.as_uri().clone()), // clone: the row owns the object it names
+                value: TemporalValue::Uri(target.as_uri().clone()),
                 observed_at: Some(instant),
                 recorded_at: instant,
                 created_at: Some(instant),
@@ -311,7 +311,7 @@ pub(crate) fn limits() -> TemporalServiceLimits {
 /// A service whose history is the stubbed `broker`, whose non-local half is
 /// `remote`, bounded by `limits`.
 pub(crate) fn service_under(broker: Arc<StubBroker>, remote: Option<Arc<dyn RemoteTemporalLinkedSource>>, limits: TemporalServiceLimits) -> TemporalService {
-    let reader = Arc::clone(&broker) as Arc<dyn TemporalHistoryReader>; // clone: one test double supplies every focused capability
+    let reader = Arc::clone(&broker) as Arc<dyn TemporalHistoryReader>;
     service_over_reader(broker, reader, remote, limits)
 }
 
@@ -327,7 +327,7 @@ pub(crate) fn service_over_entities<E: EntityReader + ContextCommitter>(entities
     let broker = Arc::new(StubBroker::new([]));
     TemporalService::new(
         TemporalServicePorts {
-            entity_reader: Arc::clone(&entities) as Arc<dyn EntityReader>, // clone: one test double supplies both current-state capabilities
+            entity_reader: Arc::clone(&entities) as Arc<dyn EntityReader>,
             reader: Arc::clone(&broker) as Arc<dyn TemporalHistoryReader>,
             mutation_barrier: Arc::clone(&broker) as Arc<dyn TemporalMutationBarrier>,
             mutator: Arc::clone(&broker) as Arc<dyn TemporalMutator>,
@@ -352,11 +352,11 @@ fn service_over_reader(
 ) -> TemporalService {
     TemporalService::new(
         TemporalServicePorts {
-            entity_reader: Arc::clone(&broker) as Arc<dyn EntityReader>, // clone: one test double supplies every focused capability
+            entity_reader: Arc::clone(&broker) as Arc<dyn EntityReader>,
             reader,
             mutation_barrier: Arc::clone(&broker) as Arc<dyn TemporalMutationBarrier>,
             mutator: Arc::clone(&broker) as Arc<dyn TemporalMutator>,
-            writes: Arc::clone(&broker) as Arc<dyn ContextCommitter>, // clone: one test double supplies every focused capability
+            writes: Arc::clone(&broker) as Arc<dyn ContextCommitter>,
             retry_delay: broker as Arc<dyn RetryDelay>,
         },
         JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),

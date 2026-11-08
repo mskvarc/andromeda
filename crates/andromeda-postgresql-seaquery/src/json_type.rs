@@ -46,7 +46,7 @@ pub fn jsonb_whole_text(value: SimpleExpr) -> SimpleExpr {
 #[must_use]
 pub fn jsonb_typed_reading(value: SimpleExpr, json_type: JsonType, ty: PostgresType) -> SimpleExpr {
     CaseStatement::new()
-        .case(jsonb_type_is(value.clone(), json_type), cast_compound(jsonb_whole_text(value), ty)) // clone: the test reads the value it guards
+        .case(jsonb_type_is(value.clone(), json_type), cast_compound(jsonb_whole_text(value), ty))
         .into()
 }
 

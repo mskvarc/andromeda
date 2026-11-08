@@ -1,7 +1,7 @@
 //! The PostgreSQL spelling of a clause 5.5.9 page window over an identifier.
 //!
-//! Every identifier-ordered collection the stores page -- entities, temporal
-//! entities, registrations, subscriptions -- is cut by the same
+//! Every identifier-ordered collection the stores page (entities, temporal
+//! entities, registrations, subscriptions) is cut by the same
 //! [`PageWindow`]: an offset is `LIMIT`/`OFFSET`, a cursor is a keyset
 //! predicate on the identifier with `LIMIT` and no `OFFSET`. Written once
 //! here, so a collection cannot page by a different reading of the window than

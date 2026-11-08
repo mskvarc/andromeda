@@ -6,7 +6,7 @@
 /// it to a value, and the three are distinct: an omitted member keeps whatever
 /// is stored, an explicit `null` clears it, and a value replaces it. Nesting one
 /// option inside another would spell the first two the same way round the wrong
-/// way -- both as an absence -- so the update statement takes this instead.
+/// way, both as an absence, so the update statement takes this instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MetadataChange<T> {
     /// The update did not name the member; what is stored stands.

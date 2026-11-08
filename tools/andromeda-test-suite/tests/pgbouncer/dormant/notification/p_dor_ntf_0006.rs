@@ -58,7 +58,7 @@ async fn p_dor_ntf_0006_every_change_of_a_live_subscription_is_notified_when_the
             batch.push(
                 Entity::<Input>::builder()
                     .id(namespace.urn("Watched", write * ENTITIES_PER_WRITE + entity)?)
-                    .entity_type(watched.clone()) // clone: every entity of the batches shares the type
+                    .entity_type(watched.clone())
                     .property("reading", 1)
                     .build()?,
             );

@@ -22,7 +22,7 @@ impl EntityDrain {
     /// Begin a drain of the changes `commits` holds.
     pub(super) fn begin(commits: &Arc<PendingCommits>) -> EntityDrain {
         EntityDrain {
-            unfinished: Some(Arc::clone(commits)), // clone: the guard reads the count when it is dropped unfinished.
+            unfinished: Some(Arc::clone(commits)),
         }
     }
 

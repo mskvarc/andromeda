@@ -4,7 +4,7 @@
 //! Every source's answer was read into the model under the context it was
 //! written in, so a captured local state a source also answered for merges
 //! with what the source answered on the model (clause 4.5.5), and the merged
-//! version -- like a source entity no local page held -- is the state the
+//! version, like a source entity no local page held, is the state the
 //! Snapshot's branch holds. A local state no source answered for never takes
 //! this path.
 

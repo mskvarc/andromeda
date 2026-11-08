@@ -45,8 +45,8 @@ pub fn validate_ngsi_ld_name(value: &str) -> Result<(), NgsiLdReferenceError> {
     IdentifierTooLong::check(value)?;
     // The four forms are alternatives, so they are tried cheapest first: the
     // compact-IRI and short-name forms are a grammar match on the borrowed text,
-    // and they already accept every absolute IRI whose scheme is a term -- the
-    // expanded attribute names a stored payload is keyed by -- before the URI
+    // and they already accept every absolute IRI whose scheme is a term (the
+    // expanded attribute names a stored payload is keyed by) before the URI
     // and IRI parsers, which build a parsed value, are consulted.
     if is_compact_iri(value) || Name::new(value).is_ok() || Uri::from_str(value).is_ok() || IriBuf::from_str(value).is_ok() {
         return Ok(());

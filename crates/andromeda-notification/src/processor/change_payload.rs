@@ -38,9 +38,8 @@ fn removed_state(event: &ChangeEvent) -> Option<Arc<EntityState>> {
     if let Some(removed) = event.entity_snapshot.as_ref() {
         return Some(Arc::clone(removed));
     }
-    // clone: the identity state owns the names the event keeps
     if let Ok(types) = EntityTypes::try_from_names(event.entity_types.iter().cloned()) {
-        return Some(Arc::new(EntityState::new(event.entity_id.clone(), types))); // clone: same
+        return Some(Arc::new(EntityState::new(event.entity_id.clone(), types)));
     }
     debug!(
         "Deletion of {} carries neither a removed state nor a type, skipping notification",

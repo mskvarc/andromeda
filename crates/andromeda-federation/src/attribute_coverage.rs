@@ -40,22 +40,13 @@ fn attribute_coverage(csr: &ContextSourceRegistration, entity_types: &[EntityTyp
     if information.iter().any(|entry| entry.attribute_names().next().is_none()) {
         return AttributeCoverage::Unrestricted;
     }
-    AttributeCoverage::Names(
-        information
-            .iter()
-            .flat_map(|entry| entry.attribute_names())
-            .cloned() // clone: the coverage owns the declared names borrowed from the registration
-            .collect(),
-    )
+    AttributeCoverage::Names(information.iter().flat_map(|entry| entry.attribute_names()).cloned().collect())
 }
 
 /// The attributes among `requested` that a registration declaring `declared`
 /// covers.
 fn covered_among<'a>(requested: impl Iterator<Item = &'a AttributeName>, declared: &[AttributeName]) -> Vec<AttributeName> {
-    requested
-        .filter(|attribute| declared.contains(attribute))
-        .cloned() // clone: the result outlives the borrow of the content
-        .collect()
+    requested.filter(|attribute| declared.contains(attribute)).cloned().collect()
 }
 
 /// The attributes of a write that `csr` covers: the one `explicit_attribute` a
@@ -70,16 +61,13 @@ pub(crate) fn matching_attributes(
     requested: &[AttributeName],
 ) -> Vec<AttributeName> {
     if let Some(attribute) = explicit_attribute {
-        return vec![attribute.clone()]; // clone: the result outlives the borrowed request
+        return vec![attribute.clone()];
     }
     let mut covered = Vec::new();
     for information in matching_entries(csr, entity_types, entity_id) {
-        let declared = information
-            .attribute_names()
-            .cloned() // clone: the comparison owns the names borrowed from the registration
-            .collect::<Vec<_>>();
+        let declared = information.attribute_names().cloned().collect::<Vec<_>>();
         if declared.is_empty() {
-            covered.extend(requested.iter().cloned()); // clone: the result outlives the borrowed request
+            covered.extend(requested.iter().cloned());
         } else if requested.is_empty() {
             covered.extend(declared);
         } else {
@@ -102,7 +90,7 @@ pub(crate) fn covered_attributes(
 ) -> Vec<AttributeName> {
     match attribute_coverage(csr, entity_types, entity_id) {
         AttributeCoverage::NotMatching => Vec::new(),
-        AttributeCoverage::Unrestricted => document.attributes().keys().cloned().collect(), // clone: the result owns the names it reports
+        AttributeCoverage::Unrestricted => document.attributes().keys().cloned().collect(),
         AttributeCoverage::Names(declared) => covered_among(document.attributes().keys(), &declared),
     }
 }
@@ -124,7 +112,7 @@ pub(crate) fn narrowed_document<'d>(
     if covered.len() == document.attributes().len() {
         return Some(Cow::Borrowed(document));
     }
-    let mut narrowed = document.clone(); // clone: each registration narrows its own copy
+    let mut narrowed = document.clone(); // clone: the borrowed document cannot be narrowed in place, so the narrowing works on a copy
     narrowed.attributes_mut().retain(|name, _| covered.contains(name));
     Some(Cow::Owned(narrowed))
 }

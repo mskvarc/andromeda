@@ -102,7 +102,6 @@ impl Walk<'_> {
         let Some(text) = text else {
             return Ok(());
         };
-        // clone: the value object owns its datatype IRI
         let item: [ExpandedItem<'a, Stored>; 1] = [ExpandedItem::typed_text(text, reserved().date_time.clone())];
         self.compact_property(result, member, &item)
     }

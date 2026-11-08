@@ -141,8 +141,8 @@ impl PendingWorkProbe for FakeProbe {
                 sleep(Duration::from_millis(1)).await;
                 Ok(PendingWork::DueAt(SystemTime::now()))
             }
-            FakeProbeOutcome::DatabaseGone => Err(PendingWorkError::DatabaseGone { database: database.clone() }), // clone: the error outlives this borrow
-            FakeProbeOutcome::Unmigrated => Err(PendingWorkError::Unmigrated { database: database.clone() }),     // clone: the error outlives this borrow
+            FakeProbeOutcome::DatabaseGone => Err(PendingWorkError::DatabaseGone { database: database.clone() }),
+            FakeProbeOutcome::Unmigrated => Err(PendingWorkError::Unmigrated { database: database.clone() }),
         }
     }
 }
@@ -389,7 +389,7 @@ impl FakeRegistry {
             TenantStatus::Active
         };
         TenantRecord::new(
-            name.clone(), // clone: the record owns its name
+            name.clone(),
             status,
             TenantDatabaseName::from(format!("db_{}", name.as_str())),
             epoch(),
@@ -772,7 +772,7 @@ impl TenantStateFactory for FlakyFactory {
     async fn build(&self, tenant: &TenantRef, database: &TenantDatabaseName) -> Result<(Arc<String>, FakeRuntime), TenancyError> {
         if self.built.fetch_add(1, Ordering::Relaxed) == 0 {
             return Err(TenancyError::RuntimeUnavailable {
-                tenant: tenant.clone(), // clone: the error owns the tenant it names
+                tenant: tenant.clone(),
                 cause: RuntimeBuildFailure::Persistence(PersistenceFailure::Unavailable),
             });
         }
@@ -862,7 +862,7 @@ async fn concurrent_first_requests_for_one_tenant_trigger_a_single_build() {
     let mut handles = Vec::new();
     for _ in 0..8 {
         let manager = Arc::clone(&manager);
-        let tenant = tenant.clone(); // clone: each task owns its reference
+        let tenant = tenant.clone();
         handles.push(tokio::spawn(async move {
             manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.expect("resolves")
         }));
@@ -1169,7 +1169,7 @@ async fn a_registry_that_cannot_be_read_evicts_nothing_rather_than_everything() 
 
         async fn registered_tenant(&self, name: &TenantName) -> Result<Option<RegisteredTenant>, TenancyError> {
             Ok(Some(RegisteredTenant::Established(TenantRecord::new(
-                name.clone(), // clone: the record owns its name
+                name.clone(),
                 TenantStatus::Active,
                 TenantDatabaseName::from(format!("db_{}", name.as_str())),
                 epoch(),
@@ -2427,7 +2427,7 @@ async fn a_request_waiting_on_another_requests_build_is_refused_at_the_admission
 
     let building = {
         let manager = Arc::clone(&manager);
-        let tenant = tenant.clone(); // clone: the task owns its reference
+        let tenant = tenant.clone();
         tokio::spawn(async move { manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.map(|leased| leased.state) })
     };
     // Let the first request take the lock and enter its build.

@@ -167,12 +167,12 @@ fn config(concurrent: u32) -> DeliveryConfig {
 fn run_pass(count: u128, answer: Answer, takes_over_while_sending: BTreeMap<Uuid, Vec<Uuid>>) -> Result<(SnapshotStatusPassOutcome, Vec<Call>), SnapshotError> {
     let queue = Arc::new(RecordingQueue::holding((1..=count).map(delivery)));
     let receiver = SlowReceiver {
-        queue: Arc::clone(&queue), // clone: the receiver records its sends and takeovers on the queue the drain reads.
+        queue: Arc::clone(&queue),
         answer,
         takes_over_while_sending,
     };
     let concurrent = u32::try_from(count).unwrap_or(u32::MAX);
-    let port: Arc<dyn SnapshotStatusQueue> = Arc::<RecordingQueue>::clone(&queue); // clone: the drain and the assertions share one queue.
+    let port: Arc<dyn SnapshotStatusQueue> = Arc::<RecordingQueue>::clone(&queue);
     let drain = SnapshotStatusDeliveryDrain::new(port, Arc::new(receiver), &config(concurrent))?;
     let outcome = block_on(drain.execute(Utc::now()))?;
     Ok((outcome, queue.calls()))

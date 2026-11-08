@@ -364,7 +364,7 @@ mod tests {
         let remote =
             json!({"id": SPEED, "type": "Attribute", "attributeName": "speed", "attributeTypes": ["Relationship"], "attributeCount": 1, "typeNames": ["Car"]});
         let (merged, _) = merged(local, vec![answer(&remote, ContextSpec::core_only())], attribute_info).await;
-        let families: Vec<AttributeType> = serde_json::from_value(merged["attributeTypes"].clone()).expect("families"); // clone: the assertion reads the member out of the answer
+        let families: Vec<AttributeType> = serde_json::from_value(merged["attributeTypes"].clone()).expect("families");
         pretty_assertions::assert_eq!(families, vec![AttributeType::Property, AttributeType::Relationship]);
         pretty_assertions::assert_eq!(merged["attributeCount"], json!(3));
         pretty_assertions::assert_eq!(merged["typeNames"], json!(["Vehicle", "Car"]));

@@ -4,9 +4,9 @@
 //! Tenant management is not defined by ETSI GS CIM 009 v1.9.1, which leaves it
 //! implementation-specific (clause 5.5.10) beyond the `NGSILD-Tenant` header
 //! (clause 6.3.14). This resource is therefore an Andromeda extension. It borrows
-//! the clause 5.2.12 idiom the specification uses for a Subscription -- a
+//! the clause 5.2.12 idiom the specification uses for a Subscription (a
 //! client-writable `isActive` Boolean paired with a read-only, system-generated
-//! `status` -- and returns a fixed JSON shape (no JSON-LD expansion variants), so
+//! `status`), and returns a fixed JSON shape (no JSON-LD expansion variants), so
 //! the operational members carry plain vendor names rather than expandable
 //! `ngsi-ld:` terms.
 

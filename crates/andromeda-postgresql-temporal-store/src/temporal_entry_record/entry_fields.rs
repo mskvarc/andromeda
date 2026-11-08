@@ -55,7 +55,7 @@ impl Grain {
     ) -> Result<Grain, TemporalStoreError> {
         let attribute_name_key = keys
             .attribute(attribute_name)
-            // clone: the invariant owns the name the dictionary failed to resolve.
+            // clone: the error outlives the borrowed attribute name it failed on.
             .ok_or_else(|| TemporalStoreInvariant::AttributeNameUnresolved(attribute_name.clone()))?;
         Ok(Grain {
             entry_kind: kind,

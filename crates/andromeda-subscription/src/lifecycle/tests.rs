@@ -158,7 +158,7 @@ impl SubscriptionStore for DeletingStore {
 
     async fn expire_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Identifier>, SubscriptionError> {
         record(&self.log, TeardownStep::RowsExpired);
-        Ok(self.expiring.clone()) // clone: every sweep hands back its own list
+        Ok(self.expiring.clone())
     }
 
     async fn find_due_interval_subscriptions(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<StoredSubscription>, SubscriptionError> {
@@ -213,18 +213,16 @@ impl SubscriptionForwardingHook for RecordingHook {
 
     async fn teardown_of(&self, _id: &Identifier) -> Result<SubscriptionTeardown, SubscriptionError> {
         record(&self.log, TeardownStep::TeardownCaptured);
-        // clone: every call hands the caller its own copy of the fixed plan.
         Ok(self.teardown.clone())
     }
 
     async fn deleted(&self, _id: &Identifier, teardown: &SubscriptionTeardown) -> Result<(), SubscriptionError> {
-        // clone: the log keeps what the hook was handed for the assertion.
         record(&self.log, TeardownStep::TornDown(teardown.clone()));
         Ok(())
     }
 
     async fn expired(&self, id: &Identifier) -> Result<(), SubscriptionError> {
-        record(&self.log, TeardownStep::Withdrawn(id.clone())); // clone: the log keeps the identifier for the assertion
+        record(&self.log, TeardownStep::Withdrawn(id.clone()));
         Ok(())
     }
 }
@@ -257,7 +255,6 @@ fn service(log: &TeardownLog, rows_deleted: u64) -> SubscriptionService<CsrSubsc
 
 fn expiring_service(log: &TeardownLog, rows_deleted: u64, expiring: Vec<Identifier>) -> SubscriptionService<CsrSubscriptionVariant> {
     let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
-    // clone: the store and the hook each hold the shared log.
     let store = DeletingStore {
         log: Arc::clone(log),
         rows_deleted,
@@ -269,7 +266,6 @@ fn expiring_service(log: &TeardownLog, rows_deleted: u64, expiring: Vec<Identifi
     };
     SubscriptionService::new(
         Arc::new(store),
-        // clone: the service and the variant each own an engine handle.
         engine.clone(),
         CsrSubscriptionVariant::new(engine),
         None,
@@ -316,7 +312,6 @@ async fn deleting_an_unknown_subscription_tears_nothing_down() {
 async fn an_expiry_withdraws_every_expired_subscription_after_the_transition() {
     let log = TeardownLog::default();
     let expiring = vec![uri("urn:ngsi-ld:Subscription:first"), uri("urn:ngsi-ld:Subscription:second")];
-    // clone: the store hands the list back and the assertion compares against it.
     let expired = expiring_service(&log, 0, expiring.clone()).expire_due(&ContextTarget::Live, Utc::now()).await;
     assert_eq!(expired.ok(), Some(expiring));
     let steps = log.lock().expect("the teardown log is never poisoned").clone();
@@ -377,7 +372,7 @@ impl SubscriptionStore for UpdatingStore {
     async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<StoredSubscription>, SubscriptionError> {
         Ok(Some(StoredSubscription {
             key: SubscriptionKey::try_from(1_i64).expect("a positive key"),
-            subscription: self.stored.clone(), // clone: every read hands back its own copy of the stored resource.
+            subscription: self.stored.clone(),
             notifying_since: since_creation(),
         }))
     }
@@ -445,7 +440,6 @@ impl SubscriptionStore for UpdatingStore {
         status: SubscriptionStatus,
         restart: NotifyingRestart,
     ) -> Result<u64, SubscriptionError> {
-        // clone: the record keeps the written IRI for the assertion.
         *self.written.lock().expect("the written context is never poisoned") = Some(fields.jsonld_context.cloned());
         *self.status.lock().expect("the written status is never poisoned") = Some(status);
         *self.restart.lock().expect("the written restart is never poisoned") = Some(restart);
@@ -477,7 +471,6 @@ async fn restart_written_after_update(status: SubscriptionStatus, fragment: Valu
     };
     let service = SubscriptionService::new(
         Arc::new(store),
-        // clone: the service and the variant each own an engine handle.
         engine.clone(),
         EntitySubscriptionVariant::new(engine),
         None,
@@ -568,7 +561,6 @@ async fn written_context_after_update(fragment: Value, context: &ContextSpec) ->
 /// the update asked for no write.
 async fn written_after_update(fragment: Value, context: &ContextSpec) -> Option<Option<IriBuf>> {
     let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
-    // clone: the admission consumes the spec, and the caller keeps its own
     let context = admit_user_context(&engine, SubmittedContext::from(context.clone()))
         .await
         .expect("the context is admitted");
@@ -581,7 +573,6 @@ async fn written_after_update(fragment: Value, context: &ContextSpec) -> Option<
     };
     let service = SubscriptionService::new(
         Arc::new(store),
-        // clone: the service and the variant each own an engine handle.
         engine.clone(),
         EntitySubscriptionVariant::new(engine),
         None,
@@ -593,7 +584,7 @@ async fn written_after_update(fragment: Value, context: &ContextSpec) -> Option<
         .update(&ContextTarget::Live, &uri("urn:ngsi-ld:Subscription:stored"), request, &context)
         .await;
     assert!(updated.is_ok(), "{updated:?}");
-    written.lock().expect("the written context is never poisoned").clone() // clone: the lock guard is released before the answer is returned.
+    written.lock().expect("the written context is never poisoned").clone()
 }
 
 /// Clause 5.5.8 acts only for each member of the Fragment, so the empty
@@ -620,7 +611,6 @@ async fn status_written_after_update(status: SubscriptionStatus, fragment: Value
     };
     let service = SubscriptionService::new(
         Arc::new(store),
-        // clone: the service and the variant each own an engine handle.
         engine.clone(),
         EntitySubscriptionVariant::new(engine),
         None,
@@ -725,7 +715,7 @@ fn service_serving_a_scoped_context() -> (SubscriptionService<EntitySubscription
     .expect("the temporary directory is writable");
     let engine = JsonLdEngine::builder()
         .allow_remote(false)
-        .preload_contexts(HashMap::from([(Url::parse(SCOPED_CONTEXT).expect("a valid URL"), path.clone())])) // clone: the removal below needs the path
+        .preload_contexts(HashMap::from([(Url::parse(SCOPED_CONTEXT).expect("a valid URL"), path.clone())]))
         .build()
         .expect("engine builds");
     fs::remove_file(&path).expect("the temporary context is removable");
@@ -738,7 +728,6 @@ fn service_serving_a_scoped_context() -> (SubscriptionService<EntitySubscription
     };
     let service = SubscriptionService::new(
         Arc::new(store),
-        // clone: the service and the variant each own an engine handle.
         engine.clone(),
         EntitySubscriptionVariant::new(engine),
         None,
@@ -868,7 +857,6 @@ impl SubscriptionStore for ListingStore {
 
     async fn list(&self, _target: &ContextTarget, window: &PageWindow) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
         let total = i64::try_from(self.stored.len()).expect("five subscriptions");
-        // clone: every listing hands back its own copies of the stored resources.
         Ok((window.cut(self.stored.clone(), |subscription| subscription.id.as_str()), total))
     }
 
@@ -940,7 +928,6 @@ async fn listed(window: &PageWindow) -> (Vec<String>, i64, Option<(Identifier, I
     let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
     let service = SubscriptionService::new(
         Arc::new(ListingStore::of_five()),
-        // clone: the service and the variant each own an engine handle.
         engine.clone(),
         EntitySubscriptionVariant::new(engine),
         None,

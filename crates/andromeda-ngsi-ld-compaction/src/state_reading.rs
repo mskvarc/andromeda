@@ -39,7 +39,6 @@ pub(crate) fn walk_entity(
         })
     })?;
     if let Some(id) = id_override {
-        // clone: the compact entity owns the identifier it is read by
         entity.id = id.clone();
     }
     Ok(entity)

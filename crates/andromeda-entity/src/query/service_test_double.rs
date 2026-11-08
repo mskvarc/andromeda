@@ -122,7 +122,7 @@ pub(crate) fn service_resolving(reference_limits: GeometryCensusLimits) -> Entit
 fn service_with(spatial: SpatialAcceleration, reference_limits: GeometryCensusLimits) -> EntityQueryService {
     let store = Arc::new(UnusedStore);
     EntityQueryService::builder()
-        .reader(store.clone() as Arc<dyn EntityReader>) // clone: the test double supplies both focused capabilities
+        .reader(store.clone() as Arc<dyn EntityReader>)
         .query_store(store as Arc<dyn EntityQueryStore>)
         .engine(JsonLdEngine::builder().allow_remote(false).build().expect("build engine"))
         .spatial(spatial)

@@ -130,7 +130,7 @@ impl InMemoryStore {
 
     /// The row of the entity `id` names.
     fn row(&self, id: &Identifier) -> Option<StoredRow> {
-        self.rows.lock().expect("the store lock is not poisoned").row(id).cloned() // clone: Arc ref-count bump, the version and the instant
+        self.rows.lock().expect("the store lock is not poisoned").row(id).cloned()
     }
 
     /// Every write submitted for the entity `id` names, in submission order.
@@ -297,7 +297,7 @@ mod tests {
     /// stated against `read`.
     fn update(id: &Identifier, previous: &Arc<EntityState>, attributes: &[&str], read: EntityVersion) -> AtomicWrite {
         AtomicWrite::builder()
-            .entity_id(Arc::new(id.clone())) // clone: the write owns its identifier
+            .entity_id(Arc::new(id.clone()))
             .entity(EntityMutation::Update(
                 EntityRecord::replacing(previous, Arc::new(stored_building(id, attributes))).expect("a projectable state"),
             ))
@@ -308,7 +308,7 @@ mod tests {
     /// The creation of the Building `id` holding `attributes`.
     fn create(id: &Identifier, attributes: &[&str]) -> AtomicWrite {
         AtomicWrite::builder()
-            .entity_id(Arc::new(id.clone())) // clone: the write owns its identifier
+            .entity_id(Arc::new(id.clone()))
             .entity(EntityMutation::Insert(
                 EntityRecord::from_state(Arc::new(stored_building(id, attributes))).expect("a projectable state"),
             ))
@@ -319,7 +319,7 @@ mod tests {
     /// The deletion of the Building `id`, stated against `read`.
     fn delete(id: &Identifier, read: EntityVersion) -> AtomicWrite {
         AtomicWrite::builder()
-            .entity_id(Arc::new(id.clone())) // clone: the write owns its identifier
+            .entity_id(Arc::new(id.clone()))
             .entity(EntityMutation::Delete)
             .precondition(Precondition::UnchangedSince(read))
             .build()
@@ -329,7 +329,7 @@ mod tests {
     /// against `read`, as a backfill folded against `read` sends.
     fn backfill(id: &Identifier, read: EntityVersion) -> AtomicWrite {
         AtomicWrite::builder()
-            .entity_id(Arc::new(id.clone())) // clone: the write owns its identifier
+            .entity_id(Arc::new(id.clone()))
             .entity(EntityMutation::None)
             .precondition(Precondition::UnchangedSince(read))
             .build()

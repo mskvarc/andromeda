@@ -24,7 +24,7 @@
 //! * `(?x)` has already dropped the whitespace and the comments it allows, and
 //!   `.` has already been read with `dot_matches_new_line`.
 //! * `\d`, `\w` and `\s` and their negations are the `regex` crate's Unicode
-//!   classes -- `Nd`, the UTS #18 word characters and `White_Space` -- and are
+//!   classes (`Nd`, the UTS #18 word characters and `White_Space`) and are
 //!   written as the ranges of those classes, some seven hundred of them for
 //!   `\w`. PostgreSQL's own shorthand classifies by the operand's collation,
 //!   which under `COLLATE "C"` is ASCII alone.
@@ -222,8 +222,8 @@ fn write_look(look: Look, out: &mut String) -> Result<(), QueryError> {
 
 /// Append a class as a bracket expression over its ranges.
 ///
-/// PostgreSQL text cannot carry U+0000, so a class holding it -- the
-/// translation of a negated bracket expression, or of `.` -- is written as the
+/// PostgreSQL text cannot carry U+0000, so a class holding it (the
+/// translation of a negated bracket expression, or of `.`) is written as the
 /// negation of its complement, and a class holding every character as `.`,
 /// which PostgreSQL's default newline-insensitive mode lets match anything.
 fn write_class(class: &ClassUnicode, out: &mut String) -> Result<(), QueryError> {
@@ -236,7 +236,7 @@ fn write_class(class: &ClassUnicode, out: &mut String) -> Result<(), QueryError>
         out.push(']');
         return Ok(());
     }
-    // clone: negation works in place, and the class belongs to the translation.
+    // clone: negate() mutates in place, so the borrowed class is copied first.
     let mut complement = class.clone();
     complement.negate();
     if complement.ranges().is_empty() {

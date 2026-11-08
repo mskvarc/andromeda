@@ -118,10 +118,10 @@ impl RequestLinks {
     /// Returns the [`ContextLinkError`] the headers draw.
     pub fn of(parts: &mut Parts) -> Result<RequestLinks, ContextLinkError> {
         if let Some(read) = parts.extensions.get::<RequestLinks>() {
-            return Ok(read.clone()); // clone: the request keeps its reading for the next extractor
+            return Ok(read.clone()); // clone: the reading stays in the request extensions for the extractors that follow
         }
         let read = read_request_links(parts)?;
-        parts.extensions.insert(read.clone()); // clone: the request keeps its reading for the next extractor
+        parts.extensions.insert(read.clone());
         Ok(read)
     }
 

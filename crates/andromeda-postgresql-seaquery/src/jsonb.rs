@@ -91,8 +91,8 @@ pub fn jsonb_key_exists(col: SimpleExpr, key: SimpleExpr) -> SimpleExpr {
 /// JSONB array, one row each.
 ///
 /// A set-returning function returned as a [`FunctionCall`] so it stands either
-/// in a `FROM`/`JOIN` position where a set is expanded to rows, or — converted
-/// to an expression — inside a subquery whose result an `ARRAY(…)` collects into
+/// in a `FROM`/`JOIN` position where a set is expanded to rows, or (converted
+/// to an expression) inside a subquery whose result an `ARRAY(…)` collects into
 /// a Postgres array, which is how a JSONB array of strings becomes a `text[]`
 /// column. Its one output column is the text value.
 #[must_use]
@@ -103,7 +103,7 @@ pub fn jsonb_array_elements_text(array: SimpleExpr) -> FunctionCall {
 /// JSONB: `jsonb_exists(target, key)` - the function spelling of `target ? key`,
 /// whether the JSONB object `target` contains `key` as a top-level key.
 ///
-/// The function form composes where the `?` operator's precedence is awkward —
+/// The function form composes where the `?` operator's precedence is awkward,
 /// as a negated conjunct `NOT jsonb_exists(...)` or beside a set-returning call.
 #[must_use]
 pub fn jsonb_exists(target: SimpleExpr, key: SimpleExpr) -> SimpleExpr {
@@ -180,7 +180,7 @@ pub fn jsonb_array_length(array: SimpleExpr) -> SimpleExpr {
 /// matches anything in `target`.
 ///
 /// The jsonpath is part of the statement text the planner parses before any
-/// parameter is substituted, so it is inlined as a single-quoted literal — the
+/// parameter is substituted, so it is inlined as a single-quoted literal: the
 /// key escaping the path itself needs is already applied by its builder, and
 /// [`text_literal`] adds the SQL escaping the surrounding literal needs.
 #[must_use]

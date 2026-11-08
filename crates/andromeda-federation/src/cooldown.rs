@@ -151,7 +151,6 @@ impl CooldownRegistry {
             None if own_cooldown(registration).is_some() => CooldownEpisode::new(BackoffSchedule::constant(Duration::ZERO)),
             None => return,
         };
-        // clone: the registry owns its keys
         windows.entry(key.clone()).or_insert(FailureWindow { armed_at: now, episode });
     }
 }

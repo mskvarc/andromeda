@@ -77,7 +77,6 @@ async fn n_bat_ups_0018_an_update_mode_upsert_racing_a_create_of_the_same_id_end
     let mut races = Vec::new();
     for value in 0..RACES {
         let id = namespace.urn("Probe", value)?;
-        // clone: both Entities of the race and the expectations name the same id and type
         let upserted = Entity::builder().id(id.clone()).entity_type(probe_type.clone()).property("u", value).build()?;
         let created = Entity::builder().id(id.clone()).entity_type(probe_type.clone()).property("c", value).build()?;
         races.push(Race {

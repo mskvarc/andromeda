@@ -1,9 +1,9 @@
 //! The temporal query a request carries, extracted already past the broker's
 //! own admission of it.
 //!
-//! The aggregation-bearing temporal query bindings -- `GET /temporal/entities`,
+//! The aggregation-bearing temporal query bindings (`GET /temporal/entities`,
 //! `GET /temporal/entities/{id}`, `POST /temporal/entityOperations/query` and
-//! the temporal Entity Map creations over GET and POST -- read their parameters
+//! the temporal Entity Map creations over GET and POST) read their parameters
 //! and then refuse a query the broker does not enable (an extension that is
 //! switched off must behave as one never implemented).
 //! Extracting the parameters through these types makes that refusal part of
@@ -149,14 +149,14 @@ where
         let admission = installed_admission::<A>(&parts)?;
         let JsonLd { body, context } = JsonLd::<Query>::from_request(Request::from_parts(parts, body), state).await?;
         let params = body.and_then(move |query, uri| {
-            // clone: each refusal names the request, which the held body keeps naming
+            // clone: each refusal takes its own copy of the request URI
             let mut params = TemporalQueryParameters::try_from(query).map_err(|error| classify_parameter_error(&error).with_instance(uri.clone()))?;
             url_params.apply_to(&mut params);
             // The body's `aggrParams.aggrGroupBy` is folded into `params` by
             // now, so the admission sees the whole query.
             admission
                 .admit(&params, TemporalQueryBinding::Body)
-                .map_err(|report| report.with_instance(uri.clone()))?; // clone: as above
+                .map_err(|report| report.with_instance(uri.clone()))?;
             Ok(params)
         });
         Ok(AdmittedTemporalPostQuery {

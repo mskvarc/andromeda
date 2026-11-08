@@ -90,7 +90,7 @@ impl WalkedAnswer for ReceivedAnswer {
 pub(crate) fn received_answer(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome, document: AnswerDocument) -> ReadPage<ReceivedAnswer> {
     let answer = |naming, entities, warnings, dropped, linked_map| {
         Some(ReceivedAnswer {
-            registration_id: Some(registration.id.clone()), // clone: the answer names the registration it came from
+            registration_id: Some(registration.id.clone()),
             mode: registration.access.mode.unwrap_or_default(),
             naming,
             entities,

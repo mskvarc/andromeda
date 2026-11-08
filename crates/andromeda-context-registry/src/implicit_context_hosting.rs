@@ -14,7 +14,7 @@
 //! times writes once. A wrapper deleted through clause 5.13.5 is forgotten at
 //! once in this process, and in any other at the latest one span later, after
 //! which it is stored again under the same identifier. A wrapper a resource
-//! keeps naming -- a subscription's `jsonldContext` -- is never taken from the
+//! keeps naming (a subscription's `jsonldContext`) is never taken from the
 //! memo: its entry is confirmed in storage every time, because a URL that
 //! outlives the request must still be served when it is dereferenced.
 
@@ -88,7 +88,7 @@ impl ImplicitContextHosting {
             WrapperUse::StoredReference => {}
         }
         let stored = policy.content_derived(document, &identity).await?;
-        self.stored.insert(derived.clone(), stored.clone()); // clone: the memo keys on the derived identifier and keeps the one the caller is answered with
+        self.stored.insert(derived.clone(), stored.clone()); // clone: the memo outlives this call and owns its key, while the returned value is a separate copy
         Ok(stored)
     }
 
@@ -99,9 +99,9 @@ impl ImplicitContextHosting {
     /// Returns [`ContextRegistryError::Invariant`] when the memo cannot take
     /// the invalidation.
     pub fn forget(&self, identifier: &Identifier) -> Result<(), ContextRegistryError> {
-        let deleted = identifier.clone(); // clone: the predicate outlives this call inside the memo
+        let deleted = identifier.clone(); // clone: the predicate is stored in the memo and outlives this call, so it owns the identifier
         self.stored
-            .invalidate_entries_if(move |_, stored| Identifier::from(stored.clone()) == deleted) // clone: the comparison reads a remembered identifier the memo keeps
+            .invalidate_entries_if(move |_, stored| Identifier::from(stored.clone()) == deleted)
             .map(|_| ())
             .map_err(|error| RegistryInvariant::MemoInvalidation(error).into())
     }
@@ -160,7 +160,7 @@ mod tests {
             _kind: ContextCreationKind,
         ) -> ContextRegistryFuture<'a, ContextInsertion> {
             Box::pin(async move {
-                self.inserts.lock().expect("the insert log").push(serving_url.clone()); // clone: the log keeps what was stored
+                self.inserts.lock().expect("the insert log").push(serving_url.clone());
                 Ok(ContextInsertion::Inserted)
             })
         }
@@ -235,8 +235,8 @@ mod tests {
     }
 
     /// A wrapper a resource keeps naming is confirmed in storage even while it
-    /// is remembered: a deletion this process did not see -- through another
-    /// replica, or any other removal -- would otherwise leave a subscription
+    /// is remembered: a deletion this process did not see (through another
+    /// replica, or any other removal) would otherwise leave a subscription
     /// naming a URL nothing serves.
     #[tokio::test]
     async fn a_stored_reference_confirms_the_entry_even_while_it_is_remembered() {

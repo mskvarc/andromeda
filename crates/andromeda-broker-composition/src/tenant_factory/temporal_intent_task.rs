@@ -107,8 +107,8 @@ pub(super) fn register_temporal_intent_drain(
         ShutdownPolicy::new(queue_config.lease_timeout.duration()),
     );
     let task = DrainTask::new(registration, fallback, move |execution| {
-        let drain = Arc::clone(&scheduled_drain); // clone: each bounded runtime future owns the shared policy operation.
-        let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
+        let drain = Arc::clone(&scheduled_drain);
+        let pacer = Arc::clone(&pacer);
         async move {
             pacer
                 .run_drain_pass(execution.cause(), async move {

@@ -13,7 +13,7 @@ use async_trait::async_trait;
 ///
 /// Spelled with `async_trait` rather than a native `async fn` because
 /// [`crate::aggregate::Health`] holds its indicators as
-/// `Arc<dyn HealthIndicator>` — a native `async fn` in a trait is not
+/// `Arc<dyn HealthIndicator>`. A native `async fn` in a trait is not
 /// dyn-compatible, and the alternative is every implementor hand-writing a
 /// `Pin<Box<dyn Future>>`.
 #[async_trait]

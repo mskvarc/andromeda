@@ -28,7 +28,7 @@ pub fn violations(ledger_text: Option<&str>, ledger: &SealLedger, migrations: &[
     }
     found.extend(structure_violations(ledger));
     for (release, migration) in ledger.sealed_migrations() {
-        // clone: each violation names the release and file it concerns
+        // clone: the violations outlive the ledger and the migrations they are read from
         match migrations.iter().find(|(file, _)| migration.is_of(file)) {
             None => found.push(SealViolation::SealedFileMissing {
                 migration: migration.clone(),
@@ -74,7 +74,7 @@ fn structure_violations(ledger: &SealLedger) -> Vec<SealViolation> {
     let mut first_seals: Vec<(&ReleaseVersion, &SealedMigration)> = Vec::new();
     for (release, migration) in ledger.sealed_migrations() {
         match first_seals.iter().find(|(_, earlier)| earlier.is_same_file(migration)) {
-            // clone: each violation names the releases and file it concerns
+            // clone: the violations outlive the ledger they are read from
             Some((first, _)) => found.push(SealViolation::MigrationSealedTwice {
                 migration: migration.clone(),
                 first: (*first).clone(),
@@ -98,7 +98,7 @@ pub fn release_violations(ledger: &SealLedger, migrations: &[(MigrationFile, Vec
         ReleaseTag::PreRelease(_) => return Vec::new(),
     };
     let mut found = Vec::new();
-    // clone: each violation names the release it concerns
+    // clone: the violations outlive the ledger and the migrations they are read from
     match ledger.latest_release() {
         Some(latest) if latest.version() == release => {}
         Some(latest) if ledger.releases().iter().any(|sealed| sealed.version() == release) => found.push(SealViolation::ReleaseNotLatest {
@@ -119,8 +119,8 @@ pub fn release_violations(ledger: &SealLedger, migrations: &[(MigrationFile, Vec
     found
 }
 
-/// Every section `earlier`, the ledger at `revision`, holds that `ledger` no
-/// longer holds unchanged.
+/// Every section `earlier`, the ledger at `revision`, holds that `ledger` does
+/// not hold unchanged.
 #[must_use]
 pub fn changed_since(ledger: &SealLedger, earlier: &SealLedger, revision: &GitRevision) -> Vec<SealViolation> {
     earlier
@@ -128,7 +128,7 @@ pub fn changed_since(ledger: &SealLedger, earlier: &SealLedger, revision: &GitRe
         .iter()
         .filter_map(|sealed| {
             let now = ledger.releases().iter().find(|release| release.version() == sealed.version());
-            // clone: each violation names the release and revision it concerns
+            // clone: the violations outlive the ledgers they are read from
             match now {
                 None => Some(SealViolation::ReleaseRemovedSince {
                     release: sealed.version().clone(),
@@ -228,7 +228,6 @@ mod tests {
     fn a_stable_tag_needs_its_section_last_and_every_migration_sealed_and_a_pre_release_needs_neither() -> Result<(), FixtureError> {
         let entities = file("0001_entities.sql")?;
         let kinds = file("0002_kinds.sql")?;
-        // clone: the tree holds the files the ledger and the expected violation also name
         let migrations = [(entities.clone(), b"select 1;\n".to_vec()), (kinds.clone(), b"select 1;\n".to_vec())];
         let first = SealLedger::default().with_release(release("v1.0.0", &[&entities])?);
         let both = first.clone().with_release(release("v1.1.0", &[&kinds])?);

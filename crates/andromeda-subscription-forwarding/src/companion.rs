@@ -49,10 +49,10 @@ use tracing::debug;
 /// it stands; a create adds both.
 fn companion_request(subscription: &Subscription, receiver: &ReceiverEndpoint) -> SubscriptionRequest {
     SubscriptionRequest {
-        entities: Clearable::from_option(subscription.selection.entities.clone()), // clone: the companion owns the selectors it mirrors
-        watched_attributes: Clearable::from_option(subscription.selection.watched_attributes.clone()), // clone: the companion owns the names it mirrors
+        entities: Clearable::from_option(subscription.selection.entities.clone()),
+        watched_attributes: Clearable::from_option(subscription.selection.watched_attributes.clone()),
         notification: Some(NotificationRequest {
-            attributes: subscription.notification.attributes.clone(), // clone: the companion owns the names it mirrors
+            attributes: subscription.notification.attributes.clone(),
             endpoint: Some(receiver.notification_endpoint()),
             ..NotificationRequest::default()
         }),
@@ -127,7 +127,7 @@ impl SubscriptionForwardingService {
                 .map_err(SubscriptionForwardingError::from)?;
             let exhausted = page.len() < REGISTRATION_PAGE as usize;
             for registration in page {
-                after = Some(registration.id.clone()); // clone: the cursor outlives the page
+                after = Some(registration.id.clone()); // clone: the cursor outlives the page it was read from
                 // Table 6.3.18-2 / clause 5.12: never forward back to a context
                 // source the creating request already passed through.
                 if registration
@@ -160,7 +160,7 @@ impl SubscriptionForwardingService {
         } else {
             CsrTriggerReason::NoLongerMatching
         };
-        decide(trigger, registration.access.mode.unwrap_or_default(), Some(copy.remote_subscription.clone())) // clone: the decision owns the copy's identifier
+        decide(trigger, registration.access.mode.unwrap_or_default(), Some(copy.remote_subscription.clone()))
     }
 
     /// Follow an update of `subscription` on its companion and on every
@@ -260,7 +260,7 @@ impl SubscriptionForwardingHook for SubscriptionForwardingService {
             if stays_local(subscription, Utc::now()) {
                 return Ok(());
             }
-            let _step = self.lifecycle_steps.async_lock(subscription.id.clone()).await; // clone: the pool owns the key while the step holds it
+            let _step = self.lifecycle_steps.async_lock(subscription.id.clone()).await;
             self.create_companion(subscription, encountered_sources)
                 .await
                 .map_err(into_subscription_error)?;
@@ -280,7 +280,7 @@ impl SubscriptionForwardingHook for SubscriptionForwardingService {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let _step = self.lifecycle_steps.async_lock(subscription.id.clone()).await; // clone: the pool owns the key while the step holds it
+            let _step = self.lifecycle_steps.async_lock(subscription.id.clone()).await;
             // The update future is large, so it is boxed rather than held inline.
             Box::pin(self.follow_update(subscription, deleted)).await.map_err(into_subscription_error)
         })
@@ -310,7 +310,7 @@ impl SubscriptionForwardingHook for SubscriptionForwardingService {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let _step = self.lifecycle_steps.async_lock(id.clone()).await; // clone: the pool owns the key while the step holds it
+            let _step = self.lifecycle_steps.async_lock(id.clone()).await;
             self.tear_down(id, teardown, CopyMappings::RemovedWithSubscription).await;
             Ok(())
         })
@@ -323,7 +323,7 @@ impl SubscriptionForwardingHook for SubscriptionForwardingService {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let _step = self.lifecycle_steps.async_lock(id.clone()).await; // clone: the pool owns the key while the step holds it
+            let _step = self.lifecycle_steps.async_lock(id.clone()).await;
             self.follow_expiry(id).await.map_err(into_subscription_error)
         })
     }

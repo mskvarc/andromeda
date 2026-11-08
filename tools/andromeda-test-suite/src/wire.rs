@@ -46,7 +46,7 @@ pub enum WireError {
 /// Returns [`WireError::Target`] when the joined text is not a URI.
 pub fn api_uri<T: Transport, M: Answering>(client: &Client<T, M>, path: &str) -> Result<Uri, WireError> {
     let base = client.endpoint().base_url();
-    // clone: the error names the API root the client keeps
+    // clone: the error must own the API root it reports
     format!("{base}{path}").parse().map_err(|error| WireError::Target(base.clone(), error))
 }
 

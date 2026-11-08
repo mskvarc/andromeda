@@ -5,7 +5,7 @@ use crate::ordering::sort_direction::SortDirection;
 /// The order a store reads a page's rows in, before they are presented.
 ///
 /// Every page is presented ascending by identifier. A page that ends at a
-/// boundary -- the one before a backward cursor, or the final one -- is read
+/// boundary (the one before a backward cursor, or the final one) is read
 /// descending instead, so a single index scan from that boundary serves it,
 /// and is reversed to ascending once read
 /// ([`crate::page_window::PageStart::read_order`]).

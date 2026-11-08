@@ -248,7 +248,7 @@ impl<'a> StagedSource<'a> {
                         .map(|column| Expr::col((Input, column))),
                     )
                     .expr_as(Expr::col((Input, Ordinality)), TemporalAppendIntents::IntentKey)
-                    .from_function(unnest_of(cast(intents.clone(), PostgresType::TemporalIntentArray)), Input); // clone: the relation owns the expression it places
+                    .from_function(unnest_of(cast(intents.clone(), PostgresType::TemporalIntentArray)), Input);
                 if columns == IntentColumns::WithFirstTypedIntent {
                     relation.expr_window_as(
                         first_typed_intent(Expr::col((Input, TemporalAppendIntents::EntityTypeNameKeys)), Expr::col((Input, Ordinality))),

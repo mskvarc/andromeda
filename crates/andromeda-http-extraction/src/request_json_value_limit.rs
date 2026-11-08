@@ -11,8 +11,8 @@ use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 /// a few megabytes. The HTTP stack installs this limit beside the byte limit on
 /// every NGSI-LD request, and every extractor that parses a JSON payload counts
 /// the payload's values against it before building anything from it. A request
-/// carrying none -- a router assembled without the stack, as in a unit test --
-/// is not counted.
+/// carrying none (a router assembled without the stack, as in a unit test) is
+/// not counted.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RequestJsonValueLimit(JsonValueLimit);
 

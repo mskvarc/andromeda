@@ -187,7 +187,7 @@ fn expanded_command(expression: &str) -> Result<String, BodyFault> {
     }
 }
 
-/// `template` with each placeholder replaced as [`expanded_command`] says,
+/// `template` with each placeholder filled in as [`expanded_command`] says,
 /// `arguments` the values after the template.
 fn expand(template: &str, arguments: &[Node]) -> String {
     let mut expanded = String::with_capacity(template.len());

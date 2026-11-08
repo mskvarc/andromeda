@@ -31,7 +31,6 @@ impl TenantLabel {
 
     /// The label value, owned as the metrics facade stores it.
     pub(crate) fn value(&self) -> SharedString {
-        // clone: the metrics facade owns each label value it stores.
         self.0.clone()
     }
 }

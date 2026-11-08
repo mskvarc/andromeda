@@ -86,12 +86,12 @@ impl HttpContextLoader {
         let Some(ref l2_cache) = self.l2_cache else {
             return Ok(StoredLookup::NotHeld);
         };
-        let l2_cache = Arc::clone(l2_cache); // clone: Arc ref-count bump into the cache-fill future
+        let l2_cache = Arc::clone(l2_cache);
         let key = identifier.clone(); // owned: the moka key and the cache-fill future both need it
         let allow_remote = self.allow_remote;
         let hosted_revalidation = self.lifetimes.hosted_revalidation;
         let filled_here = Arc::new(AtomicBool::new(false));
-        let fill_marker = Arc::clone(&filled_here); // clone: the cache-fill future records whether this caller filled the entry
+        let fill_marker = Arc::clone(&filled_here);
 
         let result = self
             .cache
@@ -206,7 +206,7 @@ mod tests {
         }
 
         fn puts(&self) -> Vec<String> {
-            self.puts.lock().expect("the lock is not poisoned").clone() // clone: the assertion owns a snapshot
+            self.puts.lock().expect("the lock is not poisoned").clone()
         }
     }
 
@@ -214,7 +214,7 @@ mod tests {
     impl ContextCache for StoredRows {
         async fn get(&self, url: &IriBuf) -> Result<Option<CachedContext>, ContextCacheError> {
             self.reads.fetch_add(1, Ordering::SeqCst);
-            Ok(self.rows.get(url.as_str()).cloned()) // clone: the fixture keeps its row for the next read
+            Ok(self.rows.get(url.as_str()).cloned())
         }
 
         async fn put(&self, url: &IriBuf, _document_url: &IriBuf, _payload: &JsonLiteral, _lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
@@ -293,7 +293,7 @@ mod tests {
     async fn a_url_shaped_like_an_own_url_is_never_recorded_as_cached() {
         let registry = Arc::new(ContextRegistry::new());
         let own_shaped = iri(format!("https://other-broker.example{CONTEXTS_PATH}{UNHELD}"));
-        registry.register_preloaded(own_shaped.clone(), literal(&terms())).expect("registered"); // clone: the load below names the same URL
+        registry.register_preloaded(own_shaped.clone(), literal(&terms())).expect("registered");
         let rows = Arc::new(StoredRows::default());
         let loader = loader(registry, &rows);
 
@@ -329,7 +329,7 @@ mod tests {
     async fn an_ordinary_preloaded_url_is_still_recorded_as_cached() {
         let registry = Arc::new(ContextRegistry::new());
         let ordinary = iri("https://example.org/terms.jsonld".to_owned());
-        registry.register_preloaded(ordinary.clone(), literal(&terms())).expect("registered"); // clone: the load below names the same URL
+        registry.register_preloaded(ordinary.clone(), literal(&terms())).expect("registered");
         let rows = Arc::new(StoredRows::default());
         let loader = loader(registry, &rows);
 

@@ -1,8 +1,8 @@
 //! Decoding one member of a compact node into the typed value the model holds
 //! for it.
 //!
-//! Every member the model types -- an identifier, a `DateTime`, a reference, a
-//! language map, an `objectList` -- is decoded by that type's own decoding, so
+//! Every member the model types (an identifier, a `DateTime`, a reference, a
+//! language map, an `objectList`) is decoded by that type's own decoding, so
 //! a member read from a compact node becomes exactly what the same member of a
 //! decoded document becomes.
 

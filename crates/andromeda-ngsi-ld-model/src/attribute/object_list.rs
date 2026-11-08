@@ -85,10 +85,10 @@ struct RelationshipObject<'a> {
 }
 
 // Hand-written because the serialised shape is not the shape of the field and
-// no derive expresses it: Table 5.2.37-1 splits the two representations --
+// no derive expresses it: Table 5.2.37-1 splits the two representations:
 // "In the normalized form, each array element holds a JSON object containing a
 // single Attribute with a key called `object` and where the value is a valid
-// URI. In the concise form, each string in the array holds a valid URI" -- and
+// URI. In the concise form, each string in the array holds a valid URI", and
 // the model carries the normalized one, which the concise and simplified
 // renderings are derived from at the presentation boundary. A `#[serde(into =
 // ...)]` derive would express it only by cloning the whole list first.
@@ -252,7 +252,7 @@ mod tests {
     /// used as the right-hand side of the `objectList` … as well as in
     /// notifications and in temporal evolutions (for encoding a deleted
     /// `ListRelationship`)." An NGSI-LD Null is not a Relationship Object, so it
-    /// is not wrapped as one — and because the typed member renders through the
+    /// is not wrapped as one. Because the typed member renders through the
     /// same function every payload rewrite uses, it cannot be wrapped on one
     /// path and left alone on the other.
     #[test]

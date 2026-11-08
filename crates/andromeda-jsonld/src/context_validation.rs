@@ -66,7 +66,7 @@ mod tests {
         fs::write(&path, document).expect("the temporary directory is writable");
         let engine = JsonLdEngine::builder()
             .allow_remote(false)
-            .preload_contexts(HashMap::from([(Url::parse(url).expect("a valid URL"), path.clone())])) // clone: the removal below needs the path
+            .preload_contexts(HashMap::from([(Url::parse(url).expect("a valid URL"), path.clone())]))
             .build()
             .expect("engine builds");
         fs::remove_file(&path).expect("the temporary context is removable");

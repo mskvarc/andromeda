@@ -82,7 +82,7 @@ fn family(attribute: &AttributeName, types: &[String]) -> Result<Option<Attribut
         match declared {
             Some(previous) if previous != family => {
                 return Err(EntityRefusal::SeveralFamilies {
-                    attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
+                    attribute: attribute.clone(), // clone: the refusal outlives the borrowed attribute, so it owns a copy
                 });
             }
             Some(_) | None => declared = Some(family),
@@ -133,7 +133,7 @@ impl InstanceParts {
         if let Some(carrier) = ValueCarrier::from_iri(iri) {
             if self.carrier.is_some() {
                 return Err(EntityRefusal::MemberForbidden {
-                    attribute: Some(attribute.clone()), // clone: the refusal names the attribute the caller keeps
+                    attribute: Some(attribute.clone()), // clone: the refusal outlives the borrowed attribute, so it owns a copy
                     family,
                     member: name.parse::<AttributeName>().map_err(EntityRefusal::ExpandedAttributeName)?,
                 });
@@ -168,7 +168,7 @@ impl InstanceParts {
             let member = name.parse::<AttributeName>().map_err(EntityRefusal::ExpandedAttributeName)?;
             if is_output_only(iri) {
                 return Err(EntityRefusal::OutputOnlyMember {
-                    attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
+                    attribute: attribute.clone(), // clone: the refusal outlives the borrowed attribute, so it owns a copy
                     member,
                 });
             }

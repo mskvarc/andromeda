@@ -20,8 +20,8 @@ use axum::{
 /// The URI the client addressed, read off a request's parts.
 ///
 /// Falls back to the routed URI only for a request that never passed through a
-/// router -- a unit test driving an extractor directly -- where no nesting can
-/// have rewritten it.
+/// router, such as a unit test driving an extractor directly, where no nesting
+/// can have rewritten it.
 #[must_use]
 pub fn addressed_uri(parts: &Parts) -> Uri {
     original_or_routed(&parts.extensions, &parts.uri)
@@ -36,8 +36,6 @@ pub fn addressed_request_uri<B>(request: &Request<B>) -> Uri {
 
 /// The recorded original URI when a router recorded one, else the routed URI.
 fn original_or_routed(extensions: &Extensions, routed: &Uri) -> Uri {
-    // clone: the problem detail owns its instance, and a `Uri` shares its
-    // buffer by reference count.
     extensions.get::<OriginalUri>().map_or(routed, |OriginalUri(original)| original).clone()
 }
 

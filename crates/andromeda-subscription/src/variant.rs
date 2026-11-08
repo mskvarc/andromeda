@@ -1,9 +1,9 @@
 //! What one kind of subscription does differently from the other.
 //!
 //! Entity subscriptions (clause 5.8) and Context Source Registration
-//! Subscriptions (clause 5.11) share their whole lifecycle -- clause 5.11.2.4
+//! Subscriptions (clause 5.11) share their whole lifecycle (clause 5.11.2.4
 //! says so outright, "as described in clause 5.8.1.4, restricted to the local
-//! case" -- and differ in four places: which terms are expanded, how the
+//! case") and differ in four places: which terms are expanded, how the
 //! resource is presented, what an update additionally has to satisfy, and
 //! which change event the store broadcast carries. Naming those four is what
 //! lets `crate::lifecycle` be written once.

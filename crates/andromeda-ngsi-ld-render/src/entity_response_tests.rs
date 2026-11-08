@@ -307,7 +307,7 @@ impl<'a> Writing<'a> {
             Shape::Collection => EntityPayload::Collection(bodies.iter().map(body).collect()),
         };
         let mut written = Vec::new();
-        let head = ResponseRenderer::new(self.carrier.0, self.carrier.1.clone()) // clone: each writing owns its context
+        let head = ResponseRenderer::new(self.carrier.0, self.carrier.1.clone())
             .with_format(self.format)
             .with_requested_version(self.version)
             .with_geometry_selection(self.selection)

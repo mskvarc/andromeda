@@ -73,7 +73,7 @@ impl JsonLdEngine {
     /// cache was attached, because there would be nothing to fold them into.
     #[must_use]
     pub fn hit_counter(&self) -> Option<Arc<HitCounter>> {
-        self.hit_counter.clone() // clone: Arc ref-count bump
+        self.hit_counter.clone()
     }
 
     /// The context loader.

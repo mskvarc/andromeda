@@ -64,7 +64,7 @@ mod tests {
 
     fn subscription(id: &Identifier) -> Arc<CompiledCsrSubscription> {
         Arc::new(CompiledCsrSubscription {
-            id: id.clone(), // clone: the compiled subscription owns its identifier
+            id: id.clone(),
             standing: SubscriptionStanding {
                 status: SubscriptionStatus::Active,
                 expires_at: None,
@@ -98,10 +98,10 @@ mod tests {
     fn a_cached_subscription_is_listed_until_removed() {
         let cache = CsourceSubscriptionCache::new();
         let id: Identifier = "urn:ngsi-ld:Subscription:csource".parse().expect("valid URI");
-        cache.insert(id.clone(), subscription(&id)); // clone: the cache owns its key
+        cache.insert(id.clone(), subscription(&id));
 
-        let listed: Vec<Identifier> = cache.subscriptions().iter().map(|subscription| subscription.id.clone()).collect(); // clone: the assertion owns the listed identifiers
-        assert_eq!(listed, vec![id.clone()]); // clone: the expected list owns its member
+        let listed: Vec<Identifier> = cache.subscriptions().iter().map(|subscription| subscription.id.clone()).collect();
+        assert_eq!(listed, vec![id.clone()]);
 
         cache.remove(&id);
         assert!(cache.subscriptions().is_empty());

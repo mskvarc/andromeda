@@ -9,11 +9,11 @@ use std::{
 /// Which dependency table a declaration came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DependencyKind {
-    /// `[dependencies]` — what the crate itself is built against.
+    /// `[dependencies]`: what the crate itself is built against.
     Normal,
-    /// `[build-dependencies]` — what its build script is built against.
+    /// `[build-dependencies]`: what its build script is built against.
     Build,
-    /// `[dev-dependencies]` — what its tests, benches and examples are built
+    /// `[dev-dependencies]`: what its tests, benches and examples are built
     /// against.
     Development,
 }
@@ -214,7 +214,7 @@ pub(crate) fn workspace_manifest_paths(root: &Path) -> Vec<PathBuf> {
 /// The rule itself, over declarations already read.
 ///
 /// Separate from [`assert_dependency_boundary`] so that what the rule rejects can be
-/// exercised without a manifest on disk — a guard nothing has ever seen fail is
+/// exercised without a manifest on disk: a guard nothing has ever seen fail is
 /// a guard nobody knows works.
 fn assert_permitted(
     declared: &[(DependencyKind, &str)],
@@ -240,7 +240,7 @@ fn assert_permitted(
 /// shapes Cargo manifests take: `name = …` inside a dependency table,
 /// `[dependencies.name]`, and a dependency table qualified by a `[target.…]`
 /// prefix. Anything it does not recognise yields no declaration, so a shape it
-/// cannot read fails open — which is why the crate that declares an edge also
+/// cannot read fails open, which is why the crate that declares an edge also
 /// carries the test, where the omission is visible.
 pub(crate) fn declarations(manifest: &str) -> Vec<(DependencyKind, &str)> {
     let mut declared = Vec::new();

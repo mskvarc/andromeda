@@ -167,7 +167,7 @@ const fn check_flag(flag: Flag) -> Result<(), QueryError> {
 /// Reject an assertion the two engines do not agree on.
 ///
 /// `^`, `$` and `\A` mean the same thing to both. `\z` is a `regex`-crate
-/// spelling PostgreSQL answers with "invalid escape \ sequence" — it spells the
+/// spelling PostgreSQL answers with "invalid escape \ sequence": it spells the
 /// same anchor `\Z`. The word-boundary assertions are the dangerous case: they
 /// compile in both, but PostgreSQL reads `\b` as a backspace character and
 /// `\B` as a literal, so the same text means two different filters depending

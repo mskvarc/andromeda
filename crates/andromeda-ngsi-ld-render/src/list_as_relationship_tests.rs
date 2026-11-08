@@ -76,7 +76,7 @@ fn graph(root: &Entity) -> LinkedGraph<Entity> {
     }
     LinkedGraph {
         roots: ids,
-        nodes: nodes.into_iter().map(|node| (node.id.clone(), node)).collect(), // clone: the graph keys its nodes by owned identifiers
+        nodes: nodes.into_iter().map(|node| (node.id.clone(), node)).collect(),
         edges,
         failures: Vec::new(),
         depth: NonZeroU32::MIN,

@@ -1,8 +1,8 @@
 //! An in-memory [`SnapshotStore`] double for the policy tests.
 //!
 //! It holds a few Snapshots, answers what scoping reads of them, hands out
-//! preparation jobs the way the store does -- a clone only once its source has
-//! left `preparing` -- and records what preparations do to their claims.
+//! preparation jobs the way the store does (a clone only once its source has
+//! left `preparing`) and records what preparations do to their claims.
 //! Every other operation fails loudly: no test exercises it, and a silent
 //! default would let a test pass for the wrong reason.
 
@@ -159,7 +159,7 @@ impl StoreDouble {
     /// Also hold `clone`, a clone job of `source`.
     pub(crate) fn with_clone(self, clone: Snapshot, source: &Identifier) -> StoreDouble {
         if let Ok(mut entries) = self.entries.lock() {
-            entries.push(Entry::new(clone, Some(source.clone()))); // clone: the stored job owns its source identifier.
+            entries.push(Entry::new(clone, Some(source.clone())));
         }
         self
     }
@@ -193,7 +193,7 @@ impl StoreDouble {
             .and_then(|priority| SnapshotPriority::try_from(priority).ok())
             .expect("the service inserts a priority within clause 5.2.41");
         let snapshot = Snapshot::builder()
-            .id(params.id.clone()) // clone: the stored record owns its identifier.
+            .id(params.id.clone())
             .snapshot_priority(priority)
             .status(params.status)
             .created_at(params.created_at)
@@ -226,7 +226,7 @@ impl StoreDouble {
         };
         entry.stage = Stage::Ended(status);
         self.recorded.lock().expect("the store double lock is not poisoned").push(RecordedStatus {
-            id: id.clone(), // clone: the record owns the identifier it names.
+            id: id.clone(),
             status,
             queries_details: queries_details.map(<[ExecutionResultDetails]>::to_vec),
             temporal_queries_details: temporal_queries_details.map(<[ExecutionResultDetails]>::to_vec),
@@ -235,7 +235,7 @@ impl StoreDouble {
     }
 
     /// Claim the first waiting Snapshot whose clone source, if any, has left
-    /// `preparing` or is gone -- the store's claim predicate.
+    /// `preparing` or is gone, the store's claim predicate.
     fn claim_next(&self) -> Option<SnapshotPreparationJob> {
         self.claim_first(|_| true)
     }
@@ -259,8 +259,8 @@ impl StoreDouble {
         let entry = &mut entries[position];
         entry.stage = Stage::Claimed;
         Some(SnapshotPreparationJob {
-            snapshot: entry.snapshot.clone(),            // clone: the job owns its Snapshot.
-            clone_source_id: entry.clone_source.clone(), // clone: the job owns its source identifier.
+            snapshot: entry.snapshot.clone(),
+            clone_source_id: entry.clone_source.clone(),
             query_context: JsonLiteral::null(),
         })
     }
@@ -275,13 +275,13 @@ impl StoreDouble {
             .map(Entry::status)
             .ok_or_else(|| SnapshotInvariant::CloneSourceMissing {
                 source_snapshot: source.clone(),
-            })?; // clone: the error owns the Snapshot it names.
+            })?;
         self.copies.lock().expect("the store double lock is not poisoned").push(CloneCopy {
-            target: target.clone(), // clone: the record owns the identifier it names.
+            target: target.clone(),
             source_status,
         });
         match self.end_preparation(target, SnapshotStatus::Success, None, None) {
-            0 => Err(SnapshotInvariant::ClaimLost { snapshot: target.clone() }.into()), // clone: the error owns the Snapshot it names.
+            0 => Err(SnapshotInvariant::ClaimLost { snapshot: target.clone() }.into()),
             _ => Ok(()),
         }
     }

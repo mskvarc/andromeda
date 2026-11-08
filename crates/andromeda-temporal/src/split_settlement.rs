@@ -90,7 +90,7 @@ impl TemporalService {
                 parts.entry(entity_id).or_default().push(part);
             }
         }
-        let mut entity_ids: Vec<Identifier> = parts.keys().map(|entity_id| (*entity_id).clone()).collect(); // clone: the store reads the identifiers the parts keep
+        let mut entity_ids: Vec<Identifier> = parts.keys().map(|entity_id| (*entity_id).clone()).collect();
         entity_ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
         if filter.is_empty() {
             return Ok(SplitSettlement {
@@ -129,7 +129,7 @@ impl TemporalService {
                 continue;
             };
             truths
-                .entry(entity_id.clone()) // clone: the truths are keyed by the identifier the part is judged under
+                .entry(entity_id.clone())
                 .or_insert_with(|| LeafTruths::none(filter.leaf_count()))
                 .or(&filter.truths_of(&AnsweredEvolution::of(part, compiled.window), &linked));
         }
@@ -139,7 +139,7 @@ impl TemporalService {
                 continue;
             };
             truths
-                .entry(entity_id.clone()) // clone: the truths are keyed by the identifier the parts are judged under
+                .entry(entity_id.clone())
                 .or_insert_with(|| LeafTruths::none(filter.leaf_count()))
                 .or(&filter.truths_of(&in_effect, &linked));
         }

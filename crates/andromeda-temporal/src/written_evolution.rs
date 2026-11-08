@@ -146,7 +146,7 @@ impl WrittenEvolution {
             expires_at,
             attributes,
         } = Arc::unwrap_or_clone(document).into_parts();
-        let id = Some(entity_id.clone()); // clone: the document owns the identifier the request path names
+        let id = Some(entity_id.clone());
         let types = if types.is_empty() { recorded_types } else { types };
         WrittenEvolution::new(Arc::new(EntityDocument::new(id, types, scope, expires_at, attributes)), reified_scope)
     }
@@ -154,8 +154,8 @@ impl WrittenEvolution {
     /// The history the write records: every instance the evolution adds, and
     /// the Scope instances it dates.
     pub(crate) fn history(&self) -> Vec<HistoryRecord> {
-        let mut history = vec![HistoryRecord::EvolutionInstances(Arc::clone(&self.document))]; // clone: Arc ref-count bump
-        history.extend(self.reified_scope.iter().map(|scope| HistoryRecord::EvolutionInstances(Arc::clone(scope)))); // clone: Arc ref-count bump
+        let mut history = vec![HistoryRecord::EvolutionInstances(Arc::clone(&self.document))];
+        history.extend(self.reified_scope.iter().map(|scope| HistoryRecord::EvolutionInstances(Arc::clone(scope))));
         history
     }
 }
@@ -319,7 +319,7 @@ mod tests {
 
     /// One observation of `config` written as `instance`, observed once.
     fn evolution_of(instance: &Value) -> Value {
-        let mut observed = instance.clone(); // clone: the case keeps its written form for the failure message
+        let mut observed = instance.clone();
         observed["observedAt"] = json!("2024-01-01T00:00:00Z");
         json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "config": [observed]})
     }

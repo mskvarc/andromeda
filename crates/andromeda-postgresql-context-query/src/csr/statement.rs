@@ -68,12 +68,10 @@ pub fn build_csr_query(query: &CompiledCsrQuery, window: &PageWindow) -> Result<
     let mut select = registration_select();
     let count = match parts {
         None => {
-            // clone: the count statement filters on the same condition
             select.cond_where(condition.clone());
             count_where(condition)
         }
         Some(GeometryParts { absent, present }) => {
-            // clone: both parts narrow the same condition
             let absent = condition.clone().add(absent);
             let present = condition.add(present);
             let members = array_cat(part_page(&absent, window), part_page(&present, window));
@@ -102,7 +100,6 @@ pub fn build_csr_query(query: &CompiledCsrQuery, window: &PageWindow) -> Result<
 /// parts is the page of their union.
 fn part_page(part: &Condition, window: &PageWindow) -> SimpleExpr {
     let mut select = Query::select();
-    // clone: both the page and the count read the part
     select.column(Csr::Id).from(Csr::Table).cond_where(part.clone());
     apply_identifier_window(&mut select, SeaExpr::col(Csr::Id), &window.through_page_end());
     array_of_subquery(select.take())

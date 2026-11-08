@@ -134,7 +134,6 @@ fn temporary(table: impl IntoIden) -> TableRef {
 /// catalogue, stream census and history: the relations the application of the
 /// staged history writes.
 pub(crate) fn staging_tables(branch: &DynIden) -> [TemporaryCopy; 4] {
-    // clone: a table name owns the schema iden it qualifies with, a cheap shared handle
     [
         TemporaryCopy::new(Entities::Table, (branch.clone(), Entities::Table.into_iden())),
         TemporaryCopy::new(TemporalAttributeStreams::Table, (branch.clone(), TemporalAttributeStreams::Table.into_iden())),
@@ -210,7 +209,7 @@ pub(crate) fn copy_history(snapshot: Option<&DynIden>, entity_id: &Identifier, c
     let of = HistoryOf::Entity(Expr::val(entity_id.as_str()));
     let branch = match snapshot {
         None => HistoryBranch::live_in(LiveSchema.into_iden()),
-        Some(schema) => HistoryBranch::recorded_in(schema.clone()), // clone: the branch owns the schema it names
+        Some(schema) => HistoryBranch::recorded_in(schema.clone()),
     };
     let source = attribute_rows(&branch, &of, Local);
     let mut select = Query::select();

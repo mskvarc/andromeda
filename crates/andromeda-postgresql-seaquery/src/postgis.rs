@@ -77,7 +77,7 @@ enum PostgisFunction {
 }
 
 /// The `PostGIS` bounding-box overlap operator `&&`, true when two geometries'
-/// 2D bounding boxes share a point -- the test a geometry `GiST` index answers.
+/// 2D bounding boxes share a point: the test a geometry `GiST` index answers.
 const BOUNDING_BOXES_OVERLAP: &str = "&&";
 
 /// The `PostGIS` bounding-box containment operator `~`, true when the first
@@ -178,8 +178,8 @@ pub fn st_make_envelope(min: [f64; 2], max: [f64; 2]) -> SimpleExpr {
 /// `PostGIS`: `geometry && envelope` - whether the two bounding boxes overlap.
 ///
 /// The one test a geometry `GiST` index answers directly, so it is what a
-/// predicate the index cannot otherwise use -- a spheroidal `ST_DWithin` over a
-/// cast column -- is prefiltered with.
+/// predicate the index cannot otherwise use (a spheroidal `ST_DWithin` over a
+/// cast column) is prefiltered with.
 #[must_use]
 pub fn bounding_boxes_overlap(geometry: SimpleExpr, envelope: SimpleExpr) -> SimpleExpr {
     geometry.binary(BinOper::Custom(BOUNDING_BOXES_OVERLAP), envelope)
@@ -251,7 +251,6 @@ pub fn st_make_valid(geom: SimpleExpr) -> SimpleExpr {
 /// stored as written; spatial predicates judge this repaired form instead.
 #[must_use]
 pub fn repaired_when_invalid(geometry: SimpleExpr) -> SimpleExpr {
-    // clone: the geometry is tested and then repaired.
     let validity: SimpleExpr = Func::cust(PostgisFunction::IsValid).arg(geometry.clone()).into();
     Expr::case(validity, Expr::null()).finally(st_make_valid(geometry)).into()
 }

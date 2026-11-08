@@ -136,20 +136,20 @@ fn earlier_deletions<'a>(
             if latest.get(&(entity, attribute, dataset)).is_some_and(|placed| before < *placed) {
                 continue;
             }
-            let dataset = dataset.map_or(DatasetSelector::Default, |dataset| DatasetSelector::Id(dataset.clone())); // clone: the request owns the dataset it names
+            let dataset = dataset.map_or(DatasetSelector::Default, |dataset| DatasetSelector::Id(dataset.clone()));
             match asked
                 .iter_mut()
                 .find(|request| request.source == *answer.source && request.attribute == *attribute && request.dataset == dataset && request.before == before)
             {
                 Some(request) => {
                     if !request.entities.contains(entity) {
-                        request.entities.push(entity.clone()); // clone: the request owns the entities it names
+                        request.entities.push(entity.clone());
                     }
                 }
                 None => asked.push(EarlierDeletions {
-                    source: answer.source.clone(),  // clone: the request owns the registration it is sent to
-                    entities: vec![entity.clone()], // clone: the request owns the entities it names
-                    attribute: attribute.clone(),   // clone: the request owns the attribute it names
+                    source: answer.source.clone(),
+                    entities: vec![entity.clone()],
+                    attribute: attribute.clone(),
                     dataset,
                     before,
                 }),

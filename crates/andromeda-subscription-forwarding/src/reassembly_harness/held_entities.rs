@@ -33,7 +33,7 @@ impl HeldEntities {
     /// A store holding `states`.
     pub(crate) fn new(states: Vec<EntityState>) -> HeldEntities {
         HeldEntities {
-            states: states.into_iter().map(|state| (state.id().clone(), Arc::new(state))).collect(), // clone: the map owns the identifier its state also holds
+            states: states.into_iter().map(|state| (state.id().clone(), Arc::new(state))).collect(),
         }
     }
 
@@ -60,7 +60,7 @@ impl EntityReader for HeldEntities {
             .filter_map(|id| {
                 self.states.get(id).map(|state| {
                     (
-                        id.clone(), // clone: the answer owns its keys
+                        id.clone(),
                         RetrievedEntity {
                             state: Arc::clone(state),
                             sys_attrs: HeldEntities::system_times(),
@@ -95,7 +95,7 @@ impl EntityReader for HeldEntities {
         Ok(ids
             .iter()
             .filter(|id| self.states.contains_key(*id))
-            .map(|id| (id.clone(), HeldEntities::system_times())) // clone: the answer owns its keys
+            .map(|id| (id.clone(), HeldEntities::system_times()))
             .collect())
     }
 }

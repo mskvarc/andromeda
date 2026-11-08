@@ -58,7 +58,7 @@ impl OutcomeRecordingStore {
 
     /// The writes asked for so far.
     pub(crate) fn writes(&self) -> Vec<(Identifier, OutcomeTally)> {
-        self.writes.lock().expect("the write record is never poisoned").clone() // clone: the assertion reads a snapshot
+        self.writes.lock().expect("the write record is never poisoned").clone()
     }
 
     /// Wait until a held write has started.
@@ -104,7 +104,7 @@ impl SubscriptionStore for OutcomeRecordingStore {
     }
 
     async fn record_outcomes(&self, _target: &ContextTarget, id: &Identifier, tally: OutcomeTally) -> Result<(), SubscriptionError> {
-        self.writes.lock().expect("the write record is never poisoned").push((id.clone(), tally)); // clone: the record owns what it saw
+        self.writes.lock().expect("the write record is never poisoned").push((id.clone(), tally));
         if self.held.as_ref() == Some(id) {
             self.held_write_started.notify_one();
             self.released.acquire().await.expect("the semaphore is never closed").forget();

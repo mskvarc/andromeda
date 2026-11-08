@@ -6,7 +6,7 @@
 //! connection whose search path points at the schema being upgraded. Each
 //! Snapshot is upgraded on its own. A success records the new version; a
 //! failure records why and leaves the version behind, which quarantines that
-//! Snapshot alone -- the tenant and every other Snapshot keep serving -- and
+//! Snapshot alone (the tenant and every other Snapshot keep serving) and
 //! the next run retries it.
 
 use crate::{

@@ -112,8 +112,6 @@ impl RuntimeLease {
     /// Used on the cache-hit path, under the shard guard that also reads the
     /// state, so the strong count eviction observes already reflects this hold.
     pub(super) fn clone_from(origin: &Arc<LeaseOrigin>) -> RuntimeLease {
-        // clone: a lease is by definition an additional owner of the origin; its
-        // whole purpose is to raise the strong count the eviction paths read.
         RuntimeLease {
             hold: Some(Arc::clone(origin)),
         }
@@ -130,9 +128,8 @@ impl Drop for RuntimeLease {
         // An eviction racing the drop may read it as not quite the last; such
         // a place is then found by the waker's next timed pass.
         let last = Arc::strong_count(&origin) <= 2;
-        // clone: the signal and the alarm must outlive the hold, which is
-        // released first so the woken janitor and waker read the lowered strong
-        // count.
+        // The signal and the alarm are cloned out before the hold is released,
+        // so the woken janitor and waker read the lowered strong count.
         let release_signal = origin.is_retired().then(|| Arc::clone(&origin.release_signal));
         let alarm = last.then(|| Arc::clone(&origin.alarm));
         drop(origin);

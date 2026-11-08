@@ -11,17 +11,19 @@ use crate::{
     history_read::TemporalHistoryRead,
     join::apply_temporal_join,
     temporal::{
+        AcceptFormatNoGeo,
         ProblemResponse,
         Response,
         ResultInstanceExt,
         StatusCode,
         complete_history::HistoryCompleteness,
         query::{
-            admission::admit_request,
+            admission::{AdmittedQuery, admit_request},
             forwarding::{QueryScope, TemporalForwarding, forward_temporal_history},
             hub_aggregation::aggregate_at_hub,
             in_effect_gathering::{GatheringRequest, gather_in_effect},
             merged_page::{MergedPageCut, cut_merged_page},
+            page::LocalRead,
             request::TemporalQueryRequest,
             request_entity_map::record_query_map,
             response::{TemporalCollectionMetadata, query_response},
@@ -31,15 +33,17 @@ use crate::{
     temporal_answer::matched_histories,
 };
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
+use andromeda_http_extraction::prefer::PreferHeader;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
-use andromeda_ngsi_ld_query::projection::attrs_selection::AttrsAdmission;
-use andromeda_ngsi_ld_render::structural_projection::StructuralProjection;
+use andromeda_ngsi_ld_query::{projection::attrs_selection::AttrsAdmission, temporal::contributed_entities::ContributedEntities};
+use andromeda_ngsi_ld_render::{response::ResponseRenderer, structural_projection::StructuralProjection};
 use andromeda_temporal::{
     error::TemporalError,
-    service::{TemporalQueryWarning, TemporalRange},
+    service::{TemporalQueryResult, TemporalQueryWarning, TemporalRange},
     temporal_invariant::TemporalInvariant,
 };
+use axum::http::Uri;
 
 /// Admitting a decoded query before it runs.
 mod admission;
@@ -107,14 +111,15 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
 
     let contributed = contributed_entities(filtering, &params, forwarded.as_ref(), in_effect.as_ref(), shape.rendering());
     let local = page.local_read(forwarded.as_ref());
-
-    let local_result = service
-        // clone: the settlement below reads the same contributed entities the local read is exempting
-        .query(&target, &params, &local.window, local.count, admitted.reading(&context), contributed.clone())
-        .await
-        .with_instance(&uri)?;
-    log_query_warnings(&local_result.warnings);
-    let local_total = local_match_count(local_result.total_count).with_instance(&uri)?;
+    let read = TemporalHistoryRead {
+        service: &state.temporal,
+        target: &target,
+        params: &params,
+        context: &context,
+        language_targeting: admitted.language.targeting,
+        attrs_admission: AttrsAdmission::ReifiedScopeAdmitted,
+    };
+    let (local_result, local_total) = query_local_history(&read, &admitted, &local, &contributed, &uri).await?;
     let answers = forwarded.as_ref().map_or(&[][..], |history| history.sources.as_slice());
     let mut completeness = HistoryCompleteness::of(&params, local_result.range, answers).with_instance(&uri)?;
     let contribution = ContributionMerge {
@@ -167,14 +172,6 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     // 206 decision about the roots alone. The join also resolves before
     // EntityMap creation so a requested map can include the linked ids
     // (spec 5.5.14, 5.7.4.4).
-    let read = TemporalHistoryRead {
-        service: &state.temporal,
-        target: &target,
-        params: &params,
-        context: &context,
-        language_targeting: admitted.language.targeting,
-        attrs_admission: AttrsAdmission::ReifiedScopeAdmitted,
-    };
     // The histories are compacted under the request context once every holder's
     // part has been merged into them (clause 5.7.3); the join then reads the
     // compact roots.
@@ -193,10 +190,8 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     // row for the POST form, but clause 6.24.3.1 gives it the clause 5.7.4
     // behaviour of the GET and clause 6.3.6 ties the echo to any response
     // carrying a payload body, so both bindings answer the same way.
-    let rendering = ResponseContextSource::new(service.engine(), &context, &state.context_hosting, &api_root)
-        .start_rendering_normalized(accept.media_type(), admitted.prefer.rendering_preferences())
-        .await
-        .with_instance(&uri)?;
+    let source = ResponseContextSource::new(service.engine(), &context, &state.context_hosting, &api_root);
+    let rendering = start_rendering(source, &accept, admitted.prefer, &uri).await?;
     let plan = resolved.plan();
     let answer = matched_histories(&bodies, plan.as_ref(), Some(StructuralProjection::from(&projection)));
     query_response(
@@ -218,9 +213,50 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     )
 }
 
+/// Run the local read of the query under `read` and count its matches, logging
+/// the non-fatal per-entity failures the read collected.
+async fn query_local_history(
+    read: &TemporalHistoryRead<'_>,
+    admitted: &AdmittedQuery,
+    local: &LocalRead<'_>,
+    contributed: &ContributedEntities,
+    instance: &Uri,
+) -> Result<(TemporalQueryResult, Option<usize>), ProblemResponse> {
+    let local_result = read
+        .service
+        // clone: the query takes ownership, but the settlement still reads the contributed entities
+        .query(
+            read.target,
+            read.params,
+            &local.window,
+            local.count,
+            admitted.reading(read.context),
+            contributed.clone(),
+        )
+        .await
+        .with_instance(instance)?;
+    log_query_warnings(&local_result.warnings);
+    let local_total = local_match_count(local_result.total_count).with_instance(instance)?;
+    Ok((local_result, local_total))
+}
+
+/// Start the normalized rendering that `accept` and `prefer` negotiate against
+/// the context `source` presents.
+async fn start_rendering<'a>(
+    source: ResponseContextSource<'a>,
+    accept: &AcceptFormatNoGeo,
+    prefer: PreferHeader,
+    instance: &Uri,
+) -> Result<ResponseRenderer<'a>, ProblemResponse> {
+    source
+        .start_rendering_normalized(accept.media_type(), prefer.rendering_preferences())
+        .await
+        .with_instance(instance)
+}
+
 /// The status a temporal query answers with (Table 6.18.3.2-2 and Table
-/// 6.24.3.1-1): 206 when the history -- the local read's or a context
-/// source's -- was cut short at `range`, else 201 when an `EntityMap` has been
+/// 6.24.3.1-1): 206 when the history (the local read's or a context
+/// source's) was cut short at `range`, else 201 when an `EntityMap` has been
 /// (re)created, else 200.
 const fn response_status(range: Option<&TemporalRange>, map_created: bool) -> StatusCode {
     if range.is_some() {
@@ -240,7 +276,7 @@ const fn response_status(range: Option<&TemporalRange>, map_created: bool) -> St
 fn element_boundary(entities: &[TemporalHistory]) -> Option<(Identifier, Identifier)> {
     let first = entities.first().and_then(TemporalHistory::id)?;
     let last = entities.last().and_then(TemporalHistory::id)?;
-    Some((first.clone(), last.clone())) // clone: the cursor pointers own the identifiers they are computed from
+    Some((first.clone(), last.clone()))
 }
 
 /// Record the non-fatal per-entity failures a temporal query collected.

@@ -13,7 +13,7 @@ impl TemporalDeleteParameters {
     /// # Errors
     ///
     /// Returns [`ParameterError::SelectorRequired`] when the request carries no
-    /// entity-narrowing input — a bare time window does not authorise deleting
+    /// entity-narrowing input. A bare time window does not authorise deleting
     /// every entity's history, so the local scope is deliberately *not* counted
     /// as a narrowing here (the clause 5.6.21.4 rule with input (e) withheld).
     /// Returns [`ParameterError::DropKeepExclusive`] when both `drop` and `keep`

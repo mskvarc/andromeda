@@ -144,8 +144,8 @@ fn deletion_events(id: &Identifier, removed: &Arc<EntityState>, sys_attrs: &SysA
             .change(deletion(removed))
             .occurred_at(Utc::now())
             .origin(ChangeOrigin::Local)
-            .entity_snapshot(Some(Arc::clone(removed))) // clone: reference-count bump
-            .previous_attributes(Some(Arc::clone(removed))) // clone: reference-count bump
+            .entity_snapshot(Some(Arc::clone(removed)))
+            .previous_attributes(Some(Arc::clone(removed)))
             .sys_attrs_snapshot(Some(sys_attrs.clone())) // clone: the event owns the system times it carries
             .build(),
     ]

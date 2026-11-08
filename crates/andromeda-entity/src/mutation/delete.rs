@@ -143,7 +143,7 @@ impl EntityService {
             version,
         } = outline;
         let write = AtomicWrite::builder()
-            .entity_id(Arc::new(id.clone())) // clone: the delete write owns its validated identifier.
+            .entity_id(Arc::new(id.clone())) // clone: the delete write outlives the borrowed identifier.
             .entity(EntityMutation::Delete)
             // Clause 5.6.6 removes current state and leaves the Temporal
             // Evolution standing, so every instance the entity still held is
@@ -215,7 +215,7 @@ impl EntityService {
         let subscription_matches = self.notifier.subscription_matches(deleted, &change, snapshots);
 
         let write = AtomicWrite::builder()
-            .entity_id(Arc::new(id.clone())) // clone: the delete write owns its validated identifier.
+            .entity_id(Arc::new(id.clone())) // clone: the delete write outlives the borrowed identifier.
             .entity(EntityMutation::Delete)
             // Clause 5.6.6 removes current state and leaves the Temporal
             // Evolution standing, so every instance the entity still held is

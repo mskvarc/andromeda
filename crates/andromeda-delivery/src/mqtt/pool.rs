@@ -193,7 +193,6 @@ impl MqttTransportPool {
 
     /// The dial guard for a broker, created on first need.
     fn dial_lock_for(&self, key: &MqttConnectionKey) -> Arc<Mutex<()>> {
-        // clone: the guard outlives the map entry, and the key is owned by the map
         Arc::clone(self.dial_locks.entry(key.clone()).or_default().value())
     }
 
@@ -207,7 +206,7 @@ impl MqttTransportPool {
     /// Advance the reconnect backoff for a broker whose dial just failed, arming
     /// the entry on the first failure.
     fn advance_backoff(&self, key: &MqttConnectionKey) {
-        // clone: the map owns the key; the backoff outlives this call
+        // clone: the map stores its own copy of the key, which this fn only borrows
         let mut state = self.reconnect.entry(key.clone()).or_insert_with(|| ReconnectState {
             backoff: BackoffCursor::new(self.config.reconnect_backoff),
             next_attempt_at: Instant::now(),
@@ -272,9 +271,9 @@ impl MqttTransportPool {
                 version: connection.key.version,
                 health: connection.state.health.load(),
                 seconds_since_healthy: last.elapsed().as_secs(),
-                broker_uptime: sys.broker_uptime.clone(),         // clone: same
-                broker_version: sys.broker_version.clone(),       // clone: same
-                clients_connected: sys.clients_connected.clone(), // clone: same
+                broker_uptime: sys.broker_uptime.clone(),
+                broker_version: sys.broker_version.clone(),
+                clients_connected: sys.clients_connected.clone(),
             });
         }
         summaries
@@ -435,7 +434,6 @@ mod tests {
         // A client with no live session; its event loop is never polled here.
         let (client, _eventloop) = rumqttc::AsyncClient::new(rumqttc::MqttOptions::new("test", "127.0.0.1", 1883), 8);
         let state = Arc::new(ConnectionState::connected());
-        // A publish waiting on its PUBACK.
         let mut ack = state.acks().register(AckKind::PubAck);
         // A stand-in event loop that never ends on its own, so only the abort can stop it.
         let event_loop = tokio::spawn(pending::<()>());

@@ -125,8 +125,8 @@ async fn a_property_holding_the_empty_array_renders_the_empty_array() {
 
 /// Clause 4.5.24.2: `json` is "a raw JSON object (or array of objects)"
 /// "never subject to JSON-LD term expansion or compaction", so the walk
-/// returns an array literal as written -- one element, nested arrays and the
-/// empty array included -- where the JSON-LD 1.1 add-value rule the processor
+/// returns an array literal as written (one element, nested arrays and the
+/// empty array included), where the JSON-LD 1.1 add-value rule the processor
 /// follows would add its elements one by one. The processor is therefore no
 /// oracle for an array literal, and the corpus holds none.
 #[tokio::test]
@@ -242,7 +242,7 @@ async fn every_written_document_reads_as_the_temporal_entity_the_processor_compa
         for (name, expanded) in documents::written_documents() {
             let document =
                 EntityDocument::from_slice(&serde_json::to_vec(&expanded).expect("the document renders")).expect("the canonical codec reads the document");
-            let evolution = TemporalDocument::new(document.clone(), EntitySystemTimes::default(), IndexMap::new()); // clone: the oracle reads the same document
+            let evolution = TemporalDocument::new(document.clone(), EntitySystemTimes::default(), IndexMap::new());
             let expected = temporal_through_processor(&compactor, &terms, &document)
                 .await
                 .map(|entity| format!("{entity:?}"))

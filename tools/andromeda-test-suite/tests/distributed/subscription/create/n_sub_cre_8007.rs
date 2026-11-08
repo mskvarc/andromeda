@@ -39,7 +39,6 @@ async fn n_sub_cre_8007_subscriptions_forwarded_to_one_domain_and_deleted_at_onc
     let registration = CSourceRegistration::builder(broker::peer(PeerRole::B)?)
         .id(namespace.registration_id("b")?)
         .information([RegistrationInfo::builder()
-            // clone: the information element owns its type
             .entities([EntityInfo::new(building_type.clone()).with_id_pattern(namespace.id_pattern("Building")?)])
             .build()?])
         .mode(RegistrationMode::Inclusive)
@@ -62,7 +61,6 @@ async fn n_sub_cre_8007_subscriptions_forwarded_to_one_domain_and_deleted_at_onc
         .fold(Cleanup::of(&hub).registration_of(&registration), Cleanup::subscription);
     for subscription_id in &subscription_ids {
         let subscription = Subscription::builder()
-            // clone: the Subscription owns its id, and the test deletes it by that id
             .id(subscription_id.clone())
             .entities([building_type.as_str()])
             .notification(NotificationParams::builder(Endpoint::builder(sink.endpoint(1)?).accept(NgsiLdMediaType::Json).build()?).build()?)
@@ -72,7 +70,6 @@ async fn n_sub_cre_8007_subscriptions_forwarded_to_one_domain_and_deleted_at_onc
     for number in 0..SUBSCRIPTIONS {
         let building = Entity::builder()
             .id(namespace.urn("Building", number)?)
-            // clone: every Entity owns its type
             .entity_type(building_type.clone())
             .property("speed", number)
             .build()?;

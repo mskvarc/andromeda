@@ -160,8 +160,8 @@ async fn expand_pred_terms(pred: Predicate, members: TrailingMembers<'_>, expand
 /// linked-entity hop the Relationship as a term and its guard as entity types.
 ///
 /// The guard names entity types, not attributes, so it expands through
-/// [`TermExpander::expand_type`] — clause 4.9's `EntityType` production, which
-/// clause 4.17 expands the same way a `type` selection is expanded.
+/// [`TermExpander::expand_type`] (clause 4.9's `EntityType` production, which
+/// clause 4.17 expands the same way a `type` selection is expanded).
 ///
 /// # Errors
 ///
@@ -204,8 +204,8 @@ where
     Box::pin(expand_query_path(path, members, expander))
 }
 
-/// Expand an attribute path — main attribute, sub-attributes and, when
-/// `members` makes them terms, compound-value member names — to full IRIs.
+/// Expand an attribute path (main attribute, sub-attributes and, when
+/// `members` makes them terms, compound-value member names) to full IRIs.
 ///
 /// The member names of a compound value expand for the same reason the attribute name does: JSON-LD expansion of a structured Property value turns its members into IRI-keyed nodes, so `address[city]` addresses the expansion of `city` under the request `@context`, not the four letters the client typed.
 ///
@@ -218,8 +218,8 @@ where
 pub async fn expand_attr_path(mut path: AttrPath, members: TrailingMembers<'_>, expander: &impl TermExpander) -> Result<AttrPath, QueryError> {
     path.attr = expanded_attribute_name(&expander.expand_term(path.attr.as_str()).await?)?;
     path.sub_attrs = expand_attribute_names(&path.sub_attrs, expander).await?;
-    // A value that is raw JSON -- under an attribute the request declared in
-    // `jsonKeys` (clause 4.9 EXAMPLE 11), or any Context Source Property -- is
+    // A value that is raw JSON (an attribute the request declared in `jsonKeys`,
+    // clause 4.9 EXAMPLE 11, or any Context Source Property) is
     // addressed by literal object keys, which no `@context` expands.
     if let Some(TrailingPath::Members(member_path)) = &mut path.trailing
         && members.are_terms_under(&path.attr)
@@ -402,7 +402,7 @@ mod tests {
     /// A hop's two halves expand through different vocabularies: the
     /// Relationship is an attribute term, the guard names entity types. The stub
     /// expander sends each through a distinguishable prefix so the test can see
-    /// that `expand_term` and `expand_type` were applied to the right halves —
+    /// that `expand_term` and `expand_type` were applied to the right halves:
     /// swapping them would expand a guard against the attribute vocabulary and
     /// silently stop matching every entity.
     #[tokio::test]

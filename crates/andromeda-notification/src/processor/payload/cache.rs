@@ -92,7 +92,7 @@ impl RenderingKey {
         RenderingKey {
             source,
             selection,
-            context: context.cloned(), // clone: the key owns the context it names
+            context: context.cloned(),
             instants: InstantsKey(sys_attrs),
             reading,
         }

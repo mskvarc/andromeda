@@ -1,8 +1,8 @@
 //! Batch entity request parsing for NGSI-LD batch operations.
 //!
-//! Provides [`BatchBody`] -- a [`FromRequest`] extractor that applies the clause
+//! Provides [`BatchBody`], a [`FromRequest`] extractor that applies the clause
 //! 6.3.4 request preconditions and classifies the representation the request
-//! announced -- and [`parse_batch_entities`], which decodes the array a
+//! announced, and [`parse_batch_entities`], which decodes the array a
 //! [`BatchBody`] carries. Every Content-Type decision is taken once, in the
 //! extractor: a `BatchBody` exists only for a request whose media type clause
 //! 6.3.4 admits, so nothing below it has to re-derive that or answer for it.
@@ -50,7 +50,7 @@ use std::mem::take;
 /// The type is the evidence: it exists only for a request that declared a
 /// payload length, announced a media type clause 6.3.4 admits, and did not
 /// combine `application/ld+json` with a context `Link` header. Its fields are
-/// private for that reason -- one cannot be assembled around a request that
+/// private for that reason: one cannot be assembled around a request that
 /// failed any of those, so [`parse_batch_entities`] never has to ask again.
 pub struct BatchBody {
     /// Request headers, replayed onto forwarded copies of the operation.
@@ -102,7 +102,7 @@ where
         // absent Content-Length with a bare 411 before the Content-Type is
         // looked at: a request that declares no payload length has declared no
         // payload for the media type to describe.
-        let declared = declared_body_length(&parts.headers, &parts.extensions).map_err(|error| error.into_rejection(uri.clone()).into_response())?; // clone: the media-type refusal below names the same request
+        let declared = declared_body_length(&parts.headers, &parts.extensions).map_err(|error| error.into_rejection(uri.clone()).into_response())?;
         let content_kind = admit_content_kind(&parts.headers, &parts.method).map_err(IntoResponse::into_response)?;
         // Clause 6.3.5: an `application/ld+json` body names its context in the
         // body, so "the presence of a JSON-LD Link header in the incoming HTTP
@@ -124,11 +124,9 @@ where
         let headers = take(&mut parts.headers);
         let value_limit = parts.extensions.get::<RequestJsonValueLimit>().copied();
         let decode_bounds = parts.extensions.get::<RequestDecodeBounds>().copied();
-        let blocking_decode = parts.extensions.get::<BlockingDecodePolicy>().cloned(); // clone: the body owns its share of the permits
+        let blocking_decode = parts.extensions.get::<BlockingDecodePolicy>().cloned();
         let req = Request::from_parts(parts, body);
-        let body = buffer_payload(req, state, declared, uri.clone()) // clone: an empty payload below names the same request
-            .await
-            .map_err(IntoResponse::into_response)?;
+        let body = buffer_payload(req, state, declared, uri.clone()).await.map_err(IntoResponse::into_response)?;
         // A declared length the payload did not carry leaves clause 5.5.4 with
         // no JSON document to read, which is the same refusal a declared length
         // of zero draws.
@@ -251,15 +249,15 @@ fn admitted_text(text: &[u8]) -> Result<Option<EmbeddedContext>, BatchItemRefusa
 /// 6.3.4 media-type and payload-length refusals are not among them:
 /// [`BatchBody`] raised those before this was reached.
 pub async fn parse_batch_entities(batch: &BatchBody, uri: &HttpUri) -> Result<ParsedBatch, ProblemResponse> {
-    let body = batch.body.clone(); // clone: a reference-count bump; the decode may run on the blocking pool
-    let link_context = batch.link_context.clone(); // clone: the decode may run on the blocking pool, which borrows nothing
+    let body = batch.body.clone();
+    let link_context = batch.link_context.clone(); // clone: the decode may run on the blocking pool, which cannot borrow the batch
     let (content_kind, value_limit, decode_bounds) = (batch.content_kind, batch.value_limit, batch.decode_bounds);
-    let instance = uri.clone(); // clone: the decode's refusals name the request it answers
+    let instance = uri.clone();
     decode_payload(batch.blocking_decode.as_ref(), body.len(), move || {
         decode_batch(&body, content_kind, link_context, value_limit, decode_bounds).map_err(|refusal| refusal.into_problem(instance))
     })
     .await
-    .map_err(|failure| failure.report().with_instance(uri.clone()))? // clone: the refusal names the request it answers
+    .map_err(|failure| failure.report().with_instance(uri.clone()))?
 }
 
 /// Decode a batch body read under `content_kind` into its entities, each with
@@ -284,7 +282,6 @@ fn decode_batch(
         ContentKind::Json | ContentKind::MergePatchJson => Some(BatchContext::shared(link_context)),
         ContentKind::LdJson => None,
     };
-    // clone: the batch and every item it reads hold the shared handle
     let mut contexts = shared_context.clone().map_or_else(BatchContexts::per_entity, BatchContexts::shared);
     let mut admitted = Vec::new();
     let mut errors = Vec::new();
@@ -385,7 +382,7 @@ mod tests {
         for BatchItem { identifier, text, .. } in items {
             match entity_of(&text, ContextReading::keyword_spellings(), None) {
                 Ok(entity) => entities.push(entity),
-                Err(refusal) => errors.push(refusal.against(written(&identifier).clone())), // clone: the fixture keeps the item it reports
+                Err(refusal) => errors.push(refusal.against(written(&identifier).clone())),
             }
         }
         (entities, errors)

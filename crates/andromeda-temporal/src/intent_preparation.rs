@@ -58,20 +58,19 @@ pub(crate) fn prepare(
                 append_document_entries(EntityDocument::from(state.as_ref()), recorded_at, ScopeEntryKind::Event, &mut entries)?;
             }
             HistoryRecord::EvolutionInstances(document) => {
-                // clone: every history row owns the values it records, while the
-                // written document stays shared with the write it belongs to.
+                // clone: the write keeps its shared document, so the entries are read from a copy.
                 append_document_entries(EntityDocument::clone(document), recorded_at, ScopeEntryKind::Assertion, &mut entries)?;
             }
             HistoryRecord::Tombstone(removed) => entries.push(TemporalAppendEntry::Tombstone {
-                attribute_name: removed.key.attr.clone(),   // clone: the durable intent owns the instance identity.
-                dataset_id: removed.key.dataset_id.clone(), // clone: the durable intent owns the dataset identity.
+                attribute_name: removed.key.attr.clone(),
+                dataset_id: removed.key.dataset_id.clone(),
                 attribute_type: removed.attribute_type,
                 instance: InstanceIdentity::generate(),
             }),
             // Clause 4.18 ends a Scope's validity when it is "explicitly
             // removed by an update or delete operation", and the write that
             // removed it declared no instant of its own, so the removal is
-            // dated at the write — which is also what clause 4.5.6 asks of a
+            // dated at the write, which is also what clause 4.5.6 asks of a
             // Scope changed through the Core API, "the observedAt sub-Property
             // should be set as a copy of the modifiedAt sub-Property".
             HistoryRecord::ScopeRemoval => entries.push(scope_entry(ScopeObservation::Deleted, ScopeEntryKind::Event, recorded_at)),
@@ -81,7 +80,7 @@ pub(crate) fn prepare(
     Ok(Some(TemporalAppendIntent {
         record,
         base_ordinal,
-        entity_id: entity_id.clone(), // clone: the durable intent owns the validated identifier.
+        entity_id: entity_id.clone(),
         entity_types: entity_types.to_vec(),
         entries,
     }))
@@ -102,9 +101,12 @@ fn append_document_entries(
 ) -> Result<(), TemporalError> {
     let EntityDocumentParts { scope, attributes, .. } = document.into_parts();
     match scope {
-        Some(Slot::Set(scopes)) => entries.extend(scopes.as_slice().iter().map(|path| {
-            scope_entry(ScopeObservation::Path(path.clone()), stated, recorded_at) // clone: the durable intent owns its paths.
-        })),
+        Some(Slot::Set(scopes)) => entries.extend(
+            scopes
+                .as_slice()
+                .iter()
+                .map(|path| scope_entry(ScopeObservation::Path(path.clone()), stated, recorded_at)),
+        ),
         Some(Slot::Remove) => entries.push(scope_entry(ScopeObservation::Deleted, ScopeEntryKind::Event, recorded_at)),
         None => {}
     }
@@ -141,7 +143,7 @@ fn observation_entry(attribute_name: &AttributeName, observed: ObservedInstance,
     } = observed;
     TemporalAppendEntry::Observation {
         row: TemporalHistoryRow {
-            attribute_name: attribute_name.clone(), // clone: each observation owns its attribute name.
+            attribute_name: attribute_name.clone(),
             attribute_type,
             dataset_id,
             value,
@@ -181,7 +183,7 @@ fn deletion_entry(attribute_name: &AttributeName, deleted: DeletedInstance, reco
     } = deleted;
     TemporalAppendEntry::Observation {
         row: TemporalHistoryRow {
-            attribute_name: attribute_name.clone(), // clone: each entry owns its attribute name.
+            attribute_name: attribute_name.clone(),
             attribute_type,
             dataset_id,
             value: TemporalValue::Tombstone { deleted_at: recorded_at },
@@ -223,8 +225,8 @@ fn refuse_repeated_instance_ids(entries: &[TemporalAppendEntry]) -> Result<(), T
         .find(|named| !seen.insert(*named));
     match repeated {
         Some((attribute, instance)) => Err(SubmissionRefusal::RepeatedInstanceId(Box::new(RepeatedInstanceId {
-            attribute: attribute.clone(), // clone: the refusal outlives the entries it names.
-            instance: instance.clone(),   // clone: the refusal outlives the entries it names.
+            attribute: attribute.clone(), // clone: the refusal outlives the borrowed entries it names.
+            instance: instance.clone(),
         }))
         .into()),
         None => Ok(()),

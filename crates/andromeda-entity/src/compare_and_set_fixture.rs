@@ -144,7 +144,6 @@ pub(crate) fn attribute_adder(
     let member: AttributeName = term(attribute).parse().expect("a valid attribute name");
     let addition = building_with(&id, &[attribute], 2);
     move |rows: &mut StoredRows| {
-        // clone: the writer stores a changed copy sharing what it leaves alone
         let mut state = rows.payload(&id).map_or_else(|| stored_building(&id, &[]), |stored| EntityState::clone(stored));
         let added = addition.attributes().get_shared(member.as_str()).expect("the addition holds the attribute");
         state.attributes_mut().insert_shared(member, Arc::clone(added));
@@ -157,7 +156,7 @@ pub(crate) fn attribute_adder(
 /// before the next commit, and records the version it left the Building at.
 pub(crate) fn adds_attribute(id: &Identifier, attribute: &str, version: &Arc<Mutex<Option<EntityVersion>>>) -> ConcurrentWriter {
     let recorded = id.clone(); // clone: the recorder outlives the borrow
-    let version = Arc::clone(version); // clone: the test reads the version the writer records
+    let version = Arc::clone(version);
     ConcurrentWriter::BeforeNextCommit(Box::new(attribute_adder(id, attribute, move |rows: &StoredRows| {
         *version.lock().expect("the version lock is not poisoned") = rows.version(&recorded);
     })))
@@ -217,7 +216,7 @@ pub(crate) async fn contended_service(watchers: Watchers) -> ContendedService {
     let store = Arc::new(InMemoryStore::default());
     let published = Arc::new(Mutex::new(Vec::new()));
     let sink = RecordingSink {
-        published: Arc::clone(&published), // clone: the sink and the test both hold the published changes
+        published: Arc::clone(&published),
     };
     let matching = match watchers {
         Watchers::None => SubscriptionMatching::Absent,
@@ -226,6 +225,6 @@ pub(crate) async fn contended_service(watchers: Watchers) -> ContendedService {
         }),
     };
     let notifier = ChangeNotifier::new(Some(Arc::new(sink) as Arc<dyn EntityChangeSink>), matching);
-    let service = in_memory_service(&store, Arc::clone(&store) as Arc<dyn ContextCommitter>, notifier); // clone: the service commits to the store the test inspects
+    let service = in_memory_service(&store, Arc::clone(&store) as Arc<dyn ContextCommitter>, notifier);
     ContendedService { store, service, published }
 }

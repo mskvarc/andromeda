@@ -2,8 +2,8 @@
 //!
 //! `DELETE /temporal/entities` composes the entity selection of a temporal
 //! query, the attribute `drop`/`keep` and `datasetId`/`deleteAll` scoping of the
-//! per-entity temporal delete (clause 5.6.13), and a time window — a
-//! combination the specification's temporal-delete family has no operation for.
+//! per-entity temporal delete (clause 5.6.13), and a time window (a
+//! combination the specification's temporal-delete family has no operation for).
 //! This parameter set is deliberately a subset of
 //! [`TemporalQueryParameters`](crate::query::temporal::TemporalQueryParameters):
 //! it carries only what selects the instances to remove, and none of the

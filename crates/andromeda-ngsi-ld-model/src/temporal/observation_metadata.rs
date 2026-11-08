@@ -187,7 +187,7 @@ mod tests {
             "https://uri.etsi.org/ngsi-ld/modifiedAt": [{"@value": "1900-01-01T00:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}]
         });
         if let (Some(members), Some(nested)) = (instance.as_object_mut(), nested.as_object()) {
-            members.extend(nested.iter().map(|(name, value)| (name.clone(), value.clone()))); // clone: the fixture owns its members
+            members.extend(nested.iter().map(|(name, value)| (name.clone(), value.clone())));
         }
         json!([instance])
     }

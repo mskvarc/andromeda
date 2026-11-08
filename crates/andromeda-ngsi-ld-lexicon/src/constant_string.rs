@@ -13,7 +13,7 @@
 /// constructed or parsed.
 ///
 /// The deserializer is a visitor rather than `<&str>::deserialize` so it works
-/// through `serde_json::from_value` — which hands over owned strings — as well
+/// through `serde_json::from_value` (which hands over owned strings) as well
 /// as through `from_str`.
 ///
 /// # Usage

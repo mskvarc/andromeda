@@ -59,7 +59,7 @@ impl<'a> Iterator for SplitAsciiUnquoted<'a> {
                 escaped = false;
             } else if in_quotes && *byte == b'\\' {
                 // A backslash inside a quoted string opens a quoted-pair, so the
-                // next byte -- including `\"` -- does not end the quote.
+                // next byte, including `\"`, does not end the quote.
                 escaped = true;
             } else if in_target {
                 in_target = *byte != b'>';
@@ -127,8 +127,8 @@ mod tests {
 
     #[test]
     fn an_escaped_quote_inside_a_quoted_value_does_not_end_the_quote() {
-        // RFC 8288 quoted-pair: `\"` is an escaped quote -- data inside the
-        // value -- so it must not toggle quote state and let a following `;`
+        // RFC 8288 quoted-pair: `\"` is an escaped quote (data inside the
+        // value), so it must not toggle quote state and let a following `;`
         // split the segment.
         let raw = r#"rel="next"; title="a\"b; c""#;
         let segments: Vec<&str> = SplitAsciiUnquoted::new(raw, ";,").collect();

@@ -79,7 +79,7 @@ fn push_segments(path: &IgnoredPath<'_>, segments: &mut Vec<KeySegment>) {
         }
         IgnoredPath::Map { parent, key } => {
             push_segments(parent, segments);
-            // clone: the parents are borrowed from the deserializer's stack.
+            // clone: the key is borrowed from the deserializer's stack, so the segment owns a copy.
             segments.push(KeySegment::Key(key.clone()));
         }
         IgnoredPath::Some { parent } | IgnoredPath::NewtypeStruct { parent } | IgnoredPath::NewtypeVariant { parent } => push_segments(parent, segments),
@@ -163,7 +163,7 @@ pub(crate) fn ignored_settings(merged: &Figment, layers: &WritingLayers<'_>) -> 
         .flat_map(|path| {
             let in_file = file.as_ref().filter(|(_, root)| path.is_held_by(root)).map(|(file, _)| IgnoredSetting::File {
                 file: file.to_path_buf(),
-                // clone: both layers may write the same ignored key, and each report owns its path.
+                // clone: both layers may write one ignored key, so each report needs its own copy of the path.
                 path: path.clone(),
             });
             let in_environment = path.is_held_by(&environment).then(|| IgnoredSetting::Environment {

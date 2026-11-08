@@ -10,13 +10,13 @@ use std::io::{Error as IoError, ErrorKind};
 /// budget (`max_user_connections`) is spent, so the pooler queues the client and,
 /// once the wait elapses, closes it with a FATAL carrying this message under
 /// SQLSTATE `08P01`. That code is shared with genuine protocol violations and
-/// with the pooler's other connection failures, so the message -- not the code
-/// -- is what identifies pooler backpressure.
+/// with the pooler's other connection failures, so the message, not the code,
+/// is what identifies pooler backpressure.
 const POOLER_QUERY_WAIT_TIMEOUT: &str = "query_wait_timeout";
 
 /// Whether a [`sqlx::Error`] reports that a connection could not be obtained
-/// because the pool -- the broker's own or a transaction pooler in front of
-/// PostgreSQL -- is at capacity.
+/// because the pool (the broker's own or a transaction pooler in front of
+/// PostgreSQL) is at capacity.
 ///
 /// This is backpressure, not a fault: the request never ran and can be retried
 /// unchanged, so callers turn it into a 503 with `Retry-After` rather than a 500.
@@ -69,8 +69,8 @@ pub(crate) fn is_pooler_backpressure(error: &dyn DatabaseError) -> bool {
 /// (`EADDRNOTAVAIL`) or transiently collide on one (`EADDRINUSE`). Both are
 /// load-induced and clear as the churn subsides and sockets leave `TIME_WAIT`, so
 /// the request is shed as load rather than reported as the store being
-/// unreachable. Any other I/O error -- a reset, a broken pipe, an unexpected EOF
-/// -- is the connection to the store failing.
+/// unreachable. Any other I/O error (a reset, a broken pipe, an unexpected EOF)
+/// is the connection to the store failing.
 pub(crate) fn is_connection_resource_exhausted(error: &IoError) -> bool {
     matches!(error.kind(), ErrorKind::AddrNotAvailable | ErrorKind::AddrInUse)
 }

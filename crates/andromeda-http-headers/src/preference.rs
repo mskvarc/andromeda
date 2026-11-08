@@ -1,7 +1,7 @@
 //! The token vocabulary shared by the `Prefer` and `Preference-Applied` headers.
 //!
-//! RFC 7240 gives both headers the same grammar -- a comma-separated list of
-//! tokens, each optionally `name=value` -- and NGSI-LD clause 6.3.6 fixes which
+//! RFC 7240 gives both headers the same grammar, a comma-separated list of
+//! tokens, each optionally `name=value`, and NGSI-LD clause 6.3.6 fixes which
 //! tokens a broker understands. The values those tokens carry are
 //! representation options and live in `andromeda-ngsi-ld-representation`; what
 //! lives here is how they are spelled on the wire.
@@ -20,10 +20,10 @@ use strum::{Display, EnumString};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, EnumString)]
 #[strum(ascii_case_insensitive)]
 pub enum RespondMode {
-    /// `respond-async` -- the server may process the request asynchronously.
+    /// `respond-async`: the server may process the request asynchronously.
     #[strum(serialize = "respond-async")]
     Async,
-    /// `respond-sync` -- the server must process the request synchronously,
+    /// `respond-sync`: the server must process the request synchronously,
     /// which is a stronger statement than the absence of the token.
     #[strum(serialize = "respond-sync")]
     Sync,
@@ -32,11 +32,11 @@ pub enum RespondMode {
 /// One NGSI-LD preference token (clause 6.3.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Preference {
-    /// `body=json` or `body=ld+json` -- `GeoJSON` `@context` placement.
+    /// `body=json` or `body=ld+json`: `GeoJSON` `@context` placement.
     Body(GeoJsonBodyPreference),
-    /// `ngsi-ld=<version>` -- request version conformance (clause 4.3.6.8).
+    /// `ngsi-ld=<version>`: request version conformance (clause 4.3.6.8).
     Version(SpecVersion),
-    /// `respond-async` / `respond-sync` -- response-mode hint. The
+    /// `respond-async` / `respond-sync`: response-mode hint. The
     /// `/entityOperations` endpoints read it to route side effects between
     /// inline processing and the durable queue.
     Respond(RespondMode),
@@ -65,8 +65,8 @@ impl Preference {
     }
 }
 
-// Each variant spells its name differently -- two carry a value after `=` and
-// one is a bare token -- so no single strum serialisation covers the enum. The
+// Each variant spells its name differently: two carry a value after `=` and
+// one is a bare token, so no single strum serialisation covers the enum. The
 // values themselves derive their own renderings.
 impl fmt::Display for Preference {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

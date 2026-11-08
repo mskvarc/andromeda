@@ -64,7 +64,7 @@ impl EntityService {
         }: ComputedLanding<(Vec<ChangeEvent>, Vec<AttributeName>)> = self
             .commit_computed_write(target, entity, |read, now| {
                 let previous = &read.state;
-                let mut updated = EntityState::clone(previous); // clone: shares every attribute the update leaves alone
+                let mut updated = EntityState::clone(previous);
                 let not_updated = member_attribute_names(updated.update_attributes(&fragment)?)?;
                 // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps
                 // its createdAt across the read-modify-write.

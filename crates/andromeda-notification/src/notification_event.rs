@@ -1,8 +1,8 @@
 //! The immutable notification event a write produces.
 //!
 //! An event records what changed, once per affected Entity per write, and is
-//! never rewritten afterwards: the mutable delivery bookkeeping — attempts,
-//! leases, next-attempt instants — lives on the per-subscription delivery that
+//! never rewritten afterwards: the mutable delivery bookkeeping (attempts,
+//! leases, next-attempt instants) lives on the per-subscription delivery that
 //! references it. That split is a decision Andromeda made, not a resource ETSI
 //! GS CIM 009 defines, which is why the shape lives here rather than in the
 //! data model.

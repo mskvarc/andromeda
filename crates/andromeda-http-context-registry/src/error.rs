@@ -69,7 +69,7 @@ mod tests {
             ),
             (
                 ContextRegistryError::NotFound {
-                    identifier: ContextIdentifier::from(identifier.clone()), // clone: the table names a second failure of the same identifier.
+                    identifier: ContextIdentifier::from(identifier.clone()),
                 },
                 NgsiLdErrorType::ResourceNotFound,
             ),

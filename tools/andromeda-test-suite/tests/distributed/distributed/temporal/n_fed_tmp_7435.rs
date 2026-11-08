@@ -43,7 +43,6 @@ const FORWARDING_TIMEOUT_MS: u32 = 20_000;
 fn building_evolution(namespace: &Namespace, building_type: &EntityTypeName, domain: &Domain, number: u32) -> Result<TemporalEntity<Input>> {
     let evolution = TemporalEntity::builder()
         .id(namespace.urn("Building", format!("{}-{number}", domain.name))?)
-        // clone: every history owns its type
         .entity_type(building_type.clone());
     let evolution = (0..INSTANCES_PER_EVOLUTION).try_fold(evolution, |evolution, day| -> Result<_> {
         let observed_at = format!("2024-01-{:02}T00:00:00Z", day + 1).parse()?;
@@ -78,7 +77,6 @@ async fn n_fed_tmp_7435_last_n_queries_sent_at_once_over_the_histories_of_four_d
         let registration = CSourceRegistration::builder(broker::peer(domain.peer)?)
             .id(namespace.registration_id(domain.name)?)
             .information([RegistrationInfo::builder()
-                // clone: the information element owns its type
                 .entities([EntityInfo::new(building_type.clone()).with_id_pattern(namespace.id_pattern("Building")?)])
                 .build()?])
             .operations([DistributedOperation::QueryTemporal])

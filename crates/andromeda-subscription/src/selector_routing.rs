@@ -74,10 +74,10 @@ impl SelectorRouting {
                     routing.by_entity_id.push((id.clone(), placement(SelectorShape::TypeAndId)));
                 }
                 (Some(type_name), None) => {
-                    routing.by_type.push((type_name.clone(), placement(SelectorShape::TypeOnly))); // clone: bucket key
+                    routing.by_type.push((type_name.clone(), placement(SelectorShape::TypeOnly))); // clone: the index takes an owned key while the compiled subscription keeps its own
                 }
                 (None, Some(id)) => {
-                    routing.by_entity_id.push((id.clone(), placement(SelectorShape::IdOnly))); // clone: bucket key
+                    routing.by_entity_id.push((id.clone(), placement(SelectorShape::IdOnly))); // clone: the index takes an owned key while the compiled subscription keeps its own
                 }
                 (None, None) => routing.wildcard = true,
             }

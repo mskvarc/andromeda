@@ -63,8 +63,8 @@ impl ContextRegistry {
     /// Register a context document under a URL.
     ///
     /// A redundant embedded Core @context reference is dropped at registration,
-    /// so the broker's authoritative Core --
-    /// appended last per clause 4.4 -- stays the single occurrence and a
+    /// so the broker's authoritative Core, appended last per clause 4.4,
+    /// stays the single occurrence and a
     /// registered user context that redefines a core term resolves to the
     /// Core's definition rather than failing.
     ///
@@ -93,7 +93,7 @@ impl ContextRegistry {
             url,
             &as_written,
             RegistrationSource::Preloaded {
-                as_written: Arc::clone(&as_written), // clone: the source owns the document while the borrow above only parsed it.
+                as_written: Arc::clone(&as_written),
             },
         )
     }
@@ -119,7 +119,7 @@ impl ContextRegistry {
     /// The document registered for a URL, if there is one.
     #[must_use]
     pub fn get(&self, url: &IriBuf) -> Option<RegisteredContext> {
-        self.contexts.get(url).map(|entry| entry.value().clone()) // clone: an `Arc` bump and the tail, handed out while the map keeps its entry
+        self.contexts.get(url).map(|entry| entry.value().clone())
     }
 }
 
@@ -163,7 +163,7 @@ mod tests {
         let url = IriBuf::new("https://example.com/user.jsonld".to_string()).expect("valid URL");
         registry
             .register(
-                url.clone(), // clone: the lookup below names the same URL
+                url.clone(),
                 &literal(&json!({ "@context": [NGSI_LD_CORE_CONTEXT_URL, { "speed": "https://example.com/speed" }] })),
             )
             .expect("registered");
@@ -180,7 +180,7 @@ mod tests {
         let url = IriBuf::new("https://example.com/compound.jsonld".to_string()).expect("valid URL");
         registry
             .register(
-                url.clone(), // clone: the registry keys the entry on the URL the lookup below names
+                url.clone(),
                 &literal(&json!({ "@context": ["https://example.com/terms.jsonld", NGSI_LD_CORE_CONTEXT_URL] })),
             )
             .expect("registered");
@@ -205,11 +205,9 @@ mod tests {
         let embedded = IriBuf::new("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld".to_string()).expect("valid URL");
 
         registry
-            .register_preloaded(preloaded.clone(), literal(&json!({ "@context": {} }))) // clone: looked up below
+            .register_preloaded(preloaded.clone(), literal(&json!({ "@context": {} })))
             .expect("registered");
-        registry
-            .register(embedded.clone(), &literal(&json!({ "@context": {} }))) // clone: looked up below
-            .expect("registered");
+        registry.register(embedded.clone(), &literal(&json!({ "@context": {} }))).expect("registered");
 
         assert!(registry.get(&preloaded).is_some_and(|registered| registered.preloaded_written().is_some()));
         assert!(registry.get(&embedded).is_some_and(|registered| registered.preloaded_written().is_none()));
@@ -224,7 +222,7 @@ mod tests {
         let url = IriBuf::new("https://forge.example.com/compound.jsonld".to_string()).expect("valid URL");
         let written = json!({ "@context": ["https://forge.example.com/terms.jsonld", NGSI_LD_CORE_CONTEXT_URL.as_str()] });
 
-        registry.register_preloaded(url.clone(), literal(&written)).expect("registered"); // clone: looked up below
+        registry.register_preloaded(url.clone(), literal(&written)).expect("registered");
 
         let registered = registry.get(&url).expect("registered");
         assert!(matches!(registered.source, RegistrationSource::Preloaded { .. }));

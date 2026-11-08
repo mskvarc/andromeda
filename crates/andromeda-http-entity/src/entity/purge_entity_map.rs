@@ -8,9 +8,9 @@
 //!
 //! A purge only ever reuses the map it is handed, and never creates one. Three
 //! readings agree on that. Clause 5.5.14 enumerates the operations that may
-//! occur as part of a distributed transactional request -- Retrieve Entity,
+//! occur as part of a distributed transactional request (Retrieve Entity,
 //! Query Entities, Retrieve Temporal Evolution of an Entity, Query Temporal
-//! Evolution of Entities -- and Purge Entities is not among them, so a purge is
+//! Evolution of Entities), and Purge Entities is not among them, so a purge is
 //! never the request a map is created for. Table 6.4.3.3-3 admits only 204, 207
 //! and 400, never the "201 Created (in case an `EntityMap` has been
 //! (re)created)" that Table 6.4.3.2-3 gives Query Entities, so a purge has no
@@ -18,7 +18,7 @@
 //! the `EntityMap` **used** in the purge operation", which is not a map the
 //! purge would have created for a later request. Table 6.4.3.3-1 listing
 //! neither `entityMap` nor `entityMapLifetime` corroborates it without
-//! deciding it, since that table is not exhaustive either -- it omits `attrs`
+//! deciding it, since that table is not exhaustive either: it omits `attrs`
 //! and `local`, both of which clause 5.6.21.4 requires.
 //!
 //! A reference that expired or cannot be accessed therefore "yields no
@@ -77,8 +77,8 @@ impl PurgeEntityMap {
 /// The fingerprint is taken before the query is narrowed, so a purge under a
 /// map is compared against the request as written. Clause 5.6.21.4 has the
 /// purge "run a Query Entities operation (clause 5.6.2) to retrieve a list of
-/// ids of Entities for deletion" -- the cross-reference is the spec's own, and
-/// misnumbered: Query Entities is clause 5.7.2. The request the map fixes is
+/// ids of Entities for deletion" (the cross-reference is the spec's own, and
+/// misnumbered: Query Entities is clause 5.7.2). The request the map fixes is
 /// therefore that Query Entities, and it is fingerprinted as one: a map minted
 /// by `GET /entities?type=Vehicle&entityMap=true` is the map a purge over the
 /// same filters reuses, and a purge over different filters is the changed

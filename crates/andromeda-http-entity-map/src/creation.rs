@@ -157,7 +157,7 @@ async fn render_created(
         .with_entity_map_instance(rendering.uri)?;
     let written = RenderedResponse::resource(renderer.with_body(&body)).with_entity_map_instance(rendering.uri)?;
     let response = NgsiLdResponse::new(StatusCode::CREATED, written)
-        .with_entity_map_uri(map.id.clone()) // clone: the header owns the identifier beside the body
+        .with_entity_map_uri(map.id.clone()) // clone: the header owns its copy because `map` stays borrowed for the Location
         .with_warnings(warnings);
     Ok(match ResourceLocator::from(rendering.api_root).location(collection, &map.id) {
         Some(location) => response.with_location(location),

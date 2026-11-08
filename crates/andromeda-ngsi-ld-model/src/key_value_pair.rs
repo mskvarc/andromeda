@@ -3,8 +3,8 @@
 //! Two resources carry a list of these and mean the same thing by it: a
 //! subscription's `receiverInfo` and `notifierInfo` (clause 5.2.15), and a
 //! snapshot's `receiverInfo` (clause 5.2.41). Both are consumed by whatever
-//! delivers the notification -- as HTTP headers, as MQTT user properties, or
-//! as the MQTT envelope's metadata object.
+//! delivers the notification (as HTTP headers, as MQTT user properties, or
+//! as the MQTT envelope's metadata object).
 
 use compact_str::CompactString;
 use serde::{Deserialize, Serialize};

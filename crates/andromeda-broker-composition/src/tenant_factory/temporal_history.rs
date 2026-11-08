@@ -63,16 +63,16 @@ pub(super) fn compose_temporal_history(
         config,
         request_timeout,
         supervisor,
-        Arc::clone(&intent_store) as Arc<dyn TemporalIntentQueue>, // clone: one store answers both intent ports.
+        Arc::clone(&intent_store) as Arc<dyn TemporalIntentQueue>,
         intent_store as Arc<dyn TemporalIntentApplication>,
-        Arc::clone(pacer), // clone: the intent drain consults the tenant's one pacer.
+        Arc::clone(pacer),
     )?;
-    let recorder = Arc::new(TemporalRecorder::new(Arc::clone(repository))); // clone: the recorder and the read path share one repository.
+    let recorder = Arc::new(TemporalRecorder::new(Arc::clone(repository)));
     let history_mode = TemporalHistoryCommitMode::new(recorder, publisher);
     Ok(TemporalComposition {
         history_mode,
         ports: TemporalPorts {
-            reader: Arc::clone(repository) as Arc<dyn TemporalHistoryReader>, // clone: the repository answers reads directly.
+            reader: Arc::clone(repository) as Arc<dyn TemporalHistoryReader>,
             mutation_barrier,
         },
     })

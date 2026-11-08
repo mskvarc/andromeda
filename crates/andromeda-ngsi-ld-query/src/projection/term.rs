@@ -25,7 +25,7 @@ pub enum ProjectionTerm {
     #[display("scope")]
     Scope,
     /// One attribute, named by its expanded IRI, together with the
-    /// clause 4.21 linked-entity sub-projection carried inside `{...}` — empty
+    /// clause 4.21 linked-entity sub-projection carried inside `{...}`, empty
     /// when this term selects no linked entity.
     #[display("{iri}")]
     Attribute {

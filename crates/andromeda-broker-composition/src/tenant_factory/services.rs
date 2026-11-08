@@ -100,7 +100,7 @@ pub(super) fn construct_services(
     // chain identifies the tenant within this context source, so a request that
     // has traversed one tenant is not mistaken for a loop at another (clause
     // 4.3.6.4 considers each Tenant of a registered Context Source separately).
-    let aliases = ContextSourceAliases::new(config.source_alias.clone()); // clone: the tenant's forwarding owns the alias family it writes
+    let aliases = ContextSourceAliases::new(config.source_alias.clone());
     // Forwarding is constructed ahead of the services that join through it:
     // both the entity and the temporal join resolve an `objectType`-annotated
     // Linked Entity this broker does not hold through the same registrations.
@@ -108,8 +108,8 @@ pub(super) fn construct_services(
         FederationService::new(
             Arc::clone(&storage.registration_store),
             Arc::new(EntityStoreTypeResolver::new(Arc::clone(&storage.entity_ports.entity_types))),
-            storage.engine.clone(),                            // clone: each tenant service owns its JSON-LD engine handle.
-            LocalSource::new(aliases, storage.tenant.clone()), // clone: the tenant runtime keeps its own tenant reference
+            storage.engine.clone(),
+            LocalSource::new(aliases, storage.tenant.clone()),
             &config.federation,
         )
         .map_err(|error| AssemblyInvariant::Federation(Box::new(error)))?,
@@ -134,13 +134,13 @@ pub(super) fn construct_services(
         },
     );
     let state = AndromedaState {
-        live_target: storage.live_target.clone(), // clone: request state owns the immutable typed live-branch selection.
+        live_target: storage.live_target.clone(),
         entities,
         entity_query,
         entity_discovery: Arc::new(EntityDiscoveryService::new(
             Arc::clone(&storage.entity_ports.discovery),
             Arc::clone(&storage.registry_type_source),
-            storage.engine.clone(), // clone: discovery owns its engine handle.
+            storage.engine.clone(),
         )),
         temporal,
         subscriptions: subscriptions.entity,
@@ -171,7 +171,7 @@ fn compose_change_notifier(config: &TenantFactoryConfig, storage: &TenantStorage
             SubscriptionMatching::AtCommit(NotificationWriteConfig { subscription_cache }),
         ));
     }
-    let entity_change_sink = Arc::new(signals.entity.clone()) as Arc<dyn EntityChangeSink>; // clone: the runtime and policy each own a sender handle.
+    let entity_change_sink = Arc::new(signals.entity.clone()) as Arc<dyn EntityChangeSink>;
     Arc::new(ChangeNotifier::new(
         Some(entity_change_sink),
         SubscriptionMatching::AtDelivery(subscription_cache),
@@ -189,7 +189,7 @@ fn compose_entity_service(
     notifier: &Arc<ChangeNotifier>,
     writes: &Arc<dyn ContextCommitter>,
 ) -> Arc<EntityService> {
-    let attribute_history = Arc::clone(&storage.temporal_repo) as Arc<dyn AttributeDatasetHistory>; // clone: temporal and entity policy share the concrete history adapter.
+    let attribute_history = Arc::clone(&storage.temporal_repo) as Arc<dyn AttributeDatasetHistory>;
     let batch = &config.entity.batch;
     Arc::new(EntityService::new(
         EntityServicePorts {
@@ -200,7 +200,7 @@ fn compose_entity_service(
             writes: Arc::clone(writes),
             deletion_outline: Arc::clone(&storage.entity_ports.deletion_outline),
         },
-        storage.engine.clone(), // clone: entity policy owns its engine handle.
+        storage.engine.clone(),
         Arc::clone(notifier),
         BatchExecutionConfig {
             chunk_concurrency: batch.max_concurrent_chunks.get(),
@@ -232,7 +232,7 @@ fn compose_temporal_service(
             writes: Arc::clone(writes),
             retry_delay: Arc::new(TokioRetryDelay),
         },
-        storage.engine.clone(), // clone: temporal policy owns its engine handle.
+        storage.engine.clone(),
         Arc::clone(notifier),
         TemporalServiceLimits {
             instance_limits: TemporalInstanceLimits::from(&config.temporal.query),
@@ -252,10 +252,7 @@ fn compose_temporal_service(
         // Clause 4.5.23.1 applied to the temporal API: an annotated Linked
         // Entity whose history this broker does not record is fetched from the
         // context sources registered for it.
-        Some(Arc::new(LinkedForwarding::new(
-            Arc::clone(forwarding),      // clone: request handling and linked resolution share one forwarding service.
-            storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
-        )) as Arc<dyn RemoteTemporalLinkedSource>),
+        Some(Arc::new(LinkedForwarding::new(Arc::clone(forwarding), storage.live_target.clone())) as Arc<dyn RemoteTemporalLinkedSource>),
         temporal_linked_retrieval(EnabledExtensions::from(&config.extensions)),
     ))
 }
@@ -294,15 +291,14 @@ fn compose_entity_query_service(config: &TenantFactoryConfig, storage: &TenantSt
         EntityQueryService::builder()
             .reader(Arc::clone(&storage.entity_ports.reader))
             .query_store(Arc::clone(&storage.entity_ports.query))
-            .engine(storage.engine.clone()) // clone: the query service owns its engine handle.
-            .spatial(storage.spatial.clone()) // clone: request reads narrow through the tenant's one index.
-            .tenant(storage.tenant.clone()) // clone: the query service owns its tenant partition.
+            .engine(storage.engine.clone())
+            .spatial(storage.spatial.clone())
+            .tenant(storage.tenant.clone())
             // Clause 4.5.23.1: an `objectType`-annotated Linked Entity this broker
             // does not store is fetched from the context sources registered for it.
-            .remote_linked(Some(Arc::new(LinkedForwarding::new(
-                Arc::clone(forwarding),      // clone: request handling and linked resolution share one forwarding service.
-                storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
-            )) as Arc<dyn RemoteLinkedEntitySource>))
+            .remote_linked(Some(
+                Arc::new(LinkedForwarding::new(Arc::clone(forwarding), storage.live_target.clone())) as Arc<dyn RemoteLinkedEntitySource>
+            ))
             .geo_admission(geo_query_admission(config))
             .language_targeting(EnabledExtensions::from(&config.extensions).language_targeting())
             .filter_complexity(filter_complexity_limits(&config.request_limits))
@@ -323,10 +319,10 @@ fn compose_snapshot_services(
     let snapshot = &config.snapshot;
     let preparation = Arc::new(SnapshotPreparation::new(
         SnapshotCaptureSources {
-            live_target: storage.live_target.clone(), // clone: capture queries execute against the tenant's ordinary live branch.
-            entity_query: Arc::clone(entity_query),   // clone: a capture reads through the same query service requests do.
-            temporal: Arc::clone(temporal),           // clone: a capture reads history through the same temporal service.
-            forwarding: Arc::clone(forwarding),       // clone: a capture reaches context sources through one forwarding service.
+            live_target: storage.live_target.clone(),
+            entity_query: Arc::clone(entity_query),
+            temporal: Arc::clone(temporal),
+            forwarding: Arc::clone(forwarding),
         },
         Arc::clone(&storage.snapshot_store),
         Arc::clone(writes),
@@ -341,7 +337,7 @@ fn compose_snapshot_services(
     ));
     let service = Arc::new(SnapshotService::new(
         Arc::clone(&storage.snapshot_store),
-        Some(Arc::clone(&preparation)), // clone: the service schedules the same preparation the worker drives.
+        Some(Arc::clone(&preparation)),
         Some(delivery_signal),
         SnapshotServiceConfig {
             default_lifetime: snapshot.default_lifetime.duration(),
@@ -355,8 +351,8 @@ fn compose_snapshot_services(
 }
 
 /// Compose registration policy with the admission probe clauses 5.9.2.4 and
-/// 5.9.3.4 require -- a proxied registration is refused when this broker
-/// already holds the context data it claims -- and, when subscriptions are
+/// 5.9.3.4 require (a proxied registration is refused when this broker
+/// already holds the context data it claims), and, when subscriptions are
 /// forwarded, the teardown of the copies a removed registration's source holds.
 fn compose_registration_service(
     storage: &TenantStorage,
@@ -366,18 +362,17 @@ fn compose_registration_service(
 ) -> Arc<RegistrationService> {
     let probe = Arc::new(EntityStoreRegistrationProbe::new(
         Arc::clone(&storage.entity_ports.query),
-        storage.engine.clone(),      // clone: the probe compiles registration selectors against its own engine handle.
-        storage.live_target.clone(), // clone: admission inspects the tenant's live branch.
+        storage.engine.clone(),
+        storage.live_target.clone(),
     )) as Arc<dyn RegisteredEntityProbe>;
     let service = RegistrationService::new(
         Arc::clone(&storage.registration_store),
         probe,
-        storage.engine.clone(),                       // clone: registration policy owns its engine handle.
-        Some(Arc::new(signals.registration.clone())), // clone: each tenant service and worker own a sink handle.
+        storage.engine.clone(),
+        Some(Arc::new(signals.registration.clone())),
         geo_admission,
     );
     Arc::new(match forwarding {
-        // clone: request handling, the expiry sweep and subscription forwarding share one service.
         Some(forwarding) => service.with_removal_hook(Arc::clone(forwarding) as Arc<dyn RegistrationRemovalHook>),
         None => service,
     })

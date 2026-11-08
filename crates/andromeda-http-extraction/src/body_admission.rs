@@ -55,12 +55,12 @@ pub(crate) struct AdmittedBody {
 /// Returns an `InvalidRequest` for a text that is no JSON, which the
 /// preceding preconditions refuse first.
 pub(crate) fn submitted_context(context: ContextSpec, text: &[u8], uri: &Uri) -> Result<SubmittedContext, ExtractorRejection> {
-    let embedded = find_embedded_context(text).map_err(|error| NotJsonDocument(error).into_rejection(uri.clone()))?; // clone: the refusal names the request
+    let embedded = find_embedded_context(text).map_err(|error| NotJsonDocument(error).into_rejection(uri.clone()))?;
     Ok(SubmittedContext::new(context, embedded))
 }
 
-/// Apply every NGSI-LD body precondition to `req` -- clauses 6.3.4 and 6.3.5,
-/// the JSON value limit and the number range -- read its `@context`, and hand
+/// Apply every NGSI-LD body precondition to `req` (clauses 6.3.4 and 6.3.5,
+/// the JSON value limit and the number range), read its `@context`, and hand
 /// the admitted body to `finish`, on the blocking pool when the payload is
 /// large.
 ///
@@ -111,8 +111,8 @@ impl ReadBody {
         self,
         finish: impl FnOnce(AdmittedBody) -> Result<T, ExtractorRejection> + Send + 'static,
     ) -> Result<T, ExtractorRejection> {
-        let uri = self.uri.clone(); // clone: a failed decoding task still names the request
-        let blocking_decode = self.blocking_decode.clone(); // clone: the decode moves the body it was read with
+        let uri = self.uri.clone(); // clone: the closure moves the body, so the failure path keeps its own copy of the URI
+        let blocking_decode = self.blocking_decode.clone();
         decode_payload(blocking_decode.as_ref(), self.bytes.len(), move || self.admit().and_then(finish))
             .await
             .map_err(|failure| ExtractorRejection::Classified(failure.report().with_instance(uri.clone())))?
@@ -133,11 +133,8 @@ impl ReadBody {
         } = self;
         // Counted before anything is built, so a payload of too many values
         // costs its bytes and nothing more.
-        // clone: each refusal names the request, which the admitted body keeps naming
         refuse_values_past_budget(&bytes, value_limit).map_err(|refusal| ExtractorRejection::Classified(refusal.report().with_instance(uri.clone())))?;
-        // clone: as above
         admit_json_text(&bytes).map_err(|refusal| BodyAdmissionRefusal::from(refusal).into_rejection(uri.clone()))?;
-        // clone: as above
         let envelope = BodyEnvelope::read(&bytes).map_err(|error| NotJsonDocument(error).into_rejection(uri.clone()))?;
 
         // An empty array is neither an NGSI-LD entity nor a batch payload.
@@ -164,7 +161,7 @@ impl ReadBody {
             PayloadCarrier::LdJsonBody => ContextSpec::from_body(
                 envelope
                     .into_body_context()
-                    .map_err(|error| BodyAdmissionRefusal::from(error).into_rejection(uri.clone()))?, // clone: as above
+                    .map_err(|error| BodyAdmissionRefusal::from(error).into_rejection(uri.clone()))?,
             ),
             PayloadCarrier::LinkHeader => ContextSpec::from_request(link_context.map_or(RequestContext::Default, RequestContext::Link)),
         };
@@ -202,7 +199,7 @@ async fn read_body<S: Send + Sync>(req: Request, state: &S) -> Result<ReadBody, 
         .map_err(|error| ExtractorRejection::Classified(classify_context_link_error(&error).with_instance(uri.clone())))?;
     let value_limit = parts.extensions.get::<RequestJsonValueLimit>().copied();
     let decode_bounds = parts.extensions.get::<RequestDecodeBounds>().copied();
-    let blocking_decode = parts.extensions.get::<BlockingDecodePolicy>().cloned(); // clone: the body owns its share of the permits
+    let blocking_decode = parts.extensions.get::<BlockingDecodePolicy>().cloned();
     let req = Request::from_parts(parts, body);
 
     let bytes = buffer_payload(req, state, declared, uri.clone()).await?;

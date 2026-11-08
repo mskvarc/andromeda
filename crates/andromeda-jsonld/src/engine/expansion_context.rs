@@ -130,7 +130,7 @@ impl ExpansionContext {
         expand_slice(
             text,
             no_vocabulary_mut(),
-            self.active.clone(), // clone: cheap, every definition and cache is shared through an `Arc`
+            self.active.clone(),
             None,
             engine.loader(),
             ExpansionOptions::default(),
@@ -203,7 +203,7 @@ impl JsonLdEngine {
             return Ok(cached);
         }
         let prepared = Arc::new(ExpansionContext::prepare(spec, self.loader()).await?);
-        EMBEDDED_CONTEXTS.insert(key, Arc::clone(&prepared)).await; // clone: Arc ref-count bump
+        EMBEDDED_CONTEXTS.insert(key, Arc::clone(&prepared)).await;
         Ok(prepared)
     }
 }
@@ -238,7 +238,7 @@ async fn property_scoped_contexts(
         let Some(local) = definition.context.as_deref() else {
             continue;
         };
-        let base_url = definition.base_url().cloned(); // clone: processing takes the base URL by value
+        let base_url = definition.base_url().cloned();
         if let Ok(processed) = local
             .process_full(
                 no_vocabulary_mut(),
@@ -392,7 +392,7 @@ mod tests {
         let row = Arc::new(ReplaceableRow::new(&json!({ "@context": { "speed": "https://example.org/speed" } })));
         let engine = engine_over(&row);
         let url = IriBuf::new("https://example.org/stored.jsonld".to_owned()).expect("an IRI");
-        let spec = ContextSpec::from_link(url.clone()); // clone: the invalidation below names the same URL
+        let spec = ContextSpec::from_link(url.clone());
 
         let first = engine.expansion_context(&spec).await.expect("the context processes");
         let kept = engine.expansion_context(&spec).await.expect("the context processes");
@@ -413,7 +413,7 @@ mod tests {
         let row = Arc::new(ReplaceableRow::new(&json!({ "@context": { "speed": "https://example.org/speed" } })));
         let engine = engine_over(&row);
         let url = IriBuf::new("https://example.org/stored.jsonld".to_owned()).expect("an IRI");
-        let spec = ContextSpec::from_link(url.clone()); // clone: the counter is read under the same URL
+        let spec = ContextSpec::from_link(url.clone());
 
         for _ in 0..3 {
             Box::pin(run_in_operation_scope(engine.expansion_context(&spec)))

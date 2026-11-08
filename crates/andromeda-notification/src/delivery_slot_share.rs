@@ -88,7 +88,6 @@ impl SlotShare {
     /// Count a delivery to `subscription_id` in `target` in flight until
     /// [`SlotShare::release`].
     pub(crate) fn occupy(&mut self, target: &ContextTarget, subscription_id: &Identifier) {
-        // clone: the count outlives the claimed entry, which its attempt consumes.
         let occupant = SlotOccupant::new(target.clone(), subscription_id.clone());
         let count = self
             .in_flight
@@ -96,7 +95,6 @@ impl SlotShare {
             .and_modify(|count| *count = count.saturating_add(1))
             .or_insert(NonZeroUsize::MIN);
         if u32::try_from(count.get()).is_ok_and(|count| count >= self.crowding.get()) {
-            // clone: the set outlives this borrow of the in-flight entry.
             self.crowding_ones.insert(SlotOccupant::new(target.clone(), subscription_id.clone()));
         }
     }

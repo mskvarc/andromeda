@@ -2,8 +2,8 @@
 //! 5.6.10).
 //!
 //! Clause 5.6.10.3 takes "A JSON-LD Array", so the body passes every NGSI-LD
-//! body precondition a JSON-LD document does -- clauses 6.3.4 and 6.3.5, the
-//! JSON value limit and the number range -- before its items are read. An
+//! body precondition a JSON-LD document does (clauses 6.3.4 and 6.3.5, the
+//! JSON value limit and the number range) before its items are read. An
 //! `application/ld+json` array of strings names no `@context`, and clause
 //! 6.3.5 refuses it as such.
 //!
@@ -74,7 +74,7 @@ where
                 // An array of strings names no term a context could alias, so the
                 // items are read as written.
                 let batch = SubmittedBody::new(text, uri, blocking_decode, |text, _aliases, uri| {
-                    entity_id_batch(text).map_err(|refusal| refusal.into_problem(uri.clone())) // clone: the refusal owns the URI it names
+                    entity_id_batch(text).map_err(|refusal| refusal.into_problem(uri.clone()))
                 });
                 Ok(JsonLdEntityIds { batch, context })
             },

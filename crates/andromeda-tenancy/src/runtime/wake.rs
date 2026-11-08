@@ -73,7 +73,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// The wake decision, without the metric the public [`wake`](Self::wake)
     /// records around it.
     async fn wake_inner(&self, tenant: &TenantName) -> WakeOutcome {
-        let tenant_ref = TenantRef::Named(tenant.clone()); // clone: the ref outlives this call
+        let tenant_ref = TenantRef::Named(tenant.clone());
         let now = SystemTime::now();
         // A source due at once reports the database's clock at the probe's
         // statement, which is later than `now`, so the deadline is compared
@@ -105,7 +105,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// rings wakes the waker at once when it sleeps past that instant. Loading
     /// it here instead would probe it and defer it whenever the cache is full.
     pub async fn reconcile(&self, tenant: &TenantName) {
-        let tenant_ref = TenantRef::Named(tenant.clone()); // clone: the ref outlives this call
+        let tenant_ref = TenantRef::Named(tenant.clone());
         let now = SystemTime::now();
         match self.read_wake(tenant, &tenant_ref, now).await {
             WakeReading::Due { due, .. } => self.settle_schedule(tenant, now, Some(due)).await,

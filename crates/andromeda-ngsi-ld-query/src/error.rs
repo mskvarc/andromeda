@@ -5,10 +5,10 @@
 //! `std::num::ParseFloatError`) are chained through `#[source]` / `#[from]`
 //! so `.source()` walks the full cause chain.
 //!
-//! Rendering a compiled query as SQL can fail for reasons of its own -- a bind value with no typed counterpart, a reference geometry that will not encode -- and those belong to the backend that renders it, not here.
+//! Rendering a compiled query as SQL can fail for reasons of its own (a bind value with no typed counterpart, a reference geometry that will not encode), and those belong to the backend that renders it, not here.
 //!
-//! Faults of a *request* rather than of a language — a `format` value naming no
-//! rendering, `drop` and `keep` sent together — belong to the parameter model
+//! Faults of a *request* rather than of a language (a `format` value naming no
+//! rendering, `drop` and `keep` sent together) belong to the parameter model
 //! that reads them, not here. This enum carries only what one of these grammars
 //! can itself reject.
 //!

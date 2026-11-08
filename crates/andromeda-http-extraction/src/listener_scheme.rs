@@ -9,8 +9,8 @@ use derive_more::{Constructor, From, Into};
 /// Each listener installs its own: a TLS-terminating TCP listener and the
 /// HTTP/3 listener speak `https`, a plaintext listener `http`. It is the
 /// scheme of every URL the broker mints from the request origin unless a
-/// trusted reverse proxy forwards another. A request carrying no extension --
-/// a router assembled without a listener, as in a unit test -- is treated as
+/// trusted reverse proxy forwards another. A request carrying no extension (a
+/// router assembled without a listener, as in a unit test) is treated as
 /// plaintext, so it can never be talked into minting an `https` URL.
 #[derive(Clone, Copy, Constructor, Debug, Eq, From, Into, PartialEq)]
 pub struct ListenerScheme(ApiRootScheme);

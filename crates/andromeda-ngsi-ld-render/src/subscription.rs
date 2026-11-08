@@ -2,7 +2,7 @@
 //! and 5.2.14.2).
 //!
 //! Two members are generated with a default and are written back only when
-//! they differ from it -- `isActive`, which Table 5.2.12-2 derives from
+//! they differ from it: `isActive`, which Table 5.2.12-2 derives from
 //! `status`, and `localOnly`, whose absence means `false`, which the service
 //! leaves absent. The clause 4.8 system timestamps are withheld unless
 //! `sysAttrs` asks for them. Everything else clause 5.2.12 defines stays,
@@ -338,7 +338,7 @@ mod tests {
             "lang": "en",
             "expiresAt": "2030-12-31T23:59:59Z"
         });
-        let mut resource = serde_json::to_value(subscription(members.clone())).expect("the resource writes"); // clone: the members are written under both policies
+        let mut resource = serde_json::to_value(subscription(members.clone())).expect("the resource writes");
         // The resource writes `isActive` whatever it is; the view hides the default.
         if let Some(members) = resource.as_object_mut() {
             members.remove("isActive");

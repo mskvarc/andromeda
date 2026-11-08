@@ -10,9 +10,9 @@
 //! `datasetId` included, is refused.
 //!
 //! Each pair becomes one instance: the object's `type`, the
-//! family's value member holding the pair's value -- taken out of the
+//! family's value member holding the pair's value (taken out of the
 //! one-member object clause 4.5.9 wraps the value of a `LanguageProperty`, a
-//! `JsonProperty` and a `VocabProperty` in -- and the pair's instant as
+//! `JsonProperty` and a `VocabProperty` in), and the pair's instant as
 //! `observedAt`. A system time is the broker's to set, so only the
 //! `observedAt` axis of a pair is an instant a write carries. An instance is
 //! read from the text of its own, never from a tree of the pairs.

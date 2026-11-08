@@ -135,15 +135,14 @@ fn stored_states(event: &ChangeEvent) -> (Option<&EntityState>, Option<&EntitySt
 /// Add every name `event`'s record holds as a key to `mentioned`: its types,
 /// its changed attributes and every name its stored states hold.
 pub fn mention_event(event: &ChangeEvent, mentioned: &mut MentionedNames) {
-    // clone: the dictionary request owns the names it resolves.
     mentioned.types.extend(event.entity_types.iter().cloned());
     mentioned
         .attributes
-        .extend(event.change.instances.iter().map(|instance| instance.key.attr.clone())); // clone: the dictionary request owns the names it resolves.
+        .extend(event.change.instances.iter().map(|instance| instance.key.attr.clone()));
     let (state, previous) = stored_states(event);
     for state in state.into_iter().chain(previous) {
         mentioned.collect(state.attributes());
-        mentioned.types.extend(state.types().as_slice().iter().cloned()); // clone: the dictionary request owns the names it resolves.
+        mentioned.types.extend(state.types().as_slice().iter().cloned());
     }
 }
 
@@ -165,7 +164,7 @@ pub fn record_of_event(event: &ChangeEvent, keys: &NameKeys) -> Result<PendingCh
             .map(|name| {
                 keys.entity_type(name)
                     .map(EntityTypeNameKey::get)
-                    .ok_or_else(|| ChangeEventRecordError::UnresolvedType(name.clone())) // clone: the refusal names the type it could not key.
+                    .ok_or_else(|| ChangeEventRecordError::UnresolvedType(name.clone())) // clone: the error outlives the borrowed event, so it owns the name.
             })
             .collect::<Result<_, _>>()?,
         change_kinds: event.change.instances.iter().map(|instance| stored_change_kind(instance.kind).code()).collect(),
@@ -176,7 +175,7 @@ pub fn record_of_event(event: &ChangeEvent, keys: &NameKeys) -> Result<PendingCh
             .map(|instance| {
                 keys.attribute(&instance.key.attr)
                     .map(AttributeNameKey::get)
-                    .ok_or_else(|| ChangeEventRecordError::UnresolvedAttribute(instance.key.attr.clone())) // clone: the refusal names the attribute it could not key.
+                    .ok_or_else(|| ChangeEventRecordError::UnresolvedAttribute(instance.key.attr.clone())) // clone: the error outlives the borrowed event, so it owns the name.
             })
             .collect::<Result<_, _>>()?,
         change_dataset_ids: event
@@ -281,7 +280,7 @@ impl ReadChangeEvent {
         let attributes = self
             .change_attributes
             .iter()
-            .map(|key| names.attribute(*key).cloned().ok_or(PendingChangeEventError::AttributeKey(*key))) // clone: the change owns the names it reports.
+            .map(|key| names.attribute(*key).cloned().ok_or(PendingChangeEventError::AttributeKey(*key)))
             .collect::<Result<Vec<_>, _>>()?;
         let change = decode_change(self.lifecycle, self.change_kinds, attributes, self.change_dataset_ids)?;
         let state = |stored: Option<StoredState>| {

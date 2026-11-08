@@ -69,7 +69,7 @@ async fn flush_once(counter: &HitCounter, store: &dyn ContextHitStore) {
 ///
 /// Shutdown has to finish. An unreachable database would otherwise hold the
 /// awaited teardown open forever, and clause 5.13.3.5 makes `numberOfHits`
-/// optional — losing a bounded number of access counts is a smaller failure
+/// optional, so losing a bounded number of access counts is a smaller failure
 /// than a broker that never exits.
 const FINAL_FLUSH_ATTEMPTS: u32 = 3;
 

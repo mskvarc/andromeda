@@ -108,8 +108,8 @@ use std::collections::HashSet;
 /// conflict rather than raising a duplicate-key error is what lets one
 /// statement serve a batch that is permitted to succeed partially (clause
 /// 5.6.7). The child inserts read the keys the identity insert returned, so an
-/// entity that already existed lands in no relation at all -- and, because the
-/// census reads only the search rows the statement returned, is counted by no
+/// entity that already existed lands in no relation at all. Because the census
+/// reads only the search rows the statement returned, it is counted by no
 /// census ledger either.
 ///
 /// An identity row without a current state is the Temporal Evolution of an

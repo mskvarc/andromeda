@@ -29,7 +29,6 @@ async fn n_ent_cre_9043_creates_sent_at_once_sharing_never_used_attribute_names_
         .collect();
     let mut widgets = Vec::new();
     for index in 0..PARALLEL_CREATES {
-        // clone: every Widget is built with the same type
         let mut widget = Entity::builder().id(namespace.urn("Widget", index)?).entity_type(widget_type.clone());
         for (value, attribute) in (0_u32..).zip(&attributes) {
             widget = widget.property(attribute.as_str(), value);

@@ -138,8 +138,8 @@ const EXPECTED_NAMES: [(&str, [&str; 16]); 5] = [
 ];
 
 /// Clause 5.5.7 and Table 5.2.28-1: each name is the term the context spells
-/// it with -- a vocabulary-relative term, a declared term, a compact IRI where
-/// a term coercing its values keeps the shorter spelling from the name -- or,
+/// it with: a vocabulary-relative term, a declared term, a compact IRI where
+/// a term coercing its values keeps the shorter spelling from the name, or,
 /// where nothing abbreviates it, the name itself (clause 4.5.1). An attribute
 /// name and an entity type name compact alike.
 #[tokio::test]

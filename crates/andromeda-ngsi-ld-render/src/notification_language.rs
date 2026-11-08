@@ -14,7 +14,7 @@ impl NotificationLanguage {
     /// The filter the subscription's `lang` tag states.
     #[must_use]
     pub fn of(tag: &LangTagBuf) -> NotificationLanguage {
-        NotificationLanguage(LanguageFilter::from_tag(tag.clone())) // clone: the filter owns the tag it ranks.
+        NotificationLanguage(LanguageFilter::from_tag(tag.clone()))
     }
 
     /// The filter the entity walk negotiates against.

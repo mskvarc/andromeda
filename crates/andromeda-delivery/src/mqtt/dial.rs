@@ -131,7 +131,7 @@ fn connect_failed(label: &BrokerLabel, cause: ConnectionFailure) -> TransportErr
 /// The failure a connect attempt that ran out of time becomes.
 fn connect_timed_out(label: &BrokerLabel, pool: &MqttPoolConfig) -> TransportError {
     TransportError::Timeout {
-        endpoint: label.endpoint_uri.clone(), // clone: same
+        endpoint: label.endpoint_uri.clone(),
         duration: pool.connect_timeout,
     }
 }

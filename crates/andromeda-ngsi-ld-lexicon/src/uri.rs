@@ -16,8 +16,8 @@ pub const NGSI_LD_URN_NID: &str = "ngsi-ld";
 /// A URI is a URN (e.g. `urn:ngsi-ld:Building:001`) or a URL
 /// (e.g. `https://example.com/entity/1`). Clause 4.6.2 NOTE 2 makes the term
 /// "URI" also cover an Internationalized Resource Identifier (IETF RFC 3987),
-/// so an identifier whose characters run beyond ASCII -- `urn:ngsi-ld:Ciudad:PARIS`
-/// with a non-ASCII vowel, a Relationship object naming such an entity -- is
+/// so an identifier whose characters run beyond ASCII (`urn:ngsi-ld:Ciudad:PARIS`
+/// with a non-ASCII vowel, or a Relationship object naming such an entity) is
 /// equally admissible and must survive a round trip character for character.
 /// [`Url`] cannot carry one: its cannot-be-a-base encoder rewrites every
 /// non-ASCII octet as a percent escape, so those identifiers are held verbatim

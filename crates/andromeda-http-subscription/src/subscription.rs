@@ -34,7 +34,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-/// POST /ngsi-ld/v1/subscriptions -- Create a new subscription.
+/// POST /ngsi-ld/v1/subscriptions: create a new subscription.
 pub(crate) async fn create(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
@@ -69,7 +69,7 @@ pub(crate) async fn create(
     Ok(locator.locate(StatusCode::CREATED.into_response(), ResourceCollection::Subscriptions, &id))
 }
 
-/// GET /ngsi-ld/v1/subscriptions/{subscription_id} -- Retrieve a subscription.
+/// GET /ngsi-ld/v1/subscriptions/{subscription_id}: retrieve a subscription.
 pub(crate) async fn get(
     ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
@@ -101,7 +101,7 @@ pub(crate) async fn get(
     Ok(NgsiLdResponse::ok(rendered).into_response())
 }
 
-/// GET /ngsi-ld/v1/subscriptions -- Query subscriptions.
+/// GET /ngsi-ld/v1/subscriptions: query subscriptions.
 pub(crate) async fn query(
     ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
@@ -136,7 +136,7 @@ pub(crate) async fn query(
     listing.respond(rendered, total, boundary, reach, &uri, accept.media_type())
 }
 
-/// PATCH /ngsi-ld/v1/subscriptions/{subscription_id} -- Update a subscription.
+/// PATCH /ngsi-ld/v1/subscriptions/{subscription_id}: update a subscription.
 pub(crate) async fn update(
     // Clause 6.3.20: the operation defines no parameter, so any is an `InvalidRequest`.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
@@ -157,7 +157,7 @@ pub(crate) async fn update(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// DELETE /ngsi-ld/v1/subscriptions/{subscription_id} -- Delete a subscription.
+/// DELETE /ngsi-ld/v1/subscriptions/{subscription_id}: delete a subscription.
 pub(crate) async fn delete(
     // Clause 6.3.20: the operation defines no parameter, so any is an `InvalidRequest`.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,

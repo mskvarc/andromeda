@@ -43,7 +43,7 @@ async fn p_res_sat_0002_a_name_lookup_on_a_saturated_pool_is_answered_503_with_a
     let target = database_of(&resilience, &set.member(0).tenant).await?;
     let never_held = namespace.entity_type("NeverHeld")?;
     let never_written = q::attr("neverWritten").eq(1).build()?;
-    let never_written_temporal = never_written.clone(); // clone: the temporal query filters by the same q, sent at the same moment
+    let never_written_temporal = never_written.clone();
     let long_ago = "2100-01-01T00:00:00Z".parse()?;
     let console = PoolerConsole::of(BrokerRole::Resilience)?;
     let hold = PoolHold::seize(&console, &target, POOL, HELD_FOR).await?;

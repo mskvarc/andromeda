@@ -86,7 +86,7 @@ pub(crate) struct OrderedValue {
 pub(crate) fn datatype_token(value: &OrderedValue) -> SimpleExpr {
     let (time, date, date_time) = (TIME, DATE, DATE_TIME);
     // clone: sea-query owns every expression in its AST, so each reading takes
-    // its own copy of the columns the lateral projects once.
+    // its own copy of the value's columns.
     let listed = jsonb_type_is(value.object.clone(), JsonType::Array).or(jsonb_key_exists(value.object.clone(), text_literal(keyword::LIST)));
     CaseStatement::new()
         .case(value.number.clone().is_not_null(), text_literal(NUMBER_TYPE))
@@ -140,7 +140,7 @@ pub(crate) fn datatype_rank(datatype: SimpleExpr, direction: SortDirection) -> S
 
 /// Whether the declared datatype `datatype` is `iri`.
 fn declares(datatype: &SimpleExpr, iri: &str) -> SimpleExpr {
-    datatype.clone().eq(text_literal(iri)) // clone: the datatype is read by every reading
+    datatype.clone().eq(text_literal(iri))
 }
 
 #[cfg(test)]

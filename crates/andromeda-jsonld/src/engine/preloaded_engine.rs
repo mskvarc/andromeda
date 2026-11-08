@@ -24,7 +24,7 @@ pub(crate) fn engine_preloading(documents: &[(String, Value)]) -> JsonLdEngine {
         let sequence = PRELOADED_CONTEXT_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let path = env::temp_dir().join(format!("andromeda-preloaded-context-{}-{sequence}.jsonld", process::id()));
         fs::write(&path, document.to_string()).expect("the temporary directory is writable");
-        preloads.insert(Url::parse(url).expect("the fixture names a valid URL"), path.clone()); // clone: the removal below needs the path the preload map takes
+        preloads.insert(Url::parse(url).expect("the fixture names a valid URL"), path.clone());
         paths.push(path);
     }
     let engine = JsonLdEngine::builder()

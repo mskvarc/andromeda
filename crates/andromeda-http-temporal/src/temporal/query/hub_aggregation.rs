@@ -184,7 +184,7 @@ fn overlapping_entities<'a>(local: &'a [TemporalHistory], sources: &'a [Forwarde
     parts
         .chunk_by(|(left, _), (right, _)| left == right)
         .filter(|holders| holders.len() > 1)
-        .filter_map(|holders| holders.first().map(|(entity_id, _)| (*entity_id).clone())) // clone: the second round owns the identifiers it asks for
+        .filter_map(|holders| holders.first().map(|(entity_id, _)| (*entity_id).clone()))
         .collect()
 }
 
@@ -237,7 +237,7 @@ fn asked_documents(sources: Vec<ForwardedTemporalEntities>, asked_for: &[Identif
 /// The instance documents of `documents` gathered by the entity they belong
 /// to, ordered by identifier, each entity's documents in the order they came.
 fn parts_by_entity(documents: impl Iterator<Item = TemporalDocument>) -> Vec<(Identifier, Vec<TemporalDocument>)> {
-    // clone: each part is keyed by the identifier its documents name
+    // clone: the id cannot stay borrowed from the document once the document moves into the tuple
     let mut named: Vec<(Identifier, TemporalDocument)> = documents
         .filter_map(|document| document.id().cloned().map(|entity_id| (entity_id, document)))
         .collect();

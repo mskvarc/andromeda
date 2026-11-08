@@ -39,7 +39,7 @@ async fn p_dor_ntf_0004_a_failed_delivery_of_a_snapshot_branch_is_retried_after_
     let member = set.member(0);
     let snapshot_id = format!("urn:ngsi-ld:Snapshot:{namespace}-branch").parse::<SnapshotId>()?;
     let snapshot = Snapshot::builder()
-        .id(snapshot_id.clone()) // clone: the branch is addressed by the Snapshot's id after it is built
+        .id(snapshot_id.clone())
         .query(QueryDocument::builder().entities([namespace.entity_type("Absent")?.as_str()]).build()?)
         .build()?;
     member.client.snapshots().create(&snapshot).send().await?;

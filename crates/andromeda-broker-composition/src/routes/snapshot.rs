@@ -32,7 +32,7 @@ impl SnapshotStateResolver for BrokerSnapshotStateResolver {
             let LeasedState { state, lease } = self.tenants.resolve_state(tenant, creation_policy).await?;
             Ok(Arc::new(SnapshotRouteServices::new(
                 Arc::clone(&state.snapshots),
-                state.entity_query.engine().clone(), // clone: the engine shares its loader and caches behind `Arc`s
+                state.entity_query.engine().clone(),
                 lease,
             )))
         })

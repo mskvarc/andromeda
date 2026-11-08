@@ -233,7 +233,7 @@ async fn what_the_walk_does_not_model_goes_to_the_processor() {
         ),
     ];
     for (body, expected) in cases {
-        let both = patch(&engine, body.clone(), Normalization::Entity).await.expect("the fixture expands"); // clone: the fallback below expands the same body
+        let both = patch(&engine, body.clone(), Normalization::Entity).await.expect("the fixture expands");
         pretty_assertions::assert_eq!(both.typed.expect("no refusal"), TypedExpansion::Declined(expected));
         let (body, spec) = admitted(body);
         let fragment: EntityPatch = serde_json::from_value(body).expect("a typed fragment");

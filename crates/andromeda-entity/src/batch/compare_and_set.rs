@@ -270,11 +270,11 @@ async fn an_entity_superseded_on_every_attempt_reports_contention_and_spares_its
     let quiet = building_id("b");
     contended.store.seed(&contested, stored_building(&contested, &["seed"]));
     contended.store.seed(&quiet, stored_building(&quiet, &["seed"]));
-    let touched = contested.clone(); // clone: the writer outlives the borrow
+    let touched = contested.clone();
     contended
         .store
         .interfere(ConcurrentWriter::BeforeEveryCommit(Box::new(move |rows: &mut StoredRows| {
-            let payload = rows.payload(&touched).cloned().expect("the contested Building is stored"); // clone: the writer stores the same payload again
+            let payload = rows.payload(&touched).cloned().expect("the contested Building is stored");
             rows.put(&touched, payload);
         })));
 
@@ -303,7 +303,7 @@ async fn an_entity_superseded_on_every_attempt_reports_contention_and_spares_its
 #[tokio::test]
 async fn an_entity_deleted_by_another_writer_is_reported_not_found() {
     let (contended, id, _) = seeded().await;
-    let deleted = id.clone(); // clone: the writer outlives the borrow
+    let deleted = id.clone();
     contended
         .store
         .interfere(ConcurrentWriter::BeforeNextCommit(Box::new(move |rows: &mut StoredRows| rows.remove(&deleted))));

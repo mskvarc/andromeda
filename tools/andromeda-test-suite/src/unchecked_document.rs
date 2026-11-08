@@ -31,7 +31,7 @@ pub enum UncheckedDocumentError {
 pub fn from_rendered(rendered: &RawJson) -> Result<UncheckedDocument, UncheckedDocumentError> {
     let text = rendered.to_string();
     let members: IndexMap<String, Box<RawValue>> = serde_json::from_str(&text).map_err(|error| {
-        // clone: the error names the rendering the caller keeps
+        // clone: the error must own the rendering it reports
         UncheckedDocumentError::NotAnObject(rendered.clone(), error)
     })?;
     members.iter().try_fold(UncheckedDocument::empty(), |document, (name, value)| {

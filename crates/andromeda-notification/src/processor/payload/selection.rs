@@ -1,6 +1,6 @@
 //! Which members of a notified entity state one notification carries
-//! (clause 5.8.6): the attributes the subscription's list in force returns --
-//! its `pick`, its `omit`, or its `notification.attributes` -- and the
+//! (clause 5.8.6): the attributes the subscription's list in force returns
+//! (its `pick`, its `omit`, or its `notification.attributes`) and the
 //! instances its `datasetId` selects.
 //!
 //! A selection is decided on the typed state by expanded attribute name, before
@@ -34,7 +34,7 @@ pub(crate) struct SelectionRule<'r> {
 }
 
 impl SelectionRule<'_> {
-    /// Which of the entity's own members -- `scope` and its `expiresAt` --
+    /// Which of the entity's own members (`scope` and its `expiresAt`)
     /// travel with the selected attributes.
     ///
     /// Whether `scope` does is the list's clause 4.21 keyword rule. The
@@ -182,23 +182,19 @@ impl Selection {
             let Some(selection) = instances.get(name) else { continue };
             match selection.narrow(held) {
                 Narrowed::Whole => {
-                    // clone: the narrowed state names the attribute it shares
                     attributes.insert_shared(name.clone(), Arc::clone(held));
                 }
                 Narrowed::Part(narrowed) => {
-                    // clone: the narrowed state names the attribute
                     attributes.insert(name.clone(), narrowed);
                 }
                 Narrowed::Nothing => {}
             }
         }
-        // clone: the narrowed state owns the entity's own members it keeps
         let (scope, expires_at) = match members {
             EntityMembers::Kept => (source.scope().cloned(), source.expires_at()),
             EntityMembers::Unscoped => (None, source.expires_at()),
             EntityMembers::Dropped => (None, None),
         };
-        // clone: the narrowed state is named and typed as its source
         Cow::Owned(EntityState::from_parts(
             source.id().clone(),
             source.types().clone(),

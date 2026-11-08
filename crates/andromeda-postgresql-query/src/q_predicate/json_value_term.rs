@@ -108,7 +108,6 @@ pub(crate) fn json_ordering(target: &JsonTarget, op: OrderingOp, rhs: &Scalar) -
 pub(crate) fn json_pattern(target: &JsonTarget, pattern: &Pattern, polarity: PatternPolarity) -> Condition {
     let text = cast_compound(jsonb_whole_text(target.value.clone()), PostgresType::Text); // clone: the target may be read by further terms
     let value = pattern_predicate(text, polarity, pattern, PatternIndexes::None);
-    let string = jsonb_type_is(target.value.clone(), JsonType::String) // clone: as above
-        .and(negate_total(declares_other_data_type(target.datatype.clone()))); // clone: as above
-    Condition::all().add(present_and(target.presence.clone().and(string), value)) // clone: as above
+    let string = jsonb_type_is(target.value.clone(), JsonType::String).and(negate_total(declares_other_data_type(target.datatype.clone())));
+    Condition::all().add(present_and(target.presence.clone().and(string), value))
 }

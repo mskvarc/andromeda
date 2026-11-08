@@ -160,7 +160,6 @@ impl EntityService {
             sys_attrs: &sys_attrs,
         };
         let plan = self.notifier.plan(target, &id, state.types().as_slice(), creation(&state), written, None);
-        // clone: reference-count bump; the stored state is also the write's observation.
         let history = vec![HistoryRecord::Observations(Arc::clone(&state))];
         let record = match EntityRecord::from_state(state) {
             Ok(record) => record,

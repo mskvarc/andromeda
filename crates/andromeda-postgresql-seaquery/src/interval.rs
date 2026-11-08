@@ -42,7 +42,6 @@ pub fn microseconds(count: SimpleExpr) -> SimpleExpr {
 pub fn next_grid_point(origin: SimpleExpr, period: SimpleExpr, after: SimpleExpr) -> SimpleExpr {
     Expr::cust_with_exprs(
         "$1 + make_interval(secs => $2 * (floor(extract(epoch from ($3 - $4)) / $5) + 1))",
-        // clone: the origin and the period each appear twice in the expression.
         [origin.clone(), period.clone(), after, origin, period],
     )
 }

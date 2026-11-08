@@ -36,8 +36,8 @@ impl EntityTypeSelection {
     /// alternation of the several.
     pub fn as_type_expression(&self) -> TypeExprRaw {
         match self {
-            EntityTypeSelection::Single(name) => TypeExprRaw::Type(name.clone()), // clone: the expression owns its leaves
-            EntityTypeSelection::Several(names) => TypeExprRaw::Or(names.iter().cloned().map(TypeExprRaw::Type).collect()), // clone: same
+            EntityTypeSelection::Single(name) => TypeExprRaw::Type(name.clone()),
+            EntityTypeSelection::Several(names) => TypeExprRaw::Or(names.iter().cloned().map(TypeExprRaw::Type).collect()),
         }
     }
 }

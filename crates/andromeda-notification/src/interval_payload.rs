@@ -2,9 +2,9 @@
 //! its subscription matched (clause 5.8.6).
 //!
 //! The selection is the periodic path's own, since it reads the stored
-//! subscription; everything after it -- compaction, system times, the `join`
+//! subscription. Everything after it (compaction, system times, the `join`
 //! Linked Entities, the format rendering, `pick` / `omit` and the
-//! `ngsildConformance` amendment -- is written as a change-driven notification
+//! `ngsildConformance` amendment) is written as a change-driven notification
 //! is written.
 
 use crate::{
@@ -66,8 +66,8 @@ impl PeriodicPayload<'_> {
     /// prescribes, as `data` says: narrowed to `notification.attributes` and
     /// the subscription's `datasetId` instances, reduced by `pick` and `omit`,
     /// compacted under the subscription's context, joined to their Linked
-    /// Entities and rendered in its `notification.format` -- every step after
-    /// the selection written as a change-driven notification's is.
+    /// Entities and rendered in its `notification.format`. Every step after
+    /// the selection is written the way a change-driven notification writes it.
     pub(crate) async fn entities(&self, sub: &Subscription, entities: Vec<EntityState>, data: DataShape<'_>) -> Result<NotificationData, NotificationError> {
         let projection = notification_projection(&sub.notification, sub.id.as_ref());
         let attributes = notification_attributes(&sub.notification, sub.id.as_ref());
@@ -147,7 +147,6 @@ impl PeriodicPayload<'_> {
             SysAttrsInclusion::Include => (),
             SysAttrsInclusion::Strip => return HashMap::new(),
         }
-        // clone: the batch read takes the identifiers as one slice
         let ids: Vec<Identifier> = entities.iter().map(|entity| entity.id().clone()).collect();
         match self.entity_reader.get_sys_attrs_batch(self.target, &ids).await {
             Ok(instants) => instants,
@@ -162,9 +161,9 @@ impl PeriodicPayload<'_> {
 /// What a periodic notification selects of every entity it carries (clause
 /// 5.8.6): the attributes its `pick`, its `omit` or its
 /// `notification.attributes` keep, and the instances matching the
-/// subscription's `datasetId` -- "For each entity in the notification, only
-/// the Attribute instances are to be included that match the datasetId member
-/// in Subscription".
+/// subscription's `datasetId`, as clause 5.8.6 states, "For each entity in the
+/// notification, only the Attribute instances are to be included that match the
+/// datasetId member in Subscription".
 fn periodic_rule<'s>(sub: &'s Subscription, projection: &'s Projection, attributes: &'s [IriBuf]) -> SelectionRule<'s> {
     SelectionRule {
         list: ListInForce::of(Some(projection), attributes),

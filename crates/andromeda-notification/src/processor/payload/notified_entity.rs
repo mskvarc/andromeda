@@ -2,9 +2,9 @@
 //! (clause 5.8.6).
 //!
 //! The entity stays the typed compact entity it was rendered as. What the
-//! notification reports of the change beside it -- the deletion of every
+//! notification reports of the change beside it (the deletion of every
 //! Attribute an entity deletion took, the instances a change deleted, the
-//! previous values of `showChanges` -- is kept as the typed renderings it is
+//! previous values of `showChanges`) is kept as the typed renderings it is
 //! read from, and the walk a query response is written by writes all of it,
 //! the Linked Entities of a `join=inline` subscription included.
 

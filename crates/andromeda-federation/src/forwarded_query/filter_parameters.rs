@@ -1,6 +1,6 @@
-//! The name-bearing filters a forwarded query carries -- the clause 4.9 query
-//! with its `jsonKeys`, the context source filter and the clause 4.10 geo-query
-//! -- each spelled in the registration's forwarding context (clause 4.3.6.6).
+//! The name-bearing filters a forwarded query carries (the clause 4.9 query
+//! with its `jsonKeys`, the context source filter and the clause 4.10 geo-query),
+//! each spelled in the registration's forwarding context (clause 4.3.6.6).
 
 use crate::{
     error::FederationError,

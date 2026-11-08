@@ -14,8 +14,8 @@
 //! returned with a value of null - which is syntactically valid `GeoJSON`."
 //!
 //! Clause 4.5.17.1 sends the simplified `GeoJSON` rendering back to this same
-//! algorithm — "The selection of the geometry field is defined in clause
-//! 4.5.16.1" — so the instance has to be found in whichever representation the
+//! algorithm, which reads "The selection of the geometry field is defined in clause
+//! 4.5.16.1", so the instance has to be found in whichever representation the
 //! `properties` member was already rendered in: the array of instances clause
 //! 4.5.5 gives the normalized form, or the `dataset` map keyed by `datasetId`
 //! that clause 4.5.4 gives the simplified one.
@@ -81,7 +81,7 @@ impl GeometrySelection<'_> {
     /// `GeoProperty`: the instance a `datasetId` named, or the default instance
     /// when no `datasetId` was specified. When neither exists the entity lacks
     /// "the `GeoProperty` as specified", which the same clause answers with a
-    /// null geometry — never with an arbitrary instance, whose identity would
+    /// null geometry, never with an arbitrary instance, whose identity would
     /// then depend on the order the store happened to return the rows in.
     fn instance<'e>(&self, located: JsonPiece<'e>) -> Option<JsonPiece<'e>> {
         match located.kind() {
@@ -105,7 +105,7 @@ impl GeometrySelection<'_> {
     /// instance is the geometry whether or not it carries a `datasetId`: there
     /// is no other instance for a default to be chosen over. What the clause
     /// does not admit is answering a request that named a `datasetId` with an
-    /// instance carrying a different one — the entity then lacks "the
+    /// instance carrying a different one. The entity then lacks "the
     /// `GeoProperty` as specified", and the geometry is undefined, exactly as
     /// the array reading of the same attribute already decided.
     fn select_sole_instance<'e>(&self, instance: JsonPiece<'e>) -> Option<JsonPiece<'e>> {

@@ -109,6 +109,6 @@ impl DrainFallbackPolicy {
 pub fn wake_channel() -> (WakeHandle, DrainWakeReceiver) {
     let (sender, receiver) = mpsc::channel(1);
     let handle = WakeHandle { sender };
-    let guard = handle.clone(); // clone: the receiver keeps a sender so a task's wake reads never spuriously report closure.
+    let guard = handle.clone();
     (handle, DrainWakeReceiver { receiver, _guard: guard })
 }

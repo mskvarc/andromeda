@@ -7,9 +7,9 @@
 //! refusal is the one the clause names: "'Content-Length' HTTP header absence,
 //! shall result in just a 411 HTTP status code (without any payload body)".
 //!
-//! Every extractor that consumes a request payload -- the JSON-LD body of a
+//! Every extractor that consumes a request payload (the JSON-LD body of a
 //! single operation, the array of a batch operation, the document of a hosted
-//! `@context` -- checks it here rather than each on its own, so no body-taking
+//! `@context`) checks it here rather than each on its own, so no body-taking
 //! route can be reached without the precondition having been applied.
 //!
 //! The precondition reads the request as the client sent it. Decoding a
@@ -61,7 +61,6 @@ impl ReceivedContentLength {
     /// The `Content-Length` the received `headers` carry.
     #[must_use]
     pub fn of(headers: &HeaderMap) -> ReceivedContentLength {
-        // clone: the header stays on the request for the decoding layer to remove
         ReceivedContentLength(headers.get(CONTENT_LENGTH).cloned())
     }
 }

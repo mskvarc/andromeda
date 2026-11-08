@@ -94,4 +94,5 @@ andromeda_architecture_checks::workspace_architecture! {
     no_raw_iri_or_media_constants,
     no_raw_sql,
     retired_architecture,
+    comment_hygiene,
 }

@@ -3,8 +3,8 @@
 //! Three callers need exactly this and nothing more: the query endpoint reads
 //! it for every matching identifier of its page at once, the clause 4.5.23 join reads it once per
 //! Linked Entity it resolves, and both must produce the same history for the
-//! same entity over the same window. Keeping the pipeline -- history read and
-//! representation build -- in one place is what guarantees that. What is read
+//! same entity over the same window. Keeping the pipeline (history read and
+//! representation build) in one place is what guarantees that. What is read
 //! is the history in its expanded form (or, for an aggregated representation,
 //! the aggregates); it is compacted under the request context only once every
 //! holder's part has been gathered (clause 5.7.3).
@@ -44,7 +44,7 @@ pub(crate) const fn presence_of(is_empty: bool) -> HistoryPresence {
 /// Whether the compiled window actually selected any history for the entity.
 ///
 /// The two callers disagree about what an empty window means, and neither can
-/// tell from the representation alone — an entity with no history in range
+/// tell from the representation alone: an entity with no history in range
 /// renders as a well-formed temporal entity carrying no attribute instances.
 /// A query drops it from the result set; a retrieval answers it with a 404 when
 /// a window or an `attrs` selection was in force (clause 5.7.3.4). Reporting the
@@ -107,8 +107,8 @@ impl TemporalService {
     /// entities into one response reads their pages and cuts them together
     /// instead.
     ///
-    /// A window that selects nothing still reads -- into a temporal entity
-    /// carrying no attribute instances -- and says so through
+    /// A window that selects nothing still reads, into a temporal entity
+    /// carrying no attribute instances, and says so through
     /// [`RenderedTemporalEntity::presence`], because whether that is a result,
     /// an omission or a 404 is the caller's decision.
     ///
@@ -147,7 +147,6 @@ impl TemporalService {
         compiled: &CompiledTemporalQuery,
     ) -> Result<EntityHistoryPage, TemporalError> {
         let mut read = self.reader.query_entities_history(scope, slice::from_ref(entity_id), compiled).await?;
-        // clone: the page owns the identifier it is rendered under.
         history_page(entity_id.clone(), read.remove(entity_id)).map_err(|unread| *unread.error)
     }
 

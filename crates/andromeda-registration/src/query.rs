@@ -92,15 +92,13 @@ impl RegistrationService {
         let (scanned, reach) = window.settle(page.registrations);
         // Clause 5.5.9.1: the cursor pointers are read from the raw store page,
         // before the clause-5.10.2.5 trim below drops the registrations whose
-        // RegistrationInfo the query does not match. clone: the boundary
-        // outlives the page the loop consumes.
+        // RegistrationInfo the query does not match.
         let boundary = scanned
             .first()
             .map(|registration| registration.id.clone())
             .zip(scanned.last().map(|registration| registration.id.clone()));
         let names = NameCompaction::new(self.engine.compactor(context).processed_context().await?);
-        // clone: clause 5.12 matching reads the selector in its serialisable
-        // shape, and the compiled query keeps the expanded one.
+        // clone: the compiled query keeps the expanded selector, so the serialisable form is taken from a copy.
         let type_selector = compiled
             .entity_type
             .clone()
@@ -144,7 +142,6 @@ impl RegistrationService {
         // match registrations exactly as the `attrs` list does, so they join
         // it; the filter itself is not evaluated against a registration.
         if let Some(expression) = params.q.clone() {
-            // clone: expansion owns and rewrites the request expression without mutating cached parameters.
             let expanded_filter = expand_q_expr(expression, &JsonKeyAttributes::default(), &expander).await?;
             // Discovery takes no `expandValues`, so no attribute admits a bare word.
             let expanded_filter = apply_expand_values(expanded_filter, &HashSet::<AttributeName>::new(), &expander).await?;
@@ -164,7 +161,7 @@ impl RegistrationService {
             }
         }
         let csf_expr = match params.csf.clone() {
-            Some(expression) => Some(expand_csf_expr(expression, &expander).await?), // clone: same reason as `q`.
+            Some(expression) => Some(expand_csf_expr(expression, &expander).await?),
             None => None,
         };
         let temporal = if let (Some(timerel), Some(time_at)) = (&params.timerel, &params.time_at) {
@@ -179,14 +176,14 @@ impl RegistrationService {
         };
 
         Ok(CompiledCsrQuery::builder()
-            .ids(params.id.clone().unwrap_or_default()) // clone: the compiled query owns request identifiers across the store await.
+            .ids(params.id.clone().unwrap_or_default())
             .entity_type(expanded_type)
-            .id_pattern(params.id_pattern.clone()) // clone: the compiled query owns the validated pattern.
+            .id_pattern(params.id_pattern.clone())
             .attrs(attrs)
             .csf_expr(csf_expr)
             .geo(geo)
-            .scope_q(params.scope_q.clone()) // clone: the compiled query owns the parsed scope query.
-            .encountered_sources(encountered_sources.to_vec()) // clone: the compiled query owns the Via listing across the store await.
+            .scope_q(params.scope_q.clone())
+            .encountered_sources(encountered_sources.to_vec())
             .temporal(temporal)
             .build())
     }
@@ -200,7 +197,7 @@ impl RegistrationService {
 /// agree with the in-memory engine; the typed evaluation here is the authority,
 /// and it is what settles the response.
 ///
-/// Clause 5.10.2.5 states the trimming as a recommendation -- implementations
+/// Clause 5.10.2.5 states the trimming as a recommendation: implementations
 /// "should return filtered Context Source Registrations, which only contain
 /// context source registration information relevant for the query, in
 /// particular only matching `RegistrationInfo` elements". Andromeda adopts it as

@@ -93,7 +93,7 @@ impl TemporalHistoryReader for StubBroker {
                     entity_id.clone(),
                     vec!["https://example.com/Thing".parse::<EntityTypeName>().expect("valid type IRI")],
                 )
-            }) // clone: the index owns its validated entity URI.
+            })
             .collect())
     }
 
@@ -107,7 +107,7 @@ impl TemporalHistoryReader for StubBroker {
         self.listed_selections
             .lock()
             .expect("the recording lock is never poisoned")
-            .push(compiled.entities.clone()); // clone: the recording outlives the compiled query
+            .push(compiled.entities.clone());
         Ok(TemporalEntityIdOutcome {
             entity_ids: Vec::new(),
             total: None,
@@ -156,7 +156,6 @@ impl TemporalHistoryReader for StubBroker {
                     .into_iter()
                     .map(|row| TemporalHistoryObservation { row, identity: None })
                     .collect();
-                // clone: the answer is keyed by the identifier it was read for.
                 (!observations.is_empty()).then(|| (entity_id.clone(), Ok(TemporalHistoryOutcome { observations })))
             })
             .collect())
@@ -182,12 +181,12 @@ impl TemporalHistoryReader for StubBroker {
         self.merged_entities
             .lock()
             .expect("the recording lock is never poisoned")
-            .push((entity_id.clone(), local, entity_types.to_vec())); // clone: the recording owns what it was handed
+            .push((entity_id.clone(), local, entity_types.to_vec()));
         self.merged_answers
             .lock()
             .expect("the recording lock is never poisoned")
             .extend_from_slice(answered);
-        Ok(self.aggregated.clone()) // clone: every merged aggregation is answered with the same rows
+        Ok(self.aggregated.clone())
     }
 
     async fn recorded_attribute_shapes(
@@ -212,7 +211,7 @@ impl TemporalHistoryReader for StubBroker {
 /// The current state of one known entity: a `Thing` holding no attribute.
 fn thing(id: &Identifier) -> Arc<EntityState> {
     let thing = "https://example.com/Thing".parse::<EntityTypeName>().expect("valid type IRI");
-    Arc::new(EntityState::new(id.clone(), EntityTypes::one(thing))) // clone: the state owns its identifier
+    Arc::new(EntityState::new(id.clone(), EntityTypes::one(thing)))
 }
 
 #[async_trait]
@@ -234,7 +233,7 @@ impl EntityReader for StubBroker {
                         expires_at: None,
                     },
                 };
-                (id.clone(), retrieved) // clone: the port hands back owned keys
+                (id.clone(), retrieved)
             })
             .collect())
     }

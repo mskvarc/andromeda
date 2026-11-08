@@ -19,7 +19,7 @@ pub(super) fn source_failures(id: &Identifier, warnings: Vec<NgsiLdWarning>) -> 
 ///
 /// The IANA codes clause 6.3.17 uses are a transport concern. What travels back
 /// into the traversal is the condition itself, which the HTTP binding turns
-/// into a response warning again when it renders — the domain layer in between
+/// into a response warning again when it renders. The domain layer in between
 /// never learns that response headers exist. The mapping is the same whether
 /// the traversal was over current entities or over their history, so it is
 /// stated once.
@@ -32,7 +32,7 @@ fn resolution_failure(id: &Identifier, warning: NgsiLdWarning) -> LinkedResoluti
         WarnCode::MiscellaneousPersistentWarning => LinkedResolutionFailureKind::Refused,
     };
     LinkedResolutionFailure {
-        id: id.clone(), // clone: the failure outlives the borrowed candidate id
+        id: id.clone(), // clone: id is borrowed here, and the returned failure must own its copy.
         kind,
         detail: text.into(),
     }

@@ -43,8 +43,8 @@ impl SubscriptionStateResolver for BrokerSubscriptionStateResolver {
                     .snapshot_targets(snapshot_targets)
                     .subscriptions(Arc::clone(&state.subscriptions))
                     .csource_subscriptions(Arc::clone(&state.csr_subscriptions))
-                    .engine(state.entity_query.engine().clone()) // clone: the engine shares its loader and caches behind `Arc`s
-                    .context_hosting(state.context_hosting.clone()) // clone: the route services own a handle on the tenant's hosting
+                    .engine(state.entity_query.engine().clone())
+                    .context_hosting(state.context_hosting.clone())
                     .build(),
             ))
         })

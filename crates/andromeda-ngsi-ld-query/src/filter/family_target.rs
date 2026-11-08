@@ -5,7 +5,7 @@
 //! them:
 //!
 //! * "If the target element is a Property, the target value is defined as the
-//!   Value associated to such Property" — one value, or, when the client wrote
+//!   Value associated to such Property", one value, or, when the client wrote
 //!   an array, the array JSON-LD expansion turned into several `hasValue`
 //!   nodes;
 //! * "If the target element is a `LanguageProperty`, and no target language is
@@ -21,7 +21,7 @@
 //! * "If the target element is a Relationship, the target object is defined as
 //!   the object associated (represented as a URI or array of URIs)".
 //!
-//! Every one of those that can hold more than one value resolves to an array, which is what makes the clause's array rules -- "Is included in the target value, if the latter is an array", and under `unequal` "Is not included in the target value, if the latter is an array" -- apply to it.
+//! Every one of those that can hold more than one value resolves to an array, which is what makes the clause's array rules ("Is included in the target value, if the latter is an array", and under `unequal` "Is not included in the target value, if the latter is an array") apply to it.
 //!
 //! The two list families are ordered, so their target is the array even when
 //! it holds a single element, which is what keeps the ordering and pattern
@@ -239,8 +239,8 @@ mod tests {
     }
 
     /// A single-element `valueList` is still the array clause 4.9 names, which
-    /// is what keeps the ordering and pattern operators — defined over a scalar
-    /// and a String target — off it.
+    /// is what keeps the ordering and pattern operators (defined over a scalar
+    /// and a String target) off it.
     #[test]
     fn a_single_element_value_list_is_still_an_array_target() {
         let (value, _) = target_of(&json!({
@@ -280,7 +280,7 @@ mod tests {
     /// Clause 4.9: "If the target element is a `VocabProperty`, the target value
     /// shall be expanded according to the @context", and the `equal` operator
     /// matches it when the operand "is included in the target value, if the
-    /// latter is an array" — so every term is a target, not only the first.
+    /// latter is an array", so every term is a target, not only the first.
     #[test]
     fn a_multi_term_vocab_property_resolves_to_every_term() {
         let (value, origin) = target_of(&json!({

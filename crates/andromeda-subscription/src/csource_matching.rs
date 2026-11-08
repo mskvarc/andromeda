@@ -145,7 +145,7 @@ mod tests {
             "modifiedAt": "2024-01-02T00:00:00Z"
         });
         if let (Some(target), Some(source)) = (document.as_object_mut(), extra.as_object()) {
-            target.extend(source.iter().map(|(key, value)| (key.clone(), value.clone()))); // clone: the fixture owns its members
+            target.extend(source.iter().map(|(key, value)| (key.clone(), value.clone())));
         }
         serde_json::from_value(document).expect("registration parses")
     }

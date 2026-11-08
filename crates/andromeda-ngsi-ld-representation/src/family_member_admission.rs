@@ -21,8 +21,8 @@
 //! per the API data type definitions a `BadRequestData`.
 //!
 //! Nothing here restates the lists. The membership table already exists as
-//! [`AttributeType::reserved_fields`] — the members each family defines for
-//! itself — and the prohibition is its complement over the value members of
+//! [`AttributeType::reserved_fields`] (the members each family defines for
+//! itself), and the prohibition is its complement over the value members of
 //! the eight families. A second, hand-written copy of the same fourteen lists
 //! could only ever drift from it.
 //!
@@ -34,9 +34,9 @@
 //!
 //! `unitCode` is not part of the complement, even though four of the clauses
 //! prohibit it. Whether a family is unitless is a statement about quantities
-//! rather than about another family's value — clauses 4.5.21.2 and 4.5.21.3
+//! rather than about another family's value (clauses 4.5.21.2 and 4.5.21.3
 //! leave a `ListProperty`'s inherited `unitCode` in place while removing its
-//! `value` — and `andromeda_ngsi_ld_lexicon::unit_code_admission` already owns
+//! `value`), and `andromeda_ngsi_ld_lexicon::unit_code_admission` already owns
 //! that question.
 //!
 //! [`MemberAdmission`] is the two-state answer every admission rule of the
@@ -50,7 +50,7 @@ use strum::{Display, EnumIter, EnumString, IntoStaticStr};
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum MemberAdmission {
     /// The family declares the member, or the member is not one any family
-    /// claims — a sub-attribute name, a system attribute, `datasetId`.
+    /// claims (a sub-attribute name, a system attribute, `datasetId`).
     Admitted,
     /// The member names another family's value, so the clause defining this
     /// family states it shall never be present.
@@ -59,9 +59,9 @@ pub enum MemberAdmission {
 
 /// A compacted member that names some family's value.
 ///
-/// Both spellings of each of the eight families' value members — the current
+/// Both spellings of each of the eight families' value members (the current
 /// one of [`AttributeType::compact_value_key`] and the output-only one of
-/// [`AttributeType::previous_key`] — and the two linked-entity members of
+/// [`AttributeType::previous_key`]) and the two linked-entity members of
 /// clause 4.5.23.2. The spellings are the ones the NGSI-LD Core `@context`
 /// gives these terms.
 #[derive(Clone, Copy, Debug, Display, EnumIter, EnumString, Eq, IntoStaticStr, PartialEq)]

@@ -50,7 +50,6 @@ impl IntervalCandidates<'_> {
             // applied in memory.
             let page_candidates = self
                 .collect_pages(selector.type_.as_single_type(), |entity| {
-                    // clone: the set owns the identifiers already selected
                     selector.selects(entity.types().as_slice(), entity.id()) && selected.insert(entity.id().clone())
                 })
                 .await?;
@@ -89,7 +88,7 @@ impl IntervalCandidates<'_> {
                     .map_err(NotificationError::from)?,
             };
             let exhausted = page.len() < usize::from(INTERVAL_ENTITY_PAGE);
-            // clone: the next read names the last identifier of a page that is consumed below
+            // clone: the page is consumed by the filter that follows, so the cursor keeps its own copy of the last identifier
             after = page.last().map(|entry| entry.id(EntityState::id).clone());
             // The store logged each entity that does not read back; the others
             // are still notified.
@@ -146,7 +145,7 @@ mod tests {
         }
 
         fn page(&self, entity_type: Option<&EntityTypeName>, after: Option<&Identifier>, limit: u16) -> Vec<StoredEntry<EntityState>> {
-            self.reads.lock().expect("the notes are not poisoned").push(after.cloned()); // clone: the note outlives the read
+            self.reads.lock().expect("the notes are not poisoned").push(after.cloned());
             self.entities
                 .iter()
                 .filter(|entry| match entry {
@@ -155,7 +154,7 @@ mod tests {
                 })
                 .filter(|entry| after.is_none_or(|after| entry.id(EntityState::id).as_str() > after.as_str()))
                 .take(usize::from(limit))
-                .cloned() // clone: each read hands out its own states
+                .cloned()
                 .collect()
         }
     }

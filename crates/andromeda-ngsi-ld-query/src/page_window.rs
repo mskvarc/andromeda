@@ -68,7 +68,6 @@ impl PageWindow {
             PageStart::Offset(offset) => PageWindow::offset(self.limit.saturating_add(*offset), 0),
             PageStart::Cursor(_) => PageWindow {
                 limit: self.limit,
-                // clone: the part is read from where the page starts
                 start: self.start.clone(),
             },
         }
@@ -79,7 +78,6 @@ impl PageWindow {
     pub fn with_lookahead(&self) -> PageWindow {
         PageWindow {
             limit: self.limit.saturating_add(1),
-            // clone: the read window starts where the page does
             start: self.start.clone(),
         }
     }

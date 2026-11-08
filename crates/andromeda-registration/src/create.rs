@@ -66,7 +66,7 @@ impl RegistrationService {
         check_conflicts(self.repo.as_ref(), self.entity_probe.as_ref(), params.mode, &params.information, None).await?;
         let written = self.repo.create(&id, &params).await?;
         self.emit_csr_change(CsrChangeEvent {
-            csr_id: id.clone(), // clone: the change event and response each own the identifier.
+            csr_id: id.clone(),
             change: CsrChange::Created {
                 written: Box::new(written.registration),
             },

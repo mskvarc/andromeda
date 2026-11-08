@@ -40,8 +40,8 @@ pub struct CachedContext {
     pub residual: ResidualLifetime,
     /// The URL the stored row keys clause 5.13.3.5 hit accounting on.
     ///
-    /// A row is reachable by either identity it holds -- its local id or its
-    /// serving/source URL (`identity_matches`) -- so a hosted `@context` a
+    /// A row is reachable by either identity it holds (its local id or its
+    /// serving/source URL, `identity_matches`), so a hosted `@context` a
     /// client echoes back as a relative path resolves by its local id while its
     /// `numberOfHits` and the flush both key on the serving URL. Carrying that
     /// canonical URL back lets the resolver attribute the access to the same key
@@ -79,8 +79,8 @@ pub enum StoredDocumentSource {
 /// stores it.
 ///
 /// Clause 5.13.5.4 replaces a reloaded entry's document "with the newly
-/// downloaded one", and the row keeps the document as downloaded -- not the copy
-/// prepared for processing -- together with the URL it was finally read from,
+/// downloaded one", and the row keeps the document as downloaded (not the copy
+/// prepared for processing) together with the URL it was finally read from,
 /// exactly as a first download is stored ([`ContextCache::put`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DownloadedContext {

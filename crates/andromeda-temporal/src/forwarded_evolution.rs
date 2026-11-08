@@ -57,7 +57,7 @@ impl TemporalService {
         let expansion = EntityExpansion::prepare(&self.engine, context)
             .await?
             .bounded_by(self.limits.payload_budget.json_values);
-        let (fragment, reified) = written.clone().into_fragment(); // clone: the local phase still writes the payload
+        let (fragment, reified) = written.clone().into_fragment(); // clone: the local phase still needs the payload that into_fragment consumes
         let document = expansion.entity_patch(&fragment, Normalization::Entity).await?;
         let scope_history = match reified {
             Some(instances) => Some(expand_reified_scope(&expansion, instances).await?),
@@ -88,7 +88,7 @@ impl TemporalService {
         for member in written.attrs.keys() {
             let expanded = self.engine.expand_term(member.as_str(), &terms).await?;
             if claimed.iter().any(|name| name.as_str() == expanded.as_str()) {
-                taken.push(member.clone()); // clone: the strip names the members the map is keyed by
+                taken.push(member.clone()); // clone: the names must outlive the borrow of `written.attrs` that yields them
             }
         }
         written.strip_attributes(&taken);

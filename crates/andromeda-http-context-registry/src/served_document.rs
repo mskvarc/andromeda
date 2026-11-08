@@ -97,7 +97,7 @@ fn stored_document_response(document: &JsonLiteral, revalidation: CacheLifetime,
 /// for an unknown identifier or tenant and a 422 for a Cached entry carry it
 /// as the 200 does: each depends on the tenant the request addressed.
 pub(crate) async fn vary_on_tenant(mut response: Response) -> Response {
-    response.headers_mut().append(VARY, HeaderValue::from(NgsiLdTenant::name().clone())); // clone: a header name is a cheap shared byte buffer
+    response.headers_mut().append(VARY, HeaderValue::from(NgsiLdTenant::name().clone()));
     response
 }
 
@@ -230,7 +230,7 @@ mod tests {
 
         let tag = header(&first, ETAG).expect("an entity tag");
         assert!(tag.starts_with('"') && !tag.starts_with("W/"), "a strong tag: {tag}");
-        pretty_assertions::assert_eq!(header(&same, ETAG), Some(tag.clone())); // clone: the tag is compared twice
+        pretty_assertions::assert_eq!(header(&same, ETAG), Some(tag.clone()));
         assert_ne!(header(&changed, ETAG), Some(tag));
     }
 

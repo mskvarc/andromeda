@@ -9,7 +9,7 @@
 //! half, and only the second half: nothing here decides *what* to answer, only
 //! how the answer is spelled.
 //!
-//! Every renderer is a consuming builder — inputs through the constructor and
+//! Every renderer is a consuming builder: inputs through the constructor and
 //! `with_*` methods, then `render`. There is no `Renderer` trait: the thirteen
 //! renderings share a name and nothing else, and a trait over them would only
 //! force one error type onto types that fail for unrelated reasons, or for no

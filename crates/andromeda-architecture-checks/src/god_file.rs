@@ -3,8 +3,8 @@
 //! The project rules split a file past ~400 production lines on sight and never lets
 //! one past 600. This gate makes that measurable rather than a hand-kept
 //! ledger: a file over the hard limit fails outright, and a file over the
-//! signal line is tolerated only while it is on a baseline that can only shrink
-//! — a new file crossing the signal line fails, and a baseline file that falls
+//! signal line is tolerated only while it is on a baseline that can only shrink:
+//! a new file crossing the signal line fails, and a baseline file that falls
 //! back under it must be removed. Production lines are counted to the first
 //! `#[cfg(test)]`, the same measure the project's own rule uses; integration
 //! tests, `*tests.rs` files, build scripts, and the focused test crates are not

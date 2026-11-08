@@ -2,7 +2,7 @@
 //! `temporal_delete_by_query` extension).
 //!
 //! The route is installed only when the extension is enabled, so reaching this
-//! handler is itself the gate. The operation is local-only — never forwarded —
+//! handler is itself the gate. The operation is local-only (never forwarded),
 //! so unlike the per-id temporal delete it consults no registration and runs
 //! entirely against this broker's history. A `dryRun` answers `200` with the
 //! would-delete count; a real delete answers `204`; an over-the-bound delete

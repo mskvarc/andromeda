@@ -71,7 +71,7 @@ impl FederationService {
                 break;
             }
             let page_len = page.len();
-            cursor = page.last().map(|registration| registration.id.clone()); // clone: the cursor must outlive the page moved below.
+            cursor = page.last().map(|registration| registration.id.clone()); // clone: the cursor outlives the page, which into_iter consumes further down this iteration.
             csrs.extend(page.into_iter().filter(|registration| operation.matches(registration)));
             if page_len < page_capacity {
                 break;
@@ -96,7 +96,7 @@ impl FederationService {
                 let read = SourceRead::builder().registration(&csr).inbound(context).triggering(triggering).build();
                 // Clause 6.3.17 allows caching for `/entities` only.
                 let outcome = self.forward_get(read, url, Cacheability::Uncacheable).await;
-                let registration_id = Some(csr.id.clone()); // clone: the answer names the registration it came from
+                let registration_id = Some(csr.id.clone());
                 match outcome {
                     ForwardGetOutcome::Success(response) => Some(ForwardedDiscoveryResult {
                         registration_id,

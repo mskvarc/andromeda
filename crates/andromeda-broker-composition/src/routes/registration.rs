@@ -36,7 +36,7 @@ impl RegistrationStateResolver for BrokerRegistrationStateResolver {
             let LeasedState { state, lease } = self.tenants.resolve_state(tenant, creation_policy).await?;
             Ok(Arc::new(RegistrationRouteServices::new(
                 Arc::clone(&state.csr),
-                state.context_hosting.clone(), // clone: the route services own a handle on the tenant's hosting
+                state.context_hosting.clone(),
                 lease,
             )))
         })

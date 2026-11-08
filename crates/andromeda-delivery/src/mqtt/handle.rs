@@ -127,7 +127,7 @@ impl MqttTransportHandle {
             // The publish did not complete within the allowed time; the
             // delivery queue retransmits rather than assuming it arrived.
             Err(_elapsed) => Err(TransportError::Timeout {
-                endpoint: self.config.endpoint_uri.clone(), // clone: same
+                endpoint: self.config.endpoint_uri.clone(),
                 duration: deadline,
             }),
         }

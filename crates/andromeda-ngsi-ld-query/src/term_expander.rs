@@ -1,7 +1,7 @@
 //! Expanding compact NGSI-LD terms to IRIs, without naming the expander.
 //!
-//! Every query parameter that carries a name — `attrs`, `q`, `type`, `pick`,
-//! `omit`, `geoproperty`, `orderBy` — arrives compact and has to be expanded
+//! Every query parameter that carries a name (`attrs`, `q`, `type`, `pick`,
+//! `omit`, `geoproperty`, `orderBy`) arrives compact and has to be expanded
 //! through the request's `@context` before it can address anything the broker
 //! stores. Doing that requires a JSON-LD processor, which sits above this
 //! module: `jsonld` reads a parsed `q` filter, and `query` would read the

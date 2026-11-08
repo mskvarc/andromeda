@@ -221,7 +221,6 @@ impl SnapshotStatusTransport for DeliverySnapshotNotificationSink {
     /// Deliver one durably leased Snapshot lifecycle event over HTTP.
     async fn deliver_status(&self, delivery: &SnapshotStatusDelivery) -> DeliveryResult {
         let request = DeliveryRequest {
-            // clone: the leased outbox row remains available to record the result after transport completes
             body: NotificationBody::new(delivery.notification.clone()),
             endpoint_uri: delivery.endpoint.clone(),
             content_type: ResponseMediaType::JsonLd,

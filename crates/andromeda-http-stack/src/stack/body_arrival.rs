@@ -46,7 +46,6 @@ impl BodyArrival {
         let watched = request.map(|inner| {
             Body::new(WatchedBody {
                 inner,
-                // clone: the body reports into the flag the watch reads
                 awaiting_client: Arc::clone(&awaiting_client),
             })
         });

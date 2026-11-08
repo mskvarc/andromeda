@@ -53,7 +53,7 @@ pub(crate) fn append_typed_links(response: &mut Response, links: Vec<(RelationTy
     let values = links
         .into_iter()
         .filter_map(|(relation, target)| {
-            // clone: each link value owns its copy of the negotiated media type.
+            // Each link value needs its own owned media type, since the closure runs once per link.
             IriRefBuf::new(target)
                 .ok()
                 .map(|target| LinkValue::with_params(target, Some(relation), Some(media_type.clone())))

@@ -65,7 +65,6 @@ pub(crate) fn in_any_part(branch: &HistoryBranch, read: impl Fn(TableRef) -> Sel
 /// The instances of `part` that `condition` admits.
 pub(crate) fn admitted(part: TableRef, condition: &Condition) -> SelectStatement {
     let mut select = Query::select();
-    // clone: every read of the stream keeps the same represented instances.
     select.from(part).cond_where(condition.clone());
     select
 }

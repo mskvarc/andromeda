@@ -109,7 +109,7 @@ impl FederationService {
         let mut request = self.http_client.request(method, url).headers(typed_headers);
         request = apply_custom_headers(request, &info, triggering.headers);
         if let Some(body) = &payload.body {
-            request = request.body(body.clone()); // clone: reqwest owns the body it sends
+            request = request.body(body.clone());
         }
 
         // Clause 4.14: "When contacting the respective Context Sources, the
@@ -118,9 +118,7 @@ impl FederationService {
         // Registration, no Tenant information is to be used and thus the
         // default Tenant is targeted" (Table 5.2.9-1 `tenant`). The tenant the
         // triggering request ran in is never carried over.
-        if let Some(tenant) = registration.tenant.clone()
-        // clone: the header owns the tenant name
-        {
+        if let Some(tenant) = registration.tenant.clone() {
             let tenant = NgsiLdTenant::new(tenant);
             let mut request_headers = HeaderMap::new();
             request_headers.typed_insert(tenant);
@@ -128,7 +126,7 @@ impl FederationService {
         }
         if let Some(linked_map) = linked_map {
             let mut map_headers = HeaderMap::new();
-            map_headers.typed_insert(NgsiLdEntityMap::new(linked_map.clone())); // clone: the header owns the map identifier
+            map_headers.typed_insert(NgsiLdEntityMap::new(linked_map.clone()));
             request = request.headers(map_headers);
         }
 
@@ -167,10 +165,10 @@ fn apply_custom_headers(mut request: reqwest::RequestBuilder, info: &ContextSour
             let Some(value) = incoming.and_then(|headers| headers.get(&field.name)) else {
                 continue;
             };
-            request = request.header(field.name.clone(), value.clone()); // clone: the forwarded request owns its header value
+            request = request.header(field.name.clone(), value.clone());
             continue;
         }
-        request = request.header(field.name.clone(), field.value.clone()); // clone: the forwarded request owns its header value
+        request = request.header(field.name.clone(), field.value.clone());
     }
     request
 }
@@ -353,7 +351,7 @@ mod tests {
 
     /// Clause 4.14: "If no Tenant information is present in the Context Source
     /// Registration, no Tenant information is to be used and thus the default
-    /// Tenant is targeted" -- the triggering request's tenant is not inherited.
+    /// Tenant is targeted. The triggering request's tenant is not inherited.
     #[test]
     fn a_registration_without_a_tenant_targets_the_default_tenant() {
         let registration = registration(None);
@@ -384,7 +382,7 @@ mod tests {
     }
 
     fn headers_of(request: reqwest::RequestBuilder) -> HeaderMap {
-        request.build().expect("request builds").headers().clone() // clone: the request is dropped with the builder
+        request.build().expect("request builds").headers().clone()
     }
 
     #[test]

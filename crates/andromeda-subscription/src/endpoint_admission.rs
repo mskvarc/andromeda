@@ -4,9 +4,9 @@
 //! Which endpoints a broker can reach is a property of the delivery bindings
 //! it was built with, not of the subscription resource, so the rule is a trait
 //! the composition implements and the lifecycle merely calls. Create and
-//! update ask it the same question -- an update fragment that touches only the
-//! endpoint has to be admitted exactly as a create carrying the same endpoint
-//! would be.
+//! update ask it the same question, and an update fragment that touches only
+//! the endpoint has to be admitted exactly as a create carrying the same
+//! endpoint would be.
 
 use crate::{endpoint_refusal::EndpointRefusal, error::SubscriptionError, subscription_validation_reason::SubscriptionValidationReason};
 use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, subscription::Endpoint};

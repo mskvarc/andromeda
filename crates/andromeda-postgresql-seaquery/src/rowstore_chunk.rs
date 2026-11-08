@@ -83,8 +83,8 @@ pub fn departed_chunks_deletion(hypertable: &str, listed: &ListedChunks) -> Dele
         .and_where(Expr::col(Chunks::HypertableName).eq(hypertable))
         .to_owned();
     Query::delete()
-        .from_table(listed.table.clone()) // clone: the statement owns the relation it deletes from
-        .and_where(Expr::col(listed.range_start.clone()).not_in_subquery(held)) // clone: the statement owns the column it compares
+        .from_table(listed.table.clone())
+        .and_where(Expr::col(listed.range_start.clone()).not_in_subquery(held))
         .to_owned()
 }
 

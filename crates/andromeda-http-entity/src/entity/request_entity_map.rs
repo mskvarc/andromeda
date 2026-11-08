@@ -3,8 +3,8 @@
 //! A read may reference a map and may ask for one. Resolving what it runs
 //! under happens before any source is contacted, since the map fixes which
 //! sources are contacted at all; recording what those sources contributed
-//! happens after they have answered. The two reads that do this — Query
-//! Entities and Retrieve Entity — differ only in how the entities this broker
+//! happens after they have answered. The two reads that do this (Query
+//! Entities and Retrieve Entity) differ only in how the entities this broker
 //! holds itself are listed, which is why that half alone is a parameter here.
 
 use crate::error::{EntityHttpClassify, EntityResultExt};
@@ -28,8 +28,8 @@ use axum::http::Uri as HttpUri;
 
 /// Where the entities a map attributes to this broker come from.
 ///
-/// Listing them is not free for a query — it costs a second pass over the
-/// store — so the source is described here and read only when the recording
+/// Listing them is not free for a query (it costs a second pass over the
+/// store), so the source is described here and read only when the recording
 /// asks for it.
 #[derive(Clone, Copy)]
 pub(crate) enum LocalEntitySource<'a> {

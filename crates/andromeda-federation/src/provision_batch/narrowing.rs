@@ -37,8 +37,8 @@ fn entity_types<'a>(entity: &BatchEntity<'a>) -> &'a [EntityTypeName] {
 
 /// Narrow the client's array to what `csr` receives (the `IN` of clauses
 /// 5.6.7.4 and following): the entities it matches, each reduced to the
-/// attributes it covers minus those another exclusive registration -- or,
-/// unless `csr` is itself a redirect, another redirect registration -- owns,
+/// attributes it covers minus those another exclusive registration (or,
+/// unless `csr` is itself a redirect, another redirect registration) owns,
 /// and without the entities that keeps no attribute. Every entity is read
 /// under the expanded names its own context gave it.
 pub(super) fn narrow_input<'a>(
@@ -89,7 +89,7 @@ pub(super) fn narrow_input<'a>(
             continue;
         }
         let proxied_attrs = if is_proxied(csr) {
-            body.attributes().keys().cloned().collect() // clone: the result owns the names the registration claims
+            body.attributes().keys().cloned().collect()
         } else {
             Vec::new()
         };
@@ -141,7 +141,7 @@ mod tests {
         let speed = registration("urn:ngsi-ld:csr:speed", "redirect", Some(VEHICLE_TYPE), None, &[SPEED], &["createBatch"]);
         let location = registration("urn:ngsi-ld:csr:location", "redirect", Some(VEHICLE_TYPE), None, &[PLACE], &["createBatch"]);
         let everything = registration("urn:ngsi-ld:csr:all", "inclusive", Some(VEHICLE_TYPE), None, &[], &["createBatch"]);
-        let candidates = vec![speed.clone(), location, everything.clone()]; // clone: the candidate list and the subjects both own the registrations
+        let candidates = vec![speed.clone(), location, everything.clone()];
         let context = BatchContexts::per_entity().context_of(None);
         let v1 = uri("urn:ngsi-ld:Vehicle:1");
         let d1 = uri("urn:ngsi-ld:Device:1");

@@ -154,7 +154,7 @@ impl<'a> ReadyEntityResponse<'a> {
         };
         let (context, context_link) = match &self.renderer.context {
             ResponseContext::Body(context) => (Some(context), None),
-            ResponseContext::Link(target) => (None, Some(target.clone())), // clone: the head owns the target the renderer keeps
+            ResponseContext::Link(target) => (None, Some(target.clone())),
             ResponseContext::Absent => (None, None),
         };
         let format = self.renderer.format;

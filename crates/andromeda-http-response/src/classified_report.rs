@@ -65,7 +65,7 @@ impl ClassifiedReport {
     /// Shed backpressure as a 503 Service Unavailable with a `Retry-After`.
     ///
     /// For a request the broker declined to run because a resource was
-    /// momentarily at capacity — a saturated connection pool is the canonical
+    /// momentarily at capacity. A saturated connection pool is the canonical
     /// case. The request is well-formed and can be retried unchanged, so it is
     /// answered 503, never the 500 an internal fault earns, and its detail is
     /// disclosed rather than masked to a coarse operation summary.

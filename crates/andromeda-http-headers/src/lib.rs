@@ -1,8 +1,8 @@
 //! The typed NGSI-LD HTTP header set, and the values those headers carry.
 //!
 //! ETSI GS CIM 009 v1.9.1 clause 6.3 defines the headers an NGSI-LD interaction
-//! uses: the `NGSILD-*` family it introduces, and the general HTTP headers --
-//! `Accept`, `Prefer`, `Preference-Applied`, `Link`, `Via` -- whose NGSI-LD
+//! uses: the `NGSILD-*` family it introduces, and the general HTTP headers
+//! (`Accept`, `Prefer`, `Preference-Applied`, `Link`, `Via`), whose NGSI-LD
 //! reading is narrower than the RFC's. Every one of them is a
 //! [`headers::Header`] implementation over a validated type, so a handler never
 //! sees a header value as text.

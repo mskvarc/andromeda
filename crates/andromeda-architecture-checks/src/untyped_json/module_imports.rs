@@ -71,7 +71,6 @@ impl ModuleImports {
                 };
                 let names = imported_trees(syntax, &|segments| settled.resolve(Some(position), segments));
                 if !names.is_empty() {
-                    // clone: every source of the module records its names under the shared key
                     next.0.entry((position.crate_root.clone(), position.module.clone())).or_default().extend(names);
                 }
             }
@@ -87,7 +86,6 @@ impl ModuleImports {
     pub(crate) fn resolve(&self, position: Option<&ModulePosition>, segments: &[String]) -> Option<UntypedTree> {
         let position = position?;
         let (module, name) = position.target(segments)?;
-        // clone: the key owns its crate root; the lookup is built from the importer's
         self.0.get(&(position.crate_root.clone(), module))?.get(name).copied()
     }
 }

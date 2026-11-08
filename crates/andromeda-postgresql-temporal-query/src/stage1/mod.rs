@@ -440,7 +440,7 @@ mod tests {
     }
 
     /// Clause 5.5.9.1: a forward cursor pages the element dimension past the
-    /// boundary id over the default order -- `WHERE id > $x ORDER BY id ASC` and
+    /// boundary id over the default order, `WHERE id > $x ORDER BY id ASC` and
     /// no `OFFSET`.
     #[test]
     fn stage1_keyset_after_pages_forward_ascending_without_offset() {
@@ -452,7 +452,7 @@ mod tests {
     }
 
     /// Clause 5.5.9.1: a backward cursor pages before the boundary over the
-    /// reversed order -- `WHERE id < $x ORDER BY id DESC` -- which the store
+    /// reversed order, `WHERE id < $x ORDER BY id DESC`, which the store
     /// reverses to ascending after fetching.
     #[test]
     fn stage1_keyset_before_pages_backward_descending_without_offset() {
@@ -467,8 +467,8 @@ mod tests {
         assert!(!sql.contains("OFFSET"), "{sql}");
     }
 
-    /// Clause 5.5.9.1: the from-end cursor takes the final page -- `ORDER BY id
-    /// DESC`, no boundary predicate -- which the store reverses to ascending.
+    /// Clause 5.5.9.1: the from-end cursor takes the final page (`ORDER BY id
+    /// DESC`, no boundary predicate), which the store reverses to ascending.
     #[test]
     fn stage1_keyset_end_takes_the_final_page_descending() {
         let compiled = minimal_compiled();

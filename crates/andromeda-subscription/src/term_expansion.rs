@@ -1,9 +1,9 @@
 //! Expansion of a subscription request's terms against the request `@context`
 //! (ETSI GS CIM 009 clause 5.5.7).
 //!
-//! Everything a subscription is later matched by is stored in expanded form —
-//! entity types, watched attributes, the notification's attribute lists, the
-//! `q` and `csf` filters, the `geoQ` geoproperty — because matching runs
+//! Everything a subscription is later matched by is stored in expanded form
+//! (entity types, watched attributes, the notification's attribute lists, the
+//! `q` and `csf` filters, the `geoQ` geoproperty), because matching runs
 //! against expanded entity data and never has the creator's `@context` at hand.
 //! Context hosting is not handled here; the lifecycle adds that on top.
 
@@ -55,7 +55,7 @@ async fn expand_geoproperty(geoproperty: &mut NgsiLdReference, expander: &impl T
 
 /// Expand entities, watchedAttributes, the notification's attributes, pick and
 /// omit, the filters, the opt-in lists and geoQ of a subscription request in
-/// place. Context hosting is NOT handled here — the lifecycle adds that on top.
+/// place. Context hosting is NOT handled here, because the lifecycle adds that on top.
 ///
 /// The `q` the request holds afterwards is the expanded filter itself, which
 /// also keeps the spelling the subscriber wrote of its trailing `[…]` members,
@@ -261,8 +261,8 @@ mod tests {
     /// The path has to be the bracketed form of clause 4.9. A dotted path names
     /// sub-attributes, which are NGSI-LD terms and expand whatever `jsonKeys`
     /// says; only the `[...]` form reaches inside a value, and clause 4.9
-    /// EXAMPLE 11 is exactly that case -- "the target value raw is JSON, and is
-    /// not expanded to ngsi-ld:hasValue using the core @context".
+    /// EXAMPLE 11 is exactly that case, which the spec words as "the target value
+    /// raw is JSON, and is not expanded to ngsi-ld:hasValue using the core @context".
     #[tokio::test]
     async fn json_keys_leaves_the_addressed_object_keys_literal() {
         let declared = expanded(json!({"q": "payload[city]==\"Berlin\"", "jsonKeys": "payload"}))

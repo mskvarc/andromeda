@@ -47,14 +47,13 @@ pub(crate) fn decode_aggregation_group_span(row: &PgRow) -> Result<AggregationGr
 ///
 /// The family the period is reported under is the lowest one its rows carried.
 /// A group whose rows disagreed about the family survives only when the request
-/// counts alone — [`ensure_uniform_aggregation_groups`] refuses every other
-/// case — and a count is the same number whichever family it is reported under.
+/// counts alone ([`ensure_uniform_aggregation_groups`] refuses every other
+/// case), and a count is the same number whichever family it is reported under.
 ///
 /// [`ensure_uniform_aggregation_groups`]: andromeda_postgresql_temporal_query::aggregation_group::ensure_uniform_aggregation_groups
 pub(crate) fn decode_aggregation_row(row: &PgRow, span: &AggregationGroupSpan) -> Result<TemporalAggregationRow, TemporalStoreError> {
     let value_shape = span.value_shapes.uniform();
     Ok(TemporalAggregationRow {
-        // clone: the decoded row owns the name the span holds for the whole result set.
         attribute_name: span.attribute_name.clone(),
         attribute_type: attribute_type_of(span.families.lowest),
         dataset_id: decode_dataset_id(row)?,
@@ -134,7 +133,7 @@ enum ExtremumColumn {
 /// The value shape alone does not decide a Relationship family, whose extrema
 /// Table 4.5.19.1-3 marks N/A whatever column its targets sit in: a
 /// `ListRelationship` holds an `objectList` as a JSON array and so reports the
-/// Array shape here. The statement is what refuses it — every extremum column
+/// Array shape here. The statement is what refuses it: every extremum column
 /// is gated on the attribute family, so the aggregate this names is SQL NULL
 /// for such a group and no extremum is decoded.
 const fn extremum_column(value_shape: RecordedShape) -> ExtremumColumn {
@@ -411,8 +410,8 @@ mod tests {
         pretty_assertions::assert_eq!(number, "-273.15".parse::<JsonNumber>().expect("an exact decimal"));
     }
 
-    /// A zero-valued aggregate -- the standard deviation of a single
-    /// observation, for one -- is a number like any other, whatever scale the
+    /// A zero-valued aggregate (the standard deviation of a single
+    /// observation, for one) is a number like any other, whatever scale the
     /// column reported it at.
     #[test]
     fn a_scaled_zero_is_a_number_like_any_other() {

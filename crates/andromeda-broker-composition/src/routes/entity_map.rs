@@ -36,7 +36,7 @@ impl EntityMapStateResolver for BrokerEntityMapStateResolver {
                 Arc::clone(&state.temporal),
                 Arc::clone(&state.forwarding),
                 state.live_target.clone(),
-                state.context_hosting.clone(), // clone: the route services own a handle on the tenant's hosting
+                state.context_hosting.clone(),
                 lease,
             )))
         })

@@ -92,13 +92,13 @@ pub struct ResolvedCsrUpdate {
 pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateFragment) -> ResolvedCsrUpdate {
     let registration_name = fragment.registration_name.resolved_over(existing.registration_name);
     let description = fragment.description.resolved_over(existing.description);
-    let information = fragment.information.clone().unwrap_or(existing.coverage.information); // clone: own the borrowed update fragment when it supplied information.
+    let information = fragment.information.clone().unwrap_or(existing.coverage.information);
     let dataset_id = fragment.dataset_id.resolved_over(existing.coverage.dataset_id);
     let tenant = fragment.tenant.resolved_over(existing.tenant);
     let observation_interval = fragment.observation_interval.resolved_over(existing.coverage.observation_interval);
     let management_interval = fragment.management_interval.resolved_over(existing.coverage.management_interval);
     let expires_at = fragment.expires_at.resolved_over(existing.lifecycle.expires_at);
-    let endpoint = fragment.endpoint.clone().unwrap_or(existing.access.endpoint); // clone: own the borrowed update fragment when it supplied the URL.
+    let endpoint = fragment.endpoint.clone().unwrap_or(existing.access.endpoint);
     let accept = fragment.accept.resolved_over(existing.access.accept);
     let mode = fragment.mode.unwrap_or_else(|| existing.access.mode.unwrap_or_default());
     // Clause 4.20: the merged registration falls back to its mode's default set
@@ -122,7 +122,7 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
         if value.is_null_sentinel() {
             additional_properties.shift_remove(name);
         } else {
-            additional_properties.insert(name.clone(), value.clone()); // clone: the fragment is borrowed and the resolved update owns what it writes
+            additional_properties.insert(name.clone(), value.clone());
         }
     }
 

@@ -107,7 +107,7 @@ pub async fn database_of(client: &BrokerClient, tenant: &Tenant) -> Result<Datab
     read_tenant(client, tenant, TenantView::Usage)
         .await?
         .database_name
-        .ok_or_else(|| TenantManagementError::NoDatabase(tenant.clone())) // clone: the error names the tenant the test keeps
+        .ok_or_else(|| TenantManagementError::NoDatabase(tenant.clone())) // clone: the error must own the tenant it reports
 }
 
 /// The databases holding `tenants`, in order.
@@ -182,7 +182,7 @@ async fn read_status(client: &BrokerClient, tenant: &Tenant) -> Result<TenantSta
     read_tenant(client, tenant, TenantView::Plain)
         .await?
         .status
-        .ok_or_else(|| TenantManagementError::NoStatus(tenant.clone())) // clone: the error names the tenant the test keeps
+        .ok_or_else(|| TenantManagementError::NoStatus(tenant.clone())) // clone: the error must own the tenant it reports
 }
 
 #[cfg(test)]

@@ -45,7 +45,7 @@ impl CsourceIntervalNotificationOperation {
         tenant: TenantRef,
     ) -> CsourceIntervalNotificationOperation {
         CsourceIntervalNotificationOperation {
-            target: target.clone(), // clone: the operation and its delivery half address the same branch.
+            target: target.clone(),
             sub_repo: Arc::clone(&sub_repo),
             csr_repo,
             delivery: CsourceNotificationDelivery::new(target, sub_repo, engine, transport, tenant),

@@ -154,7 +154,7 @@ impl TenantFactoryConfig {
             tenancy: config.tenancy.clone(),
             extensions: config.extensions,
             link_field: config.http.link_field,
-            public_url: config.server.public_url.clone(), // clone: each tenant built reads the configured apiRoot
+            public_url: config.server.public_url.clone(),
             source_alias,
         }
     }
@@ -286,15 +286,15 @@ async fn build_tenant_state(
     // channel, so a Snapshot created the instant a tenant loads is not left to
     // the drain's idle fallback.
     let (snapshot_status_wake, snapshot_status_receiver) = wake_channel();
-    let snapshot_delivery_signal = snapshot_delivery_signal(snapshot_status_wake.clone()); // clone: the sweep keeps the handle while the service holds its own.
+    let snapshot_delivery_signal = snapshot_delivery_signal(snapshot_status_wake.clone());
     let consequence_publisher: Arc<dyn CommitConsequencePublisher> =
         Arc::new(RuntimeCommitConsequencePublisher::new(committed_notification_wake, side_effect_wake));
     let writes: Arc<dyn ContextCommitter> = Arc::new(PostgresAtomicCommitter::new(
         &storage.pool,
         temporal.history_mode,
         config.temporal.history.core_writes,
-        Arc::clone(&storage.attribute_names),   // clone: the commit interns names through the tenant's one dictionary.
-        Arc::clone(&storage.entity_type_names), // clone: the same dictionary, for entity types.
+        Arc::clone(&storage.attribute_names),
+        Arc::clone(&storage.entity_type_names),
         consequence_publisher,
     ));
     let writes = indexed_commits(writes, &storage.spatial, tenant)?;
@@ -317,11 +317,11 @@ async fn build_tenant_state(
         side_effect_wake: side_effect_receiver,
         snapshot_status_wake,
         snapshot_status_receiver,
-        pacer: Arc::clone(&pacer), // clone: the tasks consult the pacer the runtime reports use to.
+        pacer: Arc::clone(&pacer),
         periodic: PeriodicPacing {
             ceiling: config.notifications.periodic.max_poll_interval.duration(),
-            pacer: Arc::clone(&pacer),      // clone: the periodic sweeps consult the tenant's one pacer.
-            due: Arc::clone(&periodic_due), // clone: the sweeps publish into the cell the runtime answers from.
+            pacer: Arc::clone(&pacer),
+            due: Arc::clone(&periodic_due),
         },
     };
     let supervision = supervise_tasks(config, &storage, &services, &writes, &dispatcher, task_supervisor, channels)?;

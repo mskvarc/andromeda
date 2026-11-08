@@ -5,15 +5,15 @@ use thiserror::Error;
 
 /// The surrogate key of one temporal attribute stream.
 ///
-/// A stream is the stable grain of temporal history — one entity, one attribute
-/// name, one dataset — and its key is what every history row segments by and
+/// A stream is the stable grain of temporal history (one entity, one attribute
+/// name, one dataset), and its key is what every history row segments by and
 /// what the stream-led history indexes lead with. Because that key repeats on
 /// every history row and in every one of those indexes, it is a database
 /// generated eight-byte identity rather than a sixteen-byte UUID: half the
 /// bytes per index entry, and keys minted close together sort close together
 /// on the physical page. The key is assigned once by the database and never
-/// reassigned — a reused number would attach one stream's history to another
-/// — and it is never rendered to a client.
+/// reassigned. A reused number would attach one stream's history to another,
+/// and the key is never rendered to a client.
 #[derive(Clone, Copy, Debug, Display, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[display("{_0}")]
 pub struct StreamKey(i64);

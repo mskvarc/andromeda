@@ -247,7 +247,6 @@ pub(crate) fn page_edge(probes: &StreamProbes<'_>, grid: &AggregationGrid, paged
                 Walk::Backward => Func::least([grid.end_under(FoundPeriod), probe_bound(1, PeriodStart)]).into(),
             };
             let mut budget_bound = Query::select();
-            // clone: the budget is read on the kept side of the count edge, which the edge also weighs.
             // `OFFSET 0` keeps the bound a column the probe compares with.
             budget_bound.expr_as(open_bound(walk, count_edge.clone()), Bound).offset(0);
             let kept = probes.kept_side(walk, &Expr::col((BudgetBound, Bound)));

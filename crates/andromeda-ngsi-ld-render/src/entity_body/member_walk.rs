@@ -42,9 +42,9 @@ impl<'a> MemberWalk<'a> {
         MemberWalk { join, ..self }
     }
 
-    /// The walk over a sub-attribute, which clause 4.15 does not negotiate --
+    /// The walk over a sub-attribute, which clause 4.15 does not negotiate:
     /// the filter selects among the Attributes of the Entity, and a
-    /// sub-attribute is written as it is -- and whose targets clause 4.5.23
+    /// sub-attribute is written as it is, and whose targets clause 4.5.23
     /// does not nest. A sub-attribute is a Property or Relationship like any
     /// other (clauses 4.5.2 and 4.5.3), so the version fallback reaches it.
     pub(crate) const fn nested(self) -> MemberWalk<'a> {

@@ -1,6 +1,6 @@
 //! The clause 4.21 projection a query request compiled to.
 //!
-//! Both query endpoints already have the request compiled — `EntityQueryService`
+//! Both query endpoints already have the request compiled: `EntityQueryService`
 //! caches a [`CompiledEntityQuery`] keyed on the parameters and the context
 //! fingerprint, and its `projection` is the very thing the response has to be
 //! narrowed by. Reading it back off that cached compilation is what stops the

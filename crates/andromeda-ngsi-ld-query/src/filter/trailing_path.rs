@@ -64,7 +64,7 @@ impl MemberPath {
     /// A member path as freshly parsed, its two spellings the same.
     #[must_use]
     pub fn new(members: Vec<AttributeName>) -> MemberPath {
-        // clone: each spelling owns its names, and expansion rewrites one.
+        // clone: the two spellings are separate values, since expansion rewrites only the addressed one.
         let written = members.clone();
         MemberPath { addressed: members, written }
     }

@@ -39,7 +39,7 @@ impl FailureReport {
 
     /// Share the rendered cause with lifecycle and health observers.
     pub(crate) fn shared_summary(&self) -> Arc<str> {
-        Arc::clone(&self.summary) // clone: health and lifecycle events retain the same immutable summary.
+        Arc::clone(&self.summary)
     }
 }
 

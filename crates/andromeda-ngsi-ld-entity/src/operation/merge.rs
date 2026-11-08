@@ -31,7 +31,6 @@ impl EntityState {
     /// Returns [`MutationError::Refused`] when a written instance cannot
     /// become state.
     pub fn merge(&mut self, fragment: &EntityDocument, default_observed_at: Option<NgsiLdDateTime>) -> Result<(), MutationError> {
-        // clone: the entity owns the types it gains.
         self.types_mut().extend(fragment.types().iter().cloned());
         if let Some(scope) = fragment.scope() {
             replace_scope(self, scope);

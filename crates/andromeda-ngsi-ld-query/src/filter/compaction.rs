@@ -3,8 +3,8 @@
 //! The inverse of [`crate::filter::expansion`]: a stored filter carries the
 //! expanded IRIs it was written with, and a reader receives it spelled in the
 //! terms of the `@context` the read supplied. Every position expansion
-//! rewrote — the attribute, its sub-attributes, the compound-value members, a
-//! hop's Relationship and its entity-type guard — is rewritten back here, and
+//! rewrote (the attribute, its sub-attributes, the compound-value members, a
+//! hop's Relationship and its entity-type guard) is rewritten back here, and
 //! nothing else is touched: operators, operands and the boolean structure
 //! come back exactly as stored.
 //!
@@ -58,9 +58,9 @@ async fn compact_expr(expr: Expr, members: TrailingMembers<'_>, compactor: &impl
 
 /// Undo the `expandValues` coercion of clause 5.2.12 on a stored filter.
 ///
-/// Table 5.2.12-1 defines `expandValues` as a query-execution instruction --
+/// Table 5.2.12-1 defines `expandValues` as a query-execution instruction:
 /// the values of the named attributes "should be expanded against the supplied
-/// @context using JSON-LD type coercion **prior to executing the query**" -- so
+/// @context using JSON-LD type coercion **prior to executing the query**", so
 /// the coercion belongs to the filter a match runs, not to the filter the
 /// client wrote. A Subscription echoes the one the client wrote, and this is
 /// what puts the operands back the way they arrived: the exact inverse of
@@ -120,8 +120,8 @@ async fn revert_compare_values<S: BuildHasher + Sync>(pred: Predicate, expand_at
 /// Put one coerced scalar operand back in the client's terms.
 ///
 /// Only a string or a `URI` can have been coerced; every other scalar kind was already a
-/// value. A string the coercion could not have produced -- one that is not a
-/// usable attribute name -- is the client's own literal and is left alone.
+/// value. A string the coercion could not have produced (one that is not a
+/// usable attribute name) is the client's own literal and is left alone.
 async fn revert_scalar(scalar: Scalar, compactor: &impl TermCompactor) -> Scalar {
     match scalar {
         Scalar::Str(text) => match text.parse::<AttributeName>() {
@@ -203,9 +203,9 @@ async fn compact_pred_terms(pred: Predicate, members: TrailingMembers<'_>, compa
 }
 
 /// Compact an attribute axis: every local segment as a term, and for each
-/// linked-entity hop the Relationship as a term and its guard as entity types
-/// — the same split [`crate::filter::expansion::expand_query_path`] makes in
-/// the other direction.
+/// linked-entity hop the Relationship as a term and its guard as entity types.
+/// This is the same split [`crate::filter::expansion::expand_query_path`] makes
+/// in the other direction.
 pub async fn compact_query_path(path: QueryPath, members: TrailingMembers<'_>, compactor: &impl TermCompactor) -> QueryPath {
     match path {
         QueryPath::Local(local) => QueryPath::Local(compact_attr_path(local, members, compactor).await),
@@ -239,8 +239,8 @@ fn compact_query_path_boxed<'a, C: TermCompactor>(
     Box::pin(compact_query_path(path, members, compactor))
 }
 
-/// Compact an attribute path — main attribute, sub-attributes and, when
-/// `members` makes them terms, compound-value member names — to terms.
+/// Compact an attribute path (main attribute, sub-attributes and, when
+/// `members` makes them terms, compound-value member names) to terms.
 ///
 /// The member names become the path's written spelling as well: a freshly
 /// parsed path carries what the client wrote in both spellings of its
@@ -251,7 +251,7 @@ pub async fn compact_attr_path(mut path: AttrPath, members: TrailingMembers<'_>,
         if members.are_terms_under(&path.attr) {
             member_path.addressed = compact_all(&member_path.addressed, compactor).await;
         }
-        member_path.written.clone_from(&member_path.addressed); // clone: the written spelling is the compacted one
+        member_path.written.clone_from(&member_path.addressed); // clone: the written and addressed spellings are separate owned values
     }
     path.attr = compactor.compact_term(&path.attr).await;
     path.sub_attrs = compact_all(&path.sub_attrs, compactor).await;

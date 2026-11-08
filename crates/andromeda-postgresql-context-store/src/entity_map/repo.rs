@@ -13,7 +13,7 @@ impl EntityMapRepository {
     /// Create a new Entity Map repository backed by the given connection pool.
     #[must_use]
     pub fn new(pool: &PgPool) -> EntityMapRepository {
-        EntityMapRepository { pool: pool.clone() } // clone: `PgPool` is an atomically reference-counted pool handle.
+        EntityMapRepository { pool: pool.clone() }
     }
 
     /// Borrow the pool for the store implementation.

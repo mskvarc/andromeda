@@ -55,7 +55,6 @@ impl StreamProbes<'_> {
             let mut candidate = admitted(part, self.condition);
             candidate.expr_as(Expr::col((Ah, column)), Instant).cond_where(axis_present(Ah, self.axis()));
             if let Some(bound) = bound {
-                // clone: every part is bounded by the same instant.
                 candidate.and_where(bound.clone());
             }
             candidate.order_by_expr(axis_order(Ah, self.axis()), walk.order()).limit(offset + 1);
@@ -75,7 +74,6 @@ impl StreamProbes<'_> {
     /// instants at or after it, backwards the instants before it.
     pub(crate) fn beyond(&self, walk: Walk, from: &SimpleExpr) -> SimpleExpr {
         axis_bound(Ah, self.axis(), |instant| match walk {
-            // clone: the instant is borrowed and bounds the column by value.
             Walk::Forward => instant.gte(from.clone()),
             Walk::Backward => instant.lt(from.clone()),
         })
@@ -94,12 +92,10 @@ impl StreamProbes<'_> {
     /// single side would decompress every batch beyond `from`. `COALESCE`
     /// runs the search beyond only when the nearer one finds nothing.
     pub(crate) fn next_instant(&self, walk: Walk, from: &SimpleExpr, width: SimpleExpr) -> SelectStatement {
-        // clone: the bound one period on is read by both searches.
         let step = match walk {
             Walk::Forward => from.clone().add(width),
             Walk::Backward => from.clone().sub(width),
         };
-        // clone: the near search bounds the column by both instants.
         let near = axis_bound(Ah, self.axis(), |instant| match walk {
             Walk::Forward => instant.clone().gte(from.clone()).and(instant.lt(step.clone())),
             Walk::Backward => instant.clone().lt(from.clone()).and(instant.gte(step.clone())),
@@ -121,7 +117,6 @@ impl StreamProbes<'_> {
     /// and most recent instant and decompresses only the batches it admits.
     pub(crate) fn kept_side(&self, walk: Walk, bound: &SimpleExpr) -> SimpleExpr {
         axis_bound(Ah, self.axis(), |instant| match walk {
-            // clone: the bound is borrowed and compared with the column by value.
             Walk::Forward => instant.lt(bound.clone()),
             Walk::Backward => instant.gte(bound.clone()),
         })

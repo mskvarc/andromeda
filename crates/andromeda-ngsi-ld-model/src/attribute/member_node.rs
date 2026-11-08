@@ -9,8 +9,8 @@
 //! or one value; the NGSI-LD Null in place of the whole member, in any spelling
 //! that expands to it, is that Null. A node no clause admits is refused where
 //! it stands. This is the reading every
-//! compact document gets -- a request, a peer's answer, a notification, a
-//! compacted entity -- so they cannot disagree on what a member is.
+//! compact document gets (a request, a peer's answer, a notification, a
+//! compacted entity), so they cannot disagree on what a member is.
 //!
 //! An instance's sub-attributes are members too (clause 4.5.2), read by the
 //! reading of the instance, so the reading recurses once per level of nesting,

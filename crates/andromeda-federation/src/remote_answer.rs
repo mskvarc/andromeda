@@ -41,7 +41,7 @@ mod tests {
     use serde_json::json;
 
     fn problem(body: &serde_json::Value) -> BatchProblemDetail {
-        serde_json::from_value(body.clone()).expect("a problem detail") // clone: the fixture stays readable
+        serde_json::from_value(body.clone()).expect("a problem detail")
     }
 
     fn rendered(status: u16, problem: Option<BatchProblemDetail>) -> String {

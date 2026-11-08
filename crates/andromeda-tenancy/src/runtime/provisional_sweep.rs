@@ -38,7 +38,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         };
         let mut settlement = ProvisionalSettlement::default();
         for name in names {
-            let tenant = TenantRef::Named(name.clone()); // clone: the cache and the lock map are keyed by an owned reference
+            let tenant = TenantRef::Named(name.clone());
             if self.runtimes.contains_key(&tenant) {
                 self.establish_cached(&name, &mut settlement).await;
             } else {

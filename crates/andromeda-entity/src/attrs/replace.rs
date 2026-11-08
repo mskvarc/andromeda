@@ -59,7 +59,7 @@ impl EntityService {
         let ComputedLanding { value: events, committed_at } = self
             .commit_computed_write(target, entity, |read, now| {
                 let previous = &read.state;
-                let mut replaced = EntityState::clone(previous); // clone: shares every attribute the replacement leaves alone
+                let mut replaced = EntityState::clone(previous);
                 replaced.replace_attribute(&attribute, &replacement)?;
                 // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps
                 // its createdAt across the read-modify-write.

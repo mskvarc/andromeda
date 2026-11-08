@@ -299,7 +299,7 @@ fn row_to_alias(row: &PgRow) -> Result<Option<ContextSourcePseudonym>, ContextSt
 /// Rebuild the health members: the forwarding outcome counters and timestamps.
 ///
 /// Every member of Table 5.2.9-2 has cardinality 0..1 and reports something the
-/// broker has observed -- `status` "if the last attempt to perform a
+/// broker has observed: `status` "if the last attempt to perform a
 /// distributed operation succeeded", `timesSent` the number of operations the
 /// registration triggered, `lastSuccess` "created on first successful
 /// operation". A registration that has triggered nothing has observed nothing,
@@ -457,7 +457,7 @@ mod tests {
         let bound = |wanted: fn(&Csr) -> bool| {
             columns.iter().find(|(column, _)| wanted(column)).and_then(|(_, value)| {
                 if let SimpleExpr::Value(Value::String(text)) = value {
-                    text.clone() // clone: the columns are borrowed and the test owns what it reads back
+                    text.clone()
                 } else {
                     None
                 }

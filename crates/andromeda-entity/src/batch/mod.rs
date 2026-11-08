@@ -225,9 +225,9 @@ impl EntityService {
             let mut errors = Vec::new();
             for id in entity_ids {
                 if seen.insert(id.as_str()) {
-                    unique_ids.push(id.clone()); // clone: the unique batch owns its identifiers
+                    unique_ids.push(id.clone());
                 } else {
-                    errors.push((id.clone(), EntityError::not_found(id))); // clone: reported alongside the error
+                    errors.push((id.clone(), EntityError::not_found(id)));
                 }
             }
 

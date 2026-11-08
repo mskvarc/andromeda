@@ -92,9 +92,9 @@ impl SubscriptionCache {
     /// # Errors
     ///
     /// Returns the store's failure when the active subscriptions of `target`
-    /// cannot be listed — [`SubscriptionError::Persistence`] for an adapter
+    /// cannot be listed ([`SubscriptionError::Persistence`] for an adapter
     /// failure, [`SubscriptionError::Representation`] for a stored row that no
-    /// longer reads back as a subscription. The cache is left untouched in
+    /// longer reads back as a subscription). The cache is left untouched in
     /// either case.
     pub async fn reload(&self, target: &ContextTarget, repo: &(impl SubscriptionStore + ?Sized)) -> Result<(), SubscriptionError> {
         let subscriptions = repo.list_active(target).await?;
@@ -468,7 +468,7 @@ mod tests {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let target = live_target();
         let subscription = make_compiled_sub("keyed", 7, "Vehicle", vec!["entityCreated"]);
-        let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes
+        let id = subscription.id.clone();
         cache.insert(&target, subscription);
 
         assert_eq!(cache.get(&target, &id).map(|compiled| compiled.key), SubscriptionKey::try_from(7).ok());
@@ -476,8 +476,8 @@ mod tests {
 
     fn upserted(target: &ContextTarget, id: &Identifier) -> SubscriptionChange {
         SubscriptionChange::Upserted {
-            target: target.clone(), // clone: the change owns its target
-            id: id.clone(),         // clone: the change owns its id
+            target: target.clone(),
+            id: id.clone(),
         }
     }
 
@@ -490,7 +490,7 @@ mod tests {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let target = live_target();
         let subscription = make_compiled_sub("unreadable", 3, "Vehicle", vec!["entityCreated"]);
-        let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes
+        let id = subscription.id.clone();
         cache.insert(&target, subscription);
 
         let refreshed = cache.refresh(&target, &id, &AnsweringStore::new(StoredAnswer::Unreadable)).await;
@@ -507,7 +507,7 @@ mod tests {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let target = live_target();
         let subscription = make_compiled_sub("lost", 6, "Vehicle", vec!["entityCreated"]);
-        let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes
+        let id = subscription.id.clone();
         cache.insert(&target, subscription);
         let store = AnsweringStore::new(StoredAnswer::Unreadable);
 
@@ -578,7 +578,7 @@ mod tests {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let target = live_target();
         let stale = make_compiled_sub("raced", 10, "Vehicle", vec!["entityCreated"]);
-        let id = stale.id.clone(); // clone: the lookup outlives the value the map takes
+        let id = stale.id.clone();
         let reconcile = cache.refreshes.begin(&target, &id);
 
         cache
@@ -598,7 +598,7 @@ mod tests {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let target = live_target();
         let stale = make_compiled_sub("overtaken", 11, "Vehicle", vec!["entityCreated"]);
-        let id = stale.id.clone(); // clone: the lookup outlives the value the map takes
+        let id = stale.id.clone();
         let slow = cache.refreshes.begin(&target, &id);
 
         cache.refresh(&target, &id, &AnsweringStore::new(StoredAnswer::Absent)).await?;
@@ -615,14 +615,14 @@ mod tests {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let target = live_target();
         let stale = make_compiled_sub("deleted-meanwhile", 12, "Vehicle", vec!["entityCreated"]);
-        let id = stale.id.clone(); // clone: the lookup outlives the value the map takes
+        let id = stale.id.clone();
         let slow = cache.refreshes.begin(&target, &id);
 
         cache
             .handle_change(
                 &SubscriptionChange::Deleted {
-                    target: target.clone(), // clone: the change owns its target
-                    id: id.clone(),         // clone: the change owns its id
+                    target: target.clone(),
+                    id: id.clone(),
                 },
                 &AnsweringStore::new(StoredAnswer::Absent),
             )
@@ -646,8 +646,8 @@ mod tests {
         cache
             .handle_change(
                 &SubscriptionChange::Deleted {
-                    target: target.clone(), // clone: the change owns its target
-                    id: id.clone(),         // clone: the change owns its id
+                    target: target.clone(),
+                    id: id.clone(),
                 },
                 &store,
             )
@@ -664,7 +664,7 @@ mod tests {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality);
         let target = live_target();
         let subscription = make_compiled_sub("gone", 4, "Vehicle", vec!["entityCreated"]);
-        let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes
+        let id = subscription.id.clone();
         cache.insert(&target, subscription);
 
         cache.refresh(&target, &id, &AnsweringStore::new(StoredAnswer::Absent)).await?;

@@ -97,8 +97,6 @@ impl SnapshotService {
             return;
         };
         let preparation = Arc::clone(preparation);
-        // clone: the spawned pass owns its own handle to the delivery signal,
-        // which it raises once it has enqueued this creation's notifications.
         let delivery_signal = self.delivery_signal.clone();
         let id = id.clone(); // clone: the spawned pass outlives the request that created the Snapshot.
         tokio::spawn(async move {

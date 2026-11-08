@@ -235,7 +235,7 @@ fn names_from(names: Vec<String>) -> Result<Vec<TenantName>, TenancyError> {
 #[async_trait]
 impl TenantDatabase for PostgresTenantRegistry {
     fn default_database(&self) -> TenantDatabaseName {
-        self.default_database.clone() // clone: the port hands back an owned name
+        self.default_database.clone()
     }
 
     async fn registered_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {

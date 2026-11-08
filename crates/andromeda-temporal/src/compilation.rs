@@ -94,7 +94,7 @@ impl TemporalService {
                     .q_expr(q_expr)
                     .language_matching(language_targeting.matching())
                     .geo(geo)
-                    // clone: the compiled selection owns its scope query independently of the reusable request parameters.
+                    // clone: the compiled selection outlives the borrowed request, which may be reused.
                     .scope_q(params.scope_q.clone())
                     // Clause 5.5.14: a request narrowed to an empty identifier
                     // set considers no entity, which the selectors' identifier
@@ -216,7 +216,7 @@ fn compile_representation(params: &TemporalQueryParameters, format: TemporalForm
     let aggregation = format.is_aggregated();
     Representation::builder()
         .format(format)
-        // clone: the compiled representation owns its methods independently of the reusable request parameters.
+        // clone: the compiled representation outlives the borrowed request, which may be reused.
         .aggr_methods(params.aggr_methods.clone().filter(|_| aggregation).unwrap_or_default())
         .aggr_period_duration(params.aggr_period_duration.filter(|_| aggregation))
         .period_origin(params.aggr_period_origin.filter(|_| aggregation))

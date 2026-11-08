@@ -216,8 +216,8 @@ fn branch_lock_statement(snapshot_key: SnapshotKey) -> SelectStatement {
 }
 
 /// Drop both possible branch schemas of one Snapshot; `IF EXISTS` covers the
-/// one it does not have -- the published schema while it prepares, the staging
-/// schema once published.
+/// one it does not have (the published schema while it prepares, the staging
+/// schema once published).
 async fn drop_branch_schemas(transaction: &mut Transaction<'_, Postgres>, snapshot_key: SnapshotKey) -> Result<(), SnapshotError> {
     drop_branch_schema(transaction, snapshot_key, SnapshotBranch::Published)
         .await

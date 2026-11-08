@@ -149,7 +149,7 @@ pub(crate) async fn serve(
             host: config.management.host,
             port: config.management.port,
             transport: config.management.transport,
-            ..config.server.clone() // clone: the management listener owns its synthesized configuration
+            ..config.server.clone()
         };
         let management_serve = serve_management(management_config, max_header_section, security, management, wait_for(&shutdown_token));
         listeners.push(Box::pin(async move { management_serve.await.map_err(ListenerError::from) }));

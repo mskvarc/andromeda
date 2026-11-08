@@ -3,8 +3,8 @@
 //!
 //! Compaction works on the processor's own expanded form, so every document is
 //! first read into it. How it is read depends on where the document came from:
-//! one this broker's own expansion produced -- a stored payload, or a document
-//! just expanded -- is canonical expanded JSON-LD and is read as it stands,
+//! one this broker's own expansion produced (a stored payload, or a document
+//! just expanded) is canonical expanded JSON-LD and is read as it stands,
 //! while one assembled in memory or received from another party is taken
 //! through the expansion algorithm, which normalizes it.
 

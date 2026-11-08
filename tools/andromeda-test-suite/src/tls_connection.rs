@@ -226,7 +226,7 @@ pub(crate) fn read(path: &Path) -> Result<Vec<u8>, TlsError> {
 ///
 /// Returns [`TlsError`] when the URL names no host or port, or the host resolves to no address.
 pub(crate) async fn socket_address(config: &SuiteConfig, url: &Url) -> Result<SocketAddr, TlsError> {
-    // clone: the error names the URL the configuration keeps
+    // clone: the error must own the URL it reports
     let host = url.host().ok_or_else(|| TlsError::NoHost(url.clone()))?.to_owned();
     let port = url.port_or_known_default().ok_or_else(|| TlsError::NoHost(url.clone()))?;
     let target = config
@@ -236,7 +236,7 @@ pub(crate) async fn socket_address(config: &SuiteConfig, url: &Url) -> Result<So
     let text = target.to_string();
     let mut addresses = lookup_host((text.as_str(), port))
         .await
-        // clone: the host stays in hand for the error of an empty answer
+        // clone: the error owns a copy, as the host is also reported when no address resolves
         .map_err(|error| TlsError::Resolve(target.clone(), error))?;
     addresses.next().ok_or(TlsError::NoAddress(target))
 }
@@ -248,7 +248,7 @@ async fn resolved(config: &SuiteConfig) -> Result<Vec<(String, Vec<SocketAddr>)>
         let host = target.host().to_string();
         let addresses = lookup_host((host.as_str(), 0))
             .await
-            // clone: the error names the host the configuration keeps
+            // clone: the error must own the host it reports
             .map_err(|error| TlsError::Resolve(target.host().clone(), error))?;
         resolved.push((name.host().to_string(), addresses.collect()));
     }

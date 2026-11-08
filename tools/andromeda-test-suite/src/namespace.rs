@@ -94,7 +94,7 @@ impl Namespace {
     /// Returns [`NamespaceError::Uri`] when `kind` or `suffix` breaks the URN.
     pub fn urn(&self, kind: &str, suffix: impl Display) -> Result<EntityId, NamespaceError> {
         let text = format!("urn:ngsi-ld:{kind}:{}-{suffix}", self.token);
-        text.parse().map_err(|error| NamespaceError::Uri(self.clone(), error)) // clone: the error names the namespace the test keeps
+        text.parse().map_err(|error| NamespaceError::Uri(self.clone(), error)) // clone: the error must own the namespace it reports
     }
 
     /// The URI `urn:ngsi-ld:<kind>:<token>-<suffix>` of the test where a plain URI is taken: a subscription id, or the
@@ -105,7 +105,7 @@ impl Namespace {
     /// Returns [`NamespaceError::Uri`] when `kind` or `suffix` breaks the URI.
     pub fn uri(&self, kind: &str, suffix: impl Display) -> Result<Uri, NamespaceError> {
         let text = format!("urn:ngsi-ld:{kind}:{}-{suffix}", self.token);
-        text.parse().map_err(|error| NamespaceError::Uri(self.clone(), error)) // clone: the error names the namespace the test keeps
+        text.parse().map_err(|error| NamespaceError::Uri(self.clone(), error)) // clone: the error must own the namespace it reports
     }
 
     /// The dataset id `urn:ngsi-ld:<kind>:<token>-<suffix>` of an attribute instance of the test (clause 4.5.5).
@@ -115,7 +115,7 @@ impl Namespace {
     /// Returns [`NamespaceError::Uri`] when `kind` or `suffix` breaks the URI.
     pub fn dataset_id(&self, kind: &str, suffix: impl Display) -> Result<DatasetId, NamespaceError> {
         let text = format!("urn:ngsi-ld:{kind}:{}-{suffix}", self.token);
-        text.parse().map_err(|error| NamespaceError::Uri(self.clone(), error)) // clone: the error names the namespace the test keeps
+        text.parse().map_err(|error| NamespaceError::Uri(self.clone(), error)) // clone: the error must own the namespace it reports
     }
 
     /// The subscription id `urn:ngsi-ld:Subscription:<token>-<suffix>`.
@@ -125,7 +125,7 @@ impl Namespace {
     /// Returns [`NamespaceError::Uri`] when `suffix` breaks the URN.
     pub fn subscription_id(&self, suffix: impl Display) -> Result<SubscriptionId, NamespaceError> {
         let text = self.urn_text("Subscription", suffix);
-        SubscriptionId::try_from(text.as_str()).map_err(|error| NamespaceError::Uri(self.clone(), error)) // clone: the error names the namespace the test keeps
+        SubscriptionId::try_from(text.as_str()).map_err(|error| NamespaceError::Uri(self.clone(), error)) // clone: the error must own the namespace it reports
     }
 
     /// The registration id `urn:ngsi-ld:ContextSourceRegistration:<token>-<suffix>`.
@@ -135,7 +135,7 @@ impl Namespace {
     /// Returns [`NamespaceError::Uri`] when `suffix` breaks the URN.
     pub fn registration_id(&self, suffix: impl Display) -> Result<RegistrationId, NamespaceError> {
         let text = self.urn_text("ContextSourceRegistration", suffix);
-        RegistrationId::try_from(text.as_str()).map_err(|error| NamespaceError::Uri(self.clone(), error)) // clone: the error names the namespace the test keeps
+        RegistrationId::try_from(text.as_str()).map_err(|error| NamespaceError::Uri(self.clone(), error)) // clone: the error must own the namespace it reports
     }
 
     /// The text `urn:ngsi-ld:<kind>:<token>-<suffix>`, for a resource kind whose identifier type the client takes as
@@ -162,7 +162,7 @@ impl Namespace {
     /// Returns [`NamespaceError::Pattern`] when `kind` or `tail` breaks the pattern.
     pub fn id_pattern_ending(&self, kind: &str, tail: &str) -> Result<IdPattern, NamespaceError> {
         let text = format!("urn:ngsi-ld:{kind}:{}-{tail}", self.token);
-        text.parse().map_err(|error| NamespaceError::Pattern(self.clone(), error)) // clone: the error names the namespace the test keeps
+        text.parse().map_err(|error| NamespaceError::Pattern(self.clone(), error)) // clone: the error must own the namespace it reports
     }
 
     /// The entity type `<base>_<token>`, which expands under the default vocabulary to an IRI no other test uses.
@@ -172,7 +172,7 @@ impl Namespace {
     /// Returns [`NamespaceError::Name`] when `base` is not the start of a name.
     pub fn entity_type(&self, base: &str) -> Result<EntityTypeName, NamespaceError> {
         let text = self.suffixed(base);
-        text.parse().map_err(|error| NamespaceError::Name(self.clone(), error)) // clone: the error names the namespace the test keeps
+        text.parse().map_err(|error| NamespaceError::Name(self.clone(), error)) // clone: the error must own the namespace it reports
     }
 
     /// The attribute name `<base>_<token>`, for a selector that selects on the attribute alone.
@@ -182,7 +182,7 @@ impl Namespace {
     /// Returns [`NamespaceError::Name`] when `base` is not the start of a name.
     pub fn attribute(&self, base: &str) -> Result<AttributeName, NamespaceError> {
         let text = self.suffixed(base);
-        text.parse().map_err(|error| NamespaceError::Name(self.clone(), error)) // clone: the error names the namespace the test keeps
+        text.parse().map_err(|error| NamespaceError::Name(self.clone(), error)) // clone: the error must own the namespace it reports
     }
 
     /// The text `<base>_<token>`.
@@ -217,7 +217,7 @@ impl Namespace {
     ///
     /// Returns [`NamespaceError::Tenant`] when the token is not a tenant name, which it always is.
     pub fn tenant(&self) -> Result<Tenant, NamespaceError> {
-        self.token.parse().map_err(|error| NamespaceError::Tenant(self.clone(), error)) // clone: the error names the namespace the test keeps
+        self.token.parse().map_err(|error| NamespaceError::Tenant(self.clone(), error)) // clone: the error must own the namespace it reports
     }
 
     /// The tenant numbered `index` among the namespace's tenants, for a test that needs several of its own.
@@ -228,7 +228,7 @@ impl Namespace {
     pub fn numbered_tenant(&self, index: usize) -> Result<Tenant, NamespaceError> {
         format!("{}-{index}", self.token)
             .parse()
-            .map_err(|error| NamespaceError::Tenant(self.clone(), error)) // clone: the error names the namespace the test keeps
+            .map_err(|error| NamespaceError::Tenant(self.clone(), error)) // clone: the error must own the namespace it reports
     }
 }
 

@@ -26,7 +26,7 @@ pub(crate) async fn run(supervision: DriverSupervision, operation: Arc<ResidentO
         health.write().await.running(SystemTime::now());
         emit(&lifecycle, TaskLifecycleEvent::new(name.clone(), LifecycleEventKind::Started)); // clone: restart attempts retain one stable task identity.
         let readiness = Arc::new(ResidentReadiness::default());
-        let execution = ResidentExecution::new(cancellation.clone(), Arc::clone(&readiness)); // clone: the resident operation and driver coordinate one readiness transition.
+        let execution = ResidentExecution::new(cancellation.clone(), Arc::clone(&readiness));
         let attempt = operation(execution);
         tokio::pin!(attempt);
         let (result, running_recorded) = tokio::select! {

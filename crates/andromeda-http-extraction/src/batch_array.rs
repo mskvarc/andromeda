@@ -1,8 +1,8 @@
 //! Reading the array a batch request carries, item by item.
 //!
 //! Clauses 5.6.7 to 5.6.10 and 5.6.20 take a non-empty JSON array. Its items
-//! are read as the caller asks -- the slice of text an entity is, to be
-//! decoded straight from it, or the small JSON value an Entity ID is -- so a
+//! are read as the caller asks, either as the slice of text an entity is (to be
+//! decoded straight from it) or as the small JSON value an Entity ID is, so a
 //! batch of entities carrying large geometries is never built into one JSON
 //! tree first.
 

@@ -1,7 +1,7 @@
 //! The clause 4.3.6.8 version fallback, applied by the typed walk as it
 //! writes Entity data: what each row of Tables 4.3.6.8-1, -2 and -3 leaves of
 //! an entity, in every representation, including the members a rendered
-//! document could not be adapted on -- sub-attributes, nested Linked
+//! document could not be adapted on: sub-attributes, nested Linked
 //! Entities, `showChanges` members, notified deletions and the `GeoJSON`
 //! geometry.
 
@@ -59,7 +59,7 @@ fn body(entity: &Entity, format: ResponseFormat, version: SpecVersion) -> Value 
 
 /// One attribute of `document`'s body in `format` for `version`.
 fn attribute(document: Value, name: &str, format: ResponseFormat, version: SpecVersion) -> Value {
-    body(&entity(document), format, version)[name].clone() // clone: the assertion reads one member of a body it does not keep
+    body(&entity(document), format, version)[name].clone()
 }
 
 /// An entity carrying `members` beside its `id` and `type`.
@@ -75,11 +75,11 @@ fn carrying(members: Value) -> Value {
 fn a_language_property_is_written_as_a_property_below_1_4() {
     let document = carrying(json!({"name": {"type": "LanguageProperty", "languageMap": {"en": "a", "de": "b"}}}));
     assert_eq!(
-        attribute(document.clone(), "name", ResponseFormat::Normalized, SpecVersion::V1_3), // clone: read in three representations
+        attribute(document.clone(), "name", ResponseFormat::Normalized, SpecVersion::V1_3),
         json!({"type": "Property", "value": {"en": "a", "de": "b"}})
     );
     assert_eq!(
-        attribute(document.clone(), "name", ResponseFormat::Concise, SpecVersion::V1_3), // clone: read in three representations
+        attribute(document.clone(), "name", ResponseFormat::Concise, SpecVersion::V1_3),
         json!({"en": "a", "de": "b"})
     );
     assert_eq!(
@@ -95,7 +95,7 @@ fn vocab_json_and_list_properties_are_written_as_properties_below_1_8() {
         "cfg": {"type": "JsonProperty", "json": {"a": 1}},
         "l": {"type": "ListProperty", "valueList": [1, 2]}
     }));
-    let normalized = body(&entity(document.clone()), ResponseFormat::Normalized, SpecVersion::V1_4); // clone: read in two representations
+    let normalized = body(&entity(document.clone()), ResponseFormat::Normalized, SpecVersion::V1_4);
     assert_eq!(normalized["cat"], json!({"type": "Property", "value": "Shop"}));
     assert_eq!(normalized["cfg"], json!({"type": "Property", "value": {"a": 1}}));
     assert_eq!(normalized["l"], json!({"type": "Property", "value": [1, 2]}));
@@ -137,11 +137,11 @@ fn a_list_relationship_is_written_as_a_relationship_of_every_target_below_1_8() 
         "rel": {"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:A:1"}, {"object": "urn:ngsi-ld:B:1"}], "objectType": "A"}
     }));
     assert_eq!(
-        attribute(document.clone(), "rel", ResponseFormat::Normalized, SpecVersion::V1_4), // clone: read in three representations
+        attribute(document.clone(), "rel", ResponseFormat::Normalized, SpecVersion::V1_4),
         json!({"type": "Relationship", "object": ["urn:ngsi-ld:A:1", "urn:ngsi-ld:B:1"]})
     );
     assert_eq!(
-        attribute(document.clone(), "rel", ResponseFormat::Concise, SpecVersion::V1_4), // clone: read in three representations
+        attribute(document.clone(), "rel", ResponseFormat::Concise, SpecVersion::V1_4),
         json!({"object": ["urn:ngsi-ld:A:1", "urn:ngsi-ld:B:1"]})
     );
     assert_eq!(
@@ -164,7 +164,7 @@ fn property_members_are_removed_by_version() {
         }
     }));
     assert_eq!(
-        attribute(document.clone(), "speed", ResponseFormat::Normalized, SpecVersion::V1_0), // clone: read at two versions
+        attribute(document.clone(), "speed", ResponseFormat::Normalized, SpecVersion::V1_0),
         json!({"type": "Property", "value": 5})
     );
     assert_eq!(
@@ -192,7 +192,7 @@ fn relationship_members_are_removed_by_version() {
         }
     }));
     assert_eq!(
-        attribute(document.clone(), "owner", ResponseFormat::Normalized, SpecVersion::V1_0), // clone: read at two versions
+        attribute(document.clone(), "owner", ResponseFormat::Normalized, SpecVersion::V1_0),
         json!({"type": "Relationship", "object": "urn:ngsi-ld:Person:1"})
     );
     assert_eq!(
@@ -216,13 +216,10 @@ fn multiple_instances_collapse_to_the_default_one_below_1_3() {
         ]
     }));
     assert_eq!(
-        attribute(document.clone(), "speed", ResponseFormat::Normalized, SpecVersion::V1_0), // clone: read in three representations
+        attribute(document.clone(), "speed", ResponseFormat::Normalized, SpecVersion::V1_0),
         json!({"type": "Property", "value": 2})
     );
-    assert_eq!(
-        attribute(document.clone(), "speed", ResponseFormat::Concise, SpecVersion::V1_0), // clone: read in three representations
-        json!(2)
-    );
+    assert_eq!(attribute(document.clone(), "speed", ResponseFormat::Concise, SpecVersion::V1_0), json!(2));
     assert_eq!(attribute(document, "speed", ResponseFormat::KeyValues, SpecVersion::V1_0), json!(2));
 }
 
@@ -238,7 +235,7 @@ fn without_a_default_instance_the_first_held_instance_is_kept() {
         ]
     }));
     assert_eq!(
-        attribute(document.clone(), "speed", ResponseFormat::Normalized, SpecVersion::V1_0), // clone: read in two representations
+        attribute(document.clone(), "speed", ResponseFormat::Normalized, SpecVersion::V1_0),
         json!({"type": "Property", "value": 26})
     );
     assert_eq!(attribute(document, "speed", ResponseFormat::KeyValues, SpecVersion::V1_0), json!(26));
@@ -255,7 +252,7 @@ fn of_two_default_instances_every_representation_keeps_the_first() {
         ]
     }));
     assert_eq!(
-        attribute(document.clone(), "speed", ResponseFormat::Normalized, SpecVersion::V1_0), // clone: read in two representations
+        attribute(document.clone(), "speed", ResponseFormat::Normalized, SpecVersion::V1_0),
         json!({"type": "Property", "value": 1})
     );
     assert_eq!(attribute(document, "speed", ResponseFormat::KeyValues, SpecVersion::V1_0), json!(1));
@@ -270,7 +267,7 @@ fn instances_are_kept_from_1_3() {
         ]
     }));
     assert_eq!(
-        attribute(document.clone(), "speed", ResponseFormat::Normalized, SpecVersion::V1_3), // clone: read in two representations
+        attribute(document.clone(), "speed", ResponseFormat::Normalized, SpecVersion::V1_3),
         json!([
             {"type": "Property", "value": 26, "datasetId": "urn:ngsi-ld:Dataset:z"},
             {"type": "Property", "value": 1, "datasetId": "urn:ngsi-ld:Dataset:a"}

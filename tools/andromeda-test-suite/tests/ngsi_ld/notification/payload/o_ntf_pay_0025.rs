@@ -48,28 +48,24 @@ async fn link_chain(broker: &BrokerClient, namespace: &Namespace, sink: &Notific
         written: format!("chain-{index}-once"),
     };
     let building_type = namespace.entity_type("Building")?;
-    // clone: the chain keeps every id for the expectations on its notification
     let country = Entity::builder()
         .id(chain.country.clone())
         .entity_type(namespace.entity_type("Country")?)
         .property("name", "Portugal")
         .build()?;
     broker.entities().create(&country).send().await?.done()?;
-    // clone: the chain keeps every id for the expectations on its notification
     let city = Entity::builder()
         .id(chain.city.clone())
         .entity_type(namespace.entity_type("City")?)
         .relationship("locatedIn", chain.country.clone())
         .build()?;
     broker.entities().create(&city).send().await?.done()?;
-    // clone: the chain keeps every id for the expectations on its notification
     let building = Entity::builder()
         .id(chain.building.clone())
         .entity_type(building_type.clone())
         .relationship("locatedAt", chain.city.clone())
         .build()?;
     broker.entities().create(&building).send().await?.done()?;
-    // clone: the chain keeps every id for the expectations on its notification
     let subscription = Subscription::builder()
         .id(chain.subscription.clone())
         .entities([EntitySelector::new(SelectorTypeBuilder::from(&building_type).build()?).with_ids(chain.building.clone())])

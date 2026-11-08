@@ -96,7 +96,7 @@ pub fn client_at(base_url: Url) -> Result<BrokerClient, BrokerError> {
 fn api_root(role: BrokerRole) -> Result<Url, BrokerError> {
     let config = SuiteConfig::get().map_err(|error| BrokerError::Config(error.clone()))?;
     let broker = config.broker(role)?;
-    broker.join("ngsi-ld/v1/").map_err(|error| BrokerError::ApiPath(broker.clone(), error)) // clone: the error names the broker the configuration keeps
+    broker.join("ngsi-ld/v1/").map_err(|error| BrokerError::ApiPath(broker.clone(), error)) // clone: the error must own the URL it reports
 }
 
 /// The HTTP client every test client sends through.
@@ -112,7 +112,7 @@ fn http_client() -> Result<reqwest::Client, BrokerError> {
 /// The client of the API root `base_url` sending through `transport`.
 fn built(base_url: Url, transport: SuiteTransport) -> Result<BrokerClient, BrokerError> {
     Client::builder()
-        .base_url(base_url.clone()) // clone: the error names the API root the client was given
+        .base_url(base_url.clone()) // clone: the builder takes a copy, and the error still reports the API root
         .transport(transport)
         .build()
         .map_err(|error| BrokerError::Endpoint(base_url, Box::new(error)))

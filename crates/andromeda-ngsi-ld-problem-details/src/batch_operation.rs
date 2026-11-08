@@ -205,7 +205,7 @@ impl<'de> Visitor<'de> for BatchProblemDetailVisitor {
                 "status" => status = Some(map.next_value()?),
                 "detail" => detail = Some(map.next_value()?),
                 // Every other member is an RFC 7807 clause 3 extension, which a
-                // consumer must ignore rather than reject — so an extension a
+                // consumer must ignore rather than reject, so an extension a
                 // peer broker adds cannot poison the batch result.
                 _other => {
                     let _ = map.next_value::<de::IgnoredAny>()?;

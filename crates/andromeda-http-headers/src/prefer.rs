@@ -25,10 +25,10 @@
 //! ```
 //!
 //! # NGSI-LD preference tokens
-//! * `body=json` -- @context in Link header, omitted from `GeoJSON` body
-//! * `body=ld+json` -- @context included in `GeoJSON` response body
-//! * `ngsi-ld=1.9` -- request version conformance (clause 4.3.6.8)
-//! * `respond-async` / `respond-sync` -- asynchronous vs synchronous processing
+//! * `body=json`: @context in Link header, omitted from `GeoJSON` body
+//! * `body=ld+json`: @context included in `GeoJSON` response body
+//! * `ngsi-ld=1.9`: request version conformance (clause 4.3.6.8)
+//! * `respond-async` / `respond-sync`: asynchronous vs synchronous processing
 
 use crate::{
     geo_json_body::GeoJsonBodyPreference,

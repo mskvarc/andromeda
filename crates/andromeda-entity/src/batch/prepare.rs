@@ -257,9 +257,9 @@ impl EntityService {
                 let walk_task = |entries: Vec<PendingEntity<M>>| -> Box<dyn BlockingTask> {
                     Box::new(WalkTask {
                         entries,
-                        context: Arc::clone(context), // clone: every task shares the processed context.
+                        context: Arc::clone(context),
                         screening,
-                        outputs: Arc::clone(&outputs), // clone: every task writes to the same result collection.
+                        outputs: Arc::clone(&outputs),
                     })
                 };
                 for entry in entries {

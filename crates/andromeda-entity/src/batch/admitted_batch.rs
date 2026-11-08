@@ -227,7 +227,7 @@ mod tests {
     }
 
     fn entity(written: &Value) -> Entity {
-        serde_json::from_value(written.clone()).expect("the fixture is a valid entity") // clone: the fixture keeps its written form
+        serde_json::from_value(written.clone()).expect("the fixture is a valid entity")
     }
 
     fn names(raw: &[&str]) -> Vec<AttributeName> {
@@ -347,7 +347,7 @@ mod tests {
     fn submitted_under(id: &str, context: &AdmittedBatchContext) -> SubmittedEntity<AttributeValue> {
         SubmittedEntity {
             entity: vehicle(id),
-            context: context.clone(), // clone: each entity holds the shared handle
+            context: context.clone(),
         }
     }
 

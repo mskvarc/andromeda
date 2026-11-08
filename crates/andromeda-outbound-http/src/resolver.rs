@@ -35,7 +35,6 @@ impl PrivateIpResolver {
 
 impl Resolve for PrivateIpResolver {
     fn resolve(&self, name: Name) -> Resolving {
-        // clone: the future outlives the borrow of the resolver
         Box::pin(vetted_addrs(name.as_str().to_owned(), self.policy.clone()))
     }
 }

@@ -32,7 +32,7 @@ pub(crate) fn as_value(literal: &JsonLiteral) -> Value {
 /// The processor's expansion of `document` under `spec`, the document's own
 /// `@context` processed before the one the spec names, as JSON.
 pub(crate) async fn expanded_document(engine: &JsonLdEngine, document: &Value, spec: &ContextSpec) -> Result<Value, JsonLdError> {
-    let mut document = document.clone(); // clone: the fixture stays the caller's
+    let mut document = document.clone();
     let own = document.as_object_mut().and_then(|members| members.remove("@context"));
     let spec = match (own, spec.core_policy()) {
         (Some(own), CoreContextPolicy::Append) => {
@@ -42,7 +42,7 @@ pub(crate) async fn expanded_document(engine: &JsonLdEngine, document: &Value, s
             combined.append(&mut entries);
             ContextSpec::from_body(JsonLiteral::admit(&written_entries(&combined, EntriesShape::Array)).expect("an admissible context"))
         }
-        (Some(_) | None, CoreContextPolicy::Only) | (None, CoreContextPolicy::Append) => spec.clone(), // clone: the caller keeps the spec
+        (Some(_) | None, CoreContextPolicy::Only) | (None, CoreContextPolicy::Append) => spec.clone(),
     };
     let context = engine.expansion_context(&spec).await?;
     let read = context.expand_text(engine, document.to_string().as_bytes()).await?;

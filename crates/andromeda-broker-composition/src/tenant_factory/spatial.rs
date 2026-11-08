@@ -43,7 +43,7 @@ pub(super) async fn initialize_spatial(
         SpatialConsistency::Watermark => {
             let watermark = Arc::new(SpatialWatermark::new(
                 Arc::new(SpatialEntityIndex::new()),
-                Arc::clone(source), // clone: the watermark reads the store the tenant's other ports share
+                Arc::clone(source),
                 location_placement(tenant)?,
             ));
             if let Err(error) = watermark.rebuild().await {
@@ -68,18 +68,13 @@ pub(super) fn indexed_commits(
     tenant: &TenantRef,
 ) -> Result<Arc<dyn ContextCommitter>, TenantAssemblyError> {
     Ok(match spatial {
-        SpatialAcceleration::CommitSynchronous(index) => Arc::new(SpatialIndexingCommitter::new(
-            writes,
-            Arc::clone(index), // clone: the committer and the query path share one index
-            location_placement(tenant)?,
-        )),
+        SpatialAcceleration::CommitSynchronous(index) => Arc::new(SpatialIndexingCommitter::new(writes, Arc::clone(index), location_placement(tenant)?)),
         SpatialAcceleration::StoreVerified | SpatialAcceleration::Watermark(_) => writes,
     })
 }
 
 /// Where an entity's location sits in `tenant`'s index.
 pub(super) fn location_placement(tenant: &TenantRef) -> Result<LocationPlacement, TenantAssemblyError> {
-    // clone: the placement owns its tenant
     LocationPlacement::new(tenant.clone()).map_err(|error| AssemblyInvariant::LocationPlacement(Box::new(error)).into())
 }
 
@@ -163,7 +158,6 @@ mod tests {
         assert!(matches!(spatial, SpatialAcceleration::Watermark(_)), "the default is the watermark mode");
 
         let writes: Arc<dyn ContextCommitter> = Arc::new(UnusedCommitter);
-        // clone: the composition is handed one handle and the test keeps another to compare
         let composed = indexed_commits(Arc::clone(&writes), &spatial, &TenantRef::UnnamedDefault).expect("composes");
         assert!(Arc::ptr_eq(&composed, &writes), "a watermarked index needs no commit-path maintenance");
     }

@@ -67,7 +67,7 @@ pub struct TemporalHistoryObservation {
 /// concerned.
 ///
 /// Backend-neutral: a store maps whatever it keeps in its value columns onto
-/// these. One member per column of those tables and no fewer — a store that
+/// these. One member per column of those tables and no fewer: a store that
 /// folds two columns of a table into one storage representation still has to
 /// tell them apart here, because the tables give them different aggregation
 /// methods. A JSON array is not a JSON object (Table 4.5.19.1-1 defines
@@ -104,8 +104,8 @@ pub enum RecordedValueKind {
 /// Aggregation eligibility needs both, because the three tables of clause
 /// 4.5.19.1 are not indexed the same way. Tables 4.5.19.1-1 and 4.5.19.1-2 give
 /// one column per value datatype and govern the Property families; Table
-/// 4.5.19.1-3 has one column and no datatype at all, and governs Relationships
-/// — and, through clause 4.5.22.1's "specialized type of Relationship",
+/// 4.5.19.1-3 has one column and no datatype at all, and governs Relationships,
+/// and, through clause 4.5.22.1's "specialized type of Relationship",
 /// `ListRelationship` with them. A shape read without its family answers out of
 /// the wrong table: a `ListRelationship` holds its `objectList` as an array,
 /// whose column in Table 4.5.19.1-1 defines `avg`, `min`, `max` and `sum` over
@@ -190,7 +190,7 @@ pub trait TemporalHistoryReader: Send + Sync {
     /// The temporal catalogue is the authority for them, not current state:
     /// clause 5.6.6 deletes the entity and leaves its Temporal Evolution
     /// standing, while clause 4.5.1 keeps `type` mandatory in every
-    /// representation — so an answer taken from `entities` would drop the type
+    /// representation, so an answer taken from `entities` would drop the type
     /// of exactly the entities whose history outlived them. An entity the view
     /// does not contain is absent from the result.
     #[must_use = "temporal entity type reads must be awaited"]

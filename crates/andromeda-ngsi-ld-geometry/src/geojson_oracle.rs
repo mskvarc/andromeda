@@ -31,7 +31,7 @@ pub(crate) enum OracleRefusal {
 
 /// Read `value` through the `geojson` crate.
 pub(crate) fn through_geojson(value: &Value) -> Result<GeometryForm, OracleRefusal> {
-    let geometry: GeoJsonGeometry = serde_json::from_value(value.clone())?; // clone: the geojson crate consumes its input
+    let geometry: GeoJsonGeometry = serde_json::from_value(value.clone())?; // clone: from_value takes its input by value, and the caller keeps its copy
     Ok(decode(&geometry.value)?.with_uniform_arity()?)
 }
 

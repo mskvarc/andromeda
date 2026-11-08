@@ -230,7 +230,7 @@ mod tests {
     }
 
     /// Clause 5.6.2.5: the output data is "the list of Attributes (Properties
-    /// or Relationships) actually updated" -- the requested set minus whatever
+    /// or Relationships) actually updated": the requested set minus whatever
     /// could not be written, never an empty list.
     #[test]
     fn attributes_that_were_written_are_reported_as_updated() {

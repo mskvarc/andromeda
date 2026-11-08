@@ -78,7 +78,7 @@ mod tests {
     #[test]
     fn extras_are_carried_verbatim() {
         let extras = json!({"region": "eu-west", "nested": {"raw": [1, 2, 3]}});
-        let rendered = serde_json::to_value(identity(Some(extras.clone()))).expect("serialises"); // clone: compared below
+        let rendered = serde_json::to_value(identity(Some(extras.clone()))).expect("serialises");
         pretty_assertions::assert_eq!(rendered["contextSourceExtras"], extras);
     }
 }

@@ -96,7 +96,7 @@ impl LanguageRange {
     /// RFC 4647 section 3.3 basic filtering prefix match.
     ///
     /// True when this range is a case-insensitive prefix of `available`
-    /// followed by a `-` subtag separator. Exact matches are excluded -- use
+    /// followed by a `-` subtag separator. Exact matches are excluded: use
     /// [`exact_matches`](Self::exact_matches) for those.
     #[must_use]
     pub fn prefix_matches(&self, available: &LangTag) -> bool {

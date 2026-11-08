@@ -87,8 +87,8 @@ fn next_mask(branch: &HistoryBranch, attribute_key: SimpleExpr, after: Option<Dy
         step.and_where(Expr::col((MaskedStream, TemporalAttributeStreams::ShapeMask)).gt(Expr::col((after, TemporalAttributeStreams::ShapeMask))));
     }
     if let Some(excluded) = excluded {
-        // clone: the seed and every step of the walk each leave the same
-        // streams out.
+        // clone: the seed and every step leave out the same streams, so each takes
+        // its own copy of the borrowed subquery.
         step.and_where(Expr::col((MaskedStream, TemporalAttributeStreams::StreamKey)).not_in_subquery(excluded.clone()));
     }
     step.order_by((MaskedStream, TemporalAttributeStreams::ShapeMask), Order::Asc).limit(1).take()

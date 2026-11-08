@@ -381,7 +381,6 @@ fn gained_memberships(schema: Option<&DynIden>, written: &DynIden) -> Result<Ins
         side: MembershipSide::Evolution,
         schema,
     };
-    // clone: every column names the same relation.
     let column = |name: DynIden| Expr::col((DynIden::clone(written), name));
     let member = Member {
         key: column(Entities::EntityKey.into_iden()),
@@ -390,7 +389,6 @@ fn gained_memberships(schema: Option<&DynIden>, written: &DynIden) -> Result<Ins
     let gained = column(Created.into_iden()).or(carried_among(column(OldTypes.into_iden())).not());
     membership_insert(
         memberships,
-        // clone: the rows and their columns name the same relation.
         Query::select().from(DynIden::clone(written)).take(),
         column(NewTypes.into_iden()),
         member,

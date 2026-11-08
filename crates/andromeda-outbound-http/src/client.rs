@@ -48,7 +48,7 @@ impl OutboundHttpPolicy {
     /// redirect policy, a domain by the connect-time resolver. The pre-send
     /// guard still has to vet the first URL.
     pub fn redirecting_client_builder(&self, max_redirects: usize) -> ClientBuilder {
-        self.builder_with(vetted_redirects(self.addresses.clone(), max_redirects)) // clone: shares the lists with the redirect policy
+        self.builder_with(vetted_redirects(self.addresses.clone(), max_redirects))
     }
 
     /// The builder both client kinds share, with `redirect` deciding what a
@@ -59,13 +59,13 @@ impl OutboundHttpPolicy {
             .timeout(self.timeout)
             .pool_idle_timeout(self.pool_idle_timeout)
             .redirect(redirect)
-            .dns_resolver(PrivateIpResolver::new(self.addresses.clone())) // clone: shares the lists with the resolver
+            .dns_resolver(PrivateIpResolver::new(self.addresses.clone()))
     }
 
     /// The pre-send guard matching this policy.
     #[must_use]
     pub fn guard(&self) -> PrivateIpGuard {
-        PrivateIpGuard::new(self.addresses.clone()) // clone: shares the lists with the guard
+        PrivateIpGuard::new(self.addresses.clone())
     }
 }
 

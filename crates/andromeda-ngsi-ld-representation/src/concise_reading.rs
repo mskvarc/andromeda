@@ -18,8 +18,8 @@
 //!   `GeoProperty`'s value, and any other `type` is refused;
 //! - without a `type`, an instance of the family whose value member it carries
 //!   (clauses 4.5.3.3, 4.5.18.3, 4.5.20.3, 4.5.21.3, 4.5.22.3, 4.5.24.3), or,
-//!   carrying `value` alone of them, a Property -- a `GeoProperty` when that
-//!   value is a geometry -- since clause 4.5.2.3 infers `Property` "by the
+//!   carrying `value` alone of them, a Property (a `GeoProperty` when that
+//!   value is a geometry), since clause 4.5.2.3 infers `Property` "by the
 //!   presence of the "value" attribute";
 //! - and otherwise the value of an implicit Property.
 //!

@@ -153,7 +153,7 @@ mod tests {
     /// Where a refused position sits and what is wrong with it.
     fn refused_position(error: &GeometryError) -> (CoordinatePath, PositionError) {
         match error {
-            GeometryError::Position { at, source } => (at.clone(), *source), // clone: the assertion owns the path it compares
+            GeometryError::Position { at, source } => (at.clone(), *source),
             other @ (GeometryError::LineString { .. }
             | GeometryError::LinearRing { .. }
             | GeometryError::MixedArity { .. }

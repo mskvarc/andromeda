@@ -1,10 +1,10 @@
 //! Why the term walk hands a document to the JSON-LD processor.
 //!
 //! The walk decides each key and value of a compacted document one term at a
-//! time. A context can make compaction depend on more than one term -- a scoped
+//! time. A context can make compaction depend on more than one term (a scoped
 //! `@context` changes the active context below a property or a type, a `@nest`
 //! moves a property into another object, a map container keys the values by a
-//! part of them -- and the walk does not reproduce those. Meeting one is not a
+//! part of them), and the walk does not reproduce those. Meeting one is not a
 //! failure: the document is compacted by the processor instead, which is the
 //! authority on every case (JSON-LD 1.1 API section 6.1).
 

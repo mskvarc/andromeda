@@ -47,8 +47,7 @@ impl EntityState {
                 // nothing to it.
                 (Some(_), MergePolicy::SupplementMissing) => {}
                 (None, MergePolicy::Instances | MergePolicy::SupplementMissing) => {
-                    // clone: the shared instances are moved into the merged map
-                    // by pointer, the received version is dropped after
+                    // The shared instances move into the merged map by pointer, and the received version is dropped after.
                     self.attributes_mut().insert_shared(name.clone(), Arc::clone(instances));
                 }
             }

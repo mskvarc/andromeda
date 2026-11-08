@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn identities_minted_in_one_millisecond_keep_mint_order() {
         let minted: Vec<WriteId> = (0..1024).map(|_| WriteId::mint()).collect();
-        let mut sorted = minted.clone(); // clone: the comparison needs both the mint order and the sorted order.
+        let mut sorted = minted.clone();
         sorted.sort_unstable();
         assert_eq!(minted, sorted);
     }

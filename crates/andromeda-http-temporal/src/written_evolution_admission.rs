@@ -11,7 +11,7 @@
 //! payload a client wrote. The decode of the request holds two rules, so a
 //! decoded payload satisfies them: the attribute types of clause 5.2.4, and the
 //! rule that `entityIdSealed` and `entityTypeSealed` belong to the `ngsildproof`
-//! Property of clause 4.5.2.2 alone -- which clauses 4.5.3.2 and 4.5.3.3
+//! Property of clause 4.5.2.2 alone, which clauses 4.5.3.2 and 4.5.3.3
 //! sharpen on a Relationship, in every representation, into "'entityIdSealed'
 //! and 'entityTypeSealed' shall never be present". The seals are declared only
 //! inside `ngsildproof`'s own scoped context in the core `@context`, so after
@@ -31,8 +31,8 @@
 //! 4.6.4 forbids losing, is refused here for the same reason and at the same
 //! point, before the forwarding phase, because a payload this broker refuses
 //! must reach no Context Source. Clause 5.5.7's two prohibitions on the user
-//! `@context` -- no JSON-LD Scoped Context, and no part of it below the
-//! document's top level -- are the request's: the user `@context` admission
+//! `@context` (no JSON-LD Scoped Context, and no part of it below the
+//! document's top level) are the request's: the user `@context` admission
 //! (`crate::request_context_admission`) refuses both before this runs.
 //!
 //! The NGSI-LD Null is deliberately not screened here. Clause 5.5.4's second
@@ -40,13 +40,13 @@
 //! Properties, Relationships or Language Properties in notifications and the
 //! temporal evolution", and clause 4.18 says the same of a deleted scope. A
 //! Temporal Evolution is exactly where clause 4.5.0's deletions are recorded
-//! and served back -- clause 5.6.6 leaves the evolution standing when the
+//! and served back (clause 5.6.6 leaves the evolution standing when the
 //! current entity is deleted, and annex C, clause C.5.16 shows the deleted
-//! scope in the temporal representation -- so refusing the sentinel in the
+//! scope in the temporal representation), so refusing the sentinel in the
 //! value position of a temporal write would refuse the representation the
 //! clause requires this broker to hold. The two bullets that do bind a temporal
-//! payload -- the first level member value and the key nested inside a Property
-//! value object, neither of which the temporal exception covers -- are held by
+//! payload (the first level member value and the key nested inside a Property
+//! value object, neither of which the temporal exception covers) are held by
 //! the temporal write, which reads the expanded payload.
 
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
@@ -144,7 +144,7 @@ mod tests {
 
     /// Clauses 4.5.3.2 and 4.5.3.3, "Prohibited": on a Relationship, in either
     /// representation, "'entityIdSealed' and 'entityTypeSealed' shall never be
-    /// present" -- including in the instances of a Temporal Evolution.
+    /// present", including in the instances of a Temporal Evolution.
     #[test]
     fn a_forged_seal_on_a_temporal_relationship_instance_is_refused() {
         for member in ["entityIdSealed", "entityTypeSealed"] {

@@ -76,7 +76,7 @@ mod tests {
                 .iter()
                 .map(|[longitude, latitude]| {
                     let position = Position::try_new(*longitude, *latitude, None).expect("a test position lies on the CRS84 axes");
-                    (name.clone(), GeometryForm::Point(position)) // clone: every instance is keyed by the same name
+                    (name.clone(), GeometryForm::Point(position))
                 })
                 .collect(),
         )
@@ -111,7 +111,7 @@ mod tests {
     }
 
     /// Clause 4.10: an Entity that does not convey the target `GeoProperty` is
-    /// non-matching, whatever the relation — even `disjoint`, which an absent
+    /// non-matching, whatever the relation, even `disjoint`, which an absent
     /// geometry would otherwise trivially satisfy.
     #[test]
     fn an_entity_conveying_no_instance_of_the_target_geoproperty_does_not_match() {

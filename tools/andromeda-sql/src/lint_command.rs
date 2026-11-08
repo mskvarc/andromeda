@@ -6,7 +6,7 @@
 //! all: that run already fails, and the schema cannot be read either.
 //!
 //! A sealed migration is part of the schema the rules read, but nothing is
-//! reported in it: it can no longer change, so a finding there could never be
+//! reported in it: it cannot change, so a finding there could never be
 //! put right and would block every later seal.
 
 use crate::{

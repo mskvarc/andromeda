@@ -167,7 +167,7 @@ mod tests {
             "modifiedAt": "2024-01-01T00:00:00Z"
         });
         if let (Some(target), Some(extra)) = (wire.as_object_mut(), members.as_object()) {
-            target.extend(extra.iter().map(|(key, value)| (key.clone(), value.clone()))); // clone: the fixture owns its members
+            target.extend(extra.iter().map(|(key, value)| (key.clone(), value.clone())));
         }
         serde_json::from_value(wire).expect("a valid subscription")
     }

@@ -36,7 +36,7 @@ impl SnapshotStore for StoreDouble {
             {
                 entries.iter().find(|entry| entry.snapshot.id == *id).map(|entry| Snapshot {
                     status: entry.status(),
-                    ..entry.snapshot.clone() // clone: the port hands out an owned Snapshot
+                    ..entry.snapshot.clone()
                 })
             }
         };
@@ -216,7 +216,7 @@ impl SnapshotStore for StoreDouble {
     {
         let Some(renewal) = self.renewal.clone() else {
             return unused("renew_preparation_lease");
-        }; // clone: the answer outlives the borrow of the double.
+        };
         self.renewals.fetch_add(1, Ordering::SeqCst);
         Box::pin(async move {
             match renewal {
@@ -264,7 +264,7 @@ impl SnapshotStore for StoreDouble {
         'life3: 'async_trait,
     {
         let promoted = match self.end_preparation(id, status, queries_details, temporal_queries_details) {
-            0 => Err(SnapshotInvariant::ClaimLost { snapshot: id.clone() }.into()), // clone: the error owns the Snapshot it names.
+            0 => Err(SnapshotInvariant::ClaimLost { snapshot: id.clone() }.into()),
             _ended => Ok(()),
         };
         Box::pin(async move { promoted })

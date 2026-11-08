@@ -54,7 +54,7 @@ fn entity(members: &Value) -> Value {
     let members = members.as_object().expect("members");
     let terms: Vec<&str> = members.keys().map(String::as_str).collect();
     let mut body = json!({"id": "urn:ngsi-ld:Car:1", "type": "Car", "@context": declining_context(&terms)});
-    body.as_object_mut().expect("an object").extend(members.clone()); // clone: the fixture members are borrowed
+    body.as_object_mut().expect("an object").extend(members.clone());
     body
 }
 
@@ -73,14 +73,14 @@ async fn expand_entity(body: Value, values: Option<usize>) -> Result<(), Expansi
     let context = engine.expansion_context(&spec).await.expect("the declining context processes");
     let entity: Entity = serde_json::from_value(body).expect("a typed entity");
     let expansion = EntityExpansion::from_context(&engine, context);
-    let expansion = values.map_or(expansion.clone(), |values| expansion.bounded_by(limit(values))); // clone: the unbounded expansion is the same one
+    let expansion = values.map_or(expansion.clone(), |values| expansion.bounded_by(limit(values)));
     expansion.entity(&entity, Normalization::Entity).await.map(|_document| ())
 }
 
 /// Assert that `body` is admitted at `values` values and refused at one fewer.
 async fn assert_counts(body: &Value, values: usize) {
-    expand_entity(body.clone(), Some(values)).await.expect("the write is within the limit"); // clone: the body is expanded under two limits
-    assert_refused(expand_entity(body.clone(), Some(values - 1)).await, values - 1); // clone: as above
+    expand_entity(body.clone(), Some(values)).await.expect("the write is within the limit");
+    assert_refused(expand_entity(body.clone(), Some(values - 1)).await, values - 1);
 }
 
 #[tokio::test]
@@ -176,7 +176,7 @@ async fn a_declined_merge_fragment_counts_its_values() {
     let patch: EntityPatch<MergeMember> = serde_json::from_value(body).expect("a typed fragment");
     let expansion = EntityExpansion::from_context(&engine, context);
     expansion
-        .clone() // clone: the fragment is expanded under two limits
+        .clone()
         .bounded_by(limit(3))
         .entity_patch(&patch, Normalization::MemberDeletions)
         .await
@@ -195,7 +195,7 @@ async fn a_declined_attribute_fragment_counts_its_values() {
     let attribute: AttributeName = name.parse().expect("an attribute name");
     let expansion = EntityExpansion::from_context(&engine, context);
     expansion
-        .clone() // clone: the fragment is expanded under two limits
+        .clone()
         .bounded_by(limit(3))
         .attribute(&attribute, &member)
         .await

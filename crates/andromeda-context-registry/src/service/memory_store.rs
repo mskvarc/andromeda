@@ -80,7 +80,7 @@ impl ContextRegistryStore for MemoryStore {
                 ContextCreationKind::Hosted => ContextKind::Hosted,
                 ContextCreationKind::ImplicitlyCreated => ContextKind::ImplicitlyCreated,
             };
-            self.hold(identifier, kind, payload.clone()); // clone: the store keeps its own copy of the document.
+            self.hold(identifier, kind, payload.clone());
             Ok(ContextInsertion::Inserted)
         })
     }
@@ -96,7 +96,7 @@ impl ContextRegistryStore for MemoryStore {
     }
 
     fn get<'a>(&'a self, identifier: &'a Identifier, _detail_level: ContextDetailLevel) -> ContextRegistryFuture<'a, Option<FetchedContext>> {
-        Box::pin(async move { Ok(self.read(identifier.as_str(), |row| FetchedContext::Payload(row.payload.clone()))) }) // clone: the read hands back an owned document.
+        Box::pin(async move { Ok(self.read(identifier.as_str(), |row| FetchedContext::Payload(row.payload.clone()))) })
     }
 
     fn record_access<'a>(&'a self, _identifier: &'a Identifier) -> ContextRegistryFuture<'a, ContextMutation> {
@@ -106,8 +106,8 @@ impl ContextRegistryStore for MemoryStore {
     fn lookup<'a>(&'a self, identifier: &'a Identifier) -> ContextRegistryFuture<'a, Option<StoredContext>> {
         Box::pin(async move {
             Ok(self.read(identifier.as_str(), |row| StoredContext {
-                identifier: identifier.clone(), // clone: the lookup hands back an owned identifier.
-                kind: row.kind.clone(),         // clone: the lookup hands back an owned kind.
+                identifier: identifier.clone(),
+                kind: row.kind.clone(),
                 source_url: None,
             }))
         })

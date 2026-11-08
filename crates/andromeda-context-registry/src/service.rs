@@ -181,7 +181,7 @@ impl ContextRegistryService {
             let access = self.store.record_access(identifier).await?;
             if access == ContextMutation::Missing {
                 return Err(ContextRegistryError::NotFound {
-                    identifier: ContextIdentifier::from(identifier.clone()), // clone: the row disappeared between its read and access update.
+                    identifier: ContextIdentifier::from(identifier.clone()), // clone: the error must own the identifier after this call returns.
                 });
             }
         }
@@ -270,7 +270,7 @@ impl ContextRegistryService {
             .fetch_remote_context(&source_url)
             .await
             .map_err(|error| ContextRegistryError::ContextUnavailable {
-                source_url: source_url.clone(), // clone: the source is also needed to invalidate the previous document.
+                source_url: source_url.clone(), // clone: the error owns this copy, and the original remains for invalidating the previous document.
                 source: Box::new(error),
             })?;
         // Clause 5.13.5.4: "the existing @context is replaced with the newly

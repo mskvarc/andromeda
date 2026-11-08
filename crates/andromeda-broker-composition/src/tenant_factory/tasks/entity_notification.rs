@@ -87,15 +87,14 @@ pub(super) fn compose_notification_query(
         EntityQueryService::builder()
             .reader(Arc::clone(&storage.entity_ports.reader))
             .query_store(Arc::clone(&storage.entity_ports.query))
-            .engine(storage.engine.clone()) // clone: the notification query owns its engine handle.
-            .spatial(storage.spatial.clone()) // clone: the notification query narrows through the tenant's one index.
-            .tenant(storage.tenant.clone()) // clone: the query service owns its tenant partition.
+            .engine(storage.engine.clone())
+            .spatial(storage.spatial.clone())
+            .tenant(storage.tenant.clone())
             // A notification's join resolves Linked Entities exactly as a request's
             // does, including the ones clause 4.5.23.1 places outside this broker.
-            .remote_linked(Some(Arc::new(LinkedForwarding::new(
-                Arc::clone(forwarding),      // clone: request handling and notification joins share one forwarding service.
-                storage.live_target.clone(), // clone: linked resolution runs against the tenant's live branch.
-            )) as Arc<dyn RemoteLinkedEntitySource>))
+            .remote_linked(Some(
+                Arc::new(LinkedForwarding::new(Arc::clone(forwarding), storage.live_target.clone())) as Arc<dyn RemoteLinkedEntitySource>
+            ))
             // A notification query only resolves Linked Entities by identifier and
             // compiles no geo-query: a subscription's `geoQ` is matched in memory
             // from its stored form, admitted once when it was written, so neither a
@@ -124,13 +123,13 @@ pub(super) fn compose_notification_processor(
     pending_commits: Arc<PendingCommits>,
 ) -> Arc<NotificationProcessor> {
     Arc::new(NotificationProcessor::new(NotificationProcessorDeps {
-        live_target: storage.live_target.clone(), // clone: worker startup reloads the durable live-branch cache.
-        sub_repo: Arc::clone(subscriptions),      // clone: the processor and the interval worker share one store.
+        live_target: storage.live_target.clone(),
+        sub_repo: Arc::clone(subscriptions),
         entity_reader: Arc::clone(&storage.entity_ports.reader),
         entity_query: notification_query,
-        engine: storage.engine.clone(),   // clone: notification policy owns its engine handle.
-        transport: Arc::clone(transport), // clone: every worker delivers through one dispatcher.
-        tenant: storage.tenant.clone(),   // clone: notification policy owns its tenant partition.
+        engine: storage.engine.clone(),
+        transport: Arc::clone(transport),
+        tenant: storage.tenant.clone(),
         subscription_cache: Arc::clone(&storage.subscription_cache),
         pending_commits,
     }))
@@ -170,17 +169,14 @@ pub(super) fn register_notification_workers(
     register_notification_processor(
         supervisor,
         streams,
-        Arc::clone(&processor), // clone: the resident processor is also the delivery drain's transport.
+        Arc::clone(&processor),
         delivery,
         EvaluationLimits {
             lanes: config.evaluation.max_concurrent_changes,
             drain_timeout: config.evaluation.drain_timeout(),
         },
     )?;
-    register_subscription_cache_reconcile(
-        supervisor,
-        Arc::clone(&processor), // clone: the resident processor is also the reconcile pass's reader of the cache.
-    )?;
+    register_subscription_cache_reconcile(supervisor, Arc::clone(&processor))?;
     register_notification_delivery(supervisor, store, &config.delivery, processor, drive)
 }
 
@@ -209,17 +205,17 @@ pub(super) fn register_interval_notification(
     drive: PeriodicSweepDrive,
 ) -> Result<(), TenantAssemblyError> {
     let operation = Arc::new(IntervalNotificationOperation::new(IntervalNotificationDeps {
-        target: storage.live_target.clone(), // clone: interval delivery and expiry both operate on the tenant's live branch.
+        target: storage.live_target.clone(),
         sub_repo: delivery.subscriptions,
         entity_reader: Arc::clone(&storage.entity_ports.reader),
         entity_pages: Arc::clone(&storage.entity_ports.payload_pages),
         entity_query: delivery.notification_query,
-        engine: storage.engine.clone(), // clone: interval policy owns its engine handle.
+        engine: storage.engine.clone(),
         transport: delivery.transport,
-        tenant: storage.tenant.clone(), // clone: interval policy owns its tenant partition.
+        tenant: storage.tenant.clone(),
     }));
     let (interval_wake, receiver) = wake_channel();
-    let rerun = interval_wake.clone(); // clone: an evaluation that ends after a pass refused it wakes the sweep.
+    let rerun = interval_wake.clone();
     register_periodic_wake(
         supervisor,
         "notification-interval-wake",
@@ -229,9 +225,9 @@ pub(super) fn register_interval_notification(
     )?;
     let PeriodicSweepDrive { pacing, evaluations } = drive;
     register_notification_schedule(supervisor, "notification-interval", PeriodicSweep::Entity, receiver, pacing, move |cutoff| {
-        let operation = Arc::clone(&operation); // clone: each pass hands the shared operation to the evaluations it starts.
-        let evaluations = evaluations.clone(); // clone: each pass offers its evaluations to the tenant's one set of slots.
-        let rerun = rerun.clone(); // clone: each pass hands the sweep's wake to the evaluations it starts.
+        let operation = Arc::clone(&operation);
+        let evaluations = evaluations.clone();
+        let rerun = rerun.clone();
         async move {
             periodic_pass(
                 &operation,
@@ -261,9 +257,9 @@ fn live_evaluation_lanes(
     match delivery {
         EntityNotificationDelivery::Durable => None,
         EntityNotificationDelivery::Live => {
-            let processor = Arc::clone(processor); // clone: the lanes own the policy operation they evaluate with.
+            let processor = Arc::clone(processor);
             Some(KeyedLanes::start(width, LIVE_LANE_DEPTH, move |change: PendingChange| {
-                let processor = Arc::clone(&processor); // clone: each evaluation owns the shared policy operation.
+                let processor = Arc::clone(&processor);
                 async move {
                     // Clause 5.13.3.5: counting one hit per context per
                     // operation means the notification's own context
@@ -328,11 +324,11 @@ fn register_notification_processor(
         ShutdownPolicy::new(drain_timeout),
     );
     let task = ResidentTask::new(registration, move |execution| {
-        let commits = Arc::clone(&commits); // clone: every resident attempt reports the changes it gives up on.
-        let handoffs = handoffs.clone(); // clone: every resident attempt waits for the hand-offs the sink starts.
-        let entity_changes = Arc::clone(&entity_changes); // clone: every resident attempt takes the one queue reader in turn.
+        let commits = Arc::clone(&commits);
+        let handoffs = handoffs.clone();
+        let entity_changes = Arc::clone(&entity_changes);
         let mut subscription_receiver = subscription_changes.subscribe();
-        let processor = Arc::clone(&processor); // clone: every resident attempt owns the shared policy operation.
+        let processor = Arc::clone(&processor);
         async move {
             let mut entity_receiver = entity_changes.lock_owned().await;
             processor.reload_cache().await.map_err(worker_notification_failure)?;

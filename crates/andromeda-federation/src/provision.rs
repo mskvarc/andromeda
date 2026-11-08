@@ -184,7 +184,7 @@ impl FederationService {
         Some(PlannedWrite {
             registration: csr,
             url,
-            method: request.method.clone(), // clone: each planned write owns the method it sends
+            method: request.method.clone(),
             body: planned.map(|content| PlannedBody { content, element }),
             attributes,
             context: request.context,
@@ -234,7 +234,7 @@ impl FederationService {
 const ATTRIBUTES_SEGMENT: &str = "attrs";
 
 /// The segments of a path suffix below the entity, with the attribute segment
-/// -- the one right after the `attrs` collection -- replaced by `spelled`.
+/// (the one right after the `attrs` collection) replaced by `spelled`.
 ///
 /// The attribute is found by its position rather than by its name, so an
 /// attribute named like a collection (`attrs/attrs`) replaces only itself.

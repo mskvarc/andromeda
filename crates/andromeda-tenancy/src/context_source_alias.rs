@@ -40,8 +40,6 @@ impl ContextSourceAliases {
     #[must_use]
     pub fn for_tenant(&self, tenant: &TenantRef) -> ContextSourcePseudonym {
         match tenant {
-            // clone: the configured alias outlives the derived one, which every
-            // caller owns for the length of a response or a tenant runtime.
             TenantRef::UnnamedDefault => self.default_tenant.clone(),
             TenantRef::Named(name) => self.default_tenant.scoped_to_tenant(name),
         }

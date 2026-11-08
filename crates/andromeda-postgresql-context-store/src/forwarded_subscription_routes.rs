@@ -86,7 +86,7 @@ impl PostgresForwardedSubscriptionRouter {
     /// Create a router over the platform pool.
     #[must_use]
     pub fn new(pool: &PgPool) -> PostgresForwardedSubscriptionRouter {
-        PostgresForwardedSubscriptionRouter { pool: pool.clone() } // clone: `PgPool` is an atomically reference-counted pool handle.
+        PostgresForwardedSubscriptionRouter { pool: pool.clone() }
     }
 }
 

@@ -86,7 +86,6 @@ impl ShapedReader {
             for (attribute, carried) in shapes {
                 let kept: HashSet<RecordedAttributeShape> = carried.iter().copied().filter(|shape| wanted(attribute, shape)).collect();
                 if !kept.is_empty() {
-                    // clone: the union is keyed by the name each Entity's shapes are.
                     union.entry(attribute.clone()).or_default().extend(kept);
                 }
             }

@@ -37,7 +37,6 @@ impl AttributeSelection {
             AttributeSelection::Whole => Narrowed::Whole,
             AttributeSelection::Instances(listed) => {
                 let listed: HashSet<Option<&Identifier>> = listed.iter().map(Option::as_ref).collect();
-                // clone: the narrowed state owns the kept instances of an attribute it does not keep whole
                 let mut narrowed = held.clone();
                 if narrowed.retain(|dataset_id, _instance| listed.contains(&dataset_id)) {
                     Narrowed::Part(narrowed)
@@ -88,14 +87,14 @@ impl SelectedInstances {
         let listed: Vec<Option<Identifier>> = held
             .iter()
             .filter(|(dataset_id, _instance)| keep(*dataset_id))
-            .map(|(dataset_id, _instance)| dataset_id.cloned()) // clone: the selection names the instances it keeps
+            .map(|(dataset_id, _instance)| dataset_id.cloned())
             .collect();
         let (selection, kept) = match listed.len() {
             0 => return Kept::None,
             count if count == held.len() => (AttributeSelection::Whole, Kept::Every),
             _ => (AttributeSelection::Instances(listed), Kept::Some),
         };
-        self.0.insert(name.clone(), selection); // clone: the selection names the attribute it keeps
+        self.0.insert(name.clone(), selection);
         kept
     }
 

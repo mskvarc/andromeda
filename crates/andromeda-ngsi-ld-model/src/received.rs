@@ -455,7 +455,7 @@ mod tests {
     /// The aliases a source context defining `kind` for `@type` and `vals` for
     /// `ngsi-ld:hasValues` gives.
     fn source_aliases() -> CoreTermAliases {
-        let mut aliases = CoreTermAliases::keyword_spellings().clone(); // clone: the source's table extends the shared one
+        let mut aliases = CoreTermAliases::keyword_spellings().clone();
         aliases.alias("kind", "type");
         aliases.alias("vals", "values");
         aliases

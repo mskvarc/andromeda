@@ -15,7 +15,7 @@ use axum::http::Uri;
 
 /// Validate the parameters of an entity map creation (clause 5.14.4.4): the
 /// query's own constraints, which are the Query Entities constraints clause
-/// 5.14.4.4 restates -- the "too wide query" rule included -- and
+/// 5.14.4.4 restates (the "too wide query" rule included) and
 /// `geometryProperty`, which the clause admits only with a `GeoJSON` `Accept`;
 /// the map resources render no `GeoJSON` (clause 6.34.3.1), so its presence is
 /// always an error of type `BadRequestData`.
@@ -27,7 +27,7 @@ pub(crate) fn validate_entity_map_query(query: &EntityQueryParameters, media_typ
 
 /// Validate the parameters of a temporal entity map creation (clause
 /// 5.14.5.4): the temporal query's own constraints, which the clause restates
-/// from Query Temporal Evolution -- the temporal window, the clause 5.7.4.4
+/// from Query Temporal Evolution: the temporal window, the clause 5.7.4.4
 /// "too wide query" narrowing rule and the refusal of Linked Entity retrieval,
 /// which the `temporal_linked_retrieval` extension lifts as `linked_retrieval`
 /// says.

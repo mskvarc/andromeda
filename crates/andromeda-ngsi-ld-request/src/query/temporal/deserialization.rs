@@ -97,8 +97,8 @@ mod tests {
     #[test]
     fn timeproperty_rejects_unrecognized_value_at_the_boundary() {
         // Clause 4.8: `timeproperty` names the temporal axis. An unrecognised
-        // value is a malformed request, not a silent fallback to observedAt --
-        // a client's typo must not quietly query a different axis.
+        // value is a malformed request, not a silent fallback to observedAt.
+        // A client's typo must not quietly query a different axis.
         let error = serde_urlencoded::from_str::<TemporalQueryParameters>("timeproperty=bogus").expect_err("an unknown timeproperty is refused");
         assert!(error.to_string().contains("invalid timeproperty"), "{error}");
     }

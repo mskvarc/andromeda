@@ -25,7 +25,7 @@ fn read_metadata(json: &str) -> Result<Option<ObservationMetadata>, EntityRefusa
 
 /// The expanded members `metadata` renders as.
 fn written(metadata: &ObservationMetadata) -> Value {
-    serde_json::to_value(InstanceDocument::from(metadata.clone())).expect("metadata writes") // clone: the fixture is compared after it is rendered
+    serde_json::to_value(InstanceDocument::from(metadata.clone())).expect("metadata writes")
 }
 
 /// Decode `stored` as a value of `family` and write it back.
@@ -232,7 +232,7 @@ fn values_and_metadata_at_the_decodable_ceiling_read_back() {
 
     let ceiling = AttributeNestingLimit::DECODABLE_CEILING.get();
     pretty_assertions::assert_eq!(round_trip(AttributeType::Property, &node_chain(ceiling)), node_chain(ceiling));
-    let list_body = list_chain(ceiling)["@list"].clone(); // clone: the body is compared against its own round trip
+    let list_body = list_chain(ceiling)["@list"].clone();
     pretty_assertions::assert_eq!(round_trip(AttributeType::ListProperty, &list_body), list_body);
     pretty_assertions::assert_eq!(round_trip(AttributeType::JsonProperty, &object_chain(ceiling)), object_chain(ceiling));
     assert!(StructuredValue::from_stored(AttributeType::Property, &attribute(), &node_chain(ceiling + 1).to_string()).is_err());

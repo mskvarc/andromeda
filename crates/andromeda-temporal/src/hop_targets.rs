@@ -154,7 +154,7 @@ impl TemporalService {
         let mut seen: HashSet<Identifier> = HashSet::new();
         let mut frontier = objects_of(parts.iter().copied(), hops.first());
         for depth in 1..=hops.len() {
-            frontier.retain(|object| seen.insert(object.clone())); // clone: the walk remembers every target it has read
+            frontier.retain(|object| seen.insert(object.clone()));
             if frontier.is_empty() {
                 break;
             }
@@ -169,7 +169,7 @@ impl TemporalService {
                 aggr_period_duration: None,
                 attrs: level_reads
                     .and_then(HopReads::projection)
-                    .map(|names| names.iter().map(|name| (*name).clone()).collect()), // clone: the window owns the names it asks for
+                    .map(|names| names.iter().map(|name| (*name).clone()).collect()),
                 ..TemporalLinkedWindow::of_request(params)
             };
             let compiled = self
@@ -215,7 +215,7 @@ impl TemporalService {
         let compactor = self.engine.compactor(read.context);
         let compactor = EntityCompactor::new(&compactor);
         let remote = self.remote_temporal_linked.as_ref().filter(|_| read.target.permits_federation());
-        let held: Vec<Identifier> = visited.iter().cloned().collect(); // clone: a remote holder is told every target already read
+        let held: Vec<Identifier> = visited.iter().cloned().collect();
         let mut level = HopReading::default();
         for id in ids {
             let mut parts: Vec<TemporalHistory> = Vec::new();
@@ -279,7 +279,6 @@ fn objects_of<'a>(parts: impl Iterator<Item = &'a TemporalDocument>, relationshi
                 .into_iter()
                 .flat_map(AttributeMember::instances)
                 .flat_map(InstanceDocument::objects)
-                // clone: the walk owns the identifiers it reads
                 .filter_map(|object| Identifier::try_from(object.clone()).ok());
             for object in named {
                 if !objects.contains(&object) {

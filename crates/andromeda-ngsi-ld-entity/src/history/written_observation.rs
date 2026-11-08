@@ -44,15 +44,13 @@ pub fn written_observation(previous: Option<&EntityState>, current: &EntityState
     let mut observed = Attributes::new();
     for (name, instances) in current.attributes().iter_shared() {
         if let Some(modified) = modified_instances(instances, held.and_then(|held| held.get_shared(name))) {
-            // clone: the observation owns the attribute name.
             observed.insert_shared(name.clone(), modified);
         }
     }
-    let scope = current.scope().filter(|scope| previous.and_then(EntityState::scope) != Some(*scope)).cloned(); // clone: the observation owns its copy of the Scope the entity holds.
+    let scope = current.scope().filter(|scope| previous.and_then(EntityState::scope) != Some(*scope)).cloned();
     if observed.is_empty() && scope.is_none() {
         return None;
     }
-    // clone: the observation owns its copy of the entity's identity.
     Some(EntityState::from_parts(current.id().clone(), current.types().clone(), scope, None, observed))
 }
 
@@ -60,7 +58,6 @@ pub fn written_observation(previous: Option<&EntityState>, current: &EntityState
 /// the instances the attribute held before it (`None` when it held none).
 fn modified_instances(instances: &Arc<AttributeInstances>, predecessors: Option<&Arc<AttributeInstances>>) -> Option<Arc<AttributeInstances>> {
     let Some(predecessors) = predecessors else {
-        // clone: reference-count bump; a new attribute is observed whole and shared.
         return Some(Arc::clone(instances));
     };
     // The very instances of the previous state: the write left them as they were.
@@ -72,12 +69,10 @@ fn modified_instances(instances: &Arc<AttributeInstances>, predecessors: Option<
         .filter(|(dataset_id, instance)| predecessors.get(*dataset_id).is_none_or(|predecessor| !instance.same_content(predecessor)))
         .collect();
     if modified.len() == instances.len() {
-        // clone: reference-count bump; the observation shares the instances the entity holds.
         return Some(Arc::clone(instances));
     }
     let mut modified = modified.into_iter();
     let (dataset_id, instance) = modified.next()?;
-    // clone: the observation owns the identity and a copy of each instance it records.
     let mut observed = AttributeInstances::one(dataset_id.cloned(), instance.clone());
     for (dataset_id, instance) in modified {
         observed.insert(dataset_id.cloned(), instance.clone());

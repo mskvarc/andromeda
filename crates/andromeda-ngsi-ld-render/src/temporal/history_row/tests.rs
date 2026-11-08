@@ -182,9 +182,9 @@ fn a_generated_identifier_renders_through_the_permanent_template() {
 }
 
 /// Clauses 4.5.7 and 4.5.8: a deleted instance renders the null member its own
-/// family prescribes — `object` for a Relationship, the single-null array of
+/// family prescribes: `object` for a Relationship, the single-null array of
 /// clause 4.5.0 in `valueList` / `objectList` for the two list families of
-/// clauses 4.5.21.2 and 4.5.22.2, the family's value member otherwise — never a
+/// clauses 4.5.21.2 and 4.5.22.2, the family's value member otherwise, never a
 /// Property value the instance never had.
 #[test]
 fn a_tombstone_renders_the_null_member_of_the_family_the_instance_belonged_to() {
@@ -351,7 +351,7 @@ fn compacted_geojson(expanded: &Value) -> Value {
 fn unlist(list: &Value) -> Value {
     match list.get("@list").and_then(Value::as_array) {
         Some(items) => Value::Array(items.iter().map(unlist).collect()),
-        None => list.get("@value").cloned().unwrap_or(Value::Null), // clone: the comparison owns the ordinate
+        None => list.get("@value").cloned().unwrap_or(Value::Null),
     }
 }
 

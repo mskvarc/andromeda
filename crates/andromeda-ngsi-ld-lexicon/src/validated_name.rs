@@ -3,8 +3,8 @@
 /// Declare a `CompactString`-backed newtype whose only constructor validates its
 /// value against the NGSI-LD compacted-name grammar.
 ///
-/// The three named-member types — an entity type name, an attribute name, and a
-/// reference — are the same shape: a `CompactString` behind a newtype, a
+/// The three named-member types (an entity type name, an attribute name, and a
+/// reference) are the same shape: a `CompactString` behind a newtype, a
 /// grammar check in [`validate_ngsi_ld_name`](crate::reference::validate_ngsi_ld_name)
 /// that no derive can express, and the `FromStr`/`TryFrom<String>` pair that
 /// routes every construction through it. This macro is that shape once.

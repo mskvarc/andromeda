@@ -65,7 +65,7 @@ pub fn assert_no_sql(crate_root: &str) {
 /// A fragment that starts with an identifier character names something a store
 /// spells, not a suffix of a Rust name: `ST_` is the `PostGIS` function prefix,
 /// and matching it anywhere would also match the end of `CARGO_MANIFEST_DIR`.
-/// Fragments that open with punctuation — a cast, an operator, a separator —
+/// Fragments that open with punctuation (a cast, an operator, a separator)
 /// carry their own boundary and are matched as written.
 pub(crate) fn contains_fragment(code: &str, fragment: &str) -> bool {
     let bounded = fragment.starts_with(|first: char| first.is_alphanumeric());
@@ -123,7 +123,7 @@ fn rust_sources(root: &Path) -> Vec<(String, String)> {
 /// The code a source file ships: everything before its first `#[cfg(test)]`,
 /// with comments removed.
 ///
-/// A doc comment may name the counterpart a backend renders — that is how two
+/// A doc comment may name the counterpart a backend renders, which is how two
 /// readings of one clause stay comparable. A test may name one too, and for the
 /// same reason the manifest guard admits a runtime under `[dev-dependencies]`:
 /// a test asserts *about* a rendering without being one, and nothing it
@@ -141,8 +141,8 @@ fn code_of(source: &str) -> String {
     }
 }
 
-/// Remove `//` line comments and `/* … */` block comments — the latter nested
-/// to any depth — from Rust source, leaving string and character literals
+/// Remove `//` line comments and `/* … */` block comments, the latter nested
+/// to any depth, from Rust source, leaving string and character literals
 /// intact.
 ///
 /// A line-based filter cannot do this: it misses a block comment that names a
@@ -224,7 +224,7 @@ fn copy_string(chars: &[char], i: usize, out: &mut String) -> usize {
     j
 }
 
-/// Whether a raw string literal — `r"…"`, `r#"…"#`, or a byte-raw `br"…"` — opens
+/// Whether a raw string literal (`r"…"`, `r#"…"#`, or a byte-raw `br"…"`) opens
 /// at `i`, rather than an identifier that merely begins with `r` or `b`.
 fn is_raw_string_start(chars: &[char], i: usize) -> bool {
     if i > 0 && is_ident_char(chars[i - 1]) {

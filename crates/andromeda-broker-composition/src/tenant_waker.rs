@@ -121,8 +121,8 @@ fn register_waker(supervisor: &TaskSupervisor, manager: Manager, catch_up: Arc<d
     let (wake, wakes) = wake_channel();
     register_alarm(supervisor, Arc::clone(&manager), wake)?;
     let task = DrainTask::new(registration, fallback, move |execution| {
-        let manager = Arc::clone(&manager); // clone: each pass owns the manager while executing
-        let catch_up = Arc::clone(&catch_up); // clone: each pass owns the catch-up source
+        let manager = Arc::clone(&manager);
+        let catch_up = Arc::clone(&catch_up);
         async move {
             let now = execution.cutoff();
             let report = manager
@@ -160,8 +160,8 @@ fn register_alarm(supervisor: &TaskSupervisor, manager: Manager, wake: WakeHandl
         ShutdownPolicy::new(ALARM_RESTART_DELAY),
     );
     let task = ResidentTask::new(registration, move |execution| {
-        let manager = Arc::clone(&manager); // clone: each resident attempt owns the manager whose alarm it waits on
-        let wake = wake.clone(); // clone: each resident attempt owns the handle it wakes the waker through
+        let manager = Arc::clone(&manager);
+        let wake = wake.clone();
         async move {
             execution.mark_running();
             loop {
@@ -194,8 +194,8 @@ fn register_reconciliation(
     let schedule_pass =
         PeriodicSchedule::new(RECONCILIATION_CADENCE, InitialExecution::Immediate, MissedTickPolicy::Skip)?.with_jitter(RECONCILIATION_JITTER)?;
     let task = ScheduledTask::new(registration, schedule_pass, move |_execution| {
-        let manager = Arc::clone(&manager); // clone: each pass owns the manager while executing
-        let schedule = Arc::clone(&schedule); // clone: each pass owns the schedule handle
+        let manager = Arc::clone(&manager);
+        let schedule = Arc::clone(&schedule);
         async move {
             let unprobed = schedule.next_unprobed(limit).await.map_err(classify_failure)?;
             for tenant in unprobed {

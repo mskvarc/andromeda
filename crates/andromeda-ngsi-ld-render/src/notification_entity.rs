@@ -3,7 +3,7 @@
 //!
 //! A notification carries the notified entity in the subscription's
 //! `notification.format`, and the entity's own clause 4.8 times the
-//! subscription asked for (Table 5.2.14-1) written on it -- and, for a deleted
+//! subscription asked for (Table 5.2.14-1) written on it, and for a deleted
 //! entity, its `deletedAt`. The entity state holds none of those times, so the
 //! notification stamps them, spelled with the sub-second precision the instant
 //! carries; a time the compact entity carries itself keeps the rendering's own

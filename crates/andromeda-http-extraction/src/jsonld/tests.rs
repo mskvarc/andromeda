@@ -681,7 +681,7 @@ fn with_decode_threshold(mut request: Request<Body>, bytes: usize) -> Request<Bo
 async fn answered(rejection: ExtractorRejection) -> (StatusCode, Option<HeaderValue>, Value) {
     let response = rejection.into_response();
     let status = response.status();
-    let connection = response.headers().get(CONNECTION).cloned(); // clone: the response is consumed for its body below
+    let connection = response.headers().get(CONNECTION).cloned();
     let body = to_bytes(response.into_body(), usize::MAX).await.expect("a readable body");
     (status, connection, serde_json::from_slice(&body).unwrap_or(Value::Null))
 }
@@ -880,7 +880,7 @@ mod aliased_bodies {
     async fn spellings<T: RequestBody + Send + Debug + 'static>(plain: &Value, keywords: &Value, aliased: &Value) -> [String; 3] {
         let mut read_as = Vec::with_capacity(3);
         for (body, context) in [(plain, json!({})), (keywords, json!({})), (aliased, aliasing())] {
-            let mut body = body.clone(); // clone: the fixture stays the caller's
+            let mut body = body.clone();
             body["@context"] = context;
             let decoded = read::<T>(&body).await.unwrap_or_else(|refusal| panic!("{body} is read: {refusal:?}"));
             read_as.push(format!("{decoded:?}"));

@@ -88,7 +88,6 @@ fn read_request_body<T: RequestBody>(
 ) -> Result<T, ProblemResponse> {
     read_within::<T>(decode_bounds, text, reading).map_err(|source| {
         let refusal = UndecodableBody::of_text::<T>(text, reading, source);
-        // clone: the refusal owns the URI it names
         ClassifiedReport::public(NgsiLdErrorType::BadRequestData, refusal.to_string()).with_instance(uri.clone())
     })
 }

@@ -2,7 +2,7 @@
 //!
 //! `date_trunc(field, ts)` truncates a timestamp to the start of a calendar
 //! field (a contiguous bucket: one interval of the timeline per group), and
-//! `date_part(field, ts)` — the function form of `EXTRACT(field FROM ts)` —
+//! `date_part(field, ts)` (the function form of `EXTRACT(field FROM ts)`)
 //! projects one repeating field of a timestamp (a cyclic bucket: one group
 //! gathers instants from many periods). Both read the instant in UTC, the
 //! only zone an NGSI-LD `DateTime` names (clause 4.6.3), whatever `TimeZone`
@@ -30,7 +30,7 @@ struct DateTrunc;
 #[iden = "date_part"]
 struct DatePart;
 
-/// `date_trunc('field', ts, 'UTC')` — the start of the calendar `field`
+/// `date_trunc('field', ts, 'UTC')`: the start of the calendar `field`
 /// interval in UTC that the `timestamptz` `ts` falls in (a contiguous bucket).
 ///
 /// The field names a calendar unit (`year`, `month`, `week`, `day`, `hour`) and
@@ -41,7 +41,7 @@ pub fn date_trunc(field: &str, ts: SimpleExpr) -> SimpleExpr {
     Func::cust(DateTrunc).args([text_literal(field), ts, text_literal(UTC)]).into()
 }
 
-/// `date_part('field', ts AT TIME ZONE 'UTC')` — one repeating `field` of the
+/// `date_part('field', ts AT TIME ZONE 'UTC')`: one repeating `field` of the
 /// `timestamptz` `ts` read in UTC (a cyclic bucket), the function form of
 /// `EXTRACT(field FROM ts)`.
 ///

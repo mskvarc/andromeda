@@ -168,7 +168,6 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             .runtimes
             .iter()
             .filter(|entry| entry.value().is_retired() && !entry.value().is_leased())
-            // clone: the eviction list outlives the iteration.
             .map(|entry| (entry.key().clone(), entry.value().last_used()))
             .collect();
         if retired.is_empty() {
@@ -202,7 +201,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             .runtimes
             .iter()
             .filter(|entry| !entry.key().is_unnamed_default() && entry.value().is_unloadable(now))
-            .map(|entry| (entry.key().clone(), entry.value().eviction_rank(horizon))) // clone: the eviction list outlives the iteration
+            .map(|entry| (entry.key().clone(), entry.value().eviction_rank(horizon)))
             .collect();
         candidates.sort_by_key(|(_, rank)| *rank);
         candidates.into_iter().take(over).map(|(tenant, rank)| (tenant, rank.last_used)).collect()
@@ -246,7 +245,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         self.runtimes
             .iter()
             .filter(|entry| !entry.key().is_unnamed_default() && entry.key() != exclude && entry.value().is_unloadable(now))
-            .map(|entry| (entry.key().clone(), entry.value().eviction_rank(horizon))) // clone: the choice outlives the iteration
+            .map(|entry| (entry.key().clone(), entry.value().eviction_rank(horizon)))
             .min_by_key(|(_, rank)| *rank)
             .map(|(tenant, rank)| (tenant, rank.last_used))
     }
@@ -300,7 +299,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         let Some(chosen_at) = self.runtimes.get(tenant).map(|cached| cached.last_used()) else {
             return false;
         };
-        self.evict_all(vec![(tenant.clone(), chosen_at)], EvictionReason::Suspended).await > 0 // clone: the eviction list owns the key
+        self.evict_all(vec![(tenant.clone(), chosen_at)], EvictionReason::Suspended).await > 0
     }
 
     /// Tenants whose runtime has not been used within `ttl`, each with the
@@ -309,7 +308,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         self.runtimes
             .iter()
             .filter(|entry| !entry.key().is_unnamed_default() && entry.value().last_used().has_been_idle_for(ttl))
-            .map(|entry| (entry.key().clone(), entry.value().last_used())) // clone: the eviction list outlives the iteration
+            .map(|entry| (entry.key().clone(), entry.value().last_used()))
             .collect()
     }
 }

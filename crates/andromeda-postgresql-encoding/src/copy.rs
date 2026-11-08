@@ -77,8 +77,8 @@ pub fn write_text_opt(buf: &mut Vec<u8>, value: Option<&str>) -> Result<(), Copy
     write_text(buf, text)
 }
 
-/// Append a `jsonb` field from JSON already serialised to text — length
-/// prefix, version byte 0x01, then the text's bytes.
+/// Append a `jsonb` field from JSON already serialised to text (length
+/// prefix, version byte 0x01, then the text's bytes).
 ///
 /// The text is written as given, so it must be valid JSON; a caller that
 /// serialised a typed value once for another bind path hands the same bytes

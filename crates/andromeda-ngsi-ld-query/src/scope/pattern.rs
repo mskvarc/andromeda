@@ -27,8 +27,8 @@ pub enum ScopeSegment {
 ///
 /// Admission is the lexicon's [`checked_level`], the one a scope path admits
 /// its levels through, rather than a second reading of the character classes
-/// or the length bound here. That is what makes the `ltree` translation total
-/// — an unvalidated label reaches PostgreSQL as an `lquery` cast and fails
+/// or the length bound here. That is what makes the `ltree` translation total.
+/// An unvalidated label reaches PostgreSQL as an `lquery` cast and fails
 /// there, which is a 500 for what is a malformed request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeLabel(ScopeLevelBuf);
@@ -40,7 +40,7 @@ impl ScopeLabel {
     ///
     /// Returns [`QueryError::ScopePatternInvalid`] when `raw` is outside the
     /// clause 4.18 level-name production, or carries more characters than a
-    /// label the pattern is answered through can hold — which would otherwise
+    /// label the pattern is answered through can hold, which would otherwise
     /// reach PostgreSQL as an `lquery` cast and fail there.
     pub fn parse(raw: &str) -> Result<ScopeLabel, QueryError> {
         checked_level(raw).map(|level| ScopeLabel(level.to_owned())).map_err(|error| {
@@ -66,8 +66,8 @@ impl ScopePattern {
     /// Parse one pattern.
     ///
     /// The levels are split as a scope path splits them
-    /// ([`split_levels`]), so a pattern written without its leading `/` --
-    /// clause 4.19 EXAMPLE 5 queries a bare `CompanyB` -- names the same levels
+    /// ([`split_levels`]), so a pattern written without its leading `/`
+    /// (clause 4.19 EXAMPLE 5 queries a bare `CompanyB`) names the same levels
     /// as the rooted one. `#` matches one or more remaining levels and
     /// therefore only makes sense last.
     ///

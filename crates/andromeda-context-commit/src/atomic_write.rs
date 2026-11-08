@@ -50,7 +50,7 @@ impl AtomicWrite {
     /// already extracted. They are read from there rather than from the
     /// request fragment the mutation was computed from: clauses 5.6.2.4,
     /// 5.6.3.4 and 5.6.17.4 all take an Entity Fragment whose `type` is
-    /// optional — each says only "If type is included in the Fragment" — so a
+    /// optional. Each says only "If type is included in the Fragment", so a
     /// fragment routinely names no type at all while the Entity it was merged
     /// into names several.
     ///
@@ -61,11 +61,10 @@ impl AtomicWrite {
     /// "the same datatype as mandated by clause 5.2.4" and therefore carries
     /// `type`.
     ///
-    /// A write that records neither state nor observation -- an Entity
-    /// deletion, which records only endings -- names no type.
+    /// A write that records neither state nor observation names no type: an
+    /// Entity deletion records only endings.
     #[must_use]
     pub fn recorded_entity_types(&self) -> Vec<EntityTypeName> {
-        // clone: the durable temporal intent outlives the write it was interpreted from.
         match self.entity.record() {
             Some(record) => record.projection.types.clone(),
             None => self

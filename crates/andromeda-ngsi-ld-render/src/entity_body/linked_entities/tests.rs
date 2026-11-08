@@ -41,7 +41,7 @@ fn written_chain() -> Vec<u8> {
     }
     let graph = LinkedGraph {
         roots: ids,
-        nodes: nodes.into_iter().map(|node| (node.id.clone(), node)).collect(), // clone: the graph keys its nodes by owned identifiers
+        nodes: nodes.into_iter().map(|node| (node.id.clone(), node)).collect(),
         edges,
         failures: Vec::new(),
         depth: NonZeroU32::new(CHAIN).expect("a positive depth"),

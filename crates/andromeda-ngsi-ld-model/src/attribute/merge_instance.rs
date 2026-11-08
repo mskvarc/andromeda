@@ -3,14 +3,14 @@
 //! A merge fragment writes only what it changes: clause 5.5.12 merges it into
 //! the target "up to an arbitrary depth", so an instance may leave out the
 //! value member its family otherwise requires, and it removes a member it
-//! writes as the NGSI-LD Null -- every member but `datasetId`, which "cannot be
-//! deleted by setting it to the value urn:ngsi-ld:null". The family is always
+//! writes as the NGSI-LD Null (every member but `datasetId`, which "cannot be
+//! deleted by setting it to the value urn:ngsi-ld:null"). The family is always
 //! known: an instance names it in `type` or implies it by its value member,
 //! and anything else written where an attribute stands is a concise Property
 //! or `GeoProperty` value (clause 4.5.2.3).
 //!
-//! The output-only members a client cannot write -- the `previous...` member,
-//! the inline entities of a join, and the system timestamps of clause 4.8 --
+//! The output-only members a client cannot write (the `previous...` member,
+//! the inline entities of a join, and the system timestamps of clause 4.8)
 //! are not read.
 
 use crate::{

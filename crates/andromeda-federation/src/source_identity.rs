@@ -152,7 +152,7 @@ impl FederationService {
                 context,
                 RegistrationSelection {
                     selectors: &[EntitySelectorParams {
-                        id: Some(vec![entity_id.clone()]), // clone: the selector owns its identifiers
+                        id: Some(vec![entity_id.clone()]),
                         ..EntitySelectorParams::default()
                     }],
                     reach: SourceReach::Every,
@@ -206,8 +206,8 @@ impl FederationService {
     /// asked at most once per [`IDENTITY_LIFETIME`].
     async fn source_configuration(&self, registration: &ContextSourceRegistration) -> SourceConfiguration {
         let source = ProbedSource {
-            registration: registration.id.clone(),                // clone: the cache key owns the registration it names
-            endpoint: registration.access.endpoint.url().clone(), // clone: the cache key owns the endpoint it names
+            registration: registration.id.clone(),
+            endpoint: registration.access.endpoint.url().clone(),
         };
         let now = Instant::now();
         if let Some(configuration) = self.source_identities.fresh(&source, now) {

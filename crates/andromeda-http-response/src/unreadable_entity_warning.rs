@@ -42,7 +42,7 @@ mod tests {
     fn each_unreadable_entity_is_named_by_a_persistent_warning_after_those_already_gathered() {
         let earlier = NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "context source s1 did not respond");
         let unreadable: Identifier = "urn:ngsi-ld:Building:7".parse().expect("valid URI");
-        let warnings = with_unreadable_entity_warnings(vec![earlier.clone()], &[unreadable]); // clone: the expectation keeps the earlier warning
+        let warnings = with_unreadable_entity_warnings(vec![earlier.clone()], &[unreadable]);
         assert_eq!(
             warnings,
             vec![

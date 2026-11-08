@@ -173,9 +173,9 @@ impl ForwardedEntities {
     #[must_use]
     pub fn contribution(&self) -> Option<SourceContribution> {
         Some(SourceContribution {
-            registration: self.registration_id.clone()?, // clone: the contribution owns the registration it names
-            entity_ids: self.entities.iter().map(|received| received.state.id().clone()).collect(), // clone: same
-            linked_map: self.linked_map.clone(),         // clone: same
+            registration: self.registration_id.clone()?,
+            entity_ids: self.entities.iter().map(|received| received.state.id().clone()).collect(),
+            linked_map: self.linked_map.clone(),
         })
     }
 }
@@ -208,9 +208,9 @@ impl ForwardedTemporalEntities {
     #[must_use]
     pub fn contribution(&self) -> Option<SourceContribution> {
         Some(SourceContribution {
-            registration: self.registration_id.clone()?, // clone: the contribution owns the registration it names
-            entity_ids: self.entities.iter().filter_map(|history| history.id().cloned()).collect(), // clone: the contribution owns the identifiers it names
-            linked_map: self.linked_map.clone(),         // clone: same
+            registration: self.registration_id.clone()?,
+            entity_ids: self.entities.iter().filter_map(|history| history.id().cloned()).collect(),
+            linked_map: self.linked_map.clone(),
         })
     }
     /// The earliest instant a page of the answer was cut at (clause 6.3.10),

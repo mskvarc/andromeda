@@ -31,7 +31,7 @@ impl RegistrationService {
             hook.removed(teardown).await;
         }
         self.emit_csr_change(CsrChangeEvent {
-            csr_id: id.clone(), // clone: the deletion event outlives the borrowed request identifier.
+            csr_id: id.clone(),
             change: CsrChange::Deleted {
                 before: existing.map(Box::new),
             },
@@ -100,7 +100,7 @@ mod tests {
                 rows_deleted: self.store.deleted().len(),
             });
             let teardown = RegistrationTeardown {
-                registration: registration.clone(), // clone: the teardown outlives the borrowed registration
+                registration: registration.clone(),
                 forwarded: vec![forwarded_copy()],
             };
             Box::pin(async { Ok(teardown) })
@@ -113,7 +113,7 @@ mod tests {
         {
             self.steps.lock().expect("step log").push(RemovalStep::Removed {
                 rows_deleted: self.store.deleted().len(),
-                forwarded: teardown.forwarded.clone(), // clone: the log keeps what the hook was handed
+                forwarded: teardown.forwarded.clone(),
             });
             Box::pin(async {})
         }
@@ -130,15 +130,11 @@ mod tests {
             &json!([{"entities": [{"type": "https://example.org/Vehicle"}]}]),
         )]));
         let hook = Arc::new(RecordingHook {
-            store: Arc::clone(&store), // clone: the hook reads the store's deletion log
+            store: Arc::clone(&store),
             steps: Mutex::new(Vec::new()),
         });
-        let service = service_over(
-            Arc::clone(&store) as Arc<dyn RegistrationStore>, // clone: the test keeps its own handle to read what was deleted
-            offline_engine(),
-            None,
-        )
-        .with_removal_hook(Arc::clone(&hook) as Arc<dyn RegistrationRemovalHook>); // clone: the test reads the hook's log
+        let service = service_over(Arc::clone(&store) as Arc<dyn RegistrationStore>, offline_engine(), None)
+            .with_removal_hook(Arc::clone(&hook) as Arc<dyn RegistrationRemovalHook>);
 
         let id: Identifier = REGISTRATION_ID.parse().expect("valid URI");
         service.delete(&id).await.expect("the registration is deleted");
@@ -164,15 +160,11 @@ mod tests {
     async fn deleting_an_unknown_registration_asks_the_hook_for_nothing() {
         let store = Arc::new(FixedStore::new(Vec::new()));
         let hook = Arc::new(RecordingHook {
-            store: Arc::clone(&store), // clone: the hook reads the store's deletion log
+            store: Arc::clone(&store),
             steps: Mutex::new(Vec::new()),
         });
-        let service = service_over(
-            Arc::clone(&store) as Arc<dyn RegistrationStore>, // clone: the test keeps its own handle
-            offline_engine(),
-            None,
-        )
-        .with_removal_hook(Arc::clone(&hook) as Arc<dyn RegistrationRemovalHook>); // clone: the test reads the hook's log
+        let service = service_over(Arc::clone(&store) as Arc<dyn RegistrationStore>, offline_engine(), None)
+            .with_removal_hook(Arc::clone(&hook) as Arc<dyn RegistrationRemovalHook>);
 
         let id: Identifier = "urn:ngsi-ld:ContextSourceRegistration:unknown".parse().expect("valid URI");
         let outcome = service.delete(&id).await;

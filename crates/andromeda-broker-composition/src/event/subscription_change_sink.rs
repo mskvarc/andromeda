@@ -101,18 +101,14 @@ mod tests {
     fn upserted(id: &Identifier) -> SubscriptionChange {
         SubscriptionChange::Upserted {
             target: ContextTarget::Live,
-            id: id.clone(), // clone: the change owns its identifier
+            id: id.clone(),
         }
     }
 
     fn sink(store: &Arc<AnsweringStore>) -> (CoherentSubscriptionChangeSink, Arc<SubscriptionCache>, broadcast::Receiver<SubscriptionChange>) {
         let (sender, receiver) = broadcast::channel(4);
         let cache = Arc::new(SubscriptionCache::new(TenantRef::UnnamedDefault, LanguageMatching::TagEquality));
-        let sink = CoherentSubscriptionChangeSink::new(
-            sender,
-            Arc::clone(&cache), // clone: the test inspects the cache the sink writes
-            Arc::clone(store) as Arc<dyn SubscriptionStore>,
-        );
+        let sink = CoherentSubscriptionChangeSink::new(sender, Arc::clone(&cache), Arc::clone(store) as Arc<dyn SubscriptionStore>);
         (sink, cache, receiver)
     }
 

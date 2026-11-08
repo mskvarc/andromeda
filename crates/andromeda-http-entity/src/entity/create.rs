@@ -64,7 +64,7 @@ pub(crate) async fn create(
     // broker refuses reaches no context source, and a create whose attributes
     // a proxied registration claims in full is still validated rather than
     // answered 201 unexamined. Half of it is decidable only on the compact
-    // payload -- after expansion a seal forged outside `ngsildproof` is
+    // payload: after expansion a seal forged outside `ngsildproof` is
     // indistinguishable from a sub-attribute (clauses 4.5.2.2, 4.5.3.2 and
     // 4.5.3.3).
     let admitted = admit_written_entity::<CreateEntity>(service, &entity, &context)

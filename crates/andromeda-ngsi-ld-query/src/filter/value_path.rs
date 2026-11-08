@@ -8,7 +8,7 @@
 //! DottedPath = AttrName *(%x2E AttrName)             ; AttrName *(.AttrName)
 //! ```
 //!
-//! — a dot-separated list of names, optionally followed by one bracketed
+//! `ValuePath` is a dot-separated list of names, optionally followed by one bracketed
 //! dot-separated list that navigates into a compound Property value. The prose
 //! reads the first list as a walk through "the matching entities subjacent
 //! graph" of (sub)Properties and (sub)Relationships, and the bracketed list as
@@ -143,7 +143,7 @@ fn parse_trailing_path(cursor: &mut TokenCursor<'_>, depth: usize) -> Result<Tra
 ///
 /// Returns the tokeniser's [`QueryError::QUnterminatedString`] or
 /// [`QueryError::QUnexpectedChar`], the [`parse_value_path`] failures, and
-/// [`QueryError::QUnexpectedToken`] when anything follows the path — which is
+/// [`QueryError::QUnexpectedToken`] when anything follows the path, which is
 /// what refuses the clause 4.9 `rel{…}` linked-entity axis to a parameter whose
 /// own grammar has no hop.
 pub fn parse_attribute_path(text: &str) -> Result<AttrPath, QueryError> {
@@ -211,7 +211,7 @@ mod tests {
         assert_eq!(members, vec!["city".to_owned()]);
     }
 
-    /// Clause 4.9 EXAMPLE 10: `sensor.rawdata[airquality.particulate]` — the
+    /// Clause 4.9 EXAMPLE 10: `sensor.rawdata[airquality.particulate]`: the
     /// two axes combine, and the bracketed list is itself dot-separated.
     #[test]
     fn the_two_axes_combine_in_one_path() {

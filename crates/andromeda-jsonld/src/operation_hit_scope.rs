@@ -1,8 +1,8 @@
 //! Per-operation deduplication of clause 5.13.3.5 context-access counting.
 //!
 //! Clause 5.13.3.5 defines `numberOfHits` as the "number of times the @context
-//! was found in the storage". A single NGSI-LD operation -- one HTTP request, or
-//! the processing of one committed change into notifications -- resolves the
+//! was found in the storage". A single NGSI-LD operation (one HTTP request, or
+//! the processing of one committed change into notifications) resolves the
 //! same `@context` several times internally: an entity write is screened
 //! (clause 5.5.4) and then expanded again for storage, and a notification is
 //! compacted against the subscription's context. Counting each internal
@@ -12,8 +12,8 @@
 //!
 //! An operation scope collapses those internal resolutions: the first access of
 //! a given context URL within the scope counts, and the rest are recognised as
-//! the same use. A resolution that happens outside any scope -- a maintenance
-//! task, a test -- counts every time, which is the conservative reading.
+//! the same use. A resolution that happens outside any scope (a maintenance
+//! task, a test) counts every time, which is the conservative reading.
 //!
 //! The scope is task-local rather than threaded through every expansion call
 //! because the resolutions it unifies are spread across layers that do not share

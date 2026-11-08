@@ -28,11 +28,10 @@ use chrono::Utc;
 /// # Errors
 ///
 /// Returns the [`SubscriptionError::Validation`] of the first rule the body
-/// breaks -- an NGSI-LD Null written into any member among them (clause
-/// 5.2.1) -- [`SubscriptionError::GeoQTooLarge`] for a reference geometry
-/// past the `geoQ` limits, and [`SubscriptionError::Query`] for a `q` too
-/// complex to resolve (clause 5.5.6) or a target language the level does not
-/// admit.
+/// breaks (an NGSI-LD Null written into any member among them, clause 5.2.1),
+/// [`SubscriptionError::GeoQTooLarge`] for a reference geometry past the `geoQ`
+/// limits, and [`SubscriptionError::Query`] for a `q` too complex to resolve
+/// (clause 5.5.6) or a target language the level does not admit.
 pub(crate) fn validate_create_request(request: &SubscriptionRequest, admission: SubscriptionFilterAdmission) -> Result<(), SubscriptionError> {
     // Clause 5.2.1: an NGSI-LD Null is refused outside clauses 5.5.8 and 5.5.12,
     // and a create deletes nothing (clause 5.8.1.4, bullet 1). A JSON `null` is
@@ -166,8 +165,8 @@ pub(crate) fn validate_common_members(request: &SubscriptionRequest, admission: 
     }
 
     // Table 5.2.12-1 gives `notificationTrigger` cardinality 0..1 and a
-    // default for the absent member; an empty array is neither -- it selects no
-    // trigger, so the subscription could never fire -- and is not syntactically
+    // default for the absent member; an empty array is neither. It selects no
+    // trigger, so the subscription could never fire, and it is not syntactically
     // correct per the data type definition (clause 5.5.4). This covers create,
     // update and both kinds of subscription, which all validate here.
     if request.notification_trigger.as_set().is_some_and(Vec::is_empty) {

@@ -10,8 +10,8 @@ use std::{fmt, str::FromStr};
 /// A parsed `q` filter expression tree: `And` and `Or` nodes combine sub-expressions, `Pred` leaves hold individual predicates.
 ///
 /// The wire form is the clause 4.9 expression itself, in both directions: a
-/// resource that carries a filter — a Subscription (clause 5.2.12), a
-/// `ContextSourceRegistration` (5.2.9), a Snapshot query (5.2.23) — stores the
+/// resource that carries a filter, such as a Subscription (clause 5.2.12), a
+/// `ContextSourceRegistration` (5.2.9) or a Snapshot query (5.2.23), stores the
 /// text a client wrote and must give back an equivalent one. Parsing at
 /// deserialization is what makes a malformed filter a rejected request instead
 /// of a filter that silently matches nothing at first use.
@@ -27,8 +27,8 @@ pub enum Expr {
 }
 
 impl Expr {
-    /// Whether any predicate in this filter traverses a linked entity — the
-    /// clause 4.9 `{}` axis.
+    /// Whether any predicate in this filter traverses a linked entity (the
+    /// clause 4.9 `{}` axis).
     ///
     /// A consumer evaluating a filter in memory needs to know: a traversal
     /// reaches an attribute of another entity, which has to be read before the
@@ -41,7 +41,7 @@ impl Expr {
     }
 
     /// The greatest number of Relationship hops any predicate in this filter
-    /// crosses — the clause 4.9 `{}` axis, counted.
+    /// crosses (the clause 4.9 `{}` axis, counted).
     ///
     /// Clause 5.7.2.4 bounds a filter's traversal by the request's `joinLevel`,
     /// and the bound applies to the deepest hop chain the filter contains: a

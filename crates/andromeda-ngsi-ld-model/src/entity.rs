@@ -97,8 +97,8 @@ impl<M> Entity<M> {
     /// `location`, `observationSpace` and `operationSpace` are Attributes that
     /// this type keeps in a field of their own rather than in [`Entity::attrs`],
     /// because clause 4.7 and clause 5.2.4 give each a fixed meaning. Every
-    /// narrowing that selects Attributes by name -- `attrs` (clause 5.7.1.3),
-    /// `pick` and `omit` (clause 4.21) -- has to reach them all the same, so
+    /// narrowing that selects Attributes by name, `attrs` (clause 5.7.1.3) and
+    /// `pick` and `omit` (clause 4.21), has to reach them all the same, so
     /// this is what such a narrowing iterates rather than `attrs` alone.
     pub fn attribute_member_names(&self) -> impl Iterator<Item = &str> {
         self.attribute_members().map(|(name, _value)| name)

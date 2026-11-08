@@ -12,8 +12,8 @@
 //!
 //! The wire form is a `base64url` (no padding) token of a one-byte direction tag
 //! followed by the boundary identifier's own spelling. Because it is opaque, the
-//! only thing a client can do wrong with it is corrupt it; every corruption --
-//! invalid base64, an unknown tag, a missing or malformed identifier -- is a
+//! only thing a client can do wrong with it is corrupt it. Every corruption
+//! (invalid base64, an unknown tag, a missing or malformed identifier) is a
 //! [`CursorDecodeError`], which the request boundary reports as `BadRequestData`.
 
 use crate::page_reach::PageReach;
@@ -77,8 +77,8 @@ impl PageCursor {
     /// The neighbouring-page cursors a returned page offers.
     ///
     /// `incoming` is the cursor the page was fetched under, or `None` when the
-    /// page carried neither cursor nor offset -- the first page of a cursor
-    /// walk. `reach` is whether the collection continues past the page in the
+    /// page carried neither cursor nor offset (the first page of a cursor
+    /// walk). `reach` is whether the collection continues past the page in the
     /// direction it was read. The boundary identifiers are the first and last
     /// of the page as displayed, ascending.
     ///

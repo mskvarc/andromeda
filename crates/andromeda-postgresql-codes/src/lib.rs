@@ -2,7 +2,7 @@
 //!
 //! Two things a stored row is made of live here, and nothing else does. The
 //! first is the compact code domains: the small closed vocabularies a migration
-//! writes into `SMALLINT` columns — the attribute family and value shape of a
+//! writes into `SMALLINT` columns: the attribute family and value shape of a
 //! history row, the trigger conditions of a subscription, the lifecycle and
 //! instance transitions of a notification event, the origin of an owed
 //! change, the operation set of a context-source registration. The second is the identities those rows are

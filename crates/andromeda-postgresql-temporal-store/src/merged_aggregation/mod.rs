@@ -148,7 +148,7 @@ impl TemporalRepository {
             return Ok(());
         }
         let mut mentioned = MentionedNames::default();
-        mentioned.attributes.extend(answered.iter().map(|row| row.attribute_name.clone())); // clone: the dictionary request owns the names it resolves
+        mentioned.attributes.extend(answered.iter().map(|row| row.attribute_name.clone()));
         let keys = resolve_mentioned(&mut *tx, mentioned, self.entity_type_names.as_ref(), self.attribute_names.as_ref()).await?;
         let entity_key = self.staged_entity(tx, entity_id, entity_types).await?;
         let streams = read_staged_streams(tx).await?;
@@ -165,7 +165,7 @@ impl TemporalRepository {
         for (position, (name, dataset_id)) in missing.into_iter().enumerate() {
             let name_key = keys
                 .attribute(name)
-                .ok_or_else(|| TemporalStoreInvariant::AttributeNameUnresolved(name.clone()))?; // clone: the invariant owns the name it failed on
+                .ok_or_else(|| TemporalStoreInvariant::AttributeNameUnresolved(name.clone()))?; // clone: the error outlives the borrowed attribute name it failed on.
             stage_stream(staged_key(first_position.saturating_add(position)), entity_key, name_key.get(), dataset_id)?
                 .to_query()
                 .execute(&mut *tx)

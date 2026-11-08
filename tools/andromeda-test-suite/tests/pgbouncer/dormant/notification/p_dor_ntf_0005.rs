@@ -58,7 +58,7 @@ async fn p_dor_ntf_0005_a_tenant_with_live_changes_waiting_is_unloaded_only_afte
             batch.push(
                 Entity::<Input>::builder()
                     .id(namespace.urn("Watched", write * ENTITIES_PER_WRITE + entity)?)
-                    .entity_type(watched.clone()) // clone: every entity of the batches shares the type
+                    .entity_type(watched.clone())
                     .property("reading", 1)
                     .build()?,
             );

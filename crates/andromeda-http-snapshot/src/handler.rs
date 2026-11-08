@@ -34,7 +34,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-/// POST /ngsi-ld/v1/snapshots -- Create a new snapshot.
+/// POST /ngsi-ld/v1/snapshots: create a new snapshot.
 ///
 /// The body is a JSON-LD document (clause 6.3.5): under `application/ld+json`
 /// it carries its own `@context`, which the extractor lifts off before the
@@ -58,7 +58,7 @@ pub(crate) async fn create(
     Ok(locator.locate(StatusCode::CREATED.into_response(), ResourceCollection::Snapshots, &snapshot.id))
 }
 
-/// GET /ngsi-ld/v1/snapshots/{snapshot_id} -- Retrieve snapshot status.
+/// GET /ngsi-ld/v1/snapshots/{snapshot_id}: retrieve snapshot status.
 pub(crate) async fn get(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
@@ -82,7 +82,7 @@ fn snapshot_response(accept: AcceptFormatNoGeo, snapshot: &Snapshot, uri: &Uri) 
     Ok(NgsiLdResponse::ok(written).into_response())
 }
 
-/// PATCH /ngsi-ld/v1/snapshots/{snapshot_id} -- Update snapshot status.
+/// PATCH /ngsi-ld/v1/snapshots/{snapshot_id}: update snapshot status.
 pub(crate) async fn update(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
@@ -100,7 +100,7 @@ pub(crate) async fn update(
     snapshot_response(accept, &updated, &uri)
 }
 
-/// DELETE /ngsi-ld/v1/snapshots/{snapshot_id} -- Delete a snapshot.
+/// DELETE /ngsi-ld/v1/snapshots/{snapshot_id}: delete a snapshot.
 pub(crate) async fn delete(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
@@ -114,7 +114,7 @@ pub(crate) async fn delete(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// DELETE /ngsi-ld/v1/snapshots -- Purge snapshots selected by a `q` filter.
+/// DELETE /ngsi-ld/v1/snapshots: purge snapshots selected by a `q` filter.
 ///
 /// Implements ETSI GS CIM 009 v1.9.1 clauses 5.16.7 and 6.36.3.2:
 ///
@@ -151,7 +151,7 @@ pub(crate) async fn purge(
     }
 }
 
-/// POST /ngsi-ld/v1/snapshots/{snapshot_id}/clone -- Clone a snapshot.
+/// POST /ngsi-ld/v1/snapshots/{snapshot_id}/clone: clone a snapshot.
 pub(crate) async fn clone(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
@@ -162,8 +162,8 @@ pub(crate) async fn clone(
     locator: ResourceLocator,
     JsonLd { body, context }: JsonLd<SnapshotCloneInput>,
 ) -> Result<Response, ProblemResponse> {
-    // A clone names no term a context could define -- its queries keep the
-    // context the source Snapshot was created under -- but clause 5.5.7
+    // A clone names no term a context could define, and its queries keep the
+    // context the source Snapshot was created under, but clause 5.5.7
     // refuses an `@context` embedded below its top level all the same.
     let input = body.context_free(context).await?;
     let cloned = state.snapshots.clone_snapshot(&snapshot_id, input).await.with_snapshot_instance(&uri)?;

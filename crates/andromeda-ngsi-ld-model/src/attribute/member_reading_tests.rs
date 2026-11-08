@@ -592,7 +592,7 @@ fn a_keyword_spelled_instance_reads_typed() {
 /// and a core class are read as those core terms.
 #[test]
 fn an_aliased_instance_reads_typed() {
-    let mut aliases = CoreTermAliases::keyword_spellings().clone(); // clone: the fixture extends the shared table
+    let mut aliases = CoreTermAliases::keyword_spellings().clone();
     aliases.alias("kind", "type");
     aliases.alias("v", "value");
     aliases.alias("Prop", "Property");
@@ -626,7 +626,7 @@ fn a_json_null_on_an_optional_instance_member_is_refused() {
             "previousObject",
         ] {
             let mut instance = json!({"type": family});
-            instance[value_member] = value.clone(); // clone: each instance carries the family's value
+            instance[value_member] = value.clone();
             instance[member] = Value::Null;
             assert!(read("speed", &instance).is_err(), "{family}.{member}");
         }

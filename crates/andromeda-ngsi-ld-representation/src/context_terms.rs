@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 
 /// The terms every context has: the clause 4.4 keyword spellings of `id` and
 /// `type`, and no container.
-static KEYWORD_SPELLINGS: LazyLock<ContextTerms> = LazyLock::new(|| ContextTerms::new(CoreTermAliases::keyword_spellings().clone(), ContainerTerms::none())); // clone: once, into the terms every core-only reading shares
+static KEYWORD_SPELLINGS: LazyLock<ContextTerms> = LazyLock::new(|| ContextTerms::new(CoreTermAliases::keyword_spellings().clone(), ContainerTerms::none()));
 
 /// The terms a context defines for core terms and the terms whose container
 /// reshapes what is written under them.

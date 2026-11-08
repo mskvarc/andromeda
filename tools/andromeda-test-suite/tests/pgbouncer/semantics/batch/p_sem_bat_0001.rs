@@ -42,7 +42,7 @@ async fn p_sem_bat_0001_large_batch_upserts_commit_whole_across_concurrent_tenan
         .map(|seq| {
             Ok(Entity::builder()
                 .id(namespace.urn("Device", format!("atomic-{seq}"))?)
-                .entity_type(device_type.clone()) // clone: every Entity of the batch carries the type
+                .entity_type(device_type.clone())
                 .property("seq", seq)
                 .build()?)
         })

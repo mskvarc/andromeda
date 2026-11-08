@@ -219,9 +219,9 @@ mod tests {
     }
 
     /// Clause 5.7.1.4: a retrieval is forwarded only to registrations that
-    /// "match and support the retrieveEntity operation" -- `retrieveEntity`
+    /// "match and support the retrieveEntity operation" (`retrieveEntity`
     /// itself, a Table 4.20-2 group containing it, or no `operations` at all,
-    /// which clause 5.2.9 makes `federationOps`. One advertising only a query
+    /// which clause 5.2.9 makes `federationOps`). One advertising only a query
     /// operation is never contacted for it, while an entity query still
     /// reaches it (clause 6.23.1).
     #[test]

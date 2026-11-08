@@ -1,9 +1,9 @@
 //! Publishing a prepared Snapshot branch: promoting a staged capture or clone,
 //! and copying one Snapshot's published branch into a clone's staging branch.
 //!
-//! Every publication ends the same way -- the staging branch is analysed, the
+//! Every publication ends the same way: the staging branch is analysed, the
 //! staging schema is renamed to the published schema and the preparation row
-//! leaves `preparing` -- in one transaction, so the first read of a published
+//! leaves `preparing`, in one transaction, so the first read of a published
 //! branch is planned on its statistics and the rename and the control-row
 //! update commit together. The analysis samples a bounded number of rows per
 //! relation, so the transaction stays short however large the branch.
@@ -43,9 +43,9 @@ use andromeda_snapshot::{branch_condition::BranchCondition, error::SnapshotError
 use sea_query::{Expr, ExprTrait, JoinType, Keyword, LockType, Query, SelectStatement, SimpleExpr};
 use sqlx::{PgPool, Postgres, Transaction};
 
-/// Publish one prepared branch -- what a capture or a clone staged on success,
+/// Publish one prepared branch (what a capture or a clone staged on success,
 /// its statistics gathered first, an empty branch on failure, so a failed
-/// Snapshot stays addressable -- and record the terminal status, all in one
+/// Snapshot stays addressable), and record the terminal status, all in one
 /// transaction.
 pub(crate) async fn promote_staged_branch(
     pool: &PgPool,
@@ -92,8 +92,8 @@ pub(crate) async fn promote_context_clone(pool: &PgPool, source_id: &Identifier,
 /// branch, as of one moment, and commit the copy unpublished.
 ///
 /// Every copy statement reads the snapshot the transaction's first statement
-/// took, so the copied relations agree with each other -- a copied census
-/// counts exactly the copied search rows -- without locking the source's
+/// took, so the copied relations agree with each other (a copied census
+/// counts exactly the copied search rows) without locking the source's
 /// relations against writers or the census fold. Clause 5.16.2.4 leaves the
 /// moment a concurrently written source is copied at unspecified; it is the
 /// start of the copy. The two control records are held only `FOR KEY SHARE`,

@@ -255,7 +255,7 @@ mod tests {
         let store = Arc::new(ClaimRecordingStore::default());
         let notified = vehicle();
         let event = ChangeEvent::builder()
-            .entity_id(notified.id().clone()) // clone: the event owns the identifier it carries
+            .entity_id(notified.id().clone())
             .entity_types(notified.types().as_slice().to_vec())
             .change(EntityChange::new(EntityLifecycle::Created, Vec::new()))
             .occurred_at(evaluated_at)

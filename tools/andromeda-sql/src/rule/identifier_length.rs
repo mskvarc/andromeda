@@ -2,8 +2,8 @@
 //! PostgreSQL keeps of one.
 //!
 //! A longer identifier is truncated without an error, so two names that
-//! differ only past the limit collide, and the name the code uses no longer
-//! matches the one the catalogue holds. The parser reports the truncated name,
+//! differ only past the limit collide, and the name the code uses does not
+//! match the one the catalogue holds. The parser reports the truncated name,
 //! so the rule reads the identifiers as written, which covers every object
 //! kind, and every name a statement refers to as well as creates.
 

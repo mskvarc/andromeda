@@ -54,7 +54,6 @@ pub(crate) fn each_entity(entity_ids: &[Identifier], alias: impl IntoIden, read:
         [entity_id] => array_literal([Expr::val(entity_id.to_string())]),
         [] | [_, _, ..] => Expr::val(entity_ids.iter().map(Identifier::to_string).collect::<Vec<String>>()),
     };
-    // clone: the identifier is both projected and the Entity every source of the read narrows to.
     let mut read = read(&HistoryOf::Entity(entity.clone()));
     read.offset(0);
     let mut select = Query::select();

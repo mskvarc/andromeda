@@ -331,7 +331,7 @@ mod tests {
             ContextTail::LocalDefinitions,
             ContextTail::Unresolvable,
         ] {
-            pretty_assertions::assert_eq!(tail.clone().resolved_against(&base), tail); // clone: the expectation compares against it
+            pretty_assertions::assert_eq!(tail.clone().resolved_against(&base), tail);
         }
     }
 

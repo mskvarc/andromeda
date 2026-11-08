@@ -1,18 +1,18 @@
 //! Shared subscription persistence layer.
 //!
-//! - [`rows`] — `SubscriptionRow` persistence struct.
-//! - [`params`] — borrowed input structs.
-//! - [`mapper`] — PgRow → row → domain conversion.
-//! - [`stored_subscription_error`] — a stored row that does not read back.
-//! - [`stored_kind`] — which family a statement addresses.
-//! - [`status_code`] — the number a lifecycle state is stored as.
-//! - [`interned_attributes`] — the dictionary keys of the attribute lists.
-//! - [`entity_statements`] — the entity create and replace statements and binders.
-//! - [`csource_statements`] — the context-source create and replace statements and binders.
-//! - [`conformance_text`] — the text `ngsildConformance` is stored as.
-//! - [`delivery_state`] — the delivery counters and their statements.
-//! - [`projection`] — the read-side projection every subscription query shares.
-//! - [`failure`] — how adapter failures surface at the policy boundary.
+//! - [`rows`]: `SubscriptionRow` persistence struct.
+//! - [`params`]: borrowed input structs.
+//! - [`mapper`]: PgRow → row → domain conversion.
+//! - [`stored_subscription_error`]: a stored row that does not read back.
+//! - [`stored_kind`]: which family a statement addresses.
+//! - [`status_code`]: the number a lifecycle state is stored as.
+//! - [`interned_attributes`]: the dictionary keys of the attribute lists.
+//! - [`entity_statements`]: the entity create and replace statements and binders.
+//! - [`csource_statements`]: the context-source create and replace statements and binders.
+//! - [`conformance_text`]: the text `ngsildConformance` is stored as.
+//! - [`delivery_state`]: the delivery counters and their statements.
+//! - [`projection`]: the read-side projection every subscription query shares.
+//! - [`failure`]: how adapter failures surface at the policy boundary.
 
 /// The fields of a subscription carrying nothing optional.
 #[cfg(test)]

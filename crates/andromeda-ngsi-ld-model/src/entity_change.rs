@@ -3,9 +3,9 @@
 //!
 //! Clause 5.8.6 notifies a subscriber "whenever there is a change in the
 //! watched Attributes", and the message "shall include all the subscribed
-//! Entities that changed". A change is what one write did to one Entity -- a
+//! Entities that changed". A change is what one write did to one Entity (a
 //! batch operation treats every entity instance "as if [it] had all arrived in
-//! separate requests" (clause 5.5.11.0) -- so it is recorded once, as the
+//! separate requests" (clause 5.5.11.0)), so it is recorded once, as the
 //! Entity's lifecycle transition together with every Attribute instance the
 //! write created, updated or deleted. The notification triggers of Table
 //! 5.2.12-1 then decide *whether* a subscription is owed a notification for the
@@ -115,7 +115,7 @@ impl EntityChange {
     /// Table 5.2.12-1: "The notification triggers listed indicate what kind of
     /// changes shall trigger a notification", and clause 5.8.1.4: "Watched
     /// Attributes are those that trigger a new notification when they are
-    /// changed" -- absent, "any Attribute". The change is owed when its
+    /// changed" (absent meaning "any Attribute"). The change is owed when its
     /// lifecycle raises a listed entity-level trigger over an attribute the
     /// subscription watches, or when one of its instances raises a listed
     /// attribute-level trigger on a watched attribute. An entity created or

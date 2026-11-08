@@ -176,7 +176,7 @@ impl TemporalService {
 /// The one instance of `target` an expanded clause 5.6.14.3 `EntityTemporal`
 /// Fragment carries.
 ///
-/// The Fragment's shape -- one Attribute, an Array of exactly one instance --
+/// The Fragment's shape (one Attribute, an Array of exactly one instance)
 /// is admitted at the binding edge before anything is forwarded; what only
 /// expansion can decide is whether that Attribute is the one the request
 /// targets.

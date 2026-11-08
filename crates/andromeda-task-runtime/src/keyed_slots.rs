@@ -92,7 +92,7 @@ impl<K: Eq + Hash + Copy + Send + Sync + 'static> KeyedSlots<K> {
                 free.insert(Contention::Uncontended);
             }
         }
-        let inner = Arc::clone(&self.inner); // clone: the spawned work frees its key in the shared map.
+        let inner = Arc::clone(&self.inner);
         self.inner.tasks.spawn(async move {
             let release = Release {
                 inner: &inner,
@@ -231,7 +231,7 @@ mod tests {
         let slots = slots(1);
         let (open, gate) = oneshot::channel::<()>();
         let (ran_tx, mut ran) = mpsc::unbounded_channel();
-        let blocking = ran_tx.clone(); // clone: both work items log through one channel
+        let blocking = ran_tx.clone();
         slots.offer(
             1,
             async move {
@@ -258,7 +258,7 @@ mod tests {
     async fn finishing_stops_running_and_queued_work_and_frees_every_key_without_callbacks() {
         let slots = slots(1);
         let (freed_tx, mut freed) = mpsc::unbounded_channel::<()>();
-        let refused = freed_tx.clone(); // clone: both work items report through one channel
+        let refused = freed_tx.clone();
         slots.offer(1, future::pending(), move || refused.send(()).expect("the test reads the callbacks"));
         slots.offer(2, future::pending(), move || freed_tx.send(()).expect("the test reads the callbacks"));
         pretty_assertions::assert_eq!(slots.offer(1, async {}, || {}), Admission::Busy);

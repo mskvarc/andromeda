@@ -150,7 +150,7 @@ mod tests {
     use serde_json::{Value, json};
 
     fn member(value: &Value) -> ScopeMember {
-        serde_json::from_value(value.clone()).expect("a scope member decodes") // clone: from_value consumes its input
+        serde_json::from_value(value.clone()).expect("a scope member decodes")
     }
 
     fn scopes(paths: &[&str]) -> Scopes {
@@ -187,7 +187,7 @@ mod tests {
     #[test]
     fn a_value_outside_the_grammar_is_refused() {
         for value in [json!("/A B"), json!([]), json!(["/A", "urn:ngsi-ld:null"]), json!([1])] {
-            assert!(serde_json::from_value::<ScopeMember>(value.clone()).is_err(), "{value}"); // clone: from_value consumes its input
+            assert!(serde_json::from_value::<ScopeMember>(value.clone()).is_err(), "{value}");
         }
     }
 }

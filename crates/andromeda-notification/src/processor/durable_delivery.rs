@@ -64,7 +64,7 @@ impl NotificationDeliveryTransport for NotificationProcessor {
 ///
 /// Without the subscription as it now stands the change cannot be matched
 /// against it, and reading the failure as a subscription that is gone would
-/// acknowledge the delivery as obsolete -- losing a notification clause 5.8.6
+/// acknowledge the delivery as obsolete, losing a notification that clause 5.8.6
 /// owes the subscriber. A store that could not answer may answer the next
 /// attempt, so the delivery is retried. No notification was attempted, so no
 /// subscription bookkeeping (clause 5.2.14.2 `timesSent`, `timesFailed`)
@@ -72,7 +72,6 @@ impl NotificationDeliveryTransport for NotificationProcessor {
 fn unreadable_subscription(subscription_id: &Identifier, error: SubscriptionError) -> DeliveryDisposition {
     DeliveryDisposition::RetryableFailure {
         detail: DeliveryFailure::SubscriptionUnreadable {
-            // clone: the failure owns the identifier it names, the entry keeps its own
             subscription_id: subscription_id.clone(),
             source: error,
         }
@@ -110,20 +109,20 @@ fn commit_filters(stored: &NotificationEvent) -> CommitFilters {
 /// deleted row is gone.
 fn queued_change_event(stored: &NotificationEvent) -> ChangeEvent {
     let snapshot = stored.entity_snapshot.as_ref().map(Arc::clone);
-    // clone: the change event owns the types it is routed by
+    // clone: the types are copied out before the snapshot moves into the event
     let entity_types = snapshot.as_ref().map(|state| state.types().as_slice().to_vec()).unwrap_or_default();
     let (removed, current) = match stored.change.lifecycle {
         EntityLifecycle::Deleted => (snapshot, None),
         EntityLifecycle::Created | EntityLifecycle::Modified => (None, snapshot),
     };
     ChangeEvent::builder()
-        .entity_id(stored.entity_id.clone()) // clone: the change event and the stored event independently own the identifier.
+        .entity_id(stored.entity_id.clone())
         .entity_types(entity_types)
-        .change(stored.change.clone()) // clone: the change event owns the change it notifies through delivery.
+        .change(stored.change.clone())
         .occurred_at(stored.created_at)
         .entity_snapshot(removed)
         .previous_attributes(stored.previous_snapshot.as_ref().map(Arc::clone))
-        .sys_attrs_snapshot(stored.sys_attrs_snapshot.clone()) // clone: the change event owns the system attributes it notifies with
+        .sys_attrs_snapshot(stored.sys_attrs_snapshot.clone())
         .origin(ChangeOrigin::Local)
         .current_payload(current)
         .build()

@@ -1,7 +1,7 @@
 //! Resolving a clause 4.5.23 join for a read response.
 //!
-//! All three read endpoints -- `GET /entities`, `GET /entities/{id}` and
-//! `POST /entityOperations/query` -- run the Linked Entity engine the same way
+//! All three read endpoints (`GET /entities`, `GET /entities/{id}` and
+//! `POST /entityOperations/query`) run the Linked Entity engine the same way
 //! before they render: traverse from the roots through the Core source, give
 //! every node the names the representation uses, index those names, and ask
 //! the engine for the plan the writer renders. None of the handlers decides

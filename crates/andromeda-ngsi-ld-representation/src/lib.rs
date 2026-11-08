@@ -7,7 +7,7 @@
 //! linked entity is nested or flat.
 //! None of those decisions changes what an entity *is*, which is why they are
 //! not members of the data model, and every one of them is read on both sides
-//! of it — by the query languages that compile a request and by the renderers
+//! of it, by the query languages that compile a request and by the renderers
 //! that answer one.
 //!
 //! It sits below both: a representation option is expressible in terms of the

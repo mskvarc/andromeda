@@ -212,7 +212,7 @@ fn install_telemetry(prometheus: FeatureMode) -> Result<Option<Arc<TelemetryReco
 /// A focused coercion helper: the HTTP tenant routes and process shutdown share
 /// the one runtime manager, which implements the administration port.
 fn tenant_administration(tenants: &Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>) -> Arc<dyn TenantAdministration> {
-    tenants.clone() // clone: HTTP administration and shutdown share the one manager
+    tenants.clone()
 }
 
 /// The tenant-management usage probe.
@@ -235,8 +235,8 @@ fn tenant_usage_probe(request_url: DatabaseUrl, config: &BrokerConfig) -> Arc<dy
 
 /// Open the platform pool over the tenant registry.
 ///
-/// The platform database -- the tenant registry every cold load reads, the
-/// wake schedule, the forwarded-subscription routes -- is one database, so a
+/// The platform database (the tenant registry every cold load reads, the
+/// wake schedule, the forwarded-subscription routes) is one database, so a
 /// pooler has nothing to multiplex for it: routed through one, every replica
 /// shares the pooler's handful of server connections for that one database,
 /// and provisioning holds one of them across `CREATE DATABASE`, which queues
@@ -246,8 +246,8 @@ async fn connect_registry(config: &BrokerConfig, direct_url: &DatabaseUrl) -> Re
     Ok(Arc::new(
         PostgresTenantRegistry::connect(
             configure_pool_options(config.database.platform_max_connections.get(), config.database.acquire_timeout()),
-            direct_url.clone(),               // clone: the registry provisions and migrates over the direct base
-            config.tenancy.databases.clone(), // clone: the registry owns where tenant data lives
+            direct_url.clone(),
+            config.tenancy.databases.clone(),
             &database_defaults(config),
             config.database.acquire_timeout(),
         )
@@ -268,8 +268,8 @@ async fn construct(
     // PostgreSQL directly, because each keeps session state (a `CREATE DATABASE`
     // outside any transaction, the migrator's session advisory lock, the
     // maintenance sweep's session lock) that a transaction-pooling proxy breaks.
-    let request_url = DatabaseUrl::new(config.database.request_url().clone()); // clone: the tenant factory retains the request base URL
-    let direct_url = DatabaseUrl::new(config.database.direct_url().clone()); // clone: registry, maintenance and the tenant factory retain the direct base URL
+    let request_url = DatabaseUrl::new(config.database.request_url().clone());
+    let direct_url = DatabaseUrl::new(config.database.direct_url().clone());
     let registry = connect_registry(&config, &direct_url).await?;
     let process_tasks = TaskSupervisor::process(Handle::current());
     // Maintenance holds a session advisory lock across a whole sweep, so it gets
@@ -280,7 +280,7 @@ async fn construct(
     register_postgresql_maintenance(
         &process_tasks,
         maintenance_platform_pool,
-        direct_url.clone(), // clone: the process task derives tenant URLs over the direct base
+        direct_url.clone(), // clone: direct_url is still needed to build the tenant factory.
         config.database.maintenance,
         config.database.acquire_timeout(),
         expected_deployment(&config),
@@ -293,27 +293,27 @@ async fn construct(
     // database beside the registry.
     let pending_work_probe = pending_work_probe(
         &TenantProbeUrls::new(
-            request_url.clone(), // clone: the factory retains the request base URL
-            direct_url.clone(),  // clone: the factory retains the direct base URL
+            request_url.clone(), // clone: request_url is still needed to build the tenant factory.
+            direct_url.clone(),  // clone: direct_url is still needed to build the tenant factory.
         ),
         &config,
     )?;
-    let tenant_usage_probe = tenant_usage_probe(request_url.clone(), &config); // clone: the factory retains the request base URL
-    let wake_schedule: Arc<dyn TenantWakeSchedule> = Arc::new(PostgresTenantWakeSchedule::new(registry.main_pool().clone())); // clone: PgPool is a shared handle
+    let tenant_usage_probe = tenant_usage_probe(request_url.clone(), &config); // clone: request_url is still needed to build the tenant factory.
+    let wake_schedule: Arc<dyn TenantWakeSchedule> = Arc::new(PostgresTenantWakeSchedule::new(registry.main_pool().clone()));
     // Every open records the extension versions it left, and the waker reads
     // the record to bring dormant tenants up to date after an image upgrade.
-    let extension_versions = Arc::new(PostgresTenantExtensionVersions::new(registry.main_pool().clone())); // clone: PgPool is a shared handle
+    let extension_versions = Arc::new(PostgresTenantExtensionVersions::new(registry.main_pool().clone()));
     let factory = Arc::new(BrokerTenantFactory::new(
         &config,
-        source_identity.alias.clone(), // clone: every tenant derives its own alias from the default tenant's
+        source_identity.alias.clone(), // clone: source_identity is consumed by the route assembly.
         request_url,
         direct_url,
-        process_tasks.clone(), // clone: tenant scopes and process shutdown share supervision
+        process_tasks.clone(),
         Arc::clone(&forwarded_subscription_router),
         Arc::clone(&extension_versions),
     ));
     let tenants = TenantRuntimeManager::new(
-        config.tenancy.clone(), // clone: manager owns its policy
+        config.tenancy.clone(),
         Arc::clone(&registry),
         Arc::clone(&factory),
         pending_work_probe,
@@ -369,12 +369,12 @@ async fn construct(
             forwarded_subscription_router,
         ))))
         .tenancy(TenancyRoutes::new(tenant_administration, tenant_usage_probe, tenant_management))
-        .health(HealthRoutes::new(health.clone())) // clone: the data plane and the management plane each own a health-route fragment over the same indicators
+        .health(HealthRoutes::new(health.clone()))
         .component_report(ComponentReportRoutes::new(component_reports))
-        .configured_api_root(config.server.public_url.clone().map(ConfiguredApiRoot::new)) // clone: clause 6.2, the configured apiRoot every minted URL is built on
+        .configured_api_root(config.server.public_url.clone().map(ConfiguredApiRoot::new))
         .pagination(pagination)
         .build();
-    let stack = HttpStack::new(config.http.clone(), config.request_limits)?; // clone: the assembled stack owns its process-wide configuration
+    let stack = HttpStack::new(config.http.clone(), config.request_limits)?;
     let (api, management) = assemble_planes(config.management.mode, routes, health, telemetry_routes, &stack);
     Ok(BrokerExecution {
         api,

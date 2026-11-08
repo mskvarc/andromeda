@@ -28,7 +28,6 @@ async fn under_commit_synchronous_a_created_entity_is_a_candidate_for_the_next_g
     let index = warm_index();
     let service = indexed_service(&index);
     let query = near_origin("urn:ngsi-ld:Vehicle:new");
-    // clone: the query service shares the index
     assert_eq!(
         narrowed_ids(SpatialAcceleration::CommitSynchronous(Arc::clone(&index)), &query).await,
         Some(Vec::new())
@@ -48,7 +47,6 @@ async fn under_commit_synchronous_a_merge_moving_an_entity_into_range_makes_it_a
     let service = indexed_service(&index);
     create(&service, vehicle_at("urn:ngsi-ld:Vehicle:mover", 50.0)).await;
     let query = near_origin("urn:ngsi-ld:Vehicle:mover");
-    // clone: the query service shares the index
     assert_eq!(
         narrowed_ids(SpatialAcceleration::CommitSynchronous(Arc::clone(&index)), &query).await,
         Some(Vec::new())

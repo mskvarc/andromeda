@@ -18,7 +18,7 @@ impl ReceiverEndpoint {
     /// The receiver below the advertised origin.
     #[must_use]
     pub fn from_advertised(advertised: &Url) -> Option<ReceiverEndpoint> {
-        let mut url = advertised.clone(); // clone: the endpoint owns a URL distinct from the configured origin
+        let mut url = advertised.clone();
         {
             let mut segments = url.path_segments_mut().ok()?;
             segments.pop_if_empty();
@@ -48,7 +48,7 @@ impl ReceiverEndpoint {
     #[must_use]
     pub fn notification_endpoint(&self) -> Endpoint {
         Endpoint {
-            uri: DereferenceableUri::from(self.0.clone()), // clone: the endpoint owns its URI apart from the receiver
+            uri: DereferenceableUri::from(self.0.clone()),
             accept: Some(NotificationMediaType::Json),
             receiver_info: None,
             notifier_info: None,

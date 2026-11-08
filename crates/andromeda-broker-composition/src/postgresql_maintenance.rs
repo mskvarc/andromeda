@@ -67,8 +67,8 @@ pub(crate) fn register_postgresql_maintenance(
     );
     let branch_version = current_branch_version().map_err(|error| MaintenanceRegistrationError::BranchVersion(ContextStoreError::BranchVersion(error)))?;
     let repack = Arc::new(RepackTask::new(
-        platform_pool.clone(), // clone: the repack task holds its own platform connection beside the pass's
-        direct_url.clone(),    // clone: the repack task derives tenant URLs over the direct base
+        platform_pool.clone(),
+        direct_url.clone(), // clone: direct_url is still needed to build the controller.
         config,
         acquire_timeout,
         branch_version,
@@ -82,7 +82,7 @@ pub(crate) fn register_postgresql_maintenance(
         branch_version,
     ));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
-        let controller = Arc::clone(&controller); // clone: each bounded pass owns the process controller while executing
+        let controller = Arc::clone(&controller);
         async move {
             let outcome = controller.run(execution.cancellation()).await.map_err(classify_failure)?;
             debug!(outcome = %outcome, "PostgreSQL maintenance pass finished");
@@ -106,7 +106,7 @@ fn register_repack_task(supervisor: &TaskSupervisor, repack: Arc<RepackTask>, pr
         ShutdownPolicy::new(Duration::from_secs(60)),
     );
     let task = ScheduledTask::new(registration, schedule, move |execution| {
-        let repack = Arc::clone(&repack); // clone: each execution owns the process task while it runs
+        let repack = Arc::clone(&repack);
         async move {
             let outcome = repack.run(execution.cancellation()).await.map_err(classify_failure)?;
             debug!(outcome = %outcome, "PostgreSQL repack task finished");

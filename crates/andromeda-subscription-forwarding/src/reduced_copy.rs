@@ -61,9 +61,9 @@ fn declared_attributes(registration: &ContextSourceRegistration) -> Option<Vec<&
 fn narrow_names(names: Option<&[AttributeName]>, declared: Option<&[&AttributeName]>) -> Option<Vec<AttributeName>> {
     match (names, declared) {
         (None, None) => None,
-        (None, Some(declared)) => Some(declared.iter().map(|name| (*name).clone()).collect()), // clone: the copy owns its names
-        (Some(names), None) => Some(names.to_vec()),                                           // clone: same
-        (Some(names), Some(declared)) => Some(names.iter().filter(|name| declared.contains(name)).cloned().collect()), // clone: same
+        (None, Some(declared)) => Some(declared.iter().map(|name| (*name).clone()).collect()),
+        (Some(names), None) => Some(names.to_vec()),
+        (Some(names), Some(declared)) => Some(names.iter().filter(|name| declared.contains(name)).cloned().collect()),
     }
 }
 
@@ -100,13 +100,13 @@ impl ReducedSubscription {
                 }
                 .covers(registration)
             })
-            .cloned() // clone: the copy owns the selectors it places at the source
+            .cloned()
             .collect();
         let declared = declared_attributes(registration);
         let keeps_filters = carriage == FilterCarriage::Keep;
 
         // Clause 5.8.1.4: the notification member carries no `attributes`,
-        // `pick` or `omit` whatever the carriage -- the source sends its whole
+        // `pick` or `omit` whatever the carriage: the source sends its whole
         // part and this broker narrows the re-assembled entity. It keeps
         // `showChanges`: only the source holds the values its change replaced,
         // and the copy relays them (clause 5.8.6).
@@ -120,18 +120,18 @@ impl ReducedSubscription {
 
         ReducedSubscription {
             request: SubscriptionRequest {
-                id: Some(minted.clone()), // clone: the copy owns the identifier it is placed under
+                id: Some(minted.clone()),
                 type_: Some(SubscriptionType),
-                subscription_name: Clearable::from_option(subscription.subscription_name.clone()), // clone: the copy owns its name
-                description: Clearable::from_option(subscription.description.clone()),             // clone: the copy owns its description
+                subscription_name: Clearable::from_option(subscription.subscription_name.clone()),
+                description: Clearable::from_option(subscription.description.clone()),
                 entities: Clearable::from_option((!selectors.is_empty()).then_some(selectors)),
                 watched_attributes: Clearable::from_option(narrow_names(subscription.selection.watched_attributes.as_deref(), declared.as_deref())),
-                notification_trigger: Clearable::from_option(subscription.selection.notification_trigger.clone()), // clone: the copy owns its triggers
+                notification_trigger: Clearable::from_option(subscription.selection.notification_trigger.clone()),
                 time_interval: Clearable::from_option(subscription.delivery.time_interval),
-                q: Clearable::from_option(subscription.filters.q.as_ref().filter(|_| keeps_filters).cloned()), // clone: the copy owns its filter
-                geo_q: Clearable::from_option(subscription.filters.geo_q.as_ref().filter(|_| keeps_filters).cloned()), // clone: the copy owns its filter
-                scope_q: Clearable::from_option(subscription.filters.scope_q.as_ref().filter(|_| keeps_filters).cloned()), // clone: the copy owns its filter
-                dataset_id: Clearable::from_option(subscription.filters.dataset_id.clone()),                   // clone: the copy owns its selectors
+                q: Clearable::from_option(subscription.filters.q.as_ref().filter(|_| keeps_filters).cloned()),
+                geo_q: Clearable::from_option(subscription.filters.geo_q.as_ref().filter(|_| keeps_filters).cloned()),
+                scope_q: Clearable::from_option(subscription.filters.scope_q.as_ref().filter(|_| keeps_filters).cloned()),
+                dataset_id: Clearable::from_option(subscription.filters.dataset_id.clone()),
                 notification: Some(notification),
                 throttling: Clearable::from_option(subscription.delivery.throttling),
                 expires_at: Clearable::from_option(subscription.lifecycle.standing.expires_at),
@@ -156,7 +156,7 @@ impl ReducedSubscription {
         let mut fragment = SubscriptionRequest {
             id: None,
             type_: None,
-            ..self.request.clone() // clone: the fragment is a second request
+            ..self.request.clone()
         };
         fragment.subscription_name = deleting(fragment.subscription_name, DeletableMember::SubscriptionName, deleted);
         fragment.description = deleting(fragment.description, DeletableMember::Description, deleted);
@@ -374,7 +374,7 @@ mod tests {
 
     /// Clause 5.8.1.4: `q`, `geoQ` and `scopeQ` travel only when entities are
     /// complete at every source, while the notification's `attributes`,
-    /// `pick` and `omit` never travel -- whatever the carriage and whichever
+    /// `pick` and `omit` never travel, whatever the carriage and whichever
     /// of the three the subscription set.
     #[test]
     fn the_reduce_matrix_keeps_filters_by_carriage_and_never_the_projection_members() {
@@ -390,7 +390,7 @@ mod tests {
             for projection in &projections {
                 let mut notification = json!({"endpoint": {"uri": "http://subscriber.example.org/notify"}});
                 if let (Some(target), Some(members)) = (notification.as_object_mut(), projection.as_object()) {
-                    target.extend(members.iter().map(|(key, value)| (key.clone(), value.clone()))); // clone: each case builds its own document
+                    target.extend(members.iter().map(|(key, value)| (key.clone(), value.clone())));
                 }
                 let subscription: Subscription = serde_json::from_value(json!({
                     "id": "urn:ngsi-ld:Subscription:local",
@@ -436,7 +436,7 @@ mod tests {
     /// the members `update` deleted.
     fn fragment_after(local: &Subscription, update: &Value, carriage: FilterCarriage) -> Value {
         let registration = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
-        let deleted = DeletedMembers::of(&serde_json::from_value(update.clone()).expect("a readable fragment")); // clone: the fixture is borrowed
+        let deleted = DeletedMembers::of(&serde_json::from_value(update.clone()).expect("a readable fragment"));
         written(&ReducedSubscription::reduce(local, &registration, &receiver(), &minted(), carriage).as_fragment(&deleted, carriage))
     }
 

@@ -5,9 +5,9 @@ use strum::{Display, EnumString};
 /// One `options` token, spelled as the specification spells it.
 ///
 /// This is the union of the tokens every operation's `options` grammar draws
-/// on -- the renderings of Tables 6.3.7-1 and 6.3.12-1, `sysAttrs` (clause
+/// on (the renderings of Tables 6.3.7-1 and 6.3.12-1, `sysAttrs` (clause
 /// 6.3.11), `count` (clause 6.3.13), `noOverwrite` (clause 6.3.9) and the two
-/// upsert modes of clause 6.15.3.1. Which of them one operation accepts is that
+/// upsert modes of clause 6.15.3.1). Which of them one operation accepts is that
 /// operation's grammar; a token outside the union names nothing at all.
 #[derive(Clone, Copy, Debug, Display, EnumString, Eq, Hash, PartialEq)]
 #[strum(serialize_all = "camelCase")]

@@ -1,8 +1,8 @@
 //! Where the entities a temporal `EntityMap` attributes to this broker come
 //! from (clauses 5.2.39 and 5.5.14).
 //!
-//! The two temporal reads that run under a map — Query Temporal Evolution of
-//! Entities and Retrieve Temporal Evolution of an Entity — differ only in how
+//! The two temporal reads that run under a map (Query Temporal Evolution of
+//! Entities and Retrieve Temporal Evolution of an Entity) differ only in how
 //! the histories this broker holds itself are listed, so that difference alone
 //! is what this module owns; the recording built on it is the same for both and
 //! belongs to the map policy.
@@ -17,8 +17,8 @@ use axum::http::Uri;
 
 /// Where the histories a temporal map attributes to this broker come from.
 ///
-/// Listing them is not free for a query — it costs a pass over the temporal
-/// catalogue — so the source is described here and read only when the recording
+/// Listing them is not free for a query: it costs a pass over the temporal
+/// catalogue, so the source is described here and read only when the recording
 /// asks for it.
 pub(crate) enum LocalHistoryEntities<'a> {
     /// The single history a retrieval held locally, if it held one.
@@ -57,7 +57,7 @@ impl LocalMapEntities for LocalHistoryEntities<'_> {
 
     async fn identifiers(&self, listing: MapListing) -> Result<Vec<Identifier>, ProblemResponse> {
         match *self {
-            LocalHistoryEntities::Retrieved(entity_id) => Ok(entity_id.cloned().into_iter().collect()), // clone: the map owns its identifiers
+            LocalHistoryEntities::Retrieved(entity_id) => Ok(entity_id.cloned().into_iter().collect()),
             LocalHistoryEntities::Queried { read, linked, instance } => {
                 let requested = match listing {
                     MapListing::Minted => RequestedIdentifiers::Narrow,
@@ -69,7 +69,7 @@ impl LocalMapEntities for LocalHistoryEntities<'_> {
                     MapListing::Rechecked => RequestedIdentifiers::Ignore,
                 };
                 // Clause 5.5.14: the map fixes every entity the request matched,
-                // whatever page -- offset or cursor -- the query itself answers
+                // whatever page (offset or cursor) the query itself answers
                 // with, so the identifier pass reads the whole result.
                 let mut identifiers = read
                     .service
@@ -86,7 +86,7 @@ impl LocalMapEntities for LocalHistoryEntities<'_> {
                     )
                     .await
                     .with_instance(instance)?;
-                identifiers.extend(linked.iter().cloned()); // clone: the map owns its identifiers
+                identifiers.extend(linked.iter().cloned());
                 identifiers.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
                 identifiers.dedup();
                 Ok(identifiers)

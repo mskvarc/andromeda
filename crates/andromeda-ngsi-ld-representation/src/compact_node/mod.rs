@@ -5,8 +5,8 @@
 //! tree of its own, in which a `GeoProperty` geometry stays the typed geometry
 //! it was held as. The representation rules of this crate and the compact
 //! model's reading of entities and attribute members are stated once over this
-//! view, so the rules that decide what a member is -- an attribute instance of
-//! which family, a concise value, a node no clause admits -- cannot differ
+//! view, so the rules that decide what a member is (an attribute instance of
+//! which family, a concise value, a node no clause admits) cannot differ
 //! between a request and a compacted entity.
 //!
 //! A node is a borrowed handle, copied freely; looking at one yields the

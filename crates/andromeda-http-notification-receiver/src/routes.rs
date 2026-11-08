@@ -50,7 +50,7 @@ mod tests {
         fn resolve<'a>(&'a self, subscription: &'a Identifier) -> BoxFuture<'a, Result<LeasedForwarding, ReceiverResolutionError>> {
             Box::pin(async move {
                 Err(ReceiverResolutionError::Unknown {
-                    subscription: subscription.clone(), // clone: the error owns the identifier
+                    subscription: subscription.clone(),
                 })
             })
         }

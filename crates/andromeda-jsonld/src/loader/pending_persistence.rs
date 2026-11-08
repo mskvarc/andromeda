@@ -78,7 +78,7 @@ mod tests {
     fn owed_persistence_starts_with_no_hits_and_no_durability() {
         let lifetime = CacheLifetime::from_seconds(30).expect("thirty seconds is a positive lifetime");
         let document_url = IriBuf::new("https://example.com/final.jsonld".to_owned()).expect("a valid IRI");
-        let pending = PendingPersistence::owed(JsonLiteral::null(), document_url.clone(), lifetime); // clone: the expectation compares against it
+        let pending = PendingPersistence::owed(JsonLiteral::null(), document_url.clone(), lifetime);
 
         pretty_assertions::assert_eq!(pending.hits.load(Ordering::Relaxed), 0);
         assert!(!pending.durable.load(Ordering::Acquire));

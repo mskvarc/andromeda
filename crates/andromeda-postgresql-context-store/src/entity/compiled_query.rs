@@ -53,7 +53,7 @@ impl EntityRepository {
     /// What is sent and what is handed back are decided by this store's
     /// [`StorageProfile`](andromeda_entity::storage_profile::StorageProfile).
     /// With `PostGIS` and `ltree` every predicate is sent and nothing is handed
-    /// back, so the residual is always empty here -- but the decision is read
+    /// back, so the residual is always empty here, but the decision is read
     /// off the profile rather than assumed, which is what a store without
     /// those extensions changes.
     ///

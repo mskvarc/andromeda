@@ -1,7 +1,7 @@
 //! `Content-Range` header builder for NGSI-LD temporal pagination
 //! (clause 6.3.10).
 //!
-//! This is response-construction logic, not a payload transform -- it sits
+//! This is response-construction logic, not a payload transform: it sits
 //! alongside [`andromeda_http_response::pagination`] which builds `Link`
 //! headers from analogous pagination state.
 
@@ -16,7 +16,7 @@ use chrono::{DateTime, Utc};
 ///
 /// Clause 6.3.10 fixes both the direction and the reported size. With `lastN`
 /// the page runs backwards and `size` "shall be equal to the requested
-/// `lastN`" -- the client's own number, not how many instances were found.
+/// `lastN`" (the client's own number, not how many instances were found).
 /// Without `lastN` the page runs forwards and `size` "shall be equal to `*`",
 /// and `range-start` is the request's `timeAt` only for `timerel=after` and
 /// `timerel=between`; for `timerel=before` it is the least recent timestamp in
@@ -55,8 +55,8 @@ fn backwards_range_start(interval: &TimeInterval, most_recent: &str) -> String {
 
 /// Clause 6.3.10, forwards pagination: `range-start` is `timeAt` for
 /// `timerel=after` and `timerel=between`, and the least recent timestamp in the
-/// range of the response for `timerel=before` — a backwards-anchored bound says
-/// nothing about where a forwards page begins.
+/// range of the response for `timerel=before`, because a backwards-anchored bound
+/// says nothing about where a forwards page begins.
 fn forwards_range_start(interval: &TimeInterval, least_recent: &str) -> String {
     match interval {
         TimeInterval::After(instant) | TimeInterval::Between { from: instant, .. } => instant_text(*instant),

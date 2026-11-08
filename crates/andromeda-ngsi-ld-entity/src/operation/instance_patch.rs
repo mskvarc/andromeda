@@ -159,7 +159,6 @@ fn apply_instance_members(instance: &mut Instance, document: &InstanceDocument, 
     let written_seals = document.proof_seals();
     if !written_seals.is_empty() {
         let held_seals = instance.proof_seals();
-        // clone: the stored instance owns its copy of whichever seal it keeps.
         let seals = ProofSeals::new(
             written_seals.entity_id().or_else(|| held_seals.entity_id()).map(<[ExpandedValue]>::to_vec),
             written_seals.entity_type().or_else(|| held_seals.entity_type()).map(<[ExpandedValue]>::to_vec),

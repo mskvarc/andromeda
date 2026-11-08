@@ -73,7 +73,7 @@ impl SpatialIndexingCommitter {
             return self.commit_inner(target, writes, kind).await;
         }
         let changes: Vec<IndexChange> = writes.iter().map(IndexChange::of).collect();
-        let entities: Vec<Identifier> = changes.iter().filter_map(IndexChange::entity).cloned().collect(); // clone: the lock map owns the identifiers it locks
+        let entities: Vec<Identifier> = changes.iter().filter_map(IndexChange::entity).cloned().collect();
         let _guards = acquire_id_locks_in(&self.locks, target, &entities).await;
         for change in &changes {
             change.anticipate(&self.index, &self.placement);
@@ -144,7 +144,7 @@ enum IndexChange {
 impl IndexChange {
     /// The index change one write makes if it lands.
     fn of(write: &AtomicWrite) -> IndexChange {
-        let entity_id = || Arc::clone(&write.entity_id); // clone: a reference-count bump, the index shares the write's identifier
+        let entity_id = || Arc::clone(&write.entity_id);
         match &write.entity {
             EntityMutation::Insert(record) | EntityMutation::Update(record) => IndexChange::Restate {
                 entity_id: entity_id(),
@@ -168,7 +168,6 @@ impl IndexChange {
     fn anticipate(&self, index: &SpatialEntityIndex, placement: &LocationPlacement) {
         match self {
             IndexChange::Restate { entity_id, state } => {
-                // clone: a reference-count bump, the settled replacement needs the same identifier once the outcome is known
                 index.anticipate_entity(Arc::clone(entity_id), placement.of(state.types().as_slice(), state.location_geometry()));
             }
             // Keeping the entity's current entries until the deletion lands is
@@ -313,7 +312,7 @@ mod tests {
     fn committer(index: &Arc<SpatialEntityIndex>, script: Script) -> SpatialIndexingCommitter {
         SpatialIndexingCommitter::new(
             Arc::new(ScriptedStore(script)),
-            Arc::clone(index), // clone: the committer and the test share the index
+            Arc::clone(index),
             LocationPlacement::new(TenantRef::UnnamedDefault).expect("the core location term is an attribute name"),
         )
     }
@@ -461,7 +460,7 @@ mod tests {
         let index = seeded_index();
         let committer = SpatialIndexingCommitter::new(
             Arc::new(FailingStore),
-            Arc::clone(&index), // clone: the committer and the test share the index
+            Arc::clone(&index),
             LocationPlacement::new(TenantRef::UnnamedDefault).expect("the core location term is an attribute name"),
         );
         assert!(committer.commit(&ContextTarget::Live, accepted(), vec![write(located_at(0.0))]).await.is_err());

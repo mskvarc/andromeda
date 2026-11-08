@@ -33,7 +33,6 @@ async fn n_ent_ret_9306_a_list_relationship_written_for_a_version_before_1_8_kee
     let route = Entity::builder()
         .id(route_id.clone())
         .entity_type(namespace.entity_type("Route")?)
-        // clone: the targets are compared with the answers after the entity is built from them.
         .list_relationship("stops", ListRelationship::builder(stops.clone()))
         .build()?;
     broker.entities().create(&route).send().await?.done()?;

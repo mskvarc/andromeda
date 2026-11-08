@@ -39,8 +39,8 @@ pub(super) fn register_pool_gauges(supervisor: &TaskSupervisor, pool: PgPool, te
     );
     let gauges = PoolGauges::for_tenant(TenantLabel::from(tenant));
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
-        let pool = pool.clone(); // clone: PgPool is a shared handle; each pass reads its counters.
-        let gauges = gauges.clone(); // clone: each bounded pass owns the gauge labels while recording.
+        let pool = pool.clone();
+        let gauges = gauges.clone(); // clone: the closure runs once per pass, so each pass takes its own copy of the gauge labels.
         async move {
             gauges.record(PoolSample {
                 open: pool.size(),

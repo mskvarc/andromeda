@@ -1,6 +1,6 @@
 //! Notification payload building: the notified entity's selection and
 //! compaction, what the notification reports of the change beside it, its
-//! `join` and its format rendering -- every part of it typed, and written by
+//! `join` and its format rendering, every part of it typed and written by
 //! the walk a query response is written by.
 
 use crate::{
@@ -182,7 +182,6 @@ impl Rendering<'_, '_> {
     /// notification of the change asking for the same.
     async fn render(&self, key: &RenderingKey, state: &EntityState) -> Result<Arc<Entity>, NotificationError> {
         let (compactor, engine) = (self.compactor, self.engine);
-        // clone: the cache owns the key of every rendering it holds, and the caller keeps its own
         self.cache
             .rendering(key.clone(), move || async move {
                 let selected = key.selection().apply(state);
@@ -205,10 +204,10 @@ impl Rendering<'_, '_> {
 /// beside it (clause 5.8.6).
 ///
 /// A deleted entity is carried as its identity alone, or, under `showChanges`,
-/// with every Attribute reported deleted so the subscriber sees what went --
-/// whichever clause 5.2.12 trigger matched the subscription, since an entity
-/// deletion reaches an `attributeDeleted` subscriber too and owes it the same
-/// `deletedAt`-only document. The Attribute instances a surviving entity lost
+/// with every Attribute reported deleted so the subscriber sees what went.
+/// This holds whichever clause 5.2.12 trigger matched the subscription, since an
+/// entity deletion reaches an `attributeDeleted` subscriber too and owes it the
+/// same `deletedAt`-only document. The Attribute instances a surviving entity lost
 /// are reported beside the ones it holds.
 ///
 /// Clause 5.8.6 stamps every entity deletion with `deletedAt`, and Table
@@ -309,8 +308,8 @@ async fn deleted_rendering(
 }
 
 /// The `showChanges` view of the change (clause 5.8.6): the previous state of
-/// every instance the change touched -- every instance, when the Entity itself
-/// was deleted -- whose value the notification reports beside the current one.
+/// every instance the change touched (every instance, when the Entity itself
+/// was deleted) whose value the notification reports beside the current one.
 ///
 /// A previous state that cannot be compacted leaves the notification with its
 /// current values alone rather than failing the delivery.

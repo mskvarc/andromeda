@@ -22,9 +22,9 @@ use thiserror::Error;
 /// PostgreSQL bounds an `ltree` label by `LTREE_LABEL_MAX_CHARS`, counted in
 /// characters of the server encoding. A 1000-character level of two-byte
 /// letters is 2000 bytes and casts to `ltree` unrefused, while a
-/// 1001-character level of one-byte letters does not -- both verified against
+/// 1001-character level of one-byte letters does not (both verified against
 /// PostgreSQL 18.3 on UTF-8, which answers the second with `label string is
-/// too long. DETAIL: Label length is 1001, must be at most 1000`.
+/// too long. DETAIL: Label length is 1001, must be at most 1000`).
 pub const LEVEL_CHARACTER_LIMIT: usize = 1000;
 
 /// Why a string is not one level of a scope.

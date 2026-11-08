@@ -35,8 +35,7 @@ pub fn tenant_migrator() -> &'static Migrator {
 
 /// Two migration sets merged into one, sorted by version.
 fn union(tenant: &[Migration], branch: &[Migration]) -> Vec<Migration> {
-    // clone: `Migrator` owns its migration list, and the two embedded sets are
-    // separate static slices that cannot be borrowed as one
+    // clone: the two embedded sets are separate static slices, so their union is an owned list.
     let mut migrations: Vec<Migration> = tenant.iter().chain(branch).cloned().collect();
     migrations.sort_by_key(|migration| migration.version);
     migrations

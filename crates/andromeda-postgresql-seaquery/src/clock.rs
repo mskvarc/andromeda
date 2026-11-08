@@ -2,7 +2,7 @@
 //!
 //! A write stamps `modified_at` with the instant the transaction began, so
 //! every row one statement touches carries the same time. PostgreSQL's `NOW()`
-//! is that instant — transaction-start, not statement- or call-time — and
+//! is that instant (transaction-start, not statement- or call-time), and
 //! sea-query has no constructor for it. A lease check inside a long
 //! transaction needs the opposite: the instant the check actually runs, which
 //! is `CLOCK_TIMESTAMP()`.

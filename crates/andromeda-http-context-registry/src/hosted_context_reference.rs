@@ -59,8 +59,8 @@ impl HostedContextReference {
 
 /// The path, as written (still percent-encoded), of an absolute hierarchical
 /// IRI on whatever origin or of a root-relative reference; `None` for anything
-/// else -- an opaque IRI such as a bare URN, a network-path or path-relative
-/// reference -- and for a reference with a query or a fragment. A query is no
+/// else (an opaque IRI such as a bare URN, a network-path or path-relative
+/// reference, or a reference with a query or a fragment). A query is no
 /// part of any URL the broker mints for a stored `@context`, and a fragment
 /// names part of a document rather than the stored `@context` itself.
 fn addressed_path(reference: &IriRefBuf) -> Option<&str> {

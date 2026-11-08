@@ -162,7 +162,7 @@ fn heap_only_claimable_min(
     unleased
         .expr_as(Func::min(Expr::col(next_attempt)), Unleased::Due)
         .from(table)
-        // clone: the unleased and the leased part each carry the index predicate.
+        // clone: the same predicate also filters the leased part, so it is copied here.
         .cond_where(unfinished.clone().add(Expr::col(lease_until).is_null()));
     let mut leased = Query::select();
     leased

@@ -4,7 +4,7 @@
 //! all, plain terms, prefixes, coercions to `@id`, a datatype and `@json`,
 //! `@language`, `@list` and `@set` containers, a default language, terms that
 //! claim a reserved IRI ahead of the core context's, a redefinition of a
-//! protected core term, and the features the walk leaves to the processor --
+//! protected core term, and the features the walk leaves to the processor:
 //! scoped contexts, `@nest`, map containers. The ETSI test-suite context is
 //! the one the vocabulary crate keeps; nothing is fetched.
 

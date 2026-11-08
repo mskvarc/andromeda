@@ -6,8 +6,8 @@ use std::time::Instant;
 /// The instant one pass over a leased queue started at, advanced by the
 /// monotonic time the pass has run since.
 ///
-/// A pass may run for a while -- a delivery attempt is bounded only by its
-/// request timeout, a replay by its transaction -- so a release it records
+/// A pass may run for a while, since a delivery attempt is bounded only by its
+/// request timeout and a replay by its transaction, so a release it records
 /// late in the pass is stamped with the instant it is recorded at, not the
 /// instant the pass began. A retry scheduled one backoff after the pass began
 /// could otherwise already be due before the pass that scheduled it ends, and

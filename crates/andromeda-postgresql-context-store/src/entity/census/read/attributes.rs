@@ -83,7 +83,7 @@ fn attribute_summary_of(attr_iri: &AttributeName, rows: &[(i64, Option<i16>, Opt
     types.sort_unstable();
     types.dedup();
     Ok(Some(AttributeSummary {
-        attr_iri: attr_iri.clone(), // clone: the summary owns the name it answers for.
+        attr_iri: attr_iri.clone(),
         instance_count,
         entity_types: types.into_iter().map(stored_type_name).collect::<Result<_, _>>()?,
         attribute_types: kinds.into_iter().map(stored_attribute_family).collect::<Result<_, _>>()?,

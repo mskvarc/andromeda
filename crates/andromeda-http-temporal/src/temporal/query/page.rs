@@ -9,8 +9,8 @@
 //! parameters.
 //!
 //! This is the *element* dimension of temporal pagination. Clause 6.3.10 keeps
-//! it apart from the *temporal-window* dimension -- "Temporal representation of
-//! resources adds an additional dimension to the pagination" -- which the same
+//! it apart from the *temporal-window* dimension, "Temporal representation of
+//! resources adds an additional dimension to the pagination", which the same
 //! clause answers with a 206 and a `Content-Range`. The two are independent:
 //! one bounds how many entities the page carries, the other how much history
 //! each of them carries, so a response may carry either, both or neither.
@@ -346,7 +346,7 @@ mod tests {
     }
 
     /// Clause 5.5.9.1: the first element page of a cursor walk offers opaque
-    /// cursor pointers -- `next`/`last` carrying a `cursor`, never
+    /// cursor pointers: `next`/`last` carrying a `cursor`, never
     /// an `offset`, and neither `prev` nor `first` (both would name this page).
     #[test]
     fn a_local_default_first_page_offers_opaque_cursor_pointers() {

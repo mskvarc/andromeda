@@ -32,10 +32,10 @@ struct ConfiguredIdentity {
     ///
     /// Table 5.2.40-1 restricts `id` to a valid URI and describes it as the
     /// "Context Source ID", making the tenant requirement explicit only for
-    /// `contextSourceAlias`. Clause 5.2.40 reads the two together -- the type
+    /// `contextSourceAlias`. Clause 5.2.40 reads the two together. The type
     /// "represents the data uniquely identifying a Context Source, and if the
     /// Context Source supports multi-tenancy (see clause 4.14) uniquely
-    /// identifying a Tenant within that Context Source" -- so the identifier
+    /// identifying a Tenant within that Context Source", so the identifier
     /// names the context source and the alias names the tenant within it. This
     /// one is therefore the same for every tenant.
     id: Identifier,
@@ -92,12 +92,11 @@ impl SourceIdentityState {
     pub fn identity_at(&self, tenant: &TenantRef, now: DateTime<Utc>) -> ContextSourceIdentity {
         let elapsed = (now - self.configured.started_at).to_std().unwrap_or(Duration::ZERO);
         ContextSourceIdentity {
-            id: self.configured.id.clone(), // clone: every response document owns its identifier
+            id: self.configured.id.clone(),
             type_: ContextSourceIdentityType,
             context_source_alias: self.configured.aliases.for_tenant(tenant),
             context_source_uptime: Iso8601Duration::from_std(elapsed),
             context_source_time_at: now,
-            // clone: every response document owns its extras
             context_source_extras: self.configured.extras.clone(),
         }
     }

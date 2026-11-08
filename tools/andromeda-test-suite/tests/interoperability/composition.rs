@@ -20,7 +20,7 @@ pub(crate) fn attribute_names(names: &[&str]) -> Result<Vec<AttributeName>> {
 /// `entity` with only the attributes `names`.
 pub(crate) fn keeping(entity: &Entity<Input>, names: &[&str]) -> Result<Entity<Input>> {
     let kept = attribute_names(names)?;
-    let mut cut = entity.clone(); // clone: the case keeps the whole entity to cut other ways
+    let mut cut = entity.clone();
     let dropped: Vec<AttributeName> = cut.attributes.names().filter(|name| !kept.contains(name)).cloned().collect();
     for name in &dropped {
         cut.attributes.remove(name);
@@ -31,7 +31,7 @@ pub(crate) fn keeping(entity: &Entity<Input>, names: &[&str]) -> Result<Entity<I
 /// `entity` without the attributes `names`.
 pub(crate) fn without(entity: &Entity<Input>, names: &[&str]) -> Result<Entity<Input>> {
     let dropped = attribute_names(names)?;
-    let mut cut = entity.clone(); // clone: the case keeps the whole entity to cut other ways
+    let mut cut = entity.clone();
     for name in &dropped {
         cut.attributes.remove(name);
     }
@@ -54,12 +54,12 @@ pub(crate) const fn taking<'a>(source: &'a Entity<Input>, names: &'a [&'a str]) 
 /// An entity with the identifier and type of `base` and exactly the attributes the `parts` take, each as its source
 /// holds it.
 pub(crate) fn combining(base: &Entity<Input>, parts: &[Part<'_>]) -> Result<Entity<Input>> {
-    let mut combined = base.clone(); // clone: the case keeps the base for the identifier of its other expectations
+    let mut combined = base.clone();
     combined.attributes = Attributes::new();
     for part in parts {
         for name in attribute_names(part.names)? {
             let instances = part.source.attributes.get(&name).or_fail()?;
-            combined.attributes.set(name, instances.clone())?; // clone: the source stays whole for the case's other expectations
+            combined.attributes.set(name, instances.clone())?;
         }
     }
     Ok(combined)

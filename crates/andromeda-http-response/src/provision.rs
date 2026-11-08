@@ -145,7 +145,7 @@ pub fn multi_status_result(entity_id: &Identifier, local: &LocalOutcome, forward
             None => remote_ok = true,
         }
     }
-    let success = if local_ok || remote_ok { vec![entity_id.clone()] } else { Vec::new() }; // clone: the body owns the identifier it reports
+    let success = if local_ok || remote_ok { vec![entity_id.clone()] } else { Vec::new() };
     BatchOperationResult { success, errors }
 }
 

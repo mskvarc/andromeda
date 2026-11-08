@@ -5,7 +5,7 @@ use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 /// What a `Prefer: ngsi-ld=<version>` request did to a response payload.
 ///
 /// Clause 6.3.6 makes the `Preference-Applied` echo unconditional once the
-/// preference was expressed -- it names the version the body conforms to --
+/// preference was expressed. It names the version the body conforms to,
 /// while clause 4.3.6.8 makes the status depend on whether the body was
 /// amended: a broker that amends a payload down to an older version is no
 /// longer speaking authoritatively about it, so that response is 203 rather

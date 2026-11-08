@@ -106,7 +106,7 @@ impl<T: Send + 'static> SubmittedBody<T> {
             blocking_decode,
             read,
         } = self;
-        let instance = uri.clone(); // clone: a failed decoding task still names the request
+        let instance = uri.clone(); // clone: the closure moves the URI, so the failure path keeps its own copy
         decode_payload(blocking_decode.as_ref(), text.len(), move || read(&text, terms.borrow().reading(), &uri))
             .await
             .map_err(|failure| failure.report().with_instance(instance))?
@@ -124,7 +124,7 @@ impl SubmittedBody<WrittenAttribute> {
     /// `BadRequestData` for a fragment no clause admits where an attribute
     /// stands (clause 5.5.4).
     pub async fn admitted_attribute<M: MemberReading>(self, attribute: &AttributeName, context: &AdmittedContext) -> Result<M, ProblemResponse> {
-        let instance = self.uri.clone(); // clone: the refusal of the fragment names the request the decode consumes
+        let instance = self.uri.clone(); // clone: admitted consumes self, so the refusal keeps its own copy of the URI
         let written = self.admitted(context).await?;
         written
             .read(attribute, context.terms().reading())

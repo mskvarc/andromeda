@@ -94,13 +94,7 @@ fn exempting_contributed(filters: Condition, contributed: &ContributedEntities) 
 /// interval of the Evolution `of` names overlapping the query's window on its
 /// Temporal Property (clause 4.18), among the events `reach` names.
 pub(crate) fn scope_history_target(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, of: &HistoryOf, reach: WindowReach) -> ScopeTarget {
-    ScopeTarget::history(
-        of.clone(), // clone: the target owns the Evolution its probe reads
-        compiled.window.timeproperty,
-        compiled.window.interval,
-        branch.clone(), // clone: the target owns the branch its probe reads
-        reach,
-    )
+    ScopeTarget::history(of.clone(), compiled.window.timeproperty, compiled.window.interval, branch.clone(), reach)
 }
 
 /// The Attribute instances a temporal `q` is checked against (clause 5.7.4.4
@@ -109,8 +103,8 @@ pub(crate) fn scope_history_target(branch: &HistoryBranch, compiled: &CompiledTe
 /// `reach` names.
 pub(crate) fn windowed_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, of: &HistoryOf, reach: WindowReach) -> HistoryWindow {
     HistoryWindow::builder()
-        .branch(branch.clone()) // clone: the window owns the branch its probes read
-        .of(of.clone()) // clone: the window owns the Evolution its probes read
+        .branch(branch.clone())
+        .of(of.clone())
         .timeproperty(compiled.window.timeproperty)
         .interval(compiled.window.interval)
         .reach(reach)

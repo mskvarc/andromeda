@@ -1,8 +1,8 @@
 //! Compacting a stored registration for the response that carries it.
 //!
 //! A registration is stored expanded, so retrieval and discovery compact the
-//! names it holds -- the entity types and attribute names of `information`, and
-//! the names of its Context Source Properties -- through the `@context` the
+//! names it holds (the entity types and attribute names of `information`, and
+//! the names of its Context Source Properties) through the `@context` the
 //! response is rendered under (clauses 5.10.2.5 and 5.10.4.5).
 
 use crate::{context_source_properties::compact_context_source_properties, information_compaction::compacted_information};

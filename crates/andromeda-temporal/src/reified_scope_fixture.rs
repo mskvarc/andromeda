@@ -28,7 +28,7 @@ pub(crate) fn evolution_with_scope(scope: &Value) -> WrittenTemporalEntity {
 /// compact member `name` holding `value`.
 fn madrid_with(name: &str, value: &Value) -> Value {
     let mut instance = json!({"type": "Property", "value": "/Madrid", "observedAt": "2025-01-01T00:00:00Z"});
-    instance[name] = value.clone(); // clone: each case owns the member it adds
+    instance[name] = value.clone();
     json!([instance])
 }
 

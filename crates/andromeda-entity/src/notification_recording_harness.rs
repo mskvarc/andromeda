@@ -225,7 +225,7 @@ async fn cache_holding(cached: CachedSubscription) -> Arc<SubscriptionCache> {
 fn observed_service(probe: ProbeAnswer, matching: SubscriptionMatching) -> ObservedService {
     let published = Arc::new(Mutex::new(Vec::new()));
     let sink = RecordingSink {
-        published: Arc::clone(&published), // clone: the sink and the test both hold the published changes
+        published: Arc::clone(&published),
     };
     let notifier = ChangeNotifier::new(Some(Arc::new(sink) as Arc<dyn EntityChangeSink>), matching);
     let (service, RecordedCommits { writes: recorded, .. }, payload_reads) =
@@ -276,10 +276,10 @@ fn recording_service_with(notifier: ChangeNotifier, probe: ProbeAnswer, budget: 
     let service = EntityService::new(
         EntityServicePorts {
             reader: Arc::new(SnapshotReader {
-                state: Arc::clone(&building), // clone: the reader and the outline serve the one fixture
+                state: Arc::clone(&building),
                 modified_at,
                 version,
-                payload_reads: Arc::clone(&payload_reads), // clone: the test reads the count the reader keeps
+                payload_reads: Arc::clone(&payload_reads),
             }) as Arc<dyn EntityReader>,
             blocking_executor: Arc::new(UnusedBlockingExecutor) as Arc<dyn BlockingExecutor>,
             retry_delay: Arc::new(ImmediateRetryDelay) as Arc<dyn RetryDelay>,

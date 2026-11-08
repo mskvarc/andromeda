@@ -1,8 +1,8 @@
 //! One Relationship instance naming one target (clause 4.5.23).
 //!
-//! Every decision the engine takes about Linked Entities -- which are read,
-//! which a projection still reaches, under which Relationship a copy is nested
-//! -- reads the same unit: the entity an edge leaves, the attribute that names
+//! Every decision the engine takes about Linked Entities (which are read,
+//! which a projection still reaches, under which Relationship a copy is nested)
+//! reads the same unit: the entity an edge leaves, the attribute that names
 //! the target, and the target. A representation reports its nodes' edges once,
 //! and nothing after that walks the spelling of a Relationship again.
 

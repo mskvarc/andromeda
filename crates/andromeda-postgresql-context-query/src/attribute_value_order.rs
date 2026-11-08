@@ -102,8 +102,7 @@ impl AttributeValue {
     /// The name the enclosing statement joins the projection under.
     #[must_use]
     pub fn alias(&self) -> Alias {
-        // clone: sea-query takes the alias by value at the join site and every
-        // key expression names it again afterwards.
+        // clone: sea-query takes the alias by value at each join, so every caller gets its own copy
         self.alias.clone()
     }
 
@@ -119,12 +118,13 @@ impl AttributeValue {
         let mut projection = Query::select();
         projection
             .from_subquery(read, source)
-            .expr_as(value.number.clone(), Projected::Number) // clone: the datatype reads the same columns
-            .expr_as(value.boolean.clone(), Projected::Boolean) // clone: as above
-            .expr_as(value.date_time.clone(), Projected::DateTime) // clone: as above
-            .expr_as(value.text.clone(), Projected::Text) // clone: as above
-            .expr_as(value.datatype.clone(), Projected::DeclaredDatatype) // clone: as above
-            .expr_as(value.object.clone(), Projected::Object) // clone: as above
+            // clone: the projection consumes each column, and datatype_token still reads the ordered value afterwards
+            .expr_as(value.number.clone(), Projected::Number)
+            .expr_as(value.boolean.clone(), Projected::Boolean)
+            .expr_as(value.date_time.clone(), Projected::DateTime)
+            .expr_as(value.text.clone(), Projected::Text)
+            .expr_as(value.datatype.clone(), Projected::DeclaredDatatype)
+            .expr_as(value.object.clone(), Projected::Object)
             .expr_as(datatype_token(&value), Projected::Datatype);
         projection.take()
     }
@@ -252,7 +252,6 @@ mod tests {
         let QueryPath::Local(local) = pred.path() else {
             panic!("a local path");
         };
-        // clone: the test owns the path beyond the parsed expression
         local.clone()
     }
 

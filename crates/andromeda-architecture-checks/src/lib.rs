@@ -7,6 +7,8 @@
 //! continue to identify the crate that broke its boundary.
 
 pub mod architecture;
+pub mod comment_hygiene;
+mod comment_lexer;
 pub mod configuration_description;
 pub mod configuration_layering;
 pub mod configuration_ownership;

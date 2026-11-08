@@ -115,7 +115,7 @@ fn single_list(attribute: &AttributeName, shape: MemberShape, items: Vec<Expande
 /// string of clause 4.7.2.
 fn geo_value(attribute: &AttributeName, items: Vec<ExpandedItem>) -> Result<GeoValue, EntityRefusal> {
     let refused = |source| EntityRefusal::GeoProperty {
-        attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
+        attribute: attribute.clone(), // clone: the refusal outlives the borrowed attribute, so it owns a copy
         source,
     };
     let mut items = items.into_iter();
@@ -154,7 +154,7 @@ fn vocab(attribute: &AttributeName, item: &ExpandedItem) -> Result<NgsiLdReferen
     };
     let id = reference_id(node).ok_or_else(|| malformed(attribute, MemberShape::Vocab))?;
     id.parse::<NgsiLdReference>().map_err(|source| EntityRefusal::Reference {
-        attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
+        attribute: attribute.clone(), // clone: the refusal outlives the borrowed attribute, so it owns a copy
         member: MemberShape::Vocab,
         source,
     })

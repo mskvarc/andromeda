@@ -41,7 +41,7 @@ pub(crate) async fn matching_registrations(
     loop {
         let page = csr_repo.find_all_active(after.as_ref(), MATCH_SET_PAGE_SIZE).await?;
         let full = page.len() >= usize::try_from(MATCH_SET_PAGE_SIZE).unwrap_or(usize::MAX);
-        after = page.last().map(|registration| registration.id.clone()); // clone: the next page starts after it, while the page itself moves below
+        after = page.last().map(|registration| registration.id.clone()); // clone: the page is moved into the filter that follows, so the cursor keeps its own copy of the last identifier
         matching.extend(
             page.into_iter()
                 .filter(|registration| csource_subscription_selects_registration(subscription, registration)),

@@ -261,8 +261,8 @@ mod tests {
         vec![entity("urn:c"), entity("urn:e"), entity("urn:a"), entity("urn:d"), entity("urn:b")]
     }
 
-    /// Clause 4.3.6.7: the merged collection -- local entities first, then
-    /// what each source answered, in arrival order -- is paged in one
+    /// Clause 4.3.6.7: the merged collection (local entities first, then
+    /// what each source answered, in arrival order) is paged in one
     /// deterministic order, the `id` order the local store pages in.
     #[test]
     fn a_merged_collection_is_cut_from_its_identifier_order() {
@@ -371,12 +371,12 @@ mod tests {
     }
 
     /// Clause 5.5.9: a merge reads its local rows through a window of its own,
-    /// uncounted, and leaves the requested window -- cursor and all -- to be
+    /// uncounted, and leaves the requested window, cursor and all, to be
     /// cut from the merged collection.
     #[test]
     fn merge_widening_reads_a_separate_local_window_without_touching_params() {
         let start = PageStart::Cursor(Some(PageCursor::After(uri("urn:b"))));
-        let page = merged_page(2, start.clone(), CountPolicy::Emit); // clone: the expectation keeps the start
+        let page = merged_page(2, start.clone(), CountPolicy::Emit);
         let (local, count) = page.local_read();
         pretty_assertions::assert_eq!(local, PageWindow::offset(101, 0));
         pretty_assertions::assert_eq!(count, CountPolicy::Omit);

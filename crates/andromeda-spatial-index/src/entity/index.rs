@@ -36,9 +36,9 @@ struct SeedScope {
 ///
 /// A thin reading over the shared [`PartitionedRTree`]: the storage,
 /// back-index, and rebuild machinery all live there, and this type adds the two
-/// things that are entity-specific -- evaluating a caller-supplied `georel`
+/// things that are entity-specific (evaluating a caller-supplied `georel`
 /// against a partition, and knowing which partitions are complete enough to
-/// answer one.
+/// answer one).
 ///
 /// A partition answers only once a [`SpatialEntityIndex::rebuild`] has seeded
 /// its `(tenant, geoproperty)` scope from the store. Live mutations keep a
@@ -91,8 +91,8 @@ impl SpatialEntityIndex {
     /// type conveying the `GeoProperty`.
     pub fn query(&self, key: &SpatialKey, georel: &GeoRel, reference: &GeometryForm) -> Option<HashSet<Identifier>> {
         let scope = SeedScope {
-            tenant: key.tenant.clone(),           // clone: the seed lookup owns its tenant
-            geoproperty: key.geoproperty.clone(), // clone: the seed lookup owns its geoproperty
+            tenant: key.tenant.clone(),
+            geoproperty: key.geoproperty.clone(),
         };
         if !self.seeded.contains(&scope) {
             return None;
@@ -160,7 +160,6 @@ impl SpatialEntityIndex {
 fn entries_of<'g>(entity_id: &Arc<Identifier>, placements: impl IntoIterator<Item = (SpatialKey, &'g GeometryForm)>) -> Vec<(SpatialKey, Vec<SpatialEntry>)> {
     placements
         .into_iter()
-        // clone: a reference-count bump, every entry shares the identifier the back-index is keyed by
         .filter_map(|(key, geometry)| SpatialEntry::new(Arc::clone(entity_id), geometry).map(|entry| (key, vec![entry])))
         .collect()
 }
@@ -226,7 +225,7 @@ enum Refinement {
 const fn refinement_for(georel: &GeoRel) -> Refinement {
     match georel {
         // `geo` has no topological equality predicate, so the in-memory reading
-        // of clause 4.10 `equals` is mutual containment — which excludes shared
+        // of clause 4.10 `equals` is mutual containment, which excludes shared
         // boundaries and is therefore strictly stronger than the `ST_Equals`
         // set equality the store applies. Refining with it would drop entities
         // the store counts as equal.
@@ -554,7 +553,6 @@ mod tests {
         index.replace_entity(id.clone(), [(key(), &point(0.0, 0.0))]);
         index.anticipate_entity(id.clone(), [(key(), &point(10.0, 10.0))]);
 
-        // clone: each assertion owns the identifier it compares against
         assert_eq!(
             index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5)),
             Some(identifiers([id.clone()]))
@@ -591,7 +589,6 @@ mod tests {
         let id = uri("urn:ngsi-ld:Region:A");
         index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0))]);
 
-        // clone: each assertion owns the identifier it compares against
         assert_eq!(index.query(&key(), &GeoRel::Equals, &square(0.0, 0.0, 1.0)), Some(identifiers([id.clone()])));
         assert_eq!(index.query(&key(), &GeoRel::Equals, &square(0.0, 0.0, 2.0)), Some(identifiers([id])));
         assert_eq!(index.query(&key(), &GeoRel::Equals, &square(50.0, 50.0, 1.0)), Some(HashSet::new()));
@@ -606,7 +603,6 @@ mod tests {
         let id = uri("urn:ngsi-ld:Region:A");
         index.replace_entity(id.clone(), [(key(), &square(0.0, 0.0, 1.0)), (key(), &square(40.0, 40.0, 1.0))]);
 
-        // clone: each assertion owns the identifier it compares against
         assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 5.0)), Some(identifiers([id.clone()])));
         assert_eq!(index.query(&key(), &GeoRel::Within, &square(40.0, 40.0, 5.0)), Some(identifiers([id.clone()])));
         assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 80.0)), Some(identifiers([id])));

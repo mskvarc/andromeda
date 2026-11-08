@@ -73,7 +73,8 @@ macro_rules! workspace_architecture {
         workspace_root: $workspace_root:literal,
         no_raw_iri_or_media_constants,
         no_raw_sql,
-        retired_architecture $(,)?
+        retired_architecture,
+        comment_hygiene $(,)?
     } => {
         #[cfg(test)]
         /// The generated workspace-wide architecture checks.
@@ -95,6 +96,12 @@ macro_rules! workspace_architecture {
             #[test]
             fn retired_architecture_surfaces_do_not_return() {
                 $crate::architecture::assert_retired_architecture_invariants(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
+            /// Comments hold no spaced double hyphen or em or en dash, and no clone note that stands on nothing.
+            #[test]
+            fn comment_text_follows_the_comment_rules() {
+                $crate::comment_hygiene::assert_comment_hygiene(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
             /// No module is named after a dumping ground.

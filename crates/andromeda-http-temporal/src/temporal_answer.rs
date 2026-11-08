@@ -1,8 +1,8 @@
 //! How a temporal read writes the evolutions it answers with.
 //!
-//! Every read endpoint resolves the same selectors before it renders -- the
+//! Every read endpoint resolves the same selectors before it renders (the
 //! clause 6.3.12 representation, the natural-language filter, and the
-//! compiled clause 4.21 projection -- and a read that asked for a clause 4.5.23
+//! compiled clause 4.21 projection), and a read that asked for a clause 4.5.23
 //! join then puts the Linked Entities into the answer in whichever shape the
 //! join mode names. Neither is the property of any one handler, so both are
 //! written once here.
@@ -82,8 +82,8 @@ pub(crate) fn matched_histories<'a>(
 }
 
 /// The answer to a retrieval of `body`: the evolution itself, nested with the
-/// Linked Entities of an inline join, or -- for a flat join, which answers a
-/// collection even though one entity was asked for (clause 4.5.23) -- the
+/// Linked Entities of an inline join, or, for a flat join, which answers a
+/// collection even though one entity was asked for (clause 4.5.23), the
 /// evolution beside them.
 pub(crate) fn retrieved_history<'a>(
     body: &'a TemporalBody,

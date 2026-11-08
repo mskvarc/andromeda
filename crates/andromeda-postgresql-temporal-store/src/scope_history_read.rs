@@ -106,7 +106,7 @@ fn fold_event(event: &[&StoredScopeRow], scope_attribute: &AttributeName) -> Res
     let first = write.first().ok_or(StoredHistoryError::EmptyScopeEvent)?;
 
     let row = TemporalHistoryRow {
-        attribute_name: scope_attribute.clone(), // clone: every folded instance owns the name it is keyed by.
+        attribute_name: scope_attribute.clone(),
         // Annex C clause C.5.16 renders the reified scope as `"type":
         // "Property"`, which clause 4.5.6 mandates by making it "a temporal
         // representation of a Property (clause 4.5.7)".
@@ -139,15 +139,15 @@ fn fold_event(event: &[&StoredScopeRow], scope_attribute: &AttributeName) -> Res
 /// Clause 4.18: "The value of scope is represented as a JSON array in case
 /// there is more than one Scope", so a single Scope is the bare path and
 /// several are the array of them, in the order the write recorded them. A
-/// removal is its own row and never shares a write with a path — clause 4.18
-/// admits the NGSI-LD Null "only in case of deleted scopes" — so a write whose
+/// removal is its own row and never shares a write with a path (clause 4.18
+/// admits the NGSI-LD Null "only in case of deleted scopes"), so a write whose
 /// first row is a removal is a removal.
 fn scope_value(write: &[&StoredScopeRow]) -> Result<TemporalValue, TemporalStoreError> {
     let mut paths = Vec::with_capacity(write.len());
     for row in write {
         match &row.value {
             ScopeHistoryValue::Tombstone { deleted_at } => return Ok(TemporalValue::Tombstone { deleted_at: *deleted_at }),
-            ScopeHistoryValue::Path(path) => paths.push(path.clone()), // clone: the folded value owns the paths the rows hold.
+            ScopeHistoryValue::Path(path) => paths.push(path.clone()),
         }
     }
     let paths = paths;

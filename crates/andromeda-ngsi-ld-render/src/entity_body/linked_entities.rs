@@ -2,16 +2,16 @@
 //! Relationships of a typed entity.
 //!
 //! Clause 4.5.23.2 nests the entity a Relationship's `object` targets under the
-//! Relationship's `entity` member -- one entity for a single target URI, the
-//! ordered array of them for an array of target URIs -- and the entities a
+//! Relationship's `entity` member (one entity for a single target URI, the
+//! ordered array of them for an array of target URIs), and the entities a
 //! `ListRelationship`'s `objectList` targets under its `entityList` member, each
 //! written in the representation of the entity that carries it (clauses
 //! 4.5.3.3, 4.5.22.3 and 4.5.4). Which copy is nested under which Relationship
 //! instance, under which rule, and where nesting stops is decided by the join
 //! plan; this walk only spells what the plan's cursor answers.
 //!
-//! An entity that already carries nested entities -- a Context Source answered
-//! with them -- has them written in the same representation, as they were
+//! An entity that already carries nested entities (a Context Source answered
+//! with them) has them written in the same representation, as they were
 //! carried. A nested entity is Entity data in the same payload, so the clause
 //! 4.3.6.8 version fallback the carrying entity is written under reaches it.
 

@@ -172,7 +172,7 @@ impl ReassemblyScene {
         ));
         let transport = TransportDispatcher::new(HttpTransportConfig::default(), MqttPoolConfig::default()).expect("the dispatcher builds");
         let csource_subscriptions = SubscriptionService::new(
-            subscriptions.clone(), // clone: the scene keeps its handle for the counts
+            subscriptions.clone(),
             offline_engine(),
             CsrSubscriptionVariant::new(offline_engine()),
             None,
@@ -196,7 +196,7 @@ impl ReassemblyScene {
         )
         .expect("the federation service builds");
         let entity_query = EntityQueryService::builder()
-            .reader(held.clone()) // clone: the same store answers both ports
+            .reader(held.clone())
             .query_store(held)
             .engine(offline_engine())
             .spatial(SpatialAcceleration::StoreVerified)
@@ -213,9 +213,9 @@ impl ReassemblyScene {
             .live_target(ContextTarget::Live)
             .receiver(ReceiverEndpoint::from_advertised(&Url::parse("http://broker.example:1056").expect("a valid origin")).expect("a hierarchical origin"))
             .tenant(TenantRef::UnnamedDefault)
-            .subscriptions(subscriptions.clone()) // clone: the scene keeps its handle for the counts
+            .subscriptions(subscriptions.clone())
             .csource_subscriptions(Arc::new(csource_subscriptions))
-            .mappings(maps.clone()) // clone: the scene keeps its handle for the counts
+            .mappings(maps.clone())
             .router(Arc::new(DiscardingRouter))
             .federation(Arc::new(federation))
             .entity_query(Arc::new(entity_query))

@@ -59,7 +59,7 @@ pub(crate) struct ClaimRecordingStore {
 impl ClaimRecordingStore {
     /// The slots asked for so far, in the order they were asked for.
     pub(crate) fn claims(&self) -> Vec<(Identifier, NotificationSlotGate)> {
-        self.claims.lock().expect("the claim record is never poisoned").clone() // clone: the assertion reads a snapshot
+        self.claims.lock().expect("the claim record is never poisoned").clone()
     }
 }
 
@@ -91,7 +91,7 @@ impl SubscriptionStore for ClaimRecordingStore {
         id: &Identifier,
         gate: NotificationSlotGate,
     ) -> Result<NotificationSlot, SubscriptionError> {
-        self.claims.lock().expect("the claim record is never poisoned").push((id.clone(), gate)); // clone: the record owns what it saw
+        self.claims.lock().expect("the claim record is never poisoned").push((id.clone(), gate));
         Ok(NotificationSlot::Suppressed)
     }
 

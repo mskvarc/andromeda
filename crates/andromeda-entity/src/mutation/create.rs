@@ -119,9 +119,9 @@ impl EntityService {
         };
         let NotificationPlan { matches, events } = self.notifier.plan(target, id, created.types().as_slice(), creation(created), written, None);
         let write = AtomicWrite::builder()
-            .entity_id(Arc::new(id.clone())) // clone: the write owns a shared validated identifier.
-            .entity(EntityMutation::Insert(EntityRecord::from_state(Arc::clone(created))?)) // clone: Arc ref-count bump; the state is also the change event's
-            .history(vec![HistoryRecord::Observations(Arc::clone(created))]) // clone: Arc ref-count bump; the stored state is also the write's observation
+            .entity_id(Arc::new(id.clone())) // clone: the write outlives the borrowed identifier.
+            .entity(EntityMutation::Insert(EntityRecord::from_state(Arc::clone(created))?))
+            .history(vec![HistoryRecord::Observations(Arc::clone(created))])
             .subscription_matches(matches)
             .precondition(Precondition::MustNotExist)
             .build();

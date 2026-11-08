@@ -167,7 +167,7 @@ fn family_value(family: AttributeType, written: WrittenValue, value_type: Option
             GeoValue::Geometry(value) => value,
             // The clause 4.7.2 text is not kept, only the positions it parses
             // into: its members are compact JSON no expansion has named.
-            // clone: the encoded geometry owns the positions its text parses into.
+            // clone: `form()` borrows `encoded`, which is dropped at the end of the arm.
             GeoValue::Encoded(encoded) => GeometryValue::new(encoded.form().clone()),
         })),
         (AttributeType::Relationship, WrittenValue::Object(targets)) => Ok(relationship_value(targets)),
@@ -210,7 +210,7 @@ fn family_value(family: AttributeType, written: WrittenValue, value_type: Option
 /// kept as the ordered array clause 4.5.3.2 admits ("a URI or array of URIs").
 fn relationship_value(targets: NonEmpty<Uri>) -> TemporalValue {
     match targets.as_slice() {
-        [single] => TemporalValue::Uri(single.clone()), // clone: the one target the URI column keeps
+        [single] => TemporalValue::Uri(single.clone()),
         _ => TemporalValue::Structured(StructuredValue::Objects(targets)),
     }
 }
@@ -256,10 +256,10 @@ fn property_value(mut values: Vec<ExpandedValue<Fragment>>, value_type: Option<&
 /// The column a scalar value object beside the `valueType` `value_type` lands
 /// in, keeping the datatype or language the value object declares.
 fn scalar_value(literal: &Literal, value_type: Option<&NgsiLdReference>) -> Result<TemporalValue, TemporalError> {
-    let datatype = literal.datatype().cloned(); // clone: the observation owns the datatype the literal declares
+    let datatype = literal.datatype().cloned();
     match literal.value() {
         LiteralValue::Number(number) => Ok(TemporalValue::Number {
-            number: number.clone(), // clone: the observation owns its exact number
+            number: number.clone(),
             datatype,
         }),
         LiteralValue::Boolean(flag) => Ok(TemporalValue::Boolean { flag: *flag, datatype }),
@@ -295,7 +295,7 @@ fn json_scalar_value(json: JsonPiece<'_>) -> Option<Result<TemporalValue, Tempor
 /// boolean column, each under its own value kind. A declared value keeps the
 /// datatype its literal declares, none when the `valueType` declares it.
 fn text_value(declaration: LiteralDeclaration<'_>, text: &str, literal: &Literal) -> Result<TemporalValue, TemporalError> {
-    let datatype = || literal.datatype().cloned(); // clone: the observation owns the datatype the literal declares
+    let datatype = || literal.datatype().cloned();
     match DeclaredValue::of(declaration, PrimitiveLiteral::String(text)) {
         Some(Ok(DeclaredValue::Time(TimeValue::DateTime(instant)))) => Ok(TemporalValue::DateTime {
             instant: instant.get(),
@@ -310,7 +310,6 @@ fn text_value(declaration: LiteralDeclaration<'_>, text: &str, literal: &Literal
             text: text.to_owned(),
             annotation: match (datatype(), literal.language()) {
                 (Some(datatype), _) => TextAnnotation::Datatype(datatype),
-                // clone: the observation owns the tag the literal declares
                 (None, Some(language)) => TextAnnotation::Language(language.clone()),
                 (None, None) => TextAnnotation::Plain,
             },

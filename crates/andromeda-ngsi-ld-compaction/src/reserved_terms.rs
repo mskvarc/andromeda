@@ -1,7 +1,7 @@
 //! The expanded names NGSI-LD reserves, as the terms compaction asks about.
 //!
-//! The walk selects a key for each reserved member of an instance -- its value
-//! carrier, `observedAt`, `datasetId` and the rest (clause 4.5) -- and for each
+//! The walk selects a key for each reserved member of an instance, its value
+//! carrier, `observedAt`, `datasetId` and the rest (clause 4.5), and for each
 //! family it writes as an `@type`. The terms are built once for the process.
 
 use andromeda_ngsi_ld_entity::document::value_carrier::ValueCarrier;

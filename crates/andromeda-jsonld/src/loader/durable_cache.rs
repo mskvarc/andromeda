@@ -110,7 +110,7 @@ async fn read_durable_cache(cache: &dyn ContextCache, url: &IriBuf, allow_remote
 ///
 /// A downloaded document keeps the URL it was finally read from, which the row
 /// stores, so its relative references resolve exactly as they did when it was
-/// first downloaded -- after a restart or an eviction as much as before. A
+/// first downloaded, after a restart or an eviction as much as before. A
 /// document the broker stores itself was never read from anywhere, and its
 /// references resolve against the URL a request names it by
 /// ([`LoadedContext::tail_from`]), which is also the base the processor reads
@@ -321,7 +321,7 @@ mod tests {
             residual: ResidualLifetime::Bounded(CacheLifetime::from_seconds(30).expect("thirty seconds is a positive lifetime")),
             canonical_url: None,
             source: StoredDocumentSource::Downloaded {
-                document_url: final_url.clone(), // clone: the expectation compares against it
+                document_url: final_url.clone(),
             },
         };
 

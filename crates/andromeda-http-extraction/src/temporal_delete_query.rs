@@ -5,8 +5,8 @@
 //! query string into [`TemporalDeleteParameters`] and holds it to the delete's
 //! own validation (the too-wide rule with the local scope withheld, the
 //! `drop`/`keep` and `datasetId`/`deleteAll` exclusivities, and the clause 5.7.3
-//! window check). The `TooManyResults` bound is not an extraction concern — it
-//! turns on a pre-count the service runs — so it is not decided here.
+//! window check). The `TooManyResults` bound is not an extraction concern: it
+//! turns on a pre-count the service runs, so it is not decided here.
 
 use crate::{addressed_uri::addressed_uri, query_decoding::decode_query};
 use andromeda_http_response::{extraction_rejection::ExtractorRejection, parameter_failure::classify_parameter_error, request_refusal::RequestRefusal};
@@ -21,7 +21,6 @@ pub struct TemporalDeleteQuery(pub TemporalDeleteParameters);
 /// Deserialize the delete query string and validate it as a delete-by-query.
 fn resolve_temporal_delete_query(parts: &Parts) -> Result<TemporalDeleteQuery, ExtractorRejection> {
     let uri = addressed_uri(parts);
-    // clone: the decode refusal and the validation refusal each name the request.
     let params = decode_query::<TemporalDeleteParameters>(parts.uri.query().unwrap_or("")).map_err(|refusal| refusal.into_rejection(uri.clone()))?;
 
     params.validate().map_err(|error| {

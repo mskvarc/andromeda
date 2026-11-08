@@ -142,7 +142,7 @@ fn vary_on_encoding(headers: &mut HeaderMap) {
         .flat_map(|value| value.as_bytes().split(|byte| *byte == b','))
         .any(|member| member.trim_ascii().eq_ignore_ascii_case(VARY_ON_ENCODING.as_bytes()));
     if !named {
-        headers.append(VARY, VARY_ON_ENCODING.clone()); // clone: a header value is a cheap shared byte buffer
+        headers.append(VARY, VARY_ON_ENCODING.clone());
     }
 }
 

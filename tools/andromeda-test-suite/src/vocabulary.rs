@@ -85,7 +85,7 @@ impl Vocabulary {
             .await
             .map_err(|error| VocabularyError::Refused(Box::new(error)))?;
         let location = created.location.valid().ok_or(VocabularyError::NoLocation)?;
-        // clone: the error names the location the answer keeps
+        // clone: the error must own the location it reports
         let unresolved = |error| VocabularyError::Location(location.clone(), error);
         let broker = Url::parse(client.endpoint().base_url().as_str()).map_err(unresolved)?;
         let resolved = broker.join(location.as_str()).map_err(unresolved)?;

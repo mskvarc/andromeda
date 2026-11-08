@@ -8,7 +8,7 @@
 //! Snapshot's DDL lock that dictionary against live writes; the live keys are
 //! a tenant-only migration's), calls no TimescaleDB function (the live
 //! history tables are hypertables, a Snapshot's are plain tables), and runs in
-//! a transaction -- the branch migrator runs inside the Snapshot's creation
+//! a transaction, since the branch migrator runs inside the Snapshot's creation
 //! transaction, where a `-- no-transaction` migration could not.
 
 use andromeda_postgresql_schema::branch_schema_version::{BranchSchemaVersion, BranchVersionError};
@@ -74,8 +74,8 @@ impl BranchMigrationSet {
     /// what makes the unqualified branch DDL land in it.
     #[must_use]
     pub fn migrator(&self, schema: &str) -> Migrator {
-        // clone: a `Migrator` owns its migration list; for the embedded set this
-        // copies only the borrowed slice reference
+        // clone: the migrator needs its own list. For the embedded set this copies
+        // only the slice reference.
         let mut migrator = Migrator {
             migrations: self.migrations.clone(),
             ..Migrator::DEFAULT

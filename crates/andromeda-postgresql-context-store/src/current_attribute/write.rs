@@ -116,12 +116,12 @@ pub(crate) fn inserted_rows(target: &ContextTarget, anchor: impl IntoIden) -> Re
     let mut columns = vec![CurrentAttributes::EntityKey];
     columns.extend(written_columns());
     let mut select = Query::select();
-    select.expr(Expr::col((anchor.clone(), Entities::EntityKey))); // clone: the anchor names both the key and the join
+    select.expr(Expr::col((anchor.clone(), Entities::EntityKey)));
     for column in written_columns() {
         select.expr(Expr::col((Instances, column)));
     }
     select
-        .from(anchor.clone()) // clone: the anchor names both the source and the join
+        .from(anchor.clone())
         .join(JoinType::Join, Instances, Expr::col((Instances, Entities::Id)).equals((anchor, Entities::Id)));
     let mut insert = Query::insert();
     insert
@@ -207,13 +207,13 @@ fn edited_entities(anchor: &DynIden, edit: GrainEdit) -> SelectStatement {
         .and_where(edit.staged())
         .take();
     Query::select()
-        .column((anchor.clone(), Entities::EntityKey)) // clone: a reference-counted name
-        .from(anchor.clone()) // clone: as above
+        .column((anchor.clone(), Entities::EntityKey))
+        .from(anchor.clone())
         .join_subquery(
             JoinType::Join,
             edited,
             Edited,
-            Expr::col((Edited, Entities::Id)).equals((anchor.clone(), Entities::Id)), // clone: as above
+            Expr::col((Edited, Entities::Id)).equals((anchor.clone(), Entities::Id)),
         )
         .take()
 }
@@ -228,8 +228,8 @@ fn staged_grains(anchor: &DynIden, edit: GrainEdit) -> SelectStatement {
 /// selected yet: `… FROM anchor JOIN grains ON grains.id = anchor.id WHERE <edit>`.
 fn edited_grains(anchor: &DynIden, edit: GrainEdit) -> SelectStatement {
     Query::select()
-        .from(anchor.clone()) // clone: a reference-counted name
-        .join(JoinType::Join, Grains, Expr::col((Grains, Entities::Id)).equals((anchor.clone(), Entities::Id))) // clone: as above
+        .from(anchor.clone())
+        .join(JoinType::Join, Grains, Expr::col((Grains, Entities::Id)).equals((anchor.clone(), Entities::Id)))
         .and_where(edit.staged())
         .take()
 }
@@ -238,7 +238,7 @@ fn edited_grains(anchor: &DynIden, edit: GrainEdit) -> SelectStatement {
 /// `anchor.entity_key, grains.attribute_name_key, grains.dataset_key`.
 fn staged_grain_parts(anchor: &DynIden) -> [SimpleExpr; 3] {
     [
-        Expr::col((anchor.clone(), Entities::EntityKey)), // clone: a reference-counted name
+        Expr::col((anchor.clone(), Entities::EntityKey)),
         Expr::col((Grains, CurrentAttributes::AttributeNameKey)),
         Expr::col((Grains, CurrentAttributes::DatasetKey)),
     ]
@@ -259,14 +259,14 @@ fn staged_grain_parts(anchor: &DynIden) -> [SimpleExpr; 3] {
 pub(crate) fn vanished_rows(target: &ContextTarget, anchor: impl IntoIden, overwritten: SimpleExpr) -> DeleteStatement {
     let anchor = anchor.into_iden();
     let staged = Query::select()
-        .column((anchor.clone(), Entities::EntityKey)) // clone: the anchor names the key and the join
+        .column((anchor.clone(), Entities::EntityKey))
         .column((Instances, CurrentAttributes::AttributeNameKey))
         .column((Instances, CurrentAttributes::DatasetKey))
         .from(Instances)
         .join(
             JoinType::Join,
-            anchor.clone(),                                                              // clone: as above
-            Expr::col((anchor.clone(), Entities::Id)).equals((Instances, Entities::Id)), // clone: as above
+            anchor.clone(),
+            Expr::col((anchor.clone(), Entities::Id)).equals((Instances, Entities::Id)),
         )
         .take();
     let overwriting = Query::select()

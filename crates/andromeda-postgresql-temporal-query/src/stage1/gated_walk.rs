@@ -76,17 +76,7 @@ pub(super) fn gated_walk(
     // A walk shorter than the page needs cannot fill it, so it visits none.
     let visited = if need > u64::from(step.short_walk()) { 0 } else { step.short_walk() };
     let length = ShortWalkLength { visited, need };
-    let short = (visited > 0).then(|| {
-        short_walk(
-            // clone: the full walk reads the same Evolutions
-            walked.paged.clone(),
-            // clone: the full walk tests the same filters
-            whole.clone(),
-            window_match(),
-            window,
-            length,
-        )
-    });
+    let short = (visited > 0).then(|| short_walk(walked.paged.clone(), whole.clone(), window_match(), window, length));
     let gates = Gates::of(step, length);
 
     let mut indexed = selected_ids(narrowed.paged, gates.indexed.into_iter().fold(residual, Condition::add), window_match());
@@ -171,7 +161,6 @@ impl Gates {
         let Some(least) = dense_matches(step.dense_walk(), length) else {
             let walked_short = count_of(ShortWalkMatches).lt(length.need);
             return Gates {
-                // clone: the full walk is gated on the short walk too
                 indexed: vec![walked_short.clone(), within(Candidates, bound)],
                 walk: vec![walked_short, count_of(Candidates).gt(bound)],
             };
@@ -210,7 +199,6 @@ fn dense_matches(dense_walk: Option<u32>, length: ShortWalkLength) -> Option<u64
 fn short_walk(evolutions: TableRef, conditions: Condition, window_match: SelectStatement, window: &PageWindow, length: ShortWalkLength) -> SelectStatement {
     let start = match &window.start {
         PageStart::Offset(_) => PageStart::Offset(0),
-        // clone: the walk starts where the window does
         PageStart::Cursor(cursor) => PageStart::Cursor(cursor.clone()),
     };
     let mut walk = Query::select();

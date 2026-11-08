@@ -130,7 +130,6 @@ fn stream_edge(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, conditi
     let beyond = in_any_part(branch, |part| {
         let mut beyond = admitted(part, condition);
         beyond.expr(int_literal(1)).and_where(axis_bound(Ah, timeproperty, |instant| match walk {
-            // clone: the edge bounds every part's instances and is projected.
             Walk::Forward => instant.gt(edge.clone()),
             Walk::Backward => instant.lt(edge.clone()),
         }));
@@ -157,7 +156,6 @@ fn kept_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, cond
         let mut rows = admitted(part, condition);
         project_base_columns(&mut rows);
         rows.and_where(axis_bound(Ah, compiled.window.timeproperty, |instant| match walk {
-            // clone: the edge bounds every part's instances.
             Walk::Forward => instant.lte(or_end_of_time(edge.clone())),
             Walk::Backward => instant.gte(or_start_of_time(edge.clone())),
         }));
@@ -179,7 +177,6 @@ pub(crate) fn project_whole_streams(select: &mut SelectStatement) {
 /// ordinal tells apart the rows of one write.
 pub(crate) fn in_rendering_order(select: &mut SelectStatement, rows: impl IntoIden, axis: AttributeHistory) {
     let rows = rows.into_iden();
-    // clone: every ordering key names the rows' alias.
     select
         .order_by((rows.clone(), Alias::new("attribute_name")), Order::Asc)
         .order_by((rows.clone(), axis), Order::Asc)
@@ -220,7 +217,6 @@ pub(crate) fn walked_history(
 /// same way on every execution. A write id and its ordinal name one row.
 fn most_recent_first(select: &mut SelectStatement, alias: impl IntoIden, instant: SimpleExpr) {
     let alias = alias.into_iden();
-    // clone: every ordering key names the alias.
     select
         .order_by_expr(instant, Order::Desc)
         .order_by((alias.clone(), AttributeHistory::WriteId), Order::Desc)

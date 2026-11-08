@@ -122,7 +122,6 @@ impl Scalar {
         match self {
             Scalar::Number(number) => number.to_string(),
             Scalar::Bool(value) => value.to_string(),
-            // clone: callers own the rendered literal
             Scalar::Str(value) | Scalar::Uri(value) => value.clone(),
             Scalar::DateTime(value) => instant_text(*value),
             Scalar::Date(value) => NgsiLdDate::from(*value).to_string(),
@@ -140,8 +139,8 @@ impl Scalar {
 /// # Errors
 ///
 /// Returns [`QueryError::QInvalidDateTime`] when `raw` is not a clause 4.6.3
-/// `DateTime` -- which includes a numeric zone offset in place of the mandatory
-/// `Z`, and a fraction longer than six digits.
+/// `DateTime` (a numeric zone offset in place of the mandatory `Z`, or a
+/// fraction longer than six digits).
 pub fn parse_date_time(raw: &str) -> Result<DateTime<Utc>, QueryError> {
     raw.parse::<NgsiLdDateTime>().map(NgsiLdDateTime::get).map_err(QueryError::QInvalidDateTime)
 }
@@ -162,9 +161,9 @@ pub fn parse_date(raw: &str) -> Result<NaiveDate, QueryError> {
 /// # Errors
 ///
 /// Returns [`QueryError::QInvalidTime`] when `raw` is not a clause 4.6.3
-/// `Time` -- which includes one written without the mandatory `Z` designator,
-/// and one carrying a numeric offset, since the clause states that the string
-/// "shall not contain expressions of the difference between local time and UTC".
+/// `Time` (one written without the mandatory `Z` designator, or one carrying
+/// a numeric offset, since the clause states that the string
+/// "shall not contain expressions of the difference between local time and UTC").
 pub fn parse_time(raw: &str) -> Result<NaiveTime, QueryError> {
     raw.parse::<NgsiLdTime>().map(NgsiLdTime::get).map_err(QueryError::QInvalidTime)
 }

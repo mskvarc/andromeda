@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn a_removed_attribute_removes_every_grain_it_held() {
         let previous = committed(&sensor(20.0, 0.5));
-        let mut current = EntityState::clone(&previous); // clone: shares every attribute, as a read-modify-write does
+        let mut current = EntityState::clone(&previous);
         current.attributes_mut().remove(&ex("temperature"));
         let edit = RowEdit::between(Some(&previous), &current).expect("an edit");
         let removed = name("temperature");
@@ -322,7 +322,7 @@ mod tests {
     #[test]
     fn removing_the_first_attribute_moves_the_rows_after_it() {
         let previous = committed(&sensor(20.0, 0.5));
-        let mut current = EntityState::clone(&previous); // clone: shares every attribute, as a read-modify-write does
+        let mut current = EntityState::clone(&previous);
         current.attributes_mut().remove(&ex("reading00"));
         let edit = RowEdit::between(Some(&previous), &current).expect("an edit");
         assert!(edit.written.is_empty(), "{edit:?}");
@@ -336,8 +336,8 @@ mod tests {
     fn a_new_attribute_is_written_after_the_others() {
         let previous = committed(&sensor(20.0, 0.5));
         let humidity_state = committed(&document(&json!({ex("humidity"): [number(40.0)]})));
-        let mut current = EntityState::clone(&previous); // clone: shares every attribute, as a read-modify-write does
-        let instances = humidity_state.attributes().get_shared(&ex("humidity")).expect("the attribute").clone(); // clone: Arc ref-count bump
+        let mut current = EntityState::clone(&previous);
+        let instances = humidity_state.attributes().get_shared(&ex("humidity")).expect("the attribute").clone();
         current.attributes_mut().insert_shared(name("humidity"), instances);
         let edit = RowEdit::between(Some(&previous), &current).expect("an edit");
         let humidity = name("humidity");

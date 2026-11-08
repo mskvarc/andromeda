@@ -1,8 +1,8 @@
 //! The clause 4.5.16 `GeoJSON` envelope of a typed entity.
 //!
 //! Clause 4.5.16.2: a Feature carries the entity's `id` as its own, the
-//! geometry clause 4.5.16.1 selects, and every other member of the entity --
-//! `type` and the selected `GeoProperty` included -- in its `properties`.
+//! geometry clause 4.5.16.1 selects, and every other member of the entity,
+//! `type` and the selected `GeoProperty` included, in its `properties`.
 //! Clause 4.5.17 gives the simplified rendering the same envelope.
 
 use crate::{

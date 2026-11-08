@@ -76,7 +76,7 @@ mod tests {
         let mut parts = request.body(()).expect("a valid request").into_parts().0;
         ContextUrl::from_request_parts(&mut parts, &())
             .await
-            .map(|context| context.into_inner().request_context().clone()) // clone: the spec is dropped here
+            .map(|context| context.into_inner().request_context().clone())
     }
 
     /// Whether `rejection` is the clause 5.5.4 `BadRequestData`.

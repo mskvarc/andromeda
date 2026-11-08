@@ -20,7 +20,7 @@ pub(crate) async fn run(context: ContextChoice, method: QueryMethod) -> Result<(
     let second_at_b2 = scenario.seed(Node::B2, Sample::Parking2WithoutLocationAndTotal).await?;
     let second_at_b3 = scenario.seed(Node::B3, Sample::Parking2Full).await?;
     scenario.register_all(&INCLUSIVE_AND_EXCLUSIVE).await?;
-    let both = [first_at_b2.id.clone(), second_at_b2.id.clone()]; // clone: the entities stay whole for the expectations
+    let both = [first_at_b2.id.clone(), second_at_b2.id.clone()];
     let at_b1 = scenario.query(Node::B1, &[Kind::Parking], &[], method).await?;
     let at_b2 = scenario.query(Node::B2, &[Kind::Parking], &[], method).await?;
     let at_b3 = scenario.query(Node::B3, &[Kind::Parking], &[], method).await?;

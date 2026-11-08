@@ -300,7 +300,7 @@ mod tests {
             .0
             .iter()
             .filter_map(|value| match value {
-                Value::Bytes(Some(bytes)) => Some(bytes.clone()), // clone: the assertion outlives the borrow of the statement
+                Value::Bytes(Some(bytes)) => Some(bytes.clone()),
                 _non_geometry @ (Value::Bool(_)
                 | Value::TinyInt(_)
                 | Value::SmallInt(_)
@@ -656,7 +656,7 @@ mod tests {
             },
         ];
         for georel in relations {
-            let flat = point_query(georel.clone(), LOCATION); // clone: the relation is reused for the elevated query
+            let flat = point_query(georel.clone(), LOCATION);
             let elevated = point_query_3d(georel, LOCATION);
             let (flat_sql, flat_values) = render_parameterised(condition(&flat, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("flat renders"));
             let (elevated_sql, elevated_values) =

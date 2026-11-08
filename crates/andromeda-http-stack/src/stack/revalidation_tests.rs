@@ -86,7 +86,7 @@ async fn a_gzip_response_and_its_revalidation_carry_the_same_weak_tag_and_vary()
     let full = answer(&[(ACCEPT_ENCODING.as_str(), "gzip")]).await?;
     pretty_assertions::assert_eq!(full.status(), StatusCode::OK);
     pretty_assertions::assert_eq!(full.headers().get(CONTENT_ENCODING), Some(&HeaderValue::from_static("gzip")));
-    let weak = full.headers().get(ETAG).cloned(); // clone: the 304's tag is compared against it
+    let weak = full.headers().get(ETAG).cloned();
     pretty_assertions::assert_eq!(weak, Some(HeaderValue::from_static("W/\"document\"")));
     assert!(varies_on_encoding(&full));
 

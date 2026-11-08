@@ -1,8 +1,8 @@
 //! Applying a clause 4.5.23 join to the compact roots of a temporal read,
 //! behind the `temporal_linked_retrieval` extension.
 //!
-//! All three temporal read endpoints -- `GET /temporal/entities/{id}`,
-//! `GET /temporal/entities` and `POST /temporal/entityOperations/query` -- run
+//! All three temporal read endpoints (`GET /temporal/entities/{id}`,
+//! `GET /temporal/entities` and `POST /temporal/entityOperations/query`) run
 //! the Linked Entity engine the same way once they hold their roots: the
 //! temporal service traverses over the request's window and the engine plans
 //! the payload, which the temporal writer spells (`crate::temporal_answer`).

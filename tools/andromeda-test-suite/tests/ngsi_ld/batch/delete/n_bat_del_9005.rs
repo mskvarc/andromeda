@@ -55,7 +55,6 @@ async fn n_bat_del_9005_a_batch_delete_reaching_an_entity_after_a_later_write_re
     );
     let entities = entities;
     broker.entities().batch_create(&entities).send().await?.done()?;
-    // clone: the batch names every Sensor the creation wrote
     let ids: Vec<EntityId> = entities.iter().map(|entity| entity.id.clone()).collect();
     let first_id = namespace.urn("Sensor", 0)?;
     let appended = EntityFragment::builder().property("level", 2).build()?;

@@ -105,11 +105,7 @@ impl EntityQueryService {
     fn candidates(&self, index: &SpatialEntityIndex, accelerable: &Accelerable<'_>) -> Option<HashSet<Identifier>> {
         let mut union: HashSet<Identifier> = HashSet::new();
         for type_iri in &accelerable.type_iris {
-            let key = SpatialKey::new(
-                self.tenant.clone(),                 // clone: the spatial key owns its tenant
-                type_iri.clone(),                    // clone: the spatial key owns its type
-                accelerable.geo.geoproperty.clone(), // clone: the spatial key owns its geoproperty
-            );
+            let key = SpatialKey::new(self.tenant.clone(), type_iri.clone(), accelerable.geo.geoproperty.clone());
             // A partition that declines for any one type would otherwise
             // contribute an empty candidate set, which is indistinguishable from
             // that type having no default instance in range. The store then

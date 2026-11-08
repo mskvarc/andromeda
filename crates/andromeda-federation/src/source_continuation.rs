@@ -2,8 +2,8 @@
 //! 5.5.9.1 and 6.3.10).
 //!
 //! Clause 5.5.9.1 makes the absence of a `next` pointer the only reliable sign
-//! that a paginated answer has ended -- "the number of Elements retrieved per
-//! page can be lower than L" -- and clause 6.3.10 makes that pointer "a
+//! that a paginated answer has ended ("the number of Elements retrieved per
+//! page can be lower than L"), and clause 6.3.10 makes that pointer "a
 //! URI-reference that could be dereferenced by an NGSI-LD Client to retrieve
 //! the next page". The broker walking a source's answer is such a client, so
 //! the pointer is resolved against the URL the source answered, exactly as a

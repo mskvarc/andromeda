@@ -91,7 +91,7 @@ impl PendingSources {
                     answer.entities.drain(..).partition(|received| held.contains(received.state.id()));
                 answer.entities = kept;
                 (!claimed.is_empty()).then(|| ForwardedEntities {
-                    registration_id: answer.registration_id.clone(), // clone: the claimed part names the registration the rest still names
+                    registration_id: answer.registration_id.clone(), // clone: the answer keeps its registration for the entities it still holds
                     mode: answer.mode,
                     entities: claimed,
                     warnings: Vec::new(),
@@ -322,7 +322,7 @@ impl SnapshotExecutor {
             return Ok(Some(detail));
         }
         for identifier in identifiers {
-            ledger.materialized.insert(identifier.clone()); // clone: both ledgers own the identifier
+            ledger.materialized.insert(identifier.clone());
             ledger.captured.insert(identifier);
         }
         Ok(None)

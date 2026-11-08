@@ -87,7 +87,7 @@ impl EntityService {
         };
         let plan = self.notifier.plan(target, id, current.types().as_slice(), change, written, Some(previous));
         let write = AtomicWrite::builder()
-            .entity_id(Arc::new(id.clone())) // clone: the write owns a shared validated identifier.
+            .entity_id(Arc::new(id.clone())) // clone: the write outlives the borrowed identifier.
             .entity(EntityMutation::Update(EntityRecord::replacing(previous, current)?))
             .history(history)
             .subscription_matches(plan.matches)

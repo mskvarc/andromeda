@@ -96,7 +96,6 @@ impl AggregationGrid {
             PeriodGrid::Exact => Query::select()
                 // The origin is cast so the call names the overload anchored at an
                 // instant, whatever type the origin was bound with.
-                // clone: the origin is read by every period the grid places.
                 .expr_as(
                     time_bucket(self.width(), instant, cast(self.origin.clone(), PostgresType::Timestamptz)),
                     BucketStart,
@@ -113,14 +112,12 @@ impl AggregationGrid {
         let grid_period = || SimpleExpr::from(Expr::col((CalendarGrid, GridPeriod)));
         let grid_origin = || SimpleExpr::from(Expr::col((CalendarGrid, GridOrigin)));
         let mut grid = Query::select();
-        // clone: the origin is read by every period the grid places.
         grid.expr_as(self.width(), GridPeriod)
             .expr_as(cast(self.origin.clone(), PostgresType::Timestamptz), GridOrigin);
         let mut estimated = Query::select();
         estimated
             .column((CalendarGrid, GridPeriod))
             .column((CalendarGrid, GridOrigin))
-            // clone: the estimate and its correction both read the instant.
             .expr_as(calendar_period_estimate(grid_period(), grid_origin(), instant.clone()), PeriodEstimate)
             .from_subquery(grid, CalendarGrid);
         let mut indexed = Query::select();
@@ -163,7 +160,6 @@ impl AggregationGrid {
     pub(crate) fn keys_under(&self, alias: impl IntoIden) -> Vec<SimpleExpr> {
         let alias = alias.into_iden();
         match self.period.grid() {
-            // clone: the start is named by both keys.
             PeriodGrid::Exact => vec![Expr::col((alias, BucketStart))],
             PeriodGrid::Calendar => vec![Expr::col((alias.clone(), BucketStart)), Expr::col((alias, BucketEnd))],
         }

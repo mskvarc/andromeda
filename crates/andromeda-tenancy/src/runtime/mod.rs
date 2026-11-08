@@ -227,7 +227,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// cached runtime, if one is open, that a tenant found to exist does.
     async fn establish_tenant(&self, name: &TenantName) -> Result<Establishment, TenancyError> {
         let establishment = self.database.establish(name).await?;
-        let tenant = TenantRef::Named(name.clone()); // clone: the cache is keyed by an owned tenant reference
+        let tenant = TenantRef::Named(name.clone());
         if establishment == Establishment::Established
             && let Some(cached) = self.runtimes.get(&tenant)
         {
@@ -282,7 +282,7 @@ impl<D: TenantDatabase + TenantLifecycle, F: TenantStateFactory> TenantRuntimeMa
         let Some(record) = self.established_record(name).await? else {
             return Ok(None);
         };
-        let residency = self.residency(&TenantRef::Named(name.clone())); // clone: the residency probe keys the cache
+        let residency = self.residency(&TenantRef::Named(name.clone()));
         Ok(Some(TenantView::new(record, residency)))
     }
 
@@ -298,7 +298,7 @@ impl<D: TenantDatabase + TenantLifecycle, F: TenantStateFactory> TenantRuntimeMa
         let views = records
             .into_iter()
             .map(|record| {
-                let residency = self.residency(&TenantRef::Named(record.tenant_name.clone())); // clone: the residency probe keys the cache
+                let residency = self.residency(&TenantRef::Named(record.tenant_name.clone()));
                 TenantView::new(record, residency)
             })
             .collect();
@@ -314,7 +314,7 @@ impl<D: TenantDatabase + TenantLifecycle, F: TenantStateFactory> TenantRuntimeMa
             return Ok(None);
         }
         self.database.set_status(name, status).await?;
-        let tenant = TenantRef::Named(name.clone()); // clone: the cache key outlives this borrow
+        let tenant = TenantRef::Named(name.clone());
         // Suspending releases the runtime at once so its pool closes
         // deterministically; a runtime a request still holds is retired and
         // released as soon as that hold drops, and admission refuses the tenant

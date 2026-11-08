@@ -171,7 +171,6 @@ mod tests {
     #[test]
     fn a_registration_reserialises_to_the_flat_object_it_was_read_from() {
         let original = fully_populated_registration();
-        // clone: the original is compared against the round-tripped value below
         let registration: ContextSourceRegistration = serde_json::from_value(original.clone()).expect("registration parses");
         pretty_assertions::assert_eq!(serde_json::to_value(&registration).expect("serialises"), original);
     }
@@ -205,15 +204,15 @@ mod tests {
     fn a_registration_builder_produces_the_same_value_as_the_parsed_form() {
         let parsed: ContextSourceRegistration = serde_json::from_value(fully_populated_registration()).expect("registration parses");
         let built = ContextSourceRegistration::builder()
-            .id(parsed.id.clone()) // clone: the parsed value is compared against the built one below
-            .registration_name(parsed.registration_name.clone()) // clone: same reason
-            .description(parsed.description.clone()) // clone: same reason
-            .tenant(parsed.tenant.clone()) // clone: same reason
-            .coverage(parsed.coverage.clone()) // clone: same reason
-            .access(parsed.access.clone()) // clone: same reason
-            .health(parsed.health.clone()) // clone: same reason
-            .lifecycle(parsed.lifecycle.clone()) // clone: same reason
-            .additional_properties(parsed.additional_properties.clone()) // clone: same reason
+            .id(parsed.id.clone())
+            .registration_name(parsed.registration_name.clone())
+            .description(parsed.description.clone())
+            .tenant(parsed.tenant.clone())
+            .coverage(parsed.coverage.clone())
+            .access(parsed.access.clone())
+            .health(parsed.health.clone())
+            .lifecycle(parsed.lifecycle.clone())
+            .additional_properties(parsed.additional_properties.clone())
             .build();
         pretty_assertions::assert_eq!(
             serde_json::to_value(&built).expect("serialises"),

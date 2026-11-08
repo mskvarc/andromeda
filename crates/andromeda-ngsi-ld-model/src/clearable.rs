@@ -194,7 +194,6 @@ impl<T: Clone> Clearable<T> {
         match self {
             Clearable::Absent => stored,
             Clearable::NgsiLdNull => None,
-            // clone: the fragment is borrowed and the resolved member owns its value.
             Clearable::Set(value) => Some(value.clone()),
         }
     }

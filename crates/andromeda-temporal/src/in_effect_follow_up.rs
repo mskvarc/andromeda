@@ -41,7 +41,7 @@ pub fn follow_up_datasets<'a>(probed: &[Vec<&'a TemporalDocument>], parts: impl 
         for (attribute_of, datasets) in &answered {
             let unanswered = held.get(attribute_of).into_iter().flatten().filter(|dataset| !datasets.contains(*dataset));
             for dataset in unanswered {
-                let selector = dataset.map_or(DatasetSelector::Default, |dataset| DatasetSelector::Id(dataset.clone())); // clone: the probe owns the dataset it names
+                let selector = dataset.map_or(DatasetSelector::Default, |dataset| DatasetSelector::Id(dataset.clone()));
                 if !missing.contains(&selector) {
                     missing.push(selector);
                 }

@@ -17,7 +17,6 @@ use std::sync::Arc;
 /// change sink: nothing applies a committed change asynchronously.
 pub(super) fn indexed_service(index: &Arc<SpatialEntityIndex>) -> EntityService {
     let store = Arc::new(InMemoryStore::default());
-    // clone: the committer and the query service share the index; the committer and the service share the store
     let committer = SpatialIndexingCommitter::new(Arc::clone(&store) as Arc<dyn ContextCommitter>, Arc::clone(index), placement());
     in_memory_service(&store, Arc::new(committer), ChangeNotifier::new(None, SubscriptionMatching::Absent))
 }

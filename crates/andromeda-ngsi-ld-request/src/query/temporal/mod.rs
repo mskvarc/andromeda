@@ -297,7 +297,7 @@ impl TemporalQueryParameters {
     /// also decide which instances are read.
     pub fn select_only(&mut self, entities: Vec<Identifier>) {
         for selector in &mut self.entity_selectors {
-            selector.id = Some(entities.clone()); // clone: every selector of the union is narrowed to the same list
+            selector.id = Some(entities.clone()); // clone: each selector of the union holds its own copy of the list
         }
         self.id = Some(entities);
     }

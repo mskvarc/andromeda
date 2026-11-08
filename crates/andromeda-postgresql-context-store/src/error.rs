@@ -248,8 +248,8 @@ impl ContextStoreError {
         }
     }
 
-    /// Whether this failure is a transient transaction rollback -- a deadlock or
-    /// a serialization failure -- that re-running the transaction can clear.
+    /// Whether this failure is a transient transaction rollback (a deadlock or
+    /// a serialization failure) that re-running the transaction can clear.
     ///
     /// A Snapshot branch-schema `DROP ... CASCADE` can deadlock against the
     /// notification delivery worker draining that branch; PostgreSQL rolls the

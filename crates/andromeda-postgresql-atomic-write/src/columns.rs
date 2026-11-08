@@ -379,7 +379,7 @@ mod tests {
     fn an_unstamped_state_is_not_written() {
         let mut write = scoped_write("urn:ngsi-ld:A", Vec::new(), Some((1.0, 2.0)));
         if let EntityMutation::Update(record) = &mut write.entity {
-            let mut state = EntityState::clone(&record.state); // clone: the test strips the times of a copy
+            let mut state = EntityState::clone(&record.state);
             state.strip_attribute_instants();
             record.state = Arc::new(state);
         }
@@ -423,7 +423,7 @@ mod tests {
     /// location, replacing it under `precondition`.
     fn update_sharing_the_location(precondition: Precondition) -> AtomicWrite {
         let previous = Arc::new(vehicle_state("urn:ngsi-ld:A", Some((13.4, 52.5))));
-        let current = Arc::new(EntityState::clone(&previous)); // clone: shares every attribute, as a read-modify-write does
+        let current = Arc::new(EntityState::clone(&previous));
         AtomicWrite::builder()
             .entity_id(Arc::new("urn:ngsi-ld:A".parse::<Identifier>().expect("valid entity URI")))
             .entity(EntityMutation::Update(EntityRecord::replacing(&previous, current).expect("a projection")))
@@ -437,8 +437,8 @@ mod tests {
     }
 
     /// Clause 5.6.2: an update that leaves `location` as the state it read held
-    /// it, and holds against that version, stages the geometry as kept -- no
-    /// EWKB is encoded or bound, so the statement never re-projects it.
+    /// it, and holds against that version, stages the geometry as kept (no
+    /// EWKB is encoded or bound, so the statement never re-projects it).
     #[test]
     fn an_update_holding_against_its_read_keeps_an_unchanged_geometry() {
         let writes = [update_sharing_the_location(Precondition::UnchangedSince(EntityVersion::new(1, 1)))];

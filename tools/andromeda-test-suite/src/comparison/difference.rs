@@ -17,7 +17,7 @@ impl Difference {
     /// The difference `discrepancy` at `path`.
     pub(crate) fn at(path: &DocumentPath, discrepancy: Discrepancy) -> Difference {
         Difference {
-            // clone: each difference owns the path it names
+            // clone: the difference outlives the path it was built under
             path: path.clone(),
             discrepancy,
         }

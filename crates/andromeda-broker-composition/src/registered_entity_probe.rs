@@ -57,8 +57,8 @@ impl EntityStoreRegistrationProbe {
         let prepared = self.engine.prepare_term_context(&ContextSpec::core_only());
         let type_expr = expand_type_expression(&selector.type_.as_type_expression(), &ContextualExpander::new(&self.engine, &prepared)).await?;
         Ok(CompiledEntitySelector::builder()
-            .ids(selector.id.iter().cloned().collect()) // clone: the compiled selector owns its identifiers across the store await.
-            .id_pattern(selector.id_pattern.clone()) // clone: same reason.
+            .ids(selector.id.iter().cloned().collect())
+            .id_pattern(selector.id_pattern.clone())
             .type_expr(Some(type_expr))
             .build())
     }
@@ -143,7 +143,7 @@ impl RegisteredEntityProbe for EntityStoreRegistrationProbe {
                 return Ok(EntityPresence::Absent);
             }
             let selector = CompiledEntitySelector::builder()
-                .ids(vec![entity_id.clone()]) // clone: the compiled selector owns its identifier across the store await.
+                .ids(vec![entity_id.clone()])
                 .id_pattern(None)
                 .type_expr(None)
                 .build();
@@ -240,11 +240,10 @@ mod tests {
             'life3: 'async_trait,
             Self: 'async_trait,
         {
-            // clone: the test inspects what was asked after the call
             self.asked.lock().expect("the record is not poisoned").push((compiled.clone(), window.clone()));
             let admitted = compiled.selection.selectors.iter().all(|selector| selector.ids.contains(&self.entity));
             let holds = compiled.selection.attrs.is_empty() || compiled.selection.attrs.iter().any(|attribute| self.attributes.contains(attribute));
-            let rows = if admitted && holds { vec![self.entity.clone()] } else { Vec::new() }; // clone: the answer owns its identifier
+            let rows = if admitted && holds { vec![self.entity.clone()] } else { Vec::new() };
             Box::pin(async move {
                 Ok(QueryOutcome {
                     rows,

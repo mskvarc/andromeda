@@ -20,12 +20,11 @@ async fn under_watermark_an_entity_another_process_moved_into_range_is_a_candida
     store.write("urn:ngsi-ld:Vehicle:remote", 50.0);
     let watermark = Arc::new(SpatialWatermark::new(
         Arc::new(SpatialEntityIndex::new()),
-        Arc::clone(&store) as Arc<dyn EntitySpatialSnapshotSource>, // clone: the watermark reads the store the test writes
+        Arc::clone(&store) as Arc<dyn EntitySpatialSnapshotSource>,
         placement(),
     ));
     watermark.rebuild().await.expect("the store is readable");
     let query = near_origin("urn:ngsi-ld:Vehicle:remote");
-    // clone: the query service shares the watermark
     assert_eq!(
         narrowed_ids(SpatialAcceleration::Watermark(Arc::clone(&watermark)), &query).await,
         Some(Vec::new())
@@ -45,7 +44,7 @@ async fn under_watermark_an_unreadable_store_leaves_the_query_unnarrowed() {
     store.write("urn:ngsi-ld:Vehicle:parked", 90.0);
     let watermark = Arc::new(SpatialWatermark::new(
         Arc::new(SpatialEntityIndex::new()),
-        Arc::clone(&store) as Arc<dyn EntitySpatialSnapshotSource>, // clone: the watermark reads the store the test writes
+        Arc::clone(&store) as Arc<dyn EntitySpatialSnapshotSource>,
         placement(),
     ));
     watermark.rebuild().await.expect("the store is readable");

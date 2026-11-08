@@ -9,7 +9,7 @@
 //! @context from." Clause 5.13.5.3 says the same of Delete and Reload.
 //!
 //! Both spellings are URIs, and every stored row is keyed by one. Something
-//! else -- whatever a client puts in the path segment -- therefore addresses no
+//! else (whatever a client puts in the path segment) therefore addresses no
 //! entry, and clauses 5.13.4.4 and 5.13.5.4 both answer that with
 //! `ResourceNotFound`: "It shall give back ResourceNotFound if the identifier
 //! is not found", and "If the @context identifier does not correspond to any

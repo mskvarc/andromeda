@@ -55,7 +55,7 @@ impl EntityRepository {
         entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
     ) -> EntityRepository {
         EntityRepository {
-            pool: pool.clone(), // clone: Arc ref-count bump
+            pool: pool.clone(),
             reads,
             attribute_names,
             entity_type_names,

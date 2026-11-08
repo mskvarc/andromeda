@@ -78,7 +78,6 @@ impl TemporalRepository {
                 .ok()
                 .and_then(|position| asked.get(position))
                 .ok_or(TemporalStoreError::Invariant(TemporalStoreInvariant::HeldShapeUnasked(position)))?;
-            // clone: the answer is keyed by the name the request asked about.
             held.entry((*attribute).clone()).or_default().insert(*shape);
         }
         Ok(held)

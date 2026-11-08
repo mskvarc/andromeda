@@ -7,8 +7,8 @@
 /// enforces, so [`buffer_payload`](crate::request_payload::buffer_payload) can
 /// tell the client how large a body the broker accepts when it refuses one as
 /// too large (clause 6.3.2, "Request Entity too large"). A request carrying
-/// none -- a router assembled without the stack, as in a unit test -- is
-/// refused without the figure.
+/// none (a router assembled without the stack, as in a unit test) is refused
+/// without the figure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RequestBodyLimit(usize);
 

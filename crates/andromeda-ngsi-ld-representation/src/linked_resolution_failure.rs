@@ -33,8 +33,8 @@ pub enum LinkedResolutionFailureKind {
 
 /// One Linked Entity that a join could not resolve, and why.
 ///
-/// A failure never fails the retrieval — clause 4.5.23 leaves an unresolvable
-/// Relationship as a plain URI — so it travels back to the caller as a
+/// A failure never fails the retrieval. Clause 4.5.23 leaves an unresolvable
+/// Relationship as a plain URI, so it travels back to the caller as a
 /// description of what the response is missing rather than as an error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkedResolutionFailure {
@@ -86,12 +86,12 @@ mod tests {
             ],
             [
                 LinkedResolutionFailure {
-                    id: id.clone(), // clone: the expectation and the built failure both name it
+                    id: id.clone(),
                     kind: LinkedResolutionFailureKind::Unreachable,
                     detail: "timed out".to_owned(),
                 },
                 LinkedResolutionFailure {
-                    id: id.clone(), // clone: same
+                    id: id.clone(),
                     kind: LinkedResolutionFailureKind::UnusableResponse,
                     detail: "no id".to_owned(),
                 },

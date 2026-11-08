@@ -80,7 +80,7 @@ pub fn merge_temporal_query_results(
                 continue;
             }
             let Some(remote_id) = remote_entity.id().cloned() else {
-                continue; // clone: the map is keyed by the identifier the history names
+                continue;
             };
             match entity_map.get_mut(&remote_id) {
                 Some(local_entity) => local_entity.merge(remote_entity, mode, window.timeproperty),

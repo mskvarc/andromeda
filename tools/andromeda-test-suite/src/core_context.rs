@@ -25,7 +25,7 @@ pub enum CoreContextError {
 /// The configured core `@context` URL as an IRI.
 fn core_iri() -> Result<IriBuf, CoreContextError> {
     let url = SuiteConfig::get().map_err(Clone::clone)?.core_context();
-    // clone: the error names the URL the configuration keeps
+    // clone: the error must own the URL it reports
     IriBuf::new(url.as_str().to_owned()).map_err(|_| CoreContextError::NotAnIri(url.clone()))
 }
 

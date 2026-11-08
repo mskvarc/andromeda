@@ -153,8 +153,8 @@ pub struct NotificationParams {
     /// Maximum depth for linked entity joins (clause 4.5.23 `joinLevel`).
     ///
     /// Typed as a positive integer so `"joinLevel": 0` is rejected at
-    /// deserialization with a 400, exactly as it is on the query endpoints —
-    /// a zero depth names no traversal and must not be silently read as the
+    /// deserialization with a 400, exactly as it is on the query endpoints.
+    /// A zero depth names no traversal and must not be silently read as the
     /// default of one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub join_level: Option<NonZeroU32>,
@@ -176,8 +176,8 @@ pub struct NotificationParams {
     ///
     /// Typed as a positive integer because the table restricts the member to
     /// "Greater than 0" at cardinality `0..1`: a counter that has not moved is
-    /// an absent member, never a `0`. The stored column still floors at zero —
-    /// a counter has to be somewhere before it is first advanced — and the two
+    /// an absent member, never a `0`. The stored column still floors at zero.
+    /// A counter has to be somewhere before it is first advanced, and the two
     /// are different statements about different things.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub times_sent: Option<NonZeroU64>,
@@ -495,7 +495,6 @@ mod tests {
     #[test]
     fn a_subscription_reserialises_to_the_flat_object_it_was_read_from() {
         let original = fully_populated_subscription();
-        // clone: the original is compared against the round-tripped value below
         let subscription: Subscription = serde_json::from_value(original.clone()).expect("subscription parses");
         pretty_assertions::assert_eq!(serde_json::to_value(&subscription).expect("serialises"), original);
     }
@@ -513,14 +512,14 @@ mod tests {
     fn a_subscription_builder_produces_the_same_value_as_the_parsed_form() {
         let parsed: Subscription = serde_json::from_value(fully_populated_subscription()).expect("subscription parses");
         let built = Subscription::builder()
-            .id(parsed.id.clone()) // clone: the parsed value is compared against the built one below
-            .subscription_name(parsed.subscription_name.clone()) // clone: same reason
-            .description(parsed.description.clone()) // clone: same reason
-            .selection(parsed.selection.clone()) // clone: same reason
-            .filters(parsed.filters.clone()) // clone: same reason
-            .notification(parsed.notification.clone()) // clone: same reason
-            .delivery(parsed.delivery.clone()) // clone: same reason
-            .lifecycle(parsed.lifecycle.clone()) // clone: same reason
+            .id(parsed.id.clone())
+            .subscription_name(parsed.subscription_name.clone())
+            .description(parsed.description.clone())
+            .selection(parsed.selection.clone())
+            .filters(parsed.filters.clone())
+            .notification(parsed.notification.clone())
+            .delivery(parsed.delivery.clone())
+            .lifecycle(parsed.lifecycle.clone())
             .build();
         pretty_assertions::assert_eq!(
             serde_json::to_value(&built).expect("serialises"),
@@ -639,7 +638,6 @@ mod tests {
             serde_json::json!({"uri": "https://receiver.example.com/notify", "timeout": -1}),
             serde_json::json!({"uri": "https://receiver.example.com/notify", "timeout": 1.5}),
         ] {
-            // clone: the rejected value is reported when the assertion fails
             assert!(serde_json::from_value::<Endpoint>(wire.clone()).is_err(), "{wire} must be rejected");
         }
     }
@@ -667,7 +665,6 @@ mod tests {
             serde_json::json!({"endpoint": {"uri": "https://receiver.example.com/notify"}, "timesSent": 0}),
             serde_json::json!({"endpoint": {"uri": "https://receiver.example.com/notify"}, "timesFailed": 0}),
         ] {
-            // clone: the rejected value is reported when the assertion fails
             assert!(serde_json::from_value::<NotificationParams>(wire.clone()).is_err(), "{wire} must be rejected");
         }
     }

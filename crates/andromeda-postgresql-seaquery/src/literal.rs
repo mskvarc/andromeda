@@ -4,7 +4,7 @@
 //! few cannot: a jsonpath is part of the statement text that the planner parses
 //! before any parameter is substituted, and so is the key of a `->'…'` access.
 //! Those are interpolated, and an apostrophe in one would otherwise close the
-//! literal early — with the rest of the value read as SQL.
+//! literal early, with the rest of the value read as SQL.
 
 use sea_query::{Expr, SimpleExpr};
 
@@ -26,8 +26,8 @@ pub(crate) fn quoted_text(value: &str) -> String {
 
 /// A single-quoted SQL text literal, rendered inline rather than bound.
 ///
-/// For a fixed vocabulary token a statement writes directly — a subscription
-/// `kind`, an NGSI-LD resource `type` — where binding a parameter would only
+/// For a fixed vocabulary token a statement writes directly (a subscription
+/// `kind`, an NGSI-LD resource `type`), where binding a parameter would only
 /// shift the numbering of the values a caller does bind. The value is escaped,
 /// so an apostrophe cannot terminate the literal early; it is never a channel
 /// for caller-supplied data, which always binds.
@@ -38,8 +38,8 @@ pub fn text_literal(value: &str) -> SimpleExpr {
 
 /// The constant `FALSE`, rendered inline.
 ///
-/// A predicate that no row can satisfy — an attribute IRI no Entity has ever
-/// written, a temporal value with no canonical form — renders as this rather
+/// A predicate that no row can satisfy (an attribute IRI no Entity has ever
+/// written, a temporal value with no canonical form) renders as this rather
 /// than as a bound `false`, so it needs no placeholder and shifts no numbering.
 #[must_use]
 pub fn false_literal() -> SimpleExpr {
@@ -56,7 +56,7 @@ pub fn true_literal() -> SimpleExpr {
 /// An integer rendered inline rather than bound.
 ///
 /// For a statement-level constant an `EXISTS` probe's `SELECT 1` marker is the
-/// canonical example — where binding it would only add a placeholder to every
+/// canonical example, where binding it would only add a placeholder to every
 /// probe and shift the numbering of the values that carry meaning. The value is
 /// a broker-minted integer, never caller-supplied data.
 #[must_use]

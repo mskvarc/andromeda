@@ -30,18 +30,18 @@ async fn n_ent_cre_9057_a_refused_create_and_a_create_sent_at_once_with_the_same
     let seed = format!("https://example.test/cold/{namespace}-seed");
     let contended = format!("https://example.test/cold/{namespace}-contended");
     let existing = Entity::builder()
-        .id(existing_id.clone()) // clone: the Entity is retrieved by its id after it is built
-        .entity_type(widget_type.clone()) // clone: every Widget is built with the same type
+        .id(existing_id.clone())
+        .entity_type(widget_type.clone())
         .property(seed.as_str(), 1)
         .build()?;
     broker.entities().create(&existing).send().await?.done()?;
     let recreated = Entity::builder()
-        .id(existing_id.clone()) // clone: the Entity is retrieved by its id after it is built
-        .entity_type(widget_type.clone()) // clone: every Widget is built with the same type
+        .id(existing_id.clone())
+        .entity_type(widget_type.clone())
         .property(contended.as_str(), 1)
         .build()?;
     let fresh = Entity::builder()
-        .id(fresh_id.clone()) // clone: the Entity is retrieved by its id after it is built
+        .id(fresh_id.clone())
         .entity_type(widget_type)
         .property(contended.as_str(), 1)
         .build()?;

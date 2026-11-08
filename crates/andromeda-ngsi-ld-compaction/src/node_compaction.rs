@@ -29,7 +29,6 @@ impl Walk<'_> {
     ) -> Result<Compacted<'a>, Undecidable> {
         let mut result = CompactedObject::new();
         let types: Vec<_> = node.types().iter().map(|ty| Term::Id(node_identifier(ty.as_str()))).collect();
-        // clone: the identifier becomes the term IRI compaction reads
         let id = id.map(|id| Term::Id(id.clone()));
         self.write_identity(&mut result, id.as_ref(), &types)?;
         for (name, member) in node.members() {

@@ -115,8 +115,8 @@ impl SubscriptionForwardingService {
                     .record_forwarded(
                         &subscription.id,
                         &ForwardedCopy {
-                            registration: registration.id.clone(), // clone: the mapping owns the registration id
-                            remote_subscription: remote.clone(),   // clone: the mapping and the route each own the id
+                            registration: registration.id.clone(),
+                            remote_subscription: remote.clone(), // clone: the route registers the same identifier after the mapping takes its copy
                         },
                     )
                     .await?;
@@ -182,7 +182,7 @@ impl SubscriptionForwardingService {
     pub async fn handle_csource_notification(&self, notification: &InboundCsourceNotification) -> Result<(), SubscriptionForwardingError> {
         let Some(local) = self.mappings.local_of_companion(&notification.subscription_id).await? else {
             return Err(SubscriptionForwardingError::UnknownSubscription {
-                subscription: notification.subscription_id.clone(), // clone: the error owns the identifier
+                subscription: notification.subscription_id.clone(), // clone: the returned error outlives the borrowed notification
             });
         };
         let Some(stored) = self.subscriptions.get(&self.live_target, &local).await? else {
@@ -218,7 +218,7 @@ impl SubscriptionForwardingService {
             let existing = copies
                 .iter()
                 .find(|copy| copy.registration == registration.id)
-                .map(|copy| copy.remote_subscription.clone()); // clone: the decision owns the identifier of the copy it acts on
+                .map(|copy| copy.remote_subscription.clone());
             let decision = decide(trigger, registration.access.mode.unwrap_or_default(), existing);
             // A registration change deletes nothing of the subscription.
             self.apply_forward_decision(&subscription, &registration, decision, &DeletedMembers::default())

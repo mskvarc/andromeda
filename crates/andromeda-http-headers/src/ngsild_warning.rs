@@ -379,7 +379,7 @@ mod tests {
             NgsiLdWarning::new(WarnCode::MiscellaneousPersistentWarning, "context source s2 returned 403".to_owned()),
             NgsiLdWarning::new(WarnCode::ResponseIsStale, "context source s3 answered from cache".to_owned()),
         ];
-        let header = NgsiLdWarningHeader::new(warnings.clone()); // clone: the expectation outlives the consumed input
+        let header = NgsiLdWarningHeader::new(warnings.clone());
         pretty_assertions::assert_eq!(header.into_warnings(), warnings);
     }
 
@@ -396,7 +396,7 @@ mod tests {
     #[test]
     fn four_thousand_unreachable_sources_fit_the_budget_with_one_summary() {
         let warnings: Vec<NgsiLdWarning> = (0..4000).map(unreachable_source).collect();
-        let values = encoded(&NgsiLdWarningHeader::new(warnings.clone())); // clone: the prefix check reads the input again
+        let values = encoded(&NgsiLdWarningHeader::new(warnings.clone()));
         let (summary, listed) = values.split_last().expect("a summary");
         assert!(listed_bytes(listed) <= LISTED_WARNING_BYTES);
         assert!(listed.iter().zip(&warnings).all(|(value, warning)| *value == warning.to_string()));

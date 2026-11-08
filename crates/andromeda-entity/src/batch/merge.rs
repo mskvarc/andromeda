@@ -55,7 +55,6 @@ impl ChunkRewrite for MergeRewrite<'_> {
             let error = EntityError::not_found(&entry.id);
             return Err(Box::new((entry.id, error)));
         };
-        // clone: reference-count bumps; the merge shares every attribute it does not touch with the stored state
         let mut merged = EntityState::clone(&snapshot.state);
         if let Err(error) = merged.merge(&entry.document, None) {
             return Err(Box::new((entry.id, EntityError::from(error))));

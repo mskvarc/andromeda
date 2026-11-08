@@ -46,7 +46,6 @@ pub(crate) fn new_sub_attributes(written: &IndexMap<AttributeName, AttributeMemb
             AttributeMember::Instances(documents) => {
                 admit_distinct_identities(name, documents)?;
                 if let Some(instances) = settled_instances(name, documents)? {
-                    // clone: the stored instance owns the sub-attribute name.
                     attributes.insert(name.clone(), instances);
                 }
             }
@@ -93,7 +92,7 @@ fn settled_instances(name: &AttributeName, documents: &[InstanceDocument]) -> Re
     let instances = documents
         .iter()
         .filter(|document| !matches!(document.value(), ValueSlot::Remove(_)))
-        .map(|document| new_instance(name, document, None).map(|instance| (document.dataset_id().cloned(), instance))) // clone: the instance is keyed by its own copy of the written identity.
+        .map(|document| new_instance(name, document, None).map(|instance| (document.dataset_id().cloned(), instance)))
         .collect::<Result<Vec<_>, MutationError>>()?;
     AttributeInstances::try_from_instances(instances).map_err(|repeated| EntityRefusal::repeated_instance(name, repeated).into())
 }

@@ -113,7 +113,7 @@ impl ProjectedMembers {
                 .iter()
                 .filter_map(ProjectionTerm::attribute_iri)
                 .filter(|iri| !omitted_bare(iri))
-                .cloned() // clone: as above
+                .cloned() // clone: the requirement outlives the projection it was read from
                 .collect();
             ProjectedMembers::AnyOf { attributes, scope }
         }

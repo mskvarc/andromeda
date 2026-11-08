@@ -99,7 +99,7 @@ pub(crate) async fn delete(
         .iter()
         .any(|result| matches!(result.mode, ForwardingMode::Exclusive | ForwardingMode::Redirect));
     // Clause 5.6.6.4: when the matched proxied registrations do not advertise
-    // Delete Entity, the delete of their part is unsupported and never sent -- a
+    // Delete Entity, the delete of their part is unsupported and never sent. A
     // Conflict "in case the complete delete Entity failed, or ... a partial success
     // if some parts of the delete Entity succeeded". A local row that was actually
     // removed is that succeeded part, so an unsupported-everywhere delete beside a

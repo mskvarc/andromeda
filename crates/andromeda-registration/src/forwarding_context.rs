@@ -97,7 +97,7 @@ mod tests {
         }
         let engine = JsonLdEngine::builder()
             .allow_remote(false)
-            .preload_contexts(preloads.clone()) // clone: the removal below walks the paths the builder takes
+            .preload_contexts(preloads.clone())
             .build()
             .expect("engine builds");
         for path in preloads.values() {
@@ -107,7 +107,7 @@ mod tests {
     }
 
     fn service(store: &Arc<FixedStore>, engine: JsonLdEngine) -> RegistrationService {
-        service_over(Arc::clone(store) as Arc<dyn RegistrationStore>, engine, None) // clone: the test keeps its own handle to read what was written
+        service_over(Arc::clone(store) as Arc<dyn RegistrationStore>, engine, None)
     }
 
     async fn core_context(service: &RegistrationService) -> AdmittedContext {

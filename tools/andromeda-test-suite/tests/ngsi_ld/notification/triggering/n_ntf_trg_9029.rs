@@ -37,7 +37,6 @@ async fn n_ntf_trg_9029_a_periodic_notification_goes_out_at_its_own_grid_point_b
     let selector = EntitySelector::new(SelectorTypeBuilder::from(&vehicle_type).build()?).with_ids(vehicle_id);
     let leading = Subscription::builder()
         .id(leading_id.clone())
-        // clone: both Subscriptions select the same Entity
         .entities([selector.clone()])
         .time_interval(1)
         .notification(NotificationParams::builder(Endpoint::builder(sink.endpoint("leading")?).accept(NgsiLdMediaType::Json).build()?).build()?)

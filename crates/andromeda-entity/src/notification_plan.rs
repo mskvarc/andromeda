@@ -168,7 +168,7 @@ impl ChangeNotifier {
             .occurred_at(now)
             .origin(ChangeOrigin::Local)
             .previous_attributes(previous_snapshot.map(Arc::clone))
-            .current_payload(Some(Arc::clone(written.state))) // clone: Arc ref-count bump
+            .current_payload(Some(Arc::clone(written.state)))
             .sys_attrs_snapshot(Some(written.sys_attrs.clone())) // clone: three instants; the event owns its copy
             .build();
         NotificationPlan { matches, events: vec![event] }

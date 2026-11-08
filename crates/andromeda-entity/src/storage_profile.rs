@@ -86,10 +86,10 @@ impl StorageProfile {
             residual.geo.clone_from(&selection.geo);
         }
         if selection.q_expr.is_some() && self.value_filter != ValueFilterPushdown::JsonPath {
-            residual.q_expr.clone_from(&selection.q_expr); // clone: as above
+            residual.q_expr.clone_from(&selection.q_expr);
         }
         if selection.scope_q.is_some() && self.scope != ScopePushdown::LabelTree {
-            residual.scope_q.clone_from(&selection.scope_q); // clone: as above
+            residual.scope_q.clone_from(&selection.scope_q);
         }
         ResidualFilter::over(residual)
     }

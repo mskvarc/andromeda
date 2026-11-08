@@ -35,7 +35,7 @@ async fn p_res_out_0002_a_killed_pool_answers_batch_upserts_503_with_a_retry_del
         .map(|number| {
             Ok(Entity::builder()
                 .id(namespace.urn("Device", format!("outage-{number}"))?)
-                .entity_type(device_type.clone()) // clone: every upsert writes an Entity of the type
+                .entity_type(device_type.clone())
                 .build()?)
         })
         .collect::<Result<Vec<_>>>()?;

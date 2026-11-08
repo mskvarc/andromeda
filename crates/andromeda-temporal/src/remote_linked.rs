@@ -4,7 +4,7 @@
 //! that its object is an Internal Linked Entity: an entity of the declared type
 //! that exists somewhere in the distributed system, not necessarily in the
 //! store the request reached. Applied to the temporal API the statement is the
-//! same, so the traversal has the same two halves — the local history answers
+//! same, so the traversal has the same two halves: the local history answers
 //! for what this broker recorded, and whatever holds the rest answers through
 //! this port.
 //!
@@ -106,9 +106,9 @@ impl TemporalLinkedWindow {
             timeproperty: Some(self.timeproperty),
             last_n: self.last_n,
             format: Some(WrittenValue::Supported(self.format)),
-            aggr_methods: self.aggr_methods.clone(), // clone: the derived request owns its methods
+            aggr_methods: self.aggr_methods.clone(),
             aggr_period_duration: self.aggr_period_duration,
-            attrs: self.attrs.clone(), // clone: the derived request owns its attributes
+            attrs: self.attrs.clone(),
             ..TemporalQueryParameters::default()
         }
     }

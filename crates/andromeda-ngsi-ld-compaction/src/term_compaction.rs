@@ -17,7 +17,7 @@ use std::future::{Future, ready};
 /// only opens if a context maps an IRI to a term an attribute cannot be keyed
 /// by; the original is then the only name that still addresses it.
 fn compacted_or_original(compacted: &str, original: &AttributeName) -> AttributeName {
-    compacted.parse().unwrap_or_else(|_ungrammatical| original.clone()) // clone: the original stays in the filter being compacted
+    compacted.parse().unwrap_or_else(|_ungrammatical| original.clone())
 }
 
 impl TermCompactor for NameCompaction {

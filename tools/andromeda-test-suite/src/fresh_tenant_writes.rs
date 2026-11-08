@@ -46,8 +46,8 @@ pub async fn expect_first_writes_create_their_tenants(broker: &BrokerClient, nam
     let device_type = namespace.entity_type("Device")?;
     let device_id = namespace.urn("Device", 1)?;
     let device = Entity::builder()
-        .id(device_id.clone()) // clone: the listings are compared with the id after the Device is built from it
-        .entity_type(device_type.clone()) // clone: the listings select on the type after the Device is built from it
+        .id(device_id.clone()) // clone: the id is compared again after the Device is built
+        .entity_type(device_type.clone()) // clone: the type is queried again after the Device is built
         .property("reading", 1)
         .build()?;
     let clients = (0..tenants)

@@ -2,7 +2,7 @@
 //!
 //! With `splitEntities`, an entity's attributes may be spread across several
 //! context sources, so no single source can decide whether the entity matches.
-//! The attribute-reading filters — `q`, the geoquery and `scopeQ` — therefore
+//! The attribute-reading filters (`q`, the geoquery and `scopeQ`) therefore
 //! stay with the broker: each source answers whatever it holds, and the filters
 //! are applied here, once the local and forwarded entities have been merged.
 

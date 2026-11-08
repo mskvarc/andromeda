@@ -34,7 +34,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-/// POST /ngsi-ld/v1/csourceSubscriptions -- Create a context source subscription.
+/// POST /ngsi-ld/v1/csourceSubscriptions: create a context source subscription.
 pub(crate) async fn create(
     // Clause 6.3.20: the operation defines no parameter, so any is an
     // `InvalidRequest`; it is read first, before the tenant is resolved.
@@ -71,7 +71,7 @@ pub(crate) async fn create(
     Ok(locator.locate(StatusCode::CREATED.into_response(), ResourceCollection::ContextSourceSubscriptions, &id))
 }
 
-/// GET /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Retrieve a context source subscription.
+/// GET /ngsi-ld/v1/csourceSubscriptions/{subscription_id}: retrieve a context source subscription.
 pub(crate) async fn get(
     ExistingTenantState(state): CsourceSubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
@@ -99,7 +99,7 @@ pub(crate) async fn get(
     Ok(NgsiLdResponse::ok(rendered).into_response())
 }
 
-/// GET /ngsi-ld/v1/csourceSubscriptions -- Query context source subscriptions.
+/// GET /ngsi-ld/v1/csourceSubscriptions: query context source subscriptions.
 pub(crate) async fn query(
     ExistingTenantState(state): CsourceSubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
@@ -134,7 +134,7 @@ pub(crate) async fn query(
     listing.respond(rendered, total, boundary, reach, &uri, accept.media_type())
 }
 
-/// PATCH /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Update a context source subscription.
+/// PATCH /ngsi-ld/v1/csourceSubscriptions/{subscription_id}: update a context source subscription.
 pub(crate) async fn update(
     // Clause 6.3.20: the operation defines no parameter, so any is an `InvalidRequest`.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,
@@ -155,7 +155,7 @@ pub(crate) async fn update(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// DELETE /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Delete a context source subscription.
+/// DELETE /ngsi-ld/v1/csourceSubscriptions/{subscription_id}: delete a context source subscription.
 pub(crate) async fn delete(
     // Clause 6.3.20: the operation defines no parameter, so any is an `InvalidRequest`.
     ValidatedQuery(EmptyParams {}): ValidatedQuery<EmptyParams>,

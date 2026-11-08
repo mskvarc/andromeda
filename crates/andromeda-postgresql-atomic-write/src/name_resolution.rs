@@ -9,7 +9,7 @@
 //! than looking up: a type or attribute recorded for the first time has no
 //! key yet, and the row that references it is written moments later in the
 //! same transaction, so a key exists exactly when the row that references it
-//! does — and vanishes with it on rollback.
+//! does, and vanishes with it on rollback.
 
 use crate::commit_refusal::name_lookup;
 use andromeda_context_commit::{atomic_write::AtomicWrite, error::CommitError};

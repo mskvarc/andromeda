@@ -1,8 +1,8 @@
 //! The query a client sent, as the typed parameters of the operation it is.
 //!
 //! Clause 4.3.6.1 narrows a forwarded request against what a registration
-//! covers, and the three operations that forward -- Retrieve Entity (clause
-//! 5.7.1), Query Entities (5.7.2) and the temporal pair (5.7.3, 5.7.4) -- reach
+//! covers, and the three operations that forward (Retrieve Entity, clause
+//! 5.7.1; Query Entities, 5.7.2; and the temporal pair, 5.7.3 and 5.7.4) reach
 //! that narrowing with three different parameter sets. This is what they have
 //! in common: the members the narrowing reads before it knows which operation
 //! it is looking at.
@@ -72,12 +72,12 @@ impl ClientQuery<'_> {
             ClientQuery::EntityQuery(params) => params.selectors(),
             ClientQuery::TemporalQuery(params) => params.selectors(),
             ClientQuery::EntityRetrieve { id, params } => Cow::Owned(vec![EntitySelectorParams {
-                id: Some(vec![(*id).clone()]),     // clone: the selector owns its identifiers
-                type_: params.entity_type.clone(), // clone: the selector owns its type expression
+                id: Some(vec![(*id).clone()]),
+                type_: params.entity_type.clone(),
                 id_pattern: None,
             }]),
             ClientQuery::TemporalRetrieve { id, .. } => Cow::Owned(vec![EntitySelectorParams {
-                id: Some(vec![(*id).clone()]), // clone: the selector owns its identifiers
+                id: Some(vec![(*id).clone()]),
                 ..EntitySelectorParams::default()
             }]),
         }

@@ -23,7 +23,7 @@ impl Attribute {
             return None;
         }
         let sub_attributes = mem::take(&mut self.common_mut().sub_attributes);
-        let mut previous = self.clone(); // clone: the instance before the change keeps every member beside the value
+        let mut previous = self.clone();
         self.common_mut().sub_attributes = sub_attributes;
         self.forget_previous();
         previous.promote_previous();

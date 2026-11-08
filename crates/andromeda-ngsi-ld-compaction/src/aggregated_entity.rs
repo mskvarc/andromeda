@@ -35,7 +35,7 @@ pub fn aggregated_entity(
         .map(|expanded| {
             let term = names.compact_type_iri(expanded.as_str());
             // A term that is no type name leaves the type expanded.
-            EntityTypeName::from_str(&term).unwrap_or_else(|_| expanded.clone()) // clone: the aggregated entity owns the type name
+            EntityTypeName::from_str(&term).unwrap_or_else(|_| expanded.clone())
         })
         .collect();
     let type_ = match compacted.len() {
@@ -45,7 +45,7 @@ pub fn aggregated_entity(
     AggregatedTemporalEntity::from_rows(id, type_, rows, methods, grouping_depth, |expanded| {
         let term = names.compact_attr_iri(expanded.as_str());
         // A term that is no attribute name leaves the attribute expanded.
-        AttributeName::from_str(&term).unwrap_or_else(|_| expanded.clone()) // clone: the aggregated entity owns the attribute name
+        AttributeName::from_str(&term).unwrap_or_else(|_| expanded.clone())
     })
 }
 

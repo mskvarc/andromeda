@@ -26,7 +26,7 @@ use cefact_units::UnitCode;
 #[must_use]
 pub(crate) fn malformed(attribute: &AttributeName, member: MemberShape) -> EntityRefusal {
     EntityRefusal::Malformed {
-        attribute: Some(attribute.clone()), // clone: the refusal names the attribute the caller keeps
+        attribute: Some(attribute.clone()), // clone: the refusal outlives the borrowed attribute, so it owns a copy
         member,
     }
 }
@@ -39,7 +39,7 @@ pub(crate) fn malformed(attribute: &AttributeName, member: MemberShape) -> Entit
 #[must_use]
 pub(crate) fn null_beside_data(attribute: &AttributeName) -> EntityRefusal {
     EntityRefusal::NullBesideData {
-        attribute: Some(attribute.clone()), // clone: the refusal names the attribute the caller keeps
+        attribute: Some(attribute.clone()), // clone: the refusal outlives the borrowed attribute, so it owns a copy
     }
 }
 
@@ -86,7 +86,7 @@ pub(crate) fn date_time(items: &[ExpandedItem], attribute: &AttributeName, membe
     single_text(items, attribute, member)?
         .parse::<NgsiLdDateTime>()
         .map_err(|_| EntityRefusal::DateTime {
-            attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
+            attribute: attribute.clone(), // clone: the refusal outlives the borrowed attribute, so it owns a copy
             member,
         })
 }
@@ -100,7 +100,7 @@ pub(crate) fn system_instant(items: &[ExpandedItem], attribute: &AttributeName, 
     single_text(items, attribute, member)?
         .parse::<SystemInstant>()
         .map_err(|_| EntityRefusal::DateTime {
-            attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
+            attribute: attribute.clone(), // clone: the refusal outlives the borrowed attribute, so it owns a copy
             member,
         })
 }
@@ -119,7 +119,7 @@ pub(crate) fn system_instant(items: &[ExpandedItem], attribute: &AttributeName, 
 pub(crate) fn dataset_id(items: &[ExpandedItem], attribute: &AttributeName) -> Result<Option<Identifier>, EntityRefusal> {
     if items.iter().any(is_null) {
         return Err(EntityRefusal::DatasetIdSentinel {
-            attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
+            attribute: attribute.clone(), // clone: the refusal outlives the borrowed attribute, so it owns a copy
         });
     }
     let text = single_reference(items, attribute, MemberShape::DatasetId)?;
@@ -127,7 +127,7 @@ pub(crate) fn dataset_id(items: &[ExpandedItem], attribute: &AttributeName) -> R
         return Ok(None);
     }
     text.parse::<Identifier>().map(Some).map_err(|source| EntityRefusal::DatasetId {
-        attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
+        attribute: attribute.clone(), // clone: the refusal outlives the borrowed attribute, so it owns a copy
         source,
     })
 }
@@ -141,13 +141,13 @@ pub(crate) fn dataset_id(items: &[ExpandedItem], attribute: &AttributeName) -> R
 pub(crate) fn instance_id(items: &[ExpandedItem], attribute: &AttributeName) -> Result<Identifier, EntityRefusal> {
     if items.iter().any(is_null) {
         return Err(EntityRefusal::ReservedNullValue {
-            attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
+            attribute: attribute.clone(), // clone: the refusal outlives the borrowed attribute, so it owns a copy
         });
     }
     single_reference(items, attribute, MemberShape::InstanceId)?
         .parse::<Identifier>()
         .map_err(|source| EntityRefusal::InstanceId {
-            attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
+            attribute: attribute.clone(), // clone: the refusal outlives the borrowed attribute, so it owns a copy
             source,
         })
 }
@@ -163,7 +163,7 @@ pub(crate) fn unit_code_slot(items: &[ExpandedItem], attribute: &AttributeName) 
         return Ok(Slot::Remove);
     }
     let unusable = |source| EntityRefusal::UnitCodeUnusable {
-        attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
+        attribute: attribute.clone(), // clone: the refusal outlives the borrowed attribute, so it owns a copy
         source,
     };
     let code = single_text(items, attribute, MemberShape::UnitCode).map_err(|_| unusable(UnitCodeRefusal::Malformed))?;
@@ -204,7 +204,7 @@ pub(crate) fn references_slot(items: &[ExpandedItem], attribute: &AttributeName,
 /// One type reference.
 fn reference(text: &str, attribute: &AttributeName, member: MemberShape) -> Result<NgsiLdReference, EntityRefusal> {
     text.parse::<NgsiLdReference>().map_err(|source| EntityRefusal::Reference {
-        attribute: attribute.clone(), // clone: the refusal names the attribute the caller keeps
+        attribute: attribute.clone(), // clone: the refusal outlives the borrowed attribute, so it owns a copy
         member,
         source,
     })

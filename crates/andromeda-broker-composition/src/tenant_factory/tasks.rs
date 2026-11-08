@@ -154,9 +154,7 @@ impl TaskSupervision {
     ) -> TaskSupervision {
         TaskSupervision {
             handles,
-            // clone: the runtime waits on the trackers the sinks spawn on.
             handoffs: vec![entity.handoffs().clone(), registration.handoffs().clone()],
-            // clone: the runtime cache reads the count the sink and processor share.
             commits: Arc::clone(entity.commits()),
             health_shutdown,
             task_supervisor,
@@ -270,28 +268,21 @@ pub(super) fn supervise_tasks(
         registration_receiver,
         csource_subscription,
     } = signals;
-    register_pool_gauges(&task_supervisor, storage.pool.clone(), &storage.tenant)?; // clone: PgPool is a shared handle sampled by the gauge task.
-    // clone: PgPool is a shared handle sampled by the size-gauge task, which consults the tenant's one pacer.
+    register_pool_gauges(&task_supervisor, storage.pool.clone(), &storage.tenant)?;
     register_table_size_gauges(&task_supervisor, Arc::clone(&pacer), storage.pool.clone(), &storage.tenant)?;
-    // clone: PgPool is a shared handle the census fold acquires from, and the fold consults the tenant's one pacer.
     register_discovery_census_fold(&task_supervisor, Arc::clone(&pacer), storage.pool.clone())?;
-    // clone: every background pass of the tenant consults its one pacer.
     register_entity_side_effects(&task_supervisor, config, storage, writes, &entity, side_effect_wake, Arc::clone(&pacer))?;
     let (handles, health_shutdown) = spawn_mqtt_health_probe(storage, transport);
-    // clone: both subscription stores intern attribute lists through the tenant's one dictionary.
     let entity_subscriptions = Arc::new(SubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
     let csource_subscriptions = Arc::new(CsourceSubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
     let notification_query = compose_notification_query(storage, &services.state.forwarding, config);
     let notification_processor = compose_notification_processor(
         storage,
-        Arc::clone(&notification_query), // clone: change-driven and periodic notifications resolve their joins through one service.
+        Arc::clone(&notification_query),
         transport,
         &entity_subscriptions,
-        Arc::clone(entity.commits()), // clone: the sink holds what the processor releases.
+        Arc::clone(entity.commits()),
     );
-    // clone: the periodic sweep subscribes to the same change stream so a new or
-    // amended timeInterval subscription wakes it, while the event-driven workers
-    // own the sender.
     let interval_subscription_changes = subscription.clone();
     register_notification_workers(
         &task_supervisor,
@@ -300,13 +291,13 @@ pub(super) fn supervise_tasks(
         notification_processor,
         EntityNotificationStreams {
             entity_changes: entity_receiver,
-            handoffs: entity.handoffs().clone(),   // clone: the processor waits for the hand-offs the sink starts.
-            commits: Arc::clone(entity.commits()), // clone: the processor reports the changes it gives up on.
+            handoffs: entity.handoffs().clone(),
+            commits: Arc::clone(entity.commits()),
             subscription_changes: subscription,
         },
         DeliveryDrainDrive {
             wake: notification_wake,
-            pacer: Arc::clone(&pacer), // clone: every background pass of the tenant consults its one pacer.
+            pacer: Arc::clone(&pacer),
         },
     )?;
     register_expiry_workers(&task_supervisor, config, storage, &services.state, &registration, &pacer)?;
@@ -320,10 +311,10 @@ pub(super) fn supervise_tasks(
         IntervalDelivery {
             subscriptions: entity_subscriptions,
             notification_query,
-            transport: Arc::clone(transport), // clone: every worker delivers through one dispatcher.
+            transport: Arc::clone(transport),
         },
         interval_subscription_changes,
-        periodic.clone(), // clone: both periodic sweeps share the tenant's pacer, its due cell and its evaluation slots.
+        periodic.clone(),
     )?;
     register_csource_notification_workers(
         &task_supervisor,
@@ -332,7 +323,7 @@ pub(super) fn supervise_tasks(
         csource_subscriptions,
         CsourceNotificationStreams {
             registrations: registration_receiver,
-            handoffs: registration.handoffs().clone(), // clone: the worker waits for the hand-offs the sink starts.
+            handoffs: registration.handoffs().clone(),
             subscriptions: csource_subscription,
             drain_timeout: config.notifications.evaluation.drain_timeout(),
         },
@@ -343,7 +334,7 @@ pub(super) fn supervise_tasks(
         &task_supervisor,
         &storage.pool,
         PreparationRecovery {
-            preparation: Arc::clone(&services.snapshot_preparation), // clone: the worker drives the same preparation the snapshot service schedules.
+            preparation: Arc::clone(&services.snapshot_preparation),
             cadence: config.snapshot.preparation.recovery_interval.duration(),
             pacer,
         },
@@ -371,18 +362,8 @@ fn register_history_sweeps(
     storage: &TemporalStorageConfig,
 ) -> Result<(), TenantAssemblyError> {
     let history = HistorySchedule::try_from(&TemporalStoragePolicy::try_from(storage).map_err(AssemblyInvariant::from)?).map_err(AssemblyInvariant::from)?;
-    register_temporal_retention(
-        supervisor,
-        Arc::clone(repository), // clone: the sweep and the read stores share one repository.
-        history.retention,
-        &storage.retention,
-    )?;
-    register_columnstore_conversion(
-        supervisor,
-        Arc::clone(repository), // clone: the sweep and the read stores share one repository.
-        history.columnstore,
-        &storage.columnstore,
-    )
+    register_temporal_retention(supervisor, Arc::clone(repository), history.retention, &storage.retention)?;
+    register_columnstore_conversion(supervisor, Arc::clone(repository), history.columnstore, &storage.columnstore)
 }
 
 #[cfg(test)]

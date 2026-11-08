@@ -74,7 +74,7 @@ pub(crate) fn fewest_in_flight_candidates(target: &ContextTarget, worker_id: Lea
     ranked
         .column((Ranked, NotificationDeliveries::DeliveryKey))
         .from_subquery(heads, Ranked)
-        .order_by_expr(load.clone(), Order::Asc) // clone: the ceiling compares the same load the order ranks by
+        .order_by_expr(load.clone(), Order::Asc) // clone: the ceiling check later compares the same load the order ranks by
         .order_by((Ranked, ClaimableAt), Order::Asc)
         .order_by((Ranked, NotificationDeliveries::DeliveryKey), Order::Asc)
         .limit(u64::from(batch_size.get()))

@@ -76,15 +76,15 @@ pub(super) fn register_entity_side_effects(
             subscription_cache: Arc::clone(&storage.subscription_cache),
         })
     } else {
-        SideEffectNotificationRoute::Live(Arc::new(changes.clone()) as Arc<dyn EntityChangeSink>) // clone: services and the drain each own a sender handle.
+        SideEffectNotificationRoute::Live(Arc::new(changes.clone()) as Arc<dyn EntityChangeSink>)
     };
     let drain = Arc::new(EntitySideEffectDrain::new(
         Arc::new(PendingSideEffectsRepository::new(
             &storage.pool,
-            Arc::clone(&storage.attribute_names),   // clone: the claim names a job's keys through the tenant's one cache.
-            Arc::clone(&storage.entity_type_names), // clone: the claim names a job's keys through the tenant's one cache.
+            Arc::clone(&storage.attribute_names),
+            Arc::clone(&storage.entity_type_names),
         )),
-        Arc::clone(writes), // clone: request handling and the drain share one committer.
+        Arc::clone(writes),
         notifications,
         EntitySideEffectDrainConfig {
             lease_seconds: i32::try_from(side_effects.queue.lease_timeout.duration().as_secs()).unwrap_or(i32::MAX),
@@ -96,7 +96,7 @@ pub(super) fn register_entity_side_effects(
     ));
     register_entity_side_effect_drain(
         supervisor,
-        Arc::clone(&drain), // clone: the delivery and reap workers share one drain operation.
+        Arc::clone(&drain),
         side_effects.queue.poll_interval.duration(),
         side_effects.queue.max_poll_interval.duration(),
         side_effects.queue.lease_timeout.duration(),
@@ -133,19 +133,18 @@ pub(super) fn register_spatial_workers(supervisor: &TaskSupervisor, config: &Ten
     match &storage.spatial {
         SpatialAcceleration::StoreVerified => Ok(()),
         SpatialAcceleration::CommitSynchronous(index) => {
-            let index = Arc::clone(index); // clone: the rebuild and the commit path share one index.
-            let source = Arc::clone(&storage.entity_ports.spatial_snapshots); // clone: the rebuild reads the store the other ports share.
+            let index = Arc::clone(index);
+            let source = Arc::clone(&storage.entity_ports.spatial_snapshots);
             let placement = Arc::new(location_placement(&storage.tenant)?);
             register_spatial_rebuild(supervisor, cadence, move || {
-                // clone: each bounded pass owns the index, source and placement handles while running.
                 let (index, source, placement) = (Arc::clone(&index), Arc::clone(&source), Arc::clone(&placement));
                 async move { rebuild_location_index(&index, source.as_ref(), &placement).await }
             })
         }
         SpatialAcceleration::Watermark(watermark) => {
-            let watermark = Arc::clone(watermark); // clone: the rebuild and the query path share one watermark.
+            let watermark = Arc::clone(watermark);
             register_spatial_rebuild(supervisor, cadence, move || {
-                let watermark = Arc::clone(&watermark); // clone: each bounded pass owns the watermark while running.
+                let watermark = Arc::clone(&watermark);
                 async move { watermark.rebuild().await }
             })
         }
@@ -175,8 +174,8 @@ fn register_entity_side_effect_drain(
         ShutdownPolicy::new(lease_duration),
     );
     let task = DrainTask::new(registration, fallback, move |execution| {
-        let drain = Arc::clone(&drain); // clone: each bounded future owns the policy operation while executing.
-        let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
+        let drain = Arc::clone(&drain);
+        let pacer = Arc::clone(&pacer);
         async move {
             pacer
                 .run_drain_pass(execution.cause(), async move {
@@ -215,7 +214,7 @@ fn register_entity_side_effect_reap(
         ShutdownPolicy::new(cadence),
     );
     let task = ScheduledTask::new(registration, schedule, move |execution| {
-        let drain = Arc::clone(&drain); // clone: each reap execution owns the policy operation while executing.
+        let drain = Arc::clone(&drain);
         async move {
             let now = DateTime::<Utc>::from(execution.cutoff());
             let purged = drain.purge_dead(now - dead_letter_after).await.map_err(classify_entity_expiry_failure)?;

@@ -314,7 +314,7 @@ fn insert_deliveries_statement(
     next_attempt_at: DateTime<Utc>,
 ) -> Result<UnnestAliased<InsertStatement>, ContextStoreError> {
     let (pairs, columns) = pair_source();
-    let aliased = pairs.clone(); // clone: the aliased source names the alias the projection reads.
+    let aliased = pairs.clone(); // clone: the statement consumes the alias, so the column mapping takes this copy.
     let subscription = Alias::new("s");
     let source = Query::select()
         .column((pairs.clone(), NotificationDeliveries::EventKey))
@@ -329,8 +329,7 @@ fn insert_deliveries_statement(
             JoinType::InnerJoin,
             table_of(target, Subscriptions::Table),
             subscription.clone(),
-            // clone: sea-query takes each alias occurrence by value, and the
-            // locking clause names the same alias again
+            // clone: sea-query takes each alias by value, so the join copies it and the locking clause takes the original.
             Expr::col((subscription.clone(), Subscriptions::SubscriptionKey)).equals((pairs, NotificationDeliveries::SubscriptionKey)),
         )
         .lock_with_tables(LockType::KeyShare, [subscription])
@@ -376,7 +375,7 @@ fn insert_deliveries_statement(
 /// keeps it back until the probe's next failure sets it aside.
 fn held_at_insert(target: &ContextTarget, subscription: &Alias) -> SimpleExpr {
     let hold = Alias::new("h");
-    // clone: sea-query takes each alias occurrence by value
+    // clone: sea-query takes each alias by value, so the column list keeps a copy of the key.
     let hold_key = (hold.clone(), NotificationDeliveryHolds::SubscriptionKey);
     let hold_row = Query::select()
         .column(hold_key.clone())

@@ -22,7 +22,6 @@ pub(crate) fn value_text(row: impl IntoIden) -> SimpleExpr {
             columns.push(column);
         }
     }
-    // clone: each column reference takes the shared alias by value
     Func::coalesce(columns.into_iter().map(|column| cast(Expr::col((row.clone(), column)), PostgresType::Text))).into()
 }
 

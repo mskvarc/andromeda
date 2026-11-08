@@ -36,9 +36,7 @@ impl CsourceRevisionLedger {
     /// A ledger over the tenant database `pool` serves.
     #[must_use]
     pub fn new(pool: &PgPool) -> CsourceRevisionLedger {
-        CsourceRevisionLedger {
-            pool: pool.clone(), // clone: SQLx pools are shared reference-counted handles.
-        }
+        CsourceRevisionLedger { pool: pool.clone() }
     }
 }
 

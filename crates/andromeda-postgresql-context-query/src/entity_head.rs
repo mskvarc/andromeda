@@ -57,7 +57,6 @@ impl EntityHead {
     /// `entities` and `entity_search` as `entities` and `search`.
     #[must_use]
     pub fn source(self, entities: &DynIden, search: &DynIden) -> SimpleExpr {
-        // clone: each member names its relation by the statement's own iden
         let entities = |column: Entities| Expr::col((entities.clone(), column));
         let search = |column: EntitySearch| Expr::col((search.clone(), column));
         match self {

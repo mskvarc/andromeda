@@ -59,7 +59,7 @@ impl SubscribingSource {
     /// The registration as the registration store keeps it, its entity type
     /// expanded.
     pub(crate) fn stored(&self) -> ContextSourceRegistration {
-        serde_json::from_value(self.registration.clone()).expect("a valid registration") // clone: the decoding consumes its own copy
+        serde_json::from_value(self.registration.clone()).expect("a valid registration")
     }
 
     /// The registration as a companion notification writes it, compacted under
@@ -67,7 +67,7 @@ impl SubscribingSource {
     /// expands, and the attribute no term of the core context names stays its
     /// full IRI.
     pub(crate) fn notified(&self) -> Value {
-        let mut notified = self.registration.clone(); // clone: the notified form is a second document
+        let mut notified = self.registration.clone();
         notified["information"][0]["entities"][0]["type"] = json!("Vehicle");
         notified
     }

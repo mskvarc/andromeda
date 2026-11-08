@@ -122,7 +122,7 @@ async fn render_contributions(
         .retained
         .iter()
         .map(|entity_id| EntityParts {
-            entity_id: entity_id.clone(), // clone: each part list owns the identifier it is rendered under
+            entity_id: entity_id.clone(),
             local: LocalPart::Included,
             answered: Vec::new(),
         })
@@ -197,7 +197,6 @@ pub(crate) fn contributed_entities(
                 .into_iter()
                 .flat_map(|gathering| gathering.sources.iter())
                 .flat_map(|source| source.entities.iter());
-            // clone: the set owns the identifiers it exempts
             ContributedEntities::new(answered_parts(history).chain(probed).filter_map(|answer| answer.id().cloned()), rendering)
         }
         SplitEntities::Split | SplitEntities::Complete => ContributedEntities::default(),
@@ -231,7 +230,7 @@ pub(crate) struct ContributionMerge<'r> {
 
 /// Fold what the sources answered into the local entities: the filters
 /// decided over every contributed entity's gathered parts, the ones they did
-/// not keep dropped, and -- for an aggregated representation -- the kept ones
+/// not keep dropped, and, for an aggregated representation, the kept ones
 /// rendered over their merged instances (clause 5.7.4.4).
 ///
 /// # Errors

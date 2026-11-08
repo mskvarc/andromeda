@@ -128,7 +128,7 @@ fn shared_members<'n, M: MemberReading, N: CompactNode<'n>>(
                     structure_budget::refund(member, costs.remove(&attribute).unwrap_or_default());
                 }
                 if before.is_some() {
-                    costs.insert(attribute.clone(), structure_budget::spent_since(member, before)); // clone: the cost is kept by the name the attribute map is keyed by
+                    costs.insert(attribute.clone(), structure_budget::spent_since(member, before)); // clone: the cost map takes its own copy of the name, since the attribute map takes the original.
                 }
                 read.attrs.insert(attribute, value);
             }

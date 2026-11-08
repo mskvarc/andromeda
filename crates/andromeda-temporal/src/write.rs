@@ -82,7 +82,7 @@ impl TemporalService {
         let document = evolution.document();
         let entity_id = document
             .id()
-            .cloned() // clone: the identifier outlives the evolution it is read from
+            .cloned() // clone: the identifier must outlive the borrow of `evolution`.
             .ok_or(TemporalError::Validation(TemporalValidationReason::EntityMissingId))?;
         if document.types().is_empty() {
             return Err(TemporalError::Validation(TemporalValidationReason::EntityMissingType));
@@ -91,8 +91,8 @@ impl TemporalService {
         // Clause 5.6.11.4: an existing Temporal Evolution gets the instances
         // added "as mandated by clause 5.6.12"; otherwise "implementations
         // shall create the provided Temporal Evolution of an Entity". Both are
-        // the same write -- every instance to history, the standing ones to
-        // current state -- and the answer differs only in what it reports.
+        // the same write (every instance to history, the standing ones to
+        // current state), and the answer differs only in what it reports.
         let scope = self.reader.read_scope(target, ScopeReach::Entity(&entity_id)).await?;
         let exists = self.reader.entity_exists(&scope, &entity_id).await?;
         self.commit_evolution(target, &entity_id, &evolution).await?;
@@ -188,7 +188,7 @@ impl TemporalService {
         }
 
         if expanded_attr != *attr_id && self.mutator.attribute_exists(target, entity_id, attr_id).await? {
-            return Ok(attr_id.clone()); // clone: the resolved name is returned after borrowing the request value.
+            return Ok(attr_id.clone());
         }
 
         let attr_names = self.mutator.attribute_names_for_entity(target, entity_id).await?;

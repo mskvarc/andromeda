@@ -59,7 +59,6 @@ impl EntityService {
                     // attempt's write still shares it.
                     Arc::make_mut(&mut replacement).settle(Some(previous), now);
                     let history = mutation_history(previous, &replacement);
-                    // clone: Arc ref-count bump; the write stores the replacement
                     self.write_if_modified(target, id, read, Arc::clone(&replacement), history, now)
                 })
                 .await?;

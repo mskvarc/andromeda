@@ -5,22 +5,22 @@
 //! durable drains (notification deliveries, side effects, temporal append
 //! intents, Snapshot status notifications), the clause-5.8.6 periodic
 //! notification sweeps, the clause-5.13.1 cached-`@context` invalidation and
-//! the table-size gauges. Each runs on its own clock -- a fixed cadence, or a
-//! drain's fallback timer backing off to a ceiling -- and every tick touches
+//! the table-size gauges. Each runs on its own clock (a fixed cadence, or a
+//! drain's fallback timer backing off to a ceiling), and every tick touches
 //! the tenant's pool. Through a transaction pooler, a touched pool keeps its
 //! server connection for the pooler's `server_idle_timeout` after the tick, and
 //! a server held idle for one database is not handed to another until that
 //! timeout closes it. A handful of independent clocks per tenant therefore keep
 //! a server attached to every cached tenant, a few hundred cached tenants pin
 //! the pooler's global cap, and a tenant loaded next queues behind them until
-//! its acquire deadline sheds it -- the opposite of the intent that the fleet's backend count
-//! tracks active tenants, not cached ones.
+//! its acquire deadline sheds it. That is the opposite of the intent that the
+//! fleet's backend count tracks active tenants, not cached ones.
 //!
 //! The pacer lets a timer tick of a tenant nobody is using run only when
 //! something is due. The tenant's earliest outstanding obligation is read once
-//! -- the same read the wake loop uses to decide when a dormant tenant is next
+//! (the same read the wake loop uses to decide when a dormant tenant is next
 //! owed work, which covers every durable-queue item and its retry, every
-//! preparing Snapshot, every `expiresAt` and every periodic notification --
+//! preparing Snapshot, every `expiresAt` and every periodic notification),
 //! and that one verdict decides for every clock of the tenant until it expires
 //! or the tenant changes: any request may have created an obligation the read
 //! did not see, so a use voids the verdict. A tick that finds something due
@@ -102,9 +102,7 @@ pub(crate) struct TenantObligations {
 impl TenantObligations {
     /// Read obligations over `pool`.
     pub(crate) fn new(pool: &PgPool) -> TenantObligations {
-        TenantObligations {
-            pool: pool.clone(), // clone: SQLx pools are shared reference-counted handles.
-        }
+        TenantObligations { pool: pool.clone() }
     }
 }
 
@@ -207,7 +205,7 @@ pub(crate) struct BackgroundPacer {
     /// How many times the tenant may have changed since the pacer started: each
     /// request reaching for or letting go of the runtime, and each background
     /// pass that ran to completion. A verdict remembers the count it was read
-    /// under, so any change since -- however close in time -- voids it, and the
+    /// under, so any change since, however close in time, voids it, and the
     /// table-size gauges sample only after a change.
     changes: AtomicU64,
     /// How many obligation reads have finished; the latest is the sequence
@@ -252,8 +250,8 @@ impl BackgroundPacer {
         }
     }
 
-    /// Run one pass of work only a write can create -- a sample of the tenant's
-    /// table sizes, a reap of finished queue rows -- if the tenant may have
+    /// Run one pass of work only a write can create (a sample of the tenant's
+    /// table sizes, a reap of finished queue rows) if the tenant may have
     /// changed since that work last ran, and do nothing otherwise.
     ///
     /// `observed` is the change count the work last ran under, owned by the
@@ -275,7 +273,7 @@ impl BackgroundPacer {
     }
 
     /// Run `pass` and record the change it may have made once it has finished,
-    /// so a verdict read while it ran -- which cannot have seen what it wrote --
+    /// so a verdict read while it ran, which cannot have seen what it wrote,
     /// does not outlive it.
     async fn run_changing<T>(&self, pass: impl Future<Output = T>) -> T {
         let outcome = pass.await;
@@ -588,7 +586,7 @@ mod tests {
         let obligations = ScriptedObligations::answering_after(None, Duration::from_secs(2));
         let pacer = Arc::new(pacer_over(&obligations));
         let reading = tokio::spawn({
-            let pacer = Arc::clone(&pacer); // clone: the spawned tick owns its handle on the pacer.
+            let pacer = Arc::clone(&pacer);
             async move { pacer.admit().await }
         });
         yield_now().await;
@@ -606,8 +604,8 @@ mod tests {
         pretty_assertions::assert_eq!(obligations.reads(), 1);
     }
 
-    /// A pass may itself write an obligation -- a delivery that failed and
-    /// scheduled its retry -- that a verdict read while it ran never saw.
+    /// A pass may itself write an obligation (a delivery that failed and
+    /// scheduled its retry) that a verdict read while it ran never saw.
     #[tokio::test(start_paused = true)]
     async fn a_verdict_read_while_a_pass_ran_does_not_survive_the_pass() {
         let obligations = ScriptedObligations::answering(None);

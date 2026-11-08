@@ -4,8 +4,8 @@
 //! the local subscription. Each entity in its `data` is read into the model
 //! under the context it was written in; when entities may be split, it is
 //! completed on the model from this broker's own copy and from every other
-//! registered source that holds it -- never the sender, which already supplied
-//! its part -- and the entities that fail the local subscription's filters are
+//! registered source that holds it (never the sender, which already supplied
+//! its part) and the entities that fail the local subscription's filters are
 //! dropped. Whatever remains is written the way a notification of the local
 //! subscription writes a local entity, with the previous values the sender
 //! reported when the local subscription asks for them (`showChanges`), and
@@ -226,7 +226,7 @@ impl SubscriptionForwardingService {
     pub async fn handle_notification(&self, notification: &InboundNotification, context: &ContextSpec) -> Result<(), SubscriptionForwardingError> {
         let Some((local, sender)) = self.mappings.local_of_forwarded(&notification.subscription_id).await? else {
             return Err(SubscriptionForwardingError::UnknownSubscription {
-                subscription: notification.subscription_id.clone(), // clone: the error owns the identifier
+                subscription: notification.subscription_id.clone(), // clone: the returned error outlives the borrowed notification
             });
         };
         // Every forwarded copy asks its source for `application/json`, so its

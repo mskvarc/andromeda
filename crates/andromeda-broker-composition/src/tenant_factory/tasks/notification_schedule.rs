@@ -82,9 +82,9 @@ where
     );
     let operation = Arc::new(operation);
     let task = DrainTask::new(registration, fallback, move |execution| {
-        let operation = Arc::clone(&operation); // clone: each bounded pass owns its operation while executing.
-        let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
-        let due = Arc::clone(&due); // clone: each pass publishes into the tenant's one cell.
+        let operation = Arc::clone(&operation);
+        let pacer = Arc::clone(&pacer);
+        let due = Arc::clone(&due);
         async move {
             pacer
                 .run_drain_pass(execution.cause(), async move {
@@ -147,7 +147,7 @@ where
         ShutdownPolicy::new(restart_delay),
     );
     let task = ResidentTask::new(registration, move |execution| {
-        let wake = wake.clone(); // clone: each resident attempt owns a wake handle it pulses.
+        let wake = wake.clone();
         let mut changes = changes.subscribe();
         async move {
             execution.mark_running();
@@ -234,7 +234,7 @@ mod tests {
         let pacing = PeriodicPacing {
             ceiling: Duration::from_mins(1),
             pacer: Arc::new(BackgroundPacer::new(Duration::from_secs(30), Arc::new(NothingOutstanding))),
-            due: Arc::clone(due), // clone: the test reads the cell the sweep publishes into
+            due: Arc::clone(due),
         };
         register_notification_schedule(
             &supervisor,
@@ -292,7 +292,7 @@ mod tests {
         let pacing = PeriodicPacing {
             ceiling: Duration::from_mins(1),
             pacer: Arc::new(BackgroundPacer::new(Duration::from_secs(30), Arc::new(NothingOutstanding))),
-            due: Arc::clone(&due), // clone: the test reads the cell the sweep publishes into
+            due: Arc::clone(&due),
         };
         register_notification_schedule(
             &supervisor,

@@ -1,7 +1,7 @@
 //! A plain JSON request body decoded into a typed value.
 //!
-//! The operations whose body is a small JSON document of Andromeda's own
-//! rather than an NGSI-LD JSON-LD document -- toggling a tenant -- read it
+//! The operations whose body is a small JSON document of Andromeda's own,
+//! rather than an NGSI-LD JSON-LD document (toggling a tenant), read it
 //! here. The body is subject to the same clause 6.3.4
 //! preconditions and the same size limit as every other payload, and each
 //! refusal is a problem detail rather than the framework's plain text.
@@ -37,13 +37,10 @@ where
         // Clause 6.3.4 answers an absent `Content-Length` with a bare 411
         // before the `Content-Type` is looked at, and an unsupported media type
         // with "just a 415 HTTP status code (without any payload body)".
-        // clone: each refusal below names the same request.
         let declared = declared_body_length(request.headers(), request.extensions()).map_err(|error| error.into_rejection(instance.clone()))?;
         admit_content_kind(request.headers(), request.method())?;
         let value_limit = request.extensions().get::<RequestJsonValueLimit>().copied();
-        // clone: a body that is read but does not decode still names the request.
         let body = buffer_payload(request, state, declared, instance.clone()).await?;
-        // clone: a refused payload names the request, which a parse failure below names too.
         refuse_values_past_budget(&body, value_limit).map_err(|refusal| ExtractorRejection::Classified(refusal.report().with_instance(instance.clone())))?;
         serde_json::from_slice(&body)
             .map(JsonPayload)

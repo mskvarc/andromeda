@@ -51,14 +51,11 @@ async fn p_res_out_0004_a_killed_pool_never_answers_a_federated_query_with_local
     let probe_type = namespace.entity_type("OutageProbe")?;
     let remote_id = namespace.urn("OutageProbe", "remote")?;
     let source = ContextSource::start().await?;
-    let remote = Entity::output_builder()
-        .id(remote_id.clone()) // clone: the answers are checked for the remote Entity by its id
-        .entity_type(probe_type.clone()) // clone: the registration and the query name the type
-        .build()?;
+    let remote = Entity::output_builder().id(remote_id.clone()).entity_type(probe_type.clone()).build()?;
     source.answer(Method::GET, "/ngsi-ld/v1/entities", source_answer::entities(&[remote])).await?;
     let registration_id = namespace.registration_id("outage")?;
     let registration = CSourceRegistration::builder(source.root_endpoint()?)
-        .id(registration_id.clone()) // clone: the cleanup deletes the registration by its id
+        .id(registration_id.clone())
         .information([RegistrationInfo::builder().entities([probe_type.as_str()]).build()?])
         .mode(RegistrationMode::Inclusive)
         .operations([DistributedOperation::QueryEntity])
@@ -71,7 +68,7 @@ async fn p_res_out_0004_a_killed_pool_never_answers_a_federated_query_with_local
         iter::repeat_n((), MAX_OUTAGE_REQUESTS),
         |()| async {
             match tenant.entities().query().entity_type(&probe_type).send().await {
-                Ok(page) => FederatedAnswer::Entities(page.items().iter().map(|entity| entity.id.clone()).collect()), // clone: the answer keeps the ids past the page
+                Ok(page) => FederatedAnswer::Entities(page.items().iter().map(|entity| entity.id.clone()).collect()),
                 Err(ClientError::Response(response)) => FederatedAnswer::Refused(response.status()),
                 Err(_unanswered) => FederatedAnswer::Unanswered,
             }

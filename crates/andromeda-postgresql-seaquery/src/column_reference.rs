@@ -31,7 +31,6 @@ impl ColumnReference {
     #[must_use]
     pub fn column_expr(&self) -> SimpleExpr {
         match self {
-            // clone: the expression owns the identifiers it names.
             ColumnReference::Bare(column) => Expr::col(column.clone()),
             ColumnReference::Qualified(relation, column) => Expr::col((relation.clone(), column.clone())),
         }

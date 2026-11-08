@@ -1,8 +1,8 @@
 //! The insertable columns of one branch relation, read from the catalogue.
 //!
-//! The plan is read from the catalogue of the clone's target schema -- the
+//! The plan is read from the catalogue of the clone's target schema (the
 //! branch this binary's migrations built, which a source behind it is refused
-//! for -- so a schema change moves the copy with it rather than leaving a stale
+//! for), so a schema change moves the copy with it rather than leaving a stale
 //! column list behind.
 
 use crate::error::ContextStoreError;

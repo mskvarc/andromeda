@@ -152,7 +152,7 @@ pub(crate) async fn gather_in_effect(
         .chain(instance_documents(&probed))
         .chain(instance_documents(&deletions))
         .filter_map(TemporalDocument::id)
-        .cloned() // clone: the local read is asked about the identifiers the parts keep
+        .cloned()
         .collect();
     entity_ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
     entity_ids.dedup();

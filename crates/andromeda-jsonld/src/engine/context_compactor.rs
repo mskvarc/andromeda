@@ -589,7 +589,7 @@ mod tests {
             .build()
             .expect("engine builds");
         let url = iri_ref("https://example.org/stored.jsonld");
-        let spec = ContextSpec::from_link(url.clone()); // clone: the invalidation below names the same URL
+        let spec = ContextSpec::from_link(url.clone());
         let document = json!({"id": "urn:ngsi-ld:Thing:1", "type": "Thing", "http://example.org/a": {"type": "Property", "value": 1}});
         let expanded = expanded_document(&engine, &document, &ContextSpec::none()).await.expect("expansion succeeds");
 

@@ -15,8 +15,8 @@ use andromeda_ngsi_ld_model::{
 };
 use chrono::{DateTime, Utc};
 
-/// The members of a registration — as created, or as resolved after an update
-/// merge — that the cross-member rules read.
+/// The members of a registration (as created, or as resolved after an update
+/// merge) that the cross-member rules read.
 pub(super) struct RegistrationShape<'a> {
     /// The forwarding mode.
     pub(super) mode: ForwardingMode,

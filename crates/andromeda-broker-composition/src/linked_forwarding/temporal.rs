@@ -121,7 +121,7 @@ impl RemoteTemporalLinkedSource for LinkedForwarding {
         let forwarded = self.federation.forward_temporal_retrieve(&self.live_target, request).await;
         Ok(resolution(id, forwarded, |held: &mut Vec<HeldPart>, registration, history| {
             held.push(HeldPart {
-                registration: registration.cloned(), // clone: each part names the registration it came from
+                registration: registration.cloned(),
                 history,
             });
         }))
@@ -199,8 +199,8 @@ mod tests {
     }
 
     /// The last level asks for the entity alone over the requester's window,
-    /// and nothing the window does not hold -- an `attrs` or `datasetId` that
-    /// narrowed the roots -- leaks into the traversal.
+    /// and nothing the window does not hold (an `attrs` or `datasetId` that
+    /// narrowed the roots) leaks into the traversal.
     #[test]
     fn the_last_level_forwards_the_window_alone() {
         let parameters = linked_temporal_retrieval_parameters(depth(1), &[], &window());

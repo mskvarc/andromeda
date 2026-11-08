@@ -1,8 +1,8 @@
 //! The NGSI-LD query languages: their grammars, their ASTs and their compiled forms.
 //!
-//! ETSI GS CIM 009 v1.9.1 defines a family of query facilities — `q` (clause
+//! ETSI GS CIM 009 v1.9.1 defines a family of query facilities, namely `q` (clause
 //! 4.9), `georel` (4.10), `scopeQ` (4.18), type selection (4.17), `orderBy`
-//! (4.23), projection (4.21) and the temporal window (4.5.19) — that a broker
+//! (4.23), projection (4.21) and the temporal window (4.5.19), that a broker
 //! must read identically wherever they appear. This crate owns all of them: each
 //! concept's grammar, its AST and its compiled model live in one directory, so
 //! a change to one concept touches one directory rather than several pipeline

@@ -44,17 +44,15 @@ pub(super) fn batch_outcomes(ids: &[Identifier], outcome: &ForwardedWriteOutcome
             let outcome = listed_errors.get(id).cloned().unwrap_or(ForwardedWriteOutcome::Completed {
                 status: *status,
                 body: AnswerBody::Absent,
-            }); // clone: the result owns its outcome
-            (id.clone(), outcome) // clone: the result owns its identifier
+            });
+            (id.clone(), outcome)
         })
         .collect()
 }
 
 /// `outcome` for every entity of `ids`.
 fn every(ids: &[Identifier], outcome: &ForwardedWriteOutcome) -> Vec<(Identifier, ForwardedWriteOutcome)> {
-    ids.iter()
-        .map(|id| (id.clone(), outcome.clone())) // clone: every entity owns its identifier and the outcome it shares
-        .collect()
+    ids.iter().map(|id| (id.clone(), outcome.clone())).collect()
 }
 
 #[cfg(test)]

@@ -51,21 +51,20 @@ async fn a_mgt_tnt_0010_a_suspension_refuses_the_tenant_while_a_request_admitted
     let remote_id = namespace.urn("Device", "remote")?;
     let registration_id = namespace.registration_id(1)?;
     let local = Entity::builder()
-        .id(local_id.clone()) // clone: the local Device is retrieved by its id after it is built
-        .entity_type(device_type.clone()) // clone: the remote Device and the registration name the same type
+        .id(local_id.clone())
+        .entity_type(device_type.clone())
         .property("reading", 1)
         .build()?;
     private.entities().create(&local).send().await?.done()?;
     let remote_path = format!("/a/ngsi-ld/v1/entities/{remote_id}");
-    // clone: the registration and the held retrieval name the remote Device after the answer is built
     let remote = Entity::output_builder().id(remote_id.clone()).entity_type(device_type.clone()).build()?;
     source
         .answer(Method::GET, &remote_path, source_answer::entity(&remote).set_delay(SOURCE_DELAY))
         .await?;
     let registration = CSourceRegistration::builder(source.endpoint("a")?)
-        .id(registration_id.clone()) // clone: the cleanup deletes the registration by its id
+        .id(registration_id.clone())
         .information([RegistrationInfo::builder()
-            .entities([EntityInfo::new(device_type).with_id(remote_id.clone())]) // clone: the held retrieval names it
+            .entities([EntityInfo::new(device_type).with_id(remote_id.clone())])
             .build()?])
         .management(RegistrationManagementInfo::builder().timeout(FORWARDING_TIMEOUT_MS).build()?)
         .build()?;

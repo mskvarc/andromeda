@@ -135,9 +135,7 @@ where
     loop {
         tokio::select! {
             (io, peer) = listener.accept() => {
-                // clone: the connection's I/O and every request it carries share one record.
                 let announcement = io.announcement().clone();
-                // clone: each connection owns a handle to the shared service.
                 let connection_service = service.clone().map_request(move |request: Request<Incoming>| {
                     let mut request = request.map(Body::new);
                     request.extensions_mut().insert(ConnectInfo(announcement.clone()));
@@ -344,7 +342,7 @@ mod tests {
             // A client per upload, as each refused connection is closed.
             let response = reqwest::Client::new()
                 .post(format!("http://{address}/upload"))
-                .body(upload.clone()) // clone: every request owns its payload
+                .body(upload.clone())
                 .send()
                 .await?;
             pretty_assertions::assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);

@@ -1,8 +1,8 @@
 //! The representation a forwarded request carries (clauses 4.3.6.6, 4.3.6.8, 6.3.5, 6.3.19).
 //!
 //! A request arriving at this broker carries its `@context` in one of the two
-//! ways clause 6.3.5 allows -- a `Link` header with `application/json`, or an
-//! inline `@context` with `application/ld+json` -- and a registered source
+//! ways clause 6.3.5 allows (a `Link` header with `application/json`, or an
+//! inline `@context` with `application/ld+json`), and a registered source
 //! enforces the same rule on what it receives. [`crate::forwarding_context`]
 //! decides once, per registration, which single context a forwarded request is
 //! expressed against; this module writes the request that way: which context
@@ -153,7 +153,7 @@ fn only_attribute<M>(patch: &EntityPatch<M>) -> Option<&M> {
 fn attribute_document(name: &AttributeName, instance: &InstanceDocument) -> EntityDocument {
     // clone: the document owns the name and the instance it is compacted from
     let member = AttributeMember::Instances(vec![instance.clone()]);
-    EntityDocument::new(None, Vec::new(), None, None, IndexMap::from([(name.clone(), member)])) // clone: same
+    EntityDocument::new(None, Vec::new(), None, None, IndexMap::from([(name.clone(), member)]))
 }
 
 /// `body`, written with the `@context` member first when `context` is given.

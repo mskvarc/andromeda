@@ -70,10 +70,7 @@ impl ListedChunks {
 
     /// `SELECT <range_start> FROM <table>`.
     fn starts(&self) -> SelectStatement {
-        Query::select()
-            .column(self.range_start.clone()) // clone: the subquery owns the column it projects
-            .from(self.table.clone()) // clone: the subquery owns the relation it reads
-            .to_owned()
+        Query::select().column(self.range_start.clone()).from(self.table.clone()).to_owned()
     }
 }
 

@@ -11,7 +11,7 @@ use std::collections::HashSet;
 /// and those member names are normally terms of the request `@context`: the
 /// JSON-LD expansion of a structured Property value turns its members into
 /// IRI-keyed nodes, so `address[city]` addresses the expansion of `city`.
-/// Clause 4.9 EXAMPLE 11 is the exception this type carries — with
+/// Clause 4.9 EXAMPLE 11 is the exception this type carries: with
 /// `?q=parkingTickets[value]=="Overstay 60 minutes"&jsonKeys=parkingTickets`,
 /// "the target value raw is JSON, and is not expanded to ngsi-ld:hasValue using
 /// the core @context". The member names under an opted-in attribute are

@@ -60,8 +60,8 @@ pub(super) struct DeliveryDrainDrive {
 pub(super) fn delivery_queue(storage: &TenantStorage) -> Arc<dyn DeliveryStore> {
     Arc::new(NotificationDeliveryQueue::new(
         &storage.pool,
-        Arc::clone(&storage.attribute_names),   // clone: the queue shares the tenant's one dictionary cache.
-        Arc::clone(&storage.entity_type_names), // clone: the queue shares the tenant's one dictionary cache.
+        Arc::clone(&storage.attribute_names),
+        Arc::clone(&storage.entity_type_names),
     ))
 }
 
@@ -85,7 +85,6 @@ pub(super) fn register_notification_delivery(
             .map_err(|error| AssemblyInvariant::NotificationDrain(Box::new(error)))?,
     );
     let DeliveryDrainDrive { wake, pacer } = drive;
-    // clone: delivery and cleanup share one stateless delivery operation and the tenant's one pacer.
     register_delivery_drain(supervisor, Arc::clone(&drain), config, wake, Arc::clone(&pacer))?;
     register_delivery_cleanup(supervisor, drain, config, pacer)
 }
@@ -115,8 +114,8 @@ fn register_delivery_drain(
         ShutdownPolicy::new(fallback_floor),
     );
     let task = DrainTask::new(registration, fallback, move |execution| {
-        let drain = Arc::clone(&drain); // clone: each delivery pass owns the policy operation while executing.
-        let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
+        let drain = Arc::clone(&drain);
+        let pacer = Arc::clone(&pacer);
         async move {
             pacer
                 .run_drain_pass(execution.cause(), async move {
@@ -186,9 +185,9 @@ fn register_delivery_cleanup(
     // The change count the last cleanup ran under, shared by every tick.
     let observed = Arc::new(AtomicU64::new(0));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
-        let drain = Arc::clone(&drain); // clone: each cleanup execution owns the policy operation while executing.
-        let pacer = Arc::clone(&pacer); // clone: each tick consults the tenant's one pacer.
-        let observed = Arc::clone(&observed); // clone: every tick compares against the one last-cleanup count.
+        let drain = Arc::clone(&drain);
+        let pacer = Arc::clone(&pacer);
+        let observed = Arc::clone(&observed);
         async move { paced_cleanup(&pacer, &observed, &drain, retention, DateTime::<Utc>::from(execution.cutoff())).await }
     });
     supervisor

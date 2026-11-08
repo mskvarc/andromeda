@@ -149,7 +149,6 @@ pub(crate) fn entity_total(
             } else {
                 &[GatedStep::ShortWalk]
             };
-            // clone: the walk counts the selection under the same whole filter
             let walked = count_over(relations.clone(), source.schema, whole.clone());
             let filters = KeyedCountFilters { remainder, whole };
             TotalCount {

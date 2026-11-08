@@ -85,10 +85,10 @@ impl RegistrationExpiry {
         }
         let mut expired = Vec::with_capacity(registrations.len());
         for registration in registrations {
-            let identifier = registration.id.clone(); // clone: the outcome keeps the identifier of the registration the event takes
+            let identifier = registration.id.clone();
             if let Some(ref sink) = self.change_sink {
                 sink.publish(CsrChangeEvent {
-                    csr_id: identifier.clone(), // clone: outcome and event independently own the identifier.
+                    csr_id: identifier.clone(),
                     change: CsrChange::Deleted {
                         before: Some(Box::new(registration)),
                     },

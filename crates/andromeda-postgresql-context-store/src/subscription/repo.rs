@@ -24,7 +24,7 @@ impl SubscriptionRepository {
     #[must_use]
     pub fn new(pool: &PgPool, attribute_names: Arc<dyn NameLookup<AttributeName>>) -> SubscriptionRepository {
         SubscriptionRepository {
-            pool: pool.clone(), // clone: Arc ref-count bump
+            pool: pool.clone(),
             attribute_names,
         }
     }

@@ -434,7 +434,6 @@ mod tests {
         let from_str: Attribute = serde_json::from_str(json).expect("parses from a string");
         let expected = serde_json::from_str::<Value>(json).expect("json");
         pretty_assertions::assert_eq!(serde_json::to_value(&from_str).expect("serialises"), expected);
-        // clone: the document is decoded and compared
         let from_value: Attribute = serde_json::from_value(expected.clone()).expect("parses from a value");
         pretty_assertions::assert_eq!(serde_json::to_value(&from_value).expect("serialises"), expected);
     }
@@ -442,7 +441,6 @@ mod tests {
     #[test]
     fn every_attribute_family_reserialises_to_the_json_it_was_read_from() {
         for original in fully_populated_instances() {
-            // clone: the original is compared against the round-tripped value below
             let attribute: Attribute = serde_json::from_value(original.clone()).expect("attribute parses");
             pretty_assertions::assert_eq!(serde_json::to_value(&attribute).expect("attribute serialises"), original);
         }

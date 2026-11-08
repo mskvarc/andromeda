@@ -1,7 +1,7 @@
 //! Ordered aggregate calls sea-query has no native form for.
 //!
-//! An aggregate whose result depends on the order its inputs are folded in —
-//! `array_agg(x ORDER BY y)`, `string_agg(x, d ORDER BY y)` — carries an
+//! An aggregate whose result depends on the order its inputs are folded in
+//! (`array_agg(x ORDER BY y)`, `string_agg(x, d ORDER BY y)`) carries an
 //! `ORDER BY` clause inside the function call. sea-query models a function call
 //! as a bare argument list with no in-call ordering, so the ordered form is
 //! spelled here, in the one crate sanctioned to write a hand-formed fragment,

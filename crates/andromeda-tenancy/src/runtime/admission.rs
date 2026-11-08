@@ -189,9 +189,9 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
 
     /// The build lock for a tenant, creating it on the first request.
     pub(super) fn build_lock_for(&self, tenant: &TenantRef) -> Arc<Mutex<()>> {
-        // clone: hand back an owned Arc so the DashMap shard guard is released
-        // before the caller awaits on the lock: holding a shard guard across
-        // an await deadlocks.
+        // Hand back an owned Arc so the DashMap shard guard is released before
+        // the caller awaits on the lock: holding a shard guard across an await
+        // deadlocks.
         Arc::clone(self.build_locks.entry(tenant.clone()).or_insert_with(|| Arc::new(Mutex::new(()))).value())
     }
 
@@ -303,14 +303,11 @@ struct CachedLease<S> {
 /// absent or provisional and empty under [`TenantCreationPolicy::MustExist`],
 /// suspended, or retired.
 fn unknown(name: &TenantName) -> TenancyError {
-    TenancyError::UnknownTenant { name: name.clone() } // clone: the error outlives this borrow
+    TenancyError::UnknownTenant { name: name.clone() }
 }
 
 /// The backpressure refusal for a request that could not be admitted in time,
 /// naming the wait it gave up on.
 fn saturated(tenant: &TenantRef, wait: SaturatedWait) -> TenancyError {
-    TenancyError::Saturated {
-        tenant: tenant.clone(), // clone: the error outlives this borrow
-        wait,
-    }
+    TenancyError::Saturated { tenant: tenant.clone(), wait }
 }

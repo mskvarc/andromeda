@@ -228,7 +228,7 @@ pub(crate) async fn decoded_both_ways(
     let context = context(engine, &spec).await?;
     let text = handed(patch_text(&patch, normalization))?;
     let expanded = processor(engine, &context, &text).await?;
-    let text = serde_json::to_vec(&expanded.clone().into_serde_json()).expect("the expanded document serializes"); // clone: the document is read twice
+    let text = serde_json::to_vec(&expanded.clone().into_serde_json()).expect("the expanded document serializes"); // clone: the expanded document is still decoded after its text is taken
     Ok((decode_entity(expanded), EntityDocument::from_slice(&text)))
 }
 

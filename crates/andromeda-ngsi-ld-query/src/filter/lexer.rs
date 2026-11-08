@@ -253,8 +253,8 @@ fn is_temporal_char(current: char) -> bool {
     current.is_alphanumeric() || matches!(current, '-' | ':' | '.' | '+')
 }
 
-/// Scan a bare identifier — an attribute name, a prefixed name, or an IRI a
-/// client wrote unquoted — and recognise the two boolean keywords.
+/// Scan a bare identifier (an attribute name, a prefixed name, or an IRI a
+/// client wrote unquoted) and recognise the two boolean keywords.
 fn scan_identifier(chars: &[char], start: usize, position: OperandPosition) -> (Token, usize) {
     let mut cursor = start;
     while chars
@@ -505,7 +505,7 @@ mod tests {
     /// In an attribute path `.` is the sub-attribute separator (clause 4.9),
     /// which outranks its role inside a hostname: an IRI written there splits.
     /// That is not a limitation in practice, because an absolute IRI reaches the
-    /// AST through term expansion rather than through this tokeniser — what a
+    /// AST through term expansion rather than through this tokeniser: what a
     /// client writes is a compact name.
     #[test]
     fn a_dotted_iri_splits_because_the_dot_separates_sub_attributes() {
@@ -565,7 +565,7 @@ mod tests {
     fn a_quoted_literal_is_taken_verbatim_without_a_second_percent_decode() {
         // Clause 4.9: a quoted operand is a JSON String (RFC 8259 String
         // production), not percent-encoded data. Percent-encoding is purely an
-        // HTTP-URI transport concern -- the spec requires it "whenever the
+        // HTTP-URI transport concern: the spec requires it "whenever the
         // string acting as a filter is part of the HTTP binding's URI", and the
         // HTTP binding decodes the whole `q` once before it reaches this
         // tokeniser. A `q` carried in a JSON subscription body is not

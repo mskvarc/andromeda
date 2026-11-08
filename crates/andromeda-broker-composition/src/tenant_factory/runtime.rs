@@ -114,7 +114,7 @@ impl TenantRuntime for BrokerTenantRuntime {
     }
 
     fn activity(&self) -> Arc<dyn RuntimeActivity> {
-        Arc::clone(&self.pacer) as Arc<dyn RuntimeActivity> // clone: the cache reports use to the pacer the tenant's tasks consult.
+        Arc::clone(&self.pacer) as Arc<dyn RuntimeActivity>
     }
 
     fn next_periodic_due(&self) -> Option<SystemTime> {
@@ -126,10 +126,7 @@ impl TenantRuntime for BrokerTenantRuntime {
     }
 
     fn due_work(&self) -> Arc<dyn DueWorkSource> {
-        Arc::new(TenantDueWork::new(
-            Arc::new(TenantObligations::new(&self.pool)),
-            Arc::clone(&self.commits), // clone: the answer reads the changes this runtime still holds.
-        ))
+        Arc::new(TenantDueWork::new(Arc::new(TenantObligations::new(&self.pool)), Arc::clone(&self.commits)))
     }
 }
 

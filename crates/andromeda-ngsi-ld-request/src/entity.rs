@@ -442,7 +442,7 @@ mod tests {
     }
 
     /// Clause 4.21: a single-entity GET parses `pick` through the projection
-    /// grammar, so `linkedTo{category}` is one term with one nested term --
+    /// grammar, so `linkedTo{category}` is one term with one nested term,
     /// not the attribute name `linkedTo{category}`.
     #[test]
     fn get_pick_parses_through_the_projection_grammar() {

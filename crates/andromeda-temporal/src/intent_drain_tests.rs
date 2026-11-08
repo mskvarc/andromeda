@@ -222,7 +222,7 @@ impl TemporalIntentQueue for RecordingQueue {
         _lease_until: DateTime<Utc>,
     ) -> Result<Vec<ClaimedTemporalIntent>, TemporalError> {
         let mut state = self.state.lock().await;
-        state.entity_claims.push((entity_id.clone(), through.get())); // clone: the recording owns the entity it was asked about.
+        state.entity_claims.push((entity_id.clone(), through.get()));
         let taken = state.claimable(
             limit,
             |claim| claim.entity_id == *entity_id && claim.key <= through,
@@ -234,7 +234,7 @@ impl TemporalIntentQueue for RecordingQueue {
 
     async fn last_intent_for(&self, entity_id: &Identifier) -> Result<Option<TemporalIntentKey>, TemporalError> {
         let mut state = self.state.lock().await;
-        state.probed.push(entity_id.clone()); // clone: the recording owns the entity it was asked about.
+        state.probed.push(entity_id.clone());
         Ok(state.pending.iter().filter(|claim| claim.entity_id == *entity_id).map(|claim| claim.key).max())
     }
 
@@ -372,7 +372,7 @@ impl TemporalIntentApplication for RecordingApplication {
     async fn apply(&self, _owner: LeaseHolder, intents: &[ClaimedTemporalIntent]) -> Result<TemporalIntentApplicationOutcome, TemporalError> {
         let keys: Vec<i64> = intents.iter().map(|intent| intent.key.get()).collect();
         let mut state = self.state.lock().await;
-        state.calls.push(keys.clone()); // clone: the recording owns the keys of each call.
+        state.calls.push(keys.clone());
         if self.queue.behind(intents).await {
             return Ok(TemporalIntentApplicationOutcome::Behind);
         }
@@ -404,7 +404,7 @@ fn claimed(key: i64, entity_id: &Identifier) -> ClaimedTemporalIntent {
     ClaimedTemporalIntent {
         key: TemporalIntentKey::new(key).expect("positive key"),
         write_id: WriteId::mint(),
-        entity_id: entity_id.clone(), // clone: the claim owns the entity it names.
+        entity_id: entity_id.clone(),
         attempts: 0,
     }
 }
@@ -591,7 +591,7 @@ async fn a_long_application_failure_summary_is_cut_to_the_column_limit() {
 async fn a_stuck_intent_is_reported_by_its_key_write_and_entity() {
     let queue = Arc::new(RecordingQueue::default());
     let intent = claimed(7, &vehicle(7));
-    queue.insert(intent.clone()).await; // clone: the expected report is built from the claim after it is queued
+    queue.insert(intent.clone()).await;
     let application = Arc::new(RecordingApplication::over(&queue));
     application.fail(ApplicationFailure::StoreUnavailable).await;
     let drain = drain(&queue, &application);

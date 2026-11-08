@@ -2,8 +2,8 @@
 //!
 //! One entity or a thousand, the statements bind the same arrays, so this is
 //! the only shape the write path builds. Everything that turns a
-//! specification value into a column -- the `ltree` rendering of a scope, the
-//! EWKB encoding of a geometry -- happens on the way in here. The entity's
+//! specification value into a column (the `ltree` rendering of a scope, the
+//! EWKB encoding of a geometry) happens on the way in here. The entity's
 //! attribute instances are staged apart, one row each
 //! ([`StagedRows`](crate::current_attribute::staged_rows::StagedRows)).
 

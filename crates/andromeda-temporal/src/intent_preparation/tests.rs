@@ -58,7 +58,7 @@ fn entity_id() -> Identifier {
 fn observed(members: &Value) -> HistoryRecord {
     let mut node = json!({"@id": entity_id(), "@type": [VEHICLE]});
     if let (Some(node), Some(members)) = (node.as_object_mut(), members.as_object()) {
-        node.extend(members.iter().map(|(key, value)| (key.clone(), value.clone()))); // clone: the fixture owns its members
+        node.extend(members.iter().map(|(key, value)| (key.clone(), value.clone())));
     }
     let state = EntityState::from_slice(&serde_json::to_vec(&json!([node])).expect("JSON")).expect("a stored entity decodes");
     HistoryRecord::Observations(Arc::new(state))
@@ -368,7 +368,7 @@ fn every_written_instance_is_its_own_observation() {
 
     let rows = rows(&entries);
     pretty_assertions::assert_eq!(
-        rows.iter().map(|row| row.value.clone()).collect::<Vec<_>>(), // clone: compared after the borrow
+        rows.iter().map(|row| row.value.clone()).collect::<Vec<_>>(),
         vec![
             TemporalValue::Number {
                 number: JsonNumber::from(55),

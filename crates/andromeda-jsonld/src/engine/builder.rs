@@ -212,17 +212,13 @@ impl JsonLdEngineBuilder {
             })
             .max_context_bytes(max_context_bytes)
             .build();
-        let mut loader = HttpContextLoader::new(
-            Arc::clone(&self.registry), // clone: Arc ref-count bump
-            settings,
-            self.hosted_contexts,
-        )?;
+        let mut loader = HttpContextLoader::new(Arc::clone(&self.registry), settings, self.hosted_contexts)?;
 
         // Counting accesses is only worth doing when there is a durable cache
         // whose rows the flush can update.
         let hit_counter = self.l2_cache.as_ref().map(|_durable| Arc::new(HitCounter::new()));
         if let Some(ref counter) = hit_counter {
-            loader = loader.with_hit_counter(Arc::clone(counter)); // clone: Arc ref-count bump
+            loader = loader.with_hit_counter(Arc::clone(counter));
         }
         if let Some(durable) = self.l2_cache {
             loader = loader.with_l2_cache(durable);
@@ -589,7 +585,7 @@ mod tests {
             &json!({ "@context": [core, { "Building": "https://example.org/Building" }] }).to_string(),
         );
         let mut preloads = HashMap::new();
-        preloads.insert(context_url(&url), path.clone()); // clone: the file is removed below
+        preloads.insert(context_url(&url), path.clone());
         let engine = JsonLdEngine::builder()
             .allow_remote(false)
             .preload_contexts(preloads)
@@ -633,7 +629,7 @@ mod tests {
     fn a_preload_cannot_replace_the_embedded_version_1_0_core_context() {
         let path = preloaded_file("protected-core-v1-0", r#"{"@context":{"overridden":"https://example.com/override"}}"#);
         let mut preloads = HashMap::new();
-        preloads.insert(context_url(NGSI_LD_CORE_CONTEXT_V10_URL.as_str()), path.clone()); // clone: the file is removed below
+        preloads.insert(context_url(NGSI_LD_CORE_CONTEXT_V10_URL.as_str()), path.clone());
 
         let built = JsonLdEngine::builder().preload_contexts(preloads).build();
 

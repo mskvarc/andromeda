@@ -62,7 +62,7 @@ impl EntityService {
         } = self
             .commit_computed_write(target, entity, |read, now| {
                 let previous = &read.state;
-                let mut appended = EntityState::clone(previous); // clone: shares every attribute the append leaves alone
+                let mut appended = EntityState::clone(previous);
                 let not_appended = member_attribute_names(appended.append_attributes(&fragment, overwrite)?)?;
                 // Clause 4.8: a touched instance takes `now` for modifiedAt and keeps
                 // its createdAt across the read-modify-write.

@@ -83,8 +83,8 @@ pub(crate) struct ReadPage<A> {
     pub(crate) answer: Option<A>,
     /// How many elements the page carried, as the source counts them: the
     /// members of an Entity Array, one for a single entity, none for anything
-    /// else -- including any the broker then discards, such as an expired
-    /// entity (clause 5.7.2.4), because that is what the source's own `offset`
+    /// else (including any the broker then discards, such as an expired
+    /// entity (clause 5.7.2.4)), because that is what the source's own `offset`
     /// counts.
     pub(crate) sent: usize,
 }
@@ -143,8 +143,8 @@ enum RequestedPage {
 }
 
 /// How far into a source's answer the walk has read, counted in the elements
-/// the source sent -- including any the broker then discards, such as an
-/// expired entity (clause 5.7.2.4) -- because that is what the source's own
+/// the source sent (including any the broker then discards, such as an
+/// expired entity (clause 5.7.2.4)), because that is what the source's own
 /// `offset` counts.
 #[derive(Default)]
 struct AnswerPosition {
@@ -154,7 +154,7 @@ struct AnswerPosition {
     /// cannot keep the walk going forever.
     requested: HashSet<RequestedPage>,
     /// The identifiers gathered so far, so an offset walk over a source that
-    /// ignores `offset` -- answering the same entities again -- ends instead of
+    /// ignores `offset` (answering the same entities again) ends instead of
     /// gathering them forever.
     gathered: HashSet<Identifier>,
 }
@@ -651,7 +651,7 @@ mod tests {
     }
 
     /// Clauses 5.5.9.1 and 6.3.10: the walk follows every `next` pointer, and a
-    /// page shorter than the limit asked for does not end it -- only a page
+    /// page shorter than the limit asked for does not end it. Only a page
     /// without a pointer does.
     #[tokio::test]
     async fn the_walk_follows_every_next_pointer_past_short_pages_to_the_last_page() {

@@ -2,10 +2,10 @@
 //!
 //! PostgreSQL breaks a deadlock (SQLSTATE 40P01) or a serialization conflict
 //! (40001) by rolling one contender's whole transaction back. For a commit that
-//! is not a fault of the write: nothing of the attempt survives -- dictionary
+//! is not a fault of the write, and nothing of the attempt survives: dictionary
 //! keys it minted are withheld from the name cache until a commit publishes
 //! them, every consequence it wrote is a row of the same transaction, and the
-//! drains are woken only after a commit -- so the identical write can simply
+//! drains are woken only after a commit, so the identical write can simply
 //! run again. Clause 5.6.1.4 leaves a create exactly one failure,
 //! `AlreadyExists`; a conflict with an unrelated transaction must not become a
 //! second one, so the committer absorbs it rather than reporting it.

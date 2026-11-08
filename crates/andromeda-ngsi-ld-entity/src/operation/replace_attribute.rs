@@ -37,7 +37,6 @@ impl EntityState {
         }
         let instance = new_instance(attribute, replacement, None)?;
         if let Some(held) = self.attributes_mut().get_mut(attribute) {
-            // clone: the instance is keyed by its own copy of the addressed identity.
             held.insert(addressed.cloned(), instance);
         }
         Ok(())

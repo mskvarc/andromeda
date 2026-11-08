@@ -199,8 +199,8 @@ fn collect_proxied_attrs_leaves_out_the_attributes_an_inclusive_registration_cov
 
 #[test]
 fn collect_proxied_attrs_duplicates_not_deduped() {
-    // collect_proxied_attrs does not deduplicate -- callers
-    // use the list for removal which is idempotent on duplicates.
+    // collect_proxied_attrs does not deduplicate. Callers use the list for
+    // removal, which is idempotent on duplicates.
     let results = vec![
         write_result(ForwardingMode::Exclusive, vec![attribute_name("speed")]),
         write_result(ForwardingMode::Exclusive, vec![attribute_name("speed")]),

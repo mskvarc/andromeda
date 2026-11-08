@@ -90,7 +90,7 @@ impl<'s> TemporalLinkedSource<'s> {
     /// history cannot be read, is left out as well: clause 4.5.23 leaves such a
     /// Relationship a plain URI rather than failing the retrieval.
     async fn read_locally(&self, candidates: &[LinkedCandidate]) -> Result<LevelRead<TemporalBody>, TemporalError> {
-        let ids: Vec<Identifier> = candidates.iter().map(|candidate| candidate.id.clone()).collect(); // clone: the store reads an owned id slice
+        let ids: Vec<Identifier> = candidates.iter().map(|candidate| candidate.id.clone()).collect();
         let catalogued = self.service.reader.entity_types(&self.scope, &ids).await?;
         let compactor = self.service.engine.compactor(self.context);
         let compactor = EntityCompactor::new(&compactor);
@@ -112,7 +112,7 @@ impl<'s> TemporalLinkedSource<'s> {
             match body {
                 Ok(body) => {
                     TemporalEvolutions::edges(&body, &mut edges);
-                    nodes.insert(candidate.id.clone(), body); // clone: the level keys its nodes by owned identifiers
+                    nodes.insert(candidate.id.clone(), body);
                 }
                 Err(error) => {
                     tracing::debug!("Failed to render the temporal evolution of linked entity {}: {}", candidate.id, error);
@@ -143,8 +143,8 @@ impl<'s> TemporalLinkedSource<'s> {
                 for history in entities {
                     // A holder resolving a sub-graph answers for entities
                     // other than the candidate; a history naming none is the
-                    // candidate's. clone: the failure outlives the history the
-                    // compaction consumes.
+                    // candidate's.
+                    // clone: the failure outlives the history the compaction consumes.
                     let named = history.id().unwrap_or(&candidate.id).clone();
                     match compact_history(&compactor, history).await {
                         Ok(body) => {

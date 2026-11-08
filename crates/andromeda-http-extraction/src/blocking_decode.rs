@@ -22,8 +22,8 @@ use tokio::{
 ///
 /// A decode costs memory in proportion to its payload while it runs, so the
 /// number running at once is capped: a payload waiting for a permit holds
-/// only its bytes. A request carrying no policy -- a router assembled without
-/// the stack, as in a unit test -- decodes every payload inline.
+/// only its bytes. A request carrying no policy (a router assembled without the
+/// stack, as in a unit test) decodes every payload inline.
 #[derive(Clone, Debug)]
 pub struct BlockingDecodePolicy {
     /// The payload size, in bytes, from which a decode leaves the executor.
@@ -150,7 +150,7 @@ mod tests {
         let peak = Arc::new(AtomicUsize::new(0));
         let mut decodes = JoinSet::new();
         for _ in 0..8 {
-            let (two, running, peak) = (two.clone(), Arc::clone(&running), Arc::clone(&peak)); // clone: each decode shares the permits and the counters
+            let (two, running, peak) = (two.clone(), Arc::clone(&running), Arc::clone(&peak));
             decodes.spawn(async move {
                 decode_payload(Some(&two), 1, move || {
                     let now = running.fetch_add(1, Ordering::SeqCst) + 1;

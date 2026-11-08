@@ -1,7 +1,7 @@
 //! What a temporal query has to satisfy before it runs (clauses 5.7.3.4, 5.7.4.4).
 //!
 //! The parameter set beside this one is what a request wrote; this is what the
-//! specification makes of it -- the representation it selects, the execution
+//! specification makes of it: the representation it selects, the execution
 //! scope it asked for, the narrowing inputs clause 5.7.4.4 counts, and the
 //! constraints a retrieval and a query each have to meet.
 
@@ -270,7 +270,7 @@ impl TemporalQueryParameters {
     /// Validate the `aggrGroupBy` grouping extension parameter.
     ///
     /// The parameter is inert unless present, so a broker with the extension
-    /// disabled — where the HTTP gate has already refused a non-empty value —
+    /// disabled (where the HTTP gate has already refused a non-empty value)
     /// reaches here only with `aggr_group_by` absent and passes unchanged.
     ///
     /// # Errors

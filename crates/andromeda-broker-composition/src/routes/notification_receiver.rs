@@ -46,7 +46,7 @@ impl NotificationReceiverResolver for BrokerNotificationReceiverResolver {
                 .await
                 .map_err(ReceiverResolutionError::Routing)?
                 .ok_or_else(|| ReceiverResolutionError::Unknown {
-                    subscription: subscription.clone(), // clone: the error owns the identifier
+                    subscription: subscription.clone(), // clone: the error owns the identifier, which is only borrowed here.
                 })?;
             let LeasedState { state, lease } = self
                 .tenants
@@ -58,7 +58,7 @@ impl NotificationReceiverResolver for BrokerNotificationReceiverResolver {
                 .as_ref()
                 .map(Arc::clone)
                 .ok_or_else(|| ReceiverResolutionError::ForwardingDisabled {
-                    subscription: subscription.clone(), // clone: the error owns the identifier
+                    subscription: subscription.clone(), // clone: the error owns the identifier, which is only borrowed here.
                 })?;
             Ok(LeasedForwarding { service, lease })
         })

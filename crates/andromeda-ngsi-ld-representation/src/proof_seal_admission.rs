@@ -57,7 +57,7 @@ pub fn is_proof_seal(member: &str) -> bool {
 /// Only the `ngsildproof` Property of clause 4.5.2.2 admits a seal. The family
 /// is part of the rule and not only the name: clause 4.5.2.2 defines
 /// `ngsildproof` as "a Property", while clauses 4.5.3.2 and 4.5.3.3 prohibit
-/// both seals on a Relationship with no exception at all -- so an attribute
+/// both seals on a Relationship with no exception at all, so an attribute
 /// that calls itself `ngsildproof` and declares a Relationship carries no
 /// admissible seal. A family this cannot determine is treated as the Property
 /// clause 4.5.2.3 infers for a bare value.

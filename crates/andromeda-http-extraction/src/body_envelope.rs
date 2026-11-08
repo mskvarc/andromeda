@@ -1,8 +1,8 @@
 //! What a request body holds at its top level, read without building the
 //! body.
 //!
-//! The clause 6.3.5 rules on a body's `@context` -- an `application/json`
-//! body must not carry one, an `application/ld+json` body must -- and the
+//! The clause 6.3.5 rules on a body's `@context` (an `application/json`
+//! body must not carry one, an `application/ld+json` body must) and the
 //! clause 5.5.4 rules on its shape are decided on the members at the top of
 //! the body alone. They are read from the text straight away, every other
 //! member skipped unread, so a body carrying a geometry of a million positions
@@ -418,7 +418,7 @@ mod tests {
     #[test]
     fn an_id_written_under_a_context_alias_is_found_only_under_that_alias() {
         let text = br#"{"eid":"urn:ngsi-ld:T:1","@context":{"eid":"@id"}}"#;
-        let mut aliases = CoreTermAliases::keyword_spellings().clone(); // clone: the fixture extends the shared table
+        let mut aliases = CoreTermAliases::keyword_spellings().clone();
         aliases.alias("eid", "id");
         for (read, expected) in [
             (BodyEnvelope::read(text), None),

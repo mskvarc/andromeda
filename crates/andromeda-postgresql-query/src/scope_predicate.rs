@@ -109,8 +109,8 @@ pub fn condition(scope_q: &ScopeQuery, target: &ScopeTarget) -> Condition {
     disjunction
 }
 
-/// Render one scope pattern -- one requirement of one alternative (clause
-/// 4.19) -- against the target.
+/// Render one scope pattern, one requirement of one alternative (clause
+/// 4.19), against the target.
 ///
 /// A split temporal query reads every requirement on its own (clause 5.7.4.4),
 /// so the requirement is a rendering of its own as well as a term of
@@ -143,7 +143,7 @@ pub fn pattern_condition(pattern: &ScopePattern, target: &ScopeTarget) -> Simple
 /// matching `lquery`, narrowed further by the validity condition the target
 /// asks for.
 ///
-/// A removal carries no path — `chk_scope_history_value_presence` forbids one —
+/// A removal carries no path, since `chk_scope_history_value_presence` forbids one,
 /// so it never satisfies the pattern match and only ever appears as the event
 /// that ends someone else's interval. That is also what makes a `scopeQ`
 /// measured on the `deletedAt` axis select nothing at all: `deletedAt` is

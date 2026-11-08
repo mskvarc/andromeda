@@ -1,7 +1,7 @@
 //! A create body carrying a `GeoProperty` of a million positions is decoded
 //! from its text into the typed Entity without a JSON tree of its coordinates
-//! (clause 4.7): the extraction -- counting, number check, `@context` reading
-//! and decoding -- peaks below 100 MiB above the body it was handed, where the
+//! (clause 4.7): the extraction (counting, number check, `@context` reading
+//! and decoding) peaks below 100 MiB above the body it was handed, where the
 //! one copy of 1,000,000 positions of 32 bytes the Entity owns is about 32 MB,
 //! and its time grows linearly with the positions.
 //!

@@ -47,7 +47,7 @@ async fn p_sem_snp_0001_snapshots_settle_through_the_pooler_while_other_tenants_
     let device_type = namespace.entity_type("Device")?;
     let snapshot_id = format!("urn:ngsi-ld:Snapshot:{namespace}-load").parse::<SnapshotId>()?;
     let snapshot = Snapshot::builder()
-        .id(snapshot_id.clone()) // clone: each tenant's Snapshot is read by the id it is built with
+        .id(snapshot_id.clone())
         .query(QueryDocument::builder().entities([device_type.as_str()]).build()?)
         .build()?;
     let snapshots = join_all(snapshot_tenants.members().map(|member| async {

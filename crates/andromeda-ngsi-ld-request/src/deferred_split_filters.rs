@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::input::GeoQueryInpu
 /// split across Context Sources: each source sees only its own fragment, so a
 /// predicate over an attribute another source holds cannot be satisfied there.
 ///
-/// [`Default`] is the not-deferring case — every field `None` — which is what a
+/// [`Default`] is the not-deferring case (every field `None`), which is what a
 /// request without `splitEntities` needs.
 #[derive(Debug, Default)]
 pub struct DeferredSplitFilters {
@@ -42,7 +42,7 @@ pub struct DeferredSplitFilters {
 
 impl EntityQueryParameters {
     /// Take the attribute-reading filters out of the query, leaving it selecting
-    /// on identity alone so every source -- and the local read -- answers with
+    /// on identity alone so every source (and the local read) answers with
     /// whatever it holds (clause 5.7.2.4).
     ///
     /// With `splitEntities` an entity's attributes may be spread across several

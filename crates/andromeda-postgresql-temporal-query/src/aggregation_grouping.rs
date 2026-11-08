@@ -136,14 +136,12 @@ pub fn apply_grouping(
                     BucketKind::Calendar => date_trunc(bucket_field(bucket), axis_value),
                     BucketKind::Cyclic => date_part(bucket_field(bucket), axis_value),
                 };
-                // clone: the key is projected and grouped by.
                 select.expr_as(expr.clone(), group_key_alias(index));
                 keys.push(expr);
             }
             (GroupKey::Path(path), None) => {
                 project_value_in_effect(select, index, names.attributes.get(&path.attr), axis, branch, of);
                 for column in [group_key_alias(index), group_key_instant_alias(index)] {
-                    // clone: the column is projected and grouped by.
                     select.expr_as(Expr::col((value_key_alias(index), column.clone())), column.clone());
                     keys.push(Expr::col((value_key_alias(index), column)));
                 }
@@ -172,7 +170,6 @@ fn project_value_in_effect(
     // An attribute the dictionary never keyed was never written, so no value
     // of it is in effect anywhere.
     let of_attribute = attribute.map_or_else(false_literal, |key| Expr::col((history.clone(), HistoryGrain::AttributeNameKey)).eq(key.get()));
-    // clone: the aliases are numbered per value key, and every clause naming one takes it by value.
     let mut lateral = Query::select();
     lateral
         .expr_as(value_text(history.clone()), group_key_alias(index))

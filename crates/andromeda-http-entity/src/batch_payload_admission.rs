@@ -159,7 +159,6 @@ async fn screened_batch_entities<M: WrittenMember + MemberReading + Send + 'stat
         };
         let embedded = item.embedded.take();
         let ready = match item.admitted(admitted.clone()) {
-            // clone: every entity naming the context holds the shared handle
             Ok(ready) => ready,
             Err(UnreadItem::Refused(error)) => {
                 readable.push(Err(error));
@@ -527,7 +526,7 @@ mod tests {
         let types: Vec<Value> = refused
             .iter()
             .filter_map(|error| serde_json::to_value(error).ok())
-            .map(|error| error["error"]["type"].clone()) // clone: the type is compared after the error is dropped
+            .map(|error| error["error"]["type"].clone())
             .collect();
         pretty_assertions::assert_eq!(types.len(), 2);
         assert!(

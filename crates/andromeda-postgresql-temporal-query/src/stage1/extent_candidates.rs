@@ -93,7 +93,6 @@ impl<'q> ExtentRead<'q> {
         stream_holder(&mut candidates, branch);
         candidates
             .and_where(Expr::col((Rs, TemporalAttributeStreams::AttributeNameKey)).eq(self.geoproperty.get()))
-            // clone: the page and the count each read the candidates
             .and_where(self.overlap.clone());
         if let Some(contributed) = contributed_candidates(branch, self.contributed) {
             candidates.union(UnionType::All, contributed);

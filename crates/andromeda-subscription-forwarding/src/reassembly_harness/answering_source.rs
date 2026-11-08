@@ -41,7 +41,7 @@ impl AnsweringSource {
 
     /// The registration naming this source.
     pub(crate) fn registration(&self) -> ContextSourceRegistration {
-        self.registration.clone() // clone: the scene takes its own copy of the registration
+        self.registration.clone()
     }
 
     /// Answer every retrieval of `id` with `entity`.

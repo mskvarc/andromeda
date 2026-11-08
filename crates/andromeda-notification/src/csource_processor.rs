@@ -102,7 +102,7 @@ impl CsourceNotificationProcessor {
             tenant,
         } = deps;
         CsourceNotificationProcessor {
-            target: target.clone(), // clone: the processor and its delivery half address the same branch.
+            target: target.clone(),
             sub_repo: Arc::clone(&sub_repo),
             csr_repo,
             order,
@@ -126,7 +126,7 @@ impl CsourceNotificationProcessor {
         // subscription carries stays unused on this path.
         for stored in subscriptions {
             let compiled = compile_csource_subscription(&stored.subscription);
-            self.cache.insert(stored.subscription.id.clone(), Arc::new(compiled)); // clone: the map owns its key
+            self.cache.insert(stored.subscription.id.clone(), Arc::new(compiled));
         }
         Ok(())
     }
@@ -294,10 +294,10 @@ impl CsourceNotificationProcessor {
                 Ok(state) => state,
                 Err(error) => {
                     error!("Failed to re-read CSR {} for its initial notification: {}", registration.id, error);
-                    Some((*registration).clone()) // clone: the notification owns the state read with the match set
+                    Some((*registration).clone())
                 }
             };
-            current.push((registration.id.clone(), state)); // clone: the pair owns the identifier it withdraws by
+            current.push((registration.id.clone(), state));
         }
         current
     }

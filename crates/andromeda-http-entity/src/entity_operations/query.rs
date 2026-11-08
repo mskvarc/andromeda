@@ -30,7 +30,7 @@ pub(crate) async fn query(
     protocol: NgsiLdProtocolHeaders,
     pagination: RequestPagination,
     // Clause 6.3.5: the query is read against the one context the body
-    // extractor resolved -- the body's own `@context` for `application/ld+json`,
+    // extractor resolved: the body's own `@context` for `application/ld+json`,
     // the `Link` context for `application/json`.
     EntityPostQuery { query, context }: EntityPostQuery,
 ) -> Result<Response, ProblemResponse> {

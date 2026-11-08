@@ -59,7 +59,7 @@ pub enum ScopePathError {
 /// path this type carries, and the NGSI-LD Null, of which the same clause says
 /// the special string "shall be only used and only appear in case of deleted
 /// scopes". A deletion is not a place an entity can be, so it is not a value of
-/// this type — code holding a `ScopePath` holds somewhere an entity is, which
+/// this type: code holding a `ScopePath` holds somewhere an entity is, which
 /// is what a label-path index stores and a `scopeQ` of clause 4.19 matches.
 ///
 /// The path keeps the spelling it was written in, the optional leading `/`

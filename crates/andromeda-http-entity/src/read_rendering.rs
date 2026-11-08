@@ -1,8 +1,8 @@
 //! How a read writes the entities it answers with.
 //!
 //! Every read endpoint resolves the same three clause 4.5 selectors before it
-//! renders — the natural-language filter, the representation, and the compiled
-//! clause 4.21 projection — and a read that asked for a clause 4.5.23 join then
+//! renders (the natural-language filter, the representation, and the compiled
+//! clause 4.21 projection), and a read that asked for a clause 4.5.23 join then
 //! puts the Linked Entities into the answer in whichever shape the join mode
 //! names. Neither is the property of any one handler, so both are written once
 //! here.
@@ -156,8 +156,8 @@ pub(crate) fn matched_entities<'a>(
 }
 
 /// The answer to a retrieval of `entity`: the entity itself, nested with the
-/// Linked Entities of an inline join, or -- for a flat join, which answers a
-/// collection even though one entity was asked for (clause 4.5.23) -- the
+/// Linked Entities of an inline join, or (for a flat join, which answers a
+/// collection even though one entity was asked for, clause 4.5.23) the
 /// entity beside them.
 pub(crate) fn retrieved_entity<'a>(
     entity: &'a Entity,

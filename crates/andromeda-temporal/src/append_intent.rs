@@ -156,9 +156,9 @@ impl TemporalAppendIntent {
     /// # Errors
     ///
     /// Returns [`TemporalError::Validation`] when a history record carries an
-    /// instance a history row cannot record -- one carrying no value of the
+    /// instance a history row cannot record (one carrying no value of the
     /// shape its family requires, an `observedAt` outside the clause 4.6.3 UTC
-    /// form, or a Property value written in a time form it does not satisfy --
+    /// form, or a Property value written in a time form it does not satisfy),
     /// and [`TemporalError::Internal`] when an observed entity state does not
     /// read back as the document it encodes to.
     pub fn from_history(
@@ -184,7 +184,7 @@ impl TemporalAppendIntent {
     /// consequence and therefore no intent at all; what does reach here with no
     /// entries is a write that observed an Entity holding no Attribute, and
     /// clause 4.5.1 requires only `id` and `type` of an Entity while clause
-    /// 4.5.6 gives that Entity a Temporal Evolution all the same — one its own
+    /// 4.5.6 gives that Entity a Temporal Evolution all the same: one its own
     /// write has to be able to establish.
     #[must_use]
     pub fn write_purpose(&self) -> TemporalWritePurpose {

@@ -133,7 +133,7 @@ pub(crate) async fn query(
         .with_registration_instance(&uri)?;
     // Clause 4.3.6.4: the `Via` chain lists the context sources the request
     // already passed through; clause 5.12 excludes their registrations.
-    let encountered_sources: Vec<_> = protocol.incoming_via.iter().flat_map(Via::pseudonyms).cloned().collect(); // clone: the discovery owns the listing across the store await
+    let encountered_sources: Vec<_> = protocol.incoming_via.iter().flat_map(Via::pseudonyms).cloned().collect(); // clone: the listing is owned across the store await, not borrowed from the Via chain.
     let DiscoveredRegistrations {
         registrations,
         total,

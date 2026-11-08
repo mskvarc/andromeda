@@ -19,8 +19,8 @@
 //! - Subscriptions admit every reference (clause 5.8.1.4 adds a Subscription
 //!   that passes the clause 5.2.12 checks, none of which bounds them).
 //!
-//! `@none` is the parameter's own default -- clause 4.5.23 says "By default, it
-//! will be '@none'" -- so writing it means no more than leaving the parameter
+//! `@none` is the parameter's own default (clause 4.5.23 says "By default, it
+//! will be '@none'"), so writing it means no more than leaving the parameter
 //! out, and `joinLevel` is "only applicable if join parameter is 'flat', or
 //! 'inline'" (Table 6.5.3.1-1). A request with `@none` therefore declares no
 //! traversal at all, and a `joinLevel` beside it is a parameter incompatible

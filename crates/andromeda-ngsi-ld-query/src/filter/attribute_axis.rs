@@ -5,8 +5,8 @@
 //! three: the `.`-separated sub-attribute chain, the trailing `[…]` group that
 //! addresses a member of a compound value or the target language of a
 //! `LanguageProperty`, and the `rel{…}` hop that crosses a Relationship into the
-//! entity it names. What the axis terminates at — the target value each
-//! attribute family carries — is
+//! entity it names. What the axis terminates at, the target value each
+//! attribute family carries, is
 //! [`family_target`](crate::filter::family_target)'s.
 //!
 //! An attribute may carry several instances (clause 4.5.5), and each of them
@@ -162,7 +162,7 @@ fn admitted_by_guard<'a, E: QueriedEntity<'a>>(linked: E, guard_types: &[Attribu
 /// Clause 4.9 defines a `LanguageProperty`'s target value with no target
 /// language as "a value from any of the key-value pairs held within the
 /// languageMap", which is the one array target the unqualified path already
-/// addresses — the same reading the SQL compilation takes of the marker.
+/// addresses. The SQL compilation takes the same reading of the marker.
 fn resolve_values<'a, E: QueriedEntity<'a>>(entity: E, path: &AttrPath, matching: LanguageMatching) -> Vec<ResolvedTarget<'a>> {
     entity
         .attribute_instances(&path.attr)
@@ -320,7 +320,7 @@ impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
 /// shapes, and both are addressed by the same `q` path:
 ///
 /// * A structured Property value is a node whose members are keyed by expanded
-///   IRI, so `city` is a member *hop* — the first value, then the member's
+///   IRI, so `city` is a member *hop*: the first value, then the member's
 ///   first value, down to a literal. This is the shape a notification payload and a stored entity carry.
 /// * A `JsonProperty`'s value, and a Property value held as an opaque JSON
 ///   object, are raw JSON, where `city` is an ordinary object key. The NGSI-LD
@@ -418,7 +418,7 @@ mod tests {
     /// origins.
     fn targets_under(entity: &Value, path: &AttrPath, matching: LanguageMatching) -> Vec<(Value, TargetOrigin)> {
         let entity = FixtureEntity::from_expanded(entity);
-        resolve_targets(&entity, &QueryPath::Local(path.clone()), NoLinkedEntities, matching) // clone: the test owns the path it wraps
+        resolve_targets(&entity, &QueryPath::Local(path.clone()), NoLinkedEntities, matching)
             .into_iter()
             .map(|target| (target_json(&target.value), target.origin))
             .collect()
@@ -640,7 +640,7 @@ mod tests {
         let addressed = vec![name("https://example.com/a"), name("https://example.com/b")];
         let mut path = AttrPath::simple(name("https://example.com/myJson"));
         path.trailing = Some(TrailingPath::Members(MemberPath {
-            addressed: addressed.clone(), // clone: the second path addresses the same members
+            addressed: addressed.clone(),
             written: vec![name("a"), name("b")],
         }));
         pretty_assertions::assert_eq!(targets_along(&entity, &path), vec![(json!([1, 2]), TargetOrigin::AttributeValue)]);

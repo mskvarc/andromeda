@@ -148,8 +148,8 @@ mod tests {
         let mut node = ExpandedNode::default();
         let first = ExpandedItem::Value(ValueObject::plain(Scalar::Boolean(true)));
         let second = ExpandedItem::Value(ValueObject::plain(Scalar::Boolean(false)));
-        node.add_member("https://ex.org/a".to_owned(), vec![first.clone()]); // clone: the expectation below compares against it
-        node.add_member("https://ex.org/a".to_owned(), vec![second.clone()]); // clone: the expectation below compares against it
+        node.add_member("https://ex.org/a".to_owned(), vec![first.clone()]);
+        node.add_member("https://ex.org/a".to_owned(), vec![second.clone()]);
 
         pretty_assertions::assert_eq!(node.member("https://ex.org/a"), Some([first, second].as_slice()));
         pretty_assertions::assert_eq!(node.members.len(), 1);

@@ -93,7 +93,7 @@ impl HistoryMembers {
     /// sub-attribute is not in its committed spelling.
     pub fn keyed(metadata: &ObservationMetadata, keys: &NameKeys) -> Result<HistoryMembers, HistoryMembersError> {
         let members = metadata.members();
-        let type_key = |reference: &NgsiLdReference| keys.type_name(reference).ok_or_else(|| HistoryMembersError::UnresolvedType(reference.clone())); // clone: the refusal names the type it could not key
+        let type_key = |reference: &NgsiLdReference| keys.type_name(reference).ok_or_else(|| HistoryMembersError::UnresolvedType(reference.clone())); // clone: the error outlives the borrowed type reference it names.
         let mut sub_attributes = Vec::new();
         push_elements(&members.sub_attributes, 0, keys, &mut sub_attributes)?;
         Ok(HistoryMembers {
@@ -133,7 +133,7 @@ impl HistoryMembers {
             proof_seals,
             sub_attributes: elements,
         } = self;
-        let type_name = |key: EntityTypeNameKey| names.type_name(key).cloned().ok_or(AssemblyError::UnknownType(key)); // clone: the metadata owns its type names
+        let type_name = |key: EntityTypeNameKey| names.type_name(key).cloned().ok_or(AssemblyError::UnknownType(key));
         let value_type = value_type_key.map(type_name).transpose().map_err(stored_members)?;
         let object_types = object_type_keys
             .into_iter()
@@ -194,7 +194,7 @@ mod tests {
     /// `instance` with the members of `extra` added.
     fn with(mut instance: Value, extra: &Value) -> Value {
         if let (Some(members), Some(extra)) = (instance.as_object_mut(), extra.as_object()) {
-            members.extend(extra.iter().map(|(name, value)| (name.clone(), value.clone()))); // clone: the fixture owns its members
+            members.extend(extra.iter().map(|(name, value)| (name.clone(), value.clone())));
         }
         instance
     }
@@ -259,7 +259,7 @@ mod tests {
             attributes.into_iter().zip(1..).map(|(name, key)| (name, AttributeNameKey::from(key))).collect();
         let types: Vec<_> = types.into_iter().zip(1..).map(|(name, key)| (name, EntityTypeNameKey::from(key))).collect();
         let names = KeyNames::from_pairs(
-            attributes.iter().map(|(name, key)| (*key, name.clone())), // clone: both directions own the names
+            attributes.iter().map(|(name, key)| (*key, name.clone())),
             types.iter().map(|(name, key)| (*key, NgsiLdReference::from(name))),
         );
         (NameKeys::new(ResolvedNames::from_pairs(attributes), ResolvedNames::from_pairs(types)), names)
@@ -277,7 +277,7 @@ mod tests {
 
     /// The expanded members `metadata` renders as.
     fn rendered(metadata: Option<&ObservationMetadata>) -> Value {
-        serde_json::to_value(metadata.cloned().map(InstanceDocument::from)).expect("metadata writes") // clone: the fixture is compared after it is rendered
+        serde_json::to_value(metadata.cloned().map(InstanceDocument::from)).expect("metadata writes")
     }
 
     #[test]

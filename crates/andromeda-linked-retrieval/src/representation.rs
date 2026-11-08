@@ -2,8 +2,8 @@
 //!
 //! The engine decides everything about Linked Entities over abstract nodes. A
 //! representation answers the four questions whose answer depends on how a
-//! node is spelled -- its identifier, the edges it names, its attribute member
-//! keys and which of the clause 4.21 keyword members it carries -- and decides
+//! node is spelled (its identifier, the edges it names, its attribute member
+//! keys and which of the clause 4.21 keyword members it carries), and decides
 //! nothing.
 
 use crate::{edge::LinkedEdge, keyword::Keyword};

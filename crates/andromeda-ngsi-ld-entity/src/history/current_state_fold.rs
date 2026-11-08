@@ -82,7 +82,6 @@ pub fn fold_into_current_state(
         Some(current) => current.clone(),
         None => new_entity(evolution)?,
     };
-    // clone: the entity owns the types it gains.
     state.types_mut().extend(evolution.types().iter().cloned());
     for (name, member) in evolution.attributes() {
         for candidate in member.instances().iter().filter(|candidate| !expired(candidate, at)) {
@@ -134,11 +133,9 @@ fn stand(state: &mut EntityState, name: &AttributeName, candidate: &InstanceDocu
         (Some(_) | None, None) => {
             let instance = new_instance(name, candidate, None)?;
             match state.attributes_mut().get_mut(name) {
-                // clone: the instance is keyed by its own copy of the written identity.
                 Some(instances) => {
                     instances.insert(dataset_id.cloned(), instance);
                 }
-                // clone: the entity owns the attribute name and the instance identity it gains.
                 None => {
                     state
                         .attributes_mut()

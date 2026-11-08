@@ -71,7 +71,6 @@ fn apply_instance(
         return patch_instance(name, held, document, depth, stamp.as_ref());
     }
     let instance = new_instance(name, document, stamp.as_ref())?;
-    // clone: the instance is keyed by its own copy of the written identity.
     attributes.insert_instance(name, dataset_id.cloned(), instance);
     Ok(())
 }

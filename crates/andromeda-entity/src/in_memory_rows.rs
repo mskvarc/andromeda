@@ -125,7 +125,7 @@ impl StoredRows {
                 Some(latest) if *latest > accepted_at => WriteOutcome::Predated(SystemInstant::new(*latest)),
                 Some(_) | None => {
                     self.evolutions.remove(id);
-                    self.write(id, Arc::clone(&record.state), accepted_at); // clone: Arc ref-count bump; the rows share the written state
+                    self.write(id, Arc::clone(&record.state), accepted_at);
                     WriteOutcome::Created(StoreInstant::new(accepted_at))
                 }
             },
@@ -142,7 +142,7 @@ impl StoredRows {
                 WriteOutcome::Predated(SystemInstant::new(modified_at))
             }
             (EntityMutation::Update(record), Some(_), _) => {
-                self.write(id, Arc::clone(&record.state), accepted_at); // clone: Arc ref-count bump; the rows share the written state
+                self.write(id, Arc::clone(&record.state), accepted_at);
                 WriteOutcome::Updated(StoreInstant::new(accepted_at))
             }
             (EntityMutation::Delete, Some((_, modified_at)), _) => {

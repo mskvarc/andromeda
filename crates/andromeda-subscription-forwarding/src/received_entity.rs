@@ -1,9 +1,9 @@
 //! One entity of an inbound notification, read into the model under the
 //! context it was written in (clause 5.8.6).
 //!
-//! The sender spelled its entity under the context of the copy it holds -- the
+//! The sender spelled its entity under the context of the copy it holds: the
 //! notification's own, or the `@context` an `application/ld+json` notification
-//! writes on each entity -- so the entity is expanded once under that context
+//! writes on each entity, so the entity is expanded once under that context
 //! into the written document the local filters read and the local
 //! subscription's compaction writes. A written document, unlike an entity
 //! state, holds the deletions a source notifies. Clause 5.8.6 reports a
@@ -79,7 +79,6 @@ pub(crate) async fn read_notified(
             Ok(inbound.notified(entity).await?)
         }
         Some(own) => {
-            // clone: the context specification owns the literal it names
             let expansion = EntityExpansion::prepare(engine, &ContextSpec::from_body(own.clone()))
                 .await
                 .map_err(ReceivedEntityRefusal::OwnContext)?;
@@ -137,7 +136,7 @@ impl NotifiedPart {
                 AttributeMember::Instances(instances) => {
                     let (removed, held): (Vec<InstanceDocument>, Vec<InstanceDocument>) =
                         instances.into_iter().partition(|instance| matches!(instance.value(), ValueSlot::Remove(_)));
-                    // clone: each instance deletion is put back under its attribute after the merge
+                    // clone: the attribute name is still needed to keep the instances the change holds
                     deletions.extend(removed.into_iter().map(|instance| NotifiedDeletion::Instance(name.clone(), Box::new(instance))));
                     if !held.is_empty() {
                         kept.insert(name, AttributeMember::Instances(held));

@@ -119,14 +119,14 @@ mod tests {
         /// not apply.
         fn run(&self, compiled: &CompiledEntityQuery, window: &PageWindow) -> QueryOutcome<Identifier> {
             let unapplied = self.profile.unapplied(&compiled.selection);
-            let mut pushed = compiled.selection.clone(); // clone: the store runs a narrowed copy of the caller's query
+            let mut pushed = compiled.selection.clone();
             unapplied.strip_from(&mut pushed);
 
             let admitted = self
                 .entities
                 .iter()
                 .filter(|entity| reference_matches(&pushed, entity))
-                .map(|entity| entity.id().clone()); // clone: the outcome owns the identifiers it returns
+                .map(|entity| entity.id().clone());
 
             if unapplied.is_empty() {
                 QueryOutcome {
@@ -169,7 +169,7 @@ mod tests {
                             expires_at: None,
                         },
                     };
-                    (entity.id().clone(), retrieved) // clone: the map owns its keys, as a real store's does
+                    (entity.id().clone(), retrieved)
                 })
                 .collect())
         }
@@ -283,7 +283,7 @@ mod tests {
     fn service(profile: StorageProfile) -> EntityQueryService {
         let store = Arc::new(ProfiledEntityStore::new(profile));
         EntityQueryService::builder()
-            .reader(Arc::clone(&store) as Arc<dyn EntityReader>) // clone: the test store supplies both focused capabilities.
+            .reader(Arc::clone(&store) as Arc<dyn EntityReader>)
             .query_store(store as Arc<dyn EntityQueryStore>)
             .engine(JsonLdEngine::builder().allow_remote(false).build().expect("build engine"))
             .spatial(SpatialAcceleration::StoreVerified)

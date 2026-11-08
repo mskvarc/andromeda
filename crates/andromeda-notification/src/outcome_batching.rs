@@ -126,8 +126,8 @@ impl OutcomeBatcher {
         record: OutcomeRecord,
     ) -> Result<(), OutcomeNotRecorded> {
         let owner = OutcomeOwner {
-            target: target.clone(),             // clone: the queue the outcome waits in is keyed by an owned branch
-            subscription: subscription.clone(), // clone: and an owned subscription identifier
+            target: target.clone(),
+            subscription: subscription.clone(),
         };
         self.batcher.add(owner, (outcome, record)).await.map_err(|error| match error.inner() {
             Ok(store) => OutcomeNotRecorded::Write(store),

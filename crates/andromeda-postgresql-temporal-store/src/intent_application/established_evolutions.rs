@@ -39,7 +39,6 @@ struct EstablishingIntent;
 /// so each row probes a hash table; `id = ANY(established)` over a bound array
 /// compares each row with every element.
 pub(crate) fn among(id: SimpleExpr, established: &SimpleExpr) -> SimpleExpr {
-    // clone: every test names the same identifiers.
     id.in_subquery(Query::select().expr(unnest_of(SimpleExpr::clone(established))).take())
 }
 

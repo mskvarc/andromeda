@@ -13,7 +13,7 @@ validated_ngsi_name! {
     /// Compact payloads key attributes by term or compact IRI; expanded payloads
     /// key them by full IRI. Both are accepted, because both reach this type
     /// depending on which side of JSON-LD expansion the payload sits on. The
-    /// grammar is exactly the one [`NgsiLdReference`] uses — see
+    /// grammar is exactly the one [`NgsiLdReference`] uses, checked by
     /// [`validate_ngsi_ld_name`].
     ///
     /// [`NgsiLdReference`]: crate::reference::NgsiLdReference

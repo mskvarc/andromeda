@@ -101,29 +101,29 @@ impl Ledger {
     /// Returns [`ContextStoreError::StatementBuild`] if the insert ever stops matching
     /// its column list, which the fixed shape makes unreachable.
     fn fold(&self, target: &ContextTarget) -> Result<WithQuery, ContextStoreError> {
-        let key_tuple = || Expr::tuple(self.keys.iter().map(|key| Expr::col(key.clone()))); // clone: the tuple owns the idens it names.
+        let key_tuple = || Expr::tuple(self.keys.iter().map(|key| Expr::col(key.clone())));
         let mut crowded = Query::select();
         for key in &self.keys {
-            crowded.column(key.clone()).group_by_col(key.clone()); // clone: the select and its grouping each own the key.
+            crowded.column(key.clone()).group_by_col(key.clone());
         }
-        crowded.from(table_of(target, self.table.clone())).and_having(count_all().gt(int_literal(1))); // clone: the relation is named once per statement.
+        crowded.from(table_of(target, self.table.clone())).and_having(count_all().gt(int_literal(1)));
         let mut moved = Query::delete();
         moved
-            .from_table(table_of(target, self.table.clone())) // clone: as above.
+            .from_table(table_of(target, self.table.clone()))
             .and_where(hashed_membership(key_tuple().in_subquery(crowded.take())))
-            .returning(Query::returning().columns(self.keys.iter().cloned().chain([self.delta.clone()]))); // clone: the returning list owns its idens.
-        let total = || Func::sum(Expr::col((Moved, self.delta.clone()))); // clone: the sum is written twice.
+            .returning(Query::returning().columns(self.keys.iter().cloned().chain([self.delta.clone()])));
+        let total = || Func::sum(Expr::col((Moved, self.delta.clone())));
         let mut summed = Query::select();
         for key in &self.keys {
-            summed.column((Moved, key.clone())).group_by_col((Moved, key.clone())); // clone: as above.
+            summed.column((Moved, key.clone())).group_by_col((Moved, key.clone()));
         }
         summed.expr(total()).from(Moved).and_having(total().ne(int_literal(0)));
         let mut insert = Query::insert();
         insert
-            .into_table(table_of(target, self.table.clone())) // clone: as above.
-            .columns(self.keys.iter().cloned().chain([self.delta.clone()])) // clone: the column list owns its idens.
+            .into_table(table_of(target, self.table.clone()))
+            .columns(self.keys.iter().cloned().chain([self.delta.clone()]))
             .select_from(summed.take())?
-            .returning(Query::returning().column(self.delta.clone())); // clone: as above.
+            .returning(Query::returning().column(self.delta.clone()));
         Ok(WithClause::new()
             .cte(CommonTableExpression::new().table_name(Moved).query(moved).to_owned())
             .to_owned()

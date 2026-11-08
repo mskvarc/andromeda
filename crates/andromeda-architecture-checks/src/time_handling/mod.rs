@@ -102,7 +102,7 @@ pub fn time_handling_sites(workspace_root: &str) -> Vec<TimeHandlingSite> {
         }
         if !source.workspace_path.starts_with(XSD_OWNER) {
             sites.extend(xsd_names(&source.syntax).into_iter().map(|line| TimeHandlingSite {
-                path: source.workspace_path.clone(), // clone: every site of the file reports its path
+                path: source.workspace_path.clone(),
                 line,
                 subject: "names the XSD datatype library outside the lexicon's datatype module".to_owned(),
             }));
@@ -115,7 +115,7 @@ pub fn time_handling_sites(workspace_root: &str) -> Vec<TimeHandlingSite> {
             time_handling_findings(&source.syntax, keeps_sql_template)
                 .into_iter()
                 .map(|(line, subject)| TimeHandlingSite {
-                    path: source.workspace_path.clone(), // clone: every site of the file reports its path
+                    path: source.workspace_path.clone(),
                     line,
                     subject,
                 }),
@@ -129,7 +129,7 @@ pub fn time_handling_sites(workspace_root: &str) -> Vec<TimeHandlingSite> {
             Err(error) => vec![format!("could not be read: {error}")],
         };
         sites.extend(findings.into_iter().map(|subject| TimeHandlingSite {
-            path: path.clone(), // clone: every finding of the manifest reports its path
+            path: path.clone(),
             line: 0,
             subject,
         }));

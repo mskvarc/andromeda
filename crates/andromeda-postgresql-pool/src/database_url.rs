@@ -43,7 +43,7 @@ impl DatabaseUrl {
     /// credentials and parameters.
     #[must_use]
     pub fn with_database_name(&self, database_name: &TenantDatabaseName) -> Url {
-        // clone: `Url::set_path` mutates, and the base URL is reused per tenant
+        // clone: the base URL is reused for other tenants, so set_path mutates a copy.
         let mut url = self.0.clone();
         url.set_path(&format!("/{database_name}"));
         url

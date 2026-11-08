@@ -11,8 +11,8 @@ use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 /// outside every bounded window on that axis, and the operational `recorded_at`
 /// never stands in for a missing one.
 ///
-/// Every relation that records the four semantic axes names them identically —
-/// `attribute_history` and `scope_history` alike — so a statement over either
+/// Every relation that records the four semantic axes names them identically,
+/// `attribute_history` and `scope_history` alike, so a statement over either
 /// asks here for the column that answers the requested Temporal Property.
 #[must_use]
 pub const fn column_name(timeproperty: TimeProp) -> &'static str {

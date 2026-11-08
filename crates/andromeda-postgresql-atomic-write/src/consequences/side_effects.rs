@@ -53,8 +53,8 @@ pub(crate) async fn apply(
     }
     // Only the live branch has a side-effect queue, and queuing a Snapshot
     // commit's job there would replay it against the wrong branch. The entity
-    // policy cannot produce such a job -- its `SideEffectPlacement` defers side
-    // effects on the live branch only -- but this committer serves the
+    // policy cannot produce such a job (its `SideEffectPlacement` defers side
+    // effects on the live branch only), but this committer serves the
     // `ContextCommitter` port, which any caller may hand a job with any target,
     // so the port still refuses one it cannot honour.
     match target {

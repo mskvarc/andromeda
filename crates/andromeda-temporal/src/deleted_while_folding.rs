@@ -65,7 +65,7 @@ impl DeletedWhileFolding {
 
     /// What every commit attempted, in the order they ran.
     pub(crate) fn attempts(&self) -> Vec<Attempt> {
-        self.attempts.lock().expect("the recording lock is never poisoned").clone() // clone: the recording keeps what it was sent
+        self.attempts.lock().expect("the recording lock is never poisoned").clone()
     }
 
     /// Judge `write`, accepted at `accepted_at`, against the Entity.

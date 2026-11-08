@@ -82,7 +82,7 @@ impl FixedRegistry {
     /// The registry row of a registered tenant.
     fn record(name: &TenantName) -> TenantRecord {
         TenantRecord::new(
-            name.clone(), // clone: the record owns its name
+            name.clone(),
             TenantStatus::Active,
             TenantDatabaseName::from(format!("resident_{}", name.as_str())),
             DateTime::<Utc>::UNIX_EPOCH,
@@ -98,7 +98,7 @@ impl TenantDatabase for FixedRegistry {
     }
 
     async fn registered_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {
-        Ok(self.named.clone()) // clone: the caller owns the listing
+        Ok(self.named.clone())
     }
 
     async fn registered_tenant(&self, name: &TenantName) -> Result<Option<RegisteredTenant>, TenancyError> {
@@ -112,9 +112,7 @@ impl TenantDatabase for FixedRegistry {
     }
 
     async fn provision(&self, name: &TenantName) -> Result<TenantDatabaseName, TenancyError> {
-        Err(TenancyError::UnknownTenant {
-            name: name.clone(), // clone: the error owns the name it reports
-        })
+        Err(TenancyError::UnknownTenant { name: name.clone() })
     }
 
     async fn establish(&self, name: &TenantName) -> Result<Establishment, TenancyError> {

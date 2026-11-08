@@ -97,15 +97,15 @@ impl TenantSet {
         let device_type = namespace.entity_type("Device")?;
         let device_id = namespace.urn("Device", "member")?;
         let device = Entity::builder()
-            .id(device_id.clone()) // clone: the set reads the Device by the id it is built with
-            .entity_type(device_type.clone()) // clone: the batch entities share the type
+            .id(device_id.clone()) // clone: the set stores the id after the Device is built from it
+            .entity_type(device_type.clone()) // clone: the batch is built from the same type afterwards
             .property("reading", 1)
             .build()?;
         let members = (0..count)
             .map(|index| {
                 let tenant = namespace.numbered_tenant(index)?;
                 Ok(TenantMember {
-                    client: broker.with_tenant(tenant.clone()), // clone: the member keeps the name its client is in
+                    client: broker.with_tenant(tenant.clone()), // clone: the member stores the tenant beside the client
                     tenant,
                 })
             })
@@ -118,7 +118,7 @@ impl TenantSet {
             .iter()
             .zip(outcomes)
             .filter(|(_, outcome)| outcome.status() != Some(StatusCode::CREATED))
-            .map(|(member, outcome)| (member.tenant.clone(), outcome)) // clone: the failure names the tenant the set keeps
+            .map(|(member, outcome)| (member.tenant.clone(), outcome)) // clone: the failure owns the tenant it reports
             .collect::<Vec<_>>();
         if !failures.is_empty() {
             return Err(ProvisioningIncomplete { failures, total: count }.into());
@@ -127,7 +127,7 @@ impl TenantSet {
             .map(|index| {
                 Ok(Entity::builder()
                     .id(namespace.urn("Device", format!("batch-{index}"))?)
-                    .entity_type(device_type.clone()) // clone: every entity of the batch carries the type
+                    .entity_type(device_type.clone())
                     .property("reading", index)
                     .build()?)
             })

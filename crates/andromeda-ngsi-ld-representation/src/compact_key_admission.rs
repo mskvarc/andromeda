@@ -26,7 +26,7 @@
 //! such value, located from itself.
 //!
 //! The rules are decidable on the compact payload a client wrote and on nothing
-//! else. The walk is unconditional -- every object below a top-level member is
+//! else. The walk is unconditional. Every object below a top-level member is
 //! examined, including a Property's `value`, a `GeoProperty`'s geometry and a
 //! `LanguageProperty`'s `languageMap`, all of which the JSON-LD processor
 //! traverses. The keys of a language map are

@@ -48,8 +48,8 @@ pub enum TypedGeometryRefusal {
 /// The typed geometry keeps a geometry's positions, its `bbox` and its
 /// foreign members (IETF RFC 7946 sections 5 and 6.1), so the instance renders
 /// again as it was written (clause 4.6.4). A JSON-LD keyword is no `GeoJSON`
-/// member at all but JSON-LD the processor would act on -- an `@context` there
-/// is one clause 5.5.7 refuses -- so a geometry carrying one is refused.
+/// member at all but JSON-LD the processor would act on (an `@context` there
+/// is one clause 5.5.7 refuses), so a geometry carrying one is refused.
 ///
 /// # Errors
 ///

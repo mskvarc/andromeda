@@ -20,8 +20,8 @@
 //!
 //! # NGSI-LD example values
 //!
-//! * `ngsi-ld=1.9` -- server conforms to NGSI-LD v1.9
-//! * `body=json` -- server applied JSON body preference
+//! * `ngsi-ld=1.9`: server conforms to NGSI-LD v1.9
+//! * `body=json`: server applied JSON body preference
 
 use crate::preference::{Preference, RespondMode};
 use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;

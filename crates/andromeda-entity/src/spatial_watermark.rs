@@ -218,7 +218,7 @@ mod tests {
     fn watermark(store: &Arc<SharedStore>) -> SpatialWatermark {
         SpatialWatermark::new(
             Arc::new(SpatialEntityIndex::new()),
-            Arc::clone(store) as Arc<dyn EntitySpatialSnapshotSource>, // clone: the watermark and the test share the store
+            Arc::clone(store) as Arc<dyn EntitySpatialSnapshotSource>,
             LocationPlacement::new(TenantRef::UnnamedDefault).expect("the core location term is an attribute name"),
         )
     }

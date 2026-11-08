@@ -49,8 +49,8 @@ impl TemporalRepository {
 
 /// One entity's identifier and the truths of its `leaves` leaf columns.
 ///
-/// A leaf that renders to SQL `NULL` -- a comparison against a value the
-/// instance does not hold -- did not hold.
+/// A leaf that renders to SQL `NULL` (a comparison against a value the
+/// instance does not hold) did not hold.
 fn decode_leaf_row(row: &PgRow, leaves: usize) -> Result<(Identifier, LeafTruths), TemporalStoreError> {
     let raw: String = row.try_get(0)?;
     let entity_id = raw.parse::<Identifier>().map_err(StoredCatalogError::EntityId)?;

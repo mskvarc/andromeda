@@ -1,8 +1,8 @@
 //! One attribute instance written in a reified representation: its family's
 //! members, the members every family shares, and its sub-attributes.
 //!
-//! What a notification reports of the instance (clause 5.8.6) -- the Null of
-//! a deletion, a `deletedAt`, a previous value -- is written in place of, or
+//! What a notification reports of the instance (clause 5.8.6), namely the Null of
+//! a deletion, a `deletedAt`, a previous value, is written in place of, or
 //! beside, the members the instance carries. A clause 4.15 `lang` filter turns
 //! a top-level `LanguageProperty` into the `Property` it negotiates. A clause
 //! 4.3.6.8 version fallback writes the instance as the family the target
@@ -85,8 +85,8 @@ impl<'a> ReifiedInstance<'a> {
 
     /// The bare value clause 4.5.2.3 collapses the instance to: a Property or
     /// `GeoProperty` standing alone that carries nothing beside its value, and
-    /// whose value, written bare, reads back as the value of its own family --
-    /// the clause calls the representation "lossless". Among the instances of a
+    /// whose value, written bare, reads back as the value of its own family,
+    /// which the clause calls "lossless". Among the instances of a
     /// multi-attribute every instance stays an object, as the same clause
     /// writes them. The NGSI-LD Null a reported deletion writes in place of the
     /// value is the value of no family. A member a version fallback leaves out
@@ -160,7 +160,7 @@ impl<'a> ReifiedInstance<'a> {
 
     /// Whether the instance names its family in `type`: always in the
     /// normalized representation, and in the concise one when the typeless
-    /// object would be read back as another family -- a Property holding a
+    /// object would be read back as another family, since a Property holding a
     /// geometry would be taken for a `GeoProperty` (clause 5.2.5). Clause
     /// 4.5.2.3 lists `type` among the Optional members of the concise object
     /// form.
@@ -234,7 +234,7 @@ impl Serialize for ReifiedInstance<'_> {
 
 impl ReifiedInstance<'_> {
     /// Write the members the instance's family carries beside the shared ones:
-    /// its value -- or the Null a reported deletion puts in its place -- the
+    /// its value (or the Null a reported deletion puts in its place), the
     /// members qualifying it, its previous value, and the Linked Entities an
     /// inline join nests under a Relationship that still names its targets.
     fn serialize_family_members<M: SerializeMap>(&self, object: &mut M) -> Result<(), M::Error> {
@@ -274,8 +274,8 @@ impl ReifiedInstance<'_> {
         }
     }
 
-    /// Write the members that qualify the family's value -- its unit, its
-    /// value type and its target type -- that the version fallback keeps.
+    /// Write the members that qualify the family's value (its unit, its
+    /// value type and its target type) that the version fallback keeps.
     fn serialize_qualifiers<M: SerializeMap>(&self, object: &mut M) -> Result<(), M::Error> {
         let value_type = self.keeps(InstanceMember::ValueType);
         let object_type = self.keeps(InstanceMember::ObjectType);

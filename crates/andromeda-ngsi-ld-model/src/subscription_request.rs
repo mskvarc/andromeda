@@ -391,8 +391,8 @@ mod tests {
     }
 
     /// Clause 5.11.2: a Context Source Registration Subscription is the same
-    /// data type, carrying the members that select registrations -- here a
-    /// `temporalQ` and a `geoQ` -- and no `datasetId`, so its POST body round
+    /// data type, carrying the members that select registrations (here a
+    /// `temporalQ` and a `geoQ`) and no `datasetId`, so its POST body round
     /// trips as an entity subscription's does.
     #[test]
     fn a_context_source_subscription_round_trips_through_its_typed_model() {
@@ -535,9 +535,9 @@ mod tests {
         }
     }
 
-    /// Clause 5.5.4: the NGSI-LD Null for a member that cannot be deleted --
-    /// `type` and `notification` have cardinality `1`, and `id` "cannot be
-    /// later modified in update operations" -- is outside its data type, and
+    /// Clause 5.5.4: the NGSI-LD Null for a member that cannot be deleted
+    /// (`type` and `notification` have cardinality `1`, and `id` "cannot be
+    /// later modified in update operations") is outside its data type, and
     /// so is a member of the wrong type.
     #[test]
     fn the_ngsi_ld_null_on_a_member_that_cannot_be_deleted_and_a_mistyped_member_are_refused() {

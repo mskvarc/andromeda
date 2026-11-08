@@ -68,9 +68,9 @@ impl RecordingCommitter {
         let enqueued = Arc::new(AtomicUsize::new(0));
         (
             RecordingCommitter {
-                recorded: Arc::clone(&recorded), // clone: the committer and the test both hold the recording.
-                accepted: Arc::clone(&accepted), // clone: the committer and the test both hold the instants.
-                enqueued: Arc::clone(&enqueued), // clone: the committer and the test both hold the count.
+                recorded: Arc::clone(&recorded),
+                accepted: Arc::clone(&accepted),
+                enqueued: Arc::clone(&enqueued),
             },
             RecordedCommits {
                 writes: recorded,
@@ -148,7 +148,7 @@ impl SnapshotReader {
 impl EntityReader for SnapshotReader {
     async fn get(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<Arc<EntityState>>, EntityError> {
         self.payload_reads.fetch_add(1, Ordering::Relaxed);
-        Ok(Some(Arc::clone(&self.state))) // clone: Arc ref-count bump; the reader keeps serving the snapshot.
+        Ok(Some(Arc::clone(&self.state)))
     }
 
     async fn get_batch(&self, _target: &ContextTarget, ids: &[Identifier]) -> Result<HashMap<Identifier, RetrievedEntity>, EntityError> {
@@ -157,7 +157,7 @@ impl EntityReader for SnapshotReader {
             .iter()
             .map(|id| {
                 let retrieved = RetrievedEntity {
-                    state: Arc::clone(&self.state), // clone: Arc ref-count bump; the reader keeps serving the snapshot.
+                    state: Arc::clone(&self.state),
                     sys_attrs: self.sys_attrs(),
                 };
                 (id.clone(), retrieved) // clone: the answer owns its keys
@@ -168,7 +168,7 @@ impl EntityReader for SnapshotReader {
     async fn get_snapshot(&self, _target: &ContextTarget, _id: &Identifier) -> Result<Option<EntitySnapshot>, EntityError> {
         self.payload_reads.fetch_add(1, Ordering::Relaxed);
         Ok(Some(EntitySnapshot {
-            state: Arc::clone(&self.state), // clone: Arc ref-count bump; a writer copies what it changes.
+            state: Arc::clone(&self.state),
             version: self.version,
             sys_attrs: self.sys_attrs(),
         }))
@@ -182,7 +182,7 @@ impl EntityReader for SnapshotReader {
                 (
                     id.clone(), // clone: the map owns each requested id
                     EntitySnapshot {
-                        state: Arc::clone(&self.state), // clone: Arc ref-count bump; a writer copies what it changes
+                        state: Arc::clone(&self.state),
                         version: self.version,
                         sys_attrs: self.sys_attrs(),
                     },
@@ -199,7 +199,7 @@ impl EntityReader for SnapshotReader {
     ) -> Result<Option<RetrievedEntity>, EntityError> {
         self.payload_reads.fetch_add(1, Ordering::Relaxed);
         Ok(Some(RetrievedEntity {
-            state: Arc::clone(&self.state), // clone: Arc ref-count bump; the reader keeps serving the snapshot.
+            state: Arc::clone(&self.state),
             sys_attrs: self.sys_attrs(),
         }))
     }

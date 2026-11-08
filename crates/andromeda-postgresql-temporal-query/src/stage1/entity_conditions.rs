@@ -263,7 +263,7 @@ mod tests {
 
     /// Clause 5.7.4.4: the value, geo and scope filters of a split query apply
     /// after aggregation, so an entity a source contributed a part of is exempt
-    /// from them locally -- and only from them: the identifier selector and the
+    /// from them locally, and only from them: the identifier selector and the
     /// window still select it. The Scope query gates the page, whose full walk
     /// carries every filter.
     #[test]
@@ -491,7 +491,7 @@ mod tests {
 
     /// Clause 5.7.4.4 S3: the geospatial restriction is checked against the
     /// `GeoProperty` instances "within the interval defined by the temporal
-    /// query", which are `attribute_history` rows -- not the single hoisted
+    /// query", which are `attribute_history` rows, not the single hoisted
     /// current-state `location` column, which holds one instant and answers a
     /// different question. The default `location` reaches its history rows
     /// through the stream just as any named `GeoProperty` does.

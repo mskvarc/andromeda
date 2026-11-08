@@ -3,7 +3,7 @@
 //! The embedded core Context is not a stored entry: its sole identifier is its
 //! ETSI URL (clause 4.4), so clauses 5.13.4.4 and 5.13.5.4 answer that URL as
 //! an identifier that "does not correspond to any existing entry in the
-//! @context storage" -- `ResourceNotFound` -- whatever version spelling the
+//! @context storage" (`ResourceNotFound`), whatever version spelling the
 //! request writes and whatever projection or lifecycle command it asks for.
 
 use crate::{

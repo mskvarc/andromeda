@@ -4,7 +4,7 @@
 //! representation of a registration compacts them back through the @context it
 //! is rendered under: the discovery response of clause 5.10.2.5, the retrieval
 //! of clause 5.10.4.5 and the Context Source Notification of clause 5.11.7
-//! alike. One reading, one implementation -- a client that discovers a source
+//! alike. One reading, one implementation: a client that discovers a source
 //! and is then notified about it must be handed the same names both times.
 
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
@@ -19,7 +19,7 @@ use std::str::FromStr;
 /// with the operation's one [`NameCompaction`].
 ///
 /// A term the context compacts a name to is used where it is a name NGSI-LD
-/// can carry; one that is not -- a context may define any string as a term --
+/// can carry; one that is not (a context may define any string as a term)
 /// leaves the name in the expanded form it is stored in, which names the same
 /// thing.
 pub fn compacted_information<'i>(names: &NameCompaction, information: impl IntoIterator<Item = &'i RegistrationInfo>) -> Vec<RegistrationInfo> {
@@ -45,14 +45,13 @@ fn compacted_entity(names: &NameCompaction, entity: &EntityInfo) -> EntityInfo {
     };
     EntityInfo {
         type_,
-        id: entity.id.clone(),                 // clone: the compacted entry owns its copy of the stored identifier
-        id_pattern: entity.id_pattern.clone(), // clone: the compacted entry owns its copy of the stored pattern
+        id: entity.id.clone(),
+        id_pattern: entity.id_pattern.clone(),
     }
 }
 
 /// One entity type, compacted.
 fn compacted_type(names: &NameCompaction, name: &EntityTypeName) -> EntityTypeName {
-    // clone: a term that is no entity type name leaves the stored name in place
     EntityTypeName::from_str(&names.compact_type_iri(name.as_str())).unwrap_or_else(|_not_a_name| name.clone())
 }
 
@@ -61,7 +60,6 @@ fn compacted_type(names: &NameCompaction, name: &EntityTypeName) -> EntityTypeNa
 fn compacted_attributes(names: &NameCompaction, attributes: &[AttributeName]) -> Vec<AttributeName> {
     attributes
         .iter()
-        // clone: a term that is no attribute name leaves the stored name in place
         .map(|name| AttributeName::from_str(&names.compact_attr_iri(name.as_str())).unwrap_or_else(|_not_a_name| name.clone()))
         .collect()
 }

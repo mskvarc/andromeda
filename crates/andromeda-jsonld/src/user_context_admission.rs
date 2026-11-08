@@ -19,8 +19,8 @@
 //! under a request's context takes the admitted one. An operation that never
 //! resolves its context says so with [`SubmittedContext::unused`].
 //!
-//! Clause 5.5.7's second prohibition -- no part of the user `@context` below
-//! the top level of the document -- is a property of the same user
+//! Clause 5.5.7's second prohibition (no part of the user `@context` below
+//! the top level of the document) is a property of the same user
 //! `@context`. The request body extractors find it on the request text and
 //! carry it in the [`SubmittedContext`], so the admission refuses it on every
 //! operation, after the context loaded and was found free of scoped contexts.
@@ -178,8 +178,8 @@ impl AdmittedContext {
 ///
 /// Returns, in this order: [`JsonLdError::ContextGraph`] when the contexts'
 /// references form a cycle or nest too deep, the typed context-loading variant
-/// when one of them does not resolve -- which clause 5.5.6 answers with
-/// `LdContextNotAvailable` -- [`JsonLdError::ScopedUserContext`] naming the
+/// when one of them does not resolve (clause 5.5.6 answers that with
+/// `LdContextNotAvailable`), [`JsonLdError::ScopedUserContext`] naming the
 /// first term found carrying a scoped `@context`, and
 /// [`JsonLdError::EmbeddedUserContext`] locating the first `@context` the body
 /// embedded below a document's top level, and the typed JSON-LD processing
@@ -312,7 +312,7 @@ mod tests {
         let mut paths = Vec::with_capacity(documents.len());
         for (index, (url, document)) in documents.iter().enumerate() {
             let path = written_context(index, document);
-            preloads.insert(Url::parse(url).expect("the fixture names a valid URL"), path.clone()); // clone: the removal below needs the path the preload map takes
+            preloads.insert(Url::parse(url).expect("the fixture names a valid URL"), path.clone());
             paths.push(path);
         }
         let engine = JsonLdEngine::builder()
@@ -328,7 +328,7 @@ mod tests {
 
     /// Admit `context` as a request would submit it.
     async fn admitted(engine: &JsonLdEngine, context: &ContextSpec) -> Result<AdmittedContext, JsonLdError> {
-        admit_user_context(engine, SubmittedContext::from(context.clone())).await // clone: the test keeps the spec it compares against
+        admit_user_context(engine, SubmittedContext::from(context.clone())).await
     }
 
     fn link_spec(url: &str) -> ContextSpec {
@@ -599,7 +599,6 @@ mod tests {
 
     /// The admission of `context` submitted with the embedded finding.
     async fn admitted_with_finding(engine: &JsonLdEngine, context: &ContextSpec) -> Result<AdmittedContext, JsonLdError> {
-        // clone: the test keeps the spec it built
         admit_user_context(engine, SubmittedContext::new(context.clone(), Some(embedded_under_speed()))).await
     }
 

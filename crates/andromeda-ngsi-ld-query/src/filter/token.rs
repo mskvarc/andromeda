@@ -1,8 +1,8 @@
 //! The literal operator and conjunction tokens of the clause 4.9 `q` grammar.
 //!
 //! One owner for how each comparison and conjunction operator is spelled, so
-//! the tokeniser, the serialiser and any restricted subset of the language —
-//! such as the snapshot purge filter (clause 5.16.7) — cannot drift on the
+//! the tokeniser, the serialiser and any restricted subset of the language,
+//! such as the snapshot purge filter (clause 5.16.7), cannot drift on the
 //! token strings. The [`predicate`](crate::filter::predicate) operator types
 //! render their clause 4.9 tokens from here.
 

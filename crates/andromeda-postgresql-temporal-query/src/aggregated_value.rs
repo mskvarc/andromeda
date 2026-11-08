@@ -145,7 +145,7 @@ pub fn ordered_instant_expr() -> SimpleExpr {
 /// inside the period", which is a time of day rather than a count, so it is
 /// averaged as an interval and rendered back into the clause 4.6.3 `Time`
 /// lexical form. The numeric `avg` beside it stays SQL NULL for this shape, and
-/// the decoder picks the column the group's recorded shape names -- the same
+/// the decoder picks the column the group's recorded shape names, the same
 /// arrangement `min` and `max` already use across their three columns.
 #[must_use]
 pub fn average_time_expr() -> SimpleExpr {

@@ -68,8 +68,6 @@ fn leaf_expression(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, lea
     let of = HistoryOf::Entity(SeaExpr::col((E, Entities::Id)));
     match leaf {
         FilterLeaf::Term(pred) => {
-            // clone: the compilation reads an expression tree, and the Query
-            // Term is borrowed from the query's own
             let term = Expr::Pred(pred.clone());
             let window = windowed_instances(branch, compiled, &of, WindowReach::Inside);
             Ok(q_filter::compile(&term, &InstanceScan::History(&window), names, compiled.entities.language_matching).into())

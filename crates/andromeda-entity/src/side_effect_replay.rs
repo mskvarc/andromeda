@@ -21,7 +21,7 @@ pub(crate) fn replay_writes(owed: Vec<SubscriptionMatch>) -> Vec<AtomicWrite> {
             write.subscription_matches.push(matched);
         } else {
             let identifier = Arc::new(matched.entity_id.clone()); // clone: the write owns the identifier the match also keeps.
-            positions.insert(Arc::clone(&identifier), writes.len()); // clone: Arc ref-count bump
+            positions.insert(Arc::clone(&identifier), writes.len());
             writes.push(
                 AtomicWrite::builder()
                     .entity_id(identifier)

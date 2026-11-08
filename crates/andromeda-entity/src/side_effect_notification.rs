@@ -151,7 +151,7 @@ mod tests {
         let mut updated = change(EntityLifecycle::Modified, AttributeChangeKind::Updated, &[BUILDING_TYPE_IRI]);
         updated.current_payload = Some(Arc::new(building("retail")));
         updated.previous_attributes = Some(Arc::new(building("office")));
-        updated.sys_attrs_snapshot = Some(sys_attrs.clone()); // clone: compared with what the match stores
+        updated.sys_attrs_snapshot = Some(sys_attrs.clone());
 
         let matches = owed_subscription_matches(&recording().await, &ContextTarget::Live, &[updated]);
 
@@ -185,7 +185,7 @@ mod tests {
             modified_at: instant,
             expires_at: None,
         };
-        deleted.sys_attrs_snapshot = Some(sys_attrs.clone()); // clone: compared with what the match stores
+        deleted.sys_attrs_snapshot = Some(sys_attrs.clone());
 
         let matches = owed_subscription_matches(&recording().await, &ContextTarget::Live, &[deleted]);
 

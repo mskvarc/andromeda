@@ -67,7 +67,7 @@ impl ReadShare {
     pub fn of(pool: &PgPool, reserve: WriteReserve) -> ReadShare {
         let options = pool.options();
         ReadShare {
-            pool: pool.clone(), // clone: `PgPool` shares its inner pool by reference count.
+            pool: pool.clone(),
             permits: Arc::new(Semaphore::new(permit_count(reserve.read_connections(options.get_max_connections())))),
             acquire_timeout: options.get_acquire_timeout(),
         }

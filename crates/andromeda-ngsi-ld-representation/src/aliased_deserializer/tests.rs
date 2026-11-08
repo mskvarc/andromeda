@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 /// The keyword spellings, with `kind` aliasing `type`, `v` aliasing `value`
 /// and `Prop` aliasing the `Property` class.
 fn aliases() -> CoreTermAliases {
-    let mut aliases = CoreTermAliases::keyword_spellings().clone(); // clone: the fixture extends the shared table
+    let mut aliases = CoreTermAliases::keyword_spellings().clone();
     aliases.alias("kind", "type");
     aliases.alias("v", "value");
     aliases.alias("Prop", "Property");

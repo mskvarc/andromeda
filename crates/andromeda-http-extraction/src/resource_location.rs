@@ -97,7 +97,7 @@ where
     type Rejection = Infallible;
 
     fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> {
-        // clone: the extension stays installed for the rest of the request
+        // clone: the configured URL stays in the request's extensions for later extractors
         ready(Ok(ResourceLocator(parts.extensions.get::<ConfiguredApiRoot>().map(|root| root.url().clone()))))
     }
 }

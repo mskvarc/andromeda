@@ -63,7 +63,7 @@ impl ChangeNotifier {
             return DeletionWatchers::None;
         };
         let event = ChangeEvent::builder()
-            .entity_id(entity.id.clone()) // clone: owned Identifier for ChangeEvent
+            .entity_id(entity.id.clone())
             .entity_types(entity.types.to_vec()) // clone: the matched event owns the types it is matched by
             .change(change.clone()) // clone: the matched event owns the change it is matched as
             .occurred_at(Utc::now())
@@ -103,7 +103,7 @@ impl NotificationWriteConfig {
         } = snapshots;
 
         let event = ChangeEvent::builder()
-            .entity_id(entity_id.clone()) // clone: owned Identifier for ChangeEvent
+            .entity_id(entity_id.clone())
             .entity_types(entity_types.to_vec()) // clone: the matched event owns the types it is matched by
             .change(change.clone()) // clone: the matched event owns the change it is matched as
             .occurred_at(Utc::now())
@@ -149,9 +149,7 @@ impl NotificationWriteConfig {
         matching
             .into_iter()
             .map(|sub| {
-                // clone: every entry owns its own copy of the entity id and the
-                // change and the small system-time record; the snapshots are
-                // shared by reference count.
+                // clone: each match outlives the borrowed inputs, so it owns the entity id, the change and the system-time record.
                 SubscriptionMatch::builder()
                     .subscription_key(sub.key)
                     .entity_id(entity_id.clone())

@@ -92,7 +92,7 @@ where
         Predicate::Equality { path, membership, rhs } => targets_of(path).iter().any(|target| eval_equality(target, *membership, rhs)),
         Predicate::Ordering { path, op, rhs } => targets_of(path).iter().any(|target| {
             // Clause 4.9: an ordering comparison against a Relationship shall
-            // not match — a URI has no `<`/`>` order the query can mean.
+            // not match, since a URI has no `<`/`>` order the query can mean.
             if is_relationship(target) {
                 return false;
             }
@@ -102,9 +102,9 @@ where
         // Clause 4.9: a pattern operator applies only to a String target; a
         // non-String value is considered as not matching, so a number or
         // boolean is never stringified into a match. A Relationship's object is
-        // excluded for the same reason the ordering operators exclude it — the
+        // excluded for the same reason the ordering operators exclude it: the
         // standard requires a Relationship operand to non-match every operator
-        // other than equality and inequality — and a URI is string-shaped, so
+        // other than equality and inequality. A URI is string-shaped, so
         // only its origin can rule it out.
         Predicate::MatchPattern { path, pattern } => targets_of(path)
             .iter()
@@ -113,7 +113,7 @@ where
         // element (clause 4.9); an entity that lacks the attribute, or carries
         // only non-String values, does not match. Where the target is "a value
         // from any of the key-value pairs" of a languageMap the clause reads the
-        // negated operator as its complement — no value may match — rather than
+        // negated operator as its complement (no value may match) rather than
         // as one value that happens not to. The languageMap is then the target
         // element, so a target language it does not hold leaves no value in
         // L(R) and matches, as `unequal` does.
@@ -168,12 +168,12 @@ fn any_one_value<'t, 'a>(target: &'t ResolvedTarget<'a>) -> Option<&'t [TargetVa
 /// Evaluate an equality comparison (`==`/`!=`) against a scalar, a range, or a
 /// value list.
 ///
-/// "Outside" is the exact complement of "within" — for a range as for a value
-/// list — so a target incomparable with the bounds is outside the range, not
+/// "Outside" is the exact complement of "within", for a range as for a value
+/// list, so a target incomparable with the bounds is outside the range, not
 /// neither in nor out. The exception is a Range target that is a Relationship
 /// object: clause 4.9 forbids the ordering operators against a Relationship in
 /// either direction, and a range is two ordering comparisons, so neither
-/// membership polarity holds -- "outside" is not a match here either, mirroring the Ordering predicate arm above and the SQL compiler, which routes `<`/`>`/`<=`/`>=` away from `value_uri` for both range halves.
+/// membership polarity holds. "Outside" is not a match here either, mirroring the Ordering predicate arm above and the SQL compiler, which routes `<`/`>`/`<=`/`>=` away from `value_uri` for both range halves.
 fn eval_equality(target: &ResolvedTarget<'_>, membership: SetMembership, rhs: &CompareValue) -> bool {
     match rhs {
         CompareValue::Scalar(scalar) => compare(&target.value, membership.as_cmp_op(), scalar),
@@ -184,7 +184,7 @@ fn eval_equality(target: &ResolvedTarget<'_>, membership: SetMembership, rhs: &C
             let in_range = |value: &TargetValue<'_>| compare(value, CmpOp::GreaterEq, min) && compare(value, CmpOp::LessEq, max);
             // Where clause 4.9 makes any one value of a language map the target
             // value, the range holds when one of them lies in it, and its
-            // complement when none does -- the reading `unequal` gives a
+            // complement when none does, the reading `unequal` gives a
             // language map: "No matching value is found".
             let within = match any_one_value(target) {
                 Some(values) => values.iter().any(in_range),
@@ -998,7 +998,7 @@ mod tests {
     #[test]
     fn values_of_different_types_are_considered_unequal() {
         // Clause 4.9: `!=` holds and `==` fails when the operand's type differs
-        // from the target's — here a boolean attribute against a number.
+        // from the target's, here a boolean attribute against a number.
         assert!(holds(&parse("\"https://example.com/active\"!=5").unwrap(), &vehicle_entity()));
         assert!(!holds(&parse("\"https://example.com/active\"==5").unwrap(), &vehicle_entity()));
     }
@@ -1055,7 +1055,7 @@ mod tests {
 
     /// Clause 4.9: "If the target element is a `VocabProperty`, the target value
     /// shall be expanded according to the @context", and it is listed beside a
-    /// Relationship as a target a URI Query Term matches when included in it —
+    /// Relationship as a target a URI Query Term matches when included in it,
     /// so a `VocabProperty` carrying several terms is matched on any of them,
     /// not only the first.
     #[test]
@@ -1093,7 +1093,7 @@ mod tests {
     fn a_pattern_operator_does_not_match_a_relationship_object() {
         // Clause 4.9 requires a Relationship operand to non-match every operator
         // other than equality and inequality. A URI is string-shaped, so only its
-        // origin rules it out — and `notPatternOp` must not turn the exclusion
+        // origin rules it out, and `notPatternOp` must not turn the exclusion
         // into a match either.
         assert!(!holds(&parse("\"https://example.com/owner\"~=\"urn:.*\"").unwrap(), &rich_entity()));
         assert!(!holds(&parse("\"https://example.com/owner\"!~=\"^nothing\"").unwrap(), &rich_entity()));
@@ -1112,7 +1112,7 @@ mod tests {
 
     #[test]
     fn a_range_comparison_against_a_relationship_does_not_match_in_either_polarity() {
-        // Clause 4.9: a range is two ordering comparisons, and ordering shall not match a Relationship object in either direction -- so neither `==` (within) nor `!=` (outside) holds.
+        // Clause 4.9: a range is two ordering comparisons, and ordering shall not match a Relationship object in either direction, so neither `==` (within) nor `!=` (outside) holds.
         assert!(!holds(&parse("\"https://example.com/owner\"==\"urn:a\"..\"urn:z\"").unwrap(), &rich_entity()));
         assert!(!holds(&parse("\"https://example.com/owner\"!=\"urn:a\"..\"urn:z\"").unwrap(), &rich_entity()));
     }
@@ -1354,7 +1354,7 @@ mod tests {
 
     /// Clause 4.9's range operand over a language holding several strings: any
     /// one string inside the interval matches `==`, and `!=` is its complement,
-    /// "No matching value is found" -- with or without a target language.
+    /// "No matching value is found" (with or without a target language).
     #[test]
     fn a_range_reads_any_one_string_of_a_language_map() {
         assert!(door_holds("\"https://example.com/tags\"[en]==\"c\"..\"d\""));
@@ -1377,8 +1377,8 @@ mod tests {
 
     /// Clause 4.9's `patternOp` and `notPatternOp` are defined over a String
     /// target, and with no target language a `LanguageProperty`'s target value
-    /// is "a value from any of the key-value pairs held within the languageMap"
-    /// — a String — so every language's value is a candidate, not only the one
+    /// is "a value from any of the key-value pairs held within the languageMap",
+    /// a String, so every language's value is a candidate, not only the one
     /// that happens to serialise first. `notPatternOp` is the complement: no
     /// value may match.
     #[test]
@@ -1392,7 +1392,7 @@ mod tests {
 
     /// Clause 4.9 defines a `ListProperty`'s target value as the `valueList`
     /// array itself, and a pattern operator over a target whose "data type is
-    /// different than String … shall be considered as not matching" — so a
+    /// different than String … shall be considered as not matching", so a
     /// pattern never reaches the elements of a list.
     #[test]
     fn a_pattern_operator_does_not_reach_the_elements_of_a_value_list() {
@@ -1404,7 +1404,7 @@ mod tests {
     fn a_language_property_with_no_target_language_matches_any_language_value() {
         // Clause 4.9: "If the target element is a LanguageProperty, and no
         // target language is specified, the target value is defined as a value
-        // from any of the key-value pairs held within the languageMap" — which
+        // from any of the key-value pairs held within the languageMap", which
         // is what both spellings of "no target language" address, the bare path
         // and the `[*]` suppression marker.
         assert!(holds(&parse("\"https://example.com/description\"[*]==\"Tuer\"").unwrap(), &rich_entity()));

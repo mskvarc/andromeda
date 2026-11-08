@@ -49,7 +49,7 @@ fn registration(source: &MockServer, operations: &[&str], extra: &Value) -> Cont
         "modifiedAt": "2024-01-01T00:00:00Z"
     });
     if let (Some(document), Some(extra)) = (document.as_object_mut(), extra.as_object()) {
-        document.extend(extra.clone()); // clone: the registration owns the members it is built with
+        document.extend(extra.clone());
     }
     serde_json::from_value(document).expect("a valid registration")
 }

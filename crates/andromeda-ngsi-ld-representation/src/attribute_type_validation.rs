@@ -7,7 +7,7 @@
 //! attribute types to the eight of [`AttributeType`], clause 4.5.2.3 treats an
 //! object carrying a `type` as a normalized attribute, and clause 4.5.5 writes
 //! the instances of a multi-attribute as an array of instances. So a node that
-//! declares any other token -- `"Propertyy"`, `"Feature"`, `7` -- names a
+//! declares any other token (`"Propertyy"`, `"Feature"`, `7`) names a
 //! geometry without its coordinates, carries the value members of two families,
 //! or mixes instances with values in one array is not an attribute and must not
 //! reach the store as one. A sub-attribute is an attribute (clause 4.5.2.2), so

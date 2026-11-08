@@ -84,7 +84,7 @@ async fn negotiate_accept_language(request: Request, next: Next) -> Response {
         }
         Err(error) => InvalidAcceptLanguage(error).into_problem(addressed_uri(&parts)).into_response(),
     };
-    response.headers_mut().append(VARY, VARY_ON_LANGUAGE.clone()); // clone: a header value is a cheap shared byte buffer
+    response.headers_mut().append(VARY, VARY_ON_LANGUAGE.clone());
     response
 }
 

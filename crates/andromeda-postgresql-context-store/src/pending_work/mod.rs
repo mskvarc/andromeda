@@ -2,7 +2,7 @@
 //!
 //! Implements the tenancy crate's [`PendingWorkProbe`] port, and answers a
 //! resident tenant's background pacer through [`earliest_obligation`]. A tenant
-//! no request is touching still owes background work -- durable-delivery
+//! no request is touching still owes background work: durable-delivery
 //! retries, snapshot status and preparation, pending side effects, temporal
 //! append intents, every `expiresAt` sweep, clause-5.8.6 and clause-5.11.7
 //! periodic notifications, and the clause-5.13.1 invalidation of every
@@ -156,8 +156,8 @@ fn readable(state: TenantSchemaState, database: &TenantDatabaseName) -> Result<(
 }
 
 /// The earliest instant any background obligation of the database behind
-/// `pool` falls due -- a durable-queue item, a preparing Snapshot, an
-/// `expiresAt` of any kind, or a clause-5.8.6 periodic notification -- or
+/// `pool` falls due (a durable-queue item, a preparing Snapshot, an
+/// `expiresAt` of any kind, or a clause-5.8.6 periodic notification), or
 /// `None` when nothing is outstanding.
 ///
 /// One index-backed `SELECT LEAST(...)`, one delivery-queue read per published
@@ -205,7 +205,7 @@ async fn earliest_queue_due(pool: &sqlx::PgPool) -> Result<Option<DateTime<Utc>>
 /// A subscription owes the first grid point after the sweep instant it last
 /// answered at, or its first grid point when it never has. When the tenant has
 /// been dormant across that point it is in the past, so the probe reports the
-/// subscription as due now and the tenant is woken to deliver -- rather than
+/// subscription as due now and the tenant is woken to deliver, rather than
 /// the next grid point after now, which would always be a period in the future
 /// and would never wake an overdue subscription. The sweep records the instant
 /// it answers at, so the next probe sees the following grid point.
@@ -216,9 +216,9 @@ fn earliest_interval_due(anchors: Vec<(DateTime<Utc>, f64, Option<DateTime<Utc>>
         .min()
 }
 
-/// The active periodic subscriptions' grid anchors and intervals -- entity
+/// The active periodic subscriptions' grid anchors and intervals, for entity
 /// subscriptions (clause 5.8.6) and context source subscriptions (clause
-/// 5.11.7) alike, which share the table -- so the caller can compute the
+/// 5.11.7) alike, which share the table, so the caller can compute the
 /// soonest next-due with the shared grid.
 ///
 /// Only an active subscription still in force is owed a periodic notification:

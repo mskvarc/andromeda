@@ -30,8 +30,8 @@ use std::sync::Arc;
 pub(crate) fn in_memory_service(store: &Arc<InMemoryStore>, writes: Arc<dyn ContextCommitter>, notifier: ChangeNotifier) -> EntityService {
     EntityService::new(
         EntityServicePorts {
-            reader: Arc::clone(store) as Arc<dyn EntityReader>, // clone: the service reads the store the test inspects
-            deletion_outline: Arc::clone(store) as Arc<dyn DeletionOutlineReader>, // clone: the service outlines the store the test inspects
+            reader: Arc::clone(store) as Arc<dyn EntityReader>,
+            deletion_outline: Arc::clone(store) as Arc<dyn DeletionOutlineReader>,
             blocking_executor: Arc::new(UnusedBlockingExecutor) as Arc<dyn BlockingExecutor>,
             retry_delay: Arc::new(ImmediateRetryDelay) as Arc<dyn RetryDelay>,
             attribute_history: Arc::new(UnusedAttributeHistory) as Arc<dyn AttributeDatasetHistory>,

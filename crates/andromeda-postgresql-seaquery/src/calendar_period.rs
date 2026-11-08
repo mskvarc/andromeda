@@ -42,7 +42,6 @@ pub fn calendar_period_start(period: SimpleExpr, origin: SimpleExpr, index: Simp
 pub fn calendar_period_estimate(period: SimpleExpr, origin: SimpleExpr, instant: SimpleExpr) -> SimpleExpr {
     Expr::cust_with_exprs(
         "floor(extract(epoch from ((($1) AT TIME ZONE 'UTC') - (($2) AT TIME ZONE 'UTC'))) /((extract(year from $3) * 12 + extract(month from $4)) * 2629746 + extract(day from $5) * 86400 + extract(hour from $6) * 3600 + extract(minute from $7) * 60 + extract(second from $8)))::bigint",
-        // clone: the period's every field is read for its nominal length.
         [
             instant,
             origin,
@@ -61,12 +60,10 @@ pub fn calendar_period_estimate(period: SimpleExpr, origin: SimpleExpr, instant:
 /// one starts at or before it.
 #[must_use]
 pub fn calendar_period_index(period: SimpleExpr, origin: SimpleExpr, instant: SimpleExpr, estimate: SimpleExpr) -> SimpleExpr {
-    // clone: the estimate is both the base and the index of the two probed boundaries.
     let estimated_start = calendar_period_start(period.clone(), origin.clone(), estimate.clone());
     let next_start = calendar_period_start(period, origin, Expr::cust_with_exprs("$1 + 1", [estimate.clone()]));
     Expr::cust_with_exprs(
         "($1) - (($2) > ($3))::integer + (($4) <= ($5))::integer",
-        // clone: the instant is compared with both boundaries.
         [estimate, estimated_start, instant.clone(), next_start, instant],
     )
 }

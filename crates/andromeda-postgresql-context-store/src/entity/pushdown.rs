@@ -2,7 +2,7 @@
 //!
 //! The decision is read off this store's [`StorageProfile`] rather than
 //! assumed. For a PostgreSQL store with PostGIS and `ltree` every axis is at
-//! its full value, so nothing is ever handed back -- but the branch that would
+//! its full value, so nothing is ever handed back, but the branch that would
 //! is the same branch a store without those extensions takes, which is what
 //! makes the residual machinery above the port real rather than notional.
 //!
@@ -42,8 +42,7 @@ pub(super) fn plan<'a>(compiled: &'a CompiledEntityQuery, profile: StorageProfil
         };
     }
 
-    // clone: only when a predicate has to be stripped, which the PostgreSQL
-    // profile never triggers
+    // clone: the borrowed query must be owned before a predicate is stripped from it.
     let mut narrowed = compiled.clone();
     residual.strip_from(&mut narrowed.selection);
     // Clause 5.5.9: a window over rows a later filter will thin leaves the page

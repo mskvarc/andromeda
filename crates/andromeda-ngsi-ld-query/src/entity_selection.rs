@@ -45,7 +45,7 @@ impl EntitySelector {
 
     /// Whether this selector constrains a candidate at all.
     ///
-    /// An unconstrained selector — no id, no pattern, no type — admits every
+    /// An unconstrained selector (no id, no pattern, no type) admits every
     /// entity, so a union that contains one is unconstrained on these axes.
     #[must_use]
     pub const fn constrains(&self) -> bool {
@@ -59,7 +59,7 @@ impl EntitySelector {
 /// A list of identifiers cannot express this on its own: an empty
 /// [`EntitySelector::ids`] reads as "no identifier constraint", so it can only
 /// stand for a request that named no identifier, never for one that named an
-/// empty set of them. Clause 5.5.14 makes the second case routine — "An
+/// empty set of them. Clause 5.5.14 makes the second case routine: "An
 /// `EntityMap` fixes the Entities to be considered for subsequent requests based
 /// on it", and a request scoped to a reused `EntityMap` is left with an empty
 /// set whenever the map lists none of the identifiers it asks for, or has been
@@ -99,8 +99,8 @@ impl ConsideredEntities {
 ///
 /// The identifier, pattern and type axes are grouped into [`EntitySelector`]s
 /// and combined as a union (clause 5.2.33): an entity matches when it satisfies
-/// any selector. The remaining members — `attrs`, `q`, `geo`, `scopeQ`,
-/// `considered` and the projected members — are global, and hold for every
+/// any selector. The remaining members (`attrs`, `q`, `geo`, `scopeQ`,
+/// `considered` and the projected members) are global, and hold for every
 /// selector at once;
 /// `default_location` only narrows what `geo` already requires. One type
 /// serves the entity and temporal paths; a selection with no member set matches
@@ -112,7 +112,7 @@ impl ConsideredEntities {
 pub struct EntitySelection {
     /// The entity selectors, combined as a union (clause 5.2.33).
     ///
-    /// Empty — or a single unconstrained selector — places no id/pattern/type
+    /// Empty, or a single unconstrained selector, places no id/pattern/type
     /// constraint. A GET query holds one selector; a POST `entities[]` body
     /// holds one per array entry.
     pub selectors: Vec<EntitySelector>,
@@ -239,9 +239,9 @@ mod tests {
         pretty_assertions::assert_eq!(ConsideredEntities::of_request(None), ConsideredEntities::Selected);
     }
 
-    /// Clause 5.5.14: a request narrowed to an empty identifier set — a query
+    /// Clause 5.5.14: a request narrowed to an empty identifier set (a query
     /// scoped to a reused `EntityMap` that lists none of the identifiers it
-    /// asks for — considers no entity at all.
+    /// asks for) considers no entity at all.
     #[test]
     fn a_request_naming_an_empty_identifier_set_considers_no_entity() {
         pretty_assertions::assert_eq!(ConsideredEntities::of_request(Some(&[])), ConsideredEntities::NoEntity);
@@ -263,7 +263,7 @@ mod tests {
 
     /// Clause 5.5.14: the identifiers a request specifies are the one parameter
     /// a follow-up under an `EntityMap` may change, so dropping them leaves the
-    /// filters the clause 4.3.6.7 recheck applies — including the narrowing to
+    /// filters the clause 4.3.6.7 recheck applies, including the narrowing to
     /// no entity, which is itself an identifier constraint.
     #[test]
     fn dropping_the_identifier_narrowing_leaves_the_other_filters_alone() {
@@ -296,7 +296,7 @@ mod tests {
                     .id_pattern(Some(Pattern::parse("^urn:").expect("valid pattern")))
                     .build(),
             ])
-            .attrs(vec![speed.clone()]) // clone: the expectation keeps the IRI the selection takes
+            .attrs(vec![speed.clone()])
             .q_expr(Some(parse("speed>10").expect("q parses")))
             .geo(Some(GeoQuery {
                 georel: GeoRel::Within,
@@ -332,7 +332,7 @@ mod tests {
                     .id_pattern(Some(Pattern::parse("^urn:").expect("valid pattern")))
                     .build(),
             ])
-            .attrs(vec![speed.clone()]) // clone: the projection keeps the IRI the attribute list takes
+            .attrs(vec![speed.clone()])
             .q_expr(Some(parse("speed>10").expect("q parses")))
             .considered(ConsideredEntities::NoEntity)
             .projected_members(ProjectedMembers::AnyOf {

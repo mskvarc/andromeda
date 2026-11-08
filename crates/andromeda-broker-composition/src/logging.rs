@@ -95,7 +95,7 @@ fn build_file_layer(config: &LogFileConfig) -> Result<(Box<dyn Layer<Registry> +
     // Created ahead of `FileRotate::new`, which would otherwise panic internally
     // if the directory could not be made; here the failure is a typed error.
     fs::create_dir_all(&directory).map_err(|source| TracingInitError::LogDirectory {
-        directory: directory.clone(), // clone: the error keeps the path the writer also needs
+        directory: directory.clone(), // clone: the file writer still needs the directory after this mapping.
         source,
     })?;
     let frequency = match config.rotation {

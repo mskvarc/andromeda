@@ -407,7 +407,7 @@ mod tests {
     fn stored_with(members: &Value) -> Subscription {
         let mut wire = serde_json::to_value(stored()).expect("the fixture writes");
         if let (Some(target), Some(extra)) = (wire.as_object_mut(), members.as_object()) {
-            target.extend(extra.iter().map(|(key, value)| (key.clone(), value.clone()))); // clone: the fixture owns its members
+            target.extend(extra.iter().map(|(key, value)| (key.clone(), value.clone())));
         }
         serde_json::from_value(wire).expect("the fixture is a valid subscription")
     }

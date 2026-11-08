@@ -47,7 +47,6 @@ impl RegistrationService {
         if fragment.is_empty() {
             return Ok(());
         }
-        // clone: the change event carries the registration as it stood, and the merge consumes it
         let pre_update_snapshot = Box::new(existing.clone());
         let resolved = apply_fragment(existing, &fragment);
         // Clause 5.9.3.4 evaluates the rules against the registration as it
@@ -69,7 +68,7 @@ impl RegistrationService {
         let written = self.repo.update(id, &resolved).await?.require_applied(id)?;
 
         self.emit_csr_change(CsrChangeEvent {
-            csr_id: id.clone(), // clone: the event owns the identifier borrowed from the request path.
+            csr_id: id.clone(),
             change: CsrChange::Updated {
                 before: pre_update_snapshot,
                 written: Box::new(written.registration),
@@ -129,11 +128,7 @@ mod tests {
 
     /// A service over `store` publishing its change events to `sink`.
     fn service_publishing_to(store: &Arc<FixedStore>, sink: Option<Arc<dyn RegistrationChangeSink>>) -> RegistrationService {
-        service_over(
-            Arc::clone(store) as Arc<dyn RegistrationStore>, // clone: the test keeps its own handle to read what was written
-            offline_engine(),
-            sink,
-        )
+        service_over(Arc::clone(store) as Arc<dyn RegistrationStore>, offline_engine(), sink)
     }
 
     /// `context` as the request handler admits it.

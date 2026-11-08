@@ -61,7 +61,6 @@ mod tests {
     #[test]
     fn two_positions_make_a_line() {
         let positions = vec![flat(0.0, 0.0), flat(1.0, 1.0)];
-        // clone: the line consumes the positions it is compared against
         let line = LineStringCoordinates::try_new(positions.clone()).expect("two positions trace a line");
         pretty_assertions::assert_eq!(line.positions(), positions.as_slice());
     }

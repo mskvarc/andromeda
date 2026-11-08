@@ -81,7 +81,7 @@ where
         let (prepared, sources) = Box::pin(recording_sources(prepare())).await;
         let processed = Arc::new(prepared?);
         let held = HeldContext {
-            processed: Arc::clone(&processed), // clone: Arc ref-count bump, the cache and the caller share it
+            processed: Arc::clone(&processed),
             sources,
         };
         self.entries.insert(key, Arc::new(held)).await;

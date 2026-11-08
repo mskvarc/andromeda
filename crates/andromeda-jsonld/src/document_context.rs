@@ -52,7 +52,7 @@ impl ResolvedContext {
     /// value.
     #[must_use]
     pub fn key(&self) -> Arc<str> {
-        Arc::clone(&self.text) // clone: Arc ref-count bump
+        Arc::clone(&self.text)
     }
 
     /// The absolute references the value names directly or through a

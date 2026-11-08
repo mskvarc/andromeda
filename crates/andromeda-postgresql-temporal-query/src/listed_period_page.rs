@@ -101,7 +101,6 @@ pub(crate) fn each_listed_period(mut aggregate: SelectStatement, keys: Vec<Simpl
 /// the last listed start at or before its instant is its period's.
 pub(crate) fn placed_among_listed_periods(mut aggregate: SelectStatement, mut keys: Vec<SimpleExpr>, axis: AttributeHistory) -> SelectStatement {
     let position = width_bucket(Expr::col((Ah, axis)), listed_starts());
-    // clone: the position is projected and grouped by.
     aggregate
         .expr_as(position.clone(), PeriodPosition)
         .and_where(Expr::col((Ah, axis)).is_not_null());
@@ -124,7 +123,6 @@ pub(crate) fn placed_among_listed_periods(mut aggregate: SelectStatement, mut ke
 fn ordered_by(aggregate: &mut SelectStatement, keys: &[SimpleExpr]) -> Vec<Alias> {
     let order: Vec<Alias> = (0..keys.len()).map(group_order).collect();
     for (key, alias) in keys.iter().zip(&order) {
-        // clone: the key is projected here and grouped by in the aggregate, and the alias names the column outside it.
         aggregate.expr_as(key.clone(), alias.clone());
     }
     order

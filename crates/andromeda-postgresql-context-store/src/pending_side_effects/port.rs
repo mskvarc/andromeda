@@ -153,8 +153,8 @@ fn persistence(error: &sqlx::Error) -> EntityError {
 /// expired lease.
 ///
 /// Reclaiming a row that still carries a lease counts an attempt. Such a row's
-/// previous attempt ended without releasing it -- the worker crashed, or its
-/// lease lapsed before its replay could lock the job -- so nothing else
+/// previous attempt ended without releasing it: the worker crashed, or its
+/// lease lapsed before its replay could lock the job. Nothing else
 /// recorded it, and without this count the backoff and the stuck report of the
 /// job's next failure would leave those attempts out. A row released by a
 /// retry holds no lease, and its failed attempt was already counted then.

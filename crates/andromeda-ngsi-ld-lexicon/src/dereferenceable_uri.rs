@@ -7,7 +7,7 @@
 //! forwarded request from, so a value it cannot parse is not dereferenceable.
 //!
 //! What a `Url` is not is a faithful record of what the writer sent. Parsing
-//! normalizes — `http://host:1026` gains the empty path it implies and comes
+//! normalizes: `http://host:1026` gains the empty path it implies and comes
 //! back as `http://host:1026/`, a scheme and host are lower-cased, a default
 //! port is dropped. Clause 5.2.2 makes the members a Context Producer supplies
 //! ones the broker stores and serves back, and none of the three tables that

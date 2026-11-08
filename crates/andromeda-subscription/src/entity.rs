@@ -39,7 +39,7 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
     /// Table 5.2.12-1: "If not present, the default is the combination
     /// attributeCreated and attributeUpdated". What the Context Subscriber wrote
     /// is what the broker stores, so the default is supplied when the
-    /// Subscription is served rather than when it is created -- and it is
+    /// Subscription is served rather than when it is created, and it is
     /// supplied for the Subscription of clause 5.2.12, not for the Context
     /// Source Registration Subscription of clause 5.11, whose notifications
     /// carry a `triggerReason` (clause 5.3.2) that no notification trigger
@@ -133,7 +133,7 @@ mod tests {
             "modifiedAt": "2024-01-01T00:00:00Z"
         });
         if let (Some(target), Some(extra)) = (wire.as_object_mut(), members.as_object()) {
-            target.extend(extra.iter().map(|(key, value)| (key.clone(), value.clone()))); // clone: the fixture owns its members
+            target.extend(extra.iter().map(|(key, value)| (key.clone(), value.clone())));
         }
         serde_json::from_value(wire).expect("a valid subscription")
     }

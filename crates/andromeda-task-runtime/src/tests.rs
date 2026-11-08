@@ -253,7 +253,7 @@ async fn shutdown_forces_a_task_that_ignores_its_deadline() -> Result<(), TestEr
     });
     supervisor.register_resident(task)?;
     settle().await;
-    let shutdown_supervisor = supervisor.clone(); // clone: the test observes health while shutdown owns another supervisor handle.
+    let shutdown_supervisor = supervisor.clone();
     let shutdown = tokio::spawn(async move { shutdown_supervisor.shutdown().await });
     settle().await;
     advance(Duration::from_secs(10)).await;

@@ -82,9 +82,9 @@ mod tests {
     #[test]
     fn a_database_command_names_the_database_as_a_bare_word() {
         let database = PoolerDatabase::new("andromeda_tenant_a").expect("an accepted name");
-        assert_eq!(PoolerCommand::Kill(database.clone()).rendered(), "KILL andromeda_tenant_a"); // clone: every command below names it
-        assert_eq!(PoolerCommand::Pause(database.clone()).rendered(), "PAUSE andromeda_tenant_a"); // clone: every command below names it
-        assert_eq!(PoolerCommand::Reconnect(database.clone()).rendered(), "RECONNECT andromeda_tenant_a"); // clone: the last command names it
+        assert_eq!(PoolerCommand::Kill(database.clone()).rendered(), "KILL andromeda_tenant_a");
+        assert_eq!(PoolerCommand::Pause(database.clone()).rendered(), "PAUSE andromeda_tenant_a");
+        assert_eq!(PoolerCommand::Reconnect(database.clone()).rendered(), "RECONNECT andromeda_tenant_a");
         assert_eq!(PoolerCommand::Resume(database).rendered(), "RESUME andromeda_tenant_a");
     }
 

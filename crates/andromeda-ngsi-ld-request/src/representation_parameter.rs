@@ -105,8 +105,8 @@ impl<T> WrittenValue<T> {
     ///
     /// Every parameter set is validated before anything acts on it, so an
     /// unsupported value never reaches a caller of this. It exists for the
-    /// readings that have no request left to fail -- building a forwarded query
-    /// or a compilation cache key -- where "the request named nothing the
+    /// readings that have no request left to fail (building a forwarded query
+    /// or a compilation cache key), where "the request named nothing the
     /// operation can act on" is the only answer.
     #[must_use]
     pub const fn if_supported(&self) -> Option<&T> {
@@ -160,8 +160,8 @@ pub trait SelectedRepresentation {
 /// # Errors
 ///
 /// Returns the clause 6.3.20 rejection when either parameter carried a value
-/// the operation does not support -- both are read, so a supported `format`
-/// does not excuse an `options` value the operation cannot act on.
+/// the operation does not support (both are read, so a supported `format`
+/// does not excuse an `options` value the operation cannot act on).
 pub fn resolve_representation<F, O>(format: Option<&WrittenValue<F>>, options: Option<&WrittenValue<O>>) -> Result<F, ParameterError>
 where
     F: Copy + Default,

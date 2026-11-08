@@ -37,7 +37,7 @@ use uuid::Uuid;
 /// Expands to a struct that serialises as its URN string and rejects, at
 /// deserialisation, any value that is not a URN, does not use the `ngsi-ld`
 /// namespace, does not carry the given kind as its first NSS segment, or is
-/// longer than [`IDENTIFIER_BYTE_LIMIT`] -- the last so that every such
+/// longer than [`IDENTIFIER_BYTE_LIMIT`]. The length bound exists so that every such
 /// identifier converts into an [`Identifier`] without a second, fallible check.
 ///
 /// [`IDENTIFIER_BYTE_LIMIT`]: crate::identifier_length::IDENTIFIER_BYTE_LIMIT

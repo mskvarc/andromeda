@@ -73,8 +73,8 @@ impl BrokerProcess {
         let config = SuiteConfig::get().map_err(ConfigError::clone)?;
         let name = <&'static str>::from(role).to_lowercase().replace('_', "-");
         Ok(BrokerProcess {
-            signaller: config.signaller()?.clone(), // clone: the process owns the address it signals through
-            broker: config.broker(role)?.clone(),   // clone: the process owns the address it waits on
+            signaller: config.signaller()?.clone(),
+            broker: config.broker(role)?.clone(),
             name,
             http: reqwest::Client::new(),
         })

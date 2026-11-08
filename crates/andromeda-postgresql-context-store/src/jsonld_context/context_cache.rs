@@ -1,14 +1,14 @@
 //! Direct PostgreSQL implementation of the JSON-LD resolver's technical cache port.
 //!
 //! The rows this writes are the `"Cached"` entries of clause 5.13.1, and that
-//! clause requires them to be invalidated periodically — clause 6.3.16 saying
+//! clause requires them to be invalidated periodically. Clause 6.3.16 says
 //! how, from the `Expires` field and the `max-age`/`s-maxage` directives of the
 //! response that carried the document.
 //!
 //! Invalidation has two halves, and only one of them is here: a lapsed row
 //! stops being a cache hit the instant it lapses, because the read passes over
 //! it. Reclaiming lapsed rows is a separate periodic pass,
-//! which runs on a cadence of its own rather than riding on a write — a broker
+//! which runs on a cadence of its own rather than riding on a write. A broker
 //! that has stopped downloading new `@contexts` still has to invalidate the
 //! ones it holds.
 
@@ -77,7 +77,7 @@ impl ContextCache for JsonLdContextRepository {
 /// `None` means nothing is left, which the port reports as a miss rather than a
 /// hit: clause 5.13.1 forbids serving a lapsed `"Cached"` entry. The read
 /// already excludes lapsed rows, so this only settles the sliver of time
-/// between the predicate and the projection — and settles it the safe way.
+/// between the predicate and the projection, and settles it the safe way.
 ///
 /// A row with no expiry at all is not a cached download but a Context the
 /// broker hosts under its own URL, which no origin server can make stale.
@@ -122,7 +122,7 @@ mod tests {
 
     /// Clause 6.3.16: what the read hands back is the remainder of the span the
     /// origin server granted, so a row written with `max-age=30` that has been
-    /// held for twenty seconds has ten seconds left — not thirty, and not the
+    /// held for twenty seconds has ten seconds left, not thirty, and not the
     /// configured heuristic.
     #[test]
     fn a_row_reports_the_remainder_of_the_span_it_was_granted() {

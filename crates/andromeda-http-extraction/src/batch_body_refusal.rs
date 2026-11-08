@@ -89,8 +89,8 @@ impl RequestRefusal for BatchBodyRefusal {
     ///
     /// Clause 5.5.4 raises `InvalidRequest` only for a payload body that "is
     /// not a valid JSON document"; data that is not syntactically correct
-    /// according to the API data type definitions -- the array shape, a null
-    /// item, an `id` that is absent or not a URI -- is `BadRequestData`; and a
+    /// according to the API data type definitions (the array shape, a null
+    /// item, an `id` that is absent or not a URI) is `BadRequestData`; and a
     /// body larger than the broker accepts is the clause 6.3.2 "Request Entity
     /// too large".
     fn error_type(&self) -> NgsiLdErrorType {

@@ -63,7 +63,7 @@ mod tests {
     fn a_commit_with_notification_events_wakes_the_delivery_drain() {
         let (notifications, _notification_receiver) = wake_channel();
         let (side_effects, _side_effect_receiver) = wake_channel();
-        let publisher = RuntimeCommitConsequencePublisher::new(Some(notifications.clone()), side_effects.clone()); // clone: the publisher and the test both hold the wake handle.
+        let publisher = RuntimeCommitConsequencePublisher::new(Some(notifications.clone()), side_effects.clone());
 
         publisher.notifications_available();
 
@@ -77,7 +77,7 @@ mod tests {
     fn a_commit_with_side_effects_wakes_the_side_effect_drain() {
         let (notifications, _notification_receiver) = wake_channel();
         let (side_effects, _side_effect_receiver) = wake_channel();
-        let publisher = RuntimeCommitConsequencePublisher::new(Some(notifications.clone()), side_effects.clone()); // clone: the publisher and the test both hold the wake handle.
+        let publisher = RuntimeCommitConsequencePublisher::new(Some(notifications.clone()), side_effects.clone());
 
         publisher.side_effects_available();
 
@@ -92,12 +92,12 @@ mod tests {
     #[test]
     fn a_publisher_without_a_notification_handle_wakes_nothing() {
         let (side_effects, _side_effect_receiver) = wake_channel();
-        let publisher = RuntimeCommitConsequencePublisher::new(None, side_effects.clone()); // clone: the publisher and the test both hold the wake handle.
+        let publisher = RuntimeCommitConsequencePublisher::new(None, side_effects.clone());
 
         // Under live delivery a commit queues no notification deliveries, so
-        // the publisher holds no handle to the notification-delivery drain --
-        // which still runs, on its fallback timer, for deliveries the tenant
-        // database already holds. Announcing notifications is then a silent
+        // the publisher holds no handle to the notification-delivery drain, which
+        // still runs on its fallback timer for deliveries the tenant database
+        // already holds. Announcing notifications is then a silent
         // no-op, and it wakes no other drain in its place.
         publisher.notifications_available();
 

@@ -64,7 +64,7 @@ pub fn instance_id_where<M: for<'a> Matcher<&'a Attribute<Output>> + Debug>(
         .and_then(|found| found.iter().find(|instance| matcher.matches(instance).is_match()))
         .and_then(|instance| instance.meta().output.instance_id.clone())
         .ok_or_else(|| InstanceNotFound {
-            // clone: the error names the attribute the caller keeps
+            // clone: the error must own the attribute name it reports
             name: name.clone(),
             which: InstanceChoice::Meeting(matcher),
         })
@@ -80,7 +80,7 @@ pub fn instance_id_at(entity: &TemporalEntity<Output>, name: &AttributeName, ind
         .and_then(|found| found.get(index))
         .and_then(|instance| instance.meta().output.instance_id.clone())
         .ok_or_else(|| InstanceNotFound {
-            // clone: the error names the attribute the caller keeps
+            // clone: the error must own the attribute name it reports
             name: name.clone(),
             which: InstanceChoice::At(index),
         })

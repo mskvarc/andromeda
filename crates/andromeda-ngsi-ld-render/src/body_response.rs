@@ -26,7 +26,7 @@ pub enum BodyPayload<'b, T> {
     Single(&'b T),
     /// A collection of resources, each carrying its own `@context`.
     Collection(&'b [T]),
-    /// A body that is no JSON-LD object -- an array of identifiers -- and so
+    /// A body that is no JSON-LD object (an array of identifiers, for one) and so
     /// carries no `@context` member whatever the response's carrier is.
     ContextFree(&'b T),
 }
@@ -84,7 +84,7 @@ impl<T: Serialize> ReadyBodyResponse<'_, '_, T> {
     pub fn render_into<W: Write>(self, writer: W) -> Result<ResponseHead, RenderError> {
         let (context, context_link) = match &self.renderer.context {
             ResponseContext::Body(context) => (Some(context), None),
-            ResponseContext::Link(target) => (None, Some(target.clone())), // clone: the head owns the target the renderer keeps
+            ResponseContext::Link(target) => (None, Some(target.clone())),
             ResponseContext::Absent => (None, None),
         };
         let written = match self.payload {

@@ -418,7 +418,7 @@ mod tests {
             )),
         )
         .expect("a GeoProperty");
-        let mut value = point.clone(); // clone: the held value is compared with the original after the refused write
+        let mut value = point.clone();
         assert!(
             write_family_value(
                 &name("https://example.org/location"),

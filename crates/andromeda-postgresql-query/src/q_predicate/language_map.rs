@@ -110,7 +110,6 @@ impl LanguageMap {
     /// The entries under `selection`, narrowed by `test` when there is one.
     fn entries(&self, selection: LanguageSelection<'_>, test: Option<SimpleExpr>) -> SelectStatement {
         let mut scan = Query::select();
-        // clone: the map is read by every probe a term builds over it
         scan.expr(int_literal(1)).from_function(jsonb_array_elements(self.0.clone()), Alias::new(ENTRY));
         if let LanguageSelection::TargetLanguage(language, matching) = selection {
             scan.and_where(selects_entry(language, matching));

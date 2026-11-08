@@ -8,7 +8,7 @@ use thiserror::Error;
 /// grammar every attribute name, entity type name and reference shares, so this
 /// is Andromeda's own bound. It exists because every such value is a key in a
 /// B-tree index, and PostgreSQL refuses a B-tree entry larger than 2704 bytes
-/// with SQLSTATE 54000 ("index row size exceeds btree maximum") -- a failure
+/// with SQLSTATE 54000 ("index row size exceeds btree maximum"), a failure
 /// that would otherwise surface as an internal error on a request whose only
 /// fault is its length. 1024 octets is chosen so that two identifiers fit one
 /// key together, which the entity-map entries, the forwarded subscriptions and

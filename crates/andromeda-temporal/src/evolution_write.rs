@@ -46,8 +46,8 @@ impl TemporalService {
     /// `entity_id`, and to current state the ones that stand there.
     ///
     /// The fold is computed from current state read outside the writing
-    /// transaction, so the write states the version it assumed -- the absence of
-    /// the Entity, or its `modifiedAt` -- and is recomputed against a fresh read
+    /// transaction, so the write states the version it assumed (the absence of
+    /// the Entity, or its `modifiedAt`) and is recomputed against a fresh read
     /// when a concurrent writer got in first. An attempt the store refuses for
     /// being stamped before an instant the Entity holds is stamped again after
     /// it (clause 4.8).
@@ -153,9 +153,7 @@ fn evolution_write(
 ) -> Result<EvolutionWrite, TemporalError> {
     let previous = current.map(|snapshot| &snapshot.state);
     let fold = fold_into_current_state(previous.map(|state| &**state), evolution.document(), now.get())?;
-    let builder = AtomicWrite::builder()
-        .entity_id(Arc::new(entity_id.clone())) // clone: the write owns a shared validated identifier.
-        .history(evolution.history());
+    let builder = AtomicWrite::builder().entity_id(Arc::new(entity_id.clone())).history(evolution.history());
     match (current, fold) {
         (Some(snapshot), None) => Ok(EvolutionWrite {
             write: builder
@@ -170,7 +168,6 @@ fn evolution_write(
             state.settle(previous.map(|state| &**state), now);
             admit_stored_entity(limit, previous.map(|state| &**state), &state)?;
             let state = Arc::new(state);
-            // clone: Arc ref-count bump; the state is also the notification's
             let record = match previous {
                 Some(previous) => EntityRecord::replacing(previous, Arc::clone(&state))?,
                 None => EntityRecord::from_state(Arc::clone(&state))?,
@@ -261,7 +258,7 @@ mod tests {
     fn vehicle(members: &Value) -> Value {
         let mut entity = json!({"@id": "urn:ngsi-ld:Vehicle:1", "@type": ["https://example.org/Vehicle"]});
         if let (Some(entity), Some(members)) = (entity.as_object_mut(), members.as_object()) {
-            entity.extend(members.iter().map(|(name, value)| (name.clone(), value.clone()))); // clone: the fixture owns its members
+            entity.extend(members.iter().map(|(name, value)| (name.clone(), value.clone())));
         }
         json!([entity])
     }
@@ -326,7 +323,7 @@ mod tests {
         };
         match values.as_slice() {
             [ExpandedValue::Literal(literal)] => match literal.value() {
-                LiteralValue::Number(number) => Some(number.clone()), // clone: the assertion owns the number
+                LiteralValue::Number(number) => Some(number.clone()),
                 LiteralValue::String(_) | LiteralValue::Boolean(_) => None,
             },
             [ExpandedValue::Json(_) | ExpandedValue::Node(_) | ExpandedValue::List(_)] | [] | [_, _, ..] => None,
@@ -518,7 +515,7 @@ mod tests {
         let current = standing();
         let read = current.version;
         let entities = Arc::new(DeletedWhileFolding::new(current));
-        let service = service_over_entities(Arc::clone(&entities)); // clone: the test reads back what the service committed
+        let service = service_over_entities(Arc::clone(&entities));
         let evolution = vehicle(&json!({SPEED: [instance(0, "2023-01-01T00:00:00Z")]}));
         let document = EntityDocument::from_slice(&serde_json::to_vec(&evolution).expect("JSON")).expect("a written evolution decodes");
 

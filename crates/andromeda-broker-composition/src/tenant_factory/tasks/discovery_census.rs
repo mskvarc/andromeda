@@ -52,9 +52,9 @@ pub(super) fn register_discovery_census_fold(supervisor: &TaskSupervisor, pacer:
     // The write count the last fold ran under, shared by every tick.
     let observed = Arc::new(AtomicU64::new(0));
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
-        let pool = pool.clone(); // clone: PgPool is a shared handle; each pass acquires its own connection.
-        let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
-        let observed = Arc::clone(&observed); // clone: every tick compares against the one last-fold count.
+        let pool = pool.clone();
+        let pacer = Arc::clone(&pacer);
+        let observed = Arc::clone(&observed);
         async move {
             pacer
                 .run_when_written(&observed, async move {

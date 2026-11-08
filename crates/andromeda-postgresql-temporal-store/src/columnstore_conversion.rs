@@ -294,13 +294,10 @@ async fn convert_under_lock(connection: &mut PgConnection, chunk: &HistoryChunk)
 /// conversion took and leaves the enclosing transaction usable.
 async fn convert_within_savepoint(connection: &mut PgConnection, chunk: &HistoryChunk, removal: RowstoreRemoval) -> Result<(), sqlx::Error> {
     let mut savepoint = connection.begin().await?;
-    let converted = ConvertToColumnstore::new(
-        ChunkReference::Name(chunk.relation.clone()), // clone: the command owns the name it quotes
-        removal,
-    )
-    .to_query()
-    .execute(&mut *savepoint)
-    .await;
+    let converted = ConvertToColumnstore::new(ChunkReference::Name(chunk.relation.clone()), removal)
+        .to_query()
+        .execute(&mut *savepoint)
+        .await;
     match converted {
         Ok(_) => savepoint.commit().await,
         Err(error) => {

@@ -289,7 +289,6 @@ mod tests {
         let mut scope = row("unused", 50, StreamExtent::Cut);
         scope.attribute_name = expanded_properties::SCOPE.as_str().parse().expect("the scope IRI");
         let mut rows = stream("speed", 1, 5, StreamExtent::Cut);
-        // clone: the fixture row is both part of the page and asserted on.
         rows.push(scope.clone());
         let cut = PageCut::of_page(&rows, TimeProp::Observed, PageDirection::Forward).expect("speed was cut");
         pretty_assertions::assert_eq!(cut.boundary, minute(5));

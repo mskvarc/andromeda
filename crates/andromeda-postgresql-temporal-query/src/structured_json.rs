@@ -2,8 +2,8 @@
 //! for.
 //!
 //! The structured column keeps a Property's one structured value in its
-//! expanded form, so a JSON literal -- a `value` written as `{"@type": "@json",
-//! "@value": ...}` (clause 4.5.2) -- is stored as that value object, with the
+//! expanded form, so a JSON literal, a `value` written as `{"@type": "@json",
+//! "@value": ...}` (clause 4.5.2), is stored as that value object, with the
 //! JSON the client wrote under `@value`. Tables 4.5.19.1-1 classify and measure
 //! the value the client wrote: a JSON Array has `avg`, `min`, `max` and `sum`
 //! over its size, a JSON Object has none of them. Every expression that

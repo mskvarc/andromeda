@@ -2,9 +2,9 @@
 //! `attribute_names` dictionary before its SQL can be rendered.
 //!
 //! Five parts of a query reach an attribute by dictionary key, and so have to
-//! be collected here: the member existence terms -- `attrs` (clause 5.5.9) and
+//! be collected here: the member existence terms, `attrs` (clause 5.5.9), and
 //! the names a `pick` / `omit` projection keeps an entity alive by (clause
-//! 4.21) --, a `q` filter's predicate targets and the sub-attributes on their
+//! 4.21), a `q` filter's predicate targets and the sub-attributes on their
 //! paths, the `GeoProperty` a geo-query names (clause 4.10), and the attribute
 //! and sub-attributes an ordering reads (clause 4.23). Members of a compound
 //! value are navigated inside a `value_object` and have no dictionary row to

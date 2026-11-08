@@ -16,7 +16,7 @@ pub const API_ROOT_PATH: &str = "/ngsi-ld/v1";
 /// The NGSI-LD families live under `/ngsi-ld/v1`; metrics are served on the
 /// management plane, not the data plane. In merged mode the management probes
 /// (`/livez`, `/readyz`) and the optional scrape (`/metrics`) sit at the root as
-/// siblings of the `/ngsi-ld/v1` nest, behind the full process stack -- the
+/// siblings of the `/ngsi-ld/v1` nest, behind the full process stack: the
 /// documented cost of collapsing both planes onto one port.
 pub struct HttpApi {
     /// Process-stacked service with path normalization outside Axum routing.
@@ -250,7 +250,7 @@ mod tests {
         fn resolve<'a>(&'a self, subscription: &'a Identifier) -> BoxFuture<'a, Result<LeasedForwarding, ReceiverResolutionError>> {
             Box::pin(async move {
                 Err(ReceiverResolutionError::Unknown {
-                    subscription: subscription.clone(), // clone: the error owns the identifier
+                    subscription: subscription.clone(),
                 })
             })
         }
@@ -258,7 +258,7 @@ mod tests {
 
     fn fake_tenant_view(name: &TenantName) -> TenantView {
         let record = TenantRecord::new(
-            name.clone(), // clone: the record owns its name
+            name.clone(),
             TenantStatus::Active,
             TenantDatabaseName::from(format!("db_{}", name.as_str())),
             Utc::now(),
@@ -521,7 +521,7 @@ mod tests {
         let service = test_api()?.into_service();
         for method in [Method::PUT, Method::PATCH] {
             for path in ["/ngsi-ld/v1/entities", "/ngsi-ld/v1/entities/"] {
-                let response = service.clone().oneshot(request(method.clone(), path)?).await?; // clone: the method labels the assertion
+                let response = service.clone().oneshot(request(method.clone(), path)?).await?;
                 pretty_assertions::assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{method} {path}");
                 let allow = response
                     .headers()
@@ -566,7 +566,7 @@ mod tests {
     }
 
     /// Metrics are served on the management plane, so the scrape
-    /// never answers under `/ngsi-ld/v1` -- neither on the plain data plane nor
+    /// never answers under `/ngsi-ld/v1`: neither on the plain data plane nor
     /// in merged mode, where the scrape lives at the root `/metrics` instead.
     #[tokio::test]
     async fn the_data_plane_never_serves_metrics_under_the_api_prefix() -> Result<(), Box<dyn Error>> {
@@ -621,7 +621,7 @@ mod tests {
     /// A request under `/ngsi-ld/v1` with `headers` and, for a body-taking
     /// method, an empty JSON object with its declared length.
     fn ngsi_request(method: &Method, path: &str, headers: &[(&str, &str)]) -> Result<Request<Body>, http::Error> {
-        let mut request = Request::builder().method(method.clone()).uri(path).header("host", "broker.example"); // clone: the builder owns its method
+        let mut request = Request::builder().method(method.clone()).uri(path).header("host", "broker.example");
         for (name, value) in headers {
             request = request.header(*name, *value);
         }
@@ -661,7 +661,7 @@ mod tests {
         let service = test_api()?.into_service();
         let serve = (Method::GET, "/ngsi-ld/v1/jsonldContexts/urn:ngsi-ld:JsonLdContext:1");
         for (method, path) in FAMILY_OPERATIONS.into_iter().chain([serve]) {
-            let response = service.clone().oneshot(ngsi_request(&method, &format!("{path}?bogus=x"), &[])?).await?; // clone: the method labels the assertion
+            let response = service.clone().oneshot(ngsi_request(&method, &format!("{path}?bogus=x"), &[])?).await?;
             pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{method} {path}");
             pretty_assertions::assert_eq!(problem_type(response).await?, "InvalidRequest", "{method} {path}");
         }
@@ -700,7 +700,7 @@ mod tests {
                 probe,
                 Some(ConfiguredApiRoot::new(configured.clone())),
                 PaginationPolicy::CursorDefault,
-            )), // clone: the expectation keeps the URL
+            )),
         );
 
         let response = routed.oneshot(ngsi_request(&Method::GET, "/ngsi-ld/v1/probe", &[])?).await?;

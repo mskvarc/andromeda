@@ -118,33 +118,31 @@ pub(super) fn register_csource_notification_workers(
     // evaluated against. The processor, the one reader of the registration
     // queue, wakes the sweep on each registration change; the wake coalesces.
     let (interval_wake, interval_receiver) = wake_channel();
-    // clone: the periodic sweep subscribes to the same context-source-subscription
-    // stream so a change wakes it, while the event-driven processor owns the sender.
     let subscription_changes = streams.subscriptions.clone();
     register_csource_notification_processor(
         supervisor,
         streams,
-        interval_wake.clone(), // clone: the processor and the subscription wake each pulse the sweep.
+        interval_wake.clone(),
         CsourceNotificationPorts {
-            target: storage.live_target.clone(),                    // clone: the resident processor owns the live branch it evaluates.
-            subscriptions: Arc::clone(&csource_subscriptions),      // clone: the processor and the interval worker share one store.
-            registrations: Arc::clone(&storage.registration_store), // clone: every registration worker shares one store.
+            target: storage.live_target.clone(),
+            subscriptions: Arc::clone(&csource_subscriptions),
+            registrations: Arc::clone(&storage.registration_store),
             notified: Arc::new(NotifiedRegistrationLedger::new(&storage.pool)),
             order: Arc::new(CsourceRevisionLedger::new(&storage.pool)),
-            engine: storage.engine.clone(),   // clone: notification policy owns its engine handle.
-            transport: Arc::clone(transport), // clone: every worker delivers through one dispatcher.
-            tenant: storage.tenant.clone(),   // clone: notification policy owns its tenant partition.
+            engine: storage.engine.clone(),
+            transport: Arc::clone(transport),
+            tenant: storage.tenant.clone(),
         },
     )?;
     register_csource_interval_notification(
         supervisor,
         Arc::new(CsourceIntervalNotificationOperation::new(
-            storage.live_target.clone(), // clone: interval delivery operates on the tenant's live branch.
+            storage.live_target.clone(),
             csource_subscriptions,
-            Arc::clone(&storage.registration_store), // clone: every registration worker shares one store.
-            storage.engine.clone(),                  // clone: interval policy owns its engine handle.
-            Arc::clone(transport),                   // clone: every worker delivers through one dispatcher.
-            storage.tenant.clone(),                  // clone: interval policy owns its tenant partition.
+            Arc::clone(&storage.registration_store),
+            storage.engine.clone(),
+            Arc::clone(transport),
+            storage.tenant.clone(),
         )),
         IntervalWake {
             handle: interval_wake,
@@ -204,19 +202,19 @@ fn register_csource_notification_processor(
         ShutdownPolicy::new(drain_timeout),
     );
     let task = ResidentTask::new(registration, move |execution| {
-        let registration_changes = Arc::clone(&registration_changes); // clone: every resident attempt takes the one queue reader in turn.
-        let interval_wake = interval_wake.clone(); // clone: each resident attempt owns a wake handle it pulses.
-        let handoffs = handoffs.clone(); // clone: every resident attempt waits for the hand-offs the sink starts.
+        let registration_changes = Arc::clone(&registration_changes);
+        let interval_wake = interval_wake.clone();
+        let handoffs = handoffs.clone();
         let mut subscription_receiver = subscription_changes.subscribe();
         let processor = CsourceNotificationProcessor::new(CsourceNotificationProcessorDeps {
-            target: target.clone(), // clone: each resident restart owns the same immutable live branch target.
+            target: target.clone(), // clone: the closure runs once per attempt, so each attempt takes its own target.
             sub_repo: Arc::clone(&subscription_store),
             csr_repo: Arc::clone(&registration_store),
             notified: Arc::clone(&notified),
             order: Arc::clone(&order),
-            engine: engine.clone(), // clone: each resident restart owns the same engine handle.
+            engine: engine.clone(),
             transport: Arc::clone(&transport),
-            tenant: tenant.clone(), // clone: each resident restart owns the same tenant partition.
+            tenant: tenant.clone(), // clone: the closure runs once per attempt, so each attempt takes its own tenant.
         });
         async move {
             let mut registration_receiver = registration_changes.lock_owned().await;
@@ -281,7 +279,7 @@ fn register_csource_interval_notification(
         receiver,
         subscription_changes,
     } = wake;
-    let rerun = handle.clone(); // clone: an evaluation that ends after a pass refused it wakes the sweep.
+    let rerun = handle.clone();
     register_periodic_wake(
         supervisor,
         "csource-notification-interval-subscription-wake",
@@ -297,9 +295,9 @@ fn register_csource_interval_notification(
         receiver,
         pacing,
         move |cutoff| {
-            let operation = Arc::clone(&operation); // clone: each pass hands the shared operation to the evaluations it starts.
-            let evaluations = evaluations.clone(); // clone: each pass offers its evaluations to the tenant's one set of slots.
-            let rerun = rerun.clone(); // clone: each pass hands the sweep's wake to the evaluations it starts.
+            let operation = Arc::clone(&operation);
+            let evaluations = evaluations.clone();
+            let rerun = rerun.clone();
             async move {
                 periodic_pass(
                     &operation,

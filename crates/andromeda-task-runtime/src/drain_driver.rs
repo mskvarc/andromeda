@@ -84,7 +84,7 @@ async fn drain_until_settled(
     loop {
         let pass_cause = cause;
         let result = bounded_driver::execute(supervision, || {
-            let execution = DrainExecution::new(cancellation.clone(), SystemTime::now(), pass_cause); // clone: one bounded pass owns a cooperative task-local cancellation handle.
+            let execution = DrainExecution::new(cancellation.clone(), SystemTime::now(), pass_cause);
             operation(execution)
         })
         .await;

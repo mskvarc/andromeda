@@ -72,7 +72,7 @@ impl TypeExprRaw {
     pub fn named_types(&self) -> Vec<EntityTypeName> {
         match self {
             TypeExprRaw::Wildcard => Vec::new(),
-            TypeExprRaw::Type(name) => vec![name.clone()], // clone: the list owns the names it holds
+            TypeExprRaw::Type(name) => vec![name.clone()],
             TypeExprRaw::And(children) | TypeExprRaw::Or(children) => children.iter().flat_map(TypeExprRaw::named_types).collect(),
         }
     }
@@ -191,8 +191,8 @@ impl TypeExpr {
     /// The counterpart of [`TypeExprRaw::matches`] on the other side of
     /// expansion: the same clause 4.17 boolean structure, with leaves compared
     /// as IRIs rather than as compact names. A caller that has the expanded
-    /// payload — a store that declined the type predicate, a notification
-    /// matcher working on expanded JSON-LD — has IRIs and nothing to compact
+    /// payload (a store that declined the type predicate, a notification
+    /// matcher working on expanded JSON-LD) has IRIs and nothing to compact
     /// them against.
     pub fn matches<S: AsRef<str>>(&self, type_iris: &[S]) -> bool {
         match self {
@@ -212,7 +212,7 @@ impl TypeExpr {
     pub fn named_types(&self) -> Vec<IriBuf> {
         match self {
             TypeExpr::Wildcard => Vec::new(),
-            TypeExpr::Type(iri) => vec![iri.clone()], // clone: the list owns the IRIs it names
+            TypeExpr::Type(iri) => vec![iri.clone()],
             TypeExpr::And(children) | TypeExpr::Or(children) => children.iter().flat_map(TypeExpr::named_types).collect(),
         }
     }

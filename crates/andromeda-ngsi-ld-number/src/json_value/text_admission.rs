@@ -3,8 +3,8 @@
 //! hold, no reserved reader-token member name, no repeated member name.
 //!
 //! A request decoded straight from its text into a domain type has no tree to
-//! walk, and many of its numbers -- the ordinates of a geometry, a typed
-//! member -- never become a JSON number again. This walk drives `serde_json`'s
+//! walk, and many of its numbers (the ordinates of a geometry, a typed
+//! member) never become a JSON number again. This walk drives `serde_json`'s
 //! streaming reader through every value of the text and refuses the first
 //! number [`JsonNumber`](crate::JsonNumber) cannot hold, at its RFC 6901
 //! location.
@@ -220,7 +220,7 @@ impl AdmissionWalk {
     /// `seen`, the names of that object read before it, already holds it,
     /// unless an earlier refusal stands.
     fn check_repeat(&self, seen: &mut HashSet<Box<str>>, name: &str) {
-        // clone: the set owns the names of the object while the walk goes on to read the member's value
+        // clone: the set keeps the name after the reader moves on to the member's value
         let repeated = !seen.insert(Box::from(name));
         if repeated && self.refused.borrow().is_none() {
             *self.refused.borrow_mut() = Some(Refusal::DuplicateMember(self.member_location(name)));
@@ -230,7 +230,7 @@ impl AdmissionWalk {
     /// The location of the member `name` of the object at the current
     /// location.
     fn member_location(&self, name: &str) -> JsonPointer {
-        // clone: the refusal owns the location the walk goes on to change
+        // clone: the refusal keeps this snapshot, since the walk keeps changing the path
         let mut path = self.path.borrow().clone();
         path.push(JsonPointerSegment::Member(Box::from(name)));
         JsonPointer::from_segments(path)
@@ -238,7 +238,7 @@ impl AdmissionWalk {
 
     /// The location of the value being read.
     fn location(&self) -> JsonPointer {
-        // clone: the refusal owns the location the walk goes on to change
+        // clone: the refusal keeps this snapshot, since the walk keeps changing the path
         JsonPointer::from_segments(self.path.borrow().clone())
     }
 

@@ -29,7 +29,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             .runtimes
             .iter()
             .filter(|entry| !entry.key().is_unnamed_default() && !entry.value().is_leased())
-            .filter_map(|entry| entry.value().woken_residency().filter(|woken| woken.may_ask(now)).map(Arc::clone)) // clone: the answer is awaited after the guard drops
+            .filter_map(|entry| entry.value().woken_residency().filter(|woken| woken.may_ask(now)).map(Arc::clone))
             .collect();
         askable.sort_by_key(|woken| woken.end());
         let mut released = 0;

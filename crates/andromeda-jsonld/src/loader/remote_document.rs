@@ -186,9 +186,9 @@ const TRANSPORT_RETRY: RetryPolicy = RetryPolicy {
 /// [`fetch_and_parse`], retrying only a transport-level failure.
 ///
 /// A dropped or refused connection ([`ContextUnavailable::Request`]) is transient
-/// and worth another attempt; every other failure is deterministic -- an HTTP
+/// and worth another attempt; every other failure is deterministic (an HTTP
 /// status, an oversized body, or an unparseable document fails identically on a
-/// retry -- and is returned at once, filtered by
+/// retry) and is returned at once, filtered by
 /// [`is_transient_transport_failure`]. Retrying matters most under
 /// `--isolate-tenants`, where the per-tenant context cache makes many fresh
 /// tenants cold-fetch the same public context at once and a host occasionally

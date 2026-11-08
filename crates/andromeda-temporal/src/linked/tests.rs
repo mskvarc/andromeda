@@ -150,13 +150,13 @@ impl RemoteTemporalLinkedSource for RecordingSource {
         _context: &ContextSpec,
     ) -> Result<RemoteResolution<TemporalHistory>, TemporalError> {
         self.calls().push(RemoteCall {
-            id: id.clone(), // clone: the recording owns the identifier it reports
+            id: id.clone(),
             remaining_depth,
             visited: visited.to_vec(),
         });
         match &self.outcome {
             RemoteOutcome::Returns(entities) => Ok(RemoteResolution {
-                entities: entities.get(id).cloned().unwrap_or_default(), // clone: the source hands back owned values
+                entities: entities.get(id).cloned().unwrap_or_default(),
                 failures: Vec::new(),
             }),
             RemoteOutcome::Fails => Err(TemporalError::from(PersistenceFailure::Unavailable)),
@@ -180,7 +180,7 @@ impl RemoteTemporalLinkedSource for RecordingSource {
 /// A service whose history is the stubbed broker and whose non-local half is
 /// the recording source.
 fn service_with_remote(broker: StubBroker, source: &Arc<RecordingSource>) -> TemporalService {
-    service_over(Arc::new(broker), Some(Arc::clone(source) as Arc<dyn RemoteTemporalLinkedSource>)) // clone: the test keeps its handle on the recording
+    service_over(Arc::new(broker), Some(Arc::clone(source) as Arc<dyn RemoteTemporalLinkedSource>))
 }
 
 /// A root whose Relationship annotates its objects with the clause 4.5.23.1
@@ -290,7 +290,7 @@ async fn a_deep_chain_asks_for_its_read_scope_once() {
     ]));
     let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
-    let joined = joined(&service_over(Arc::clone(&broker), None), &roots, &flat_join(5)).await; // clone: the test keeps its handle on the counting broker
+    let joined = joined(&service_over(Arc::clone(&broker), None), &roots, &flat_join(5)).await;
 
     pretty_assertions::assert_eq!(appended_ids(&joined), vec!["urn:ngsi-ld:T:B", "urn:ngsi-ld:T:C", "urn:ngsi-ld:T:D"]);
     pretty_assertions::assert_eq!(broker.scope_reads(), 1);

@@ -2,8 +2,8 @@
 
 /// Whether an acknowledgement reached a row this worker still held the lease on.
 ///
-/// Every durable lease-owning queue in the broker — notification delivery and
-/// the durable side-effect queue alike — guards its acknowledgement statements
+/// Every durable lease-owning queue in the broker, notification delivery and
+/// the durable side-effect queue alike, guards its acknowledgement statements
 /// by the row and the worker that claimed it, and some also by the lease still
 /// being live, so an update that reaches zero rows says the same thing
 /// regardless of which queue asked: the row is no longer this worker's, and
@@ -12,10 +12,9 @@
 pub enum LeaseAcknowledgement {
     /// The row was still leased by this worker and the update applied.
     Applied,
-    /// The row was no longer this worker's -- another worker reclaimed it, or
-    /// the guard required a live lease and it had lapsed -- so the
-    /// acknowledgement was discarded rather than overwriting that worker's
-    /// progress.
+    /// The row was no longer this worker's, because another worker reclaimed it
+    /// or the guard required a live lease and it had lapsed. The acknowledgement
+    /// was discarded rather than overwriting that worker's progress.
     Lost,
 }
 

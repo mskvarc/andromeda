@@ -52,7 +52,7 @@ mod tests {
     #[test]
     fn values_minted_within_one_millisecond_keep_mint_order_and_stay_distinct() {
         let minted: Vec<Uuid> = (0..1024).map(|_| uuid_v7_clock::mint()).collect();
-        let mut sorted = minted.clone(); // clone: the comparison needs both the mint order and the sorted order.
+        let mut sorted = minted.clone();
         sorted.sort_unstable();
         assert_eq!(minted, sorted);
         assert_eq!(minted.iter().collect::<HashSet<_>>().len(), 1024);
@@ -75,7 +75,7 @@ mod tests {
         }
 
         for batch in &batches {
-            let mut sorted = batch.clone(); // clone: the comparison needs both the mint order and the sorted order.
+            let mut sorted = batch.clone();
             sorted.sort_unstable();
             assert_eq!(batch, &sorted, "one generator's own mints must not go backwards");
         }
@@ -105,7 +105,7 @@ mod tests {
             after_rollback.iter().all(|value| *value > before_rollback),
             "a rolled-back clock reading must not mint a value that sorts before one already handed out"
         );
-        let mut ordered = after_rollback.clone(); // clone: the comparison needs both the mint order and the sorted order.
+        let mut ordered = after_rollback.clone();
         ordered.sort_unstable();
         assert_eq!(after_rollback, ordered, "mints under a rolled-back clock keep their own order");
     }

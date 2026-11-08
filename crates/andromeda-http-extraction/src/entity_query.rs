@@ -1,7 +1,7 @@
 //! The entity-query extractor: the query string, decoded and classified.
 //!
-//! What the decoded parameters then have to satisfy -- the clause 5.7.2.4
-//! narrowing rule among it -- belongs to
+//! What the decoded parameters then have to satisfy (the clause 5.7.2.4
+//! narrowing rule among it) belongs to
 //! [`EntityQueryParameters::validate`](andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters),
 //! which every binding of the operation calls. This seam owns only the decoding
 //! and the clause 6.3.20 classification of a failure to decode.

@@ -59,7 +59,7 @@ impl PreparedInformation<'_> {
     /// inside the transaction that interned them.
     #[must_use]
     pub fn key_names(&self) -> HashMap<AttributeNameKey, AttributeName> {
-        self.keys.iter().map(|(name, key)| (*key, name.clone())).collect() // clone: the read-back owns the names it assembles
+        self.keys.iter().map(|(name, key)| (*key, name.clone())).collect()
     }
 }
 

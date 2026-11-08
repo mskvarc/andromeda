@@ -122,7 +122,7 @@ mod tests {
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
 
     fn geometry(value: &serde_json::Value) -> Geometry {
-        serde_json::from_value(value.clone()).expect("a valid geometry") // clone: the fixture keeps its JSON
+        serde_json::from_value(value.clone()).expect("a valid geometry")
     }
 
     fn point(longitude: f64, latitude: f64) -> Geometry {
@@ -228,7 +228,7 @@ mod tests {
             ("https://uri.etsi.org/ngsi-ld/operationSpace", RegistrationGeometry::OperationSpace),
             ("https://example.org/observationPoint", RegistrationGeometry::Location),
         ] {
-            assert_eq!(RegistrationGeometry::of(&query_on("within", reference.clone(), geoproperty)), selected); // clone: every row queries the same reference
+            assert_eq!(RegistrationGeometry::of(&query_on("within", reference.clone(), geoproperty)), selected);
         }
     }
 
@@ -239,7 +239,7 @@ mod tests {
         for georel in [GeoRel::Within, GeoRel::Intersects] {
             let geo = GeoQuery {
                 georel,
-                geometry: reference.clone(), // clone: every relation queries the same reference
+                geometry: reference.clone(),
                 geoproperty: LOCATION.parse().expect("a valid attribute name"),
             };
             assert!(geo.admits_registration_area(Some(&inside)), "{}", geo.georel);

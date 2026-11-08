@@ -7,8 +7,8 @@
 //! live-delivery broker would then publish its changes a second time.
 //!
 //! The removal is the transaction's first statement, not its last. The
-//! lease-guarded `DELETE` either misses -- the lease lapsed and the job may
-//! already be another worker's -- and the replay is refused before it wrote
+//! lease-guarded `DELETE` either misses (the lease lapsed and the job may
+//! already be another worker's) and the replay is refused before it wrote
 //! anything, or it hits and holds the job's row lock until the transaction
 //! ends. While that lock is held the claim's `FOR UPDATE SKIP LOCKED` scan
 //! steps over the row, so a replay slower than its lease can no longer have

@@ -1,8 +1,8 @@
 //! The persistence a snapshot entity query writes its captured states through.
 //!
 //! A query's own failure is recorded in its execution result (clause 5.2.42).
-//! A transient store failure -- a lost deadlock or serialization race, or a
-//! saturated pool -- is not the query's: it is returned as an error instead, so
+//! A transient store failure (a lost deadlock or serialization race, or a
+//! saturated pool) is not the query's: it is returned as an error instead, so
 //! the whole preparation restarts rather than freezing a result the load of the
 //! moment decided.
 
@@ -92,10 +92,10 @@ fn capture_writes(states: &[&Arc<EntityState>]) -> Result<Vec<AtomicWrite>, Comm
     states
         .iter()
         .map(|state| {
-            let entity_id = Arc::new(state.id().clone()); // clone: the write owns its validated entity identity beside the state
+            let entity_id = Arc::new(state.id().clone()); // clone: the write owns its entity identity beside the state it records
             Ok(AtomicWrite::builder()
                 .entity_id(entity_id)
-                .entity(EntityMutation::Insert(EntityRecord::from_state(Arc::clone(state))?)) // clone: Arc ref-count bump; a predated capture is written again
+                .entity(EntityMutation::Insert(EntityRecord::from_state(Arc::clone(state))?))
                 .build())
         })
         .collect()

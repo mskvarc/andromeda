@@ -140,12 +140,12 @@ pub enum TemporalValue {
     Uri(Uri),
     /// The Scopes one reified scope instance names (clause 4.18).
     ///
-    /// Clause 4.18 gives the Scope a value shape of its own — "The value of
+    /// Clause 4.18 gives the Scope a value shape of its own ("The value of
     /// scope is represented as a JSON array in case there is more than one
-    /// Scope" — and no attribute value has that shape, so it is its own variant
+    /// Scope"), and no attribute value has that shape, so it is its own variant
     /// rather than a structured value: a JSON-LD value node cannot hold an
     /// array at all, and several Scopes are several value nodes. The paths are
-    /// strongly typed for the same reason storage holds them as label paths — a
+    /// strongly typed for the same reason storage holds them as label paths. A
     /// Scope is a validated clause 4.18 path, never free text.
     Scopes(Vec<ScopePath>),
     /// A deletion marker observation, carrying the instant it deleted at.
@@ -153,7 +153,7 @@ pub enum TemporalValue {
     /// Clauses 4.5.7 and 4.5.8 give a deleted instance a `deletedAt` and the
     /// `urn:ngsi-ld:null` value in place of a typed one. The null URI is
     /// synthesised at rendering from this variant, never stored, and a
-    /// deletion instant is inseparable from the deletion it marks — holding it
+    /// deletion instant is inseparable from the deletion it marks. Holding it
     /// here is what stops a tombstone without one, or a live observation
     /// carrying one, from being expressible.
     Tombstone {
@@ -193,16 +193,16 @@ impl TemporalValue {
     pub fn unannotated(&self) -> TemporalValue {
         match self {
             TemporalValue::Number { number, .. } => TemporalValue::Number {
-                number: number.clone(), // clone: the unannotated value owns its number
+                number: number.clone(),
                 datatype: None,
             },
             TemporalValue::String { text, .. } => TemporalValue::String {
-                text: text.clone(), // clone: the unannotated value owns its text
+                text: text.clone(),
                 annotation: TextAnnotation::Plain,
             },
             TemporalValue::Boolean { flag, .. } => TemporalValue::Boolean { flag: *flag, datatype: None },
             TemporalValue::DeclaredNumber { number, .. } => TemporalValue::DeclaredNumber {
-                number: number.clone(), // clone: the unannotated value owns its number
+                number: number.clone(),
                 datatype: None,
             },
             TemporalValue::DeclaredBoolean { flag, .. } => TemporalValue::DeclaredBoolean { flag: *flag, datatype: None },
@@ -212,7 +212,6 @@ impl TemporalValue {
             },
             TemporalValue::Date { date, .. } => TemporalValue::Date { date: *date, datatype: None },
             TemporalValue::Time { time, .. } => TemporalValue::Time { time: *time, datatype: None },
-            // clone: the unannotated value owns what carries no annotation
             other @ (TemporalValue::Geometry(_)
             | TemporalValue::Structured(_)
             | TemporalValue::Uri(_)
@@ -297,7 +296,7 @@ impl TemporalHistoryRow {
     /// it. Each axis answers from its own value alone: an observation that
     /// declared no `observedAt` matches no `observedAt` window, and
     /// [`recorded_at`](TemporalHistoryRow::recorded_at) never fills a missing
-    /// axis in — doing so would invent a match on a Temporal Property the
+    /// axis in. Doing so would invent a match on a Temporal Property the
     /// observation does not have.
     #[must_use]
     pub const fn time_axis(&self, timeproperty: TimeProp) -> Option<DateTime<Utc>> {
@@ -334,7 +333,7 @@ pub enum AggregationMinMax {
 ///
 /// Table 4.5.19.1-1 defines `avg` over numbers, booleans and array sizes as a
 /// number, but Table 4.5.19.1-2 defines it over a `Time` as "the average time
-/// inside the period" -- a time of day, not a count. Carrying both in one type
+/// inside the period", a time of day rather than a count. Carrying both in one type
 /// is what lets the renderer emit each in its own lexical form instead of
 /// forcing a time through a numeric member.
 #[derive(Debug, Clone, PartialEq)]

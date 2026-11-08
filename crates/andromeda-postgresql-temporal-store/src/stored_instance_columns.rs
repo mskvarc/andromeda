@@ -1,8 +1,8 @@
 //! Splitting one stored instance identity across its two history columns.
 //!
 //! Attribute history and scope history hold an instance identifier the same
-//! way — a broker-minted UUID in one column, a verbatim identifier in the other,
-//! exactly one of them populated — so the split is written once here rather than
+//! way: a broker-minted UUID in one column, a verbatim identifier in the other,
+//! exactly one of them populated, so the split is written once here rather than
 //! restated per table. [`InstanceIdentity`] is owned by the lexicon and cannot
 //! carry these accessors itself, since they are about columns rather than about
 //! what an identifier is.

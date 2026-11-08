@@ -57,7 +57,6 @@ impl Evolutions {
     /// Evolutions the page and the count read in the same order.
     fn read_alike(rows: TableRef, type_test: TypeTest) -> Evolutions {
         Evolutions {
-            // clone: the count reads the same Evolutions
             counted: rows.clone(),
             paged: rows,
             type_test,

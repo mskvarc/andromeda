@@ -68,9 +68,9 @@ impl<S, R> CachedRuntime<S, R> {
         existence: TenantExistence,
         origin: Arc<LeaseOrigin>,
     ) -> (CachedRuntime<S, R>, Arc<LeaseOrigin>) {
-        // clone: the lease is a second owner of the origin by construction; the
-        // cache field and the returned handle are the two owners that make the
-        // strong count read two while a request holds it.
+        // The lease is a second owner of the origin by construction: the cache
+        // field and the returned handle are the two owners that make the strong
+        // count read two while a request holds it.
         let leased = Arc::clone(&origin);
         (
             CachedRuntime {

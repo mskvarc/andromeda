@@ -63,7 +63,7 @@ impl EntityService {
         for (context, entries) in groups {
             for (idx, preparation) in self.prepare_group(entries, context.spec(), execution, screening).await {
                 if let Some(slot) = outcomes.get_mut(idx) {
-                    *slot = Some((preparation, context.clone())); // clone: each prepared entity holds the shared context handle
+                    *slot = Some((preparation, context.clone()));
                 }
             }
         }

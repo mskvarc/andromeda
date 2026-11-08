@@ -5,7 +5,7 @@
 //! claiming worker all the same. It is handed back rather than skipped so the
 //! drain can acknowledge it: a skipped delivery keeps its lease until the term
 //! runs out and is then claimed again, with its attempt count unchanged, at
-//! every lease expiry for as long as the row exists -- and until then the
+//! every lease expiry for as long as the row exists. Until then the
 //! tenant's pending work keeps reporting it due.
 
 use crate::delivery_entry::{DeliveryEntry, DeliveryKey};

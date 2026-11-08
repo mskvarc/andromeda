@@ -80,8 +80,8 @@ fn enqueue_statement(
 /// Issued as the replay transaction's first statement: the deleted row stays
 /// locked until that transaction ends, which is what keeps a reclaim from
 /// taking the job while its replay runs, however long that is. The lease has
-/// to be live when the replay starts, though -- once it lapsed, another worker
-/// may already have reclaimed and be replaying the job -- so this, unlike a
+/// to be live when the replay starts, though. Once it lapsed, another worker
+/// may already have reclaimed and be replaying the job, so this, unlike a
 /// release of a failed attempt, compares the lease with the clock.
 ///
 /// The lease is compared against the wall clock, not the transaction clock: a
@@ -118,7 +118,7 @@ impl PendingSideEffectsRepository {
         entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
     ) -> PendingSideEffectsRepository {
         PendingSideEffectsRepository {
-            pool: pool.clone(), // clone: Arc ref-count bump (PgPool is Arc-based)
+            pool: pool.clone(),
             attribute_names,
             entity_type_names,
         }

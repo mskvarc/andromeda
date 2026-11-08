@@ -59,30 +59,28 @@ pub(super) fn register_expiry_workers(
     pacer: &Arc<BackgroundPacer>,
 ) -> Result<(), TenantAssemblyError> {
     let interval = config.expiry.sweep_interval.duration();
-    // clone: every sweep of the tenant consults the tenant's one pacer.
     let shared_pacer = || Arc::clone(pacer);
     register_subscription_expiry(
         supervisor,
         shared_pacer(),
         "subscription-expiry",
-        state.live_target.clone(),        // clone: the sweep owns the live branch it operates on.
-        Arc::clone(&state.subscriptions), // clone: request handling and the sweep share one policy.
+        state.live_target.clone(),
+        Arc::clone(&state.subscriptions),
         interval,
     )?;
     register_subscription_expiry(
         supervisor,
         shared_pacer(),
         "csource-subscription-expiry",
-        state.live_target.clone(),            // clone: the sweep owns the live branch it operates on.
-        Arc::clone(&state.csr_subscriptions), // clone: request handling and the sweep share one policy.
+        state.live_target.clone(),
+        Arc::clone(&state.csr_subscriptions),
         interval,
     )?;
     register_registration_expiry(
         supervisor,
         shared_pacer(),
-        Arc::clone(&storage.registration_store), // clone: every registration worker shares one store.
-        Arc::new(registration_changes.clone()),  // clone: each worker owns a sink handle.
-        // clone: request handling and the sweep tear down removed registrations through one forwarding service.
+        Arc::clone(&storage.registration_store),
+        Arc::new(registration_changes.clone()),
         state
             .subscription_forwarding
             .as_ref()
@@ -92,15 +90,15 @@ pub(super) fn register_expiry_workers(
     register_entity_expiry(
         supervisor,
         shared_pacer(),
-        state.live_target.clone(),   // clone: the sweep owns the live branch it operates on.
-        Arc::clone(&state.entities), // clone: request handling and the sweep share one policy.
+        state.live_target.clone(),
+        Arc::clone(&state.entities),
         Arc::clone(&storage.entity_ports.expiry),
         interval,
         EntityExpiryBatchSize::from(config.expiry.batch_size),
     )?;
-    register_snapshot_expiry(supervisor, shared_pacer(), Arc::clone(&storage.snapshot_store), interval)?; // clone: every snapshot worker shares one store.
-    register_entity_map_expiry(supervisor, shared_pacer(), Arc::clone(&storage.entity_map_store), interval)?; // clone: request handling and the sweep share one store.
-    register_cached_context_invalidation(supervisor, shared_pacer(), Arc::clone(&storage.cached_context_invalidation)) // clone: the sweep and every other Context capability share one repository.
+    register_snapshot_expiry(supervisor, shared_pacer(), Arc::clone(&storage.snapshot_store), interval)?;
+    register_entity_map_expiry(supervisor, shared_pacer(), Arc::clone(&storage.entity_map_store), interval)?;
+    register_cached_context_invalidation(supervisor, shared_pacer(), Arc::clone(&storage.cached_context_invalidation))
 }
 
 /// Register the clause 5.13.1 pass that reclaims lapsed cached `@contexts`.
@@ -128,8 +126,8 @@ fn register_cached_context_invalidation(
         ShutdownPolicy::new(CACHED_CONTEXT_INVALIDATION_INTERVAL),
     );
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
-        let store = Arc::clone(&store); // clone: each scheduled pass owns the shared invalidation port while running.
-        let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
+        let store = Arc::clone(&store);
+        let pacer = Arc::clone(&pacer);
         async move {
             pacer
                 .run(async move {
@@ -168,8 +166,8 @@ fn register_entity_expiry(
     );
     let sweep = Arc::new(EntityExpirySweep::new(target, entity_policy, entity_expiry_source, expiry_batch_size));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
-        let sweep = Arc::clone(&sweep); // clone: each scheduled future owns the shared policy operation for its duration.
-        let pacer = Arc::clone(&pacer); // clone: each scheduled future consults the tenant's one pacer.
+        let sweep = Arc::clone(&sweep);
+        let pacer = Arc::clone(&pacer);
         async move {
             pacer
                 .run(async move {
@@ -212,8 +210,8 @@ where
     );
     let expiry = Arc::new(SubscriptionExpiry::new(target, policy));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
-        let expiry = Arc::clone(&expiry); // clone: each scheduled future owns the policy operation while executing.
-        let pacer = Arc::clone(&pacer); // clone: each scheduled future consults the tenant's one pacer.
+        let expiry = Arc::clone(&expiry);
+        let pacer = Arc::clone(&pacer);
         async move {
             pacer
                 .run(async move {
@@ -259,8 +257,8 @@ fn register_registration_expiry(
     );
     let expiry = Arc::new(RegistrationExpiry::new(store, Some(change_sink), removal_hook));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
-        let expiry = Arc::clone(&expiry); // clone: each scheduled future owns the policy operation while executing.
-        let pacer = Arc::clone(&pacer); // clone: each scheduled future consults the tenant's one pacer.
+        let expiry = Arc::clone(&expiry);
+        let pacer = Arc::clone(&pacer);
         async move {
             pacer
                 .run(async move {
@@ -297,8 +295,8 @@ fn register_entity_map_expiry(
     );
     let expiry = Arc::new(EntityMapExpiry::new(store));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
-        let expiry = Arc::clone(&expiry); // clone: each execution owns the bounded operation while running.
-        let pacer = Arc::clone(&pacer); // clone: each execution consults the tenant's one pacer.
+        let expiry = Arc::clone(&expiry);
+        let pacer = Arc::clone(&pacer);
         async move {
             pacer
                 .run(async move {

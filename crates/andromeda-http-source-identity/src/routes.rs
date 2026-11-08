@@ -89,7 +89,7 @@ mod tests {
     impl RecordingStore {
         /// Every identifier inserted so far.
         fn inserted(&self) -> Vec<JsonLdContextId> {
-            self.inserted.lock().map(|inserted| inserted.clone()).unwrap_or_default() // clone: the caller owns the snapshot
+            self.inserted.lock().map(|inserted| inserted.clone()).unwrap_or_default()
         }
     }
 
@@ -102,7 +102,7 @@ mod tests {
             _kind: ContextCreationKind,
         ) -> ContextRegistryFuture<'a, ContextInsertion> {
             if let Ok(mut inserted) = self.inserted.lock() {
-                inserted.push(identifier.clone()); // clone: the record outlives the call
+                inserted.push(identifier.clone());
             }
             Box::pin(async { Ok(ContextInsertion::Inserted) })
         }
@@ -158,7 +158,7 @@ mod tests {
                 .allow_remote(false)
                 .preload_contexts(HashMap::from([(Url::parse(USER_CONTEXT)?, user_context)]))
                 .build()?;
-            let contexts = Arc::new(ContextRegistryService::new(store, engine.clone())); // clone: the registry and the response each hold the engine
+            let contexts = Arc::new(ContextRegistryService::new(store, engine.clone()));
             let hosting = Arc::new(TenantContextHosting::new(contexts));
             Ok(OfflineDefaultTenant {
                 engine,
@@ -173,8 +173,8 @@ mod tests {
             Box::pin(async {
                 let LeasedState { state, lease } = self.tenancy.resolve(&TenantRef::UnnamedDefault, TenantCreationPolicy::MustExist).await?;
                 Ok(DefaultTenantContexts {
-                    engine: self.engine.clone(),                          // clone: the engine shares its loader and caches behind `Arc`s
-                    context_hosting: TenantContextHosting::clone(&state), // clone: the response owns a handle on the hosting
+                    engine: self.engine.clone(),
+                    context_hosting: TenantContextHosting::clone(&state),
                     runtime_lease: lease,
                 })
             })

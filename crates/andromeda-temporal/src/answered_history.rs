@@ -54,7 +54,6 @@ pub(crate) fn answered_history(answer: TemporalDocument, recorded_at: DateTime<U
             continue;
         }
         for instance in instances {
-            // clone: every row owns the name of the attribute it observes
             rows.extend(instance_row(attribute_name.clone(), instance, recorded_at)?);
         }
     }

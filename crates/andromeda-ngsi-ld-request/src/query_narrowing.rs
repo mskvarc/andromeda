@@ -226,8 +226,8 @@ fn is_system_attribute(name: &AttributeName) -> bool {
 /// # Errors
 ///
 /// Returns [`ParameterError::SelectorRequired`] naming the inputs the operation
-/// admits when the request carries none of them -- the "too wide query" of
-/// clauses 5.6.21.4, 5.7.2.4, 5.7.4.4, 5.10.2.4 and 5.14.4.4.
+/// admits when the request carries none of them (the "too wide query" of
+/// clauses 5.6.21.4, 5.7.2.4, 5.7.4.4, 5.10.2.4 and 5.14.4.4).
 pub fn require_narrowing(inputs: &NarrowingInputs<'_>) -> Result<(), ParameterError> {
     if inputs.narrows() {
         Ok(())

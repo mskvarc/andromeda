@@ -185,7 +185,7 @@ pub(crate) async fn distributed_retrieval(
     };
 
     let had_remote_history = forwarded.results.iter().any(|result| !result.entities.is_empty());
-    let local_id = local_entity.is_some().then(|| id.clone()); // clone: the map owns the entity identifiers it names
+    let local_id = local_entity.is_some().then(|| id.clone()); // clone: `id` is used again afterwards, so this Option takes its own copy
     let window = params.window().map_err(|error| temporal_problem(&TemporalError::from(error), instance))?;
     // Clause 6.3.10: a source that cut its history short bounds the merged
     // page as the local cut does, so the response's range is the merge's.
@@ -210,7 +210,7 @@ pub(crate) async fn distributed_retrieval(
         // Clause 5.7.3.4: ResourceNotFound when the target Entity's history is
         // held neither locally nor by any source a matching registration
         // forwarded to. A registration that matched but whose sources returned
-        // no history leaves nothing to answer with -- the broker does not
+        // no history leaves nothing to answer with. The broker does not
         // invent a temporal representation from the registration's id and type,
         // and clause 6.3.17 does not treat a source's empty answer as abnormal.
         None => {

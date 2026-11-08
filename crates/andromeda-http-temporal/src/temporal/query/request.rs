@@ -77,7 +77,7 @@ pub(crate) struct TemporalQueryRequest {
     pub(crate) page: QueriedPage,
 }
 
-/// GET /ngsi-ld/v1/temporal/entities -- Query Temporal Evolution of Entities
+/// GET /ngsi-ld/v1/temporal/entities: Query Temporal Evolution of Entities
 /// carried in the request's query string (clause 6.18.3.2).
 ///
 /// # Errors

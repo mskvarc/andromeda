@@ -1,8 +1,8 @@
 //! Reading the temporal catalogue.
 //!
-//! Every question the temporal mutation policy asks before it acts — does this
+//! Every question the temporal mutation policy asks before it acts (does this
 //! entity have a Temporal Evolution, does it record this attribute, which
-//! datasets does that attribute have — is answered from the Evolution columns
+//! datasets does that attribute have) is answered from the Evolution columns
 //! of the identity rows and `temporal_attribute_streams` alone. Current state
 //! is never consulted: clause 5.6.6 leaves the Temporal Evolution standing when
 //! the entity is deleted, so an answer taken from the current state would

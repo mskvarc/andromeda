@@ -193,7 +193,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
         'life2: 'async_trait,
         Self: 'async_trait;
 
-    /// Non-expired proxied registrations — mode `exclusive` or `redirect` —
+    /// Non-expired proxied registrations (mode `exclusive` or `redirect`)
     /// that may cover `entity_id` and declare one of `attributes`, or declare
     /// no attribute at all (clauses 4.3.6.3, 5.9.2.4, 5.9.3.4).
     ///

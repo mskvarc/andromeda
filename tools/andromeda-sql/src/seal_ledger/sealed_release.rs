@@ -95,7 +95,6 @@ impl SealedRelease {
     /// The section in canonical order: its migrations in version order.
     #[must_use]
     pub fn canonical(&self) -> SealedRelease {
-        // clone: the canonical form is rendered beside the section as read
         SealedRelease::new(self.version.clone(), self.migrations.clone())
     }
 }

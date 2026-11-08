@@ -1,6 +1,6 @@
 //! Building a domain geometry from the callbacks a geozero reader emits.
 //!
-//! The inverse of [`crate::ewkb_walk`]. geozero's readers describe a geometry as
+//! The inverse of the EWKB walk. geozero's readers describe a geometry as
 //! a stream of begin/coordinate/end events rather than as a value, so decoding
 //! an EWKB buffer into [`GeometryForm`] means keeping the geometries that are
 //! still open on a stack and folding each finished one into its parent.
@@ -11,8 +11,8 @@
 //! altitudes comes back without them, rather than with a column of fabricated
 //! zeroes.
 //!
-//! Geometry types `PostGIS` supports but `GeoJSON` has no counterpart for — the
-//! curves, the surfaces, the triangulated network — are refused rather than
+//! Geometry types `PostGIS` supports but `GeoJSON` has no counterpart for (the
+//! curves, the surfaces, the triangulated network) are refused rather than
 //! ignored. geozero's default callbacks accept them silently, which would turn
 //! a `CIRCULARSTRING` into a geometry that decodes to nothing at all.
 

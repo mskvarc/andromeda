@@ -78,8 +78,8 @@ fn retrieval_response(
 /// The local entity to fold into a federated retrieval, or `None` when the local
 /// store genuinely holds no such entity so the matching registrations answer.
 ///
-/// A local failure that is not a genuine not-found -- a saturated pool
-/// ([`EntityError::StoreSaturated`]), a persistence fault -- is not evidence the
+/// A local failure that is not a genuine not-found (a saturated pool
+/// ([`EntityError::StoreSaturated`]), a persistence fault) is not evidence the
 /// entity is held nowhere, so it propagates unchanged to be classified on its
 /// own terms (a saturated read answers 503 with `Retry-After`) rather than
 /// masked as the `ResourceNotFound` an empty forwarding result would produce.
@@ -164,7 +164,7 @@ pub(crate) async fn get(
         // Clause 5.7.1.4: ResourceNotFound when the target Entity is held
         // neither locally nor by any source a matching registration forwarded
         // to. A registration that matched but whose sources returned no
-        // Attribute data leaves nothing to answer with -- the broker does not
+        // Attribute data leaves nothing to answer with: the broker does not
         // invent an Entity from the registration's id and type, and clause
         // 6.3.17 does not treat a source's empty answer as abnormal.
         let Some(merged) = retrieved.entity else {

@@ -4,7 +4,7 @@
 //! modelled on the clause 4.23.3 Entity Ordering Language: a `GroupKey` is
 //! either a clause 4.9 `ValuePath` or one of a fixed set of structural entity
 //! members. These members name parts of the entity or instance representation
-//! that carry no attribute IRI, so — like `orderBy`'s `id`/`type`/`scope` — they
+//! that carry no attribute IRI, so, like `orderBy`'s `id`/`type`/`scope`, they
 //! are read from their own columns rather than expanded against the `@context`.
 //!
 //! Two members go beyond the ordering vocabulary because grouping addresses the

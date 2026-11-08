@@ -85,7 +85,7 @@ fn graph(root: &TemporalBody, nodes: Vec<TemporalBody>, depth: u32) -> LinkedGra
     }
     LinkedGraph {
         roots: ids,
-        nodes: nodes.into_iter().map(|node| (node.id().clone(), node)).collect(), // clone: the graph keys its nodes by owned identifiers
+        nodes: nodes.into_iter().map(|node| (node.id().clone(), node)).collect(),
         edges,
         failures: Vec::new(),
         depth: NonZeroU32::new(depth).expect("a positive depth"),

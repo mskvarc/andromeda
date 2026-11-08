@@ -10,8 +10,8 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 /// `Selector` are the Andromeda `purge_dataset_scope` extension, adding the
 /// per-`datasetId` precision the single-entity Delete Attribute operation
 /// (clause 5.6.5) already has. Keeping `Unfiltered` distinct from `All`
-/// preserves the conformant default — a bare `drop` still deletes the whole
-/// attribute — rather than quietly reinterpreting it as a dataset-scoped one.
+/// preserves the conformant default, where a bare `drop` still deletes the whole
+/// attribute, rather than quietly reinterpreting it as a dataset-scoped one.
 ///
 /// The lowering to the model's dataset-selection primitive lives in the entity
 /// crate, which owns the mutation: this crate has no dependency on the model.

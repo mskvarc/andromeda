@@ -72,7 +72,7 @@ const fn shape_of(selection: &EntityTypeSelection) -> EntityTypeShapeCode {
 #[must_use]
 pub fn names_to_intern(information: &[RegistrationInfo]) -> Vec<AttributeName> {
     let names: IndexSet<&AttributeName> = information.iter().flat_map(RegistrationInfo::attribute_names).collect();
-    names.into_iter().cloned().collect() // clone: the dictionary request owns the names it resolves
+    names.into_iter().cloned().collect()
 }
 
 /// The rows `information` is stored as, in item and selector order.
@@ -106,8 +106,8 @@ pub fn rows_of<'info, S: BuildHasher>(
                         item_ordinal,
                         selector_ordinal: ordinal(selector_position)?,
                         selector: Some(selector_columns(selector)),
-                        property_name_keys: property_name_keys.clone(), // clone: every row of the item repeats its names
-                        relationship_name_keys: relationship_name_keys.clone(), // clone: same
+                        property_name_keys: property_name_keys.clone(),
+                        relationship_name_keys: relationship_name_keys.clone(),
                     });
                 }
             }
@@ -270,7 +270,7 @@ fn names_of<S: BuildHasher>(
         return Err(StoredInformationError::EmptyNames { item_ordinal });
     }
     keys.iter()
-        .map(|key| names.get(key).cloned().ok_or(StoredInformationError::UnknownNameKey(*key))) // clone: the information owns its names
+        .map(|key| names.get(key).cloned().ok_or(StoredInformationError::UnknownNameKey(*key)))
         .collect::<Result<Vec<_>, _>>()
         .map(Some)
 }
@@ -297,7 +297,7 @@ fn keys_of<S: BuildHasher>(
                 .iter()
                 .map(|name| {
                     keys.get(name).copied().ok_or_else(|| StoreInvariant::InformationNameNotInterned {
-                        name: name.clone(), // clone: the report owns the name it names
+                        name: name.clone(), // clone: the error outlives the borrowed names, so it owns its copy
                     })
                 })
                 .collect()

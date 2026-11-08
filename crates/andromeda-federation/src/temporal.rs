@@ -268,7 +268,7 @@ impl FederationService {
                 context,
                 RegistrationSelection {
                     selectors: &[EntitySelectorParams {
-                        id: Some(vec![entity_id.clone()]), // clone: the selector owns its identifiers
+                        id: Some(vec![entity_id.clone()]),
                         ..EntitySelectorParams::default()
                     }],
                     reach,

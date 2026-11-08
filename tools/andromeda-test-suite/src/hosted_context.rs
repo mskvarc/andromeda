@@ -69,7 +69,7 @@ impl HostedContext {
             .endpoint()
             .base_url()
             .join(location.as_str())
-            // clone: the answer keeps its location; the error owns its own copy
+            // clone: the error owns a copy, as the location is still read afterwards
             .map_err(|error| HostedContextError::Location(location.clone(), error))?;
         Ok(HostedContext {
             id,

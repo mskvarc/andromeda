@@ -12,7 +12,7 @@ const RECORD_SEPARATOR: u8 = 0x1e;
 ///
 /// Two binaries agree on this value exactly when they carry the same
 /// migrations, with the same descriptions, in the same order, with the same
-/// bodies — sqlx's own per-migration checksum covers the body. Framing each
+/// bodies (sqlx's own per-migration checksum covers the body). Framing each
 /// record with the two ASCII separators is what keeps the digest injective: a
 /// description ending in digits could otherwise be confused with the next
 /// record's version.
@@ -138,7 +138,7 @@ mod tests {
     #[test]
     fn a_down_migration_does_not_take_part_in_the_digest() {
         let up_only = vec![migration(1, "extensions", "CREATE EXTENSION postgis")];
-        let mut with_down = up_only.clone(); // clone: the two sets differ only by the appended down migration
+        let mut with_down = up_only.clone();
         with_down.push(Migration::new(
             1,
             Cow::Borrowed("extensions"),

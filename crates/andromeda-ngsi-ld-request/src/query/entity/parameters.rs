@@ -327,7 +327,7 @@ mod tests {
     fn parse_order_by_rejects_unrecognized_direction() {
         // Clause 4.23 defines exactly asc/desc/dist-asc/dist-desc. An
         // unrecognised direction is a malformed request, not a term to silently
-        // drop -- dropping it would quietly discard the client's ordering.
+        // drop: dropping it would quietly discard the client's ordering.
         let parsed = serde_urlencoded::from_str::<EntityQueryParameters>("orderBy=name;invalid");
         assert!(parsed.is_err());
     }
@@ -511,8 +511,8 @@ mod tests {
 
     /// Clause 5.7.2.4 "too deep query": the hop chain may not reach past the
     /// requested traversal, and becomes valid as soon as `joinLevel` covers it.
-    /// `inline` is the mode a filter-only client wants — clause 4.5.23.2 has
-    /// its response "only consist of Linking Entities".
+    /// `inline` is the mode a filter-only client wants (clause 4.5.23.2 has
+    /// its response "only consist of Linking Entities").
     #[test]
     fn validate_measures_the_filter_hops_against_the_join_level() {
         let too_deep = params_from_query("type=Car&join=inline&joinLevel=1&q=isParkedIn%7BinDistrict%7Bzone%7D%7D");

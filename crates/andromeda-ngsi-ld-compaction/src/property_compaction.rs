@@ -1,8 +1,8 @@
 //! Compacting the items of one expanded property into the object that holds
 //! them (JSON-LD 1.1 API section 6.1, the expanded-property step).
 //!
-//! Each item selects its own key -- a language-tagged string and a node
-//! reference of one property can land under different terms -- and is added
+//! Each item selects its own key (a language-tagged string and a node
+//! reference of one property can land under different terms), and is added
 //! under it by the selected term's container: a `@list` term takes a list's
 //! items as its array, a `@language` term keys strings by their language, and
 //! every other term takes the compacted item through the add-value rule.

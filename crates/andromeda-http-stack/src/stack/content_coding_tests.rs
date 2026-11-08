@@ -61,7 +61,6 @@ fn router() -> Result<NormalizePath<Router>, Box<dyn Error>> {
 /// `body` encoded with `coding`, by the `tower-http` response encoder.
 async fn encode(coding: ContentCoding, body: Bytes) -> Result<Bytes, Box<dyn Error>> {
     let encoder = CompressionLayer::new().layer(service_fn(move |_request: Request| {
-        // clone: each call of the service answers with the same body
         ready(Ok::<_, Infallible>(Response::new(Body::from(body.clone()))))
     }));
     let request = Request::get("/").header(ACCEPT_ENCODING, token(coding)).body(Body::empty())?;
@@ -72,7 +71,7 @@ async fn encode(coding: ContentCoding, body: Bytes) -> Result<Bytes, Box<dyn Err
 /// `body` decoded from `coding`, by the `tower-http` response decoder.
 async fn decode(coding: ContentCoding, body: Bytes) -> Result<Bytes, Box<dyn Error>> {
     let decoder = DecompressionLayer::new().layer(service_fn(move |_request: Request| {
-        let mut response = Response::new(Body::from(body.clone())); // clone: each call of the service answers with the same body
+        let mut response = Response::new(Body::from(body.clone()));
         response.headers_mut().insert(CONTENT_ENCODING, HeaderValue::from_static(token(coding)));
         ready(Ok::<_, Infallible>(response))
     }));
@@ -98,8 +97,8 @@ fn encoded_post(coding: ContentCoding, body: Bytes, declared_length: Option<usiz
 async fn every_coding_decodes_a_request_body_that_declares_its_encoded_length() -> Result<(), Box<dyn Error>> {
     for coding in EnumSet::<ContentCoding>::all() {
         let original = document(512);
-        let encoded = encode(coding, original.clone()).await?; // clone: the echo is compared against it
-        let response = router()?.oneshot(encoded_post(coding, encoded.clone(), Some(encoded.len()))?).await?; // clone: the request owns its body
+        let encoded = encode(coding, original.clone()).await?;
+        let response = router()?.oneshot(encoded_post(coding, encoded.clone(), Some(encoded.len()))?).await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::OK, "{coding}");
         pretty_assertions::assert_eq!(to_bytes(response.into_body(), usize::MAX).await?, original, "{coding}");
     }
@@ -126,7 +125,7 @@ async fn an_encoded_request_body_decoding_past_the_limit_is_refused_with_413() -
     for coding in EnumSet::<ContentCoding>::all() {
         let encoded = encode(coding, document(8192)).await?;
         assert!(encoded.len() < 1024, "{coding}: the encoding fits the limit, {} bytes", encoded.len());
-        let response = router()?.oneshot(encoded_post(coding, encoded.clone(), Some(encoded.len()))?).await?; // clone: the request owns its body
+        let response = router()?.oneshot(encoded_post(coding, encoded.clone(), Some(encoded.len()))?).await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE, "{coding}");
     }
     Ok(())
@@ -140,7 +139,7 @@ async fn every_coding_encodes_a_response_the_client_accepts_in_it() -> Result<()
             .header(CONTENT_TYPE, "application/json")
             .header(CONTENT_LENGTH, original.len())
             .header(ACCEPT_ENCODING, token(coding))
-            .body(Body::from(original.clone()))?; // clone: the decoded response is compared against it
+            .body(Body::from(original.clone()))?;
         let response = router()?.oneshot(request).await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::OK, "{coding}");
         pretty_assertions::assert_eq!(

@@ -52,8 +52,8 @@ pub(crate) fn validate_notification(notification: &NotificationRequest, q: Optio
 /// `attributes`.
 ///
 /// Table 5.2.14.1-1 gives `NotificationParams` the same three members a query
-/// carries on its URL -- `pick`, `omit` and the deprecated `attributes`, "a
-/// synonym for pick" -- so it carries the same rule about combining them. The
+/// carries on its URL (`pick`, `omit` and the deprecated `attributes`, "a
+/// synonym for pick"), so it carries the same rule about combining them. The
 /// rule itself is owned by
 /// [`andromeda_ngsi_ld_query::projection::exclusivity`], which the query
 /// bindings apply to their own parameters. A member named in both `pick` and

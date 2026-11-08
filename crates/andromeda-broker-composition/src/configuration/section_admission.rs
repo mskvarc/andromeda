@@ -83,7 +83,7 @@ pub(crate) const fn database_defaults(config: &BrokerConfig) -> DatabaseDefaults
 pub(crate) fn expected_deployment(config: &BrokerConfig) -> ExpectedDeployment {
     let columnstore = &config.temporal.storage.columnstore;
     ExpectedDeployment {
-        tenant_database_prefix: config.tenancy.databases.name_prefix.clone(), // clone: the controller keeps its own copy of the prefix
+        tenant_database_prefix: config.tenancy.databases.name_prefix.clone(),
         columnstore_conversion: ColumnstoreConversion {
             after: columnstore.convert_after.duration(),
             sweep_interval: columnstore.sweep_interval.duration(),

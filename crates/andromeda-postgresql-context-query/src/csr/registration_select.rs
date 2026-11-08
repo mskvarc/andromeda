@@ -13,7 +13,7 @@
 //! snapshot.
 //!
 //! The delivery state is `LEFT JOIN`ed on the registration's primary key. A
-//! registration always has its row -- the create transaction writes both --
+//! registration always has its row (the create transaction writes both),
 //! but a read must never lose a registration over its health, so the join does
 //! not require one. No column name repeats between the two relations, so the
 //! predicates callers add on registration columns stay unambiguous.

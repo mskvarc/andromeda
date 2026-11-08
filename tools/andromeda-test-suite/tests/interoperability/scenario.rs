@@ -156,7 +156,7 @@ impl Scenario {
     /// Has every broker delete the entity `id` locally when the case ends.
     pub(crate) fn track(&mut self, id: &EntityId) -> Result<()> {
         for node in Node::iter() {
-            self.cleanup(node)?.remove(Removal::Entity(id.clone())); // clone: the cleanup outlives the case's values
+            self.cleanup(node)?.remove(Removal::Entity(id.clone()));
         }
         Ok(())
     }
@@ -170,7 +170,7 @@ impl Scenario {
         let endpoint = broker::peer(spoke.peer())?;
         let registration = payload.registration(&self.namespace, self.registrations, &endpoint)?;
         if let Some(id) = registration.id() {
-            self.cleanup(hub)?.remove(Removal::Registration(id.clone())); // clone: the cleanup outlives the registration
+            self.cleanup(hub)?.remove(Removal::Registration(id.clone()));
         }
         let writer = self.writer(hub)?;
         let document = UncheckedDocument::try_from(registration.render())?.set_text("mode", &payload.mode().to_string());
@@ -190,7 +190,7 @@ impl Scenario {
     /// Creates the entity of `sample` on `node` alone (`local=true`), requires 201 and answers the entity.
     pub(crate) async fn seed(&mut self, node: Node, sample: Sample) -> Result<Entity<Input>> {
         let entity = sample.entity(&self.namespace)?;
-        self.cleanup(node)?.remove(Removal::Entity(entity.id.clone())); // clone: the cleanup outlives the entity
+        self.cleanup(node)?.remove(Removal::Entity(entity.id.clone()));
         let created = self
             .writer(node)?
             .with_responses()

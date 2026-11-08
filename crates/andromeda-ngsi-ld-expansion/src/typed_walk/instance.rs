@@ -248,7 +248,7 @@ fn add_geometry(node: &mut NodeBuilder, scope: &TermScope<'_>, key: &str, geomet
 /// expanded as the members of the object written under `key`, as the processor
 /// expands every member of a geometry object it reads.
 fn geometry_item(scope: &TermScope<'_>, key: &str, geometry: &Geometry) -> Result<ExpandedItem, Decline> {
-    let mut expanded = ExpandedGeometry::bare(geometry.form().clone()); // clone: the typed request is borrowed
+    let mut expanded = ExpandedGeometry::bare(geometry.form().clone()); // clone: the returned geometry outlives the borrowed request, so it owns the form
     if let Some(members) = geometry.members() {
         expanded.bbox = members.bbox().copied();
         if !members.foreign().is_empty() {

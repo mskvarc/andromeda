@@ -43,9 +43,7 @@ where
     let mut changes = changes.into_iter();
     match changes.by_ref().find_map(|change| sender.try_send(change).err()) {
         None => Box::pin(future::ready(())),
-        Some(TrySendError::Full(change)) => {
-            wait_for_room(sender.clone(), handoffs, iter::once(change).chain(changes), kind) // clone: the hand-off task owns its sender handle.
-        }
+        Some(TrySendError::Full(change)) => wait_for_room(sender.clone(), handoffs, iter::once(change).chain(changes), kind),
         Some(TrySendError::Closed(_)) => {
             debug!(changes = %kind, "no notification evaluation receives the committed changes");
             Box::pin(future::ready(()))

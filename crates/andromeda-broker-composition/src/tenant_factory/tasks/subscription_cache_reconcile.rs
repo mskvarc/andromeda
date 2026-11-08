@@ -43,7 +43,7 @@ pub(super) fn register_subscription_cache_reconcile(supervisor: &TaskSupervisor,
         ShutdownPolicy::new(RECONCILE_INTERVAL),
     );
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
-        let processor = Arc::clone(&processor); // clone: each pass owns the shared processor while running.
+        let processor = Arc::clone(&processor);
         async move {
             processor.reconcile_subscriptions(&TokioRetryDelay).await;
             Ok::<(), TaskFailure<Infallible>>(())

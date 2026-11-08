@@ -121,7 +121,7 @@ impl EntityService {
             None => Ok(PlannedWrite {
                 entry: RequestedState::Built {
                     id: entry_id,
-                    state: Arc::clone(&snapshot.state), // clone: Arc ref-count bump
+                    state: Arc::clone(&snapshot.state),
                 },
                 write: None,
             }),

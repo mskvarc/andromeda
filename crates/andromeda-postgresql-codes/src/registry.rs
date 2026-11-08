@@ -15,7 +15,7 @@
 //! Assignment is append-only. A released number keeps naming what it named:
 //! retired members stay decodable so historical rows keep their meaning, and a
 //! new member takes the next unused number. The frozen-prefix digest below is
-//! what turns that from a convention into a test — it covers the leading
+//! what turns that from a convention into a test: it covers the leading
 //! registrations a released migration has already written to disk, so appending
 //! beyond them is silent while altering, reordering or removing any of them
 //! fails.

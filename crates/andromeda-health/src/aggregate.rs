@@ -28,7 +28,7 @@ impl Health {
     /// indicators, each of which is a round trip to a pool it already holds,
     /// and a `/health` call that fans out is a `/health` call that can be used
     /// to fan out. With no indicators registered the answer is
-    /// [`HealthStatus::Up`] and an empty map — nothing to ask is not the same
+    /// [`HealthStatus::Up`] and an empty map. Nothing to ask is not the same
     /// as nothing answering, but it is the only thing a broker with no
     /// subsystems can honestly say.
     pub async fn check_all(&self) -> HealthCheckDetails {
@@ -152,7 +152,7 @@ mod tests {
                 status: HealthStatus::Up,
             })
             .build();
-        let cloned = health.clone(); // clone: the point of the test is that this is a refcount
+        let cloned = health.clone();
         assert!(Arc::ptr_eq(&health.indicators, &cloned.indicators));
     }
 }

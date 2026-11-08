@@ -55,7 +55,7 @@ impl NotificationDeliveryQueue {
         entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
     ) -> NotificationDeliveryQueue {
         NotificationDeliveryQueue {
-            pool: pool.clone(), // clone: Arc ref-count bump (PgPool is Arc-based)
+            pool: pool.clone(),
             attribute_names,
             entity_type_names,
         }

@@ -8,8 +8,8 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 ///
 /// Clause 5.7.2.4 counts an entity as matching when any instance of the target
 /// `GeoProperty` meets the restriction. An index that holds one geometry per
-/// entity -- the default instance, the one carrying no `datasetId` or, when
-/// every instance carries one, the first (clause 4.5.16.1) -- can answer for
+/// entity (the default instance, the one carrying no `datasetId` or, when
+/// every instance carries one, the first, clause 4.5.16.1) can answer for
 /// that instance only. Its answer therefore narrows the default-instance half
 /// of the relation and nothing else: every other instance of `location` is
 /// still evaluated by the store, so an entity whose only matching instance has

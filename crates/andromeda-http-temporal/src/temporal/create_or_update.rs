@@ -84,14 +84,14 @@ pub(crate) async fn create_or_update(
     // Clause 5.6.11.4 matches registrations by the evolution's id and type.
     let entity_id = payload
         .id
-        .clone() // clone: the forwarding names the evolution beside the payload it narrows
+        .clone() // clone: the payload is still needed afterwards, so its id cannot be moved out of it
         .ok_or(TemporalError::Validation(TemporalValidationReason::EntityMissingId))
         .with_instance(&uri)?;
     let entity_type = payload
         .type_
         .as_ref()
         .and_then(|types| types.iter().next())
-        .map(|name| TypeExprRaw::Type(name.clone())); // clone: the one-type selector owns the type it names
+        .map(|name| TypeExprRaw::Type(name.clone()));
     let request = ForwardProvisionRequest {
         resource: ProvisionResource::TemporalEntities,
         entity_id: &entity_id,

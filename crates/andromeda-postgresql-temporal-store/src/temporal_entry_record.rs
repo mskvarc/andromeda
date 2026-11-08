@@ -132,19 +132,19 @@ pub struct TemporalIntentRecord {
 /// names its observations' metadata holds.
 pub fn mention_intent(intent: &TemporalAppendIntent, mentioned: &mut MentionedNames) {
     match intent.write_purpose() {
-        TemporalWritePurpose::Observation => mentioned.types.extend(intent.entity_types.iter().cloned()), // clone: the dictionary request owns the names it resolves
+        TemporalWritePurpose::Observation => mentioned.types.extend(intent.entity_types.iter().cloned()),
         TemporalWritePurpose::Deletion => {}
     }
     for entry in &intent.entries {
         match entry {
             TemporalAppendEntry::Observation { row } => {
-                mentioned.attributes.push(row.attribute_name.clone()); // clone: the dictionary request owns the names it resolves
+                mentioned.attributes.push(row.attribute_name.clone());
                 mentioned.types.extend(row.value.datatype().map(EntityTypeName::from));
                 if let Some(metadata) = &row.metadata {
                     mention(metadata, mentioned);
                 }
             }
-            TemporalAppendEntry::Tombstone { attribute_name, .. } => mentioned.attributes.push(attribute_name.clone()), // clone: the dictionary request owns the names it resolves
+            TemporalAppendEntry::Tombstone { attribute_name, .. } => mentioned.attributes.push(attribute_name.clone()),
             TemporalAppendEntry::Scope { .. } => {}
         }
     }
@@ -171,7 +171,7 @@ impl TemporalIntentRecord {
                 .map(|entity_type| {
                     keys.entity_type(entity_type)
                         .map(EntityTypeNameKey::get)
-                        // clone: the invariant owns the type the dictionary failed to resolve.
+                        // clone: the error outlives the borrowed entity type it failed on.
                         .ok_or_else(|| TemporalStoreInvariant::EntityTypeUnresolved(entity_type.clone()).into())
                 })
                 .collect::<Result<Vec<_>, TemporalStoreError>>()?,
@@ -216,7 +216,6 @@ impl TemporalIntentRecord {
     /// binds it: its kind, its grain and its instance identifiers.
     pub(crate) fn identities(&self) -> TemporalIntentRecord {
         TemporalIntentRecord {
-            // clone: the bound identities own their identifier, types and needs, one of each per intent.
             entity_id: self.entity_id.clone(),
             entity_type_name_keys: self.entity_type_name_keys.clone(),
             base_ordinal: self.base_ordinal,
@@ -265,7 +264,6 @@ fn entry_record(entry: &TemporalAppendEntry, recorded_at: DateTime<Utc>, keys: &
             observed_at,
         } => {
             let value = match observation {
-                // clone: the entry owns its validated path.
                 ScopeObservation::Path(path) => ScopeHistoryValue::Path(path.clone()),
                 // Clause 4.18 reserves `urn:ngsi-ld:null` for a deleted Scope,
                 // recorded as a deletion instant and no path.
@@ -301,7 +299,6 @@ impl TemporalEntryRecord {
         TemporalEntryRecord {
             entry_kind: self.entry_kind,
             attribute_name_key: self.attribute_name_key,
-            // clone: the identity owns what it binds; a `datasetId` and a client `instanceId` are rare and short.
             dataset_key: self.dataset_key.clone(),
             attribute_kind: self.attribute_kind,
             value_kind: self.value_kind,

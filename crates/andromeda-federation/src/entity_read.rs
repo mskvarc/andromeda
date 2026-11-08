@@ -138,7 +138,7 @@ impl FederationService {
             }
             let intent = read_intent(delivery);
             // Clause 4.3.6.1: each registration is contacted through a read
-            // operation it advertises, preferring the binding the client used --
+            // operation it advertises, preferring the binding the client used:
             // a GET query, or a POST batch query. Clause 4.3.6.3: each of its
             // information blocks that covers part of the query is a forwarded
             // request of its own.

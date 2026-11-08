@@ -35,9 +35,9 @@ impl RenderedResponse {
         Ok(RenderedResponse { body, head })
     }
 
-    /// Write a typed resource that is no entity -- a Subscription, a
+    /// Write a typed resource that is no entity (a Subscription, a
     /// Registration, a Snapshot, an `EntityMap`, a batch operation result or
-    /// type information -- into its body.
+    /// type information) into its body.
     ///
     /// # Errors
     ///

@@ -5,7 +5,7 @@
 //! TLS at a reverse proxy, which leaves the
 //! broker serving plaintext HTTP behind it. The same clause makes the `apiRoot`
 //! include "the scheme ("http" or "https")", so a broker that ignored the
-//! terminator would advertise `http://` URLs for an `https://` deployment --
+//! terminator would advertise `http://` URLs for an `https://` deployment:
 //! in `Location` fields, in pagination `Link` fields, and, durably, in the
 //! `@context` URLs clause 5.13 has it serve.
 //!

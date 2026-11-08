@@ -87,10 +87,7 @@ mod tests {
         let details: Vec<String> = [SaturatedWait::BuildPermit, SaturatedWait::MigrationPool]
             .into_iter()
             .map(|wait| {
-                let error = TenancyError::Saturated {
-                    tenant: tenant.clone(), // clone: each case owns its tenant reference
-                    wait,
-                };
+                let error = TenancyError::Saturated { tenant: tenant.clone(), wait };
                 let saturated = classify_tenancy_error(&error);
                 pretty_assertions::assert_eq!(saturated.classification(), ProblemClassification::ServiceUnavailable);
                 pretty_assertions::assert_eq!(saturated.retry_after(), Some(Duration::from_secs(1)));
@@ -124,7 +121,7 @@ mod tests {
         for error in [
             TenancyError::RegistryUnavailable(PersistenceFailure::Unavailable),
             TenancyError::ProvisioningFailed {
-                name: name.clone(), // clone: each case owns its tenant name
+                name: name.clone(),
                 cause: PersistenceFailure::Unavailable,
             },
             TenancyError::RuntimeUnavailable {

@@ -90,7 +90,7 @@ impl RecordingSubscriptions {
             .expect("the documents are never poisoned")
             .iter()
             .find(|document| document["id"] == id.as_str())
-            .cloned() // clone: each read decodes its own copy of the stored form
+            .cloned()
     }
 
     /// Whether a subscription is stored under `id`.
@@ -121,7 +121,7 @@ impl RecordingSubscriptions {
 
     /// The subscriptions deleted, in the order they were.
     pub(crate) fn deleted(&self) -> Vec<Identifier> {
-        self.deleted.lock().expect("the deletion record is never poisoned").clone() // clone: the caller owns its snapshot
+        self.deleted.lock().expect("the deletion record is never poisoned").clone()
     }
 
     /// How many notification slots were claimed.
@@ -164,7 +164,7 @@ impl SubscriptionStore for RecordingSubscriptions {
             self.hold.reached.notify_one();
             self.hold.released.notified().await;
         }
-        self.deleted.lock().expect("the deletion record is never poisoned").push(id.clone()); // clone: the record owns the identifier
+        self.deleted.lock().expect("the deletion record is never poisoned").push(id.clone());
         let mut documents = self.documents.lock().expect("the documents are never poisoned");
         let before = documents.len();
         documents.retain(|document| document["id"] != id.as_str());

@@ -32,7 +32,7 @@ pub(crate) fn stored_subscription(members: &Value, endpoint: &str) -> Value {
         "modifiedAt": "2020-01-01T00:00:00Z"
     });
     if let (Some(base), Some(replacements)) = (stored.as_object_mut(), members.as_object()) {
-        base.extend(replacements.iter().map(|(name, value)| (name.clone(), value.clone()))); // clone: the stored form owns its members
+        base.extend(replacements.iter().map(|(name, value)| (name.clone(), value.clone())));
     }
     stored["notification"]["endpoint"] = json!({"uri": endpoint});
     stored

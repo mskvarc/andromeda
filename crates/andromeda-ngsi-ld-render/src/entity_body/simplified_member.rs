@@ -1,9 +1,9 @@
 //! An attribute member written in the clause 4.5.4 simplified (`keyValues`)
 //! representation.
 //!
-//! A single instance becomes its value -- wrapped in its one distinguishing
+//! A single instance becomes its value, wrapped in its one distinguishing
 //! member for a `LanguageProperty`, `JsonProperty` and `VocabProperty`, and
-//! reduced to the bare URIs for a `ListRelationship` -- and a multi-attribute
+//! reduced to the bare URIs for a `ListRelationship`. A multi-attribute
 //! becomes the `dataset` map keyed by each instance's `datasetId`, `@none` for
 //! the default. A clause 4.15 `lang` filter reduces a top-level
 //! `LanguageProperty` to the text it negotiates, and a Relationship that nests

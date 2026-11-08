@@ -5,8 +5,8 @@
 //! 5.5.12 and 5.8.6), and only there: below the top level, written as the
 //! value of a member of an instance, it is the value of a concise Property
 //! (clause 4.5.2.3). A sub-attribute is therefore written with that reading
-//! made, so a reader of the instance's JSON -- the JSON-LD processor above all
-//! -- never takes the Null for a string value of a term.
+//! made, so a reader of the instance's JSON (the JSON-LD processor above all)
+//! never takes the Null for a string value of a term.
 
 use crate::attribute::{instance::AttributeValue, merge_member::MergeMember};
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword, ngsi_ld_null::NULL_URI};

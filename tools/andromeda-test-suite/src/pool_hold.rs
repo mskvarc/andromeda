@@ -64,7 +64,7 @@ impl PoolHold {
         let seconds = held_for.as_secs_f64();
         let holding = (0..sessions)
             .map(|_| {
-                let url = url.clone(); // clone: each session owns the URL it connects with
+                let url = url.clone(); // clone: each spawned session moves its own copy of the URL
                 tokio::spawn(async move {
                     let mut connection = PgConnection::connect(url.as_str()).await?;
                     let slept = Query::select()

@@ -47,7 +47,7 @@ fn temporal_evolution() -> Value {
     speed_1.insert(core("datasetId"), json!([{"@id": "urn:ngsi-ld:Dataset:d"}]));
     speed_1.insert(core("createdAt"), date_time("2020-01-01T00:00:01.000000Z"));
     speed_1.insert(core("modifiedAt"), date_time("2020-01-01T00:00:01.000000Z"));
-    let mut speed_2 = speed_1.clone(); // clone: the second observation differs only in a few members
+    let mut speed_2 = speed_1.clone();
     speed_2.insert(core("hasValue"), json!([{"@value": 80.25}]));
     speed_2.insert(core("observedAt"), date_time("2020-01-02T00:00:00Z"));
     speed_2.insert(core("instanceId"), json!([{"@id": "urn:ngsi-ld:attribute:instance:2"}]));

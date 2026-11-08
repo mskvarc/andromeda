@@ -50,8 +50,8 @@ impl DefaultTenantContextsResolver for BrokerDefaultTenantContexts {
         Box::pin(async move {
             let LeasedState { state, lease } = self.tenants.resolve_state(&TenantRef::UnnamedDefault, TenantCreationPolicy::MustExist).await?;
             Ok(DefaultTenantContexts {
-                engine: state.entity_query.engine().clone(),    // clone: the engine shares its loader and caches behind `Arc`s
-                context_hosting: state.context_hosting.clone(), // clone: the response owns a handle on the default tenant's hosting
+                engine: state.entity_query.engine().clone(),
+                context_hosting: state.context_hosting.clone(),
                 runtime_lease: lease,
             })
         })

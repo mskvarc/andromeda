@@ -135,7 +135,6 @@ impl Literal {
         match self.value {
             LiteralValue::String(_) => Some(Literal {
                 value: LiteralValue::String(text),
-                // clone: the respelled literal keeps the written one's annotations.
                 annotation: self.annotation.clone(),
             }),
             LiteralValue::Number(_) | LiteralValue::Boolean(_) => None,

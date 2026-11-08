@@ -50,7 +50,6 @@ pub(super) fn next_write_count(entities: impl IntoIden) -> SimpleExpr {
 /// `modifiedAt`: two writes accepted in the same microsecond stamp the same
 /// instant but never leave the same count.
 pub(super) fn expectation(staging: impl IntoIden, entities_alias: impl IntoIden) -> Cond {
-    // clone: each alias qualifies more than one column
     let (staging, entities_alias) = (staging.into_iden(), entities_alias.into_iden());
     Cond::any().add(Expr::col((staging.clone(), StagedColumn::ExpectedEntityKey)).is_null()).add(
         Cond::all()

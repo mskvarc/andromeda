@@ -82,14 +82,13 @@ pub(crate) async fn admitted_batch<W: BatchWriteKind>(
 /// Submit each entity as the transport layer does before it admits a batch,
 /// every entity read against `context`, admitted once.
 pub(crate) async fn submitted<M>(service: &EntityService, entities: Vec<Entity<M>>, context: &ContextSpec) -> Vec<SubmittedEntity<M>> {
-    // clone: every entity of the fixture batch shares one context
     let shared = BatchContext::shared(context.clone());
     let admitted = shared.admit_for_request(&service.engine).await.expect("the context is admitted");
     entities
         .into_iter()
         .map(|entity| SubmittedEntity {
             entity,
-            context: admitted.clone(), // clone: every entity holds the shared handle
+            context: admitted.clone(),
         })
         .collect()
 }

@@ -32,10 +32,10 @@ async fn run(context: ContextChoice) -> Result<()> {
     let at_b2 = scenario.query(Node::B2, &kinds, LOCATION, QueryMethod::Get).await?;
     let at_b3 = scenario.query(Node::B3, &kinds, LOCATION, QueryMethod::Get).await?;
     let at_b4 = scenario.query(Node::B4, &kinds, LOCATION, QueryMethod::Get).await?;
-    expect_ids(&at_b1, &[first_at_b3.id.clone(), second_at_b4.id.clone(), first_vehicle.id.clone()])?; // clone: the entities stay whole for the expectations
+    expect_ids(&at_b1, &[first_at_b3.id.clone(), second_at_b4.id.clone(), first_vehicle.id.clone()])?;
     expect_ids(&at_b2, slice::from_ref(&first_vehicle.id))?;
     expect_ids(&at_b3, slice::from_ref(&first_at_b3.id))?;
-    expect_ids(&at_b4, &[first_at_b4.id.clone(), second_at_b4.id.clone(), second_vehicle.id.clone()])?; // clone: as above
+    expect_ids(&at_b4, &[first_at_b4.id.clone(), second_at_b4.id.clone(), second_vehicle.id.clone()])?;
     let first_vehicle_b2 = expect_among(&at_b2, &first_vehicle.id, &keeping(&first_vehicle, LOCATION)?)?;
     let first_b3 = expect_among(&at_b3, &first_at_b3.id, &keeping(&first_at_b3, LOCATION)?)?;
     expect_among(&at_b4, &first_at_b4.id, &keeping(&first_at_b4, LOCATION)?)?;

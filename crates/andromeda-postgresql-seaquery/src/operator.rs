@@ -136,7 +136,7 @@ pub fn null_if(value: SimpleExpr, sentinel: SimpleExpr) -> SimpleExpr {
 /// The total negation of a predicate: `NOT COALESCE(predicate, FALSE)`.
 ///
 /// Plain `NOT` propagates the unknown a comparison against a NULL yields, and
-/// the enclosing `WHERE` then drops the row — so `NOT` is not the complement of
+/// the enclosing `WHERE` then drops the row, so `NOT` is not the complement of
 /// a predicate over nullable columns, only of one over rows where every operand
 /// is present. Wrapping the predicate first makes the negation total: a row the
 /// predicate could not be evaluated for satisfies the negation.

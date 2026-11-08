@@ -72,7 +72,7 @@ fn corpus() -> Vec<CorpusBody> {
 /// `body` written under the test context `context` instead of its own, when
 /// it names none of its own.
 fn under(context: &str, body: &Value) -> Option<Value> {
-    let mut members = body.as_object()?.clone(); // clone: the corpus body is expanded under every context
+    let mut members = body.as_object()?.clone();
     if members.contains_key("@context") {
         return None;
     }
@@ -91,13 +91,13 @@ async fn typed_expansion_equals_processor_expansion_over_the_suite_bodies() {
             continue;
         }
         if item.kind == "entity" {
-            tally.record(&format!("{label} entity"), entity(&engine, item.body.clone(), Normalization::Entity).await); // clone: the body is expanded every way
+            tally.record(&format!("{label} entity"), entity(&engine, item.body.clone(), Normalization::Entity).await);
         }
         tally.record(
             &format!("{label} merge"),
             patch(&engine, item.body.clone(), Normalization::MemberDeletions).await,
-        ); // clone: the body is expanded every way
-        tally.record(&format!("{label} update"), patch(&engine, item.body.clone(), Normalization::Entity).await); // clone: the body is expanded every way
+        );
+        tally.record(&format!("{label} update"), patch(&engine, item.body.clone(), Normalization::Entity).await);
         for context in [TERMS, VOCAB_AND_LANGUAGE] {
             if let Some(body) = under(context, &item.body) {
                 tally.record(&format!("{label} update under {context}"), patch(&engine, body, Normalization::Entity).await);

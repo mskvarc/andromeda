@@ -214,8 +214,8 @@ mod tests {
             .await
             .expect("the core context processes");
         let written = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 1}, "owner": "urn:ngsi-ld:Person:1"});
-        let entity: Entity = serde_json::from_value(written.clone()).expect("an entity"); // clone: the same document is decoded three ways
-        let patch: EntityPatch = serde_json::from_value(written.clone()).expect("a patch"); // clone: the same document is decoded three ways
+        let entity: Entity = serde_json::from_value(written.clone()).expect("an entity");
+        let patch: EntityPatch = serde_json::from_value(written.clone()).expect("a patch");
         let fragment: EntityPatch<MergeMember> = serde_json::from_value(written).expect("a merge fragment");
         let from_entity = (&entity).expand(&expansion, Normalization::Entity).await.expect("the entity expands");
         let from_patch = (&patch).expand(&expansion, Normalization::Entity).await.expect("the patch expands");

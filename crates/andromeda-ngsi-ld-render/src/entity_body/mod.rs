@@ -1,7 +1,7 @@
 //! Entities written straight from their typed form into a response body.
 //!
-//! The renderings of clause 4.5 -- normalized, concise, simplified and the
-//! `GeoJSON` envelope -- are written member by member from the typed
+//! The renderings of clause 4.5 (normalized, concise, simplified and the
+//! `GeoJSON` envelope) are written member by member from the typed
 //! [`andromeda_ngsi_ld_model::entity::Entity`], with the clause 4.21
 //! structural rule, the clause 4.15 language negotiation, the clause 4.5.23
 //! inline join, the clause 4.3.6.8 version fallback and the

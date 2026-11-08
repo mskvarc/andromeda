@@ -3,7 +3,7 @@
 //! `notification_events` is one immutable payload per (write, ordinal): the
 //! state a subscriber must be told about, written once inside the transaction
 //! that produced the change. `notification_deliveries` is the mutable work
-//! queue built from those events — one row per matched subscription, carrying
+//! queue built from those events: one row per matched subscription, carrying
 //! the lease a worker claims it under and the retry bookkeeping.
 //! `notification_delivery_holds` names, for each Subscription whose endpoint is
 //! failing, the one delivery a claim may still take.

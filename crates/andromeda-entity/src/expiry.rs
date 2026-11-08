@@ -241,7 +241,7 @@ struct PurgedState {
 /// The entity `snapshot` becomes once every instance expired at `cutoff` is
 /// gone (clause 4.22), or `None` when it held no such instance.
 fn purged_state(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<PurgedState> {
-    let mut purged = EntityState::clone(&snapshot.state); // clone: shares every attribute holding no expired instance
+    let mut purged = EntityState::clone(&snapshot.state);
     match purged.remove_expired_instances(cutoff) {
         InstanceExpiry::NoneExpired => None,
         InstanceExpiry::Removed => {
@@ -263,7 +263,7 @@ fn purge_write(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<Atomic
     let purged = purged_state(snapshot, cutoff)?;
     Some(
         AtomicWrite::builder()
-            .entity_id(Arc::new(purged.current.id().clone())) // clone: the atomic write owns a shared validated identifier.
+            .entity_id(Arc::new(purged.current.id().clone()))
             .entity(EntityMutation::Update(
                 EntityRecord::replacing(&purged.read.state, purged.current).expect("a projectable state"),
             ))

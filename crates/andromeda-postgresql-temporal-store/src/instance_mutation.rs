@@ -219,7 +219,7 @@ async fn attribute_stream_keys(
 /// Report an instance the addressed attribute does not hold.
 fn instance_not_found(instance: &InstanceIdentity) -> TemporalNotFoundReason {
     TemporalNotFoundReason::AttributeInstance {
-        instance: instance.clone(), // clone: the reason owns the instance it names
+        instance: instance.clone(), // clone: the error outlives the borrowed instance identity it names.
     }
 }
 

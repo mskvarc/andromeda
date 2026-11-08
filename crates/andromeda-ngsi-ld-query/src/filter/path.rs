@@ -95,8 +95,8 @@ impl AttrPath {
 /// The attribute axis a `q` predicate compares along (clause 4.9 `Attribute`).
 ///
 /// Clause 4.9 gives an attribute reference three axes. Two of them stay inside
-/// one entity and are carried by [`AttrPath`]. The third — the
-/// `LinkedEntityRelation` production, written `rel{…}` — crosses a Relationship
+/// one entity and are carried by [`AttrPath`]. The third (the
+/// `LinkedEntityRelation` production, written `rel{…}`) crosses a Relationship
 /// into the entity it names, and may be chained. This enum is that distinction:
 /// a path is either wholly local, or one hop followed by a path that is itself
 /// either local or a further hop.
@@ -123,7 +123,7 @@ pub enum QueryPath {
 }
 
 impl QueryPath {
-    /// The local path this axis terminates at — the attribute whose value the
+    /// The local path this axis terminates at, the attribute whose value the
     /// predicate ultimately compares.
     ///
     /// For a hop chain that is the innermost segment, which is the attribute a

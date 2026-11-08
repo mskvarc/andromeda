@@ -50,7 +50,7 @@ async fn a_lim_pay_9018_every_write_of_a_member_over_the_entity_value_budget_is_
         if let Some(attribute) = member.attribute(entries) {
             writes.push((Method::PATCH, format!("entities/{probe_id}/attrs"), member.fragment("m", entries)));
             writes.push((Method::POST, format!("entities/{probe_id}/attrs"), member.fragment("m", entries)));
-            writes.push((Method::PUT, format!("entities/{probe_id}/attrs/m"), attribute.clone())); // clone: the attribute is sent twice
+            writes.push((Method::PUT, format!("entities/{probe_id}/attrs/m"), attribute.clone()));
             writes.push((Method::PATCH, format!("entities/{probe_id}/attrs/m"), attribute));
         }
         for (method, path, body) in writes {

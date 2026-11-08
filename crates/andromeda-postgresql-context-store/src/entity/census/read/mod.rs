@@ -7,8 +7,8 @@
 //! reads a payload or an Entity row; the answers are the size of the
 //! dictionaries, not of the store. The names come from the dictionaries by key.
 //!
-//! Each endpoint that combines two ledgers — a type's count and its
-//! attributes, an attribute's count and its families and types — reads both in
+//! Each endpoint that combines two ledgers (a type's count and its
+//! attributes, an attribute's count and its families and types) reads both in
 //! one statement, so the answer comes from one snapshot and can never pair a
 //! count with attributes from a different moment.
 

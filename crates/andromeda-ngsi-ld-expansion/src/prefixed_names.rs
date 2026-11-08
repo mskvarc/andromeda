@@ -82,7 +82,7 @@ pub fn path_attribute(context: &ExpansionContext, name: &AttributeName) -> Resul
 fn types(context: &ExpansionContext, entity_types: &EntityTypeValue) -> Result<(), EntityRefusal> {
     entity_types.iter().try_for_each(|entity_type| {
         check_prefixed_name(context.active(), entity_type.as_str()).map_err(|_| EntityRefusal::PrefixedEntityType {
-            entity_type: entity_type.clone(), // clone: the refusal owns the type it names
+            entity_type: entity_type.clone(), // clone: the refusal outlives the borrowed type, so it owns a copy
         })
     })
 }
@@ -136,6 +136,6 @@ fn sub_attributes(active: &Context<IriBuf, BlankIdBuf>, member: WrittenMemberRef
 /// Check one attribute name.
 fn attribute_name(active: &Context<IriBuf, BlankIdBuf>, name: &AttributeName) -> Result<(), EntityRefusal> {
     check_prefixed_name(active, name.as_str()).map_err(|_| EntityRefusal::PrefixedAttributeName {
-        attribute: name.clone(), // clone: the refusal owns the name it names
+        attribute: name.clone(), // clone: the refusal outlives the borrowed name, so it owns a copy
     })
 }

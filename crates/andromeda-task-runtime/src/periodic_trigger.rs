@@ -41,7 +41,7 @@ pub struct PeriodicSchedule {
     /// Extra hash input that shifts the spread per scope.
     ///
     /// The jitter is derived from the task name alone, so the same task in two
-    /// scopes -- for instance one tenant runtime and another -- would otherwise
+    /// scopes (for instance one tenant runtime and another) would otherwise
     /// draw the identical offset and fire in lockstep. A per-scope seed folds into
     /// the hash so a fleet of tenants started in one burst spreads its background
     /// work rather than stampeding the shared database in synchronized waves.

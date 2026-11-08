@@ -102,7 +102,7 @@ impl RawClaimedDeliveryRow {
         let delivery_key = DeliveryKey::from(self.delivery_key);
         self.decode(events, target).map_err(|reason| {
             Box::new(UnreadableClaimedDelivery {
-                target: target.clone(), // clone: the unreadable row answers for the branch every row of the claim shares.
+                target: target.clone(), // clone: the error outlives the borrowed target, so it owns a copy.
                 delivery_key,
                 reason,
             })
@@ -127,7 +127,7 @@ impl RawClaimedDeliveryRow {
             None => return Err(ClaimedDeliveryError::EventNotRead { event_key }),
         };
         Ok(DeliveryEntry::builder()
-            .target(target.clone()) // clone: every row of the claim answers for the one branch it was drained from.
+            .target(target.clone()) // clone: the entry outlives the borrowed target, so it owns a copy.
             .key(DeliveryKey::from(self.delivery_key))
             .subscription_id(subscription_id)
             .attempt_count(self.attempt_count)

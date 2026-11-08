@@ -81,7 +81,7 @@ pub fn validate_submission(writes: &[AtomicWrite]) -> Result<(), CommitError> {
     for write in writes {
         if !seen.insert(write.entity_id.as_ref()) {
             return Err(CommitError::DuplicateEntity {
-                entity_id: Arc::clone(&write.entity_id), // clone: the error must own the repeated identifier after validation returns.
+                entity_id: Arc::clone(&write.entity_id),
             });
         }
     }

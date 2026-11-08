@@ -12,7 +12,7 @@ validated_ngsi_name! {
     /// Compact payloads name types by term or compact IRI; expanded payloads
     /// name them by full IRI. Both are accepted, because both reach this type
     /// depending on which side of JSON-LD expansion the payload sits on. The
-    /// grammar is the one every named NGSI-LD member shares — see
+    /// grammar is the one every named NGSI-LD member shares, checked by
     /// [`validate_ngsi_ld_name`].
     EntityTypeName,
     derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, AsRef, Display, Deref, Into),

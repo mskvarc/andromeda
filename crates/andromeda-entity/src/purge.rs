@@ -107,7 +107,7 @@ fn purged_state(previous: &EntityState, mode: &PurgeMode, attributes: &[Attribut
         PurgeMode::Drop { .. } => AttributePurge::Drop(attributes),
         PurgeMode::Keep { .. } => AttributePurge::Keep(attributes),
     };
-    let mut purged = EntityState::clone(previous); // clone: shares every attribute the purge leaves alone
+    let mut purged = EntityState::clone(previous);
     let outcome = match mode.dataset_scope()? {
         // `deleteAll` removes every instance, which is the whole attribute, so
         // it is the standard whole-attribute purge; only a `datasetId`
@@ -206,7 +206,7 @@ mod tests {
         .expect("a stored entity");
         let scope: Vec<AttributeName> = vec!["https://uri.etsi.org/ngsi-ld/scope".parse().expect("a valid attribute name")];
         let mode = PurgeMode::Drop {
-            attributes: scope.clone(), // clone: the mode and the expanded list are separate inputs.
+            attributes: scope.clone(),
             dataset: DatasetPurgeScope::Unfiltered,
         };
         let (purged, history) = purged_state(&previous, &mode, &scope).expect("the scope is purged");

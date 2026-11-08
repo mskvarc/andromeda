@@ -1,8 +1,8 @@
 //! Assembling the response a single-entity temporal retrieval answers with
 //! (clause 5.7.3.4 and Table 6.19.3.1-1).
 //!
-//! What there is to answer with -- the Entity Map in use, the sources
-//! contacted and the merged history -- is decided by
+//! What there is to answer with (the Entity Map in use, the sources
+//! contacted and the merged history) is decided by
 //! `crate::temporal::retrieve_forwarding`.
 
 use crate::{

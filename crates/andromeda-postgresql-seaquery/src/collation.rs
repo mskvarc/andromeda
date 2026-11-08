@@ -47,7 +47,7 @@ impl PostgresCollation {
 
 /// `(expr) COLLATE "collation"` - compare `expr` under a named collation.
 ///
-/// `expr` has to yield a collatable type — `text`, or an array of it.
+/// `expr` has to yield a collatable type: `text`, or an array of it.
 /// PostgreSQL supports no collation on `jsonb`, so a value read out of a
 /// payload reaches this already extracted as text (`->>`, `#>>`), never cast:
 /// `'"a"'::jsonb::text` keeps the JSON quotes and would sort by them.

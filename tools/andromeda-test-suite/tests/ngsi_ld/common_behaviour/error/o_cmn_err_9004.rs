@@ -31,14 +31,12 @@ async fn o_cmn_err_9004_put_and_patch_on_the_entities_collection_get_a_405_probl
     for method in [Method::PUT, Method::PATCH] {
         for path in ["entities", "entities/"] {
             // The body goes as raw JSON: no typed operation sends a PUT or a PATCH to the collection.
-            // clone: the request takes its method and the assertions name it
             let request = request_to(&broker, method.clone(), path)?
                 .append_header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
                 .body(Bytes::from_static(b"{}"));
             let answer = broker.send_unchecked(request).await;
             expect_that!(
                 &answer,
-                // clone: every request is matched against the same error type
                 problem(StatusCode::METHOD_NOT_ALLOWED, method_not_allowed.clone())
                     .with_detail_containing(method.as_str())
                     .with_header_containing(ALLOW, "GET")

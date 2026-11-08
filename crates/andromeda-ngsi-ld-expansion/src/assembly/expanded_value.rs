@@ -50,7 +50,7 @@ impl MemberMode for Stored {
 
     fn deletion(attribute: &AttributeName) -> Result<Vec<ExpandedValue<Stored>>, EntityRefusal> {
         Err(EntityRefusal::NullInState {
-            attribute: Some(attribute.clone()), // clone: the refusal names the attribute the caller keeps
+            attribute: Some(attribute.clone()), // clone: the refusal outlives the borrowed attribute, so it owns a copy
         })
     }
 }
@@ -158,7 +158,7 @@ pub(crate) fn node_member<M: MemberMode>(attribute: &AttributeName, items: Vec<E
 /// The refusal of a nested value that is not what its expanded form names.
 fn nested_malformed(attribute: &AttributeName) -> EntityRefusal {
     EntityRefusal::Malformed {
-        attribute: Some(attribute.clone()), // clone: the refusal names the attribute the caller keeps
+        attribute: Some(attribute.clone()), // clone: the refusal outlives the borrowed attribute, so it owns a copy
         member: MemberShape::NestedValue,
     }
 }

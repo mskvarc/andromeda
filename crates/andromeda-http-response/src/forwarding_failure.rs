@@ -223,7 +223,7 @@ mod tests {
         let registration = uri("urn:ngsi-ld:ContextSourceRegistration:test");
         for error in [
             FederationError::GatewayTimeout {
-                registration: registration.clone(), // clone: each case owns its registration
+                registration: registration.clone(),
                 timeout: Duration::from_secs(5),
             },
             FederationError::BadGateway {
@@ -242,7 +242,7 @@ mod tests {
         for (error, expected) in [
             (
                 FederationError::Conflict {
-                    registration: registration.clone(), // clone: each case owns its registration
+                    registration: registration.clone(),
                 },
                 ProblemClassification::Category(NgsiLdErrorType::Conflict),
             ),
@@ -255,26 +255,26 @@ mod tests {
             ),
             (
                 FederationError::LoopDetected {
-                    registration: registration.clone(), // clone: each case owns its registration
+                    registration: registration.clone(),
                 },
                 ProblemClassification::LoopDetected,
             ),
             (
                 FederationError::GatewayTimeout {
-                    registration: registration.clone(), // clone: same
+                    registration: registration.clone(),
                     timeout: Duration::from_secs(5),
                 },
                 ProblemClassification::GatewayTimeout,
             ),
             (
                 FederationError::RemoteNotFound {
-                    registration: registration.clone(), // clone: same
+                    registration: registration.clone(),
                 },
                 ProblemClassification::DistributedResourceNotFound,
             ),
             (
                 FederationError::BadGateway {
-                    registration: registration.clone(), // clone: same
+                    registration: registration.clone(),
                     cause: Box::new(GatewayFailure::Answered(RemoteAnswer { status: 403, problem: None })),
                 },
                 ProblemClassification::BadGateway,

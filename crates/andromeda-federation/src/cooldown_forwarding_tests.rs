@@ -57,7 +57,7 @@ fn registration(source: &MockServer, management: &serde_json::Value) -> ContextS
 
 fn service(registration: &ContextSourceRegistration) -> FederationService {
     FederationService::new(
-        Arc::new(FixedRegistrationStore::new(vec![registration.clone()])), // clone: the store owns its registrations
+        Arc::new(FixedRegistrationStore::new(vec![registration.clone()])),
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
         LocalSource::new(

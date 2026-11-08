@@ -17,7 +17,7 @@ use thiserror::Error;
 /// The pagination parameters of a request whose pointers are dereferenceable:
 /// a query-string binding (clause 6.3.10).
 ///
-/// Parsing enforces no rule between them -- `cursor` beside `offset`, a cursor
+/// Parsing enforces no rule between them: `cursor` beside `offset`, a cursor
 /// on a collection that cannot be walked by one, `limit=0` without a count are
 /// all decided by [`crate::pagination::policy::PaginationPolicy::window`], so
 /// every collection refuses them alike.

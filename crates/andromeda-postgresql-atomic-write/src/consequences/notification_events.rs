@@ -56,7 +56,7 @@ pub(crate) struct EventGroup<'a> {
 /// entries have already drawn from it, and every event group here draws the
 /// next ordinals in submission order, so `(write_id, event_ordinal)` never
 /// collides with a history entry's `(write_id, write_ordinal)` pair of the same
-/// commit — the two live in the same numbering rather than each restarting
+/// commit. The two live in the same numbering rather than each restarting
 /// their own count at zero. The groups draw exactly one ordinal each.
 ///
 /// # Errors
@@ -121,7 +121,6 @@ pub(crate) fn group<'a>(landed: &[&'a AtomicWrite]) -> Vec<EventGroup<'a>> {
 fn mentioned_names(groups: &[EventGroup<'_>]) -> MentionedNames {
     let mut mentioned = MentionedNames::default();
     for group in groups {
-        // clone: the dictionary request owns the names it resolves.
         mentioned
             .attributes
             // clone: the dictionary request owns the names it resolves.
@@ -297,7 +296,7 @@ mod tests {
             modified_at: Utc::now(),
             expires_at: None,
         };
-        matched.sys_attrs_snapshot = Some(sys_attrs.clone()); // clone: the test compares the event against the value it handed over
+        matched.sys_attrs_snapshot = Some(sys_attrs.clone());
         let group = EventGroup {
             change: &matched,
             subscriptions: vec![matched.subscription_key],

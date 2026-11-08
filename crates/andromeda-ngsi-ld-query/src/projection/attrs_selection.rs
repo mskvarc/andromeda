@@ -46,7 +46,7 @@ impl AttrsAdmission {
 /// [`QueryError::TermExpansion`] or [`QueryError::TermNotAnIri`] when a name
 /// does not expand to an absolute IRI through the active `@context`.
 pub async fn expand_attrs_admitted(raw: &[AttributeName], admission: AttrsAdmission, expander: &impl TermExpander) -> Result<Vec<IriBuf>, QueryError> {
-    let mut expanded = Vec::with_capacity(raw.len());
+    let mut iris = Vec::with_capacity(raw.len());
     for name in raw {
         if refused_keyword(name, admission) {
             return Err(QueryError::AttrsReservedMember { term: name.clone() }); // clone: the refusal outlives the borrowed request
@@ -55,9 +55,9 @@ pub async fn expand_attrs_admitted(raw: &[AttributeName], admission: AttrsAdmiss
         if iri.as_str() == expanded_properties::SCOPE.as_str() && !admission.admits_scope() {
             return Err(QueryError::AttrsReservedMember { term: name.clone() }); // clone: the refusal outlives the borrowed request
         }
-        expanded.push(iri);
+        iris.push(iri);
     }
-    Ok(expanded)
+    Ok(iris)
 }
 
 /// Whether `name` spells a structural member that `admission` refuses before

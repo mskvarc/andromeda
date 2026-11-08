@@ -3,11 +3,11 @@
 //! into.
 //!
 //! The stages are the ones [`crate::entity_response`] runs over entities, in
-//! the same order and with the same outcome -- the clause 6.3.12
+//! the same order and with the same outcome: the clause 6.3.12
 //! representation, the clause 4.15 negotiation, the clause 4.21 structural
 //! rule, the clause 4.5.23 join, the presentation-boundary URI decoding, the
-//! clause 4.3.6.8 version fallback a `Prefer: ngsi-ld=<version>` asks for and
-//! the clause 6.3.6 `@context` member -- applied while each member is written.
+//! clause 4.3.6.8 version fallback a `Prefer: ngsi-ld=<version>` asks for, and
+//! the clause 6.3.6 `@context` member, applied while each member is written.
 //! A Temporal Evolution has no `GeoJSON` representation (clause 4.5.16 is
 //! about Entities), so that media type is refused.
 
@@ -239,7 +239,7 @@ impl ReadyTemporalResponse<'_> {
         };
         let (context, context_link) = match &self.renderer.context {
             ResponseContext::Body(context) => (Some(context), None),
-            ResponseContext::Link(target) => (None, Some(target.clone())), // clone: the head owns the target the renderer keeps
+            ResponseContext::Link(target) => (None, Some(target.clone())),
             ResponseContext::Absent => (None, None),
         };
         let presentation = Presentation {

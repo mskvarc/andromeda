@@ -46,7 +46,6 @@ impl AddCheckConstraint {
 
     /// The condition as the text the constraint states it in.
     fn condition_text(&self) -> String {
-        // clone: the select builder consumes the expression and the command only borrows it.
         let select = Query::select().expr(self.condition.clone()).to_string(PostgresQueryBuilder);
         select.strip_prefix("SELECT ").unwrap_or(&select).to_owned()
     }

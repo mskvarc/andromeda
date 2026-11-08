@@ -76,11 +76,8 @@ pub(crate) async fn clone_branch(conn: &mut PgConnection, source_schema: &DynIde
         if plan.is_empty() {
             continue;
         }
-        // clone: each qualified name owns its schema and relation identifiers.
         let source = TableName::from((source_schema.clone(), table.clone()));
         let target = TableName::from((target_schema.clone(), table));
-        // clone: the copy owns the names it renders; the continuations below
-        // name them again.
         RelationCopy::new(source.clone(), target.clone(), plan.columns(), plan.copied_identity())
             .to_query()
             .execute(&mut *conn)

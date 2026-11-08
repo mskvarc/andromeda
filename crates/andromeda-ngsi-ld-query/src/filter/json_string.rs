@@ -46,7 +46,7 @@ pub enum UnicodeEscapeFault {
 ///
 /// `start` indexes the opening quotation mark; the returned index is the one
 /// that follows the closing quotation mark. A backslash defers to the character
-/// after it, so an escaped quotation mark does not end the literal — but no
+/// after it, so an escaped quotation mark does not end the literal, but no
 /// escape is *resolved* here, because which resolution applies depends on the
 /// production the literal stands in. Clause 4.9 puts a `quotedStr` and a
 /// `RegExp` in the same lexical shape and gives them different grammars:

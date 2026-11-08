@@ -14,8 +14,8 @@
 //! GroupKey            = ValuePath / EntityMember
 //! ```
 //!
-//! where `,` reads as "then" — each further term nests one level deeper inside
-//! the previous term's groups — and `;` attaches a per-key bucket modifier. A
+//! where `,` reads as "then": each further term nests one level deeper inside
+//! the previous term's groups, and `;` attaches a per-key bucket modifier. A
 //! bucket is only accepted on a temporal key (a clause 4.8 temporal property).
 
 pub mod bucket_term;
@@ -93,7 +93,7 @@ pub struct AggregationGrouping(pub Vec<GroupingTerm>);
 impl AggregationGrouping {
     /// Parse a whole `aggrGroupBy` value.
     ///
-    /// Splits on `,` into terms — outermost first — then each term on `;` into
+    /// Splits on `,` into terms (outermost first), then each term on `;` into
     /// a key and an optional bucket.
     ///
     /// # Errors

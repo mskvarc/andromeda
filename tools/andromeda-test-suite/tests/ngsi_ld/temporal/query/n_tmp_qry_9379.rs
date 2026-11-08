@@ -49,7 +49,6 @@ async fn n_tmp_qry_9379_an_instance_observed_after_it_was_recorded_is_selected_o
     ];
     for (window, counts) in windows {
         for (property, count) in AXES.into_iter().zip(counts) {
-            // clone: every axis reads the same window
             let page = broker
                 .with_accept(Accept::new(NgsiLdMediaType::Json))
                 .temporal()

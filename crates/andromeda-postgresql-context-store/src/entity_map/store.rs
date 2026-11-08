@@ -39,7 +39,7 @@ impl EntityMapStore for EntityMapRepository {
             };
             let entries = read_entries(self.pool(), identifier).await?;
             let links = read_links(self.pool(), identifier).await?;
-            let map = rows_to_entity_map(identifier.clone(), &control, entries, links).map_err(|error| persistence_error::<EntityMapError>(error))?; // clone: the map owns its identifier
+            let map = rows_to_entity_map(identifier.clone(), &control, entries, links).map_err(|error| persistence_error::<EntityMapError>(error))?;
             Ok(Some(map))
         })
     }

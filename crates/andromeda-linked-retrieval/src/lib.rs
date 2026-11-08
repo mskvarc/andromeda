@@ -8,9 +8,9 @@
 //! what it excludes. A consumer supplies the operation it is and the
 //! parameters it was given; it decides nothing about Linked Entities itself.
 //!
-//! The crate holds no store, HTTP or JSON-LD engine, so every consumer --
-//! Core reads, notifications, and the temporal operations behind their
-//! extension -- can depend on it.
+//! The crate holds no store, HTTP or JSON-LD engine, so every consumer
+//! (Core reads, notifications, and the temporal operations behind their
+//! extension) can depend on it.
 
 pub mod admission;
 pub mod candidate;

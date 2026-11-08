@@ -76,7 +76,7 @@ fn assert_removed(document: &EntityDocument, cases: &[(&'static str, Value, Valu
 fn deleting_entity(cases: &[(&'static str, Value, ValueCarrier)]) -> Value {
     let mut body = json!({"id": "urn:ngsi-ld:Device:null", "type": "Device"});
     for (name, instance, _) in cases {
-        body[*name] = instance.clone(); // clone: the cases are read again to check the result
+        body[*name] = instance.clone();
     }
     body
 }
@@ -88,9 +88,9 @@ async fn every_deletion_encoding_reads_as_the_removal_of_its_value() {
     let engine = engine();
     let cases = deletions(NULL);
     let body = deleting_entity(&cases);
-    let typed = entity(&engine, body.clone(), Normalization::Entity).await.expect("expands").agreed(); // clone: the body is expanded three ways
+    let typed = entity(&engine, body.clone(), Normalization::Entity).await.expect("expands").agreed();
     assert_removed(&typed, &cases);
-    let merged = patch(&engine, body.clone(), Normalization::MemberDeletions).await.expect("expands").agreed(); // clone: the body is expanded three ways
+    let merged = patch(&engine, body.clone(), Normalization::MemberDeletions).await.expect("expands").agreed();
     assert_removed(&merged, &cases);
     let appended = patch(&engine, body, Normalization::Entity).await.expect("expands").agreed();
     assert_removed(&appended, &cases);
@@ -104,10 +104,7 @@ async fn every_deletion_encoding_reads_as_the_removal_of_its_value() {
 async fn a_merge_fragment_entity_keeps_a_first_level_null_member_as_the_deletion_of_the_member() {
     let engine = engine();
     let body = json!({"id": "urn:ngsi-ld:Vehicle:null", "type": "Vehicle", "speed": "urn:ngsi-ld:null"});
-    let merged = entity(&engine, body.clone(), Normalization::MemberDeletions) // clone: the body is expanded twice
-        .await
-        .expect("expands")
-        .agreed();
+    let merged = entity(&engine, body.clone(), Normalization::MemberDeletions).await.expect("expands").agreed();
     pretty_assertions::assert_eq!(merged.attributes()[term("speed").as_str()], AttributeMember::Remove);
     let rewritten = entity(&engine, body, Normalization::Entity).await.expect("expands").agreed();
     let instances = rewritten.attributes()[term("speed").as_str()].instances();
@@ -282,8 +279,8 @@ async fn the_null_beside_data_is_refused_by_every_write_kind() {
     for (name, instance) in nulls_beside_data(NULL) {
         let body = json!({"id": "urn:ngsi-ld:Device:null", "type": "Device", name: instance});
         let refusals = [
-            entity(&engine, body.clone(), Normalization::Entity).await.expect("expands").refused(), // clone: the body is expanded four ways
-            patch(&engine, body.clone(), Normalization::MemberDeletions).await.expect("expands").refused(), // clone: the body is expanded four ways
+            entity(&engine, body.clone(), Normalization::Entity).await.expect("expands").refused(),
+            patch(&engine, body.clone(), Normalization::MemberDeletions).await.expect("expands").refused(),
             patch(&engine, body, Normalization::Entity).await.expect("expands").refused(),
             attribute(&engine, name, instance).await.expect("expands").refused(),
         ];
@@ -331,8 +328,8 @@ async fn the_null_lookalike_iri_is_data_wherever_the_null_deletes() {
         "readings": {"type": "ListProperty", "valueList": [NULL_LOOKALIKE]}
     });
     let documents = [
-        entity(&engine, body.clone(), Normalization::Entity).await.expect("expands").agreed(), // clone: the body is expanded three ways
-        patch(&engine, body.clone(), Normalization::MemberDeletions).await.expect("expands").agreed(), // clone: the body is expanded three ways
+        entity(&engine, body.clone(), Normalization::Entity).await.expect("expands").agreed(),
+        patch(&engine, body.clone(), Normalization::MemberDeletions).await.expect("expands").agreed(),
         patch(&engine, body, Normalization::Entity).await.expect("expands").agreed(),
     ];
     for document in documents {

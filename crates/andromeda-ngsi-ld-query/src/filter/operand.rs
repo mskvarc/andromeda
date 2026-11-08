@@ -63,12 +63,12 @@ pub fn parse_compare_value(cursor: &mut TokenCursor<'_>) -> Result<CompareValue,
 /// that the number of false negatives is minimized, as recommended by IETF
 /// RFC 3986 section 6".
 ///
-/// A Relationship object is parsed as an [`Identifier`] before it is stored, and that parse applies the RFC 3986 section 6.2.2 syntax-based normalisation and section 6.2.3 scheme-based normalisation for the schemes that define one -- case normalisation of scheme and host, removal of a default port, `.`/`..` resolution, an empty path becoming `/`. A query operand is the bytes the client typed, so an entity written with `HTTP://Example.com/a` is stored as `http://example.com/a` and would not be found by the very URI that created it.
+/// A Relationship object is parsed as an [`Identifier`] before it is stored, and that parse applies the RFC 3986 section 6.2.2 syntax-based normalisation and section 6.2.3 scheme-based normalisation for the schemes that define one: case normalisation of scheme and host, removal of a default port, `.`/`..` resolution, an empty path becoming `/`. A query operand is the bytes the client typed, so an entity written with `HTTP://Example.com/a` is stored as `http://example.com/a` and would not be found by the very URI that created it.
 ///
 /// Both spellings are therefore compared, which is what makes the two sides
 /// symmetric: the written one still matches a Property whose string value
 /// happens to be that text, and the normalised one matches the object the write
-/// path actually stored. A `ValueList` expresses that with no new type — clause
+/// path actually stored. A `ValueList` expresses that with no new type: clause
 /// 4.9 already gives it "is included in" semantics, and under `unequal` it
 /// excludes both, which is correct because the two spellings name one resource.
 ///
@@ -167,7 +167,7 @@ pub fn parse_pattern_string(cursor: &mut TokenCursor<'_>) -> Result<Pattern, Que
         // Clause 4.9 `QueryTerm =/ Attribute patternOp RegExp`: `RegExp` is its
         // own terminal, "a regular expression as mandated by IEEE 1003.2", not a
         // `quotedStr`. Its metacharacters include the backslash, so the body is
-        // the pattern as written -- resolving RFC 8259 escapes here would refuse
+        // the pattern as written. Resolving RFC 8259 escapes here would refuse
         // `^example\.com$`.
         Some(Token::QuotedStr(literal) | Token::Ident(literal)) => Pattern::parse(literal),
         other => Err(QueryError::QExpected {

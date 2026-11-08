@@ -34,10 +34,7 @@ impl ContextRegistryStateResolver for BrokerContextRegistryStateResolver {
     ) -> BoxFuture<'a, Result<Arc<ContextRegistryRouteServices>, TenancyError>> {
         Box::pin(async move {
             let LeasedState { state, lease } = self.tenants.resolve_state(tenant, creation_policy).await?;
-            Ok(Arc::new(ContextRegistryRouteServices::new(
-                state.context_hosting.clone(), // clone: the route services own a handle on the tenant's hosting
-                lease,
-            )))
+            Ok(Arc::new(ContextRegistryRouteServices::new(state.context_hosting.clone(), lease)))
         })
     }
 }

@@ -71,13 +71,13 @@ impl TenantAssemblyError {
     pub(super) fn into_tenancy_error(self, tenant: &TenantRef) -> TenancyError {
         if self.is_saturation() {
             return TenancyError::Saturated {
-                tenant: tenant.clone(), // clone: the error outlives this borrow
+                tenant: tenant.clone(), // clone: the returned error must own the tenant it names.
                 wait: SaturatedWait::RuntimePool,
             };
         }
         tracing::error!(%tenant, error = %self, "the tenant runtime could not be built");
         TenancyError::RuntimeUnavailable {
-            tenant: tenant.clone(), // clone: the error outlives this borrow
+            tenant: tenant.clone(), // clone: the returned error must own the tenant it names.
             cause: self.build_failure(),
         }
     }

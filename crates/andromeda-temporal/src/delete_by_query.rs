@@ -68,7 +68,7 @@ impl TemporalService {
             .await?;
 
         // Stage 1 entity resolution, unpaged: the delete addresses every
-        // matching entity, not one page of them. A cheap guard first — no entity
+        // matching entity, not one page of them. A cheap guard first: no entity
         // matched means nothing to count or delete.
         let unpaged = PageWindow::unbounded();
         let read_scope = self.reader.read_scope(target, ScopeReach::Every).await?;

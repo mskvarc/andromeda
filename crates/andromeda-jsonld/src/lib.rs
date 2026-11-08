@@ -9,8 +9,7 @@
 //! ([`context_spec`]), where a context comes from ([`loader`],
 //! [`context_registry`], [`core_context`], [`embedded_context`]), and what
 //! expanding or compacting a document against it produces ([`engine`]). Where
-//! a request named its
-//! context -- one `Link` header, its body, or nowhere -- is
+//! a request names its context (one `Link` header, its body, or nowhere) is
 //! [`request_context::RequestContext`].
 //!
 //! This is a capability, not a policy. Nothing here decides what a client is

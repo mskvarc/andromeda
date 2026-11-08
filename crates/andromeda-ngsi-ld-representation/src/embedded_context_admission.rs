@@ -9,9 +9,9 @@
 //! and nested embedded @context could be used to modify terms defined in the
 //! Core @context or to reshape NGSI-LD Elements during the expansion of terms".
 //!
-//! The rule holds for every NGSI-LD document a client sends -- an Entity, a
+//! The rule holds for every NGSI-LD document a client sends (an Entity, a
 //! Subscription, a Context Source Registration, a Query, an Entity Map or
-//! Snapshot update -- so it is decided once, on the request text, by one
+//! Snapshot update), so it is decided once, on the request text, by one
 //! streaming pass that builds nothing: the members of the root object, or of
 //! each element of a root array (a batch, whose elements are each a document
 //! with a top level of their own), may carry `@context`; any object deeper down

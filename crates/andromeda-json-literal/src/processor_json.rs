@@ -2,8 +2,8 @@
 //!
 //! The processor holds an `@json` value in its own JSON type; that type is
 //! built here from the literal's text and printed back into one, and never
-//! held anywhere else. A value the processor wrote -- the compaction of one
-//! value object -- is handed on through [`ProcessorJsonReader`], which builds
+//! held anywhere else. A value the processor wrote (the compaction of one
+//! value object) is handed on through [`ProcessorJsonReader`], which builds
 //! the reader's own form of it without naming the processor's type.
 
 use crate::{JsonLiteral, admission::JsonLiteralError};

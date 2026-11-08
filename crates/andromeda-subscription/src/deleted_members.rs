@@ -77,7 +77,7 @@ mod tests {
     use serde_json::json;
 
     fn fragment(members: &serde_json::Value) -> SubscriptionRequest {
-        serde_json::from_value(members.clone()).expect("a readable fragment") // clone: the fixture is borrowed by the caller
+        serde_json::from_value(members.clone()).expect("a readable fragment")
     }
 
     /// Clause 5.5.8: a member written as the NGSI-LD Null is deleted, one that

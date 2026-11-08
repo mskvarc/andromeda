@@ -36,7 +36,7 @@ pub(crate) async fn run(
             }
         }
         let result = bounded_driver::execute(&supervision, || {
-            let execution = ScheduledExecution::new(cancellation.clone(), SystemTime::now()); // clone: the operation receives a cooperative handle to this task's cancellation state.
+            let execution = ScheduledExecution::new(cancellation.clone(), SystemTime::now());
             operation(execution)
         })
         .await;

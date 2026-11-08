@@ -83,7 +83,7 @@ mod tests {
     impl CompoundContextHost for RecordingHost {
         fn host<'a>(&'a self, context: &'a JsonLiteral, _usage: WrapperUse) -> CompoundContextHostFuture<'a> {
             Box::pin(async move {
-                self.hosted.lock().expect("the recording lock").push(context.clone()); // clone: the record keeps its own copy
+                self.hosted.lock().expect("the recording lock").push(context.clone());
                 Ok(IriBuf::new(WRAPPER.to_owned()).expect("a valid URL"))
             })
         }
@@ -97,7 +97,6 @@ mod tests {
 
     /// `context` as the request handler admits it.
     async fn admitted(context: &ContextSpec) -> AdmittedContext {
-        // clone: the admission consumes the spec, and the test keeps its own
         admit_user_context(&engine(), SubmittedContext::from(context.clone()))
             .await
             .expect("the context is admitted")

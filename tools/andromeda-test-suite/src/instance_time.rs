@@ -46,7 +46,7 @@ pub fn instance_time_where<M: for<'a> Matcher<&'a Attribute<Output>> + Debug>(
         .and_then(|found| found.iter().find(|instance| matcher.matches(instance).is_match()))
         .and_then(|instance| time_of(instance, member))
         .ok_or_else(|| InstanceTimeNotFound {
-            // clone: the error names the attribute the caller keeps
+            // clone: the error must own the attribute name it reports
             name: name.clone(),
             which: InstanceChoice::Meeting(matcher),
             member,
@@ -68,7 +68,7 @@ pub fn instance_time_at(
         .and_then(|found| found.get(index))
         .and_then(|instance| time_of(instance, member))
         .ok_or_else(|| InstanceTimeNotFound {
-            // clone: the error names the attribute the caller keeps
+            // clone: the error must own the attribute name it reports
             name: name.clone(),
             which: InstanceChoice::At(index),
             member,

@@ -109,7 +109,6 @@ pub(crate) fn carrier_page(source: &PageSource<'_>, carriers: SelectStatement, c
     let rest = IndexOrWalk {
         candidates: carriers,
         bound: CandidateBound::AtMost(CARRIER_BOUND),
-        // clone: the carriers are rechecked by the filter the full walk applies
         narrowed: whole.clone(),
         whole,
     };

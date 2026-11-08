@@ -1,7 +1,7 @@
 //! The Andromeda NGSI-LD domain model.
 //!
-//! This crate holds the resources ETSI GS CIM 009 v1.9.1 defines — entities,
-//! attributes, subscriptions, registrations and the discovery resources — built
+//! This crate holds the resources ETSI GS CIM 009 v1.9.1 defines (entities,
+//! attributes, subscriptions, registrations and the discovery resources), built
 //! on the lexical types of `andromeda-ngsi-ld-lexicon` and the IRI constants of
 //! `andromeda-ngsi-ld-vocabulary`. It knows nothing about transport,
 //! persistence, or the broker runtime, and every layer above it depends on

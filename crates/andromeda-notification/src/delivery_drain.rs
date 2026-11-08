@@ -95,7 +95,6 @@ impl NotificationDeliveryDrain {
         let attempts = DeliveryAttempt::new(transport, config)?;
         let lease_term = lease_term(config).map_err(NotificationInvariant::from)?;
         let concurrency = delivery_concurrency(config).map_err(NotificationInvariant::from)?;
-        // clone: the acknowledgement records outcomes in the queue the drain claims from.
         let acknowledgement = DeliveryAcknowledgement::new(Arc::clone(&store), worker_id, delay, lease_term);
         Ok(NotificationDeliveryDrain {
             store,
@@ -136,8 +135,8 @@ impl NotificationDeliveryDrain {
     /// wait on a last slow attempt only when nothing else is due.
     ///
     /// A delivery is claimed only when a slot is free to send it, so its lease
-    /// starts as its attempt does and has to outlast that one attempt -- which
-    /// `request_timeout` bounds -- never the deliveries sent before it. A batch
+    /// starts as its attempt does and has to outlast that one attempt (which
+    /// `request_timeout` bounds), never the deliveries sent before it. A batch
     /// claimed under one lease and sent a few at a time would instead still be
     /// waiting to be sent when that lease ran out, and a second worker would
     /// claim and send it again.
@@ -160,8 +159,8 @@ impl NotificationDeliveryDrain {
     /// acknowledged as exhausted with its diagnostic, because a delivery left
     /// leased and unacknowledged would be claimed again at every lease expiry
     /// with its attempt count unchanged, forever. Only the queue failing the
-    /// worker ends a pass -- a claim it cannot serve, an acknowledgement it
-    /// cannot record -- because that is not a property of any one delivery and
+    /// worker ends a pass (a claim it cannot serve, an acknowledgement it
+    /// cannot record), because that is not a property of any one delivery and
     /// the next pass may find it passed.
     ///
     /// # Errors
@@ -325,7 +324,6 @@ impl NotificationDeliveryDrain {
                 held.release(&target, event);
                 SlotEvent::Attempted(Box::new(AttemptEnded {
                     settlement: verdict.map(|verdict| DeliverySettlement {
-                        // clone: the settlement names the branch the occupant also keeps.
                         target: target.clone(),
                         key,
                         verdict,
@@ -771,7 +769,6 @@ mod tests {
 
     impl NotificationDeliveryTransport for FixedTransport {
         fn deliver<'a>(&'a self, _entry: &'a DeliveryEntry) -> BoxFuture<'a, DeliveryDisposition> {
-            // clone: every claimed delivery is answered with the same fixed disposition.
             Box::pin(async move { self.0.clone() })
         }
     }
@@ -1637,7 +1634,6 @@ mod tests {
             let entries = (1..=10_i64).map(entry_keyed).collect::<Result<Vec<_>, _>>()?;
             let store = Arc::new(RecordingStore::with_entries(entries));
             let cancellation = CancellationToken::new();
-            // clone: the transport cancels the token the pass watches.
             let transport = Arc::new(CancellingTransport(cancellation.clone()));
             let outcome = NotificationDeliveryDrain::new(store.clone(), transport, waits(), &sized(2))?
                 .execute(Utc::now(), &cancellation)

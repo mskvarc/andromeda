@@ -41,7 +41,6 @@ impl HeldEvents {
     pub fn hold(&self, target: &ContextTarget, event: &Arc<NotificationEvent>) {
         let mut branch = match self.0.get_mut(target) {
             Some(branch) => branch,
-            // clone: the map owns the branch it files the pass's events under, once per branch.
             None => self.0.entry(target.clone()).or_default(),
         };
         branch.insert(event.key, Arc::downgrade(event));
@@ -144,7 +143,7 @@ mod tests {
     fn an_event_a_sibling_delivery_still_carries_stays_held() {
         let held = HeldEvents::default();
         let first = event(3);
-        let sibling = Arc::clone(&first); // clone: a second delivery of the same event, still in flight.
+        let sibling = Arc::clone(&first);
         held.hold(&ContextTarget::Live, &first);
         held.release(&ContextTarget::Live, first);
         let found = held.get(&ContextTarget::Live, NotificationEventKey::from(3_i64)).expect("the sibling's event");

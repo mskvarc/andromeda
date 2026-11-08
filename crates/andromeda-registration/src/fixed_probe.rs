@@ -29,7 +29,7 @@ impl FixedProbe {
 
     /// Every question the probe was asked, in order.
     pub(crate) fn asked(&self) -> Vec<String> {
-        self.asked.lock().expect("probe log").clone() // clone: the test reads what the fake recorded
+        self.asked.lock().expect("probe log").clone()
     }
 }
 

@@ -3,9 +3,9 @@
 //! JSON-LD 1.1 section 9.15 gives a `@context` value exactly four shapes: `null`,
 //! a reference to a remote context, a context definition written in place, or
 //! an array of those. Everything the broker decides about a context a request
-//! named -- which core references it drops (clause 5.5.7), what it leaves in
-//! force last (clause 4.4), which documents it reaches -- is decided entry by
-//! entry, so [`ContextEntry`] is that reading of an admitted `@context` text,
+//! named is decided entry by entry: which core references it drops (clause
+//! 5.5.7), what it leaves in force last (clause 4.4), and which documents it
+//! reaches. [`ContextEntry`] is that reading of an admitted `@context` text,
 //! each entry still a slice of it.
 //!
 //! The value a document is processed under, and the one a response names, are
@@ -29,8 +29,8 @@ pub enum ContextEntry<'a> {
     Reference(Cow<'a, str>),
     /// A context definition written in place.
     Definition(ContextDefinition<'a>),
-    /// A value no `@context` entry takes -- a boolean, a number, a nested
-    /// array -- kept as written for the processor to refuse.
+    /// A value no `@context` entry takes, such as a boolean, a number or a
+    /// nested array, kept as written for the processor to refuse.
     Malformed(JsonPiece<'a>),
 }
 

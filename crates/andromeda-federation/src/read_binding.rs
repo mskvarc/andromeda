@@ -37,9 +37,9 @@ pub(crate) enum ReadIntent {
 /// How one registration is contacted for a forwarded entity query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReadBinding {
-    /// GET `/entities` -- queryEntity.
+    /// GET `/entities` (queryEntity).
     Query,
-    /// POST `/entityOperations/query` -- queryBatch.
+    /// POST `/entityOperations/query` (queryBatch).
     BatchQuery,
 }
 
@@ -47,8 +47,8 @@ pub(crate) enum ReadBinding {
 /// operations it advertises, or `None` when it advertises neither and so is
 /// not contacted.
 ///
-/// A query prefers the operation the client used (clause 6.23.1) -- a GET query
-/// prefers `queryEntity`, a POST query prefers `queryBatch` -- and falls back to
+/// A query prefers the operation the client used (clause 6.23.1), so a GET query
+/// prefers `queryEntity`, a POST query prefers `queryBatch`, and falls back to
 /// the other. `redirectionOps` and `retrieveOps` advertise `queryEntity` but not
 /// `queryBatch` (Table 4.20-2), so a client `queryBatch` to such a registration
 /// is sent as a GET `queryEntity`.

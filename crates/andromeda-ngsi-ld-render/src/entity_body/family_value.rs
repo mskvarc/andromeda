@@ -4,7 +4,7 @@
 //! Every family names its value differently (clauses 4.5.2 to 4.5.24), and its
 //! `showChanges` previous member has "the same representation" as that value
 //! (clauses 4.5.21.2 and 4.5.22.2 say so of the lists, and the other families
-//! read alike), so one writer serves both -- whichever instance the previous
+//! read alike), so one writer serves both, whichever instance the previous
 //! value is read from.
 
 use crate::{

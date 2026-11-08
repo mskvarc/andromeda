@@ -19,7 +19,7 @@ use std::{fs, io, path::Path};
 
 /// Every way the migrations below `root` and the seal ledger break the seal,
 /// with `against` every section the ledger at that revision holds that the
-/// working copy no longer holds unchanged, and with `release` every way the
+/// working copy does not hold unchanged, and with `release` every way the
 /// tree falls short of what tagging that release needs.
 ///
 /// # Errors

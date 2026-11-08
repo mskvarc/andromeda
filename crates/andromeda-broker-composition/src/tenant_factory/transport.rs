@@ -19,13 +19,13 @@ use std::sync::Arc;
 pub(super) fn construct_dispatcher(delivery: &DeliveryConfig, link_field: LinkFieldLayout) -> Result<Arc<TransportDispatcher>, TenantAssemblyError> {
     let addresses = AddressPolicy::new(
         delivery.private_addresses,
-        delivery.allowed_addresses.clone(), // clone: the configuration keeps its lists
-        delivery.denied_addresses.clone(),  // clone: the configuration keeps its lists
+        delivery.allowed_addresses.clone(),
+        delivery.denied_addresses.clone(),
     );
     let dispatcher = TransportDispatcher::new(
         HttpTransportConfig {
             timeout: delivery.request_timeout(),
-            addresses: addresses.clone(), // clone: shares the lists with the MQTT pool
+            addresses: addresses.clone(), // clone: addresses is still needed for the MQTT pool config.
             max_body: delivery.max_http_body,
             link_field,
             ..HttpTransportConfig::default()

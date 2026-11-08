@@ -30,7 +30,7 @@ pub enum WrapperUse {
     /// stored recently is taken as still stored, so a request repeated a
     /// thousand times writes once.
     Response,
-    /// Kept by a resource that outlives the request -- a subscription's
+    /// Kept by a resource that outlives the request: a subscription's
     /// `jsonldContext` (clause 5.8.1.4), dereferenced whenever it notifies. The
     /// entry is confirmed in storage before the resource keeps its URL: a
     /// clause 5.13.5 deletion through another replica, or any other removal

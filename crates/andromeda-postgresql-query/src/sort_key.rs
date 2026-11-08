@@ -3,7 +3,7 @@
 //! A statement that orders its rows in one relation and reads them back
 //! through another states the same order twice: once over the expressions and
 //! once over the columns those expressions were projected under. The key is
-//! therefore a value -- an expression beside the order it runs in -- so each
+//! therefore a value, an expression beside the order it runs in, so each
 //! statement level applies it to whichever reference it knows the key by.
 
 use crate::entity_ordering::sql_order;

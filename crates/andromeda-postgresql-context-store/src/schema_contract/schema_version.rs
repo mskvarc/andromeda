@@ -21,7 +21,7 @@ impl SchemaVersion {
 impl TryFrom<i64> for SchemaVersion {
     type Error = SchemaVersionError;
 
-    /// Narrow a migration version — sqlx models them as `i64` — into the
+    /// Narrow a migration version (sqlx models them as `i64`) into the
     /// positive `INTEGER` domain the column declares.
     fn try_from(value: i64) -> Result<SchemaVersion, SchemaVersionError> {
         let narrowed = i32::try_from(value).map_err(|_| SchemaVersionError::OutOfRange { value })?;

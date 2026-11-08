@@ -21,7 +21,7 @@ use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_request::{discovery::DiscoveryListParams, local::LocalOnlyParams};
 use axum::response::Response;
 
-/// GET /ngsi-ld/v1/types -- Query available entity types.
+/// GET /ngsi-ld/v1/types: query available entity types.
 ///
 /// # Errors
 ///
@@ -73,7 +73,7 @@ pub async fn query(
     .await
 }
 
-/// GET /ngsi-ld/v1/types/{type_} -- Retrieve information about a specific entity type.
+/// GET /ngsi-ld/v1/types/{type_}: retrieve information about a specific entity type.
 ///
 /// # Errors
 ///

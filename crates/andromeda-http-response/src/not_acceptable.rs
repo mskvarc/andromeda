@@ -2,7 +2,7 @@
 //!
 //! Clause 6.3.4 exempts three HTTP-binding precondition failures from the
 //! `InvalidRequest` problem the rest of the clause raises. Two of them are
-//! bodyless -- an absent `Content-Length` results in "just a 411 HTTP status
+//! bodyless: an absent `Content-Length` results in "just a 411 HTTP status
 //! code (without any payload body)" and an unsupported `Content-Type` in "just
 //! a 415 HTTP status code (without any payload body)". The third is not:
 //! "Not Acceptable Media Type, i.e. 'Accept' header does not imply
@@ -56,8 +56,8 @@ impl AvailableRepresentations {
 
 /// The JSON object a `406` carries.
 ///
-/// Clause 6.3.4 mandates the content of the body -- "the list of the available
-/// representations of the resources" -- and not a name for it, so the list is
+/// Clause 6.3.4 mandates the content of the body, "the list of the available
+/// representations of the resources", and not a name for it, so the list is
 /// published under a member rather than as a bare array: a bare array of media
 /// types is indistinguishable in shape from the array of entities the same
 /// endpoint answers a query with. The member is camelCased like every other

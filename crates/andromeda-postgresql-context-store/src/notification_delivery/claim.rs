@@ -4,7 +4,7 @@
 //! change, so a claim sweeps every branch: the live branch, then each Snapshot
 //! branch under `snap_<snapshot_key>`. The branch is chosen by qualifying the
 //! statement's tables with its schema, and the events, deliveries and
-//! subscriptions a claim reads are all in that one branch -- there is no
+//! subscriptions a claim reads are all in that one branch, so there is no
 //! cross-branch join to recover which Snapshot a delivery belongs to, because
 //! the branch being drained already names it.
 //!
@@ -58,8 +58,8 @@ use std::num::NonZeroU32;
 /// Each branch is claimed under a savepoint of its own, so a branch that
 /// fails rolls back its claim alone and leaves what the transaction recorded
 /// before it. A branch reaped between the enumeration and its claim (a
-/// Snapshot deleted concurrently) shows up as a missing schema and is skipped
-/// -- its notifications are moot once the branch is gone. Any other failure
+/// Snapshot deleted concurrently) shows up as a missing schema and is skipped,
+/// since its notifications are moot once the branch is gone. Any other failure
 /// ends the claim, with the transaction still able to commit what it recorded.
 ///
 /// The events the claimed deliveries answer are read inside the transaction
@@ -220,7 +220,7 @@ fn snapshot_record_lock_statement(snapshot: &SnapshotTarget) -> SelectStatement 
 /// the foreign key deletes a subscription's deliveries with it.
 ///
 /// The candidate predicate is exactly the one the queue's partial claim index
-/// carries: still queued (neither delivered nor exhausted) and claimable — the
+/// carries: still queued (neither delivered nor exhausted) and claimable. The
 /// later of its due instant and its lease expiry has passed. That instant is
 /// the index's expression, spelled through the one shared helper so the
 /// statement and the index match structurally; ordering by it, then by `delivery_key`,

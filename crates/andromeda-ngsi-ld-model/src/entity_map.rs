@@ -255,11 +255,11 @@ mod tests {
         pretty_assertions::assert_eq!(map.linked_map_for(&registration), Some(&uri("urn:ngsi-ld:EntityMap:remote")));
         pretty_assertions::assert_eq!(
             sources_of(&map, "urn:ngsi-ld:Vehicle:2"),
-            vec![&EntityMapSource::Local, &EntityMapSource::Registration(registration.clone())] // clone: compared below
+            vec![&EntityMapSource::Local, &EntityMapSource::Registration(registration.clone())]
         );
         pretty_assertions::assert_eq!(
             sources_of(&map, "urn:ngsi-ld:Vehicle:3"),
-            vec![&EntityMapSource::Registration(registration.clone())] // clone: compared below
+            vec![&EntityMapSource::Registration(registration.clone())]
         );
         pretty_assertions::assert_eq!(map.registrations().collect::<Vec<_>>(), vec![&registration]);
         pretty_assertions::assert_eq!(map.entity_ids().count(), 3);
@@ -273,7 +273,7 @@ mod tests {
         map.add_local_entities([uri("urn:ngsi-ld:Vehicle:1")]);
         pretty_assertions::assert_eq!(
             sources_of(&map, "urn:ngsi-ld:Vehicle:1"),
-            vec![&EntityMapSource::Local, &EntityMapSource::Registration(registration.clone())] // clone: compared below
+            vec![&EntityMapSource::Local, &EntityMapSource::Registration(registration.clone())]
         );
     }
 
@@ -285,7 +285,7 @@ mod tests {
         pretty_assertions::assert_eq!(map.linked_map_for(&registration), Some(&uri("urn:ngsi-ld:EntityMap:b")));
         pretty_assertions::assert_eq!(
             sources_of(&map, "urn:ngsi-ld:Vehicle:3"),
-            vec![&EntityMapSource::Registration(registration.clone())] // clone: compared below
+            vec![&EntityMapSource::Registration(registration.clone())]
         );
         let other = uri("urn:ngsi-ld:ContextSourceRegistration:c");
         map.add_contribution(&other, [uri("urn:ngsi-ld:Vehicle:1")], None);

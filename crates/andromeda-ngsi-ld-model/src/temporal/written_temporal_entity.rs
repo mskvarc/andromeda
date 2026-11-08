@@ -125,7 +125,7 @@ impl WrittenTemporalEntity {
                     structure_budget::spend(member);
                     let instances = instances_of(attribute, member).map_err(at)?;
                     if !matches!(member.shape(), NodeShape::Array(_)) && !written.unarrayed.contains(&attribute_name) {
-                        written.unarrayed.push(attribute_name.clone()); // clone: the list names the attribute the map is keyed by
+                        written.unarrayed.push(attribute_name.clone()); // clone: the list takes its own copy of the name, since the attribute map takes the original.
                     }
                     // The member a later one of the same name replaces gives
                     // back what it was recorded for.
@@ -133,7 +133,7 @@ impl WrittenTemporalEntity {
                         structure_budget::refund(member, costs.remove(&attribute_name).unwrap_or_default());
                     }
                     if before.is_some() {
-                        costs.insert(attribute_name.clone(), structure_budget::spent_since(member, before)); // clone: the cost is kept by the name the attribute map is keyed by
+                        costs.insert(attribute_name.clone(), structure_budget::spent_since(member, before)); // clone: the cost map takes its own copy of the name, since the attribute map takes the original.
                     }
                     written.attrs.insert(attribute_name, instances);
                 }

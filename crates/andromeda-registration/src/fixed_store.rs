@@ -62,12 +62,12 @@ impl FixedStore {
 
     /// Every identifier deleted so far.
     pub(crate) fn deleted(&self) -> Vec<Identifier> {
-        self.deleted.lock().expect("deletion log").clone() // clone: the test reads what the fake recorded
+        self.deleted.lock().expect("deletion log").clone()
     }
 
     /// The `information` of every update applied so far.
     pub(crate) fn updated_information(&self) -> Vec<Vec<RegistrationInfo>> {
-        self.updated_information.lock().expect("update log").clone() // clone: the test reads what the fake recorded
+        self.updated_information.lock().expect("update log").clone()
     }
 }
 
@@ -130,7 +130,7 @@ impl RegistrationStore for FixedStore {
         'life0: 'async_trait,
         'life1: 'async_trait,
     {
-        let found = self.registrations.iter().find(|registration| registration.id == *id).cloned(); // clone: the port hands out owned registrations
+        let found = self.registrations.iter().find(|registration| registration.id == *id).cloned();
         Box::pin(async { Ok(found) })
     }
 
@@ -144,7 +144,7 @@ impl RegistrationStore for FixedStore {
         'life1: 'async_trait,
         'life2: 'async_trait,
     {
-        let mut sorted = self.registrations.clone(); // clone: the page owns the registrations it hands out
+        let mut sorted = self.registrations.clone();
         sorted.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
         let total = u64::try_from(sorted.len()).unwrap_or(u64::MAX);
         let registrations = window.cut(sorted, |registration| registration.id.as_str());
@@ -161,11 +161,11 @@ impl RegistrationStore for FixedStore {
         'life1: 'async_trait,
         'life2: 'async_trait,
     {
-        self.updated_information.lock().expect("update log").push(values.information.clone()); // clone: the fake keeps a record the caller still owns
+        self.updated_information.lock().expect("update log").push(values.information.clone());
         let mutation = match self.registrations.iter().find(|registration| registration.id == *id) {
             Some(held) => {
-                let mut updated = held.clone(); // clone: the held registration stays as the fake was built
-                updated.coverage.information = values.information.clone(); // clone: the written registration owns what the caller still holds
+                let mut updated = held.clone();
+                updated.coverage.information = values.information.clone();
                 updated.access.mode = Some(values.mode);
                 RegistrationMutation::Applied(WrittenRegistration {
                     revision: CsourceChangeRevision::from(1),
@@ -199,7 +199,7 @@ impl RegistrationStore for FixedStore {
         'life1: 'async_trait,
         'life2: 'async_trait,
     {
-        Box::pin(async { Ok(self.registrations.clone()) }) // clone: the fake hands out owned registrations like the port requires
+        Box::pin(async { Ok(self.registrations.clone()) })
     }
 
     fn find_all_active<'life0, 'life1, 'async_trait>(
@@ -223,7 +223,7 @@ impl RegistrationStore for FixedStore {
         'life1: 'async_trait,
     {
         let mutation = if self.registrations.iter().any(|registration| registration.id == *id) {
-            self.deleted.lock().expect("deletion log").push(id.clone()); // clone: the fake keeps a record the caller still owns
+            self.deleted.lock().expect("deletion log").push(id.clone());
             RegistrationMutation::Applied(CsourceChangeRevision::from(1))
         } else {
             RegistrationMutation::Missing

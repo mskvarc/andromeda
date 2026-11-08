@@ -71,7 +71,7 @@ async fn a_registration_matching_after_creation_receives_the_copy_a_registration
     };
     pretty_assertions::assert_eq!(late["entities"], json!([{"type": default_iri("Vehicle")}]));
     pretty_assertions::assert_eq!(late["watchedAttributes"], json!([SPEED]));
-    pretty_assertions::assert_eq!(without_id(late.clone()), without_id(at_creation.clone())); // clone: each comparison owns the copy it strips
+    pretty_assertions::assert_eq!(without_id(late.clone()), without_id(at_creation.clone()));
 }
 
 /// Clause 5.8.1.4: an expired subscription sends no notification, so a

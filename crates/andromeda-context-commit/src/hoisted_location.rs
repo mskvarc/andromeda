@@ -80,7 +80,7 @@ mod tests {
     fn vehicle_document(members: &[(&str, Value)]) -> Vec<u8> {
         let mut node = json!({"@id": "urn:ngsi-ld:Vehicle:A", "@type": ["https://example.org/Vehicle"]});
         if let Some(node) = node.as_object_mut() {
-            node.extend(members.iter().map(|(name, value)| ((*name).to_owned(), value.clone()))); // clone: the fixture owns its members
+            node.extend(members.iter().map(|(name, value)| ((*name).to_owned(), value.clone())));
         }
         serde_json::to_vec(&json!([node])).expect("JSON")
     }
@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn an_update_of_another_attribute_leaves_the_location_unchanged() {
         let previous = Arc::new(vehicle(&[(LOCATION, point(13.4, 52.5)), (SPEED, property(1))]));
-        let mut current = EntityState::clone(&previous); // clone: shares every attribute, as a read-modify-write does
+        let mut current = EntityState::clone(&previous);
         let fragment = EntityDocument::from_slice(&vehicle_document(&[(SPEED, property(2))])).expect("a written fragment decodes");
         current.update_attributes(&fragment).expect("speed is updated");
         assert!(

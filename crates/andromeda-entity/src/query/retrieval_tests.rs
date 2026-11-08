@@ -73,7 +73,6 @@ impl EntityReader for RetrievalStore {
         id: &Identifier,
         _returned: &ReturnedAttributes<'_>,
     ) -> Result<Option<RetrievedEntity>, EntityError> {
-        // clone: the store hands out its row, as a real store does
         Ok((self.retrieved.state.id() == id).then(|| self.retrieved.clone()))
     }
 
@@ -104,7 +103,7 @@ impl EntityQueryStore for RetrievalStore {
         _count: CountPolicy,
     ) -> Result<QueryOutcome<StoredEntry<RetrievedEntity>>, EntityError> {
         Ok(QueryOutcome {
-            rows: vec![StoredEntry::Read(self.retrieved.clone())], // clone: the store hands out its row, as a real store does
+            rows: vec![StoredEntry::Read(self.retrieved.clone())],
             unapplied: ResidualFilter::default(),
             pagination: PaginationOutcome::Applied { total: None },
         })
@@ -144,7 +143,7 @@ fn service() -> EntityQueryService {
         },
     });
     EntityQueryService::builder()
-        .reader(Arc::clone(&store) as Arc<dyn EntityReader>) // clone: the double supplies both focused capabilities
+        .reader(Arc::clone(&store) as Arc<dyn EntityReader>)
         .query_store(store as Arc<dyn EntityQueryStore>)
         .engine(JsonLdEngine::builder().allow_remote(false).build().expect("build engine"))
         .spatial(SpatialAcceleration::StoreVerified)

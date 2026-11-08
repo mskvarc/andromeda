@@ -57,7 +57,7 @@ impl Expectation {
                 .iter()
                 .zip(&partner)
                 .filter(|(_, paired)| paired.is_none())
-                .map(|(value, _)| Difference::at(&item, Discrepancy::Unpaired((*value).clone()))), // clone: the difference owns the values it reports
+                .map(|(value, _)| Difference::at(&item, Discrepancy::Unpaired((*value).clone()))), // clone: the difference outlives the expectation
         );
     }
 
@@ -96,7 +96,7 @@ impl Expectation {
                 .iter()
                 .zip(&diffed)
                 .filter(|(_, paired)| paired.is_none())
-                .map(|(value, _)| Difference::at(&item, Discrepancy::Unpaired((*value).clone()))), // clone: the difference owns the values it reports
+                .map(|(value, _)| Difference::at(&item, Discrepancy::Unpaired((*value).clone()))), // clone: the difference outlives the expectation
         );
     }
 

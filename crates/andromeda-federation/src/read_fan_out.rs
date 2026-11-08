@@ -40,8 +40,8 @@ pub(crate) enum ForwardedRead {
 
 /// What every GET of one fan-out carries, whichever registration receives it.
 ///
-/// These four are one thing — the triggering request as each context source
-/// sees it — and none of them varies between the sources contacted: the
+/// These four are one thing (the triggering request as each context source
+/// sees it), and none of them varies between the sources contacted. The
 /// forwarded requests all resolve against the same JSON-LD context, extend the
 /// same `Via` chain and pass through the same headers (clauses 6.3.18, 6.3.19),
 /// are cacheable on the same terms (clause 6.3.17), and name the same
@@ -71,8 +71,8 @@ pub(crate) struct SourceAnswer<T> {
 }
 
 impl FederationService {
-    /// Send each target the forwarded read it resolved to -- a GET or a POST
-    /// batch query -- telling each the location of the map in use (clause
+    /// Send each target the forwarded read it resolved to (a GET or a POST
+    /// batch query), telling each the location of the map in use (clause
     /// 5.5.14), and read each answer with `read`. Both answer with the entities
     /// they carried, so the caller reads them the same way (clause 6.3.17).
     pub(crate) async fn fan_out_read<T>(
@@ -116,8 +116,8 @@ impl FederationService {
 /// Append one fan-out target per forwarded request a registration's blocks
 /// produce (clause 4.3.6.3). Each target carries the registration that reads its
 /// answer back, so the registration is cloned for every request but the last,
-/// which moves it; a registration with a single covering block -- the common
-/// case -- is never cloned.
+/// which moves it; a registration with a single covering block (the common
+/// case) is never cloned.
 pub(crate) fn expand_registration_targets<Q>(registration: ContextSourceRegistration, requests: Vec<Q>, targets: &mut Vec<(ContextSourceRegistration, Q)>) {
     let mut requests = requests.into_iter();
     let Some(mut current) = requests.next() else {

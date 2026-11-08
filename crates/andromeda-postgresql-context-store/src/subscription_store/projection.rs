@@ -25,7 +25,7 @@ use sea_query::{CaseStatement, Expr, ExprTrait, Keyword, Query, SelectStatement,
 fn attribute_list(column: Subscriptions) -> SimpleExpr {
     let keys = Expr::col((Subscriptions::Table, column));
     CaseStatement::new()
-        .case(keys.clone().is_null(), Keyword::Null) // clone: the column is named by the guard and by the resolution
+        .case(keys.clone().is_null(), Keyword::Null) // clone: the guard and the resolution each take the column expression by value.
         .finally(attribute_names_of(keys))
         .into()
 }

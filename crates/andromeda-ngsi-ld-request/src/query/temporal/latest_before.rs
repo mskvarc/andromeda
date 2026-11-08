@@ -57,7 +57,7 @@ mod tests {
     #[test]
     fn the_query_asks_for_the_last_instance_before_the_start() {
         let attrs = vec!["speed".parse().expect("a valid attribute name")];
-        let params = TemporalQueryParameters::latest_before(noon(), TimeProp::Deleted, Some(attrs.clone()), None); // clone: the expectation keeps the names
+        let params = TemporalQueryParameters::latest_before(noon(), TimeProp::Deleted, Some(attrs.clone()), None);
         pretty_assertions::assert_eq!(params.timerel, Some(TimeRel::Before));
         pretty_assertions::assert_eq!(params.time_at, Some(noon()));
         pretty_assertions::assert_eq!(params.timeproperty, Some(TimeProp::Deleted));

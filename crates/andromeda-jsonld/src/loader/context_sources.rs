@@ -87,8 +87,8 @@ pub(crate) fn note_source(url: &IriBuf, document: &Arc<ContextDocument>) {
             return;
         }
         recorded.push(ContextSource {
-            url: url.clone(),               // clone: the record owns the reference it resolves again
-            document: Arc::clone(document), // clone: Arc ref-count bump, the identity later resolutions are compared with
+            url: url.clone(), // clone: the record owns the reference it resolves again
+            document: Arc::clone(document),
         });
     });
     match noted {

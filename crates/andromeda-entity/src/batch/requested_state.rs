@@ -47,7 +47,6 @@ impl RequestedState {
     pub(super) fn into_state(self) -> Result<(Identifier, EntityState), Box<(Identifier, EntityError)>> {
         match self {
             RequestedState::Requested(prepared) => prepared.into_state(),
-            // clone: reference-count bumps only when the earlier attempt's write still shares the state
             RequestedState::Built { id, state } => Ok((id, Arc::unwrap_or_clone(state))),
         }
     }
@@ -77,7 +76,7 @@ pub(super) fn built(write: ChunkWrite) -> Result<PlannedWrite<RequestedState>, B
 /// no state, which no insert or update is.
 pub(super) fn stored_state(write: &ChunkWrite) -> Result<Arc<EntityState>, Box<(Identifier, EntityError)>> {
     match write.entity.record() {
-        Some(record) => Ok(Arc::clone(&record.state)), // clone: Arc ref-count bump
+        Some(record) => Ok(Arc::clone(&record.state)),
         None => Err(Box::new((
             write.id.clone(), // clone: the report owns the identifier it names
             EntityInvariant::WriteWithoutStoredState {

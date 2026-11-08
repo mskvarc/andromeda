@@ -7,10 +7,9 @@
 //! published branch yet, only its private staging branch, which holds no
 //! subscription a client created, so it is not visited. A branch reaped between
 //! this enumeration and the claim shows up as a missing schema, which the
-//! caller skips rather than fails on. A
-//! quarantined Snapshot branch -- one whose schema is behind this binary -- is
-//! not visited at all: its queue relations may not have the shape the claim
-//! expects, and its deliveries wait until its upgrade succeeds.
+//! caller skips rather than fails on. A quarantined Snapshot branch (one whose
+//! schema is behind this binary) is not visited at all: its queue relations may
+//! not have the shape the claim expects, and its deliveries wait until its upgrade succeeds.
 
 use crate::{
     error::ContextStoreError,

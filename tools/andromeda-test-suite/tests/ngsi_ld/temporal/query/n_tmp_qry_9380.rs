@@ -48,7 +48,6 @@ async fn n_tmp_qry_9380_an_entity_whose_temporal_evolution_was_deleted_is_select
     ];
     for window in windows {
         for property in AXES {
-            // clone: every axis reads the same window
             let page = broker
                 .with_accept(Accept::new(NgsiLdMediaType::Json))
                 .temporal()

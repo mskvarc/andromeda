@@ -32,19 +32,19 @@ async fn run(context: ContextChoice) -> Result<()> {
     scenario.register(Node::B1, Payload::Redirect4, Node::B4).await?;
     let kinds = [Kind::Parking, Kind::Vehicle];
     let everything = [
-        first_at_b2.id.clone(),    // clone: the entities stay whole for the expectations
-        second_at_b3.id.clone(),   // clone: as above
-        first_vehicle.id.clone(),  // clone: as above
-        second_vehicle.id.clone(), // clone: as above
+        first_at_b2.id.clone(),
+        second_at_b3.id.clone(),
+        first_vehicle.id.clone(),
+        second_vehicle.id.clone(),
     ];
     let at_b1 = scenario.query(Node::B1, &kinds, LOCATION, QueryMethod::Get).await?;
     let at_b2 = scenario.query(Node::B2, &kinds, LOCATION, QueryMethod::Get).await?;
     let at_b3 = scenario.query(Node::B3, &kinds, LOCATION, QueryMethod::Get).await?;
     let at_b4 = scenario.query(Node::B4, &kinds, LOCATION, QueryMethod::Get).await?;
     expect_ids(&at_b1, &everything)?;
-    expect_ids(&at_b2, &[first_at_b2.id.clone(), first_vehicle.id.clone()])?; // clone: as above
-    expect_ids(&at_b3, &[first_at_b3.id.clone(), second_at_b3.id.clone()])?; // clone: as above
-    expect_ids(&at_b4, &[second_at_b4.id.clone(), second_vehicle.id.clone()])?; // clone: as above
+    expect_ids(&at_b2, &[first_at_b2.id.clone(), first_vehicle.id.clone()])?;
+    expect_ids(&at_b3, &[first_at_b3.id.clone(), second_at_b3.id.clone()])?;
+    expect_ids(&at_b4, &[second_at_b4.id.clone(), second_vehicle.id.clone()])?;
     expect_among(&at_b2, &first_at_b2.id, &keeping(&first_at_b2, LOCATION)?)?;
     let first_vehicle_b2 = expect_among(&at_b2, &first_vehicle.id, &keeping(&first_vehicle, LOCATION)?)?;
     let first_b3 = expect_among(&at_b3, &first_at_b3.id, &keeping(&first_at_b3, LOCATION)?)?;

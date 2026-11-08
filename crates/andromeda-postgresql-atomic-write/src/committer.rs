@@ -85,7 +85,7 @@ impl PostgresAtomicCommitter {
         consequence_publisher: Arc<dyn CommitConsequencePublisher>,
     ) -> PostgresAtomicCommitter {
         PostgresAtomicCommitter {
-            pool: pool.clone(), // clone: SQLx pools are shared reference-counted handles.
+            pool: pool.clone(),
             history_mode,
             core_write_history,
             attribute_names,
@@ -217,9 +217,9 @@ impl PostgresAtomicCommitter {
     /// numbering every temporal, notification and side-effect consequence from
     /// its base.
     ///
-    /// Every durable consequence of this commit — every landed entity's
+    /// Every durable consequence of this commit (every landed entity's
     /// temporal history entries, its notification events, and its side-effect
-    /// job — shares the one write identity and ingestion instant carried by
+    /// job) shares the one write identity and ingestion instant carried by
     /// the record, and draws its ordinals from the one running counter that
     /// starts at the base, in the order [`number_consequences`] gives them.
     /// `commit` and `commit_enqueued` mint a fresh record and start that

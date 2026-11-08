@@ -12,8 +12,8 @@
 //! follow from that order, and both are what this module exists for:
 //!
 //! - a representation this broker refuses never reaches a Context Source;
-//! - an operation whose local part is left with nothing to do -- because an
-//!   exclusive or redirect registration claimed every attribute -- has still
+//! - an operation whose local part is left with nothing to do (because an
+//!   exclusive or redirect registration claimed every attribute) has still
 //!   run the validation, so it cannot answer 201 or 204 to a payload clause
 //!   5.5.4 refuses.
 //!
@@ -28,21 +28,21 @@
 //!   `entityTypeSealed` belong to the `ngsildproof` Property of clause 4.5.2.2
 //!   alone. Clauses 4.5.3.2 and 4.5.3.3 sharpen the second one for a
 //!   Relationship, normalized and concise alike, into "'entityIdSealed' and
-//!   'entityTypeSealed' shall never be present" -- an unconditional
+//!   'entityTypeSealed' shall never be present": an unconditional
 //!   prohibition, since the `ngsildproof` exception is a Property's.
 //! - A third is decidable on the compact payload because no context can define
 //!   the keys it refuses: the clause 4.6.4 refusal of a key JSON-LD expansion
-//!   would drop or rewrite past recovery, which `crate::compact_screening`
-//!   reads off the decoded payload. Clause 5.5.7's two rules on the user `@context` -- no JSON-LD
-//!   Scoped Context, and no part of it below the document's top level -- are
-//!   the request's, not the payload's: `andromeda_jsonld::user_context_admission`
-//!   owns both, every admission here takes the context it admitted, and a
-//!   batch entity that embedded an `@context` is refused on its own once the
-//!   context it names was admitted.
-//! - The rest read the expanded payload -- where an NGSI-LD Null may stand,
+//!   would drop or rewrite past recovery, which the compact screening reads off
+//!   the decoded payload. Clause 5.5.7's two rules on the user `@context` (no
+//!   JSON-LD Scoped Context, and no part of it below the document's top level)
+//!   are the request's, not the payload's: the user context admission owns both,
+//!   every admission here takes the context it admitted, and a batch entity that
+//!   embedded an `@context` is refused on its own once the context it names was
+//!   admitted.
+//! - The rest read the expanded payload (where an NGSI-LD Null may stand,
 //!   what the `scope` member of clause 4.18 may hold, what an attribute
 //!   instance's envelope may carry, and whether a `GeoProperty` geometry is
-//!   well formed -- and `andromeda_entity::write_admission` owns them, because
+//!   well formed), and the entity write admission owns them, because
 //!   which of them an operation is exempt from is decided by that operation's
 //!   own clause.
 //!
@@ -138,8 +138,8 @@ impl<M: WrittenMember + Sync> WrittenEntityPayload for &EntityPatch<M> {
     }
 }
 
-/// Screen one entity-shaped payload -- a whole Entity or an entity-shaped
-/// Fragment -- for the write `W` before it is forwarded or stored.
+/// Screen one entity-shaped payload (a whole Entity or an entity-shaped
+/// Fragment) for the write `W` before it is forwarded or stored.
 ///
 /// # Errors
 ///
@@ -178,7 +178,7 @@ mod tests {
 
     /// The entity a written payload decodes into, as the extractor produces it.
     fn entity(payload: &Value) -> Entity {
-        serde_json::from_value(payload.clone()).expect("the payload decodes into an entity") // clone: `from_value` consumes the payload the test keeps
+        serde_json::from_value(payload.clone()).expect("the payload decodes into an entity")
     }
 
     #[test]

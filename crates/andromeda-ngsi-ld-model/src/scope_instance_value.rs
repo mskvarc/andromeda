@@ -8,8 +8,8 @@
 //! `"/Madrid/Centro"` and Vehicle A8311's
 //! `["/Madrid/Centro", "/Company123/UnitA"]`.
 //!
-//! Two readers rebuild that instance — the stored scope history and the overlay
-//! over intents a deferred sink has not applied yet — and they have to agree on
+//! Two readers rebuild that instance (the stored scope history and the overlay
+//! over intents a deferred sink has not applied yet), and they have to agree on
 //! the shape byte for byte, so the shaping is written once here.
 
 use crate::temporal::TemporalValue;

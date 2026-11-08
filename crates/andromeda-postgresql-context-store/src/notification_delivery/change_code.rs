@@ -1,7 +1,7 @@
 //! The numbers `notification_events` stores one entity change as.
 //!
-//! The domain vocabulary of what one write did -- the Entity's lifecycle
-//! transition and each Attribute instance's transition -- and the
+//! The domain vocabulary of what one write did (the Entity's lifecycle
+//! transition and each Attribute instance's transition) and the
 //! migration-owned registries that number it are variant-for-variant identical,
 //! and the translation between them is written out by hand in both directions.
 //! A blanket conversion keyed on the number would let a transition a later

@@ -4,8 +4,8 @@
 //! [`GeometrySelection`] states the rule over a rendered document: the
 //! `GeoProperty` named by `geometryProperty` (else `location`), and of its
 //! instances the one a `datasetId` names or the default one, read in whichever
-//! representation the Feature's `properties` take. A `GeoProperty` -- the one
-//! attribute that can hold a geometry of millions of positions -- is selected
+//! representation the Feature's `properties` take. A `GeoProperty`, the one
+//! attribute that can hold a geometry of millions of positions, is selected
 //! here from the typed instances, in the same representation, and its geometry
 //! is written from its positions. Any other member is rendered on its own and
 //! handed to the document rule, which is exact by construction and costs no

@@ -3,12 +3,12 @@
 //! ETSI GS CIM 009 v1.9.1 defines no health resource, so nothing here is a
 //! reading of the specification: `GET /health` is an Andromeda extension and
 //! [`report::HealthCheckResponse`] is its own shape. What the specification
-//! does contribute is the identifier — clause 4.6.2's name grammar, through
+//! does contribute is the identifier: clause 4.6.2's name grammar, through
 //! [`andromeda_ngsi_ld_lexicon::uri::Uri`].
 //!
 //! The crate is a port and a payload and nothing else. [`indicator::HealthIndicator`]
-//! is implemented by whichever subsystem can actually answer for itself — the
-//! MQTT connection pool, the PostgreSQL pool — and [`aggregate::Health`] runs
+//! is implemented by whichever subsystem can actually answer for itself: the
+//! MQTT connection pool and the PostgreSQL pool, and [`aggregate::Health`] runs
 //! them and takes the worst answer. Neither of those subsystems is named here,
 //! which is the whole point: adding a component means implementing the trait
 //! and adding a [`component::ComponentName`], not editing an aggregator.

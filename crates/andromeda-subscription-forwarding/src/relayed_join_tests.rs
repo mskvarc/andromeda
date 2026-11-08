@@ -44,7 +44,7 @@ fn notification() -> Value {
 fn subscription_members(notification_members: &Value) -> Value {
     let mut members = json!({"format": "normalized"});
     if let (Some(base), Some(extra)) = (members.as_object_mut(), notification_members.as_object()) {
-        base.extend(extra.iter().map(|(name, value)| (name.clone(), value.clone()))); // clone: the stored form owns its members
+        base.extend(extra.iter().map(|(name, value)| (name.clone(), value.clone())));
     }
     json!({"notification": members})
 }

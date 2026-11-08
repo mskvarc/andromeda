@@ -76,7 +76,7 @@ impl TemporalService {
         let entity_ids: Vec<Identifier> = parts
             .iter()
             .filter(|part| part.local == LocalPart::Included)
-            .map(|part| part.entity_id.clone()) // clone: the catalogue read takes the identifiers by value
+            .map(|part| part.entity_id.clone())
             .collect();
         let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
         let local_types = self.reader.entity_types(&scope, &entity_ids).await?;
@@ -97,7 +97,7 @@ impl TemporalService {
                     Err(error) => rendering.warnings.push(unreadable(&entity_id, error)),
                 }
             }
-            let entity_types = local_types.get(&entity_id).cloned().unwrap_or(answered_types); // clone: the catalogue's types are read for every entity
+            let entity_types = local_types.get(&entity_id).cloned().unwrap_or(answered_types);
             let aggregated = match self
                 .reader
                 .query_merged_entity_aggregation(&scope, &entity_id, local, &entity_types, &compiled, &rows)
@@ -152,7 +152,7 @@ impl TemporalService {
 /// The warning of an entity, or a part of it, that could not be rendered.
 fn unreadable(entity_id: &Identifier, error: TemporalError) -> TemporalQueryWarning {
     TemporalQueryWarning {
-        entity_id: entity_id.clone(), // clone: the warning owns the identifier it names
+        entity_id: entity_id.clone(), // clone: the warning outlives the borrowed entity identifier.
         reason: TemporalQueryWarningReason::MergedAggregation(error),
     }
 }

@@ -135,9 +135,7 @@ impl<'q> PageShape<'q> {
         let (page, read_order, total_planning, total_candidates) = match self {
             PageShape::Plain => {
                 let mut page = Query::select();
-                // clone: the source lends its relations, and applying them takes them
                 source.relations.clone().apply_from(&mut page, source.schema);
-                // clone: the count statement filters on the same condition.
                 page.cond_where(condition.clone());
                 let (keys, read_order) = window_and_sort_keys(&mut page, source.rows, source.query, source.window, &source.names.attributes)?;
                 return Ok(CutPage {
@@ -150,7 +148,6 @@ impl<'q> PageShape<'q> {
             }
             PageShape::Keyed(q_expr, keyed) => {
                 let keyed_total = match count {
-                    // clone: the count reads the same candidates under its own bound
                     CountPolicy::Emit => Some(TotalCandidates::Term(KeyedCandidates {
                         select: keyed.select.clone(),
                         ..keyed
@@ -170,7 +167,6 @@ impl<'q> PageShape<'q> {
             }
             PageShape::IdPattern(matches) => {
                 let matches_total = match count {
-                    // clone: the count reads the same matches under its own bound
                     CountPolicy::Emit => Some(TotalCandidates::IdPattern(matches.select.clone())),
                     CountPolicy::Omit => None,
                 };

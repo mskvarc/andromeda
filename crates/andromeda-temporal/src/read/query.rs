@@ -203,7 +203,7 @@ impl TemporalService {
         let mut rendered = Vec::with_capacity(pages.len());
         for page in pages {
             let entity_types = entity_types_map.get(&page.entity_id).map(Vec::as_slice).unwrap_or_default();
-            // clone: a render failure names the entity the page was consumed for.
+            // clone: the page is moved into the render, and a failure still names its entity.
             let entity_id = page.entity_id.clone();
             let outcome = render_aggregation_page(page, entity_types, rendering);
             rendered.extend(settle_entity(entity_id, outcome, warnings)?);
@@ -243,7 +243,7 @@ impl TemporalService {
         let mut rendered = Vec::with_capacity(pages.len());
         for page in pages {
             let entity_types = entity_types_map.get(&page.entity_id).map(Vec::as_slice).unwrap_or_default();
-            // clone: a render failure names the entity the page was consumed for.
+            // clone: the page is moved into the render, and a failure still names its entity.
             let entity_id = page.entity_id.clone();
             let outcome = render_history_page(page, entity_types, compiled, cut);
             rendered.extend(settle_entity(entity_id, outcome, warnings)?);
@@ -256,7 +256,7 @@ impl TemporalService {
 /// warning.
 ///
 /// One entity that cannot be read or rendered degrades the result set rather
-/// than the query -- the rest of the matches still answer -- except for a
+/// than the query (the rest of the matches still answer), except for a
 /// `TooManyResults` (403), which refuses the whole operation rather than
 /// dropping one entity from it.
 ///

@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_query::scope::pattern::{ScopePattern, ScopeSegment};
 /// `scopeQ` predicates and their index read, and the written text in a text
 /// column that the read path parses back with `ScopePath::from_str`. Clause
 /// 4.6.4 has the broker "return the original content", and only the text
-/// holds it -- `Madrid` and `/Madrid` share the label path `Madrid`.
+/// holds it, since `Madrid` and `/Madrid` share the label path `Madrid`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StoredScopePath<'a> {
     /// The `ltree` label path: the levels joined by `.`, so `/A/B/C` is
@@ -54,8 +54,8 @@ fn label_path(scope: &ScopePath) -> String {
 /// The PostgreSQL `lquery` a clause 4.18 scope pattern matches with.
 ///
 /// Levels are dot-separated labels; `+` becomes `*{1}`. A `#` renders per
-/// clause 4.19: a prefix `#` (something precedes it) is `*` — zero or more
-/// further labels — so `/A/#` becomes `A.*` and matches the anchor `A` itself
+/// clause 4.19: a prefix `#` (something precedes it) is `*`, meaning zero or more
+/// further labels, so `/A/#` becomes `A.*` and matches the anchor `A` itself
 /// as well as its descendants; a bare `/#` is `*{1,}`, any non-empty scope.
 /// Total by construction, because [`ScopePattern`] validated every label
 /// against the same grammar `ltree` itself accepts.
@@ -109,7 +109,6 @@ mod tests {
         // They are the same clause, so they must give the same verdict.
         let paths = ["/A/B", "/A/B/C", "/A/B/C/D", "/A"];
         let cases = [
-            // pattern, rendered lquery, verdict per path above
             ("/A/B", "A.B", [true, false, false, false]),
             ("/A/+/C", "A.*{1}.C", [false, true, false, false]),
             // Clause 4.19 Example 2: `/A/#` matches `/A` itself as well as below.

@@ -116,7 +116,6 @@ async fn one_long_query_is_served_or_refused_identically_over_http11_http2_and_h
     let tcp = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
     let tcp_port = tcp.local_addr()?.port();
     let (tcp_stop, tcp_stopped) = oneshot::channel::<()>();
-    // clone: the TCP and the QUIC listener each serve the one router.
     let tcp_router = router.clone();
     let tcp_server = tokio::spawn(async move {
         serve_bound(&server, limit, tcp, security, tcp_router, async move {

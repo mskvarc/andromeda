@@ -56,9 +56,9 @@ fn context_source_properties() -> SimpleExpr {
 /// The compilation is infallible, which is why it reports no error: a
 /// registration property is addressed as a JSONB key rather than resolved
 /// against a name dictionary, every operand is bound as a parameter rather
-/// than converted, and the one shape with no registration counterpart — the
+/// than converted, and the one shape with no registration counterpart (the
 /// clause 4.9 `{}` traversal, which needs a Relationship a registration cannot
-/// carry — renders as a constant `FALSE` instead of a failure.
+/// carry) renders as a constant `FALSE` instead of a failure.
 #[must_use]
 pub fn csr_expr_to_condition(expr: &Expr) -> Condition {
     match expr {
@@ -95,7 +95,7 @@ fn csr_pred_to_condition(pred: &Predicate) -> Condition {
 /// Relationship (clause 5.2.9 `ContextSourceRegistration`), so there is no
 /// Relationship to descend and no linked entity to reach: the traversal has no
 /// target here, and a predicate with no target does not hold. Rejecting the
-/// whole filter instead would be wrong — the traversal is valid `q` syntax, and
+/// whole filter instead would be wrong, since the traversal is valid `q` syntax, and
 /// clause 4.9 only requires the entity to "contain the target element" for a
 /// predicate to hold.
 fn no_registration_matches() -> Condition {
@@ -122,8 +122,8 @@ fn csr_pattern_condition(path: &AttrPath, pattern: &Pattern, polarity: PatternPo
     // `#>> '{}'` unwraps the jsonb value to its text form without the surrounding
     // quotes a `::text` cast would keep, so a stored `"Alpha"` is matched as
     // `Alpha` (clause 4.9).
-    let value = pattern_predicate(jsonb_whole_text(extract.clone()), polarity, pattern, PatternIndexes::None); // clone: the guards read the same extraction
-    let string = present(extract.clone()).and(jsonb_type_is(extract, JsonType::String)); // clone: as above
+    let value = pattern_predicate(jsonb_whole_text(extract.clone()), polarity, pattern, PatternIndexes::None);
+    let string = present(extract.clone()).and(jsonb_type_is(extract, JsonType::String));
     Condition::all().add(present_and(string, value))
 }
 
@@ -164,8 +164,8 @@ fn csr_value_extract(path: &AttrPath) -> SimpleExpr {
 /// which is what keeps [`csr_value_extract`] linear rather than exponential.
 fn unwrap_property(expr: SimpleExpr) -> SimpleExpr {
     let derived = Query::select().expr_as(expr, Alias::new("j")).to_owned();
-    // `j` is read three times — the type test, the unwrapped value, and the
-    // fallthrough — so each read builds its own reference to the aliased column.
+    // `j` is read three times (the type test, the unwrapped value, and the
+    // fallthrough), so each read builds its own reference to the aliased column.
     let j = || SimpleExpr::from(SeaExpr::col(Alias::new("j")));
     let case = CaseStatement::new()
         .case(
@@ -190,7 +190,7 @@ fn unwrap_property(expr: SimpleExpr) -> SimpleExpr {
 fn csr_reading(extract: SimpleExpr, scalar: &Scalar) -> (SimpleExpr, SimpleExpr) {
     match scalar {
         Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_) => {
-            let datatype = extract.clone().json_get_text(text_literal(keyword::TYPE)); // clone: the value and the datatype read one extraction
+            let datatype = extract.clone().json_get_text(text_literal(keyword::TYPE));
             let declared = [(TimeValueForm::DateTime, DATE_TIME), (TimeValueForm::Date, DATE), (TimeValueForm::Time, TIME)]
                 .into_iter()
                 .fold(CaseStatement::new(), |case, (form, term)| {
@@ -198,7 +198,7 @@ fn csr_reading(extract: SimpleExpr, scalar: &Scalar) -> (SimpleExpr, SimpleExpr)
                     case.case(
                         datatype.clone().is_in([text_literal(term), text_literal(iri.as_str())]),
                         text_literal(iri.as_str()),
-                    ) // clone: every arm reads the one datatype
+                    )
                 });
             (extract.json_get(text_literal(keyword::VALUE)), declared.into())
         }
@@ -209,7 +209,7 @@ fn csr_reading(extract: SimpleExpr, scalar: &Scalar) -> (SimpleExpr, SimpleExpr)
 /// Build the present-guarded single-scalar comparison against
 /// `context_source_properties`.
 fn csr_scalar_comparison(extract: SimpleExpr, scalar: &Scalar, op: CmpOp) -> SimpleExpr {
-    let guard = present(extract.clone()); // clone: the value side lifts the same extraction
+    let guard = present(extract.clone());
     let (text, datatype) = csr_reading(extract, scalar);
     let lifted = lift_comparison(scalar, text, datatype);
     present_and(guard, compare(lifted.stored, op, lifted.operand))
@@ -222,12 +222,12 @@ fn csr_equality_condition(path: &AttrPath, membership: SetMembership, rhs: &Comp
     match rhs {
         CompareValue::Scalar(scalar) => csr_membership_condition(extract, membership, slice::from_ref(scalar)),
         CompareValue::Range { min, max } => {
-            let guard = present(extract.clone()); // clone: the bounds lift the same extraction
+            let guard = present(extract.clone());
             let (stored, datatype) = csr_reading(extract, min);
-            let lower = lift_comparison(min, stored.clone(), datatype.clone()); // clone: both bounds compare against the one lifted stored side
+            let lower = lift_comparison(min, stored.clone(), datatype.clone());
             let upper_operand = lift_comparison(max, stored, datatype).operand;
             let stored_side = lower.stored;
-            let within = compare(stored_side.clone(), CmpOp::GreaterEq, lower.operand).and(compare(stored_side, CmpOp::LessEq, upper_operand)); // clone: both bounds compare the one stored side
+            let within = compare(stored_side.clone(), CmpOp::GreaterEq, lower.operand).and(compare(stored_side, CmpOp::LessEq, upper_operand));
             // Outside is the total negation of within over a present property: a
             // value of another data type lifts to NULL, and clause 4.9 makes it
             // unequal to the range.
@@ -250,7 +250,7 @@ fn csr_equality_condition(path: &AttrPath, membership: SetMembership, rhs: &Comp
 /// one element it is. `!=` is the complement of `==` over a present property,
 /// so a value whose data type differs from the operand's is unequal to it.
 fn csr_membership_condition(extract: SimpleExpr, membership: SetMembership, values: &[Scalar]) -> Condition {
-    let guard = present(extract.clone()); // clone: the elements are read from the same extraction
+    let guard = present(extract.clone());
     let element = || SimpleExpr::from(SeaExpr::col((Alias::new(ELEMENT), Alias::new(ELEMENT))));
     let equal_to_one = values.iter().fold(Condition::any(), |cond, value| {
         let (stored, datatype) = csr_reading(element(), value);
@@ -330,8 +330,8 @@ mod tests {
         assert!(deeper.len() < shallow.len() * 6, "growth must be linear: {} vs {}", deeper.len(), shallow.len());
     }
 
-    /// An apostrophe cannot appear in a short attribute name — the clause 5.2.4
-    /// grammar excludes it — but it is a legal sub-delimiter inside an IRI, so
+    /// An apostrophe cannot appear in a short attribute name (the clause 5.2.4
+    /// grammar excludes it), but it is a legal sub-delimiter inside an IRI, so
     /// an expanded name can still carry one into a single-quoted SQL literal.
     #[test]
     fn an_apostrophe_in_a_property_name_is_doubled() {
@@ -373,15 +373,15 @@ mod tests {
     }
 
     /// A compound value's member is a JSON object key inside the unwrapped
-    /// value, so it must be stepped without going through `unwrap_property` —
-    /// otherwise the whole compound value's serialized JSON is compared instead
+    /// value, so it must be stepped without going through `unwrap_property`.
+    /// Otherwise the whole compound value's serialized JSON is compared instead
     /// of the addressed member, and `q=info[city]==Berlin` never matches.
     #[test]
     fn a_compound_value_path_steps_into_the_member_without_wrapping_it_as_a_property() {
         let sql = render("\"https://example.com/address\"[city]==\"Berlin\"");
         // The member step (`->'city'`) is applied right after the sub-attribute
-        // extraction's closing parentheses, outside the `unwrap_property` CASE —
-        // once for the presence test, once for the comparison — not inside it,
+        // extraction's closing parentheses, outside the `unwrap_property` CASE
+        // (once for the presence test and once for the comparison), not inside it,
         // which would test a `type` member `city`'s own value never carries.
         assert!(sql.contains("-> ('city')) IS NOT NULL"), "{sql}");
         assert!(sql.contains("= 'Berlin'"), "{sql}");

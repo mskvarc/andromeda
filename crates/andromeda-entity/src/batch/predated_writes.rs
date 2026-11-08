@@ -78,8 +78,8 @@ async fn two_buildings() -> (ContendedService, Identifier, Identifier) {
 /// before it reads `id`, answering when that write landed.
 fn another_writer_appends_before_the_read(contended: &ContendedService, id: &Identifier) -> Landed {
     let landed: Landed = Arc::new(Mutex::new(None));
-    let recorded = Arc::clone(&landed); // clone: the writer records what the test reads
-    let touched = id.clone(); // clone: the writer outlives the borrow
+    let recorded = Arc::clone(&landed);
+    let touched = id.clone();
     contended.store.interfere_before_read(attribute_adder(id, "alarm", move |rows: &StoredRows| {
         *recorded.lock().expect("the instant lock is not poisoned") = rows.modified_at(&touched);
     }));
@@ -246,7 +246,7 @@ async fn a_batch_create_of_an_identifier_deleted_while_it_ran_records_its_creati
     let (a, b) = (building_id("a"), building_id("b"));
     contended.store.seed_at(&a, stored_building(&a, &["level"]), from_now(-60));
     let deleted: Landed = Arc::new(Mutex::new(None));
-    let (recorded, retired) = (Arc::clone(&deleted), a.clone()); // clone: the writer records what the test reads and outlives the borrow
+    let (recorded, retired) = (Arc::clone(&deleted), a.clone());
     contended
         .store
         .interfere(ConcurrentWriter::BeforeNextCommit(Box::new(move |rows: &mut StoredRows| {
@@ -326,7 +326,7 @@ async fn a_create_of_an_identifier_deleted_after_it_read_its_clock_lands_after_t
     let a = building_id("a");
     contended.store.seed_at(&a, stored_building(&a, &["level"]), from_now(-60));
     let deleted: Landed = Arc::new(Mutex::new(None));
-    let (recorded, retired) = (Arc::clone(&deleted), a.clone()); // clone: the writer records what the test reads and outlives the borrow
+    let (recorded, retired) = (Arc::clone(&deleted), a.clone());
     contended
         .store
         .interfere(ConcurrentWriter::BeforeNextCommit(Box::new(move |rows: &mut StoredRows| {

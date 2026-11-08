@@ -193,7 +193,6 @@ mod tests {
     #[test]
     fn each_stream_a_replacement_removed_rows_from_is_named_once() {
         let mut replaced = rows();
-        // clone: the same row replaced twice names its stream once.
         replaced.push(replaced[0].clone());
         assert_eq!(replaced_streams(&replaced), vec![11, 12]);
     }

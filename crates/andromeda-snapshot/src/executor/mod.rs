@@ -214,13 +214,7 @@ impl SnapshotPreparation {
         config: SnapshotPreparationConfig,
     ) -> SnapshotPreparation {
         SnapshotPreparation {
-            executor: SnapshotExecutor::new(
-                sources,
-                Arc::clone(&store), // clone: the preparation claims the jobs its executor promotes through the same store.
-                writes,
-                config.capture_page_size,
-                config.attribute_nesting,
-            ),
+            executor: SnapshotExecutor::new(sources, Arc::clone(&store), writes, config.capture_page_size, config.attribute_nesting),
             store,
             max_per_pass: config.max_per_pass.max(1),
             worker_id: LeaseHolder::mint(),

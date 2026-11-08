@@ -440,7 +440,7 @@ fn each_extremum_family_is_written_in_its_own_json_shape() {
     ];
     for (extremum, expected) in cases {
         let mut row = bucket(None, None);
-        row.min = Some(extremum.clone()); // clone: the case table is reused for the failure message
+        row.min = Some(extremum.clone());
         let instance = aggregated(&[row], &[AggrMethod::Min], 0);
         assert_eq!(instance["min"], json!([[expected, Value::Null, Value::Null]]), "{extremum:?}");
     }

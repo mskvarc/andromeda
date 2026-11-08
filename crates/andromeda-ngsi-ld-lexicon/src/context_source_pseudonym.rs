@@ -22,8 +22,8 @@ const TENANT_SEPARATOR: char = '~';
 /// chain and the value forwarding loop detection compares against
 /// ([`Via::contains_pseudonym`](crate::via::Via::contains_pseudonym)). It is
 /// deliberately permissive: an incoming `Via` from another broker may carry any
-/// opaque token -- a bare label (`broker-a`), a host (`example.com:8080`), or a
-/// URI (`urn:ngsi-ld:ContextSourceIdentity:broker1`) -- so the only structure
+/// opaque token, whether a bare label (`broker-a`), a host (`example.com:8080`), or a
+/// URI (`urn:ngsi-ld:ContextSourceIdentity:broker1`). The only structure
 /// required is that a `Via` element can carry the value at all. RFC 9110 makes a
 /// `received-by` a single whitespace-delimited token, so the value must be
 /// non-empty and free of whitespace and control characters; being URI-shaped is
@@ -260,8 +260,8 @@ mod tests {
         pretty_assertions::assert_eq!(ContextSourcePseudonym::new(composed.as_str()).expect("valid pseudonym"), composed);
     }
 
-    /// Every tenant label the grammar admits composes to a valid pseudonym --
-    /// leading underscore, hyphens, digits and the maximum length included.
+    /// Every tenant label the grammar admits composes to a valid pseudonym
+    /// (leading underscore, hyphens, digits and the maximum length included).
     #[test]
     fn every_admissible_tenant_label_composes_to_a_valid_pseudonym() {
         let broker = ContextSourcePseudonym::new("urn:ngsi-ld:ContextSourceIdentity:broker1").expect("valid pseudonym");

@@ -3,9 +3,9 @@
 //! [`AttributeType`] is the specification's vocabulary and [`AttributeKind`] is
 //! the migration-owned number a stored row keeps it in: a history row, a current
 //! attribute value, the attribute instances an entity's search row records and
-//! the discovery census. The two are separate on purpose — one may gain a member
+//! the discovery census. The two are separate on purpose: one may gain a member
 //! from a future revision of the specification while the other may only ever be
-//! appended to — so the translation is written out rather than derived, and it
+//! appended to, so the translation is written out rather than derived, and it
 //! lives beside the code so every store reads and writes the one mapping.
 
 use crate::attribute_kind::AttributeKind;

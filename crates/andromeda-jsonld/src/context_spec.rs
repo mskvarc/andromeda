@@ -1,7 +1,7 @@
 //! Which `@context` applies to one operation.
 //!
 //! ETSI GS CIM 009 clause 6.3.5 lets a request name its context in exactly one
-//! place -- a `Link` header, the body, or nowhere -- which is
+//! place (a `Link` header, the body, or nowhere), which is
 //! [`RequestContext`]. [`ContextSpec`] is that choice plus the policy that
 //! decides how the core context joins it; resolving it into the `@context` a
 //! document is processed under is [`crate::document_context`], and into the

@@ -228,7 +228,7 @@ fn a_number_held_as_json_is_respelled() {
 /// spelling reads.
 #[test]
 fn a_body_reads_alike_from_text_and_tree_under_aliases() {
-    let mut aliases = CoreTermAliases::keyword_spellings().clone(); // clone: the fixture extends the shared table
+    let mut aliases = CoreTermAliases::keyword_spellings().clone();
     aliases.alias("kind", "type");
     aliases.alias("v", "value");
     let terms = ContextTerms::new(aliases, ContainerTerms::none());

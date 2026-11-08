@@ -30,7 +30,7 @@ fn compact_vehicle(id: &str, attributes: &[(&str, Value)]) -> Value {
     entity.insert("id".to_owned(), json!(id));
     entity.insert("type".to_owned(), json!("Vehicle"));
     for (name, node) in attributes {
-        entity.insert((*name).to_owned(), node.clone()); // clone: the entity owns its members
+        entity.insert((*name).to_owned(), node.clone());
     }
     Value::Object(entity)
 }
@@ -180,7 +180,7 @@ async fn completed_deletion(deleted: Value, format: &str) -> Value {
     let [entity] = entities.as_slice() else {
         panic!("one entity is relayed, got {entities:?}");
     };
-    entity.clone() // clone: the scene owns the delivered notification
+    entity.clone()
 }
 
 /// Clause 5.8.6 with clause 4.5.0: an instance of a `datasetId` the split
@@ -190,7 +190,7 @@ async fn completed_deletion(deleted: Value, format: &str) -> Value {
 #[tokio::test]
 async fn an_instance_deletion_of_a_split_part_is_relayed_beside_the_instance_this_broker_holds() {
     let deleted = json!({"type": "Property", "value": "urn:ngsi-ld:null", "datasetId": "urn:ngsi-ld:Dataset:gps"});
-    let normalized = completed_deletion(deleted.clone(), "normalized").await; // clone: the deletion is relayed twice
+    let normalized = completed_deletion(deleted.clone(), "normalized").await;
     pretty_assertions::assert_eq!(
         normalized["owner"],
         json!([{"type": "Property", "value": "Ada"}, {"type": "Property", "value": "urn:ngsi-ld:null", "datasetId": "urn:ngsi-ld:Dataset:gps"}]),

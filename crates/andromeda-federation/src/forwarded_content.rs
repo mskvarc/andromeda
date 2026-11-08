@@ -4,7 +4,7 @@
 //! A write handler hands the forwarding layer the admitted document itself,
 //! never a serialisation of what the client sent. Registration matching
 //! (clause 5.12) needs only the entity identifier and type, so a write no
-//! registration covers -- the common case -- never compacts its content at
+//! registration covers (the common case) never compacts its content at
 //! all. The names of the content are the expanded names the admission
 //! produced, so the coverage of a registration is decided on what a name means
 //! and the spelling a source receives is decided by compaction under that
@@ -61,9 +61,9 @@ impl ForwardedContent<'_> {
     pub(crate) fn written_attributes(&self) -> Vec<AttributeName> {
         match self {
             ForwardedContent::Entity(document) | ForwardedContent::Merge(document) | ForwardedContent::Evolution { document, .. } => {
-                document.attributes().keys().cloned().collect() // clone: the coverage check owns the names it reports
+                document.attributes().keys().cloned().collect()
             }
-            ForwardedContent::Attribute { name, .. } => vec![(*name).clone()], // clone: same
+            ForwardedContent::Attribute { name, .. } => vec![(*name).clone()],
         }
     }
 }

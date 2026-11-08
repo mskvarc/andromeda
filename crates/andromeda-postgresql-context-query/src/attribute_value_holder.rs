@@ -64,7 +64,7 @@ impl Holder {
     fn field(&self, row: CurrentAttributes, element: SubAttribute) -> SimpleExpr {
         match self {
             Holder::Row(alias) => SeaExpr::col((alias.clone(), row)),
-            Holder::Element(value) => composite_field(value.clone(), &element), // clone: the element is read by every field
+            Holder::Element(value) => composite_field(value.clone(), &element),
         }
     }
 
@@ -78,12 +78,12 @@ impl Holder {
                 self.field(CurrentAttributes::ValueLongText, SubAttribute::ValueString),
                 self.field(CurrentAttributes::ValueUri, SubAttribute::ValueUri),
                 self.field(CurrentAttributes::ValueLongUri, SubAttribute::ValueUri),
-                json_text(object.clone()), // clone: the object is read by every kind
+                json_text(object.clone()),
             ],
             Holder::Element(_) => vec![
                 self.field(CurrentAttributes::ValueString, SubAttribute::ValueString),
                 self.field(CurrentAttributes::ValueUri, SubAttribute::ValueUri),
-                json_text(object.clone()), // clone: as above
+                json_text(object.clone()),
             ],
         };
         let geometry = CaseStatement::new().case(
@@ -95,16 +95,16 @@ impl Holder {
                 self.field(CurrentAttributes::ValueNumber, SubAttribute::ValueNumber),
                 json_number(object.clone()),
             ])
-            .into(), // clone: as above
+            .into(),
             boolean: Func::coalesce([
                 self.field(CurrentAttributes::ValueBoolean, SubAttribute::ValueBoolean),
                 json_boolean(object.clone()),
             ])
-            .into(), // clone: as above
+            .into(),
             date_time: self.field(CurrentAttributes::ValueDateTime, SubAttribute::ValueDateTime),
             text: Func::coalesce(strings).into(),
             datatype: self.declared_datatype(),
-            json_null: stored_json_null(object.clone()), // clone: as above
+            json_null: stored_json_null(object.clone()),
             object: Func::coalesce([json_compound(object), geometry.into()]).into(),
         }
     }
@@ -114,7 +114,7 @@ impl Holder {
     fn declared_datatype(&self) -> SimpleExpr {
         let kind = self.field(CurrentAttributes::ValueKind, SubAttribute::ValueKind);
         CaseStatement::new()
-            .case(kind.clone().eq(int_literal(i64::from(ValueKind::Date.code()))), text_literal(DATE.as_str())) // clone: the kind is read by both arms
+            .case(kind.clone().eq(int_literal(i64::from(ValueKind::Date.code()))), text_literal(DATE.as_str()))
             .case(kind.eq(int_literal(i64::from(ValueKind::Time.code()))), text_literal(TIME.as_str()))
             .into()
     }
@@ -175,13 +175,13 @@ impl Holder {
         let declared = match members {
             Some(members) => {
                 let node_path = expanded_jsonpath(&members.addressed);
-                readings.push(jsonb_path_query_first(object.clone(), &format!("{node_path}.\"{}\"", keyword::VALUE))); // clone: every reading walks the one value
+                readings.push(jsonb_path_query_first(object.clone(), &format!("{node_path}.\"{}\"", keyword::VALUE)));
                 readings.push(
                     CaseStatement::new()
-                        .case(json_property, jsonb_path_query_first(object.clone(), &literal_jsonpath(&members.written))) // clone: as above
+                        .case(json_property, jsonb_path_query_first(object.clone(), &literal_jsonpath(&members.written)))
                         .into(),
                 );
-                jsonb_whole_text(jsonb_path_query_first(object.clone(), &format!("{node_path}.\"{}\"", keyword::TYPE))) // clone: as above
+                jsonb_whole_text(jsonb_path_query_first(object.clone(), &format!("{node_path}.\"{}\"", keyword::TYPE)))
             }
             None => typed_null(PostgresType::Text),
         };
@@ -190,12 +190,12 @@ impl Holder {
         }
         let member: SimpleExpr = Func::coalesce(readings).into();
         OrderedValue {
-            number: json_number(member.clone()),   // clone: the member is read by every kind
-            boolean: json_boolean(member.clone()), // clone: as above
+            number: json_number(member.clone()),
+            boolean: json_boolean(member.clone()),
             date_time: typed_null(PostgresType::Timestamptz),
-            text: json_text(member.clone()), // clone: as above
+            text: json_text(member.clone()),
             datatype: declared,
-            json_null: jsonb_type_is(member.clone(), JsonType::Null), // clone: as above
+            json_null: jsonb_type_is(member.clone(), JsonType::Null),
             object: json_compound(member),
         }
     }
@@ -238,7 +238,7 @@ fn json_text(json: SimpleExpr) -> SimpleExpr {
 fn json_compound(json: SimpleExpr) -> SimpleExpr {
     CaseStatement::new()
         .case(
-            jsonb_typeof(json.clone()).is_in([JsonType::Object, JsonType::Array].map(|json_type| text_literal(json_type.into()))), // clone: the test reads the value it guards
+            jsonb_typeof(json.clone()).is_in([JsonType::Object, JsonType::Array].map(|json_type| text_literal(json_type.into()))),
             json,
         )
         .into()

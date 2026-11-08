@@ -26,7 +26,7 @@ pub const fn sql_order(direction: SortDirection) -> Order {
 /// Clause 4.23.1: "for strings the default collation order shall be defined as
 /// using ICU "root" collation order ("und-x-icu")". A request that named no
 /// collation therefore still sorts under a named collation, not under whatever
-/// the column happens to declare -- the identifier columns are `COLLATE "C"`,
+/// the column happens to declare. The identifier columns are `COLLATE "C"`,
 /// which is byte-wise and is not the clause's default.
 #[must_use]
 pub fn ordering_collation(requested: Option<&IcuCollation>) -> PostgresCollation {

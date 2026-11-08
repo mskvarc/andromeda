@@ -176,7 +176,7 @@ impl HttpStack {
         // without the stack treats every forwarded field as untrusted rather
         // than inheriting a permissive default.
         let mut router = router
-            .layer(middleware::from_fn_with_state(self.forwarded_trust.clone(), install_forwarded_trust)) // clone: the middleware owns its copy of the policy
+            .layer(middleware::from_fn_with_state(self.forwarded_trust.clone(), install_forwarded_trust))
             // The limit travels with the request as well as bounding it, so a
             // payload reader refusing a body names the size it would accept.
             .layer(Extension(self.request_body_limit))
@@ -189,7 +189,7 @@ impl HttpStack {
             // geometry be, so refusing one past it costs the same whatever its
             // size.
             .layer(Extension(self.request_decode_bounds))
-            .layer(Extension(self.blocking_decode.clone())) // clone: every request shares the stack's decode permits
+            .layer(Extension(self.blocking_decode.clone()))
             // A collection page is held to its byte ceiling once rendered,
             // whichever handler answered it.
             .layer(middleware::from_fn_with_state(self.page_byte_ceiling, refuse_oversized_page));
@@ -197,7 +197,7 @@ impl HttpStack {
             router = router.layer(helmet.clone());
         }
         if let Some(policy) = &self.strict_transport_security {
-            router = router.layer(middleware::from_fn_with_state(policy.clone(), set_strict_transport_security)); // clone: the middleware owns its copy of the policy
+            router = router.layer(middleware::from_fn_with_state(policy.clone(), set_strict_transport_security));
         }
         // Applied to the assembled response, so the `@context` link and the
         // pagination links each handler writes are laid out once, whichever
@@ -314,7 +314,7 @@ impl HttpStack {
     ///
     /// The management plane serves observability endpoints to operators and
     /// scrapers, so it carries only the shared diagnostic layers and path
-    /// normalization -- no CORS, CSRF, helmet, compression, decompression,
+    /// normalization, with no CORS, CSRF, helmet, compression, decompression,
     /// server-timing, tenant echo, or request-metric layer. A scraper or kubelet
     /// therefore reaches `/metrics`, `/livez` and `/readyz` unencumbered, and the
     /// endpoints keep answering while the data plane is saturated or draining.

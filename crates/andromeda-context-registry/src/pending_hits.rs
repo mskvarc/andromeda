@@ -41,7 +41,7 @@ mod tests {
         let now = Utc::now();
         ContextMetadata::builder()
             .url(Url::parse(serving.as_str()).ok())
-            .serving_iri(Some(serving.clone())) // clone: the counter key is owned by the metadata record under test.
+            .serving_iri(Some(serving.clone()))
             .local_id(serving.as_str().parse::<Identifier>().expect("a serving URL is a valid URI"))
             .kind(ContextKind::Cached)
             .created_at(now)

@@ -115,14 +115,14 @@ impl PoolerConsole {
     pub fn of(role: BrokerRole) -> Result<PoolerConsole, PoolerConsoleError> {
         let config = SuiteConfig::get().map_err(Clone::clone)?;
         Ok(PoolerConsole {
-            admin: config.pooling()?.pooler(role)?.clone(), // clone: the console owns its URL; the configuration keeps its own
+            admin: config.pooling()?.pooler(role)?.clone(),
         })
     }
 
     /// The URL a client of the pooler reaches `database` by, with the console's login.
     #[must_use]
     pub fn database_url(&self, database: &DatabaseName) -> Url {
-        let mut url = self.admin.clone(); // clone: the console keeps its own URL
+        let mut url = self.admin.clone();
         url.set_path(&format!("/{database}"));
         url
     }

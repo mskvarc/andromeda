@@ -46,7 +46,6 @@ fn domain_buildings(namespace: &Namespace, building_type: &EntityTypeName, domai
         .map(|number| -> Result<Entity<Input>> {
             Ok(Entity::builder()
                 .id(namespace.urn("Building", format!("{}-{number}", domain.name))?)
-                // clone: every Entity owns its type
                 .entity_type(building_type.clone())
                 .property("speed", number)
                 .scope(scope.as_str())
@@ -71,7 +70,6 @@ async fn n_map_qen_8001_a_map_over_four_domains_counts_every_entity_and_scoped_q
         let registration = CSourceRegistration::builder(broker::peer(domain.peer)?)
             .id(namespace.registration_id(domain.name)?)
             .information([RegistrationInfo::builder()
-                // clone: the information element owns its type
                 .entities([EntityInfo::new(building_type.clone()).with_id_pattern(namespace.id_pattern("Building")?)])
                 .build()?])
             .mode(RegistrationMode::Inclusive)

@@ -73,7 +73,7 @@ impl TemporalService {
         if read.in_effect.is_empty() {
             return Ok(level);
         }
-        let recorded: Vec<Identifier> = ids.iter().filter(|id| catalogued.contains_key(*id)).cloned().collect(); // clone: the store is asked about owned identifiers
+        let recorded: Vec<Identifier> = ids.iter().filter(|id| catalogued.contains_key(*id)).cloned().collect();
         if !recorded.is_empty() {
             let reads = InEffectReads {
                 attributes: read.in_effect,
@@ -148,15 +148,14 @@ impl Holders<'_> {
     /// placed on `timeproperty` before the start, in `dataset` alone when one
     /// is named.
     async fn latest(&self, timeproperty: TimeProp, dataset: Option<&DatasetSelector>, incomplete: &mut Vec<LinkedResolutionFailure>) -> Vec<HeldPart> {
-        let attributes = self.attributes.iter().map(|name| (*name).clone()).collect(); // clone: the request owns the names it asks for
-        let params = TemporalQueryParameters::latest_before(self.start, timeproperty, Some(attributes), dataset.cloned()); // clone: the request owns the dataset it names
+        let attributes = self.attributes.iter().map(|name| (*name).clone()).collect();
+        let params = TemporalQueryParameters::latest_before(self.start, timeproperty, Some(attributes), dataset.cloned());
         self.ask(&params, None, incomplete).await
     }
 
     /// What the one source `request` names answers for the deletion of its
     /// stream before the `deletedAt` it carries.
     async fn earlier(&self, request: &EarlierDeletions, incomplete: &mut Vec<LinkedResolutionFailure>) -> Vec<HeldPart> {
-        // clone: the request owns the stream it names
         let params = TemporalQueryParameters::latest_before(
             request.before,
             TimeProp::Deleted,

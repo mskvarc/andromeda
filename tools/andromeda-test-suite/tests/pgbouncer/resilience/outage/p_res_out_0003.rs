@@ -44,7 +44,7 @@ async fn p_res_out_0003_every_write_retried_after_an_outage_as_retry_after_says_
         .map(|number| {
             Ok(Entity::builder()
                 .id(namespace.urn("Device", format!("outage-{number}"))?)
-                .entity_type(device_type.clone()) // clone: every upsert writes an Entity of the type
+                .entity_type(device_type.clone())
                 .build()?)
         })
         .collect::<Result<Vec<_>>>()?;

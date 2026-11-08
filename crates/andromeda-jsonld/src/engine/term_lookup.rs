@@ -2,9 +2,9 @@
 //!
 //! A `q` filter, an `orderBy` clause and an `attrs` list all name terms one at
 //! a time. Each is expanded by the IRI Expansion algorithm over the active
-//! context the operation's `@context` processed into -- as a member key for an
-//! attribute, as an `@type` value for an entity type (JSON-LD 1.1 API,
-//! Expansion Algorithm steps 13.2 and 13.4.4.4) -- never by expanding a
+//! context the operation's `@context` processed into (as a member key for an
+//! attribute, or as an `@type` value for an entity type, JSON-LD 1.1 API
+//! Expansion Algorithm steps 13.2 and 13.4.4.4), never by expanding a
 //! document. The cache here keeps each answer, which depends only on the term
 //! and the resolved `@context`, so both go into the key.
 
@@ -194,7 +194,7 @@ impl<'a> TermCacheKeyRef<'a> {
         TermCacheKey {
             role: self.role,
             term: Box::from(self.term),
-            context_identity: Arc::clone(&context.identity), // clone: cache keys retain the shared canonical identity
+            context_identity: Arc::clone(&context.identity),
         }
     }
 }

@@ -56,7 +56,7 @@ fn prepare<'a>(
     move |job| {
         Box::pin(async move {
             if let Ok(mut claimed) = claimed.lock() {
-                claimed.push(job.snapshot.id.clone()); // clone: the log owns the identifiers it records.
+                claimed.push(job.snapshot.id.clone());
             }
             let claim = PreparationClaim {
                 store,

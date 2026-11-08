@@ -209,7 +209,7 @@ impl TemporalIntentDrain {
                     pass.first_failure.get_or_insert(failure);
                 }
                 IntentEnd::LeaseLost => pass.outcome.lease_lost += 1,
-                IntentEnd::Behind => held_back.push(claim.clone()), // clone: the release names the claims it gives back.
+                IntentEnd::Behind => held_back.push(claim.clone()),
             }
         }
         pass.outcome.held_back = held_back.len();
@@ -310,7 +310,7 @@ impl TemporalIntentDrain {
         Some(StuckTemporalIntent {
             key: claim.key,
             write_id: claim.write_id,
-            entity_id: claim.entity_id.clone(), // clone: the report owns the entity it names.
+            entity_id: claim.entity_id.clone(),
             attempts,
         })
     }

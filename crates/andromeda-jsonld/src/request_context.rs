@@ -3,8 +3,8 @@
 //! ETSI GS CIM 009 v1.9.1 clause 6.3.5 gives a request exactly one place to
 //! name its context: a `Link` header with the JSON-LD context relation for a
 //! request without a body or with an `application/json` one, the body's own
-//! `@context` member for an `application/ld+json` one, and neither -- the
-//! default context -- when the request names none. The two carriers exclude
+//! `@context` member for an `application/ld+json` one, and neither (the
+//! default context) when the request names none. The two carriers exclude
 //! each other ("the presence of a JSON-LD Link header in the incoming HTTP
 //! request when the Content-Type header is "application/ld+json" shall result
 //! in an HTTP error response of type `BadRequestData`"), and a request naming

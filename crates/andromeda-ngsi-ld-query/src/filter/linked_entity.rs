@@ -28,8 +28,8 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 /// Parse the attribute axis of a Query Term whose leading name `leading` has
 /// already been read: a `ValuePath`, or a hop `leading{LinkedEntityPath}`.
 ///
-/// `depth` counts the path segments consumed so far — sub-attributes and
-/// linked-entity hops together — so a chain of hops is bounded by the same
+/// `depth` counts the path segments consumed so far (sub-attributes and
+/// linked-entity hops together), so a chain of hops is bounded by the same
 /// budget a chain of sub-attributes is.
 ///
 /// # Errors
@@ -74,7 +74,7 @@ struct HopGuard<'a> {
 /// Clause 4.9 spells the guard `*1(EntityType 1*("," EntityType) ":")`: two
 /// or more comma-separated types, then a colon. The tokeniser is
 /// context-free and `:` is a legal identifier character, so the colon
-/// arrives glued to whatever the client wrote next — `Store:category` is one
+/// arrives glued to whatever the client wrote next: `Store:category` is one
 /// identifier. The guard is therefore recognised from shape, not from a
 /// colon token: a comma directly after the first name inside the braces
 /// means a guard, and nothing else in the grammar puts a comma there. A lone
@@ -111,7 +111,7 @@ fn parse_hop_guard<'a>(cursor: &mut TokenCursor<'a>) -> Result<HopGuard<'a>, Que
 ///
 /// The distinction decides how the guard's terminating colon is found: only
 /// a bare identifier can have the colon glued to it, because a quoted string
-/// ends at its closing quote — and a quoted name is an expanded IRI, whose
+/// ends at its closing quote, and a quoted name is an expanded IRI, whose
 /// own colons are part of the IRI rather than the grammar.
 fn parse_guard_name<'a>(cursor: &mut TokenCursor<'a>) -> Result<(&'a str, Quoting), QueryError> {
     match cursor.advance() {
@@ -129,21 +129,21 @@ fn parse_guard_name<'a>(cursor: &mut TokenCursor<'a>) -> Result<(&'a str, Quotin
 ///
 /// A comma is checked first: it says another type follows, so this name
 /// cannot be carrying the terminator and whatever colons it holds are part
-/// of the name — `rel{ex:A,ex:B:attr}` has a prefixed type in each position
+/// of the name: `rel{ex:A,ex:B:attr}` has a prefixed type in each position
 /// and only the last one is split.
 ///
 /// For the last name the colon reaches the parser in one of two shapes,
 /// both of which the tokeniser produces without any state: glued to the type
 /// it terminates (`Store:` or `Store:category`, since `:` continues an
 /// identifier), or as its own `:`-prefixed identifier when the type was
-/// quoted — which is how an expanded filter round-trips, its IRIs being
+/// quoted, which is how an expanded filter round-trips, its IRIs being
 /// quoted. An empty remainder means the inner path starts at the next token.
 ///
 /// A bare last name holding *two* colons is ambiguous and is rejected rather
 /// than resolved by guesswork: `ex:Store:category` reads equally well as the
 /// prefixed type `ex:Store` before the attribute `category` or as the type
 /// `ex` before the prefixed attribute `Store:category`, and clause 4.9
-/// decides neither — its `EntityType` production admits no colon at all,
+/// decides neither: its `EntityType` production admits no colon at all,
 /// while real filters do carry prefixed names. Quoting the type says which
 /// was meant, which is what the error asks for.
 fn split_guard_terminator<'a>(cursor: &mut TokenCursor<'a>, name: &'a str, quoting: Quoting) -> Result<Option<(&'a str, Option<&'a str>)>, QueryError> {

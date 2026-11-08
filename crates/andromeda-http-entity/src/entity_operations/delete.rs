@@ -50,8 +50,8 @@ pub(crate) async fn batch_delete(
     prefer: PreferHeader,
     // Clause 5.6.10.3 takes "A JSON-LD Array": the body passes the clause
     // 6.3.4 and 6.3.5 preconditions a JSON-LD document does, and clause
-    // 5.6.10.4 reports an identifier refused on its own -- one too long to be
-    // stored -- against itself while the rest are deleted.
+    // 5.6.10.4 reports an identifier refused on its own (one too long to be
+    // stored) against itself while the rest are deleted.
     JsonLdEntityIds { batch, context }: JsonLdEntityIds,
 ) -> Result<Response, ProblemResponse> {
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_instance(&uri)?;

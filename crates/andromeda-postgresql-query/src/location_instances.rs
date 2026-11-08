@@ -3,8 +3,8 @@
 //! Clause 5.7.2.4: "if there are multiple instances of the `GeoProperty` on which
 //! the geoquery is based, it is sufficient if any of these instances meets the
 //! geospatial restrictions". `location` is held in two places. Its default
-//! instance -- the one carrying no `datasetId`, or the first when every one
-//! carries one (clause 4.5.16.1) -- is hoisted into the dedicated
+//! instance (the one carrying no `datasetId`, or the first when every one
+//! carries one, clause 4.5.16.1) is hoisted into the dedicated
 //! `entity_search.location` columns, whose `GiST` indexes serve the common
 //! single-instance entity. Every instance, the default one included, is also a
 //! `current_attributes` row. The relation is therefore evaluated as the
@@ -316,7 +316,7 @@ mod tests {
     }
 
     /// An index that found no default instance leaves the `datasetId`
-    /// instances to decide alone -- the case of an entity whose only matching
+    /// instances to decide alone, which is the case of an entity whose only matching
     /// `location` carries a `datasetId`.
     #[test]
     fn an_empty_candidate_set_leaves_the_dataset_instances_to_decide() {

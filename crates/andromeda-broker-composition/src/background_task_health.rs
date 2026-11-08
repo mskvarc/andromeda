@@ -39,7 +39,7 @@ pub(crate) trait LoadedTenantSupervisors: Send + Sync + 'static {
 
 impl LoadedTenantSupervisors for TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory> {
     fn loaded(&self) -> Vec<(TenantRef, TaskSupervisor)> {
-        self.read_resident(|runtime| runtime.task_supervisor().clone()) // clone: the report reads the supervisor after the cache's lock is released.
+        self.read_resident(|runtime| runtime.task_supervisor().clone())
     }
 }
 
@@ -92,7 +92,7 @@ impl HealthIndicator for BackgroundTaskHealthIndicator {
 fn task_tenant(tenant: &TenantRef) -> TaskTenant {
     match tenant {
         TenantRef::UnnamedDefault => TaskTenant::UnnamedDefault(UnnamedDefaultTenant),
-        TenantRef::Named(name) => TaskTenant::Named(name.clone()), // clone: the report owns the name after the supervisor listing ends.
+        TenantRef::Named(name) => TaskTenant::Named(name.clone()),
     }
 }
 
@@ -102,7 +102,7 @@ async fn stopped_in(supervisor: &TaskSupervisor, tenant: Option<TaskTenant>) -> 
         .failed_tasks()
         .await
         .into_iter()
-        .filter_map(|snapshot| stopped_task(snapshot, tenant.clone())) // clone: each stopped task of the tenant carries it.
+        .filter_map(|snapshot| stopped_task(snapshot, tenant.clone()))
         .collect()
 }
 
@@ -171,7 +171,7 @@ mod tests {
 
     impl LoadedTenantSupervisors for Loaded {
         fn loaded(&self) -> Vec<(TenantRef, TaskSupervisor)> {
-            self.0.clone() // clone: supervisors are shared handles.
+            self.0.clone()
         }
     }
 
@@ -239,7 +239,7 @@ mod tests {
     }
 
     async fn check(process: &TaskSupervisor, tenants: Vec<(TenantRef, TaskSupervisor)>) -> ComponentDetail {
-        BackgroundTaskHealthIndicator::new(process.clone(), Arc::new(Loaded(tenants))).check().await // clone: the indicator owns a handle to the same supervisor.
+        BackgroundTaskHealthIndicator::new(process.clone(), Arc::new(Loaded(tenants))).check().await
     }
 
     #[tokio::test(start_paused = true)]

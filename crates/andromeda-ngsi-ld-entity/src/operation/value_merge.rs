@@ -52,12 +52,10 @@ fn settled_node(node: &ValueNode<Fragment>) -> Result<ValueNode, JsonLiteralErro
         .members()
         .iter()
         .filter_map(|(name, member)| match member {
-            // clone: the stored node owns its member names.
             FragmentMember::Values(values) => Some(settled_values(values).map(|values| (name.clone(), values))),
             FragmentMember::Remove => None,
         })
         .collect::<Result<_, _>>()?;
-    // clone: the stored node owns its identifier and types.
     Ok(ValueNode::new(node.id().cloned(), node.types().to_vec(), members))
 }
 
@@ -142,7 +140,6 @@ fn merge_node(base: &mut ValueNode, patch: &ValueNode<Fragment>) -> Result<(), J
                     }
                 }
                 None => {
-                    // clone: the stored node owns the member name it gains.
                     base.members_mut().insert(name.clone(), settled_values(values)?);
                 }
             },

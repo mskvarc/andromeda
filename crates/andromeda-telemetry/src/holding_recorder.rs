@@ -94,7 +94,6 @@ impl Recorder for HoldingRecorder {
 /// Add `key` to `held` unless it names a series of one tenant.
 fn hold(held: &DashSet<Key>, key: &Key) {
     if !carries_tenant_label(key) && !held.contains(key) {
-        // clone: the held set owns its keys beyond the registration that named them.
         held.insert(key.clone());
     }
 }

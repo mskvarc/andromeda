@@ -103,7 +103,7 @@ async fn a_turned_on_strict_transport_security_reaches_a_client_over_tls_only() 
     let default_stack = HttpStack::new(HttpStackConfig::default(), RequestLimitsConfig::default())?;
     let trusted = Certificate::from_der(authority.certificate())?;
 
-    let over_tls = policy_seen_over(&stack, ListenerTransport::Tls, &tls, Some(trusted.clone())).await?; // clone: each client trusts its own copy of the authority
+    let over_tls = policy_seen_over(&stack, ListenerTransport::Tls, &tls, Some(trusted.clone())).await?;
     let over_plaintext = policy_seen_over(&stack, ListenerTransport::Plaintext, &tls, None).await?;
     let by_default_over_tls = policy_seen_over(&default_stack, ListenerTransport::Tls, &tls, Some(trusted)).await?;
 

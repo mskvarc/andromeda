@@ -32,7 +32,7 @@ pub struct CommonHeadersOptions<'a> {
 /// thing that reads it.
 pub fn apply_common_headers(headers: &mut HeaderMap, context_link: Option<IriBuf>, options: &CommonHeadersOptions<'_>) {
     if let Some(location) = options.location {
-        headers.typed_insert(location.clone()); // clone: the typed header map owns the value it encodes
+        headers.typed_insert(location.clone());
     }
 
     if let Some(id) = options.entity_map_uri {
@@ -69,7 +69,7 @@ pub fn with_location(mut response: Response, location: Location) -> Response {
 /// [`NgsiLdResponse`]: crate::single::NgsiLdResponse
 #[must_use]
 pub fn with_entity_map(mut response: Response, identifier: &Identifier) -> Response {
-    response.headers_mut().typed_insert(NgsiLdEntityMap::new(identifier.clone())); // clone: the typed header owns the identifier it encodes
+    response.headers_mut().typed_insert(NgsiLdEntityMap::new(identifier.clone()));
     response
 }
 

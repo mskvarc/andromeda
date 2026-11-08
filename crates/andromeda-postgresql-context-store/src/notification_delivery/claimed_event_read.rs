@@ -150,18 +150,18 @@ fn ordinality_alias() -> (Alias, [UnnestColumn; 1], Alias) {
 /// and `datasetId`s.
 fn claimed_events_statement(target: &ContextTarget, event_keys: &[i64]) -> UnnestAliased<SelectStatement> {
     let (unnest_alias, unnest_columns, position) = ordinality_alias();
-    // clone: the aliased source names the same alias and position the projection reads.
+    // clone: the projection takes the alias and position by value, so it gets copies taken here.
     let (aliased, aliased_position) = (unnest_alias.clone(), position.clone());
 
     let ordered_names = Query::select()
         .expr(array_agg_ordered(
             Expr::col((ChangedName, AttributeNames::Name)),
-            // clone: the aggregate and the join below name the same unnested relation.
+            // clone: sea-query takes each alias by value, so the aggregate takes a copy.
             Expr::col((unnest_alias.clone(), position)),
         ))
         .from_function(
             unnest_call([(&unnest_columns[0], Expr::col((ClaimedEventRow, NotificationEvents::ChangeAttributeNameKeys)))]),
-            // clone: the unnested relation is named by its function call and by its join.
+            // clone: from_function takes the alias by value, so the join keeps the original.
             unnest_alias.clone(),
         )
         .join_as(

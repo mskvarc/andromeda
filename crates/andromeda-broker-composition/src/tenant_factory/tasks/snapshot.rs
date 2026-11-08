@@ -78,12 +78,12 @@ pub(super) fn register_snapshot_workers(
     // its own clone of the handle, so a freshly created Snapshot's notification
     // does not wait for the drain's fallback either.
     let SnapshotStatusWake { sweep_wake, receiver } = wake;
-    let pacer = Arc::clone(&recovery.pacer); // clone: the preparation sweep and the status drain consult the tenant's one pacer.
+    let pacer = Arc::clone(&recovery.pacer);
     register_snapshot_preparation(supervisor, recovery, sweep_wake)?;
     let drain = Arc::new(
         SnapshotStatusDeliveryDrain::new(
             Arc::new(SnapshotStatusOutbox::new(pool)),
-            Arc::new(DeliverySnapshotNotificationSink::new(Arc::clone(transport))), // clone: every worker delivers through one dispatcher.
+            Arc::new(DeliverySnapshotNotificationSink::new(Arc::clone(transport))),
             config,
         )
         .map_err(|error| AssemblyInvariant::SnapshotStatusDrain(Box::new(error)))?,
@@ -95,7 +95,7 @@ pub(super) fn register_snapshot_workers(
         .duration()
         .max(config.queue.poll_interval.duration())
         .max(Duration::from_secs(1));
-    register_snapshot_status_delivery(supervisor, Arc::clone(&drain), floor, ceiling, receiver, pacer)?; // clone: delivery and cleanup share one drain.
+    register_snapshot_status_delivery(supervisor, Arc::clone(&drain), floor, ceiling, receiver, pacer)?;
     register_snapshot_status_cleanup(supervisor, drain, config.retention.sweep_interval.duration().max(Duration::from_secs(1)))
 }
 
@@ -121,8 +121,8 @@ pub(super) fn register_snapshot_expiry(
     );
     let expiry = Arc::new(SnapshotExpiry::new(store));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
-        let expiry = Arc::clone(&expiry); // clone: each execution owns the bounded operation while running.
-        let pacer = Arc::clone(&pacer); // clone: each execution consults the tenant's one pacer.
+        let expiry = Arc::clone(&expiry);
+        let pacer = Arc::clone(&pacer);
         async move {
             pacer
                 .run(async move {
@@ -154,9 +154,9 @@ fn register_snapshot_preparation(supervisor: &TaskSupervisor, recovery: Preparat
         ShutdownPolicy::new(cadence),
     );
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
-        let preparation = Arc::clone(&preparation); // clone: each execution owns the bounded operation while running.
-        let status_wake = status_wake.clone(); // clone: each execution wakes delivery through its own handle.
-        let pacer = Arc::clone(&pacer); // clone: each execution consults the tenant's one pacer.
+        let preparation = Arc::clone(&preparation);
+        let status_wake = status_wake.clone();
+        let pacer = Arc::clone(&pacer);
         async move {
             pacer
                 .run(async move {
@@ -232,8 +232,8 @@ fn register_snapshot_status_delivery(
         ShutdownPolicy::new(floor),
     );
     let task = DrainTask::new(registration, fallback, move |execution| {
-        let drain = Arc::clone(&drain); // clone: each bounded pass owns the shared delivery operation while executing.
-        let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
+        let drain = Arc::clone(&drain);
+        let pacer = Arc::clone(&pacer);
         async move {
             pacer
                 .run_drain_pass(execution.cause(), async move {
@@ -276,7 +276,7 @@ fn register_snapshot_status_cleanup(
         ShutdownPolicy::new(cadence),
     );
     let task = ScheduledTask::new(registration, schedule, move |execution| {
-        let drain = Arc::clone(&drain); // clone: each cleanup pass owns the shared delivery operation while executing.
+        let drain = Arc::clone(&drain);
         async move {
             drain
                 .cleanup(DateTime::<Utc>::from(execution.cutoff()))
@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn signalling_the_delivery_waker_places_a_wake_on_the_drain_channel() {
         let (handle, _receiver) = wake_channel();
-        let probe = handle.clone(); // clone: a second producer observes the channel state the signal leaves.
+        let probe = handle.clone();
         let waker = StatusDeliveryWaker::new(handle);
         waker.signal();
         assert_eq!(

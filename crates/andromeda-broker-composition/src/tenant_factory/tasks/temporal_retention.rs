@@ -60,7 +60,7 @@ pub(super) fn register_temporal_retention(
         ShutdownPolicy::new(cadence),
     );
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
-        let repository = Arc::clone(&repository); // clone: each bounded pass owns the repository handle while running.
+        let repository = Arc::clone(&repository);
         async move {
             let outcome = repository.sweep_retention(retention, Utc::now()).await.map_err(classify_sweep_failure)?;
             match outcome {

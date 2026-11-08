@@ -363,7 +363,7 @@ fn a_geo_property_records_its_geometry_however_it_was_written() {
         let instance = json!({"@type": [GEO_PROPERTY], expanded_properties::VALUE.as_str(): [geometry]});
         pretty_assertions::assert_eq!(
             recorded(&instance),
-            TemporalValue::Geometry(GeometryValue::new(written.form().clone())), // clone: compared once per spelling
+            TemporalValue::Geometry(GeometryValue::new(written.form().clone())),
             "{instance}"
         );
     }

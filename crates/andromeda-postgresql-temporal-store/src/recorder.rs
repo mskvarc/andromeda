@@ -100,7 +100,7 @@ impl TemporalRecorder {
             .iter()
             .map(|intent| {
                 TemporalIntentRecord::of(intent, &keys).map_err(|source| TemporalStoreError::EntityIntent {
-                    entity_id: intent.entity_id.clone(), // clone: the failure owns the entity it names.
+                    entity_id: intent.entity_id.clone(), // clone: the error outlives the borrowed intent whose entity it names.
                     source: Box::new(source),
                 })
             })

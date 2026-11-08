@@ -109,7 +109,7 @@ fn reported_ids(csr: &ContextSourceRegistration, local_ids: &[Identifier]) -> Ve
             }
             .covers(csr)
         })
-        .cloned() // clone: the report owns the identifiers it names
+        .cloned()
         .collect::<Vec<_>>();
     if !covered.is_empty() {
         return covered;
@@ -119,12 +119,12 @@ fn reported_ids(csr: &ContextSourceRegistration, local_ids: &[Identifier]) -> Ve
         .information
         .iter()
         .flat_map(|information| information.entities.iter().flatten())
-        .filter_map(|selector| selector.id.clone()) // clone: same
+        .filter_map(|selector| selector.id.clone())
         .collect::<Vec<_>>();
     if !declared.is_empty() {
         return declared;
     }
-    vec![csr.id.clone()] // clone: same
+    vec![csr.id.clone()]
 }
 
 impl FederationService {
@@ -193,7 +193,7 @@ impl FederationService {
                 // Clause 5.5.14: the source is told the map it is linked to under
                 // the map in use, so it joins the same unitary sequence the query
                 // that built the map did.
-                let linked_map = request.entity_map.location_for(&csr.id).cloned(); // clone: the planned write owns the map location it carries
+                let linked_map = request.entity_map.location_for(&csr.id).cloned();
                 reported.push((csr.id.clone(), ids)); // clone: the report is keyed by the registration the write contacts
                 planned.push(PlannedWrite {
                     registration: csr,
@@ -223,7 +223,7 @@ impl FederationService {
             let reported_ids = reported
                 .iter()
                 .find(|(registration, _)| *registration == result.registration_id)
-                .map(|(_, ids)| ids.clone()) // clone: the result owns the identifiers it reports against
+                .map(|(_, ids)| ids.clone())
                 .unwrap_or_default();
             results.push(ForwardedPurgeResult { result, reported_ids });
         }

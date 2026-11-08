@@ -62,7 +62,6 @@ async fn p_sem_mnt_0002_pooled_requests_are_unaffected_while_a_repack_runs() -> 
             .iter()
             .map(|id| {
                 (0..PROPERTIES)
-                    // clone: each entity of the batch is built owning its id and type
                     .fold(Entity::builder().id(id.clone()).entity_type(entity_type.clone()), |builder, index| {
                         builder.property(format!("p{index}"), "v".repeat(64))
                     })

@@ -3,8 +3,8 @@
 //!
 //! Clause 6.3.7 lets a Context Source answer 501 Not Implemented when it does
 //! not support the data format the request asks for, and the response tables
-//! of the operations a broker forwards -- Table 6.4.3.2-3 for the entity reads,
-//! Table 6.34.3.1-1 for the creation of an `EntityMap` -- list that same 501
+//! of the operations a broker forwards (Table 6.4.3.2-3 for the entity reads,
+//! Table 6.34.3.1-1 for the creation of an `EntityMap`) list that same 501
 //! as an answer the broker itself gives, "used by Registered Context Sources
 //! to indicate that the data format of the request is unsupported". It stands
 //! for the operation only where that one source holds all of the data, which

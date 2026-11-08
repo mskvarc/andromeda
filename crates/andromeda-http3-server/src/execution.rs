@@ -3,8 +3,8 @@
 //! The bound endpoint is driven by [`crate::request_loop`], which accepts each
 //! QUIC connection, then each request on it, and dispatches the request to the
 //! same axum router the TCP listener serves. While it serves, every
-//! configuration the shared TLS identity's feed rebuilds -- a rotated
-//! certificate, a changed client CA -- is installed on the endpoint, so new
+//! configuration the shared TLS identity's feed rebuilds (a rotated
+//! certificate, a changed client CA) is installed on the endpoint, so new
 //! connections present it while open ones keep the session they negotiated.
 //! Serving ends when the supplied shutdown future resolves, after which
 //! open connections announce their close and are given the shared close

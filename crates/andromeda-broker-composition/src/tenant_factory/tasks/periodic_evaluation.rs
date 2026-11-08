@@ -118,8 +118,8 @@ where
 {
     for due in evaluation.due(cutoff).await? {
         let key = E::key(&due);
-        let evaluating = Arc::clone(evaluation); // clone: the detached evaluation owns its operation.
-        let rerun = rerun.clone(); // clone: each evaluation holds the sweep's wake until it ends.
+        let evaluating = Arc::clone(evaluation);
+        let rerun = rerun.clone();
         // A Subscription still in flight is refused here; its own evaluation
         // calls `rerun` once it ends.
         let _admission = slots.offer(key, async move { evaluating.evaluate(due, cutoff).await }, rerun);
@@ -146,9 +146,9 @@ pub(super) fn register_periodic_evaluations(supervisor: &TaskSupervisor) -> Resu
         RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(grace)),
         ShutdownPolicy::new(grace),
     );
-    let owned = slots.clone(); // clone: the task finishes the slots the sweeps offer evaluations to.
+    let owned = slots.clone();
     let task = ResidentTask::new(registration, move |execution| {
-        let slots = owned.clone(); // clone: each resident attempt owns a handle to the one set of slots.
+        let slots = owned.clone();
         async move {
             execution.mark_running();
             execution.cancellation().cancelled().await;
@@ -308,7 +308,7 @@ mod tests {
     #[tokio::test]
     async fn a_subscription_in_flight_is_not_started_by_a_second_pass_and_is_started_by_the_first_pass_after_it_ends() {
         let gate = Arc::new(Notify::new());
-        let (evaluation, mut log) = TwoDue::new([Some(Arc::clone(&gate)), None]); // clone: the test opens the gate the evaluation waits on
+        let (evaluation, mut log) = TwoDue::new([Some(Arc::clone(&gate)), None]);
         let slots = slots();
         let (rerun_sender, mut rerun) = mpsc::unbounded_channel();
         let wake = move || rerun_sender.send(()).expect("the test reads the wakes");

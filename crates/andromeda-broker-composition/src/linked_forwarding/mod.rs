@@ -177,11 +177,11 @@ mod tests {
 
         let resolved = resolution(&id, Ok(outcome), |gathered: &mut Vec<_>, _, history| gathered.push(history));
 
-        let kinds: Vec<_> = resolved.failures.iter().map(|failure| (failure.id.clone(), failure.kind)).collect(); // clone: the expectation owns its identifiers
+        let kinds: Vec<_> = resolved.failures.iter().map(|failure| (failure.id.clone(), failure.kind)).collect();
         pretty_assertions::assert_eq!(
             kinds,
             vec![
-                (id.clone(), LinkedResolutionFailureKind::Unreachable), // clone: same
+                (id.clone(), LinkedResolutionFailureKind::Unreachable),
                 (id, LinkedResolutionFailureKind::UnusableResponse),
             ]
         );

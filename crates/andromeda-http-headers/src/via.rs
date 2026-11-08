@@ -267,8 +267,8 @@ mod tests {
     #[test]
     fn a_version_less_token_is_kept_as_a_pseudonym() {
         // A non-conformant element with no protocol version still names an
-        // intermediary, so it is kept rather than dropped -- fail closed, so
-        // loop detection can still match it.
+        // intermediary, so it is kept rather than dropped, and loop detection
+        // can still match it.
         let via = decode_from("brokerX").expect("should decode");
         pretty_assertions::assert_eq!(via.0[0].protocol, None);
         assert!(via.contains_pseudonym(&pseudonym("brokerX")));

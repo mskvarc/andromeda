@@ -79,7 +79,7 @@ impl WakeBacklog {
     /// A tenant deferred again keeps the earlier of its due instants.
     pub(crate) fn deferred(&self, tenant: &TenantName, due: SystemTime, retry_at: SystemTime) {
         self.deferred
-            .entry(tenant.clone()) // clone: the backlog keys outlive the wake
+            .entry(tenant.clone())
             .and_modify(|wake| {
                 wake.due = wake.due.min(due);
                 wake.retry_at = retry_at;

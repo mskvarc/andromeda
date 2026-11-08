@@ -1,4 +1,4 @@
-//! `PATCH /ngsi-ld/v1/tenants/{tenantName}` -- suspend and resume a tenant.
+//! `PATCH /ngsi-ld/v1/tenants/{tenantName}`: suspend and resume a tenant.
 
 use crate::{
     error::{TenancyHttpError, classify},
@@ -30,7 +30,7 @@ pub struct TenantPatch {
 
 /// Suspend or resume a tenant by its `isActive` toggle.
 ///
-/// `false` suspends the tenant -- its persisted state flips to `Suspended` and
+/// `false` suspends the tenant: its persisted state flips to `Suspended` and
 /// its runtime is evicted at once, so subsequent data requests naming it answer
 /// 404 `NonexistentTenant` until it is resumed. `true` resumes it, leaving the
 /// next access to cold-load it. Returns 204 with no body.

@@ -131,7 +131,6 @@ impl From<EntityRefusal> for AssemblyError {
 /// Returns [`AssemblyError::UnknownAttribute`] when `key` has no name in
 /// `names`.
 pub fn attribute_name(key: AttributeNameKey, names: &KeyNames) -> Result<AttributeName, AssemblyError> {
-    // clone: the assembled state owns its names
     names.attribute(key).cloned().ok_or(AssemblyError::UnknownAttribute(key))
 }
 

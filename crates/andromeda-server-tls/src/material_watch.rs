@@ -4,8 +4,8 @@
 //! manager renews them, a Kubernetes Secret volume swaps them in, an operator
 //! copies new ones over the old. The watch loads the material once at start,
 //! failing startup if it is unusable, then reloads it whenever the directories
-//! holding it change. A reload that fails -- a half-written file, a key that no
-//! longer matches its certificate -- is logged and discarded, and the previous
+//! holding it change. A reload that fails (a half-written file, a key that no
+//! longer matches its certificate) is logged and discarded, and the previous
 //! material keeps being served: a broken rotation must never take a working
 //! listener down.
 

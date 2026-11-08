@@ -5,9 +5,9 @@
 //! parses a path, `split_levels` reads the optional leading `/`, and
 //! `checked_level` admits a level with its storage bound. Every other crate
 //! goes through those, so a Scope is read the same way wherever it is written,
-//! stored, matched or merged. A second reading -- splitting a Scope on `/` by
+//! stored, matched or merged. A second reading (splitting a Scope on `/` by
 //! hand, admitting a level without its bound, or holding the raw grammar type
-//! that skips both -- lets one store drop a Scope's leading
+//! that skips both) lets one store drop a Scope's leading
 //! `/` while another keeps it as written.
 //!
 //! The guard flags, in any production source outside the lexicon's `scope`

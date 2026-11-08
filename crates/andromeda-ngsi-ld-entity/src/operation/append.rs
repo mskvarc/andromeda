@@ -45,7 +45,6 @@ impl EntityState {
     /// Returns [`MutationError::Refused`] when a written instance cannot
     /// become state.
     pub fn append_attributes<'a>(&mut self, fragment: &'a EntityDocument, overwrite: OverwritePolicy) -> Result<Vec<MemberName<'a>>, MutationError> {
-        // clone: the entity owns the types it gains.
         self.types_mut().extend(fragment.types().iter().cloned());
         let mut not_appended = Vec::new();
         if let Some(scope) = fragment.scope() {
@@ -97,7 +96,6 @@ impl EntityState {
                 continue;
             }
             let instance = new_instance(name, document, None)?;
-            // clone: the instance is keyed by its own copy of the written identity.
             self.attributes_mut().insert_instance(name, dataset_id.cloned(), instance);
         }
         Ok(appended)

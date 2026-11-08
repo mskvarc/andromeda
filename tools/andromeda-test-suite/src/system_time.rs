@@ -63,7 +63,7 @@ pub fn of_entity(entity: &Entity<Output>, member: SystemMember) -> Result<&DateT
         SystemMember::DeletedAt => output.deleted_at.as_ref(),
     }
     .ok_or_else(|| SystemTimeError::Missing {
-        // clone: the error names the entity the caller keeps
+        // clone: the error must own the entity id it reports
         entity: entity.id.clone(),
         depth: 0,
         member,
@@ -91,7 +91,7 @@ pub fn of_attribute<'e>(entity: &'e Entity<Output>, path: &[&str], member: Syste
         SystemMember::DeletedAt => output.deleted_at.as_ref(),
     }
     .ok_or_else(|| SystemTimeError::Missing {
-        // clone: the error names the entity the caller keeps
+        // clone: the error must own the entity id it reports
         entity: entity.id.clone(),
         depth: path.len(),
         member,
@@ -109,7 +109,7 @@ enum LevelShortfall {
 impl LevelShortfall {
     /// The error this shortfall is at `level` of a path into `entity`.
     fn of(self, entity: &Entity<Output>, level: usize) -> SystemTimeError {
-        // clone: the error names the entity the caller keeps
+        // clone: the error must own the entity id it reports
         let entity = entity.id.clone();
         match self {
             LevelShortfall::Absent => SystemTimeError::NoAttribute { entity, level },

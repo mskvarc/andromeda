@@ -85,7 +85,7 @@ impl<'a> InsertionPolicy<'a> {
             settled @ (DerivedInsertion::Stored | DerivedInsertion::HeldByAnother) => settled,
         };
         match shared {
-            DerivedInsertion::Stored => Ok(identifier.clone()), // clone: the identity keeps its identifier for the caller's memo
+            DerivedInsertion::Stored => Ok(identifier.clone()),
             DerivedInsertion::HeldByAnother | DerivedInsertion::Vanished => self.fresh(document, ContextCreationKind::ImplicitlyCreated).await,
         }
     }
@@ -106,7 +106,7 @@ impl<'a> InsertionPolicy<'a> {
         {
             ContextInsertion::Inserted => Ok(DerivedInsertion::Stored),
             ContextInsertion::Occupied => {
-                let held = Identifier::from(derived.clone()); // clone: the caller returns the derived identifier when the held entry matches.
+                let held = Identifier::from(derived.clone());
                 self.held_entry(&held, canonical).await
             }
         }
@@ -230,7 +230,7 @@ mod tests {
             _kind: ContextCreationKind,
         ) -> ContextRegistryFuture<'a, ContextInsertion> {
             Box::pin(async move {
-                self.offered.lock().expect("the offer log").push(identifier.clone()); // clone: the log keeps what was offered
+                self.offered.lock().expect("the offer log").push(identifier.clone());
                 let mut inserts = self.inserts.lock().expect("the script");
                 Ok(if inserts.is_empty() { ContextInsertion::Inserted } else { inserts.remove(0) })
             })

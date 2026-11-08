@@ -5,8 +5,8 @@
 //! [`Clearable`]: a value, the NGSI-LD Null (which clause 5.5.8 lets an update
 //! use to delete the member) or absent. A JSON `null` is no value of any member
 //! (clause 5.2.1) and is refused as the body is read. The body decodes straight from the request text
-//! into the types that own each member's restriction -- `NonEmptyText`,
-//! `TimeInterval`, `RegistrationManagementInfo`, `DatasetSelector` -- so a value
+//! into the types that own each member's restriction (`NonEmptyText`,
+//! `TimeInterval`, `RegistrationManagementInfo`, `DatasetSelector`), so a value
 //! outside Table 5.2.9-1 fails the decoding, naming the member, as
 //! `BadRequestData`. What the body carries beyond Table 5.2.9-1 is the
 //! registration's Context Source Properties, held as data (clause 4.9); one
@@ -142,7 +142,7 @@ impl RegistrationBody {
     pub(crate) fn refuse_ngsi_ld_null_properties(&self) -> Result<(), RegistrationError> {
         match self.additional_properties.iter().find(|(_, value)| value.is_null_sentinel()) {
             Some((name, _)) => Err(RegistrationError::Validation(RegistrationValidationReason::PropertyMustNotBeNull {
-                name: name.clone(), // clone: the refusal owns the name the body keeps
+                name: name.clone(), // clone: the error outlives the borrowed property name the body keeps.
             })),
             None => Ok(()),
         }
@@ -383,7 +383,7 @@ mod tests {
             ("location", Value::Null),
             ("customThing", Value::Null),
         ] {
-            assert!(create_of(&with(member, value.clone())).is_err(), "{member} = {value} must be rejected"); // clone: reported on failure
+            assert!(create_of(&with(member, value.clone())).is_err(), "{member} = {value} must be rejected");
         }
     }
 
@@ -442,7 +442,7 @@ mod tests {
     /// context aliases them with, reads as the plain spelling.
     #[test]
     fn a_registration_spelled_with_keywords_or_aliases_reads_as_spelled_plainly() {
-        let mut aliases = CoreTermAliases::keyword_spellings().clone(); // clone: the fixture extends the shared table
+        let mut aliases = CoreTermAliases::keyword_spellings().clone();
         aliases.alias("kind", "type");
         aliases.alias("ident", "id");
         let terms = ContextTerms::new(aliases, ContainerTerms::none());

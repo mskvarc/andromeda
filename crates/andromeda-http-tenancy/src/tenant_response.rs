@@ -90,7 +90,7 @@ pub async fn build_tenant(view: &TenantView, options: TenantOptions, usage_probe
     };
     Ok(Tenant::builder()
         .id(id)
-        .tenant_name(record.tenant_name.clone()) // clone: the resource owns its name
+        .tenant_name(record.tenant_name.clone())
         .is_active(record.status.is_active())
         .status(status)
         .created_at(created_at)
@@ -124,7 +124,7 @@ mod tests {
         let acme = tenant_id(&name("acme")).expect("a tenant identifier");
         pretty_assertions::assert_eq!(tenant_page_start(&PageStart::Cursor(None)).ok(), Some(TenantPageStart::Forward { after: None }));
         pretty_assertions::assert_eq!(
-            tenant_page_start(&PageStart::Cursor(Some(PageCursor::After(acme.clone())))).ok(), // clone: the identifier is reused below
+            tenant_page_start(&PageStart::Cursor(Some(PageCursor::After(acme.clone())))).ok(),
             Some(TenantPageStart::Forward { after: Some(name("acme")) })
         );
         pretty_assertions::assert_eq!(

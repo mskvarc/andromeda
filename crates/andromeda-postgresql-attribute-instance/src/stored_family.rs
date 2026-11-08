@@ -339,7 +339,6 @@ impl StoredFamily<'_> {
 
     /// The type IRI behind a type key.
     pub(crate) fn type_name(self, key: EntityTypeNameKey) -> Result<NgsiLdReference, AssemblyError> {
-        // clone: the assembled state owns its type IRIs
         self.names.type_name(key).cloned().ok_or(AssemblyError::UnknownType(key))
     }
 

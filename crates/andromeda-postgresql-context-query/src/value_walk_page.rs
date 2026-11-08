@@ -143,13 +143,12 @@ pub(crate) fn value_walk_page(source: &PageSource<'_>, order: &ValueWalkOrder) -
     let mut ctes = WithClause::new();
     ctes.cte(materialized(occupied_columns(source.rows, order.attribute), OccupiedColumns));
     let mut walked = Condition::any();
-    let mut sorted = whole.clone(); // clone: every branch filters on the selection
+    let mut sorted = whole.clone();
     for column in WalkedColumn::ALL {
         let gate = held_alone(column.held());
-        // clone: every branch filters on the selection and reads the gate
         let carriers = carriers(source, order, column, whole.clone().add(gate.clone()), need);
         ctes.cte(materialized(carriers, column.carriers()));
-        walked = walked.add(gate.clone()); // clone: the plain page reads the gate negated
+        walked = walked.add(gate.clone());
         sorted = sorted.add(gate.not());
     }
     let carried = count_of(WalkedCarriers::Numbers).add(count_of(WalkedCarriers::Instants));
@@ -166,7 +165,7 @@ pub(crate) fn value_walk_page(source: &PageSource<'_>, order: &ValueWalkOrder) -
     let mut walk = Query::select();
     walk.column(Asterisk).from_subquery(ranked.take(), Alias::new("ranked"));
     for (column, key_order) in &plain.order {
-        key_order.order_by(&mut walk, Expr::col(column.clone())); // clone: both branches order by the same columns
+        key_order.order_by(&mut walk, Expr::col(column.clone()));
     }
     walk.limit(u64::from(source.window.limit)).offset(u64::from(order.offset));
 

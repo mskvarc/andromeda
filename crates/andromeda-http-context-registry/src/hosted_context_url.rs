@@ -60,7 +60,7 @@ impl HostedContextLocator for HostedContextUrls<'_> {
 /// slash; its query and fragment are dropped.
 #[must_use]
 pub fn hosted_context_url(api_root: &Url, identifier: &JsonLdContextId) -> Url {
-    let mut url = api_root.clone(); // clone: the minted URL is built on its own copy of the apiRoot
+    let mut url = api_root.clone();
     let prefix = api_root.path().trim_end_matches('/');
     url.set_path(&format!("{prefix}/{}/{identifier}", CONTEXTS_PATH.join("/")));
     url.set_query(None);

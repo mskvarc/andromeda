@@ -1,8 +1,8 @@
 //! Compacting expanded NGSI-LD IRIs back to terms, without naming the compactor.
 //!
-//! A stored filter carries expanded IRIs — a Subscription's `q` and `csf`
+//! A stored filter carries expanded IRIs: a Subscription's `q` and `csf`
 //! (clause 5.2.12) are expanded through the request `@context` when the
-//! resource is written (clause 5.5.7) — and has to be given back spelled in
+//! resource is written (clause 5.5.7), and has to be given back spelled in
 //! the terms of the `@context` the reader supplied. That needs a JSON-LD
 //! processor, which sits above this crate, so the need is stated here as a
 //! port and the JSON-LD layer supplies the implementation, exactly as

@@ -21,7 +21,7 @@ use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_request::{discovery::DiscoveryListParams, local::LocalOnlyParams};
 use axum::response::Response;
 
-/// GET /ngsi-ld/v1/attributes -- Query available attributes.
+/// GET /ngsi-ld/v1/attributes: query available attributes.
 ///
 /// # Errors
 ///
@@ -75,7 +75,7 @@ pub async fn query(
     .await
 }
 
-/// GET /ngsi-ld/v1/attributes/{attr_id} -- Retrieve information about a specific attribute.
+/// GET /ngsi-ld/v1/attributes/{attr_id}: retrieve information about a specific attribute.
 ///
 /// # Errors
 ///

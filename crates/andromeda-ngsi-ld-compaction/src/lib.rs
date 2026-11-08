@@ -3,8 +3,8 @@
 //!
 //! The model of `andromeda-ngsi-ld-entity` is keyed by expanded IRIs; a
 //! response is keyed by the terms of the request's `@context`. Compacting an
-//! NGSI-LD entity reduces to compacting IRIs -- attribute names, types,
-//! `vocab` values, members of structured values -- and choosing the term
+//! NGSI-LD entity reduces to compacting IRIs (attribute names, types,
+//! `vocab` values, members of structured values) and choosing the term
 //! definition each value is written under: `@id` coercion, typed literals,
 //! language maps, `@list` containers, `@json`. The JSON-LD library decides each
 //! of those one term at a time against the processed request context, and the
@@ -13,7 +13,7 @@
 //! the expanded document and handing it to the processor.
 //!
 //! The processor stays the authority: what the walk cannot decide one term at
-//! a time -- scoped contexts, `@nest`, map containers -- is compacted by the
+//! a time (scoped contexts, `@nest`, map containers) is compacted by the
 //! processor from the model's canonical expanded form, and the walk's output
 //! is pinned to the processor's by differential tests over every attribute
 //! family and the contexts that change term selection.

@@ -198,7 +198,7 @@ mod tests {
             "pick": ["id", "owner{name},speed"],
             "omit": ["scope"]
         });
-        let notification = request(wire.clone()); // clone: the wire form is compared with the written one below
+        let notification = request(wire.clone());
         pretty_assertions::assert_eq!(notification.pick.as_ref().map(Vec::len), Some(2));
         pretty_assertions::assert_eq!(serde_json::to_value(&notification).expect("serialises"), wire);
     }

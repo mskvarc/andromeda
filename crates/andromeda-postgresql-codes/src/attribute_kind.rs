@@ -10,9 +10,9 @@ compact_code_registry! {
     /// attribute whose type changes does not retroactively change the shape of
     /// what was already recorded. It is present on tombstones too, since
     /// synthesising `urn:ngsi-ld:null` for a deletion requires the member shape
-    /// the family dictates — a value for a `Property`, an object for a
-    /// `Relationship`, a language map for a `LanguageProperty` (clauses 4.5.7 and
-    /// 4.5.8) — and that shape is unknowable without the family.
+    /// the family dictates (a value for a `Property`, an object for a
+    /// `Relationship`, a language map for a `LanguageProperty`; clauses 4.5.7 and
+    /// 4.5.8). That shape is unknowable without the family.
     ///
     /// The labels are the specification's own type tokens, which is the casing
     /// clause 5.2.4 mandates on the wire and therefore the only spelling that

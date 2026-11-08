@@ -15,7 +15,7 @@ use std::{borrow::Cow, cmp::Ordering};
 ///
 /// Clause 4.9 forbids the ordering and pattern operators against a
 /// Relationship, so the evaluator has to know a value's origin, not only its
-/// shape — a Relationship object and a string Property value are both strings.
+/// shape: a Relationship object and a string Property value are both strings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedTarget<'a> {
     /// The target value to compare against the Query Term operand.
@@ -156,7 +156,7 @@ pub enum MultiValueReading {
     ///
     /// Clause 4.9 defines a `ListProperty`'s target value as "the valueList
     /// array associated to such a `ListProperty`" and a `ListRelationship`'s as
-    /// "the array of objects", and a Property's is the Value the client wrote —
+    /// "the array of objects", and a Property's is the Value the client wrote,
     /// an array when they wrote one. The equality operators test membership in
     /// it ("Is included in the target value, if the latter is an array"), while
     /// an operator defined over a scalar or a String target does not match it at
@@ -169,7 +169,7 @@ pub enum MultiValueReading {
     /// language is specified, the target value is defined as a value from any of
     /// the key-value pairs held within the languageMap." Every operator is
     /// therefore answered by the values themselves, and the negated ones hold
-    /// only when none of them satisfies the Query Term — "No matching value is
+    /// only when none of them satisfies the Query Term: "No matching value is
     /// found in any of the values of the key-value pairs of a languageMap".
     AnyOneValue,
 }

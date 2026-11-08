@@ -6,8 +6,8 @@ use std::borrow::Cow;
 
 /// One entity selector carried by a POST query body's `entities[]` array.
 ///
-/// A GET query has no structured selectors — its flat `id`/`type`/`idPattern`
-/// parameters describe one implicit selector — so this type exists to preserve
+/// A GET query has no structured selectors (its flat `id`/`type`/`idPattern`
+/// parameters describe one implicit selector), so this type exists to preserve
 /// the per-selector grouping a POST body draws that a comma-joined parameter
 /// cannot express: `{id:A,type:T1}` and `{id:B,type:T2}` are a union, not the
 /// cross product `(A,T2)` that a flattened `id=A,B`/`type=T1,T2` would match.

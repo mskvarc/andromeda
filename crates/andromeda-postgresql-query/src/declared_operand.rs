@@ -56,12 +56,12 @@ pub fn declares_other_data_type(datatype: SimpleExpr) -> SimpleExpr {
 #[must_use]
 pub fn number_reading(stored: SimpleExpr, datatype: SimpleExpr) -> SimpleExpr {
     let text = jsonb_whole_text(stored.clone()); // clone: the tests and the cast read one value
-    let declared = jsonb_type_is(stored.clone(), JsonType::String) // clone: as above
+    let declared = jsonb_type_is(stored.clone(), JsonType::String)
         .and(declares_number(datatype))
-        .and(text.clone().ne(text_literal("NaN"))) // clone: as above
-        .and(pg_input_is_valid(text.clone(), PostgresType::Numeric)); // clone: as above
+        .and(text.clone().ne(text_literal("NaN")))
+        .and(pg_input_is_valid(text.clone(), PostgresType::Numeric));
     CaseStatement::new()
-        .case(jsonb_type_is(stored, JsonType::Number), cast_compound(text.clone(), PostgresType::Numeric)) // clone: as above
+        .case(jsonb_type_is(stored, JsonType::Number), cast_compound(text.clone(), PostgresType::Numeric))
         .case(declared, cast_compound(text, PostgresType::Numeric))
         .into()
 }
@@ -71,11 +71,11 @@ pub fn number_reading(stored: SimpleExpr, datatype: SimpleExpr) -> SimpleExpr {
 #[must_use]
 pub fn boolean_reading(stored: SimpleExpr, datatype: SimpleExpr) -> SimpleExpr {
     let text = jsonb_whole_text(stored.clone()); // clone: the tests and the cast read one value
-    let declared = jsonb_type_is(stored.clone(), JsonType::String) // clone: as above
+    let declared = jsonb_type_is(stored.clone(), JsonType::String)
         .and(declares_boolean(datatype))
-        .and(pg_input_is_valid(text.clone(), PostgresType::Boolean)); // clone: as above
+        .and(pg_input_is_valid(text.clone(), PostgresType::Boolean));
     CaseStatement::new()
-        .case(jsonb_type_is(stored, JsonType::Boolean), cast_compound(text.clone(), PostgresType::Boolean)) // clone: as above
+        .case(jsonb_type_is(stored, JsonType::Boolean), cast_compound(text.clone(), PostgresType::Boolean))
         .case(declared, cast_compound(text, PostgresType::Boolean))
         .into()
 }
@@ -84,7 +84,7 @@ pub fn boolean_reading(stored: SimpleExpr, datatype: SimpleExpr) -> SimpleExpr {
 /// `NULL` otherwise.
 #[must_use]
 pub fn string_reading(stored: SimpleExpr, datatype: SimpleExpr) -> SimpleExpr {
-    let string = jsonb_type_is(stored.clone(), JsonType::String).and(negate_total(declares_other_data_type(datatype))); // clone: the test reads the value it guards
+    let string = jsonb_type_is(stored.clone(), JsonType::String).and(negate_total(declares_other_data_type(datatype))); // clone: the guard reads the value the cast then reads
     CaseStatement::new()
         .case(string, cast_compound(jsonb_whole_text(stored), PostgresType::Text))
         .into()

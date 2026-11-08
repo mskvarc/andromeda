@@ -126,8 +126,6 @@ impl DatasetFilter {
         for selector in selectors {
             match selector {
                 DatasetSelector::Default => default_selected = true,
-                // clone: the reduced filter owns its identifiers, and the
-                // selector list it came from is borrowed
                 DatasetSelector::Id(uri) => named.push(uri.clone()),
             }
         }

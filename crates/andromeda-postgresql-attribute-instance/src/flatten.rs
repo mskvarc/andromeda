@@ -94,7 +94,7 @@ pub fn push_elements(attributes: &Attributes, parent: i32, keys: &NameKeys, elem
                 created_at: instance.created_at().map(SystemInstant::get),
                 modified_at: instance.modified_at().map(SystemInstant::get),
             });
-            // clone: the refusal owns the name it reports.
+            // clone: the error outlives the borrowed attribute name it reports.
             let position = i32::try_from(elements.len()).map_err(|_| FlattenError::TooManyInstances(name.clone()))?;
             push_elements(instance.sub_attributes(), position, keys, elements)?;
         }
@@ -110,12 +110,12 @@ pub fn push_elements(attributes: &Attributes, parent: i32, keys: &NameKeys, elem
 /// instance is not one a write commits.
 pub fn members(name: &AttributeName, dataset_id: Option<&Identifier>, instance: &Instance, keys: &NameKeys) -> Result<InstanceMembers, FlattenError> {
     let family = instance.value();
-    // clone: the refusal owns the name it reports.
+    // clone: the error outlives the borrowed type reference it reports.
     let type_key = |reference: &NgsiLdReference| keys.type_name(reference).ok_or_else(|| FlattenError::UnresolvedType(reference.clone()));
     Ok(InstanceMembers {
-        // clone: the refusal owns the name it reports.
+        // clone: the error outlives the borrowed attribute name it reports.
         attribute_name_key: keys.attribute(name).ok_or_else(|| FlattenError::UnresolvedAttribute(name.clone()))?,
-        dataset_id: dataset_id.cloned(), // clone: the row owns its datasetId
+        dataset_id: dataset_id.cloned(),
         attribute_kind: stored_attribute_kind(instance.family()),
         value: stored_value(name, family, keys)?,
         value_type_key: family.value_type().map(type_key).transpose()?,
@@ -140,7 +140,7 @@ fn stored_value(name: &AttributeName, family: &FamilyValue, keys: &NameKeys) -> 
         },
         FamilyValue::GeoProperty { geometry, .. } => Ok(match geometry {
             GeoValue::Geometry(geometry) => StoredValue::Geometry {
-                form: geometry.form().clone(), // clone: the row owns the positions it binds
+                form: geometry.form().clone(),
                 members: geometry.members().map(stored_json).transpose()?,
             },
             GeoValue::Encoded(encoded) => StoredValue::String {
@@ -149,8 +149,8 @@ fn stored_value(name: &AttributeName, family: &FamilyValue, keys: &NameKeys) -> 
             },
         }),
         FamilyValue::Relationship { objects, .. } => match objects.as_slice() {
-            [object] => Ok(StoredValue::Uri(object.clone())),        // clone: the row owns the object it binds
-            _ => object(&StructuredValue::Objects(objects.clone())), // clone: the codec writes the objects it owns
+            [object] => Ok(StoredValue::Uri(object.clone())),
+            _ => object(&StructuredValue::Objects(objects.clone())),
         },
         FamilyValue::LanguageProperty { entries, .. } => object(&StructuredValue::LanguageMap(entries.to_fragment())),
         FamilyValue::VocabProperty { vocab, .. } => match vocab.as_slice() {
@@ -158,19 +158,18 @@ fn stored_value(name: &AttributeName, family: &FamilyValue, keys: &NameKeys) -> 
                 text: term.as_str().to_owned(),
                 annotation: LiteralAnnotation::Plain,
             }),
-            _ => object(&StructuredValue::Vocabs(vocab.clone())), // clone: the codec writes the terms it owns
+            _ => object(&StructuredValue::Vocabs(vocab.clone())),
         },
         FamilyValue::JsonProperty { json, .. } => match json.as_slice() {
-            [literal] => object(&StructuredValue::Json(literal.clone())), // clone: the codec writes the literal it owns
+            [literal] => object(&StructuredValue::Json(literal.clone())),
             _ => Err(FlattenError::SeveralJsonLiterals(name.clone())),
         },
         FamilyValue::ListProperty { items, .. } => object(&StructuredValue::List(items.iter().map(ExpandedValue::to_fragment).collect())),
         FamilyValue::ListRelationship { objects, .. } => objects
             .iter()
             .map(|object| match object {
-                // clone: the codec writes the targets it owns
                 ListObject::Wrapped(uri) => Ok(uri.clone()),
-                // clone: the refusal owns the name it reports.
+                // clone: the error outlives the borrowed attribute name it reports.
                 ListObject::Bare(_) | ListObject::Literal(_) => Err(FlattenError::UncommittedValue(name.clone())),
             })
             .collect::<Result<Vec<_>, _>>()
@@ -193,13 +192,13 @@ pub fn scalar_literal(values: &[ExpandedValue]) -> Option<&Literal> {
 fn literal_value(name: &AttributeName, literal: &Literal, value_type: Option<&NgsiLdReference>, keys: &NameKeys) -> Result<StoredValue, FlattenError> {
     let datatype = literal
         .datatype()
-        // clone: the refusal owns the name it reports.
+        // clone: the error outlives the borrowed datatype it reports.
         .map(|datatype| keys.type_name(datatype).ok_or_else(|| FlattenError::UnresolvedType(datatype.clone())))
         .transpose()?;
     let text = match literal.value() {
         LiteralValue::Number(number) => {
             return Ok(StoredValue::Number {
-                number: number.clone(), // clone: the row owns its exact number
+                number: number.clone(),
                 datatype,
             });
         }
@@ -214,7 +213,7 @@ fn literal_value(name: &AttributeName, literal: &Literal, value_type: Option<&Ng
             });
         }
         Some(Ok(value)) if value.to_string() == text.as_str() => value,
-        // clone: the refusal owns the name it reports.
+        // clone: the error outlives the borrowed attribute name it reports.
         Some(Ok(_) | Err(_)) => return Err(FlattenError::UncommittedValue(name.clone())),
     };
     Ok(match declared {
@@ -233,7 +232,6 @@ fn literal_value(name: &AttributeName, literal: &Literal, value_type: Option<&Ng
 fn string_annotation(literal: &Literal, datatype: Option<EntityTypeNameKey>) -> LiteralAnnotation {
     match (datatype, literal.language()) {
         (Some(datatype), _) => LiteralAnnotation::Datatype(datatype),
-        // clone: the row owns the tag it binds
         (None, Some(language)) => LiteralAnnotation::Language(language.clone()),
         (None, None) => LiteralAnnotation::Plain,
     }

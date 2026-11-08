@@ -119,7 +119,7 @@ impl ContextRegistryStore for TwoEntryStore {
     fn lookup<'a>(&'a self, identifier: &'a Identifier) -> ContextRegistryFuture<'a, Option<StoredContext>> {
         Box::pin(async move {
             Ok(self.kind(identifier).map(|kind| StoredContext {
-                identifier: identifier.clone(), // clone: the looked-up row owns its identifier
+                identifier: identifier.clone(),
                 kind,
                 source_url: None,
             }))
@@ -156,10 +156,7 @@ impl ContextRegistryStateResolver for ResidentResolver {
                 TenantRef::Named(_) => &self.acme,
                 TenantRef::UnnamedDefault => &state,
             };
-            Ok(Arc::new(ContextRegistryRouteServices::new(
-                TenantContextHosting::clone(hosting), // clone: the route services own a handle on the tenant's hosting
-                lease,
-            )))
+            Ok(Arc::new(ContextRegistryRouteServices::new(TenantContextHosting::clone(hosting), lease)))
         })
     }
 }
@@ -168,12 +165,7 @@ impl ContextRegistryStateResolver for ResidentResolver {
 /// policy the API assembly installs on every NGSI-LD request.
 fn routes() -> Router {
     let engine = JsonLdEngine::builder().allow_remote(false).build().expect("an offline engine");
-    let hosting = |hosted| {
-        TenantContextHosting::new(Arc::new(ContextRegistryService::new(
-            Arc::new(TwoEntryStore { hosted }),
-            engine.clone(), // clone: each tenant's registry holds the engine
-        )))
-    };
+    let hosting = |hosted| TenantContextHosting::new(Arc::new(ContextRegistryService::new(Arc::new(TwoEntryStore { hosted }), engine.clone())));
     let acme: TenantName = "acme".parse().expect("a tenant name");
     let resolver = ResidentResolver {
         tenancy: ResidentTenancy::new(Arc::new(hosting(HOSTED)), vec![acme]),
@@ -309,7 +301,7 @@ async fn the_former_tenant_parameter_is_invalid_request_on_every_operation() {
         (Method::GET, "/jsonldContexts?andromedaTenant=acme", vec![]),
         (Method::DELETE, "/jsonldContexts/urn:ngsi-ld:JsonLdContext:x?andromedaTenant=acme", vec![]),
     ] {
-        let response = answer(method.clone(), uri, &headers).await; // clone: the method labels the assertion
+        let response = answer(method.clone(), uri, &headers).await;
         pretty_assertions::assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{method} {uri}");
         pretty_assertions::assert_eq!(problem_type(response).await.as_deref(), Some("InvalidRequest"), "{method} {uri}");
     }

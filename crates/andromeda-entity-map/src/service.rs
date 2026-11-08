@@ -273,7 +273,7 @@ mod tests {
             Box::pin(async move {
                 let mut maps = self.0.lock().expect("the test store lock is not poisoned");
                 maps.retain(|stored| stored.id != map.id);
-                maps.push(map.clone()); // clone: the fake owns what it stores
+                maps.push(map.clone());
                 Ok(())
             })
         }
@@ -281,7 +281,7 @@ mod tests {
         fn get<'a>(&'a self, identifier: &'a Identifier) -> EntityMapStoreFuture<'a, Option<EntityMap>> {
             Box::pin(async move {
                 let maps = self.0.lock().expect("the test store lock is not poisoned");
-                Ok(maps.iter().find(|map| &map.id == identifier && !map.is_expired()).cloned()) // clone: the caller owns the returned map
+                Ok(maps.iter().find(|map| &map.id == identifier && !map.is_expired()).cloned())
             })
         }
 
@@ -308,7 +308,7 @@ mod tests {
                 let mut maps = self.0.lock().expect("the test store lock is not poisoned");
                 match maps.iter_mut().find(|map| &map.id == identifier && !map.is_expired()) {
                     Some(map) => {
-                        map.link(registration.clone(), linked_map.clone()); // clone: the fake owns what it stores
+                        map.link(registration.clone(), linked_map.clone());
                         Ok(EntityMapMutation::Applied)
                     }
                     None => Ok(EntityMapMutation::Missing),

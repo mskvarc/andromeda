@@ -19,7 +19,7 @@ use andromeda_ngsi_ld_query::{
 /// name tokens; both are the text the dictionary stores, and both satisfy the
 /// clause 4.6.2 grammar an [`EntityTypeName`] validates, so a token that
 /// nevertheless fails to parse is left out and its predicate later compiles as
-/// an unresolved — and therefore unsatisfiable — type.
+/// an unresolved, and therefore unsatisfiable, type.
 #[must_use]
 pub fn projected_type_names(selection: &EntitySelection) -> Vec<EntityTypeName> {
     let mut names = Vec::new();

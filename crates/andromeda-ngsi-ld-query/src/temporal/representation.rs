@@ -8,7 +8,7 @@ use typed_builder::TypedBuilder;
 
 /// The response shape of a temporal query.
 ///
-/// Nothing here changes which rows are read — only what is done with them, which
+/// Nothing here changes which rows are read, only what is done with them, which
 /// is why it is separate from the selection types. `aggr_methods` and
 /// `aggr_period_duration` are meaningful only when `format` is
 /// [`TemporalFormat::AggregatedValues`] (clause 4.5.19).

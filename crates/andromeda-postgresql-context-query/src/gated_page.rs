@@ -163,7 +163,7 @@ pub(crate) fn gated_page(
     let mut narrowed = rest
         .narrowed
         .add(source.rows.entity_key_column().in_subquery(column_of(Candidates, Entities::EntityKey)))
-        .add(walked_short.clone()); // clone: both later branches are gated on the short walk
+        .add(walked_short.clone());
     let mut walk = match rest.bound {
         CandidateBound::AtMost(bound) => {
             narrowed = narrowed.add(within(Candidates, bound));
@@ -199,7 +199,7 @@ pub(crate) fn gated_page(
     }
     answered.from(ShortWalkMatches).and_where(walked_enough);
     for (column, key_order) in &order {
-        key_order.order_by(&mut answered, Expr::col(column.clone())); // clone: each branch orders by the same columns
+        key_order.order_by(&mut answered, Expr::col(column.clone()));
     }
     match source.window.start {
         PageStart::Offset(offset) => {
@@ -243,7 +243,6 @@ fn step(step: GatedStep) -> SimpleExpr {
 fn short_walk(short: ShortWalk<'_>, window: &PageWindow, need: u64) -> Result<SelectStatement, RenderError> {
     let start = match &window.start {
         PageStart::Offset(_) => PageStart::Offset(0),
-        // clone: the walk starts where the window does
         PageStart::Cursor(cursor) => PageStart::Cursor(cursor.clone()),
     };
     let limit = if need > u64::from(short.length) { 0 } else { short.length };

@@ -81,7 +81,6 @@ mod tests {
     #[test]
     fn a_closed_ring_of_four_positions_is_a_ring() {
         let positions = vec![flat(0.0, 0.0), flat(1.0, 0.0), flat(1.0, 1.0), flat(0.0, 0.0)];
-        // clone: the ring consumes the positions it is compared against
         let ring = LinearRing::try_new(positions.clone()).expect("closed, and four positions");
         pretty_assertions::assert_eq!(ring.positions(), positions.as_slice());
     }

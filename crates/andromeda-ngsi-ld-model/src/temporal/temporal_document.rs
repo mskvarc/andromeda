@@ -248,7 +248,7 @@ impl TemporalDocument {
             let family = instances.iter().find_map(InstanceDocument::family);
             reshape(name, instances);
             if let (true, Some(family)) = (instances.is_empty(), family) {
-                self.emptied.entry(name.clone()).or_insert(family); // clone: the record names the attribute the document keeps
+                self.emptied.entry(name.clone()).or_insert(family); // clone: the record outlives this borrow of the document's attributes, so it owns the key
             }
         }
     }

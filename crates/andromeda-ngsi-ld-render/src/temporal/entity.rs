@@ -119,8 +119,8 @@ impl TemporalEntityRenderer<'_> {
             // 4.5.6 names it beside "each Property and Relationship" rather
             // than among them, and clause 4.18 makes a Scope valid "from the
             // time it has been set until the time it has been explicitly
-            // removed" rather than observed at an instant inside the window --
-            // annex C clause C.5.16 renders one set an hour before the window
+            // removed" rather than observed at an instant inside the window.
+            // Annex C clause C.5.16 renders one set an hour before the window
             // it answers. Letting that instant into the range would report a
             // window the request never asked for.
             if kept
@@ -131,7 +131,7 @@ impl TemporalEntityRenderer<'_> {
                 max_time = Some(max_time.map_or(instant, |seen: DateTime<Utc>| seen.max(instant)));
             }
             let family = row.attribute_type;
-            // clone: the attribute map owns the name the row is consumed with.
+            // clone: the map takes its key by value, and the row is still needed after the entry call.
             let (_, instances) = attrs.entry(row.attribute_name.clone()).or_insert_with(|| (family, Vec::new()));
             if kept {
                 leave_deleted_scope_unobserved(&mut row);
@@ -144,20 +144,14 @@ impl TemporalEntityRenderer<'_> {
         let emptied = attrs
             .iter()
             .filter(|(_, (_, instances))| instances.is_empty())
-            .map(|(attr_name, (family, _))| (attr_name.clone(), *family)) // clone: the result outlives the map it is read from
+            .map(|(attr_name, (family, _))| (attr_name.clone(), *family))
             .collect();
 
         let attributes = attrs
             .into_iter()
             .map(|(attr_name, (_, instances))| (attr_name, AttributeMember::Instances(instances)))
             .collect();
-        let entity = EntityDocument::new(
-            Some(entity_id.clone()), // clone: the document owns the identifier it names
-            entity_types.to_vec(),
-            None,
-            None,
-            attributes,
-        );
+        let entity = EntityDocument::new(Some(entity_id.clone()), entity_types.to_vec(), None, None, attributes);
 
         Ok(TemporalEntityBuildResult {
             document: TemporalDocument::new(entity, EntitySystemTimes::default(), emptied),
@@ -185,9 +179,9 @@ const fn rendered_timestamps(compiled: &CompiledTemporalQuery) -> SysAttrsInclus
 /// Apply the compiled clause 4.21 `pick` / `omit` projection to a temporal
 /// entity's attribute map.
 ///
-/// `scope` has no separate struct field in a temporal representation -- it is
+/// `scope` has no separate struct field in a temporal representation. It is
 /// stored and rendered as an ordinary attribute-shaped row, keyed by its
-/// expanded IRI like every other attribute -- so its half of the clause
+/// expanded IRI like every other attribute, so its half of the clause
 /// 4.21 structural rule is applied here, against the
 /// `scope` keyword, rather than by the id/type pruning that
 /// runs later on the compacted representation. `id` and `type` are not
@@ -199,8 +193,8 @@ fn project_attrs(attrs: &mut TemporalAttrMap, projection: &Projection) {
     if list.is_unrestricted() {
         return;
     }
-    // A history row is keyed by the attribute's expanded IRI -- history is
-    // never stored keyed by a compact term -- so the list matches it without
+    // A history row is keyed by the attribute's expanded IRI, since history is
+    // never stored keyed by a compact term, so the list matches it without
     // an index.
     let expanded = AttributeIriIndex::default();
     attrs.retain(|attr_name, _| {
@@ -377,7 +371,7 @@ mod tests {
     }
 
     /// Clause 4.21: `pick=isParkedIn{category}` keeps the relationship
-    /// attribute on the root -- the nested sub-projection narrows whatever it
+    /// attribute on the root. The nested sub-projection narrows whatever it
     /// links to, which is a separate concern applied to the resolved Linked
     /// Entity, not to this root rendering.
     #[test]
@@ -394,7 +388,7 @@ mod tests {
     }
 
     /// Clause 4.21: `omit=rel{a}` omits `a` inside whatever `rel` links to,
-    /// not `rel` itself -- a nested omit term therefore keeps the
+    /// not `rel` itself, so a nested omit term keeps the
     /// relationship on the root exactly as an unrestricted attribute would.
     #[test]
     fn a_nested_omit_term_still_keeps_its_relationship_on_the_root() {

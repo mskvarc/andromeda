@@ -116,7 +116,6 @@ fn listener_scheme(parts: &Parts) -> ApiRootScheme {
 /// `Host`. Only an origin-form HTTP/1.1 request names its authority in `Host`
 /// alone.
 fn request_authority(parts: &Parts) -> Option<headers::Host> {
-    // clone: the authority is a shared, reference-counted buffer the request keeps.
     parts
         .uri
         .authority()
@@ -165,7 +164,7 @@ pub(crate) fn request_origin(parts: &Parts) -> Result<Option<Url>, ApiRootError>
 /// The configured `apiRoot` when one is installed, else the request's origin.
 fn resolve_api_root(parts: &Parts) -> Result<ApiRoot, ApiRootError> {
     match parts.extensions.get::<ConfiguredApiRoot>() {
-        Some(configured) => Ok(ApiRoot(Some(configured.url().clone()))), // clone: the extension stays installed for the rest of the request
+        Some(configured) => Ok(ApiRoot(Some(configured.url().clone()))), // clone: the configured URL stays in the request's extensions for later extractors
         None => request_origin(parts).map(ApiRoot),
     }
 }
@@ -316,8 +315,8 @@ mod tests {
         Ok(())
     }
 
-    /// `headers::Host` admits some authorities a URL cannot be built from --
-    /// an out-of-range port, an empty host, a malformed IPv6 literal -- so the
+    /// `headers::Host` admits some authorities a URL cannot be built from (an
+    /// out-of-range port, an empty host, a malformed IPv6 literal), so the
     /// reconstruction can genuinely fail and says so rather than inventing an
     /// origin.
     #[tokio::test]
@@ -346,8 +345,8 @@ mod tests {
     }
 
     /// A `Host` field that is not an authority at all is no `Host` field, so
-    /// the request yields no origin rather than a rejection -- the same answer
-    /// as a request that carried none.
+    /// the request yields no origin rather than a rejection, which is the answer
+    /// for a request that carried no `Host` field.
     #[tokio::test]
     async fn a_host_field_that_is_not_an_authority_yields_no_origin() -> Result<(), Box<dyn Error>> {
         pretty_assertions::assert_eq!(origin_of(&[("host", "not a host")], None).await?, None);

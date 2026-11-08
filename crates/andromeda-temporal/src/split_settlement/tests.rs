@@ -98,7 +98,7 @@ fn parked_in(observed: &str) -> TemporalHistoryRow {
     row(
         "https://example.com/parkedIn",
         AttributeType::Relationship,
-        TemporalValue::Uri(uri(PARKING).as_uri().clone()), // clone: the row owns the object it names
+        TemporalValue::Uri(uri(PARKING).as_uri().clone()),
         observed,
     )
 }
@@ -305,11 +305,11 @@ impl OtherHolders {
     }
 
     fn probes_sent(&self) -> Vec<ProbeKey> {
-        self.probed.lock().expect("the lock is never poisoned").clone() // clone: the lock is released before the test compares
+        self.probed.lock().expect("the lock is never poisoned").clone()
     }
 
     fn asked(&self) -> Vec<(Identifier, Option<Vec<AttributeName>>)> {
-        self.asked.lock().expect("the lock is never poisoned").clone() // clone: the lock is released before the test compares
+        self.asked.lock().expect("the lock is never poisoned").clone()
     }
 }
 
@@ -327,12 +327,12 @@ impl RemoteTemporalLinkedSource for OtherHolders {
         window: &TemporalLinkedWindow,
         _context: &ContextSpec,
     ) -> Result<RemoteResolution<TemporalHistory>, TemporalError> {
-        self.asked.lock().expect("the lock is never poisoned").push((id.clone(), window.attrs.clone())); // clone: the recording owns what it reports
+        self.asked.lock().expect("the lock is never poisoned").push((id.clone(), window.attrs.clone()));
         if self.unreachable {
             return Err(TemporalError::from(PersistenceFailure::Unavailable));
         }
         Ok(RemoteResolution {
-            entities: self.held.get(id).cloned().unwrap_or_default(), // clone: the source hands back owned values
+            entities: self.held.get(id).cloned().unwrap_or_default(),
             failures: Vec::new(),
         })
     }
@@ -346,8 +346,7 @@ impl RemoteTemporalLinkedSource for OtherHolders {
     ) -> Result<RemoteResolution<HeldPart>, TemporalError> {
         let timeproperty = params.timeproperty_or_default();
         let before = params.time_at.expect("a probe names its bound");
-        let dataset = params.dataset_id.as_ref().and_then(|datasets| datasets.first()).cloned(); // clone: the recording owns what it reports
-        // clone: the recording owns what it reports
+        let dataset = params.dataset_id.as_ref().and_then(|datasets| datasets.first()).cloned();
         self.probed
             .lock()
             .expect("the lock is never poisoned")
@@ -355,14 +354,14 @@ impl RemoteTemporalLinkedSource for OtherHolders {
         if self.unreachable {
             return Err(TemporalError::from(PersistenceFailure::Unavailable));
         }
-        let asks = (id.clone(), timeproperty, before, dataset); // clone: the key owns the identifier it compares
+        let asks = (id.clone(), timeproperty, before, dataset);
         Ok(RemoteResolution {
             entities: self
                 .probes
                 .iter()
                 .filter(|probe| probe.asks == asks && only.is_none_or(|only| *only == probe.registration))
                 .map(|probe| HeldPart {
-                    registration: Some(probe.registration.clone()), // clone: the source hands back owned values
+                    registration: Some(probe.registration.clone()),
                     history: probe.history.clone(),
                 })
                 .collect(),
@@ -383,7 +382,7 @@ async fn held_by_source(id: &str, members: Value) -> (Identifier, Vec<TemporalHi
 /// The settlement of `q` over the Vehicle part `window`, this broker holding
 /// `broker` and the remainder of the system `others`.
 async fn settled_beside(broker: StubBroker, others: &Arc<OtherHolders>, q: &str, window: &TemporalDocument) -> SplitSettlement {
-    let service = service_over(Arc::new(broker), Some(Arc::clone(others) as Arc<dyn RemoteTemporalLinkedSource>)); // clone: the test keeps its handle on the recording
+    let service = service_over(Arc::new(broker), Some(Arc::clone(others) as Arc<dyn RemoteTemporalLinkedSource>));
     let parts = AnsweredParts {
         in_window: vec![window],
         in_effect: Vec::new(),
@@ -469,7 +468,7 @@ async fn a_failing_source_leaves_its_part_out_and_is_reported() {
             .incomplete
             .iter()
             .map(|failure| (failure.id.clone(), failure.kind))
-            .collect::<Vec<_>>(), // clone: the expectation owns the identifier
+            .collect::<Vec<_>>(),
         vec![(uri(PARKING), LinkedResolutionFailureKind::Unreachable)]
     );
 }
@@ -485,7 +484,7 @@ async fn a_two_hop_term_reads_each_depth_from_every_holder_for_the_attributes_it
         vec![row(
             "https://example.com/operator",
             AttributeType::Relationship,
-            TemporalValue::Uri(uri("urn:ngsi-ld:Company:1").as_uri().clone()), // clone: the row owns the object it names
+            TemporalValue::Uri(uri("urn:ngsi-ld:Company:1").as_uri().clone()),
             "2020-08-01T12:20:00Z",
         )],
     );
@@ -689,7 +688,7 @@ async fn a_dataset_a_holder_left_out_of_its_answer_is_asked_about_on_its_own() {
             free_spots(0, "2020-08-01T11:30:00Z", Some(D1)),
         )
         .await,
-    ); // clone: the expectation below names the dataset too
+    );
     let window = parked_vehicle().await;
     let holders = OtherHolders::probing([], probes);
     assert!(settled_beside(StubBroker::new([]), &holders, FREE_PARKING, &window).await.retained.is_empty());
@@ -710,7 +709,7 @@ async fn a_relationship_in_effect_when_the_window_opens_reaches_the_next_depth()
         vec![row(
             "https://example.com/operator",
             AttributeType::Relationship,
-            TemporalValue::Uri(uri("urn:ngsi-ld:Company:1").as_uri().clone()), // clone: the row owns the object it names
+            TemporalValue::Uri(uri("urn:ngsi-ld:Company:1").as_uri().clone()),
             "2020-08-01T11:00:00Z",
         )],
     );

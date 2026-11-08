@@ -37,7 +37,6 @@ where
                 .copied()
                 .filter(|shape| methods.iter().any(|method| !admits(*shape, *method)))
                 .collect();
-            // clone: the disqualifying shapes are keyed by the name the recorded ones are.
             (!refusing.is_empty()).then(|| (attribute.clone(), refusing))
         })
         .collect()
@@ -112,7 +111,7 @@ const fn admits(shape: RecordedAttributeShape, method: AggrMethod) -> bool {
         // Table 4.5.19.1-3, the whole of it: `avg`, `max`, `min`, `stddev`,
         // `sum` and `sumsq` are N/A for a Relationship, and clause 4.5.22.1
         // makes `ListRelationship` "a specialized type of Relationship" so the
-        // same single-column table governs it — a multi-target `object` and an
+        // same single-column table governs it: a multi-target `object` and an
         // `objectList` are both held as arrays of URIs, and neither may borrow
         // the array-size aggregates Table 4.5.19.1-1 gives a JSON Array. A
         // `VocabProperty` lands on the same two methods out of a different
@@ -321,7 +320,7 @@ mod tests {
     }
 
     /// Table 4.5.19.1-3: a Relationship admits `distinctCount` over its targets
-    /// and `totalCount` over its updates, and every other method is N/A —
+    /// and `totalCount` over its updates, and every other method is N/A,
     /// whatever shape the broker stored the targets in. Clause 4.5.22.1 makes
     /// `ListRelationship` "a specialized type of Relationship", so the same row
     /// governs it, and a multi-target `object` or an `objectList` held as an

@@ -133,7 +133,7 @@ mod tests {
             if existence == TenantExistence::Provisional {
                 self.asked_provisional.fetch_add(1, Ordering::SeqCst);
             }
-            let database = database.clone(); // clone: the error outlives this borrow
+            let database = database.clone();
             match self.answer {
                 Answer::Nothing => Ok(PendingWork::None),
                 Answer::DueAt(seconds) => Ok(PendingWork::DueAt(at(seconds))),

@@ -118,7 +118,6 @@ pub fn projected_page(mut page: SelectStatement, rows: &EntityRowRefs, keys: Vec
         .map(|(position, key)| {
             let column = sort_column(position);
             let (expression, order) = key.into_parts();
-            // clone: the page projects the key under this name and orders by it.
             page.expr_as(expression, column.clone());
             order.order_by(&mut page, Expr::col(column.clone()));
             (column, order)

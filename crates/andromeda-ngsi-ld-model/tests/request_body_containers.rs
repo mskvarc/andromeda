@@ -27,7 +27,7 @@ use serde_json::{Value, json};
 /// container, `tags` with `@set` while it reaches no core term, and `n` as an
 /// alias of `@nest`.
 fn terms() -> ContextTerms {
-    let mut aliases = CoreTermAliases::keyword_spellings().clone(); // clone: the fixture extends the shared table
+    let mut aliases = CoreTermAliases::keyword_spellings().clone();
     aliases.alias("tps", "type");
     aliases.alias("val", "value");
     let mut containers = ContainerTerms::none();

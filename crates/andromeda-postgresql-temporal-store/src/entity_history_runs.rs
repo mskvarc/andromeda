@@ -43,7 +43,7 @@ pub(crate) fn by_entity(rows: &[PgRow]) -> Result<Vec<(Identifier, &[PgRow])>, T
         if entities.get(end) != entities.get(start)
             && let (Some(entity_id), Some(run)) = (entities.get(start), rows.get(start..end))
         {
-            runs.push((entity_id.clone(), run)); // clone: each run owns the identifier it is keyed by
+            runs.push((entity_id.clone(), run));
             start = end;
         }
     }

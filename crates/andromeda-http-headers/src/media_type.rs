@@ -28,12 +28,12 @@ pub const APPLICATION_GEO_JSON: MediaType<'static> = MediaType::from_parts(names
 /// carry it in a `Link` header.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ResponseMediaType {
-    /// `application/json` -- `@context` omitted from the body, provided via a `Link` header.
+    /// `application/json`: `@context` omitted from the body, provided via a `Link` header.
     #[default]
     Json,
-    /// `application/ld+json` -- `@context` included in the body as a URL reference.
+    /// `application/ld+json`: `@context` included in the body as a URL reference.
     JsonLd,
-    /// `application/geo+json` -- `GeoJSON` `FeatureCollection` format (clause 6.3.15).
+    /// `application/geo+json`: `GeoJSON` `FeatureCollection` format (clause 6.3.15).
     GeoJson,
 }
 

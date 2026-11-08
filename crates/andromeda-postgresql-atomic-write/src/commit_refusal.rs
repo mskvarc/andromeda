@@ -7,7 +7,7 @@
 //! `BadRequestData` and the second into `InternalError`, and telling a client to
 //! retry a request that can never succeed is the failure this module exists to
 //! prevent. The store types already carry the distinction, so it is translated
-//! here once rather than re-derived — or lost — in each phase.
+//! here once, rather than re-derived or lost in each phase.
 //!
 //! Three failures are neither: a saturated pool, a transaction PostgreSQL
 //! rolled back to break a deadlock or a serialization conflict, and a store

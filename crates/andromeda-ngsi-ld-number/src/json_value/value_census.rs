@@ -2,7 +2,7 @@
 //!
 //! A parsed JSON document costs memory per value, not per byte: a 28 MB body of
 //! short numbers is several million values, and every later representation of
-//! it -- the parsed tree, its typed decode, its JSON-LD expansion -- multiplies
+//! it (the parsed tree, its typed decode, its JSON-LD expansion) multiplies
 //! that count. IETF RFC 8259 section 9 lets an implementation "set limits on
 //! the size of texts that it accepts", and the census is how such a limit is
 //! taken without building anything: it drives `serde_json`'s own streaming
@@ -10,8 +10,8 @@
 //! passes the limit.
 //!
 //! The reader is the one every body is parsed with afterwards, so the census
-//! refuses every text the parse refuses for its syntax -- malformed JSON,
-//! trailing content, nesting past the reader's recursion limit -- and counts
+//! refuses every text the parse refuses for its syntax (malformed JSON,
+//! trailing content, nesting past the reader's recursion limit), and counts
 //! every number once whatever its spelling, although with `arbitrary_precision`
 //! the reader hands a number that is not a 64-bit integer to a visitor as a
 //! one-member map holding its token. An object whose first member is spelled
@@ -19,9 +19,9 @@
 //! without the census checking the token's text, which the parse afterwards
 //! does.
 //!
-//! The pieces of the walk -- the running [`ValueTally`], the
+//! The pieces of the walk (the running [`ValueTally`], the
 //! [`ValueCensusSeed`] counting one value and everything below it, and the
-//! [`MemberNameSeed`] telling a number token from an object -- are public, so
+//! [`MemberNameSeed`] telling a number token from an object) are public, so
 //! a census that counts part of a text differently, such as the positions of a
 //! geometry, counts the rest of it exactly as this one does.
 

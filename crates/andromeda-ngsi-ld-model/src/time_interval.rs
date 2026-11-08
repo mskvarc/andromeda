@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn a_closed_interval_round_trips() {
         let wire = json!({"startAt": "2020-08-01T22:07:00Z", "endAt": "2021-08-01T21:07:00Z"});
-        let parsed: TimeInterval = serde_json::from_value(wire.clone()).expect("interval parses"); // clone: compared below
+        let parsed: TimeInterval = serde_json::from_value(wire.clone()).expect("interval parses");
         assert!(parsed.end_at.is_some());
         pretty_assertions::assert_eq!(serde_json::to_value(parsed).expect("serialises"), wire);
     }

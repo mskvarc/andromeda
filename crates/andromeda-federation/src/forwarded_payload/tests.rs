@@ -61,7 +61,7 @@ fn engine() -> JsonLdEngine {
         let sequence = CONTEXT_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let path = env::temp_dir().join(format!("andromeda-forwarded-payload-{}-{sequence}.jsonld", process::id()));
         fs::write(&path, document.to_string()).expect("the temporary directory is writable");
-        preloads.insert(Url::parse(url).expect("a valid URL"), path.clone()); // clone: removed below
+        preloads.insert(Url::parse(url).expect("a valid URL"), path.clone());
         paths.push(path);
     }
     let engine = JsonLdEngine::builder()
@@ -97,7 +97,7 @@ fn literal(context: &Value) -> JsonLiteral {
 async fn expanded(spec: &ContextSpec, written: &Value) -> EntityDocument {
     let engine = engine();
     let expansion = EntityExpansion::prepare(&engine, spec).await.expect("the context processes");
-    let patch: EntityPatch = serde_json::from_value(written.clone()).expect("a partial entity"); // clone: the fixture keeps its written form
+    let patch: EntityPatch = serde_json::from_value(written.clone()).expect("a partial entity");
     expansion.entity_patch(&patch, Normalization::Entity).await.expect("the entity expands")
 }
 
@@ -193,7 +193,7 @@ async fn several_inbound_urls_are_forwarded_under_one_core_link_with_full_names(
 #[tokio::test]
 async fn an_inline_object_context_is_re_inlined_for_ld_json_and_compacted_under_the_core_link_for_json() {
     let inline = literal(&json!({"speed": "https://example.org/speed", "Vehicle": "https://example.org/Vehicle"}));
-    let inbound = ContextSpec::from_body(inline.clone()); // clone: compared below
+    let inbound = ContextSpec::from_body(inline.clone());
     let document = expanded(&inbound, &vehicle()).await;
 
     let as_ld = payload(&inbound, &[("contentType", "application/ld+json")], Some(entity(&document))).await;
@@ -210,7 +210,7 @@ async fn an_inline_object_context_is_re_inlined_for_ld_json_and_compacted_under_
 
 /// Clause 4.3.6.6: a configured `jsonldContext` forces `application/json`,
 /// names that context in the one `Link`, and the body is compacted against
-/// it -- `speed` becomes `velocity` and `Vehicle` becomes `Car`, which only
+/// it, so `speed` becomes `velocity` and `Vehicle` becomes `Car`, which only
 /// the configured context spells that way.
 #[tokio::test]
 async fn a_forwarded_entity_is_spelled_by_compaction() {
@@ -305,7 +305,7 @@ async fn a_forwarded_subscription_update_deletes_as_the_source_version_reads() {
 }
 
 /// A relative reference is never forwarded. An inline
-/// context holding one -- as an entry, or as an `@import` -- would resolve
+/// context holding one (as an entry, or as an `@import`) would resolve
 /// against the source's URL rather than this broker's request, so the
 /// `application/ld+json` body is written inline against the core context
 /// instead, every user term as its full IRI.
@@ -341,7 +341,7 @@ async fn an_inline_context_holding_a_relative_reference_is_never_forwarded() {
 #[tokio::test]
 async fn an_inline_context_of_absolute_references_travels_as_written() {
     let absolute = literal(&json!([USER_CONTEXT, {"@import": OTHER_CONTEXT, "colour": "https://example.org/colour"}]));
-    let inbound = ContextSpec::from_body(absolute.clone()); // clone: compared below
+    let inbound = ContextSpec::from_body(absolute.clone());
     let document = expanded(&inbound, &vehicle()).await;
     let forwarded = payload(&inbound, &[("contentType", "application/ld+json")], Some(entity(&document))).await;
     pretty_assertions::assert_eq!(body_context(forwarded.body.as_deref().expect("body")), Some(absolute));
@@ -512,7 +512,7 @@ async fn a_forwarded_subscription_is_not_read_as_an_entity() {
 #[tokio::test]
 async fn a_forwarded_query_keeps_its_entity_selectors() {
     let query = json!({"type": "Query", "entities": [{"type": "Vehicle"}, {"type": "Bus"}]});
-    let typed: Query = serde_json::from_value(query.clone()).expect("a query"); // clone: compared below
+    let typed: Query = serde_json::from_value(query.clone()).expect("a query");
     pretty_assertions::assert_eq!(forwarded_to_1_0(OutgoingBody::Query(&typed)).await, query);
 }
 
@@ -567,7 +567,7 @@ async fn scope_history(spec: &ContextSpec, written: &[Value]) -> EntityDocument 
     let name = "scope".parse().expect("an attribute name");
     let mut instances = Vec::new();
     for instance in written {
-        let member: AttributeValue = serde_json::from_value(instance.clone()).expect("an instance"); // clone: the fixture keeps its written form
+        let member: AttributeValue = serde_json::from_value(instance.clone()).expect("an instance");
         instances.push(expansion.attribute(&name, &member).await.expect("the instance expands").into_parts().1);
     }
     let scope = "https://uri.etsi.org/ngsi-ld/scope".parse().expect("an attribute name");
@@ -724,7 +724,7 @@ async fn the_items_of_a_batch_entity_merge_are_forwarded_as_written() {
     let mut contexts = BatchContexts::per_entity();
     let user = contexts.context_of(Some(literal(&json!(USER_CONTEXT))));
     for written in merge_fragments() {
-        let mut item = written.clone(); // clone: the fixture keeps its written form
+        let mut item = written.clone();
         item["id"] = json!("urn:ngsi-ld:Vehicle:1");
         let document = merge_expanded(user.spec(), &item).await;
         let items = vec![ItemBody {

@@ -2,7 +2,7 @@
 //!
 //! Implements the tenancy crate's [`TenantUsageProbe`] port over a transient
 //! one-connection pool on the tenant's request URL, so a usage read adds no
-//! permanent backend and never makes the tenant resident -- the expensive
+//! permanent backend and never makes the tenant resident. The expensive
 //! `?options=usage` half of tenant introspection stays off the dormancy path.
 
 use crate::store_fault::persistence_failure;
@@ -25,7 +25,7 @@ use std::{num::TryFromIntError, time::Duration};
 
 /// Reads a tenant's own database for its operational usage.
 ///
-/// Holds the request base URL -- the pooler when one is configured -- from which
+/// Holds the request base URL (the pooler when one is configured) from which
 /// each tenant's connection string is derived, the acquire deadline the transient
 /// probe pool gives up after, and the configured snapshot-count ceiling reported
 /// as `snapshotQuota`.

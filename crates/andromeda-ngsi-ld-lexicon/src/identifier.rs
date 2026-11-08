@@ -24,8 +24,8 @@ use urn_rs::Urn;
 /// in. That bound is Andromeda's own implementation limit, refused as
 /// `BadRequestData` before anything reaches the store.
 ///
-/// A reference to a resource -- a Relationship's `object`, a member of a
-/// `ListRelationship`'s `objectList` -- is a plain [`Uri`] instead: it is never an
+/// A reference to a resource (a Relationship's `object`, a member of a
+/// `ListRelationship`'s `objectList`) is a plain [`Uri`] instead: it is never an
 /// index key, so nothing but the request-body limit bounds it. A reference that
 /// is longer than an identifier may be cannot name a stored resource, which is
 /// what [`Identifier::try_from`] a [`Uri`] answers.
@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn a_uri_becomes_an_identifier_only_within_the_limit() {
         let short: Uri = urn_of_length(IDENTIFIER_BYTE_LIMIT).parse().expect("a URI");
-        assert_eq!(Identifier::try_from(short.clone()).map(Uri::from), Ok(short)); // clone: compared after the move
+        assert_eq!(Identifier::try_from(short.clone()).map(Uri::from), Ok(short));
 
         let long: Uri = urn_of_length(6000).parse().expect("a URI of any length");
         assert_eq!(Identifier::try_from(long), Err(IdentifierTooLong { length: 6000 }));

@@ -103,14 +103,14 @@ mod tests {
         let entity_id: Identifier = id.parse().expect("a valid entity URI");
         let change = EntityChange::new(EntityLifecycle::Modified, Vec::new());
         AtomicWrite::builder()
-            .entity_id(Arc::new(entity_id.clone())) // clone: the write and its consequences each own the identifier
+            .entity_id(Arc::new(entity_id.clone()))
             .entity(EntityMutation::None)
             .history(vec![HistoryRecord::Observations(observed(id))])
             .subscription_matches(vec![
                 SubscriptionMatch::builder()
                     .subscription_key(SubscriptionKey::try_from(subscription).expect("a positive key"))
-                    .entity_id(entity_id.clone()) // clone: the match and the change each own the identifier
-                    .change(change.clone()) // clone: the match and the change each own the change
+                    .entity_id(entity_id.clone())
+                    .change(change.clone())
                     .build(),
             ])
             .side_effects(Some(BatchSideEffectJob {

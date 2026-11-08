@@ -63,7 +63,7 @@ async fn completing_after(duration: Duration) -> Result<PreparationEnd, Snapshot
 #[tokio::test(start_paused = true)]
 async fn an_attempt_completes_while_its_lease_renewal_waits_on_a_lock_the_attempt_holds() {
     let gate = Arc::new(Notify::new());
-    let store = store(Renewal::GatedOn(Arc::clone(&gate))).await; // clone: the execution releases the gate the double waits on.
+    let store = store(Renewal::GatedOn(Arc::clone(&gate))).await;
     let id = snapshot_id();
     let started = Instant::now();
     let execution = async {

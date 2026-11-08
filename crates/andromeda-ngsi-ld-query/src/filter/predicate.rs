@@ -60,8 +60,8 @@ pub enum Predicate {
 impl Predicate {
     /// The attribute axis this predicate compares along.
     ///
-    /// Every variant carries one, so a consumer that only has to walk the axis —
-    /// a SQL compiler descending the linked-entity hops, for instance — reads it
+    /// Every variant carries one, so a consumer that only has to walk the axis
+    /// (a SQL compiler descending the linked-entity hops, for instance) reads it
     /// here rather than re-matching all five variants.
     #[must_use]
     pub const fn path(&self) -> &QueryPath {
@@ -89,7 +89,7 @@ impl Predicate {
 /// The internal comparison primitive: any of the six clause 4.9 comparison
 /// operators.
 ///
-/// Not carried by [`Predicate`] — its two comparison variants carry the
+/// Not carried by [`Predicate`]: its two comparison variants carry the
 /// parser-facing [`SetMembership`] and [`OrderingOp`] instead. This is the
 /// operator an evaluator or a backend renders a single scalar comparison with,
 /// including the internal `>=`/`<=`/`=` a range or a value list expands into.
@@ -165,7 +165,7 @@ impl OrderingOp {
     }
 }
 
-/// Whether a compound operand — a range or a value list — is asserted or denied.
+/// Whether a compound operand (a range or a value list) is asserted or denied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetMembership {
     /// `==`: the attribute value lies inside the range or the list.

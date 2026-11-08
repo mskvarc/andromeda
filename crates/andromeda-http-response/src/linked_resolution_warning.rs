@@ -4,7 +4,7 @@
 //! answers (clause 4.5.23 leaves the Relationship as a plain URI), so the only
 //! way a client learns that the body is incomplete is the `NGSILD-Warning`
 //! header clause 6.3.17 defines. The traversal reports the condition in domain
-//! terms — it knows nothing about headers — and this is where that condition
+//! terms. It knows nothing about headers, and this is where that condition
 //! becomes an IANA warning code.
 //!
 //! Both joins report through it: the entity join of clause 4.5.23 and the same
@@ -96,7 +96,7 @@ mod tests {
     fn the_join_warnings_follow_the_forwarding_warnings() {
         let existing = NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "Context source did not respond".to_owned());
 
-        let warnings = with_linked_resolution_warnings(vec![existing.clone()], &[failure(LinkedResolutionFailureKind::Refused)]); // clone: the expectation keeps its own copy
+        let warnings = with_linked_resolution_warnings(vec![existing.clone()], &[failure(LinkedResolutionFailureKind::Refused)]);
 
         pretty_assertions::assert_eq!(warnings.len(), 2);
         pretty_assertions::assert_eq!(warnings.first(), Some(&existing));

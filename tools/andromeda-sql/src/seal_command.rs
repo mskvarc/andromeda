@@ -72,7 +72,7 @@ pub fn seal_migrations(root: &Path, release: ReleaseVersion, layout: &CanonicalL
     {
         return Ok(SealOutcome::Refused(SealRefusal::NotAfterLatest {
             release,
-            // clone: the refusal names the release it follows
+            // clone: the refusal outlives the ledger the release was read from
             latest: latest.version().clone(),
         }));
     }

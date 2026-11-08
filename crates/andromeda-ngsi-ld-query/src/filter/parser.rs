@@ -1,11 +1,11 @@
 //! Recursive-descent parser for the NGSI-LD Query Language (clause 4.9).
 //!
-//! The grammar this parser implements is reproduced verbatim as ABNF at the root of this crate. Nothing derives from it -- the language needs operator precedence and value typing that a pure ABNF recogniser does not express -- so it is the reference this parser is checked against, and the two are kept in step by hand.
+//! The grammar this parser implements is reproduced verbatim as ABNF at the root of this crate. Nothing derives from it: the language needs operator precedence and value typing that a pure ABNF recogniser does not express, so it is the reference this parser is checked against, and the two are kept in step by hand.
 //!
 //! This module owns the expression grammar: the boolean structure of a `Query`,
 //! and the `QueryTerm` that combines an attribute axis with an operator and an
 //! operand. The productions it composes each live with the concept they belong
-//! to, because `q` is not the only parameter that derives from them —
+//! to, because `q` is not the only parameter that derives from them:
 //! [`value_path`] holds the `ValuePath` axis clause 4.23.3 shares,
 //! [`linked_entity`] the `LinkedEntityRelation` hop, [`operand`] the
 //! right-hand-side literals, and [`token_cursor`] the position all of them
@@ -416,8 +416,8 @@ mod tests {
     fn a_date_time_scalar_is_parsed_once_at_filter_parse_time() {
         // Clause 4.6.3: a temporal operand is an RFC 3339 value, so a bare
         // literal that has the shape of one but is not a real instant is
-        // derivable from no production of the clause 4.9 grammar -- `quotedStr`
-        // carries the quotes it lacks -- and the request is malformed.
+        // derivable from no production of the clause 4.9 grammar (`quotedStr`
+        // carries the quotes it lacks), and the request is malformed.
         match parse("observed>=2017-12-24T12:00:00Z").expect("parses") {
             Expr::Pred(Predicate::Ordering { rhs: Scalar::DateTime(_), .. }) => {}
             other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => panic!("expected a date-time operand, got {other:?}"),

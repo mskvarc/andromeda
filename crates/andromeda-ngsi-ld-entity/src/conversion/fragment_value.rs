@@ -15,18 +15,15 @@ impl ExpandedValue {
     #[must_use]
     pub fn to_fragment(&self) -> ExpandedValue<Fragment> {
         match self {
-            ExpandedValue::Literal(literal) => ExpandedValue::Literal(literal.clone()), // clone: the written value owns its literal
-            ExpandedValue::Json(json) => ExpandedValue::Json(json.clone()),             // clone: the written value owns its literal
+            ExpandedValue::Literal(literal) => ExpandedValue::Literal(literal.clone()),
+            ExpandedValue::Json(json) => ExpandedValue::Json(json.clone()),
             ExpandedValue::List(items) => ExpandedValue::List(items.iter().map(ExpandedValue::to_fragment).collect()),
             ExpandedValue::Node(node) => ExpandedValue::Node(Box::new(ValueNode::new(
-                node.id().cloned(),    // clone: the written node owns its identifier
-                node.types().to_vec(), // clone: the written node owns its types
+                node.id().cloned(),
+                node.types().to_vec(),
                 node.members()
                     .iter()
-                    .map(|(name, values)| {
-                        // clone: the written node owns its member names
-                        (name.clone(), FragmentMember::Values(values.iter().map(ExpandedValue::to_fragment).collect()))
-                    })
+                    .map(|(name, values)| (name.clone(), FragmentMember::Values(values.iter().map(ExpandedValue::to_fragment).collect())))
                     .collect(),
             ))),
         }
@@ -40,7 +37,7 @@ impl LanguageEntries {
         LanguageEntries::new(
             self.entries()
                 .iter()
-                .map(|entry| LanguageEntry::new(entry.language().cloned(), FragmentText::Text(entry.text().clone()))) // clone: the written entry owns its text
+                .map(|entry| LanguageEntry::new(entry.language().cloned(), FragmentText::Text(entry.text().clone())))
                 .collect(),
         )
     }

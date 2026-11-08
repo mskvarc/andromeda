@@ -32,7 +32,6 @@ impl EntityState {
     /// Returns [`MutationError::Refused`] when a written instance cannot
     /// become state.
     pub fn update_attributes<'a>(&mut self, fragment: &'a EntityDocument) -> Result<Vec<MemberName<'a>>, MutationError> {
-        // clone: the entity owns the types it gains.
         self.types_mut().extend(fragment.types().iter().cloned());
         let mut not_updated = Vec::new();
         if let Some(scope) = fragment.scope() {

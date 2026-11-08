@@ -82,7 +82,7 @@ impl<'s> CoreLinkedSource<'s> {
     /// into an entity, is left out: clause 4.5.23 leaves such a Relationship a
     /// plain URI rather than failing the retrieval.
     async fn read_locally(&self, candidates: &[LinkedCandidate]) -> Result<LevelRead<Entity>, EntityError> {
-        let ids: Vec<Identifier> = candidates.iter().map(|candidate| candidate.id.clone()).collect(); // clone: the store reads an owned id slice
+        let ids: Vec<Identifier> = candidates.iter().map(|candidate| candidate.id.clone()).collect();
         // Clause 4.8: the entity-level system times come back with each state
         // from the same read.
         let retrieved = self.service.reader.get_batch(self.target, &ids).await?;
@@ -340,7 +340,7 @@ mod tests {
                                 expires_at: None,
                             },
                         };
-                        (id.clone(), retrieved) // clone: the port hands back owned keys
+                        (id.clone(), retrieved)
                     })
                 })
                 .collect())
@@ -455,7 +455,7 @@ mod tests {
             context: &ContextSpec,
         ) -> Result<RemoteResolution<ReceivedState>, EntityError> {
             self.calls().push(RemoteCall {
-                id: id.clone(), // clone: the recording owns the identifier it reports
+                id: id.clone(),
                 remaining_depth,
                 visited: visited.to_vec(),
             });
@@ -467,7 +467,6 @@ mod tests {
                     let expansion = EntityExpansion::prepare(&engine, context).await.expect("the context processes");
                     let mut received = Vec::new();
                     for entity in entities.get(id).cloned().unwrap_or_default() {
-                        // clone: the source hands back owned entities
                         received.push(expansion.received(entity).await.expect("the answer reads"));
                     }
                     Ok(RemoteResolution {
@@ -478,7 +477,7 @@ mod tests {
                 RemoteOutcome::Reports(kind) => Ok(RemoteResolution {
                     entities: Vec::new(),
                     failures: vec![LinkedResolutionFailure {
-                        id: id.clone(), // clone: the failure owns the identifier it names
+                        id: id.clone(),
                         kind: *kind,
                         detail: "the context source answered with a refusal".to_owned(),
                     }],
@@ -493,13 +492,13 @@ mod tests {
     }
 
     fn service_with_remote(store: StubStore, source: &Arc<RecordingSource>) -> EntityQueryService {
-        build_service(store, Some(Arc::clone(source) as Arc<dyn RemoteLinkedEntitySource>)) // clone: the test keeps its handle on the recording
+        build_service(store, Some(Arc::clone(source) as Arc<dyn RemoteLinkedEntitySource>))
     }
 
     fn build_service(store: StubStore, remote_linked: Option<Arc<dyn RemoteLinkedEntitySource>>) -> EntityQueryService {
         let store = Arc::new(store);
         EntityQueryService::builder()
-            .reader(store.clone() as Arc<dyn EntityReader>) // clone: the test double supplies both focused capabilities
+            .reader(store.clone() as Arc<dyn EntityReader>)
             .query_store(store as Arc<dyn EntityQueryStore>)
             .engine(JsonLdEngine::builder().allow_remote(false).build().expect("build engine"))
             .spatial(SpatialAcceleration::StoreVerified)

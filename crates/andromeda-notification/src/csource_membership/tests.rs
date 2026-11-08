@@ -98,7 +98,7 @@ fn pair(registration: &str) -> (String, String) {
 }
 
 /// Clause 5.11.7: a registration committed just after its subscription, and
-/// read by that subscription's initial notification, is notified once -- its
+/// read by that subscription's initial notification, is notified once. Its
 /// creation does not report it a second time.
 #[tokio::test]
 async fn a_registration_carried_by_the_initial_notification_is_not_reported_again_by_its_creation() {
@@ -158,8 +158,8 @@ async fn a_creation_evaluated_before_the_initial_notification_is_reported_once_b
     assert_eq!(ids(&initial), Vec::<String>::new());
 }
 
-/// Two brokers sharing the tenant database -- one sending a subscription's
-/// initial notification, the other evaluating a registration change -- report
+/// Two brokers sharing the tenant database, one sending a subscription's
+/// initial notification and the other evaluating a registration change, report
 /// the registration once between them.
 #[tokio::test]
 async fn brokers_sharing_the_tenant_database_report_a_registration_once_between_them() {
@@ -895,8 +895,8 @@ async fn an_unsent_initial_notification_withdraws_what_it_recorded() {
 }
 
 /// A registration updated out of matching between the initial notification's
-/// read of the match set and its recording -- its update evaluated first, with
-/// nothing recorded to withdraw -- is withdrawn by the re-read and left out of
+/// read of the match set and its recording (its update evaluated first, with
+/// nothing recorded to withdraw) is withdrawn by the re-read and left out of
 /// the notification, so the subscriber is never told it matches.
 #[tokio::test]
 async fn a_registration_changed_before_the_initial_recording_is_withdrawn_and_left_out() {

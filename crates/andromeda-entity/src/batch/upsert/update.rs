@@ -90,7 +90,6 @@ impl ChunkRewrite for UpdateRewrite<'_> {
                 let (id, state) = prepared.into_state()?;
                 inserted(service.chunk_insert(target, id, state, now)?)
             }
-            // clone: reference-count bumps only when the earlier attempt's write still shares the state
             (UpsertFragment::Inserted { id, stored }, None) => inserted(service.chunk_insert(target, id, Arc::unwrap_or_clone(stored), now)?),
         }
     }
@@ -179,7 +178,6 @@ impl EntityService {
         previous: &EntitySnapshot,
         now: SystemInstant,
     ) -> Result<Option<ChunkWrite>, Box<(Identifier, EntityError)>> {
-        // clone: reference-count bumps; the update shares every attribute it does not touch with the stored state
         let mut updated = EntityState::clone(&previous.state);
         if let Err(error) = updated.update_attributes(fragment) {
             return Err(Box::new((id, EntityError::from(error))));

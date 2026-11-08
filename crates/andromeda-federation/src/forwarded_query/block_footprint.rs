@@ -1,9 +1,9 @@
-//! Clause 4.3.6.1 makes the broker respect every constraint a registration declares when it forwards a request, and clause 4.3.6.3 makes each information block a self-contained coverage statement -- an exclusive block names a single entity and its attributes, and a registration may carry several such blocks. A forwarded request therefore respects one block at a time, naming that block's entities, type and attributes, rather than the union of every block, which would ask a source for a cross-product of entities and attributes it never registered together.
+//! Clause 4.3.6.1 makes the broker respect every constraint a registration declares when it forwards a request, and clause 4.3.6.3 makes each information block a self-contained coverage statement (an exclusive block names a single entity and its attributes, and a registration may carry several such blocks). A forwarded request therefore respects one block at a time, naming that block's entities, type and attributes, rather than the union of every block, which would ask a source for a cross-product of entities and attributes it never registered together.
 //!
 //! Registered type and attribute names are stored expanded (as IRIs). Two decisions turn on those names, and both go through the JSON-LD engine so they agree with the registration selection that reached here:
 //!
 //! - Coverage: a client's term is kept when its expanded IRI equals a block selector's stored type IRI or a declared attribute IRI, the same comparison the registration selection makes, so a selected block is narrowed consistently.
-//! - Spelling: every name the forwarded request carries is written in the registration's forwarding context -- the client's own terms reworded when that context is another one (clause 4.3.6.6), and a block's stored IRIs compacted to the term that context spells them with. A name the context abbreviates none of is forwarded as its full IRI, which a source still resolves (clause 4.5.1).
+//! - Spelling: every name the forwarded request carries is written in the registration's forwarding context (the client's own terms reworded when that context is another one, clause 4.3.6.6), and a block's stored IRIs compacted to the term that context spells them with. A name the context abbreviates none of is forwarded as its full IRI, which a source still resolves (clause 4.5.1).
 
 use crate::{error::FederationError, federation_invariant::FederationInvariant, forwarded_names::ForwardedNames};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
@@ -106,7 +106,7 @@ pub(super) enum AttrCoverage {
 /// The attributes `block` contributes for a client that asked for `client_attrs`.
 ///
 /// When the block declares names, the client's attributes are narrowed to them,
-/// or -- when the client asked for none -- the block's declared names are sent
+/// or, when the client asked for none, the block's declared names are sent
 /// on their own, because they are a registration constraint rather than a
 /// client filter (clause 4.3.6.1). A block declaring no names forwards the
 /// client's attributes, or nothing when the client named none. Every name is
@@ -126,7 +126,7 @@ pub(super) async fn block_attrs(
     match client_attrs.filter(|attrs| !attrs.is_empty()) {
         Some(attrs) => {
             let kept = if declared.is_empty() {
-                attrs.to_vec() // clone: the forwarded query owns the names it writes
+                attrs.to_vec()
             } else {
                 covered_attrs(attrs, &declared, names).await?
             };
@@ -158,7 +158,7 @@ fn covered_ids(ids: &[Identifier], block: &RegistrationInfo) -> Option<Vec<Ident
     let covered = ids
         .iter()
         .filter(|id| EntitySpecification::of_entity(&[], id).matches_entity_axis(block))
-        .cloned() // clone: the forwarded query owns the identifiers it writes
+        .cloned()
         .collect::<Vec<_>>();
     (!covered.is_empty()).then_some(covered)
 }
@@ -168,15 +168,15 @@ fn covered_ids(ids: &[Identifier], block: &RegistrationInfo) -> Option<Vec<Ident
 ///
 /// Each client attribute is expanded to its IRI through the request context and
 /// kept when a declared attribute IRI equals it. The declared names are stored
-/// expanded, so this is an exact IRI comparison -- the same one that selected
-/// the registration -- rather than a guess at the client's term (clause
+/// expanded, so this is an exact IRI comparison (the same one that selected
+/// the registration) rather than a guess at the client's term (clause
 /// 4.3.6.1).
 async fn covered_attrs(client_attrs: &[AttributeName], declared: &[&AttributeName], names: &ForwardedNames<'_>) -> Result<Vec<AttributeName>, FederationError> {
     let mut covered = Vec::new();
     for attribute in client_attrs {
         let iri = names.resolver().expand_attr(attribute.as_str()).await?;
         if declared.iter().any(|name| name.as_str() == iri.as_str()) {
-            covered.push(attribute.clone()); // clone: the forwarded query owns the names it writes
+            covered.push(attribute.clone());
         }
     }
     Ok(covered)
@@ -251,16 +251,13 @@ fn alternation(leaves: Vec<TypeExprRaw>) -> Option<TypeExprRaw> {
     }
 }
 
-/// The block's explicitly named identifiers, or -- when it names none -- the
+/// The block's explicitly named identifiers, or, when it names none, the
 /// single id pattern its entity selectors constrain identifiers by.
 fn block_identifiers(block: &RegistrationInfo) -> (Vec<Identifier>, Option<String>) {
     let Some(selectors) = block.entities.as_deref() else {
         return (Vec::new(), None);
     };
-    let ids = selectors
-        .iter()
-        .filter_map(|selector| selector.id.clone()) // clone: the forwarded query owns the identifiers it writes
-        .collect::<Vec<_>>();
+    let ids = selectors.iter().filter_map(|selector| selector.id.clone()).collect::<Vec<_>>();
     if !ids.is_empty() {
         return (ids, None);
     }

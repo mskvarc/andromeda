@@ -77,7 +77,6 @@ fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery, alias: &Dy
 
     if !compiled.instances.attr_filter.is_empty() {
         let keys: Vec<i32> = concerned_attribute_keys(compiled, attributes).into_iter().map(AttributeNameKey::get).collect();
-        // clone: the alias is shared by every condition on the source.
         condition = condition.add(is_any_of(SeaExpr::col((alias.clone(), HistoryGrain::AttributeNameKey)), keys));
     }
 

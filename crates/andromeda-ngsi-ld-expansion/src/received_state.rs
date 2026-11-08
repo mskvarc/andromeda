@@ -126,12 +126,12 @@ impl EntityExpansion<'_> {
 /// holding the instances they were; `None` when it reports none.
 fn lift_previous_instances(entity: &mut Entity) -> Option<Entity> {
     let mut previous = Entity::builder()
-        .id(entity.id.clone()) // clone: the instances before the change name the entity they belong to
-        .type_(entity.type_.clone()) // clone: as above
+        .id(entity.id.clone()) // clone: the lifted entity keeps its own identifier, the original stays in use
+        .type_(entity.type_.clone()) // clone: the lifted entity keeps its own type, the original stays in use
         .build();
     for (name, member) in &mut entity.attrs {
         if let Some(lifted) = previous_member(member) {
-            previous.attrs.insert(name.clone(), lifted); // clone: as above
+            previous.attrs.insert(name.clone(), lifted); // clone: the map key is borrowed from the entity, so the lifted entity owns a copy
         }
     }
     previous.location = entity.location.as_mut().and_then(previous_member);

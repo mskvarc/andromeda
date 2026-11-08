@@ -83,7 +83,7 @@ impl EntityService {
         let ComputedLanding { value: events, committed_at } = self
             .commit_computed_write(target, entity, |read, now| {
                 let previous = &read.state;
-                let mut remaining = EntityState::clone(previous); // clone: shares every attribute the deletion leaves alone
+                let mut remaining = EntityState::clone(previous);
                 delete_member(&mut remaining, &attribute, selection)?;
 
                 let history = deletion_history(previous, &attribute, &tombstone_targets);

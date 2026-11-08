@@ -109,7 +109,7 @@ impl<'a> ForwardedNames<'a> {
     /// when its compacted spelling is not an NGSI-LD name.
     pub(crate) async fn attr(&self, term: &AttributeName) -> Result<AttributeName, FederationError> {
         match self.rewording {
-            Rewording::AsInbound => Ok(term.clone()), // clone: the forwarded query owns the names it writes
+            Rewording::AsInbound => Ok(term.clone()),
             Rewording::Reword => {
                 let iri = self.resolver.expand_attr(term.as_str()).await?;
                 forwarded_name(&self.names.compact_attr_iri(iri.as_str()))
@@ -124,7 +124,7 @@ impl<'a> ForwardedNames<'a> {
     /// As [`ForwardedNames::attr`].
     pub(crate) async fn entity_type(&self, term: &EntityTypeName) -> Result<EntityTypeName, FederationError> {
         match self.rewording {
-            Rewording::AsInbound => Ok(term.clone()), // clone: the forwarded query owns the names it writes
+            Rewording::AsInbound => Ok(term.clone()),
             Rewording::Reword => {
                 let iri = self.resolver.expand_type(term.as_str()).await?;
                 forwarded_name(&self.names.compact_type_iri(iri.as_str()))
@@ -140,7 +140,7 @@ impl<'a> ForwardedNames<'a> {
     /// As [`ForwardedNames::attr`].
     pub(crate) async fn type_expr(&self, expression: &TypeExprRaw) -> Result<TypeExprRaw, FederationError> {
         match self.rewording {
-            Rewording::AsInbound => Ok(expression.clone()), // clone: the forwarded query owns the selector it writes
+            Rewording::AsInbound => Ok(expression.clone()),
             Rewording::Reword => self.reworded_type_expr(expression).await,
         }
     }
@@ -179,7 +179,7 @@ impl<'a> ForwardedNames<'a> {
     /// a `jsonKeys` name does not.
     pub(crate) async fn q(&self, expression: &Expr, json_keys: Option<&[AttributeName]>) -> Result<Expr, FederationError> {
         match self.rewording {
-            Rewording::AsInbound => Ok(expression.clone()), // clone: the forwarded query owns the filter it writes
+            Rewording::AsInbound => Ok(expression.clone()),
             Rewording::Reword => {
                 let mut literal_keys = Vec::new();
                 for name in json_keys.unwrap_or_default() {
@@ -204,7 +204,7 @@ impl<'a> ForwardedNames<'a> {
     /// expand against the inbound context.
     pub(crate) async fn csf(&self, expression: &Expr) -> Result<Expr, FederationError> {
         match self.rewording {
-            Rewording::AsInbound => Ok(expression.clone()), // clone: the forwarded query owns the filter it writes
+            Rewording::AsInbound => Ok(expression.clone()),
             Rewording::Reword => {
                 let inbound = ContextualExpander::new(self.engine, self.resolver.prepared());
                 let expanded = expand_csf_expr(expression.clone(), &inbound).await?; // clone: the walker consumes the expression the client's parameters keep
@@ -247,7 +247,7 @@ impl<'a> ForwardedNames<'a> {
     /// As [`ForwardedNames::attr`].
     pub(crate) async fn geoproperty(&self, name: &NgsiLdReference) -> Result<NgsiLdReference, FederationError> {
         match self.rewording {
-            Rewording::AsInbound => Ok(name.clone()), // clone: the forwarded query owns the name it writes
+            Rewording::AsInbound => Ok(name.clone()),
             Rewording::Reword => {
                 let iri = self.resolver.expand_attr(name.as_str()).await?;
                 forwarded_name(&self.names.compact_attr_iri(iri.as_str()))
@@ -416,7 +416,7 @@ mod tests {
 
         let literal = names.query_string("q=speed%5Broad%5D%3D%3D%22Main%22&jsonKeys=speed").await.expect("rewords");
         let pairs = form_urlencoded::parse(literal.as_bytes()).into_owned().collect::<Vec<_>>();
-        let value = |key: &str| pairs.iter().find(|(name, _)| name == key).map(|(_, value)| value.clone()); // clone: the assertion owns the value
+        let value = |key: &str| pairs.iter().find(|(name, _)| name == key).map(|(_, value)| value.clone());
         pretty_assertions::assert_eq!(value("q").as_deref(), Some("velocity[road]==\"Main\""));
         pretty_assertions::assert_eq!(value("jsonKeys").as_deref(), Some("velocity"));
 

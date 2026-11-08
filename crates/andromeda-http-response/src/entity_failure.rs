@@ -23,7 +23,7 @@ pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
         EntityError::AlreadyExists { .. } => ClassifiedReport::public(NgsiLdErrorType::AlreadyExists, error.to_string()),
         // Clause 5.5.2 `Conflict`, not `InternalError`: nothing failed inside the
         // broker and nothing about the submitted content is wrong, so the client
-        // is told the truth — the entity is contended and the identical request
+        // is told the truth: the entity is contended and the identical request
         // may be sent again.
         EntityError::Contention { .. } => ClassifiedReport::public(NgsiLdErrorType::Conflict, error.to_string()),
         EntityError::OperationNotSupported(reason) => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, reason.to_string()),

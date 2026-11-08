@@ -300,7 +300,7 @@ mod tests {
     fn a_membership_list_past_the_parameter_ceiling_binds_as_one_array() {
         let identifiers: Vec<String> = (0..70_000).map(|index| format!("urn:ngsi-ld:Vehicle:{index}")).collect();
         let (sql, values) = Query::select()
-            .expr(is_any_of(Expr::col(Alias::new("id")), identifiers.iter().cloned())) // clone: the expectation keeps the list
+            .expr(is_any_of(Expr::col(Alias::new("id")), identifiers.iter().cloned()))
             .and_where(is_none_of(Expr::col(Alias::new("name")), ["a".to_owned(), "b".to_owned()]))
             .to_owned()
             .build(PostgresQueryBuilder);

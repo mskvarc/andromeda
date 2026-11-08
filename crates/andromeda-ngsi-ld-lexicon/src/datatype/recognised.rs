@@ -43,7 +43,7 @@ impl RecognisedDatatype {
     /// IRI, which every datatype is (clause 4.5.2: `valueType` "shall be type
     /// coerced into a datatype URI").
     pub fn of(datatype: &NgsiLdReference) -> Result<Option<RecognisedDatatype>, DatatypeError> {
-        // clone: the refusal owns the text it reports.
+        // clone: the error must own the value it reports after the borrow ends.
         let iri = Iri::parse(datatype.as_str()).map_err(|_| DatatypeError::NotAnIri(datatype.clone()))?;
         if let Some(form) = TimeValueForm::named_by(iri.as_str()) {
             return Ok(Some(RecognisedDatatype::Time(form)));
@@ -94,7 +94,7 @@ pub fn admit_language_map_value_type(value_type: &NgsiLdReference) -> Result<(),
     match RecognisedDatatype::of(value_type)? {
         Some(RecognisedDatatype::LangString) => Ok(()),
         Some(RecognisedDatatype::Time(_) | RecognisedDatatype::Xsd(_) | RecognisedDatatype::Json) | None => {
-            // clone: the refusal owns the text it reports.
+            // clone: the error must own the value it reports after the borrow ends.
             Err(DatatypeError::NotLangString(value_type.clone()))
         }
     }

@@ -79,7 +79,6 @@ impl TemporalService {
         compiled: &CompiledTemporalQuery,
     ) -> Result<EntityAggregationPage, TemporalError> {
         let mut read = self.reader.query_entities_aggregation(scope, slice::from_ref(entity_id), compiled).await?;
-        // clone: the page owns the identifier it is rendered under.
         aggregation_page(entity_id.clone(), read.remove(entity_id)).map_err(|unread| *unread.error)
     }
 

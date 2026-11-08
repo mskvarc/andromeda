@@ -5,7 +5,7 @@
 //! as a string literal, and a `language plpgsql` clause can shift the
 //! indentation of earlier comments. Each function statement (a `CREATE
 //! PROCEDURE` parses to the same statement kind and is held out with them) is
-//! therefore replaced by a placeholder statement selecting a string literal
+//! therefore swapped for a placeholder statement selecting a string literal
 //! that numbers it, which `pg_format` lays out like any other statement, and is
 //! put back verbatim once the text is formatted.
 
@@ -19,7 +19,7 @@ const PLACEHOLDER_PREFIX: &str = "__function_statement_";
 /// What a placeholder's string literal ends with.
 const PLACEHOLDER_SUFFIX: &str = "__";
 
-/// A migration's text with every function statement replaced by a placeholder.
+/// A migration's text with every function statement swapped for a placeholder.
 #[derive(Debug)]
 pub struct HeldOutFunctions<'sql> {
     /// The text with placeholders in place of the function statements.

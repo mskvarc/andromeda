@@ -90,17 +90,15 @@ impl InEffectProbe<'_> {
             InEffectReading::Deletion | InEffectReading::EarlierDeletion(_) => TimeProp::Deleted,
         };
         let params = TemporalQueryParameters {
-            // clone: the probe owns the selection it forwards beside the client's query
             id: client.id.clone(),
             entity_type: client.entity_type.clone(),
             id_pattern: client.id_pattern.clone(),
             csf: client.csf.clone(),
-            ..TemporalQueryParameters::latest_before(start, timeproperty, attrs, self.dataset.cloned()) // clone: the probe owns the dataset it names
+            ..TemporalQueryParameters::latest_before(start, timeproperty, attrs, self.dataset.cloned())
         };
         Ok(Some(match self.reading {
             InEffectReading::Placed | InEffectReading::Deletion => params,
             InEffectReading::EarlierDeletion(earlier) => TemporalQueryParameters {
-                // clone: the probe owns the stream it names
                 id: Some(earlier.entities.clone()),
                 id_pattern: None,
                 attrs: Some(vec![earlier.attribute.clone()]),
@@ -128,7 +126,7 @@ impl InEffectProbe<'_> {
 ///
 /// Returns [`NgsiLdReferenceError`] when `location` is not an attribute name.
 fn filter_attributes(client: &TemporalQueryParameters) -> Result<Vec<AttributeName>, NgsiLdReferenceError> {
-    let mut attributes: Vec<AttributeName> = client.q.as_ref().map(referenced_attributes).unwrap_or_default().into_iter().cloned().collect(); // clone: the probe owns the names it forwards
+    let mut attributes: Vec<AttributeName> = client.q.as_ref().map(referenced_attributes).unwrap_or_default().into_iter().cloned().collect();
     if let Some(geo) = client.geo.0.as_ref() {
         let geoproperty = match &geo.geoproperty {
             Some(reference) => AttributeName::from(reference),

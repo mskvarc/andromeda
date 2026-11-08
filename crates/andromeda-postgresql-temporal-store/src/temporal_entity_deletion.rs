@@ -187,7 +187,7 @@ fn deleted_branch(target: &ContextTarget) -> HistoryBranch {
 /// own: the judgement's snapshot then starts after every write that queued
 /// history for the Entity before the lock was granted has committed.
 async fn locate_temporal_entity(tx: &mut Transaction<'_, Postgres>, branch: &HistoryBranch, entity_id: &Identifier) -> Result<EntityKey, TemporalStoreError> {
-    let not_found = || TemporalStoreError::NotFound(TemporalNotFoundReason::Entity { id: entity_id.clone() }); // clone: the reason owns the entity it names
+    let not_found = || TemporalStoreError::NotFound(TemporalNotFoundReason::Entity { id: entity_id.clone() }); // clone: the error outlives the borrowed entity identifier it names.
     let located = lock_identity_row_statement(branch.schema(), entity_id.as_str())
         .to_query()
         .fetch_optional(&mut **tx)

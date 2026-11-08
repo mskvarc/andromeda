@@ -66,10 +66,10 @@ pub(super) fn register_table_size_gauges(
     // The write count the last sample ran under, shared by every tick.
     let observed = Arc::new(AtomicU64::new(0));
     let task = ScheduledTask::new(registration, schedule, move |_execution| {
-        let pool = pool.clone(); // clone: PgPool is a shared handle; each pass acquires one connection.
-        let series = series.clone(); // clone: each bounded pass owns the series labels while recording.
-        let pacer = Arc::clone(&pacer); // clone: each pass consults the tenant's one pacer.
-        let observed = Arc::clone(&observed); // clone: every tick compares against the one last-sample count.
+        let pool = pool.clone();
+        let series = series.clone(); // clone: the closure runs once per pass, so each pass takes its own copy of the series.
+        let pacer = Arc::clone(&pacer);
+        let observed = Arc::clone(&observed);
         async move {
             series.republish();
             pacer

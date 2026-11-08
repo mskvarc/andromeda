@@ -99,7 +99,6 @@ impl RenderedCommand for RejectingTriggerCommand<'_> {
     fn rendered(&self) -> String {
         match self {
             RejectingTriggerCommand::Install(trigger) => {
-                // clone: the expression builder consumes its predicate and the command only borrows the trigger.
                 let probe = Query::select()
                     .expr(int_literal(1))
                     .and_where(trigger.condition.clone())

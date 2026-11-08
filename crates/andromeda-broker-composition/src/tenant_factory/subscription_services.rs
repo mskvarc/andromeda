@@ -89,23 +89,21 @@ pub(super) fn compose_subscription_services(
 ) -> SubscriptionServices {
     let endpoint_validator: Arc<dyn SubscriptionEndpointValidator> = Arc::new(DeliverySubscriptionEndpointValidator);
     let csource = Arc::new(SubscriptionService::new(
-        // clone: the subscription stores intern attribute lists through the tenant's one dictionary.
         Arc::new(CsourceSubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))),
-        storage.engine.clone(),                              // clone: each subscription service owns its engine handle.
-        CsrSubscriptionVariant::new(storage.engine.clone()), // clone: the variant expands against its own engine handle.
-        Some(Arc::new(BroadcastSubscriptionChangeSink::new(signals.csource_subscription.clone()))), // clone: service and worker each own a sender handle.
-        Arc::clone(&endpoint_validator),                     // clone: both subscription services share one endpoint validator.
+        storage.engine.clone(),
+        CsrSubscriptionVariant::new(storage.engine.clone()),
+        Some(Arc::new(BroadcastSubscriptionChangeSink::new(signals.csource_subscription.clone()))),
+        Arc::clone(&endpoint_validator),
         filter_admission,
     ));
-    // clone: see above.
     let store = Arc::new(SubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
     let forwarding = edge.map(|edge| compose_subscription_forwarding(edge, storage, dispatcher, entity_query, &csource, &store));
     let mut entity = SubscriptionService::new(
         Arc::clone(&store),
-        storage.engine.clone(),                                 // clone: each subscription service owns its engine handle.
-        EntitySubscriptionVariant::new(storage.engine.clone()), // clone: the variant expands against its own engine handle.
+        storage.engine.clone(),
+        EntitySubscriptionVariant::new(storage.engine.clone()),
         Some(Arc::new(CoherentSubscriptionChangeSink::new(
-            signals.subscription.clone(), // clone: service and worker each own a sender handle.
+            signals.subscription.clone(),
             Arc::clone(&storage.subscription_cache),
             store,
         ))),
@@ -133,9 +131,9 @@ fn compose_subscription_forwarding(
 ) -> Arc<SubscriptionForwardingService> {
     Arc::new(
         SubscriptionForwardingService::builder()
-            .live_target(storage.live_target.clone()) // clone: forwarding is defined only over the tenant's live branch.
+            .live_target(storage.live_target.clone())
             .receiver(edge.receiver)
-            .tenant(storage.tenant.clone()) // clone: the forwarding service owns its tenant
+            .tenant(storage.tenant.clone())
             .subscriptions(Arc::clone(subscriptions))
             .csource_subscriptions(Arc::clone(csource_subscriptions))
             .mappings(Arc::new(SubscriptionForwardingRepository::new(&storage.pool)) as Arc<dyn SubscriptionForwardingStore>)
@@ -143,7 +141,7 @@ fn compose_subscription_forwarding(
             .federation(Arc::clone(edge.federation))
             .entity_query(Arc::clone(entity_query))
             .transport(Arc::clone(dispatcher))
-            .engine(storage.engine.clone()) // clone: forwarding owns its engine handle.
+            .engine(storage.engine.clone())
             .build(),
     )
 }

@@ -5,8 +5,8 @@
 //! Compaction selects a term per item from that shape and compacts the item by
 //! it, so the walk first states what each piece of the model is in those
 //! terms: a scalar becomes the library's own value object, an identifier its
-//! own `@id`, and the larger nodes -- attribute instances, geometries,
-//! structured values -- stay borrowed from the model and are walked in place.
+//! own `@id`, and the larger nodes (attribute instances, geometries,
+//! structured values) stay borrowed from the model and are walked in place.
 
 use crate::{
     compacted::{Compacted, ProcessorCompacted},

@@ -2,8 +2,8 @@
 //!
 //! One statement, run on a cadence the broker owns: the clause 5.13.1 sweep
 //! that reclaims the `"Cached"` rows whose clause 6.3.16 expiration time has
-//! passed. Serving is already safe without it — the resolver's read passes over
-//! a lapsed row — so this reclaims storage and keeps clause 5.13.3's listing
+//! passed. Serving is already safe without it: the resolver's read passes over
+//! a lapsed row, so this reclaims storage and keeps clause 5.13.3's listing
 //! honest about what the broker still holds.
 
 use crate::{

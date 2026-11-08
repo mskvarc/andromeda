@@ -54,7 +54,7 @@ impl PostgresRegistrationStore {
     /// tenant's shared attribute-name dictionary.
     pub fn new(pool: &PgPool, attribute_names: Arc<dyn NameLookup<AttributeName>>) -> PostgresRegistrationStore {
         PostgresRegistrationStore {
-            pool: pool.clone(), // clone: `PgPool` is an atomically reference-counted pool handle.
+            pool: pool.clone(),
             attribute_names,
         }
     }

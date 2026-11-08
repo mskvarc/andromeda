@@ -3,8 +3,8 @@
 //! Two of them are tenant-scoped: a local subscription to its companion context
 //! source registration subscription, and a local subscription to the copy
 //! forwarded to each registration. The third is platform-wide: every
-//! subscription identifier this broker mints and hands to a peer — a companion
-//! or a forwarded copy — to the tenant it belongs to, so an inbound
+//! subscription identifier this broker mints and hands to a peer (a companion
+//! or a forwarded copy) to the tenant it belongs to, so an inbound
 //! notification, which carries no tenant of ours (clause 6.3.14), can still be
 //! routed to the right tenant.
 

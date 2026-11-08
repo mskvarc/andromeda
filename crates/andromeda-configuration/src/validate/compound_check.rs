@@ -29,7 +29,7 @@ impl ViolationLog {
     /// Record the violations of one obligation, applying under
     /// `required_by`.
     fn enforce(&mut self, obligation: Obligation, config: &BrokerConfig, width: AddressWidth, required_by: &Requirement) {
-        // clone: each violation owns the settings it names
+        // clone: each violation record owns its requirement, so the closure hands out a copy.
         let owned = || required_by.clone();
         match obligation {
             Obligation::Present(key) | Obligation::NonEmpty(key) => {

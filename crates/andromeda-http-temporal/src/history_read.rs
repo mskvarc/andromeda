@@ -1,7 +1,7 @@
 //! What one read of temporal history is bound to.
 //!
-//! Every phase of a temporal read -- the clause 4.5.23 join, the Entity Map
-//! the read is recorded in, the payload it answers with -- addresses the same
+//! Every phase of a temporal read (the clause 4.5.23 join, the Entity Map
+//! the read is recorded in, the payload it answers with) addresses the same
 //! five things: the service the history is read through, the tenant-scoped
 //! target the read stays inside, the query that bounds it, the JSON-LD
 //! context its terms expand under, and how its target languages select

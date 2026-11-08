@@ -350,7 +350,7 @@ mod tests {
             json!({ "@protected": true }),
             json!({ "@version": 1.1, "@protected": true }),
         ] {
-            let mut definition = remainder.as_object().expect("an object").clone(); // clone: the fixture keeps its remainder for the message
+            let mut definition = remainder.as_object().expect("an object").clone();
             definition.insert("@import".to_owned(), json!(NGSI_LD_CORE_CONTEXT_V18_URL.as_str()));
 
             let (normalized, _) = prepare("https://example.com/importing.jsonld", &json!({ "@context": definition }));

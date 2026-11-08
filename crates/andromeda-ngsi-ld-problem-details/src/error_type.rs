@@ -106,7 +106,7 @@ impl NgsiLdErrorType {
     ///
     /// Clause 5.5.2 defines the error *types*; the HTTP binding's Table 6.3.2-1
     /// is what maps each type to a status code, so that table is the authority
-    /// here — notably `LdContextNotAvailable`, which it assigns 504 rather than
+    /// here, notably `LdContextNotAvailable`, which it assigns 504 rather than
     /// 503 because the broker is a gateway that failed to dereference an
     /// upstream `@context`, not a service that is itself unavailable.
     #[must_use]

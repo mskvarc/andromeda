@@ -90,7 +90,7 @@ fn forbidden_member(instance: &InstanceDocument) -> Option<MemberShape> {
 pub(crate) fn value_observations(value: &ValueSlot) -> Result<Vec<ScopeObservation>, ScopeRefusal> {
     match value {
         ValueSlot::Set(WrittenValue::Value(values)) => match scope_slot(values.iter().map(scope_item))? {
-            Slot::Set(scopes) => Ok(scopes.as_slice().iter().cloned().map(ScopeObservation::Path).collect()), // clone: each observation owns its path.
+            Slot::Set(scopes) => Ok(scopes.as_slice().iter().cloned().map(ScopeObservation::Path).collect()),
             Slot::Remove => Ok(vec![ScopeObservation::Deleted]),
         },
         ValueSlot::Remove(ValueCarrier::Value) => Ok(vec![ScopeObservation::Deleted]),

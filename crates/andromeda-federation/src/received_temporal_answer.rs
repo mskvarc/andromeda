@@ -99,7 +99,7 @@ impl FederationService {
     ) -> ReadPage<ReceivedTemporalAnswer<ContextualEntity>> {
         let answered = |naming, entities, warnings, dropped, linked_map, partial_range: Option<NgsiLdContentRange>| {
             Some(ReceivedTemporalAnswer {
-                registration_id: Some(registration.id.clone()), // clone: the answer names the registration it came from
+                registration_id: Some(registration.id.clone()),
                 mode: registration.access.mode.unwrap_or_default(),
                 naming,
                 entities,

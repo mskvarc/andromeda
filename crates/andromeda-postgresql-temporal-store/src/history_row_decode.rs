@@ -4,8 +4,8 @@
 //! Every column probe, code decode, EWKB-to-GeoJSON conversion and instance
 //! identity reassembly lives here so that neither the service layer nor the
 //! renderers ever import `sqlx`. The readers for the catalogue columns an
-//! `attribute_history` row carries — its attribute name, its `datasetId`, its
-//! unit identity — are shared with [`crate::aggregation_row_decode`], whose rows
+//! `attribute_history` row carries (its attribute name, its `datasetId`, its
+//! unit identity) are shared with [`crate::aggregation_row_decode`], whose rows
 //! project those same columns.
 //!
 //! Nothing in this module guesses. The history table records which typed column holds a row's value, so the value is read from that column and
@@ -98,7 +98,7 @@ impl DecodedHistoryRow {
         } = self;
         observation.row.metadata = members.metadata(&observation.row.attribute_name, names)?;
         if let Some(key) = datatype_key {
-            let datatype = names.type_name(key).cloned().ok_or(StoredHistoryError::ValueDatatype(key))?; // clone: the value owns its datatype
+            let datatype = names.type_name(key).cloned().ok_or(StoredHistoryError::ValueDatatype(key))?;
             observation.row.value = typed(observation.row.value, datatype)?;
         }
         Ok(observation)

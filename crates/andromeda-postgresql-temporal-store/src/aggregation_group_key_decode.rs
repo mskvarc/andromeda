@@ -40,8 +40,8 @@ pub(crate) fn decode_group_keys(
             (GroupKey::Member(EntityMember::Scope), _) => GroupKeyValue::Absent,
             (GroupKey::Path(_), Some(bucket)) => match bucket.kind() {
                 BucketKind::Calendar => optional_value(projected_column::<DateTime<Utc>>(row, &group_key_column(index))?.map(instant_text)),
-                // A cyclic field (`date_part`) is a whole number — hour 0-23,
-                // day-of-week 0-6, month 1-12 — that renders as its integer.
+                // A cyclic field (`date_part`) is a whole number (hour 0-23,
+                // day-of-week 0-6, month 1-12) that renders as its integer.
                 BucketKind::Cyclic => optional_value(projected_column::<f64>(row, &group_key_column(index))?.map(|field| format!("{field}"))),
             },
             (GroupKey::Path(_), None) => match projected_column::<DateTime<Utc>>(row, &group_key_instant_column(index))? {

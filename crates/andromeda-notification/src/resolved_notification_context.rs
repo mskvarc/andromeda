@@ -136,7 +136,7 @@ mod tests {
 
     impl FailureRecordingStore {
         fn failures(&self) -> Vec<(Identifier, OutcomeTally)> {
-            self.failures.lock().expect("the failure record is never poisoned").clone() // clone: the assertion reads a snapshot
+            self.failures.lock().expect("the failure record is never poisoned").clone()
         }
     }
 
@@ -172,7 +172,7 @@ mod tests {
         }
 
         async fn record_outcomes(&self, _target: &ContextTarget, id: &Identifier, tally: OutcomeTally) -> Result<(), SubscriptionError> {
-            self.failures.lock().expect("the failure record is never poisoned").push((id.clone(), tally)); // clone: the record owns what it saw
+            self.failures.lock().expect("the failure record is never poisoned").push((id.clone(), tally));
             Ok(())
         }
 

@@ -29,9 +29,9 @@ pub enum HistoryRecord {
     ///
     /// Clauses 5.6.11.4 and 5.6.12.4 add the instances "to the target Temporal
     /// Evolution of an Entity", so every one of them is history. What they do
-    /// to current state is a separate question -- current state holds one
+    /// to current state is a separate question: current state holds one
     /// instance per Attribute instance (clause 4.5.5), the most current one
-    /// (clause 4.5.5.3) -- which the write answers through its
+    /// (clause 4.5.5.3), which the write answers through its
     /// [`EntityMutation`](crate::entity_mutation::EntityMutation) rather than
     /// through its history.
     EvolutionInstances(Arc<EntityDocument>),
@@ -42,10 +42,10 @@ pub enum HistoryRecord {
     /// Clause 4.18: "For the Temporal Evolution a given Scope is considered
     /// valid from the time it has been set until the time it has been
     /// explicitly removed by an update or delete operation." A write that
-    /// leaves the Entity with no Scope is such an operation — a Replace Entity
+    /// leaves the Entity with no Scope is such an operation: a Replace Entity
     /// (clause 5.6.18.4: "completely replace the existing Entity ... with the
     /// new Entity content provided") that omits `scope`, or the deletion of the
-    /// Entity itself — and without this record the reconstructed interval would
+    /// Entity itself. Without this record the reconstructed interval would
     /// stay open for ever and report a Scope the Entity has not been in since.
     ///
     /// It carries nothing, because clause 4.18 gives an Entity at most one
@@ -64,8 +64,8 @@ pub enum HistoryRecord {
 pub fn tombstone(attr: &AttributeName, dataset_id: Option<&Identifier>, attribute_type: AttributeType) -> HistoryRecord {
     HistoryRecord::Tombstone(RemovedAttributeInstance {
         key: AttributeInstanceKey {
-            attr: attr.clone(),              // clone: the history record owns its attribute name.
-            dataset_id: dataset_id.cloned(), // clone: the history record owns its dataset identifier.
+            attr: attr.clone(),
+            dataset_id: dataset_id.cloned(),
         },
         attribute_type,
     })
@@ -124,8 +124,8 @@ pub fn deletion_history(previous: &EntityState) -> Vec<HistoryRecord> {
     let instances = previous.instance_families().map(|(attr, dataset_id, attribute_type)| {
         (
             AttributeInstanceKey {
-                attr: attr.clone(),              // clone: the tombstone owns its attribute name.
-                dataset_id: dataset_id.cloned(), // clone: the tombstone owns its dataset identifier.
+                attr: attr.clone(),
+                dataset_id: dataset_id.cloned(),
             },
             attribute_type,
         )
@@ -197,7 +197,7 @@ mod tests {
     fn entity(members: &Value) -> Value {
         let mut node = json!({"@id": "urn:ngsi-ld:A", "@type": ["https://example.org/T"]});
         if let (Some(node), Some(members)) = (node.as_object_mut(), members.as_object()) {
-            node.extend(members.iter().map(|(key, value)| (key.clone(), value.clone()))); // clone: the fixture owns its members
+            node.extend(members.iter().map(|(key, value)| (key.clone(), value.clone())));
         }
         json!([node])
     }
@@ -389,8 +389,8 @@ mod tests {
 
     /// Clauses 4.5.7, 4.5.8 and 4.18: a deletion that never read the state
     /// states the instances and the Scope it removed itself, and records
-    /// exactly the tombstones -- each instance with its family, then the Scope
-    /// -- that reading the removed state records.
+    /// exactly the tombstones (each instance with its family, then the Scope)
+    /// that reading the removed state records.
     #[test]
     fn an_outline_of_every_instance_and_the_scope_records_the_tombstones_the_state_would() {
         let with_dataset = |dataset_id: &str| {

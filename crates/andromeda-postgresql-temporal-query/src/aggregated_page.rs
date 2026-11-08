@@ -130,7 +130,6 @@ fn unpaged_rows(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, aggreg
 /// them reads them whole whatever the grid.
 fn paged_read(probes: &StreamProbes<'_>, aggregated: &Condition, grid: &AggregationGrid, paged: PagedWalk) -> AggregatedStreamRead {
     let StreamProbes { branch, compiled, .. } = *probes;
-    // clone: the page's rows are the aggregated instances on the kept side of the edge.
     let kept = aggregated.clone().add(probes.kept_side(paged.walk, &stream_bound()));
     let every_kept = |kept: &Condition| {
         over_parts(branch, |part| {

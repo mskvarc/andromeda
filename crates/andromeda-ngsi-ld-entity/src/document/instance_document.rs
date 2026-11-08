@@ -361,7 +361,7 @@ mod tests {
             (ValueSlot::Remove(ValueCarrier::Object), AttributeType::Relationship),
             (ValueSlot::Remove(ValueCarrier::ValueList), AttributeType::ListProperty),
         ] {
-            pretty_assertions::assert_eq!(typeless(value.clone()).implied_family(), Some(family), "{value:?}"); // clone: the value is reported on failure
+            pretty_assertions::assert_eq!(typeless(value.clone()).implied_family(), Some(family), "{value:?}");
         }
         pretty_assertions::assert_eq!(typeless(ValueSlot::Absent).implied_family(), None);
     }

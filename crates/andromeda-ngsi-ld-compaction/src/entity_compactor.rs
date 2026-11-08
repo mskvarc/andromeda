@@ -5,8 +5,8 @@
 //! [`ContextCompactor`]: the request context is processed once, the first time
 //! an entity needs it, and every entity of the operation is compacted against
 //! it by the term walk, the keys each attribute selected being remembered for
-//! the next entity. An entity the walk leaves to the processor -- one under a
-//! context with scoped contexts, `@nest` or map containers -- is compacted by
+//! the next entity. An entity the walk leaves to the processor (one under a
+//! context with scoped contexts, `@nest` or map containers) is compacted by
 //! the processor from its canonical expanded form, so either way the result is
 //! what the processor gives.
 
@@ -205,7 +205,7 @@ impl<'a> EntityCompactor<'a> {
             // A term the context gives the name that is no attribute name
             // leaves the name expanded: it is the name the instances were
             // compacted under, or none was.
-            let name = AttributeName::from_str(&compacted).unwrap_or_else(|_| expanded.clone()); // clone: the compact name is the expanded one verbatim
+            let name = AttributeName::from_str(&compacted).unwrap_or_else(|_| expanded.clone());
             if name.as_str() == compact_properties::SCOPE {
                 entity.scope.get_or_insert_with(|| TemporalAttribute::emptied(*family));
             } else {

@@ -217,8 +217,8 @@ where
     ///
     /// `snapshot_generation` is the clock value the rebuild worker captured
     /// before reading its source (see [`PartitionedRTree::current_generation`]).
-    /// Per partition and under its lock, an object mutated live since then --
-    /// inserted, moved or removed -- keeps its live state, and every other
+    /// Per partition and under its lock, an object mutated live since then
+    /// (inserted, moved or removed) keeps its live state, and every other
     /// object takes the snapshot's: present if the snapshot holds it, absent
     /// otherwise. A partition the snapshot does not mention is in scope all
     /// the same and is emptied of every object the snapshot no longer holds. The
@@ -247,14 +247,14 @@ where
                 });
             }
             for (id, _) in &rebuilt.installed {
-                // clone: the record is keyed by the identifier the tree's entry holds
+                // clone: the installed entries are consumed by the next loop, so the record takes its own copy of the identifier
                 self.rewrite_record(id.clone(), |placements| placements.retain(|placement| *placement.key != key));
             }
             for (id, envelope) in rebuilt.installed {
                 self.rewrite_record(id, |placements| {
                     placements.reserve_exact(1);
                     placements.push(Placement {
-                        key: Arc::clone(&bucket.key), // clone: a reference-count bump, every placement of the partition shares its key
+                        key: Arc::clone(&bucket.key),
                         envelope,
                     });
                 });
@@ -343,7 +343,7 @@ where
             }
             for entry in arriving {
                 installed.push(Placement {
-                    key: Arc::clone(&bucket.key), // clone: a reference-count bump, every placement of the partition shares its key
+                    key: Arc::clone(&bucket.key),
                     envelope: entry.envelope(),
                 });
                 partition.tree.insert(entry);
@@ -358,7 +358,7 @@ where
     /// The partition a key names, created empty when it does not exist yet.
     fn bucket(&self, key: &SpatialKey) -> Arc<Bucket<E>> {
         self.existing(key).unwrap_or_else(|| {
-            // clone: the map and the bucket each own the key; the returned handle is a reference-count bump so the shard guard is released before the partition is locked
+            // clone: the map takes ownership of its key, so the borrowed key is copied here
             let bucket = self.buckets.entry(key.clone()).or_insert_with(|| {
                 Arc::new(Bucket {
                     key: Arc::new(key.clone()),
@@ -371,7 +371,6 @@ where
 
     /// The partition a key names, if it exists.
     fn existing(&self, key: &SpatialKey) -> Option<Arc<Bucket<E>>> {
-        // clone: a reference-count bump, so the shard guard is released before the partition is locked
         self.buckets.get(key).map(|bucket| Arc::clone(bucket.value()))
     }
 }

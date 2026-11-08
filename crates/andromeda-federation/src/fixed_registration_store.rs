@@ -173,7 +173,7 @@ impl RegistrationStore for FixedRegistrationStore {
         'life0: 'async_trait,
         'life1: 'async_trait,
     {
-        let registration = self.registrations.iter().find(|registration| &registration.id == id).cloned(); // clone: the read answers its own copy of the fixed registration
+        let registration = self.registrations.iter().find(|registration| &registration.id == id).cloned();
         Box::pin(async { Ok(registration) })
     }
 

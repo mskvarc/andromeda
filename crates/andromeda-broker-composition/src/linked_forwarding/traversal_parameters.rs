@@ -28,7 +28,7 @@ use std::num::NonZeroU32;
 pub(super) fn traversal_continuation(depth: NonZeroU32, visited: &[Identifier]) -> (Option<JoinMode>, Option<NonZeroU32>, Option<Vec<Identifier>>) {
     let join_level = NonZeroU32::new(depth.get() - 1);
     let join = join_level.map(|_| JoinMode::Flat);
-    let contained_by = (join_level.is_some() && !visited.is_empty()).then(|| visited.to_vec()); // clone: the forwarded parameters own the identifiers they carry
+    let contained_by = (join_level.is_some() && !visited.is_empty()).then(|| visited.to_vec());
     (join, join_level, contained_by)
 }
 

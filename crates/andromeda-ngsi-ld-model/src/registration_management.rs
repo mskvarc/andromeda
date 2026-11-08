@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn every_clause_5_2_34_member_round_trips_through_its_wire_shape() {
         let wire = json!({"cacheDuration": "PT10S", "cooldown": 500, "localOnly": true, "timeout": 3000});
-        let parsed: RegistrationManagementInfo = serde_json::from_value(wire.clone()).expect("management parses"); // clone: compared below
+        let parsed: RegistrationManagementInfo = serde_json::from_value(wire.clone()).expect("management parses");
         pretty_assertions::assert_eq!(parsed.local_only, Some(LocalScope::LocalOnly));
         pretty_assertions::assert_eq!(parsed.cooldown.map(PositiveMilliseconds::get), Some(500));
         pretty_assertions::assert_eq!(parsed.timeout.map(PositiveMilliseconds::get), Some(3000));
@@ -91,7 +91,7 @@ mod tests {
             assert!(
                 serde_json::from_value::<RegistrationManagementInfo>(wire.clone()).is_err(),
                 "{wire} must be rejected"
-            ); // clone: reported on failure
+            );
         }
     }
 

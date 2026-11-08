@@ -4,11 +4,11 @@
 //! it answers (clauses 5.2.3, 4.4 and 5.5.7), embedded in an
 //! `application/ld+json` body or advertised by one `Link` header, and a
 //! compound context is named through a wrapper hosted among the tenant's
-//! stored `@context`s (Annex C.8, clause 5.13.1). That is three steps --
+//! stored `@context`s (Annex C.8, clause 5.13.1). That is three steps:
 //! presenting the request context through the tenant's engine, hosting it
 //! under the request's `apiRoot` when a `Link` must name it, and configuring
-//! the renderer -- and [`ResponseContextSource`] is the one place they are
-//! taken in that order, so no handler repeats them.
+//! the renderer. [`ResponseContextSource`] is the one place they are taken in
+//! that order, so no handler repeats them.
 //!
 //! It lives here rather than beside the renderer in `andromeda-http-response`
 //! because two of its inputs, the tenant's hosting and the request's

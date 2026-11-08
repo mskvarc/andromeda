@@ -6,8 +6,8 @@ compact_code_registry! {
     /// A condition a subscription listens for (clause 5.2.12).
     ///
     /// A queued notification does not store a trigger: one change raises any
-    /// number of them, and what it stores is the change itself -- see
-    /// `EntityLifecycleCode` and `AttributeChangeKindCode`.
+    /// number of them, and what it stores is the change itself (see
+    /// `EntityLifecycleCode` and `AttributeChangeKindCode`).
     ///
     /// The labels are the specification's camel-case tokens, since these are
     /// the values a subscription document carries on the wire.

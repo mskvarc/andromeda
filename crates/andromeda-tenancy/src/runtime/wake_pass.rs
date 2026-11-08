@@ -251,7 +251,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// extension update and records the versions it leaves, which is the work
     /// it was chosen for.
     async fn load_to_catch_up(&self, tenant: &TenantName) -> CatchUpAttempt {
-        let tenant_ref = TenantRef::Named(tenant.clone()); // clone: the ref outlives this call
+        let tenant_ref = TenantRef::Named(tenant.clone());
         if self.runtimes.contains_key(&tenant_ref) {
             return CatchUpAttempt::Skipped;
         }

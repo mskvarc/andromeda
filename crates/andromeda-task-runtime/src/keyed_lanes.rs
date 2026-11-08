@@ -55,7 +55,7 @@ impl<T: Send + 'static> KeyedLanes<T> {
         let lanes = (0..width.get())
             .map(|_| {
                 let (sender, mut receiver) = mpsc::channel::<T>(depth.get());
-                let work = Arc::clone(&work); // clone: every lane worker runs the one shared work function.
+                let work = Arc::clone(&work);
                 workers.spawn(async move {
                     while let Some(item) = receiver.recv().await {
                         work(item).await;
@@ -147,7 +147,7 @@ mod tests {
             NonZeroUsize::new(width).expect("a positive width"),
             NonZeroUsize::new(4).expect("a positive depth"),
             move |item: Item| {
-                let log = log.clone(); // clone: each run logs through the shared sender
+                let log = log.clone();
                 async move {
                     if let Some(gate) = item.gate {
                         gate.await.expect("the test opens every gate it sets");

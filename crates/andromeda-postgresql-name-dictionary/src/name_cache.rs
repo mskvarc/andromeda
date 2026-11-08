@@ -80,7 +80,7 @@ impl<N: DictionaryRelation> NameCache<N> {
     #[must_use]
     pub fn new(pool: &PgPool, config: &NameCacheConfig) -> NameCache<N> {
         NameCache {
-            pool: pool.clone(), // clone: Arc ref-count bump
+            pool: pool.clone(),
             keys: bounded_keys(config),
             names: bounded_names(config),
             preload_rows: preload_row_limit(config),
@@ -132,7 +132,6 @@ impl<N: DictionaryRelation> NameCache<N> {
         let mut missing = Vec::new();
         for name in names {
             match self.keys.get(name) {
-                // clone: the answer owns its keys; the name is a `CompactString`
                 Some(id) => resolved.push((name.clone(), id)),
                 None => missing.push(name),
             }
@@ -147,8 +146,8 @@ impl<N: DictionaryRelation> NameCache<N> {
         match publication {
             CachePublication::Publish => {
                 for (name, id) in resolved {
-                    self.keys.insert(name.clone(), *id); // clone: the cache keeps its own key
-                    self.names.insert(*id, name.clone()); // clone: each direction keeps its own name
+                    self.keys.insert(name.clone(), *id);
+                    self.names.insert(*id, name.clone());
                 }
                 self.entries.report(self.held_entries());
             }

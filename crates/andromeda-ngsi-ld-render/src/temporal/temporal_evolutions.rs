@@ -29,7 +29,7 @@ impl LinkedRepresentation for TemporalEvolutions {
     type Node = TemporalBody;
 
     fn identifier(node: &TemporalBody) -> Option<Identifier> {
-        Some(node.id().clone()) // clone: the traversal keys its nodes by owned identifiers
+        Some(node.id().clone())
     }
 
     fn edges(node: &TemporalBody, out: &mut Vec<LinkedEdge>) {

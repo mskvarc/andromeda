@@ -9,8 +9,8 @@ use thiserror::Error;
 ///
 /// RFC 9110 defines it as `[ protocol-name "/" ] protocol-version`, where the
 /// name and version are each an HTTP `token` (`1*tchar`): `1.1`, `HTTP/1.1`.
-/// Andromeda never interprets the value -- it is read from an incoming `Via` and
-/// echoed back verbatim when the chain is extended -- so the type validates the
+/// Andromeda never interprets the value. It is read from an incoming `Via` and
+/// echoed back verbatim when the chain is extended, so the type validates the
 /// grammar without ascribing meaning to name or version.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Display)]
 #[display("{_0}")]

@@ -279,7 +279,7 @@ fn grouped_page(
 ) -> SelectStatement {
     let axis = axis_column(compiled.window.timeproperty);
     let (mut select, mut keys) = aggregated_rows(rows, compiled, branch, of, names);
-    let mut order = keys.clone(); // clone: the periods are numbered in the order of their group keys
+    let mut order = keys.clone();
     if let Some(grid) = grid {
         select
             .join_lateral(JoinType::Join, grid.period_of(Expr::col((Ah, axis))), Bucket, SimpleExpr::from(true))
@@ -333,12 +333,11 @@ pub fn build_aggregation_query(
     let (grid, origin, laid_from) = match compiled.representation.aggr_period_duration {
         Some(period) => {
             let (origin_expr, origin) = grid_origin(branch, of, compiled);
-            // clone: the grid places every period from the origin the rows also report.
             (Some(AggregationGrid::new(period, origin_expr.clone())), origin, Some(origin_expr))
         }
         None => (None, None, None),
     };
-    // clone: the edge places the page on every represented instance, the aggregates fold the valued ones.
+    // clone: the aggregates fold only the valued instances, so they take the condition narrowed by carries_a_value.
     let aggregated = condition.clone().add(carries_a_value(Ah));
     let read = aggregated_stream_read(branch, compiled, condition, &aggregated, grid.as_ref());
 
@@ -376,7 +375,6 @@ pub fn build_aggregation_query(
 /// then each stream's periods in order.
 pub(crate) fn in_listing_order(select: &mut SelectStatement, rows: impl IntoIden) {
     let rows = rows.into_iden();
-    // clone: every ordering key names the rows' alias.
     select
         .order_by((rows.clone(), Alias::new("attribute_name")), Order::Asc)
         // The named instances of an attribute come before its default

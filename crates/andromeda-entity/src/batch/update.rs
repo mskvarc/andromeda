@@ -66,7 +66,6 @@ impl ChunkRewrite for UpdateRewrite<'_> {
             let error = EntityError::not_found(&entry.id);
             return Err(Box::new((entry.id, error)));
         };
-        // clone: reference-count bumps; the update shares every attribute it does not touch with the stored state
         let mut updated = EntityState::clone(&snapshot.state);
 
         // Clause 5.6.9.4 runs Append Attributes (clause 5.6.3) locally under
@@ -163,7 +162,7 @@ mod tests {
         let mut instance = serde_json::Map::new();
         instance.insert("@type".to_owned(), json!(["https://uri.etsi.org/ngsi-ld/Property"]));
         instance.insert("https://uri.etsi.org/ngsi-ld/hasValue".to_owned(), json!([{"@value": value}]));
-        instance.insert("https://uri.etsi.org/ngsi-ld/createdAt".to_owned(), stamp.clone()); // clone: both stamps hold the one instant
+        instance.insert("https://uri.etsi.org/ngsi-ld/createdAt".to_owned(), stamp.clone());
         instance.insert("https://uri.etsi.org/ngsi-ld/modifiedAt".to_owned(), stamp);
         for (name, value) in sub_attributes {
             instance.insert(term(name), building_property(*value, &[]));

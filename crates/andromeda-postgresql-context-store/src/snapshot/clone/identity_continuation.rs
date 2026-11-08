@@ -57,8 +57,6 @@ pub(crate) async fn continue_identity(conn: &mut PgConnection, source: &TableNam
 /// when the sequence caches, which only moves the continuation further on; it
 /// is NULL for a sequence never called, which `GREATEST` ignores.
 fn continuation_statement(source: &TableName, target: &TableName, column: &DynIden) -> SelectStatement {
-    // clone: the copied maximum is read from its own subquery, which owns the
-    // names it reads.
     let copied_maximum = scalar_subquery(Query::select().expr(Func::max(Expr::col(column.clone()))).from(target.clone()).to_owned());
     let position = Func::greatest([sequence_last_value(identity_sequence(source, column)), copied_maximum]);
     Query::select()

@@ -20,7 +20,7 @@ async fn run(context: ContextChoice) -> Result<()> {
     scenario.register(Node::B1, Payload::Auxiliary1, Node::B2).await?;
     scenario.register(Node::B1, Payload::Inclusive1, Node::B3).await?;
     scenario.register(Node::B1, Payload::Inclusive2, Node::B4).await?;
-    let both = [first_at_b3.id.clone(), second_at_b2.id.clone()]; // clone: the entities stay whole for the expectations
+    let both = [first_at_b3.id.clone(), second_at_b2.id.clone()];
     let at_b1 = scenario.query(Node::B1, &[Kind::Parking], &[], QueryMethod::Get).await?;
     let at_b2 = scenario.query(Node::B2, &[Kind::Parking], &[], QueryMethod::Get).await?;
     let at_b3 = scenario.query(Node::B3, &[Kind::Parking], &[], QueryMethod::Get).await?;

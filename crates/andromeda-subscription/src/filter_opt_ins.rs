@@ -48,7 +48,7 @@ impl FilterOptIns {
         Ok(FilterOptIns {
             // clone: the write keeps its lists while the filter expansion reads their names
             expand_values: expand_values.as_set().into_iter().flatten().cloned().collect(),
-            json_keys: json_keys.as_set().into_iter().flatten().cloned().collect(), // clone: as above
+            json_keys: json_keys.as_set().into_iter().flatten().cloned().collect(),
         })
     }
 
@@ -59,8 +59,8 @@ impl FilterOptIns {
     /// synchronous matcher that has no `@context` and no expander, so the
     /// coercion Table 5.2.12-1 asks for happens once, here, at create and update
     /// time; what is stored is the filter matching consumes. `jsonKeys` is not
-    /// applied as a rewrite at all -- it decides how the filter's own terms
-    /// expand, so it is handed to the expansion instead.
+    /// applied as a rewrite at all, because it decides how the filter's own
+    /// terms expand, so it is handed to the expansion instead.
     ///
     /// # Errors
     ///

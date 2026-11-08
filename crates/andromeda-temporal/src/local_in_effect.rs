@@ -107,7 +107,7 @@ impl TemporalService {
 pub(crate) fn part_document(entity_id: &Identifier, types: &[EntityTypeName], rows: Vec<TemporalHistoryRow>) -> Result<TemporalDocument, TemporalError> {
     let mut instances: IndexMap<AttributeName, Vec<InstanceDocument>> = IndexMap::new();
     for row in rows {
-        // clone: the document keys each attribute by the name its rows carry
+        // clone: the name is taken before `row` is moved into the instance.
         let attribute = row.attribute_name.clone();
         let instance =
             neutral_row_to_instance(row, SysAttrsInclusion::Include).map_err(|error| TemporalError::from(TemporalInvariant::RenderedInstance(error)))?;
@@ -117,7 +117,7 @@ pub(crate) fn part_document(entity_id: &Identifier, types: &[EntityTypeName], ro
         .into_iter()
         .map(|(attribute, instances)| (attribute, AttributeMember::Instances(instances)))
         .collect();
-    let entity = EntityDocument::new(Some(entity_id.clone()), types.to_vec(), None, None, attributes); // clone: the document owns the identifier and the types it names
+    let entity = EntityDocument::new(Some(entity_id.clone()), types.to_vec(), None, None, attributes);
     Ok(TemporalDocument::new(entity, EntitySystemTimes::default(), IndexMap::new()))
 }
 

@@ -1,8 +1,8 @@
 //! Sending one context source notification (ETSI GS CIM 009 clause 5.11.7).
 //!
-//! Four occasions send the same message -- a subscription that just started
+//! Four occasions send the same message (a subscription that just started
 //! matching, one that was just updated, a registration that changed, and a
-//! `timeInterval` that elapsed -- and clause 5.11.7 describes one sending for
+//! `timeInterval` that elapsed), and clause 5.11.7 describes one sending for
 //! all of them: the structure of clause 5.3.2, the endpoint, then
 //! `timesSent`, `lastNotification` and the success or failure stamp. Keeping
 //! that in one type keeps the periodic sender and the change-driven one from
@@ -40,8 +40,8 @@ use tracing::{debug, error};
 
 /// Whether a notification reached its endpoint's transport.
 ///
-/// Clause 5.11.7 counts a notification that failed at the endpoint as sent --
-/// `timesSent` is incremented and only `lastFailure` tells it apart -- so the
+/// Clause 5.11.7 counts a notification that failed at the endpoint as sent.
+/// `timesSent` is incremented and only `lastFailure` tells it apart, so the
 /// subscriber may have received it either way. One held back before it was
 /// sent, by the subscription's `throttling`, its endpoint's `cooldown` or a
 /// payload that could not be built, never reached the subscriber.
@@ -114,7 +114,7 @@ impl CsourceNotificationDelivery {
             .collect())
     }
 
-    /// Deliver `data` -- the notified registrations -- to `subscription` with
+    /// Deliver `data` (the notified registrations) to `subscription` with
     /// `trigger_reason`, honouring the subscription's `throttling` and its
     /// endpoint's `cooldown`, and recording the outcome on it (clause 5.11.7).
     ///
@@ -241,7 +241,6 @@ fn notified_registration(
     subscription: &CompiledCsrSubscription,
 ) -> ContextSourceRegistration {
     let information = compacted_information(names, matching_information(subscription, registration));
-    // clone: the notification carries its own trimmed copy of the stored registration
     let mut notified = registration.clone();
     notified.coverage.information = information;
     notified

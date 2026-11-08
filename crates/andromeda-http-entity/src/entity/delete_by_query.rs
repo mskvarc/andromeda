@@ -169,8 +169,8 @@ pub(crate) async fn delete_by_query(
     };
 
     // Clause 5.5.14: an EntityMap "fixes the Entities to be considered for
-    // subsequent requests based on it", so a purge left considering none -- its
-    // identifiers and the map's do not intersect -- has no entity for any
+    // subsequent requests based on it", so a purge left considering none (its
+    // identifiers and the map's do not intersect) has no entity for any
     // context source to purge, and forwarding could only widen what the map
     // fixed.
     let considers_nothing = matches!(ConsideredEntities::of_request(query.id.as_deref()), ConsideredEntities::NoEntity);
