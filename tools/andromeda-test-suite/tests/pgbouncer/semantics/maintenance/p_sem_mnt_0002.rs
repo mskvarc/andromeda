@@ -4,10 +4,13 @@ use andromeda_test_suite::{
     broker,
     broker_metrics::{BrokerMetric, BrokerMetricsError, MetricLabel, MetricsReading},
     config::BrokerRole,
+    eventually::{Poll, eventually},
     load_run::run_load,
     maintenance_seed::{CURRENT_ATTRIBUTES_REPACK, MaintenanceSeed},
     namespace::Namespace,
     outcome::Done,
+    table_statistics::{TableStatistics, TenantTable},
+    tenant_management::database_of,
     tenant_picker::UniformPicker,
     tenant_set::TenantSet,
 };
@@ -37,6 +40,12 @@ const BATCH: usize = 1_000;
 
 /// The properties each bloating entity carries.
 const PROPERTIES: usize = 6;
+
+/// The dead share of a heap at which the responsive profile defers a repack to a vacuum.
+const VACUUM_PENDING_PERCENT: u64 = 10;
+
+/// The longest the test waits for autovacuum to remove the deleted rows.
+const VACUUM_WAIT: Duration = Duration::from_secs(180);
 
 /// Pins: in a broker running automatic maintenance and automatic repacks with the responsive profile behind a
 /// transaction pooler, a tenant whose `current_attributes` 72,000 deleted entities of 6 properties each left free
@@ -74,6 +83,18 @@ async fn p_sem_mnt_0002_pooled_requests_are_unaffected_while_a_repack_runs() -> 
     for chunk in ids[..deleted].chunks(BATCH) {
         bloated.client.entities().batch_delete(chunk).send().await?.done()?;
     }
+    // A free-space probe that still sees the deleted rows dead defers the repack to a vacuum and closes the breach
+    // run, the seeded one included, so the seed waits for autovacuum to have removed them.
+    let database = database_of(&pooled, &bloated.tenant).await?;
+    let statistics = TableStatistics::of(BrokerRole::PooledDurable, &database)?;
+    eventually(VACUUM_WAIT, || async {
+        match statistics.tuples(TenantTable::CurrentAttributes).await {
+            Ok(counts) if counts.dead_share_below(VACUUM_PENDING_PERCENT) => Poll::Ready(()),
+            Ok(counts) => Poll::Pending(counts.to_string()),
+            Err(error) => Poll::Pending(error.to_string()),
+        }
+    })
+    .await?;
     MaintenanceSeed::of(BrokerRole::PooledDurable)?
         .seed_breach(&bloated.tenant, CURRENT_ATTRIBUTES_REPACK)
         .await?;

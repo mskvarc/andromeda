@@ -122,3 +122,20 @@ pub enum PgStatActivity {
     /// none.
     XactStart,
 }
+
+/// `pg_stat_user_tables`: one row per user table of the current database,
+/// with its cumulative statistics.
+#[derive(Iden, Clone, Copy)]
+pub enum PgStatUserTables {
+    /// The relation itself.
+    #[iden = "pg_stat_user_tables"]
+    Table,
+    /// The schema holding the table.
+    Schemaname,
+    /// The table's name.
+    Relname,
+    /// The estimated live rows.
+    NLiveTup,
+    /// The estimated dead rows, those no vacuum has removed yet.
+    NDeadTup,
+}

@@ -173,6 +173,7 @@ pub mod source_request;
 pub mod spelling_matcher;
 pub mod subscription_document;
 pub mod system_time;
+pub mod table_statistics;
 pub mod teardown;
 pub mod temporal_delete_by_query;
 pub mod temporal_map_retrieval;
