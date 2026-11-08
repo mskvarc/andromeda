@@ -1,12 +1,17 @@
 //! The grid of an aggregation period with a year or month part.
 //!
 //! `time_bucket` keeps only the year and month of its origin for such a period
-//! and refuses one that also carries days or time, so the grid is computed here:
-//! period k of a period P from an origin runs from `origin + k * P` to
-//! `origin + (k + 1) * P`. Every boundary is computed from the origin, in UTC: a
-//! boundary stepped from the one before would carry a month-end clamp forward
-//! (31 January, 28 February, 28 March), and the session time zone would move a
-//! boundary across a daylight-saving change.
+//! and refuses one that also carries days or time, so the grid is computed here.
+//! Boundary k of a period P from an anchor runs from the anchor moved by k
+//! periods, in UTC, and every boundary is computed from the anchor: a boundary
+//! stepped from the one before would carry a month-end clamp forward (31 January,
+//! 28 February, 28 March), and the session time zone would move a boundary
+//! across a daylight-saving change.
+//!
+//! The day of month a boundary falls on follows the anchor. An anchor on the
+//! last day of its month puts every boundary on the last day of its month
+//! (29 February, 31 March, 30 April). Any other anchor keeps its day of month,
+//! clamped to the month's last day (30 January, 28 February, 30 March).
 //!
 //! The index of an instant's period is first estimated from the elapsed seconds
 //! over the period's nominal length, a month counted as the Gregorian average of
@@ -25,15 +30,38 @@
 
 use sea_query::{Expr, SimpleExpr};
 
-/// The start of period `index` of the grid of `period` from `origin`:
-/// `((origin AT TIME ZONE 'UTC') + index * period) AT TIME ZONE 'UTC'`.
+/// The start of period `index` of the grid of `period` from `origin`.
 ///
 /// `origin` is a `timestamptz`, `period` an `interval` and `index` an integer;
 /// the result is a `timestamptz`. The end of period k is the start of period
-/// k + 1.
+/// k + 1. A period with no month part is the origin moved by `index` periods.
+/// Otherwise the months are counted from the origin's month, and the day of
+/// month follows the origin's day rule (see the module documentation). Days and
+/// time beside the months are then added `index` times over.
 #[must_use]
 pub fn calendar_period_start(period: SimpleExpr, origin: SimpleExpr, index: SimpleExpr) -> SimpleExpr {
-    Expr::cust_with_exprs("((($1) AT TIME ZONE 'UTC') + ($2) * ($3)) AT TIME ZONE 'UTC'", [origin, index, period])
+    Expr::cust_with_exprs(
+        concat!(
+            "CASE WHEN (extract(year from ($3)) * 12 + extract(month from ($3)))::integer = 0",
+            " THEN (($1) AT TIME ZONE 'UTC') + ($2) * ($3)",
+            " ELSE (",
+            "date_trunc('month', ($1) AT TIME ZONE 'UTC')",
+            " + make_interval(months => ($2)::integer * (extract(year from ($3)) * 12 + extract(month from ($3)))::integer)",
+            " + make_interval(days => (",
+            "CASE WHEN extract(day from ((($1) AT TIME ZONE 'UTC') + interval '1 day')) = 1",
+            " THEN extract(day from (date_trunc('month', ($1) AT TIME ZONE 'UTC')",
+            " + make_interval(months => ($2)::integer * (extract(year from ($3)) * 12 + extract(month from ($3)))::integer)",
+            " + interval '1 month' - interval '1 day'))",
+            " ELSE least(extract(day from (($1) AT TIME ZONE 'UTC')), extract(day from (date_trunc('month', ($1) AT TIME ZONE 'UTC')",
+            " + make_interval(months => ($2)::integer * (extract(year from ($3)) * 12 + extract(month from ($3)))::integer)",
+            " + interval '1 month' - interval '1 day')))",
+            " END - 1)::integer)",
+            " + (($1) AT TIME ZONE 'UTC' - date_trunc('day', ($1) AT TIME ZONE 'UTC'))",
+            " + ($2) * (($3) - make_interval(months => (extract(year from ($3)) * 12 + extract(month from ($3)))::integer))",
+            ") END AT TIME ZONE 'UTC'",
+        ),
+        [origin, index, period],
+    )
 }
 
 /// The estimated index of the period `instant` falls in: the whole nominal
@@ -81,10 +109,32 @@ mod tests {
         Expr::col(Alias::new(name))
     }
 
+    /// Every boundary is computed from the origin and the index, never from a
+    /// boundary before it, and the result is read back in UTC.
     #[test]
     fn a_period_starts_at_the_origin_moved_by_whole_periods_in_utc() {
         let sql = render(calendar_period_start(column("period"), column("origin"), column("k")));
-        assert_eq!(sql, r#"SELECT ((("origin") AT TIME ZONE 'UTC') + ("k") * ("period")) AT TIME ZONE 'UTC'"#);
+        assert!(sql.starts_with(r#"SELECT CASE WHEN (extract(year from ("period")) * 12 + extract(month from ("period")))::integer = 0 THEN (("origin") AT TIME ZONE 'UTC') + ("k") * ("period") ELSE"#), "{sql}");
+        assert!(sql.ends_with("END AT TIME ZONE 'UTC'"), "{sql}");
+        assert!(
+            sql.contains(r#"make_interval(months => ("k")::integer * (extract(year from ("period")) * 12 + extract(month from ("period")))::integer)"#),
+            "{sql}"
+        );
+    }
+
+    /// The month-end branch: the last day of the target month when the origin is
+    /// one, else the origin's day clamped to the target month's last day.
+    #[test]
+    fn a_calendar_boundary_takes_the_month_end_of_a_month_end_origin_and_the_clamped_day_otherwise() {
+        let sql = render(calendar_period_start(column("period"), column("origin"), column("k")));
+        assert!(
+            sql.contains(r#"CASE WHEN extract(day from ((("origin") AT TIME ZONE 'UTC') + interval '1 day')) = 1 THEN extract(day from"#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#"ELSE least(extract(day from (("origin") AT TIME ZONE 'UTC')), extract(day from"#),
+            "{sql}"
+        );
     }
 
     /// The nominal month is 2,629,746 s (30.436875 days) and the nominal year
@@ -113,9 +163,8 @@ mod tests {
             column("observed_at"),
             column("estimate"),
         ));
-        assert_eq!(
-            sql,
-            r#"SELECT ("estimate") - ((((("origin") AT TIME ZONE 'UTC') + ("estimate") * ("period")) AT TIME ZONE 'UTC') > ("observed_at"))::integer + ((((("origin") AT TIME ZONE 'UTC') + ("estimate" + 1) * ("period")) AT TIME ZONE 'UTC') <= ("observed_at"))::integer"#
-        );
+        assert!(sql.starts_with(r#"SELECT ("estimate") - ("#), "{sql}");
+        assert!(sql.contains(r#" > ("observed_at"))::integer"#), "{sql}");
+        assert!(sql.ends_with(r#"<= ("observed_at"))::integer"#), "{sql}");
     }
 }

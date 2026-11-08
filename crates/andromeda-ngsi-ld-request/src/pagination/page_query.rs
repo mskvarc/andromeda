@@ -130,7 +130,6 @@ const fn role(parameter: QueryParameter) -> ParameterRole {
         | QueryParameter::LastN
         | QueryParameter::AggrMethods
         | QueryParameter::AggrPeriodDuration
-        | QueryParameter::AggrPeriodOrigin
         | QueryParameter::AggrGroupBy
         | QueryParameter::Kind
         | QueryParameter::Reload => ParameterRole::Selection,

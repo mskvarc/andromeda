@@ -111,8 +111,6 @@ pub enum QueryParameter {
     AggrMethods,
     /// Aggregation period (`aggrPeriodDuration`).
     AggrPeriodDuration,
-    /// The instant aggregation periods are laid from (`aggrPeriodOrigin`).
-    AggrPeriodOrigin,
     /// Aggregation grouping (`aggrGroupBy`).
     AggrGroupBy,
     /// Kind of stored `@context` (`kind`).

@@ -26,7 +26,6 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::AggrGroupByOnAggregatedAttribute(_)
         | ParameterError::LastNWithGrouping
         | ParameterError::AggregationWithoutAggregatedValues
-        | ParameterError::AggrPeriodOriginWithoutPeriods
         | ParameterError::JoinLevelWithoutJoin
         | ParameterError::ContainedByWithoutJoinLevel
         | ParameterError::EntityMapLifetimeWithoutEntityMap

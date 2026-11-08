@@ -193,7 +193,7 @@ impl TemporalService {
                 }
             }
         }
-        let cut = settle_aggregation_pages(compiled, &mut pages);
+        let cut = settle_aggregation_pages(compiled, &mut pages)?;
         let rendering = AggregationRendering {
             compiled,
             names: compactor.names().await?,

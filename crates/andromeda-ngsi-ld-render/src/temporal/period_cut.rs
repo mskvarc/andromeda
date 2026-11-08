@@ -20,8 +20,8 @@
 use crate::temporal::{history_row::TimeRange, page_cut::PageCut};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalAggregationRow};
-use andromeda_ngsi_ld_query::temporal::instance_page::PageDirection;
-use chrono::{DateTime, Datelike, Utc};
+use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, period_grid::lays_the_grid};
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
 /// One attribute stream: an attribute and the `datasetId` of its instances.
@@ -63,28 +63,34 @@ impl PageCut {
         Some(PageCut { direction, boundary })
     }
 
-    /// This forward cut on a grid of whole months laid from `origin`, moved
-    /// back to the latest end of a period of `rows` it keeps from which the
-    /// same grid is laid; unchanged when its own boundary lays it or no such
-    /// end lies within it, and backwards.
+    /// This cut moved to the nearest boundary of `rows` that lays the grid of
+    /// whole months anchored at `anchor` (clause 4.5.19.1), or `None` when no
+    /// such boundary lies within the rows on the kept side of the cut.
     ///
-    /// Each boundary is `origin` moved by whole months with the day of month
-    /// clamped to the month's last, so one keeping `origin`'s day and time was
-    /// not clamped, and moving it by whole months meets every later boundary.
-    /// From a clamped one (29 February of a grid from 31 January) the months
-    /// fall on its own day instead.
+    /// A continuation opens on the boundary the page ends on and lays its grid
+    /// from there, so only a boundary that [`lays_the_grid`] accepts lays the
+    /// grid of the response. A forward cut moves back to the latest such end
+    /// at or before it, and a backward cut moves forward to the earliest such
+    /// start at or after it.
     #[must_use]
-    pub fn on_whole_month_grid<'a>(self, rows: impl IntoIterator<Item = &'a TemporalAggregationRow>, origin: DateTime<Utc>) -> PageCut {
-        let lays_the_grid = |boundary: DateTime<Utc>| boundary.day() == origin.day() && boundary.time() == origin.time();
-        match self.direction {
-            PageDirection::Forward if !lays_the_grid(self.boundary) => rows
-                .into_iter()
-                .filter_map(|row| row.bucket_end)
-                .filter(|end| *end < self.boundary && lays_the_grid(*end))
-                .max()
-                .map_or(self, |boundary| PageCut { boundary, ..self }),
-            PageDirection::Forward | PageDirection::Backward { .. } => self,
+    pub fn on_whole_month_grid<'a>(self, rows: impl IntoIterator<Item = &'a TemporalAggregationRow>, anchor: DateTime<Utc>) -> Option<PageCut> {
+        if lays_the_grid(anchor, self.boundary) {
+            return Some(self);
         }
+        let rows: Vec<&TemporalAggregationRow> = rows.into_iter().collect();
+        let boundary = match self.direction {
+            PageDirection::Forward => rows
+                .iter()
+                .filter_map(|row| row.bucket_end)
+                .filter(|end| *end < self.boundary && lays_the_grid(anchor, *end))
+                .max(),
+            PageDirection::Backward { .. } => rows
+                .iter()
+                .filter_map(|row| row.bucket_start)
+                .filter(|start| *start > self.boundary && lays_the_grid(anchor, *start))
+                .min(),
+        }?;
+        Some(PageCut { boundary, ..self })
     }
 
     /// Whether an aggregated period stays in the response under this cut:
@@ -228,53 +234,79 @@ mod tests {
             .collect()
     }
 
-    /// From 28 February the months would fall on the 28th, so the page ends
-    /// on 31 January, the latest boundary it holds that kept the 31st.
+    /// The periods between consecutive `boundaries`, as `speed` served them.
+    fn between(boundaries: &[DateTime<Utc>]) -> Vec<TemporalAggregationRow> {
+        boundaries
+            .windows(2)
+            .map(|bounds| TemporalAggregationRow {
+                bucket_start: Some(bounds[0]),
+                bucket_end: Some(bounds[1]),
+                ..period("speed", 0, StreamExtent::Cut)
+            })
+            .collect()
+    }
+
+    /// A month-end grid from 31 July keeps every boundary on a month end, so
+    /// the page ends on 28 February, which lays the same grid.
     #[test]
-    fn a_forward_cut_on_a_clamped_month_end_moves_back_to_the_latest_unclamped_one() {
+    fn a_forward_cut_on_a_month_end_of_a_month_end_grid_stays() {
         let rows = months_from_the_31st(7);
         let cut = PageCut {
             direction: PageDirection::Forward,
             boundary: day(2021, 2, 28),
         };
-        pretty_assertions::assert_eq!(cut.on_whole_month_grid(&rows, day(2020, 7, 31)).boundary, day(2021, 1, 31));
+        pretty_assertions::assert_eq!(cut.on_whole_month_grid(&rows, day(2020, 7, 31)), Some(cut));
     }
 
+    /// From 30 January a grid keeps the 30th, so the boundary of 28 February
+    /// is clamped and lays no grid: the page ends on the latest end that does,
+    /// 30 January.
     #[test]
-    fn a_forward_cut_on_an_unclamped_boundary_stays() {
-        let rows = months_from_the_31st(6);
+    fn a_forward_cut_on_a_clamped_boundary_of_a_fixed_day_grid_moves_back_to_a_legal_end() {
+        let rows = between(&[day(2020, 12, 30), day(2021, 1, 30), day(2021, 2, 28)]);
         let cut = PageCut {
             direction: PageDirection::Forward,
-            boundary: day(2021, 1, 31),
+            boundary: day(2021, 2, 28),
         };
-        pretty_assertions::assert_eq!(cut.on_whole_month_grid(&rows, day(2020, 7, 31)), cut);
+        pretty_assertions::assert_eq!(cut.on_whole_month_grid(&rows, day(2020, 1, 30)).map(|cut| cut.boundary), Some(day(2021, 1, 30)));
     }
 
-    /// The one period the page holds ends on 30 September; no earlier end
-    /// lies within it, so the page keeps it.
+    /// 30 March keeps the 30th and is not a month end, so it lays the grid.
     #[test]
-    fn a_forward_cut_with_no_unclamped_boundary_within_it_stays() {
-        let rows: Vec<TemporalAggregationRow> = months_from_the_31st(2).into_iter().skip(1).collect();
+    fn a_forward_cut_on_a_fixed_day_boundary_that_lays_the_grid_stays() {
+        let rows = between(&[day(2021, 1, 30), day(2021, 2, 28), day(2021, 3, 30)]);
         let cut = PageCut {
             direction: PageDirection::Forward,
-            boundary: day(2020, 9, 30),
+            boundary: day(2021, 3, 30),
         };
-        pretty_assertions::assert_eq!(cut.on_whole_month_grid(&rows, day(2020, 7, 31)), cut);
+        pretty_assertions::assert_eq!(cut.on_whole_month_grid(&rows, day(2020, 1, 30)), Some(cut));
     }
 
-    /// A grid laid from the 28th or earlier clamps no month.
+    /// The rows hold no end on the 28th, so no end lays a grid from the 28th.
     #[test]
-    fn a_forward_cut_on_a_grid_from_the_28th_stays() {
+    fn a_forward_cut_with_no_legal_end_within_the_page_is_refused() {
         let rows = months_from_the_31st(7);
         let cut = PageCut {
             direction: PageDirection::Forward,
             boundary: day(2021, 2, 28),
         };
-        pretty_assertions::assert_eq!(cut.on_whole_month_grid(&rows, day(2020, 7, 28)), cut);
+        pretty_assertions::assert_eq!(cut.on_whole_month_grid(&rows, day(2020, 7, 28)), None);
+    }
+
+    /// A 29 February grid of years is a month-end grid, whose 28 February of a
+    /// non-leap year lays the grid.
+    #[test]
+    fn a_yearly_cut_on_a_non_leap_month_end_of_a_month_end_grid_stays() {
+        let rows = between(&[day(2024, 2, 29), day(2025, 2, 28), day(2026, 2, 28)]);
+        let cut = PageCut {
+            direction: PageDirection::Forward,
+            boundary: day(2025, 2, 28),
+        };
+        pretty_assertions::assert_eq!(cut.on_whole_month_grid(&rows, day(2024, 2, 29)), Some(cut));
     }
 
     #[test]
-    fn a_backward_cut_stays_on_its_boundary() {
+    fn a_backward_cut_on_a_boundary_that_lays_the_grid_stays() {
         let rows = months_from_the_31st(7);
         let cut = PageCut {
             direction: PageDirection::Backward {
@@ -282,7 +314,7 @@ mod tests {
             },
             boundary: day(2020, 9, 30),
         };
-        pretty_assertions::assert_eq!(cut.on_whole_month_grid(&rows, day(2020, 7, 31)), cut);
+        pretty_assertions::assert_eq!(cut.on_whole_month_grid(&rows, day(2020, 7, 31)), Some(cut));
     }
 
     /// A page no stream of which was cut is complete.

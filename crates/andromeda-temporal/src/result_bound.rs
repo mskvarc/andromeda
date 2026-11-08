@@ -15,6 +15,11 @@ pub enum ResultBound {
     /// The distinct groups one grouped aggregation would emit.
     #[strum(serialize = "aggregation groups (extensions.temporal_aggregation_grouping_max_groups)")]
     AggregationGroups,
+    /// The periods one page of an aggregated temporal read holds per attribute
+    /// stream: a page of a grid the budget bounds, or a calendar grid whose
+    /// page cannot end on a boundary that lays the grid within the budget.
+    #[strum(serialize = "aggregation periods one page holds per attribute stream (temporal.query.max_last_n)")]
+    AggregationPeriods,
     /// The instances of one attribute sharing the instant at the edge of a
     /// temporal page, which the page carries whole.
     #[strum(serialize = "instances of one attribute sharing the instant at a page edge (temporal.max_edge_group)")]
@@ -39,5 +44,6 @@ mod tests {
                 .ends_with("(extensions.temporal_aggregation_grouping_max_groups)")
         );
         assert!(ResultBound::EdgeGroup.to_string().ends_with("(temporal.max_edge_group)"));
+        assert!(ResultBound::AggregationPeriods.to_string().ends_with("(temporal.query.max_last_n)"));
     }
 }

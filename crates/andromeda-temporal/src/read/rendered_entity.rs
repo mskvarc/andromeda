@@ -230,7 +230,7 @@ impl TemporalService {
         compactor: &EntityCompactor<'_>,
     ) -> Result<RenderedTemporalEntity, TemporalError> {
         let mut pages = [self.read_aggregation_page(scope, entity_id, compiled).await?];
-        let cut = settle_aggregation_pages(compiled, &mut pages);
+        let cut = settle_aggregation_pages(compiled, &mut pages)?;
         let [page] = pages;
         render_aggregation_page(
             page,

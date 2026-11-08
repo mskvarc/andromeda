@@ -55,7 +55,6 @@ impl TryFrom<Query> for TemporalQueryParameters {
             options: None,
             aggr_methods: aggregation.0,
             aggr_period_duration: aggregation.1,
-            aggr_period_origin: None,
             aggr_group_by: aggregation.2,
             // Table 5.2.23-1 defines no pagination member: the POST binding
             // reads its page from the URL (clause 6.24.3.1).

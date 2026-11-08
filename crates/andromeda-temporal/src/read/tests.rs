@@ -260,7 +260,6 @@ async fn a_forward_cut_retrieve_continues_one_microsecond_past_its_edge() {
         Some(TemporalContinuation {
             interval: TimeInterval::After(minute(19) + Duration::microseconds(1)),
             last_n: None,
-            period_origin: None,
         })
     );
 }
@@ -286,7 +285,6 @@ async fn a_backward_cut_retrieve_continues_with_the_last_n_its_sparsest_stream_i
                 to: minute(2),
             },
             last_n: NonZeroU32::new(44),
-            period_origin: None,
         })
     );
 }

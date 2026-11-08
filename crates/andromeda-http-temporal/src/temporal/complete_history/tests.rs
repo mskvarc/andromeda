@@ -168,7 +168,6 @@ async fn a_source_stop_before_the_local_one_is_an_exclusive_bound() {
         Some(TemporalContinuation {
             interval: TimeInterval::After(at("2020-01-01T01:05:00.000001Z")),
             last_n: None,
-            period_origin: None,
         })
     );
 }
@@ -249,7 +248,6 @@ async fn backwards_a_source_stop_after_the_local_one_is_an_exclusive_bound() {
                 to: at("2020-01-01T01:15:00Z"),
             },
             last_n: NonZeroU32::new(49),
-            period_origin: None,
         })
     );
 }

@@ -79,6 +79,17 @@ impl AggregationGrid {
         self.period.grid()
     }
 
+    /// Whether a page of this grid may end on one of its boundaries: every
+    /// exact boundary, and a calendar boundary only where the duration is whole
+    /// months or years. A grid mixing months with days or time has no boundary
+    /// a continuation could lay its grid from, so its reads are never paged.
+    pub(crate) fn pages_by_periods(&self) -> bool {
+        match self.period.grid() {
+            PeriodGrid::Exact => true,
+            PeriodGrid::Calendar => self.period.is_whole_months(),
+        }
+    }
+
     /// The period bound as an interval.
     pub(crate) fn width(&self) -> SimpleExpr {
         cast(Expr::val(self.period.as_iso8601()), PostgresType::Interval)

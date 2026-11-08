@@ -6,10 +6,11 @@
 //! before any is rendered: the cut is the earliest period boundary any stream
 //! of any of them was cut at, and the whole-range period an absent
 //! `aggrPeriodDuration` asks for reads the same for every stream of the
-//! response (clause 4.5.19.1). On a calendar grid the cut also carries the
-//! origin the periods were laid from, which the continuation keeps, and on a
-//! grid of whole months it ends where it can on a boundary a continuation
-//! from `range-end` lays the same grid from.
+//! response (clause 4.5.19.1). On a grid of whole months the cut ends on a
+//! boundary that lays the grid from the anchor, so a continuation opening there
+//! lays the same grid. A grid mixing months with days or time has no such
+//! boundary: its pages are served whole, and refused when they exceed the page
+//! budget.
 
 use crate::{
     error::TemporalError,
@@ -24,12 +25,15 @@ use crate::{
     service::TemporalService,
 };
 use andromeda_ngsi_ld_compaction::{aggregated_entity::aggregated_entity, name_compaction::NameCompaction};
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, temporal_history::TemporalHistory};
-use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, period_grid::PeriodGrid};
+use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, instance_page::InstancePage, period_grid::PeriodGrid};
 use andromeda_ngsi_ld_render::temporal::{page_cut::PageCut, period_cut::period_time_range, whole_range::WholeRange};
 use chrono::{DateTime, Utc};
-use std::slice;
+use std::{
+    collections::{HashMap, HashSet},
+    slice,
+};
 
 /// One entity's aggregated periods as its page read them, before the
 /// response's common cut is applied.
@@ -125,23 +129,36 @@ fn aggregation_page(entity_id: Identifier, answer: Option<Result<TemporalAggrega
 /// Cut every page of a response at the one period boundary any stream of any
 /// of them was cut at, and report the whole-range period every stream of the
 /// response shares; the cut, or `None` when the response is complete.
-pub(crate) fn settle_aggregation_pages(compiled: &CompiledTemporalQuery, pages: &mut [EntityAggregationPage]) -> Option<ResponseCut> {
+///
+/// A grid mixing months with days or time has no boundary a continuation could
+/// lay its grid from, so its pages are never cut: they are served whole and
+/// refused when they hold more periods than the budget.
+///
+/// # Errors
+///
+/// Returns [`TemporalError::TooManyResults`] when an unpaged page of mixed
+/// periods exceeds the budget, or when a page of whole months has no period end
+/// that lays its grid within the budget.
+pub(crate) fn settle_aggregation_pages(compiled: &CompiledTemporalQuery, pages: &mut [EntityAggregationPage]) -> Result<Option<ResponseCut>, TemporalError> {
     let period = compiled.representation.aggr_period_duration;
-    // Every entity of a response lays its periods from one origin: the
-    // request's, or for a retrieval naming no instant its one entity's.
-    let calendar_origin = period
-        .filter(|period| period.grid() == PeriodGrid::Calendar)
-        .and(pages.iter().find_map(|page| page.origin));
+    if period.is_some_and(|period| period.grid() == PeriodGrid::Calendar && !period.is_whole_months()) {
+        refuse_over_budget(compiled, pages)?;
+        return Ok(None);
+    }
     let cut = compiled
         .instances
         .page
         .direction()
-        .and_then(|direction| PageCut::common(pages.iter().filter_map(|page| PageCut::of_periods(&page.rows, direction))))
-        .map(|cut| match (period, calendar_origin) {
-            (Some(period), Some(origin)) if period.is_whole_months() => cut.on_whole_month_grid(pages.iter().flat_map(|page| page.rows.iter()), origin),
-            (Some(_) | None, Some(_) | None) => cut,
-        })
-        .map(|cut| ResponseCut::of_periods(cut, pages, calendar_origin));
+        .and_then(|direction| PageCut::common(pages.iter().filter_map(|page| PageCut::of_periods(&page.rows, direction))));
+    let cut = match (cut, period) {
+        (Some(cut), Some(period)) if period.is_whole_months() => {
+            let anchor = pages.iter().find_map(|page| page.origin);
+            let moved = anchor.and_then(|anchor| cut.on_whole_month_grid(pages.iter().flat_map(|page| page.rows.iter()), anchor));
+            Some(moved.ok_or_else(|| no_legal_end(compiled, pages))?)
+        }
+        (cut, _) => cut,
+    };
+    let cut = cut.map(|cut| ResponseCut::of_periods(cut, pages));
     if let Some(ResponseCut { cut, .. }) = cut {
         for page in pages.iter_mut() {
             page.rows.retain(|row| cut.keeps_period(row));
@@ -153,7 +170,68 @@ pub(crate) fn settle_aggregation_pages(compiled: &CompiledTemporalQuery, pages: 
             range.close(row);
         }
     }
-    cut
+    Ok(cut)
+}
+
+/// The periods one page may hold per attribute stream, when the request pages
+/// its periods.
+fn period_budget(compiled: &CompiledTemporalQuery) -> Option<u64> {
+    match compiled.instances.page {
+        InstancePage::Periods { budget } | InstancePage::PeriodsBackward { budget, .. } => Some(u64::from(budget.periods)),
+        InstancePage::Whole | InstancePage::LastN { .. } | InstancePage::Forward { .. } | InstancePage::Backward { .. } => None,
+    }
+}
+
+/// One attribute stream of one entity: the unit a period budget is counted in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct PeriodStream<'a> {
+    /// The entity the stream belongs to.
+    entity: &'a Identifier,
+    /// The attribute the stream holds.
+    attribute: &'a AttributeName,
+    /// The `datasetId` of the stream's instances, absent for the default instance.
+    dataset: Option<&'a Identifier>,
+}
+
+/// The most periods any one attribute stream of any entity holds in `pages`.
+fn periods_per_stream(pages: &[EntityAggregationPage]) -> u64 {
+    let mut periods: HashMap<PeriodStream<'_>, HashSet<Option<DateTime<Utc>>>> = HashMap::new();
+    for page in pages {
+        for row in &page.rows {
+            let stream = PeriodStream {
+                entity: &page.entity_id,
+                attribute: &row.attribute_name,
+                dataset: row.dataset_id.as_ref(),
+            };
+            periods.entry(stream).or_default().insert(row.bucket_start);
+        }
+    }
+    periods
+        .values()
+        .map(HashSet::len)
+        .max()
+        .map_or(0, |count| u64::try_from(count).unwrap_or(u64::MAX))
+}
+
+/// Refuse an unpaged page of mixed periods that holds more periods than the
+/// budget; a page that is not paged by periods is not checked.
+fn refuse_over_budget(compiled: &CompiledTemporalQuery, pages: &[EntityAggregationPage]) -> Result<(), TemporalError> {
+    let Some(maximum) = period_budget(compiled) else {
+        return Ok(());
+    };
+    let held = periods_per_stream(pages);
+    if held > maximum {
+        return Err(TemporalError::too_many_results(held, maximum, ResultBound::AggregationPeriods));
+    }
+    Ok(())
+}
+
+/// The refusal of a page of whole months none of whose period ends lays the
+/// grid within the budget. A continuation of the page needs at least one more
+/// period than the budget holds, so the refusal counts one more than it.
+fn no_legal_end(compiled: &CompiledTemporalQuery, pages: &[EntityAggregationPage]) -> TemporalError {
+    let maximum = period_budget(compiled).unwrap_or_else(|| periods_per_stream(pages));
+    TemporalError::too_many_results(maximum.saturating_add(1), maximum, ResultBound::AggregationPeriods)
 }
 
 /// The bounds a rendered aggregated page is held to.
@@ -210,9 +288,13 @@ pub(crate) fn render_aggregation_page(
 
 #[cfg(test)]
 mod tests {
-    use crate::read::{
-        aggregated_page::{EntityAggregationPage, settle_aggregation_pages},
-        rendered_entity::HistoryPresence,
+    use crate::{
+        error::TemporalError,
+        read::{
+            aggregated_page::{EntityAggregationPage, settle_aggregation_pages},
+            rendered_entity::HistoryPresence,
+        },
+        result_bound::ResultBound,
     };
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_type::AttributeType, temporal_format::TemporalFormat, time_prop::TimeProp};
     use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalAggregationRow};
@@ -325,11 +407,10 @@ mod tests {
         "2021-02-28T00:00:00Z",
     ];
 
-    /// A page of `P1M` from 31 July cut at 28 February ends on 31 January
-    /// instead, from which a continuation lays the same grid, and its
-    /// continuation keeps the origin.
+    /// A grid from the 31st of a month is a month-end grid, so every boundary
+    /// is a month end and the page cut on 28 February lays the same grid again.
     #[test]
-    fn a_month_page_cut_on_a_clamped_boundary_ends_on_the_latest_unclamped_one() {
+    fn a_month_page_cut_on_a_month_end_of_a_month_end_grid_continues_on_it() {
         let origin = at("2020-07-31T00:00:00Z");
         let compiled = aggregated("P1M", TimeInterval::After(origin));
         let mut pages = [EntityAggregationPage::read(
@@ -337,18 +418,17 @@ mod tests {
             between(&MONTHS_FROM_THE_31ST),
             Some(origin),
         )];
-        let cut = settle_aggregation_pages(&compiled, &mut pages).expect("the response was cut");
-        pretty_assertions::assert_eq!(cut.cut.boundary, at("2021-01-31T00:00:00Z"));
-        pretty_assertions::assert_eq!(pages[0].rows.len(), 6);
+        let cut = settle_aggregation_pages(&compiled, &mut pages).expect("settles").expect("the response was cut");
+        pretty_assertions::assert_eq!(cut.cut.boundary, at("2021-02-28T00:00:00Z"));
+        pretty_assertions::assert_eq!(pages[0].rows.len(), 7);
         let next = cut.range(TimeInterval::After(origin), None).next.expect("a continuation");
-        pretty_assertions::assert_eq!(next.interval, TimeInterval::After(at("2021-01-31T00:00:00Z")));
-        pretty_assertions::assert_eq!(next.period_origin, Some(origin));
+        pretty_assertions::assert_eq!(next.interval, TimeInterval::After(at("2021-02-28T00:00:00Z")));
     }
 
-    /// No boundary of `P1M1D` is the origin moved by whole months, so the
-    /// page ends where it was cut and its continuation keeps the origin.
+    /// A grid mixing months with days is served whole: its periods are never
+    /// cut, and no continuation is offered.
     #[test]
-    fn a_page_of_months_and_days_ends_where_it_was_cut_and_keeps_its_origin() {
+    fn a_page_of_months_and_days_is_served_whole_and_never_cut() {
         let origin = at("2020-07-31T00:00:00Z");
         let compiled = aggregated("P1M1D", TimeInterval::After(origin));
         let rows = between(&["2020-07-31T00:00:00Z", "2020-09-01T00:00:00Z", "2020-10-01T00:00:00Z"]);
@@ -357,21 +437,51 @@ mod tests {
             rows,
             Some(origin),
         )];
-        let cut = settle_aggregation_pages(&compiled, &mut pages).expect("the response was cut");
-        pretty_assertions::assert_eq!(cut.cut.boundary, at("2020-10-01T00:00:00Z"));
-        let next = cut.range(TimeInterval::After(origin), None).next.expect("a continuation");
-        pretty_assertions::assert_eq!(next.period_origin, Some(origin));
+        assert!(settle_aggregation_pages(&compiled, &mut pages).expect("settles").is_none());
+        pretty_assertions::assert_eq!(pages[0].rows.len(), 2);
+    }
+
+    /// A mixed-duration page that holds more periods than the budget is refused
+    /// with the aggregation periods bound.
+    #[test]
+    fn a_page_of_months_and_days_over_the_period_budget_is_refused() {
+        let origin = at("2020-07-31T00:00:00Z");
+        let mut compiled = aggregated("P1M1D", TimeInterval::After(origin));
+        compiled.instances.page = InstancePage::Periods {
+            budget: PeriodBudget {
+                periods: 1,
+                instances: NonZeroU64::new(1_000_000).expect("a positive budget"),
+            },
+        };
+        let rows = between(&["2020-07-31T00:00:00Z", "2020-09-01T00:00:00Z", "2020-10-01T00:00:00Z"]);
+        let mut pages = [EntityAggregationPage::read(
+            "urn:ngsi-ld:Vehicle:1".parse().expect("a valid identifier"),
+            rows,
+            Some(origin),
+        )];
+        let error = settle_aggregation_pages(&compiled, &mut pages).expect_err("over the budget");
+        assert!(
+            matches!(
+                error,
+                TemporalError::TooManyResults {
+                    matched: 2,
+                    maximum: 1,
+                    bound: ResultBound::AggregationPeriods,
+                }
+            ),
+            "{error:?}"
+        );
     }
 
     /// An exact grid laid from any of its boundaries is the same grid, so its
-    /// continuation names no origin.
+    /// continuation opens on the boundary the page ends on.
     #[test]
-    fn an_exact_page_continuation_names_no_origin() {
+    fn an_exact_page_continuation_opens_on_its_boundary() {
         let compiled = aggregated("PT1H", TimeInterval::After(at("2024-01-01T00:00:00Z")));
         let mut pages = [page("urn:ngsi-ld:Vehicle:1", hours(0, 19, StreamExtent::Cut))];
-        let cut = settle_aggregation_pages(&compiled, &mut pages).expect("the response was cut");
+        let cut = settle_aggregation_pages(&compiled, &mut pages).expect("settles").expect("the response was cut");
         let next = cut.range(TimeInterval::After(at("2024-01-01T00:00:00Z")), None).next.expect("a continuation");
-        pretty_assertions::assert_eq!(next.period_origin, None);
+        pretty_assertions::assert_eq!(next.interval, TimeInterval::After(at("2024-01-01T19:00:00Z")));
     }
 
     /// Clause 6.3.10: one response, one `Content-Range`. Vehicle 1 was cut
@@ -385,7 +495,10 @@ mod tests {
             page("urn:ngsi-ld:Vehicle:1", hours(0, 19, StreamExtent::Cut)),
             page("urn:ngsi-ld:Vehicle:2", hours(5, 24, StreamExtent::Cut)),
         ];
-        let cut = settle_aggregation_pages(&compiled, &mut pages).expect("the response was cut").cut;
+        let cut = settle_aggregation_pages(&compiled, &mut pages)
+            .expect("settles")
+            .expect("the response was cut")
+            .cut;
         pretty_assertions::assert_eq!(cut.boundary, at("2024-01-01T19:00:00Z"));
         pretty_assertions::assert_eq!(pages[0].rows.len(), 19);
         pretty_assertions::assert_eq!(pages[1].rows.len(), 14);
@@ -397,7 +510,7 @@ mod tests {
     fn a_response_no_stream_was_cut_in_is_complete() {
         let compiled = aggregated("PT1H", TimeInterval::After(at("2024-01-01T00:00:00Z")));
         let mut pages = [page("urn:ngsi-ld:Vehicle:1", hours(0, 40, StreamExtent::Whole))];
-        assert!(settle_aggregation_pages(&compiled, &mut pages).is_none());
+        assert!(settle_aggregation_pages(&compiled, &mut pages).expect("settles").is_none());
         pretty_assertions::assert_eq!(pages[0].rows.len(), 40);
     }
 
@@ -411,7 +524,7 @@ mod tests {
             page("urn:ngsi-ld:Vehicle:1", vec![period(start, at("2024-01-02T15:00:00Z"), StreamExtent::Whole)]),
             page("urn:ngsi-ld:Vehicle:2", vec![period(start, at("2024-01-01T09:00:00Z"), StreamExtent::Whole)]),
         ];
-        assert!(settle_aggregation_pages(&compiled, &mut pages).is_none());
+        assert!(settle_aggregation_pages(&compiled, &mut pages).expect("settles").is_none());
         for row in pages.iter().flat_map(|page| &page.rows) {
             pretty_assertions::assert_eq!(row.bucket_start, Some(start));
             pretty_assertions::assert_eq!(row.bucket_end, Some(at("2024-01-02T15:00:00Z")));

@@ -219,7 +219,6 @@ fn compile_representation(params: &TemporalQueryParameters, format: TemporalForm
         // clone: the compiled representation outlives the borrowed request, which may be reused.
         .aggr_methods(params.aggr_methods.clone().filter(|_| aggregation).unwrap_or_default())
         .aggr_period_duration(params.aggr_period_duration.filter(|_| aggregation))
-        .period_origin(params.aggr_period_origin.filter(|_| aggregation))
         .grouping(grouping)
         .sys_attrs(params.sys_attrs())
         .build()
@@ -340,17 +339,13 @@ mod tests {
         let params = TemporalQueryParameters {
             aggr_methods: Some(vec![AggrMethod::Sum]),
             aggr_period_duration: hourly(),
-            aggr_period_origin: Some("2024-01-01T00:00:00Z".parse().expect("a valid instant")),
             ..TemporalQueryParameters::default()
         };
         let ignored = compile_representation(&params, TemporalFormat::TemporalValues, None);
-        pretty_assertions::assert_eq!(
-            (ignored.aggr_methods, ignored.aggr_period_duration, ignored.period_origin),
-            (Vec::new(), None, None)
-        );
+        pretty_assertions::assert_eq!((ignored.aggr_methods, ignored.aggr_period_duration), (Vec::new(), None));
         let kept = compile_representation(&params, TemporalFormat::AggregatedValues, None);
         pretty_assertions::assert_eq!(kept.aggr_methods, vec![AggrMethod::Sum]);
-        assert!(kept.aggr_period_duration.is_some() && kept.period_origin.is_some());
+        assert!(kept.aggr_period_duration.is_some());
     }
 
     /// `n` as a client `lastN`.

@@ -7,11 +7,7 @@
 //! `aggrPeriodDuration`). Clauses 6.3.11 and 6.3.12 add `format` and
 //! `options`, clause 6.3.18 adds `local`, and clause 5.7.3.3 adds the
 //! `entityMap` flag and its suggested lifetime, which the table leaves out.
-//! `aggrPeriodOrigin` is Andromeda's: the `rel="next"` continuation of a
-//! calendar-grid aggregation carries it, as a collection pointer carries
-//! `pageContext`, so the clause 6.3.10 next page lies on the grid of the first
-//! (clause 4.5.19). The
-//! `temporal_linked_retrieval` and `temporal_aggregation_grouping` extensions
+//! The `temporal_linked_retrieval` and `temporal_aggregation_grouping` extensions
 //! add `join`, `joinLevel`, `containedBy` and `aggrGroupBy`, which the
 //! binding's extension gate refuses while they are off. One entity's history
 //! is no collection clause 4.12 pages, and the operation selects no entity, so
@@ -105,12 +101,6 @@ pub struct TemporalRetrieveParameters {
     #[serde(rename = "aggrPeriodDuration")]
     #[serde(default, with = "optional")]
     pub aggr_period_duration: Option<AggregationPeriod>,
-    /// The instant the aggregation periods are laid from
-    /// (`aggrPeriodOrigin`): the origin a `rel="next"` continuation of a
-    /// calendar-grid aggregation keeps once its window opens past it, as the
-    /// `pageContext` of a collection pointer keeps its context.
-    #[serde(rename = "aggrPeriodOrigin", default, deserialize_with = "instant_serde::optional::deserialize")]
-    pub aggr_period_origin: Option<DateTime<Utc>>,
     /// The grouping within each aggregation period (`aggrGroupBy`, the
     /// `temporal_aggregation_grouping` extension).
     #[serde(rename = "aggrGroupBy")]
@@ -157,7 +147,6 @@ query_parameter_set!(TemporalRetrieveParameters {
     Lang,
     AggrMethods,
     AggrPeriodDuration,
-    AggrPeriodOrigin,
     AggrGroupBy,
     Format,
     Options,
@@ -186,7 +175,6 @@ impl From<TemporalRetrieveParameters> for TemporalQueryParameters {
             lang: retrieve.lang,
             aggr_methods: retrieve.aggr_methods,
             aggr_period_duration: retrieve.aggr_period_duration,
-            aggr_period_origin: retrieve.aggr_period_origin,
             aggr_group_by: retrieve.aggr_group_by,
             format: retrieve.format,
             options: retrieve.options,
@@ -208,7 +196,6 @@ mod tests {
         query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation, retrieve_parameters::TemporalRetrieveParameters},
     };
     use andromeda_linked_retrieval::admission::TemporalJoin;
-    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use pretty_assertions::assert_eq;
     use std::num::NonZeroU32;
 
@@ -232,18 +219,6 @@ mod tests {
         assert!(query.entity_type.is_none() && query.q.is_none() && query.page.is_absent());
     }
 
-    /// The origin a continuation of a calendar grid keeps reaches the query
-    /// model beside the period it lays.
-    #[test]
-    fn the_period_origin_reaches_the_query_model() {
-        let query = TemporalQueryParameters::from(params(
-            "timerel=after&timeAt=2020-02-29T00:00:00Z&format=aggregatedValues&aggrMethods=sum&aggrPeriodDuration=P1M&aggrPeriodOrigin=2020-01-31T00:00:00Z",
-        ));
-        let origin = "2020-01-31T00:00:00Z".parse::<NgsiLdDateTime>().expect("a valid instant").get();
-        assert_eq!(query.aggr_period_origin, Some(origin));
-        assert!(query.validate(TemporalQueryOperation::Retrieve, TemporalJoin::Spec).is_ok());
-    }
-
     /// Clause 5.7.3 and Tables 6.19.3.1-1: a winning `temporalValues` format
     /// ignores the aggregation parameters `options=aggregatedValues` admits,
     /// and without `aggregatedValues` anywhere they are refused.
@@ -260,19 +235,6 @@ mod tests {
             .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Spec)
             .expect_err("no aggregated values named");
         assert!(matches!(error, ParameterError::AggregationWithoutAggregatedValues), "{error:?}");
-    }
-
-    /// An origin lays periods, so without a non-zero period there is nothing
-    /// for it to lay (clause 6.3.20).
-    #[test]
-    fn a_period_origin_without_a_period_is_invalid() {
-        for aggregation in ["", "&aggrPeriodDuration=PT0S"] {
-            let query = TemporalQueryParameters::from(params(&format!(
-                "format=aggregatedValues&aggrMethods=sum&aggrPeriodOrigin=2020-01-31T00:00:00Z{aggregation}"
-            )));
-            let error = query.validate(TemporalQueryOperation::Retrieve, TemporalJoin::Spec).expect_err(aggregation);
-            assert!(matches!(error, ParameterError::AggrPeriodOriginWithoutPeriods), "{aggregation}: {error:?}");
-        }
     }
 
     /// The extension members are read here and refused by the binding's gate

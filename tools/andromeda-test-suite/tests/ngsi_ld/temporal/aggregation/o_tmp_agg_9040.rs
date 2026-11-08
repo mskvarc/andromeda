@@ -1,73 +1,61 @@
-//! A year grid from 29 february walks its next links on the grid of the first page.
+//! A monthly grid from the 30th keeps its day, clamped in February, and refuses a mixed duration past its budget.
 
 use andromeda_test_suite::{
-    aggregated_answer::read,
-    aggregation_matcher::{has_aggregate, period, successive_periods},
+    aggregation_matcher::{has_aggregate, successive_periods},
     broker,
-    followed_link,
-    header_matcher::absent,
-    link_header::link_text,
     namespace::Namespace,
-    nth::nth,
     outcome::Upserted,
-    paged_history::has_range,
     period_grid::series,
+    problem::problem,
+    wire::request_to,
 };
 use googletest::prelude::*;
-use http::{
-    HeaderValue,
-    StatusCode,
-    header::{ACCEPT, CONTENT_RANGE},
-};
+use http::{HeaderValue, Method, StatusCode, header::ACCEPT};
 use ngsi_ld::{
-    http::headers::{Accept, ContentRange, ContentRangeSize, Link, RelationType},
-    model::{NgsiLdMediaType, evolution::AggregationMethod},
+    http::headers::Accept,
+    model::{ErrorType, NgsiLdMediaType, evolution::AggregationMethod},
     query::temporal_query,
 };
 
-/// Pins: 24 instances, one per P1Y period laid from 2000-02-29, answer a 206 of 16 periods ending on 2016-02-29
-/// rather than on the clamped 2019-02-28, whose rel="next" Link names `aggrPeriodOrigin` 2000-02-29 and answers the
-/// other 8 periods, 2020's starting on 29 February; a request built from the Content-Range end answers the same 8
-/// Clause: 4.5.19, 4.5.19.1, 6.3.10
-/// Recorded: Andromeda configuration, not v1.9.1: the base stack answers at most 19 periods per attribute (clause
-/// 6.3.10 leaves the limit to the implementation)
-/// Recorded: clause 6.3.10 defines no request that continues a partial response, and clause 4.5.19 does not say where
-/// periods start; Andromeda's rel="next" Link names the origin of a calendar grid in `aggrPeriodOrigin` so the next
-/// page keeps the grid of the first
-/// Recorded: a forward page on a grid of whole months ends on the latest boundary that kept the origin's day, from
-/// which a request built from the Content-Range end lays the same grid
+/// Pins: a monthly grid anchored on 30 January 2024 keeps the 30th, so its boundary in February is the 29th of the
+/// leap year, and 30 April is an ordinary boundary of it. A duration mixing months with days has no legal cut, so a
+/// read of it over the page budget is refused with `TooManyResults`
+/// Clause: 4.5.19, 4.5.19.1, 6.3.20
+/// Recorded: Andromeda's calendar grid rule and its mixed-duration refusal, on the base stack's period budget of 19
 #[gtest]
 #[tokio::test]
-async fn o_tmp_agg_9040_a_year_grid_from_29_february_walks_its_next_links_on_the_grid_of_the_first_page() -> Result<()> {
+async fn o_tmp_agg_9040_a_monthly_grid_from_the_30th_keeps_its_day_and_a_mixed_duration_past_the_budget_is_refused() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let grid_evolution = series(
         &namespace,
         &[
-            "2000-03-01T00:00:00Z",
-            "2001-03-01T00:00:00Z",
-            "2002-03-01T00:00:00Z",
-            "2003-03-01T00:00:00Z",
-            "2004-03-01T00:00:00Z",
-            "2005-03-01T00:00:00Z",
-            "2006-03-01T00:00:00Z",
-            "2007-03-01T00:00:00Z",
-            "2008-03-01T00:00:00Z",
-            "2009-03-01T00:00:00Z",
-            "2010-03-01T00:00:00Z",
-            "2011-03-01T00:00:00Z",
-            "2012-03-01T00:00:00Z",
-            "2013-03-01T00:00:00Z",
-            "2014-03-01T00:00:00Z",
-            "2015-03-01T00:00:00Z",
-            "2016-03-01T00:00:00Z",
-            "2017-03-01T00:00:00Z",
-            "2018-03-01T00:00:00Z",
-            "2019-03-01T00:00:00Z",
-            "2020-03-01T00:00:00Z",
-            "2021-03-01T00:00:00Z",
-            "2022-03-01T00:00:00Z",
-            "2023-03-01T00:00:00Z",
+            "2024-02-01T00:00:00Z",
+            "2024-03-01T00:00:00Z",
+            "2024-04-01T00:00:00Z",
+            "2024-05-01T00:00:00Z",
+            "2024-06-01T00:00:00Z",
+            "2024-07-01T00:00:00Z",
+            "2024-08-01T00:00:00Z",
+            "2024-09-01T00:00:00Z",
+            "2024-10-01T00:00:00Z",
+            "2024-11-01T00:00:00Z",
+            "2024-12-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+            "2025-02-01T00:00:00Z",
+            "2025-03-01T00:00:00Z",
+            "2025-04-01T00:00:00Z",
+            "2025-05-01T00:00:00Z",
+            "2025-06-01T00:00:00Z",
+            "2025-07-01T00:00:00Z",
+            "2025-08-01T00:00:00Z",
+            "2025-09-01T00:00:00Z",
+            "2025-10-01T00:00:00Z",
+            "2025-11-01T00:00:00Z",
+            "2025-12-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+            "2026-02-01T00:00:00Z",
+            "2026-03-01T00:00:00Z",
         ],
     )?;
     let grid_id = grid_evolution.id.clone();
@@ -78,100 +66,41 @@ async fn o_tmp_agg_9040_a_year_grid_from_29_february_walks_its_next_links_on_the
         .temporal()
         .retrieve_aggregated(&grid_id)
         .temporal_q(
-            temporal_query::between("2000-02-29T00:00:00Z".parse()?, "2024-02-29T00:00:00Z".parse()?)
+            temporal_query::between("2024-01-30T00:00:00Z".parse()?, "2024-07-30T00:00:00Z".parse()?)
                 .aggregation_methods([AggregationMethod::Sum])
-                .aggregation_period("P1Y".parse()?),
+                .aggregation_period("P1M".parse()?),
         )
         .send()
         .await?;
-    expect_that!(headed.status, eq(StatusCode::PARTIAL_CONTENT));
-    expect_that!(
-        headed.head.typed::<ContentRange>().valid(),
-        some(has_range(
-            "2000-02-29T00:00:00Z".parse()?,
-            "2016-02-29T00:00:00Z".parse()?,
-            ContentRangeSize::Unknown
-        ))
-    );
-    let links = link_text(headed.head.headers());
-    expect_that!(&links, contains_substring("timeAt=2016-02-29T00%3A00%3A00Z"));
-    expect_that!(&links, contains_substring("aggrPeriodOrigin=2000-02-29T00%3A00%3A00Z"));
+    expect_that!(headed.status, eq(StatusCode::OK));
     expect_that!(
         headed.outcome.body(),
         has_aggregate(
             "speed",
             AggregationMethod::Sum,
-            all!(
-                len(eq(16)),
-                nth(0, period().value(0).start("2000-02-29T00:00:00Z".parse()?).end("2001-02-28T00:00:00Z".parse()?)),
-                nth(
-                    15,
-                    period().value(15).start("2015-02-28T00:00:00Z".parse()?).end("2016-02-29T00:00:00Z".parse()?)
-                )
-            )
-        )
-    );
-    let link = headed.head.typed::<Link>().into_valid().or_fail()?;
-    let request = followed_link::request(&broker, &link, &RelationType::Next)?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
-    let page_2 = broker.send_unchecked(request).await?;
-    expect_that!(page_2.status(), eq(StatusCode::OK));
-    expect_that!(link_text(page_2.headers()), not(contains_substring("rel=\"next\"")));
-    expect_that!(page_2.headers().get(CONTENT_RANGE), none());
-    let aggregated_2 = read(&page_2)?;
-    expect_that!(
-        &aggregated_2,
-        has_aggregate(
-            "speed",
-            AggregationMethod::Sum,
             successive_periods(
-                16,
+                0,
                 &[
-                    "2016-02-29T00:00:00Z",
-                    "2017-02-28T00:00:00Z",
-                    "2018-02-28T00:00:00Z",
-                    "2019-02-28T00:00:00Z",
-                    "2020-02-29T00:00:00Z",
-                    "2021-02-28T00:00:00Z",
-                    "2022-02-28T00:00:00Z",
-                    "2023-02-28T00:00:00Z",
+                    "2024-01-30T00:00:00Z",
                     "2024-02-29T00:00:00Z",
+                    "2024-03-30T00:00:00Z",
+                    "2024-04-30T00:00:00Z",
+                    "2024-05-30T00:00:00Z",
+                    "2024-06-30T00:00:00Z",
+                    "2024-07-30T00:00:00Z",
                 ]
             )?
         )
     );
-    let headed_3 = json
-        .with_heads()
-        .temporal()
-        .retrieve_aggregated(&grid_id)
-        .temporal_q(
-            temporal_query::between("2016-02-29T00:00:00Z".parse()?, "2024-02-29T00:00:00Z".parse()?)
-                .aggregation_methods([AggregationMethod::Sum])
-                .aggregation_period("P1Y".parse()?),
-        )
-        .send()
-        .await?;
-    expect_that!(headed_3.status, eq(StatusCode::OK));
-    expect_that!(headed_3.head.typed::<ContentRange>(), absent());
-    expect_that!(
-        headed_3.outcome.body(),
-        has_aggregate(
-            "speed",
-            AggregationMethod::Sum,
-            successive_periods(
-                16,
-                &[
-                    "2016-02-29T00:00:00Z",
-                    "2017-02-28T00:00:00Z",
-                    "2018-02-28T00:00:00Z",
-                    "2019-02-28T00:00:00Z",
-                    "2020-02-29T00:00:00Z",
-                    "2021-02-28T00:00:00Z",
-                    "2022-02-28T00:00:00Z",
-                    "2023-02-28T00:00:00Z",
-                    "2024-02-29T00:00:00Z",
-                ]
-            )?
-        )
-    );
+    let answer = request_to(
+        &json,
+        Method::GET,
+        &format!(
+            "temporal/entities/{grid_id}?timerel=between&timeAt=2024-01-30T00%3A00%3A00Z&endTimeAt=2026-03-30T00%3A00%3A00Z&format=aggregatedValues&aggrMethods=sum&aggrPeriodDuration=P1M1D"
+        ),
+    )?
+    .append_header(ACCEPT, HeaderValue::from_static("application/json"));
+    let refused = broker.with_accept(Accept::new(NgsiLdMediaType::Json)).send_unchecked(answer).await;
+    expect_that!(&refused, problem(StatusCode::FORBIDDEN, ErrorType::TooManyResults));
     Ok(())
 }

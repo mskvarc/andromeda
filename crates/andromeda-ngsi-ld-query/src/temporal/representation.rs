@@ -3,7 +3,6 @@
 use crate::temporal::{aggregation_period::AggregationPeriod, grouping::AggregationGrouping};
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use chrono::{DateTime, Utc};
 use typed_builder::TypedBuilder;
 
 /// The response shape of a temporal query.
@@ -23,12 +22,6 @@ pub struct Representation {
     /// (clause 4.5.19).
     #[builder(default = Default::default())]
     pub aggr_period_duration: Option<AggregationPeriod>,
-    /// The instant the periods are laid from when the request names one
-    /// (`aggrPeriodOrigin`, which a continuation of a calendar grid carries);
-    /// `None` lays them from the window's reference instant, or from the
-    /// earliest instant of the Entity's history when the window has none.
-    #[builder(default = Default::default())]
-    pub period_origin: Option<DateTime<Utc>>,
     /// The `aggrGroupBy` grouping applied within each aggregation period, when
     /// the grouped extension format is requested. Non-standard; present only for
     /// [`TemporalFormat::GroupedValues`].

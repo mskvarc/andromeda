@@ -83,8 +83,8 @@ struct BucketOrigin;
 #[iden = "origin"]
 struct Origin;
 
-/// Column `period_origin`: the instant the grid's periods are laid from,
-/// which a continuation of a calendar grid keeps.
+/// Column `period_origin`: the anchor the grid's periods are laid from, the
+/// reference instant of the window or else the earliest instant of the history.
 #[derive(Iden, Clone, Copy)]
 #[iden = "period_origin"]
 struct PeriodOrigin;
@@ -185,12 +185,12 @@ fn origin_subquery(branch: &HistoryBranch, of: &HistoryOf, axis: AttributeHistor
     origin.take()
 }
 
-/// The origin of the period grid: the origin the request names, else the
-/// reference instant of the query's window (clause 4.5.19), else the
-/// earliest instant of the Entity's history on the axis, read once for the
-/// statement in the CTE the second element names, rather than from epoch.
+/// The origin of the period grid: the reference instant of the query's window
+/// (clause 4.5.19), else the earliest instant of the Entity's history on the
+/// axis, read once for the statement in the CTE the second element names,
+/// rather than from epoch.
 fn grid_origin(branch: &HistoryBranch, of: &HistoryOf, compiled: &CompiledTemporalQuery) -> (SimpleExpr, Option<CommonTableExpression>) {
-    if let Some(origin) = compiled.representation.period_origin.as_ref().or(compiled.window.interval.reference()) {
+    if let Some(origin) = compiled.window.interval.reference() {
         return (Expr::val(*origin), None);
     }
     let origin = CommonTableExpression::new()
@@ -742,27 +742,24 @@ mod tests {
     #[test]
     fn a_calendar_period_ends_at_the_next_periods_start() {
         let sql = sql_of(&from_the_fifteenth("P1M"));
-        assert!(
-            sql.contains(r#"("calendar_grid"."period_index" + (1)) * ("calendar_grid"."period")) AT TIME ZONE 'UTC' AS "bucket_end""#),
-            "{sql}"
-        );
+        assert!(sql.contains(r#""calendar_grid"."period_index" + (1)"#), "{sql}");
+        assert!(sql.contains(r#"AS "bucket_end""#), "{sql}");
         assert!(sql.contains(r#""bucket"."bucket_end" AS "bucket_end""#), "{sql}");
         pretty_assertions::assert_eq!(group_keys(&sql), "\"bucket\".\"bucket_start\", \"bucket\".\"bucket_end\"", "{sql}");
     }
 
-    /// A continuation opening on 15 May keeps the grid laid from the origin it
-    /// names, and every row reports that origin.
+    /// A continuation opens on a boundary that lays its grid, so the grid is
+    /// laid from the instant the window opens on, and every row reports it.
     #[test]
-    fn a_named_period_origin_lays_the_grid_in_place_of_the_reference_instant() {
+    fn a_continuation_lays_its_grid_from_the_instant_its_window_opens_on() {
         let mut compiled = from_the_fifteenth("P1M");
         compiled.window.interval = TimeInterval::After(instant("2026-05-15T00:00:00Z"));
-        compiled.representation.period_origin = Some(instant("2026-01-31T00:00:00Z"));
         let sql = sql_of(&compiled);
         assert!(
-            sql.contains("'P1M'::interval AS \"period\", '2026-01-31 00:00:00.000000 +00:00'::timestamptz AS \"origin\""),
+            sql.contains("'P1M'::interval AS \"period\", '2026-05-15 00:00:00.000000 +00:00'::timestamptz AS \"origin\""),
             "{sql}"
         );
-        assert!(sql.contains("'2026-01-31 00:00:00.000000 +00:00'::timestamptz AS \"period_origin\""), "{sql}");
+        assert!(sql.contains("'2026-05-15 00:00:00.000000 +00:00'::timestamptz AS \"period_origin\""), "{sql}");
     }
 
     /// The origin the periods were laid from is reported beside them, read

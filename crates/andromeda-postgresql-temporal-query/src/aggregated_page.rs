@@ -95,8 +95,9 @@ pub(crate) fn aggregated_stream_read(
     };
     let probes = StreamProbes { branch, compiled, condition };
     match (grid, paging) {
-        (Some(grid), Paging::Paged(paged)) => paged_read(&probes, aggregated, grid, paged),
-        (None, Paging::Paged(PagedWalk { last_n, .. }) | Paging::Unpaged(last_n)) | (Some(_), Paging::Unpaged(last_n)) => AggregatedStreamRead {
+        (Some(grid), Paging::Paged(paged)) if grid.pages_by_periods() => paged_read(&probes, aggregated, grid, paged),
+        (None, Paging::Paged(PagedWalk { last_n, .. }) | Paging::Unpaged(last_n))
+        | (Some(_), Paging::Paged(PagedWalk { last_n, .. }) | Paging::Unpaged(last_n)) => AggregatedStreamRead {
             edge: None,
             rows: StreamRows::OnTheGrid(unpaged_rows(branch, compiled, aggregated, last_n)),
         },

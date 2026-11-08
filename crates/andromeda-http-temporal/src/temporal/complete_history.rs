@@ -31,7 +31,6 @@ use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::temporal::{
     continuation::{PageEdge, TemporalContinuation},
     instance_page::PageDirection,
-    period_grid::PeriodGrid,
     window::TimeInterval,
 };
 use andromeda_temporal::{error::TemporalError, service::TemporalRange};
@@ -105,12 +104,11 @@ impl MergedForm {
         }
     }
 
-    /// What a page of this form ends on at `instant`, its periods laid on
-    /// the calendar grid from `origin` when there is one.
-    const fn edge(self, instant: DateTime<Utc>, origin: Option<DateTime<Utc>>) -> PageEdge {
+    /// What a page of this form ends on at `instant`.
+    const fn edge(self, instant: DateTime<Utc>) -> PageEdge {
         match self {
             MergedForm::Instances => PageEdge::Instant(instant),
-            MergedForm::Periods => PageEdge::PeriodBoundary { boundary: instant, origin },
+            MergedForm::Periods => PageEdge::PeriodBoundary { boundary: instant },
         }
     }
 }
@@ -132,9 +130,6 @@ pub(crate) struct HistoryBound {
     /// The fewest instances the bound admits of any attribute stream of the
     /// merged history, counted by [`HistoryCompleteness::trim`].
     fewest_served: Option<u64>,
-    /// The origin of the calendar grid the request's periods are laid on,
-    /// which a continuation of merged periods keeps.
-    period_origin: Option<DateTime<Utc>>,
 }
 
 impl HistoryCompleteness {
@@ -179,22 +174,16 @@ impl HistoryCompleteness {
                 .collect(),
             StopSide::Inclusive => Vec::new(),
         };
-        let (interval, local_origin) = match local {
-            Some(range) => (range.interval, range.next.and_then(|next| next.period_origin)),
-            None => (params.window()?.interval, None),
+        let interval = match local {
+            Some(range) => range.interval,
+            None => params.window()?.interval,
         };
-        let period_origin = params
-            .aggr_period_duration
-            .filter(|_| params.selected_format().is_aggregated())
-            .filter(|period| period.grid() == PeriodGrid::Calendar)
-            .and(params.aggr_period_origin.or(interval.reference().copied()).or(local_origin));
         Ok(HistoryCompleteness::UpTo(HistoryBound {
             interval,
             direction,
             stop,
             cut_short,
             fewest_served: None,
-            period_origin,
         }))
     }
 
@@ -243,14 +232,8 @@ impl HistoryCompleteness {
                     PageDirection::Forward => most,
                     PageDirection::Backward { .. } => least,
                 });
-                let next = edge.and_then(|edge| {
-                    TemporalContinuation::following(
-                        bound.interval,
-                        bound.direction,
-                        MergedForm::of(page).edge(edge, bound.period_origin),
-                        bound.fewest_served,
-                    )
-                });
+                let next = edge
+                    .and_then(|edge| TemporalContinuation::following(bound.interval, bound.direction, MergedForm::of(page).edge(edge), bound.fewest_served));
                 Some(TemporalRange {
                     interval: bound.interval,
                     observed,

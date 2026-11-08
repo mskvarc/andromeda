@@ -141,11 +141,6 @@ pub struct TemporalQueryParameters {
     #[serde(rename = "aggrPeriodDuration")]
     #[serde(default, with = "optional")]
     pub aggr_period_duration: Option<AggregationPeriod>,
-    /// The instant the aggregation periods are laid from (`aggrPeriodOrigin`),
-    /// which only a retrieval's continuation carries: no query string of a
-    /// query names it, so serde skips it and the retrieval sets it.
-    #[serde(skip)]
-    pub aggr_period_origin: Option<DateTime<Utc>>,
     /// The grouping applied within each aggregation period (`aggrGroupBy`).
     ///
     /// Non-standard, from the temporal aggregation grouping extension. Carried
@@ -506,17 +501,6 @@ mod tests {
             .validate(TemporalQueryOperation::Query, TemporalJoin::Spec)
             .expect_err("methods are required");
         assert!(matches!(error, ParameterError::AggrMethodsRequired), "{error:?}");
-    }
-
-    #[test]
-    fn a_period_origin_without_a_period_is_refused_whatever_options_name() {
-        const WINDOW: &str = "type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z";
-        let mut p = params_from_query(&format!("{WINDOW}&format=temporalValues&options=aggregatedValues"));
-        p.aggr_period_origin = Some("2024-01-01T00:00:00Z".parse().expect("a valid instant"));
-        let error = p
-            .validate(TemporalQueryOperation::Query, TemporalJoin::Spec)
-            .expect_err("an origin needs periods");
-        assert!(matches!(error, ParameterError::AggrPeriodOriginWithoutPeriods), "{error:?}");
     }
 
     /// Either spelling of `aggregatedValues` admits both aggregation
