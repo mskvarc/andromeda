@@ -4,7 +4,7 @@ name: suite
 # its fifteen brokers over fifteen PostgreSQL servers are very resource intensive.
 on:
   schedule:
-    - cron: "17 2 * * 1"
+    - cron: "17 2 * * 5"
   workflow_dispatch:
     inputs:
       tree:
