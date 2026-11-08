@@ -4,9 +4,10 @@
 -- Spec: ETSI GS CIM 009 v1.9.1 clauses 4.5.25, 5.2.39, 5.5.14, 5.14
 --
 -- An EntityMap pins the entities a distributed query matched, so that
--- follow-up pages, which may reach any broker instance serving the tenant,
--- consider the same entities and contact the same context sources. That
--- makes it durable tenant state rather than a per-process cache.
+-- follow-up pages, which may arrive after the tenant was evicted or the
+-- broker restarted, consider the same entities and contact the same context
+-- sources. That makes it durable tenant state rather than a per-process
+-- cache.
 -- ============================================================================
 create table entity_maps (
     entity_map_key bigint generated always as identity,
@@ -41,6 +42,7 @@ create table entity_map_entries (
     source text compression lz4 collate "C" not null,
     constraint pk_entity_map_entries primary key (entity_map_key, position),
     constraint fk_entity_map_entries_entity_map foreign key (entity_map_key) references entity_maps (entity_map_key) on delete cascade,
+    constraint chk_entity_map_entries_position_non_negative check (position >= 0),
     constraint chk_entity_map_entries_entity_id_length check (octet_length(entity_id) <= 1024),
     constraint chk_entity_map_entries_source_length check (octet_length(source) <= 1024)
 );

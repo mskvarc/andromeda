@@ -2,11 +2,11 @@
 -- 0002: PostgreSQL maintenance state
 -- ============================================================================
 -- What the opt-in maintenance controller knows about each tenant and each
--- relation it may act on. Every broker replica runs the controller, and the
--- platform database is where the replicas coordinate: a tenant row keeps what
--- tenant selection orders by across restarts, including tenants no replica
--- currently holds in memory, and a target row keeps the breach evidence that
--- stops one noisy sample from triggering an action.
+-- relation it may act on, kept in the platform database so that it outlasts
+-- a restart of the broker. A tenant row keeps what tenant selection orders
+-- by, including tenants the broker does not currently hold in memory, and a
+-- target row keeps the breach evidence that stops one noisy sample from
+-- triggering an action.
 --
 -- `last_tuple_changes` and `last_stats_reset` are the tenant database's
 -- `pg_stat_database` counters (`tup_inserted + tup_updated + tup_deleted`,
@@ -88,9 +88,9 @@
 -- the target, the OID of the table in the tenant database, the phase the run
 -- reached and when it started and reached that phase. The row is written in
 -- the transaction that installs the trigger and deleted once the run's
--- objects are dropped, so a row that outlives its run (a broker that stopped
--- mid-run) tells recovery which table's objects to drop. While no broker
--- holds the cluster-wide repack lock, every row belongs to a run that is no
+-- objects are dropped, so a row that outlives its run (the broker stopped
+-- mid-run) tells recovery which table's objects to drop. While the
+-- cluster-wide repack lock is free, every row belongs to a run that is no
 -- longer running.
 --
 -- `postgresql_maintenance_fleet` holds the one row of state that belongs to
@@ -157,10 +157,10 @@
 create table postgresql_maintenance_tenants (
     tenant_key bigint not null,
     last_inspected_at timestamptz,
-    consecutive_failures integer not null default 0,
-    last_result smallint,
     last_tuple_changes bigint,
     last_stats_reset timestamptz,
+    consecutive_failures integer not null default 0,
+    last_result smallint,
     constraint pk_postgresql_maintenance_tenants primary key (tenant_key),
     constraint fk_postgresql_maintenance_tenants_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
     constraint chk_postgresql_maintenance_tenants_failures_non_negative check (consecutive_failures >= 0),
@@ -212,8 +212,8 @@ create table postgresql_maintenance_targets (
 );
 
 create table postgresql_maintenance_fleet (
-    singleton boolean not null default true,
     autovacuum_saturated_passes integer not null default 0,
+    singleton boolean not null default true,
     constraint pk_postgresql_maintenance_fleet primary key (singleton),
     constraint chk_postgresql_maintenance_fleet_singleton check (singleton),
     constraint chk_postgresql_maintenance_fleet_saturated_passes_non_negative check (autovacuum_saturated_passes >= 0)

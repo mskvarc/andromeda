@@ -4,10 +4,10 @@
 -- The TimescaleDB, PostGIS and pg_repack versions each tenant database held
 -- after the broker last opened it, and the version the server shipped at that
 -- moment. A database keeps the extension version it was created or last
--- updated at until a broker opens it, and the installed version lives only in
--- each database's own catalogue, so this table is how the platform database
--- finds the tenants still behind an image upgrade without connecting to any of
--- them. The unnamed default tenant has rows like any other.
+-- updated at until the broker opens it, and the installed version lives only
+-- in each database's own catalogue, so this table is how the platform
+-- database finds the tenants still behind an image upgrade without connecting
+-- to any of them. The unnamed default tenant has rows like any other.
 --
 -- Every open writes the rows of the tenant it opened, after the extensions
 -- were brought up to date, so the open path is the table's one writer.

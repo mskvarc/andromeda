@@ -40,8 +40,8 @@ create table snapshots (
     snapshot_queries json compression lz4,
     snapshot_temporal_queries json compression lz4,
     -- The resolved JSON-LD context both query families are compiled and run
-    -- under, stored so that a replica preparing the branch never falls back
-    -- to its own ambient context.
+    -- under, stored so that preparing the branch, in whatever later process,
+    -- never falls back to that process's ambient context.
     query_context json compression lz4 not null,
     receiver_info json compression lz4,
     constraint pk_snapshots primary key (snapshot_key),
@@ -105,10 +105,10 @@ create table snapshot_notification_outbox (
     snapshot_key bigint not null,
     next_attempt_at timestamptz not null default now(),
     lease_until timestamptz,
-    claimed_by uuid,
-    attempt_count integer not null default 0,
     delivered_at timestamptz,
     exhausted_at timestamptz,
+    attempt_count integer not null default 0,
+    claimed_by uuid,
     endpoint text compression lz4 collate "C" not null,
     receiver_info json compression lz4,
     payload json compression lz4 not null,
@@ -143,8 +143,8 @@ create index idx_snapshot_notification_outbox_snapshot on snapshot_notification_
 -- of the Snapshot.
 create table snapshot_clone_copies (
     snapshot_key bigint not null,
-    backend_pid integer not null,
     transaction_started_at timestamptz not null,
+    backend_pid integer not null,
     constraint pk_snapshot_clone_copies primary key (snapshot_key),
     constraint fk_snapshot_clone_copies_snapshot foreign key (snapshot_key) references snapshots (snapshot_key) on delete cascade,
     constraint chk_snapshot_clone_copies_backend_pid check (backend_pid > 0)

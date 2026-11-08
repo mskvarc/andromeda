@@ -45,22 +45,31 @@
 --
 -- The table takes an insert-driven vacuum once a twentieth of its rows are
 -- new.
+--
+-- `entity_key` carries no foreign key. A Scope row belongs to the Temporal
+-- Evolution, not to the identity row. Temporal Evolution deletion (clause
+-- 5.6.16) removes the rows while an identity row holding a current state
+-- stays, so a key to `entities` could not state when a row must go. The
+-- deletion removes them explicitly, in the transaction that holds the
+-- identity row's lock every recording write also takes, and the broker's
+-- orphan audit counts any row whose Entity holds no Evolution.
 -- ============================================================================
 create table scope_history (
     recorded_at timestamptz not null,
     entity_key bigint not null,
     write_id uuid not null,
-    write_ordinal integer not null,
-    value_kind smallint not null,
     observed_at timestamptz,
     created_at timestamptz,
     modified_at timestamptz,
     deleted_at timestamptz,
+    write_ordinal integer not null,
+    value_kind smallint not null,
     scope_path ltree compression lz4,
     verbatim_scope_path text compression lz4 collate "C",
     constraint pk_scope_history primary key (recorded_at, write_id, write_ordinal),
     constraint chk_scope_history_write_ordinal check (write_ordinal >= 0),
-    constraint chk_scope_history_value_presence check ((value_kind = 0 and deleted_at is not null and scope_path is null and verbatim_scope_path is null) or (value_kind = 1 and scope_path is not null and verbatim_scope_path is not null))
+    constraint chk_scope_history_deleted_at_tombstone check ((value_kind = 0) = (deleted_at is not null)),
+    constraint chk_scope_history_value_presence check ((value_kind = 0 and scope_path is null and verbatim_scope_path is null) or (value_kind = 1 and scope_path is not null and verbatim_scope_path is not null))
 )
 with (
     autovacuum_vacuum_insert_scale_factor = 0.05

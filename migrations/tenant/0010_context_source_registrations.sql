@@ -44,8 +44,8 @@
 -- client write of a csource subscription advances `revision` by one in its own
 -- transaction and keeps the revision it drew. The row lock the advance takes
 -- is held until that transaction ends, so no two such writes draw revisions in
--- an order other than the one they commit in, whichever broker sharing the
--- database makes them. A registration change is matched against a csource
+-- an order other than the one they commit in, however many connections make
+-- them concurrently. A registration change is matched against a csource
 -- subscription only when the subscription's latest write drew the lower
 -- revision; a subscription written later is notified of the change by its own
 -- write.
@@ -67,7 +67,7 @@ create table context_source_registrations (
     mode smallint not null,
     -- The revision of the broker's rendering that produced the
     -- `entity_id_pattern_form` of this registration's information rows, NULL
-    -- when the registration declares no `idPattern`. A broker renders again,
+    -- when the registration declares no `idPattern`. The broker renders again,
     -- when it opens the tenant, every row an older revision produced.
     entity_id_pattern_forms_revision smallint,
     -- Whether the registration declares `management` at all: an empty
@@ -84,12 +84,13 @@ create table context_source_registrations (
     tenant text compression lz4 collate "C",
     -- Each geometry as written (clause 4.7.1), beside its `ST_MakeValid` form
     -- when the written one is invalid (clause 4.7.2 admits it, IETF RFC 7946
-    -- section 3.1.6 sets no simplicity rule on a ring), NULL otherwise. A
-    -- geoquery judges `coalesce(<x>_valid, <x>)`. Each `<x>_reach` is the
-    -- rectangle the written geometry covers when its edges are read as the
-    -- great-circle arcs `near` measures along (clause 4.10), NULL where it
-    -- extends past the planar bounding box by no more than 1e-6 degrees; the
-    -- spatial indexes key `coalesce(<x>_reach, <x>_valid, <x>)`.
+    -- section 3.1.6 sets no simplicity rule on a ring), NULL otherwise, as on
+    -- `current_attributes`. A geoquery judges `coalesce(<x>_valid, <x>)`.
+    -- Each `<x>_reach` is the rectangle the written geometry covers when its
+    -- edges are read as the great-circle arcs `near` measures along (clause
+    -- 4.10), NULL where it extends past the planar bounding box by no more
+    -- than 1e-6 degrees; the spatial indexes key
+    -- `coalesce(<x>_reach, <x>_valid, <x>)`.
     location geometry compression lz4,
     location_valid geometry compression lz4,
     location_reach geometry compression lz4,
@@ -145,19 +146,19 @@ create table context_source_registrations (
     constraint chk_csr_management_timeout_positive check (management_timeout > 0),
     constraint chk_csr_context_source_info_pairs check ((context_source_info_keys is null) = (context_source_info_values is null) and cardinality(context_source_info_keys) = cardinality(context_source_info_values) and array_position(context_source_info_keys, null) is null and array_position(context_source_info_values, null) is null),
     constraint chk_csr_operations check (operations is null or (cardinality(operations) > 0 and array_position(operations, null) is null and 1 <= all (operations) and 48 >= all (operations))),
-    constraint chk_csr_location_valid check (location_valid is null or (location is not null and st_isvalid(location_valid) and not st_isvalid(location))),
+    constraint chk_csr_location_valid check (location_valid is null or location is not null),
     constraint chk_csr_location_srid check (location is null or st_srid(location) = 4326),
     constraint chk_csr_location_zm check (location is null or st_zmflag(location) in (0, 2)),
     constraint chk_csr_location_reach check (location_reach is null or (location is not null and st_srid(location_reach) = 4326 and location_reach ~ location)),
-    constraint chk_csr_observation_space_valid check (observation_space_valid is null or (observation_space is not null and st_isvalid(observation_space_valid) and not st_isvalid(observation_space))),
+    constraint chk_csr_observation_space_valid check (observation_space_valid is null or observation_space is not null),
     constraint chk_csr_observation_space_srid check (observation_space is null or st_srid(observation_space) = 4326),
     constraint chk_csr_observation_space_zm check (observation_space is null or st_zmflag(observation_space) in (0, 2)),
     constraint chk_csr_observation_space_reach check (observation_space_reach is null or (observation_space is not null and st_srid(observation_space_reach) = 4326 and observation_space_reach ~ observation_space)),
-    constraint chk_csr_operation_space_valid check (operation_space_valid is null or (operation_space is not null and st_isvalid(operation_space_valid) and not st_isvalid(operation_space))),
+    constraint chk_csr_operation_space_valid check (operation_space_valid is null or operation_space is not null),
     constraint chk_csr_operation_space_srid check (operation_space is null or st_srid(operation_space) = 4326),
     constraint chk_csr_operation_space_zm check (operation_space is null or st_zmflag(operation_space) in (0, 2)),
     constraint chk_csr_operation_space_reach check (operation_space_reach is null or (operation_space is not null and st_srid(operation_space_reach) = 4326 and operation_space_reach ~ operation_space)),
-    constraint chk_csr_scope_spelling check ((scope_paths is null) = (verbatim_scope_paths is null) and (scope_paths is null or cardinality(scope_paths) = cardinality(verbatim_scope_paths)))
+    constraint chk_csr_scope_spelling check ((scope_paths is null) = (verbatim_scope_paths is null) and (scope_paths is null or (cardinality(scope_paths) = cardinality(verbatim_scope_paths) and array_position(scope_paths, null) is null and array_position(verbatim_scope_paths, null) is null)))
 );
 
 -- A geoquery keeps the registrations whose geometry meets it and those that

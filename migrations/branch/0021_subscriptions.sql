@@ -25,9 +25,10 @@
 -- becomes expired when `expires_at` passes.
 --
 -- A `subscriptions` row changes only when the client updates it, when it
--- expires, and when a broker claims the notification a csource subscription's
--- latest write owes. `modified_at` (clause 4.8) moves on a client update and
--- when the expiry sweep expires the subscription, never on a delivery.
+-- expires, and when an evaluation claims the notification a csource
+-- subscription's latest write owes. `modified_at` (clause 4.8) moves on a
+-- client update and when the expiry sweep expires the subscription, never on
+-- a delivery.
 --
 -- A csource subscription is notified of each registration change against the
 -- subscription as that change found it (clauses 5.11.2.4, 5.11.3.4). Every
@@ -43,10 +44,10 @@ create table subscriptions (
     -- The `context_source_change_clock` revision of the subscription's latest
     -- client write. NULL exactly for an entity subscription.
     context_source_revision bigint,
-    -- The `context_source_revision` whose notification a broker has claimed;
-    -- the latest write is owed one notification, and a broker that reaches an
-    -- older write's change after it has nothing left to send. NULL until the
-    -- first claim.
+    -- The `context_source_revision` whose notification an evaluation has
+    -- claimed; the latest write is owed one notification, and an evaluation
+    -- that reaches an older write's change after it has nothing left to send.
+    -- NULL until the first claim.
     evaluated_context_source_revision bigint,
     created_at timestamptz not null,
     modified_at timestamptz not null,
@@ -54,14 +55,20 @@ create table subscriptions (
     -- or last set active from paused or expired. Clause 5.8.6 notifies only an
     -- active subscription, so a change committed before this instant is never
     -- notified to it, however late it is evaluated. The change's commit
-    -- instant is the store's transaction timestamp too, so every broker
-    -- sharing the database orders the two alike.
+    -- instant is the store's transaction timestamp too, so the two are
+    -- ordered by one clock.
     active_since timestamptz not null,
     -- The transaction timestamp at which the subscription was created or the
     -- value of a member deciding which changes it is notified of last changed.
     -- A change matched only after it committed is not judged by a selection
     -- written after the change.
     selected_since timestamptz not null,
+    -- NULL means the subscription never expires.
+    expires_at timestamptz,
+    -- Seconds.
+    time_interval double precision,
+    -- Seconds.
+    throttling double precision,
     -- A csource subscription leaves `dataset_ids` and `local_only` at their
     -- defaults.
     kind smallint not null,
@@ -70,12 +77,6 @@ create table subscriptions (
     -- Table 5.2.12-1 `splitEntities`. NULL is the absent member, which defers
     -- to the deployment default, so the column has no default of its own.
     split_entities boolean,
-    -- NULL means the subscription never expires.
-    expires_at timestamptz,
-    -- Seconds.
-    time_interval double precision,
-    -- Seconds.
-    throttling double precision,
     id text compression lz4 collate "C" not null,
     -- The endpoint's clause 5.2.15 `cooldown` and `timeout` stay inside this
     -- document: they are read once per delivery from the subscription already
@@ -131,7 +132,10 @@ create table subscriptions (
     constraint chk_subscriptions_time_interval_positive check (time_interval > 0),
     constraint chk_subscriptions_throttling_positive check (throttling > 0),
     constraint chk_subscriptions_time_interval_excludes_throttling check (not (time_interval is not null and throttling is not null)),
-    constraint chk_subscriptions_time_interval_excludes_watched_attributes check (not (time_interval is not null and watched_attributes is not null))
+    constraint chk_subscriptions_time_interval_excludes_watched_attributes check (not (time_interval is not null and watched_attributes is not null)),
+    constraint chk_subscriptions_q_written_members check ((q is null) = (q_written_members is null)),
+    constraint chk_subscriptions_csource_defaults check (kind = 1 or (dataset_ids is null and not local_only)),
+    constraint chk_subscriptions_temporal_q_csource check (temporal_q is null or kind = 2)
 );
 
 -- Loading the subscriptions of one kind and status for matching.

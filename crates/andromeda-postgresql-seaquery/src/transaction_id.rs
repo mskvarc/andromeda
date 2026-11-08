@@ -5,7 +5,9 @@
 //! transactions that took them: a transaction that finished before a snapshot
 //! was taken holds an identifier below that snapshot's `xmin`, and every
 //! transaction still running when it was taken, or started after, holds one at
-//! or above it.
+//! or above it. Every transaction whose writes a snapshot sees holds an
+//! identifier below that snapshot's `xmax`, the first one not yet assigned
+//! when it was taken.
 
 use crate::{cast::cast, pg_type::PostgresType};
 use sea_query::{Func, Iden, SimpleExpr};
@@ -24,6 +26,11 @@ struct PgCurrentSnapshot;
 #[derive(Iden, Clone, Copy)]
 #[iden = "pg_snapshot_xmin"]
 struct PgSnapshotXmin;
+
+/// The `pg_snapshot_xmax()` function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "pg_snapshot_xmax"]
+struct PgSnapshotXmax;
 
 /// PostgreSQL: `pg_current_xact_id()` - the `xid8` of the current transaction,
 /// assigning one if it has none yet.
@@ -46,6 +53,18 @@ pub fn snapshot_xmin() -> SimpleExpr {
     cast(cast(xmin, PostgresType::Text), PostgresType::Bigint)
 }
 
+/// PostgreSQL: `pg_snapshot_xmax(pg_current_snapshot())` - the first `xid8`
+/// not yet assigned when the current statement's snapshot was taken.
+///
+/// Every row the statement sees was written by a transaction below it, so a
+/// visible row whose stored transaction identifier is at or above it took that
+/// identifier from another cluster's counter, as a dump restored into a new
+/// cluster carries it.
+#[must_use]
+pub fn snapshot_xmax() -> SimpleExpr {
+    Func::cust(PgSnapshotXmax).arg(Func::cust(PgCurrentSnapshot)).into()
+}
+
 /// A `bigint` reading of an `xid8`, such as [`snapshot_xmin`] produced, cast
 /// back to `xid8` so it compares against a stored transaction identifier.
 #[must_use]
@@ -55,7 +74,7 @@ pub fn as_transaction_id(position: SimpleExpr) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::transaction_id::{as_transaction_id, current_transaction_id, snapshot_xmin};
+    use crate::transaction_id::{as_transaction_id, current_transaction_id, snapshot_xmax, snapshot_xmin};
     use pretty_assertions::assert_eq;
     use sea_query::{Expr, PostgresQueryBuilder, Query};
 
@@ -69,6 +88,12 @@ mod tests {
     fn the_snapshot_horizon_reads_the_statement_snapshot_as_a_bigint() {
         let sql = Query::select().expr(snapshot_xmin()).to_owned().to_string(PostgresQueryBuilder);
         assert_eq!(sql, "SELECT pg_snapshot_xmin(pg_current_snapshot())::text::bigint");
+    }
+
+    #[test]
+    fn the_snapshot_ceiling_reads_the_statement_snapshot_as_a_transaction_id() {
+        let sql = Query::select().expr(snapshot_xmax()).to_owned().to_string(PostgresQueryBuilder);
+        assert_eq!(sql, "SELECT pg_snapshot_xmax(pg_current_snapshot())");
     }
 
     #[test]

@@ -84,10 +84,10 @@ create index idx_registration_information_entity_id_pattern on registration_info
 where
     entity_id_pattern is not null;
 
--- A queried `idPattern` against the registered `id` (clause 5.12): the
--- portable pattern is unanchored, so the B-tree cannot serve it.
+-- A queried `idPattern` matched against the registered `id` (clause 5.12),
+-- which the B-tree cannot serve because the portable pattern is unanchored.
 -- The trigram column is collated under the database's default, the
--- collation `pg_trgm` extracts an indexed string's trigrams under: the
+-- collation `pg_trgm` extracts an indexed string's trigrams under. The
 -- trigrams of a pattern are taken under the collation the pattern is tested
 -- under, and under `"C"` they leave out every letter outside ASCII the
 -- default classifies, so the index would drop strings the pattern matches.

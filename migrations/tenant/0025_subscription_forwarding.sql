@@ -10,6 +10,11 @@
 -- tears both down (clause 5.8.5.4), and an inbound notification is routed by
 -- the copy's identifier (clause 5.8.6).
 --
+-- Both ends of a companion mapping and the owner of a copy are held by their
+-- `subscriptions` surrogate key, as every other relation of a subscription
+-- holds it. The broker names a subscription by its URI and resolves the key in
+-- the statement that reads or writes the mapping.
+--
 -- Every edge cascades: deleting a subscription removes its companion mapping,
 -- from either end, and its forwarded copies; deleting a registration removes
 -- the copies held at its context source. The remote copies are not the
@@ -18,28 +23,25 @@
 -- only clears rows whose teardown has already been captured.
 -- ============================================================================
 create table subscription_companions (
-    local_subscription_id text compression lz4 collate "C" not null,
+    local_subscription_key bigint not null,
     -- The context source registration subscription this broker minted.
-    companion_subscription_id text compression lz4 collate "C" not null,
-    constraint pk_subscription_companions primary key (local_subscription_id),
-    constraint uq_subscription_companions_companion unique (companion_subscription_id),
-    constraint fk_subscription_companions_local foreign key (local_subscription_id) references subscriptions (id) on delete cascade,
-    constraint fk_subscription_companions_companion foreign key (companion_subscription_id) references subscriptions (id) on delete cascade,
-    constraint chk_subscription_companions_local_subscription_id_length check (octet_length(local_subscription_id) <= 1024),
-    constraint chk_subscription_companions_companion_subscription_id_length check (octet_length(companion_subscription_id) <= 1024)
+    companion_subscription_key bigint not null,
+    constraint pk_subscription_companions primary key (local_subscription_key),
+    constraint uq_subscription_companions_companion unique (companion_subscription_key),
+    constraint fk_subscription_companions_local foreign key (local_subscription_key) references subscriptions (subscription_key) on delete cascade,
+    constraint fk_subscription_companions_companion foreign key (companion_subscription_key) references subscriptions (subscription_key) on delete cascade
 );
 
 create table forwarded_subscriptions (
-    local_subscription_id text compression lz4 collate "C" not null,
+    local_subscription_key bigint not null,
     -- The registration whose context source holds the copy.
     registration_id text compression lz4 collate "C" not null,
     -- The identifier the copy carries at the context source.
     remote_subscription_id text compression lz4 collate "C" not null,
-    constraint pk_forwarded_subscriptions primary key (local_subscription_id, registration_id),
+    constraint pk_forwarded_subscriptions primary key (local_subscription_key, registration_id),
     constraint uq_forwarded_subscriptions_remote unique (remote_subscription_id),
-    constraint fk_forwarded_subscriptions_local foreign key (local_subscription_id) references subscriptions (id) on delete cascade,
+    constraint fk_forwarded_subscriptions_local foreign key (local_subscription_key) references subscriptions (subscription_key) on delete cascade,
     constraint fk_forwarded_subscriptions_registration foreign key (registration_id) references context_source_registrations (id) on delete cascade,
-    constraint chk_forwarded_subscriptions_local_subscription_id_length check (octet_length(local_subscription_id) <= 1024),
     constraint chk_forwarded_subscriptions_registration_id_length check (octet_length(registration_id) <= 1024),
     constraint chk_forwarded_subscriptions_remote_subscription_id_length check (octet_length(remote_subscription_id) <= 1024)
 );

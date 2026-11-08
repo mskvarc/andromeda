@@ -3,11 +3,11 @@
 -- ============================================================================
 -- When each dormant tenant next has background work due while no request is
 -- touching it: a periodic notification, a durable-delivery retry, a Snapshot
--- preparation, an expiry sweep. The replica that evicts a tenant probes its
--- database for the earliest such instant and records it here, and any replica
--- may later claim the row and wake the tenant. Kept in the platform database
--- rather than in a broker's memory, a wake survives the eviction of the
--- runtime that scheduled it and is never duplicated across replicas.
+-- preparation, an expiry sweep. When the broker evicts a tenant, it probes
+-- the tenant's database for the earliest such instant and records it here,
+-- and later claims the row and wakes the tenant. Kept in the platform
+-- database rather than in the broker's memory, a wake survives the eviction
+-- of the runtime that scheduled it and a restart of the broker.
 -- ============================================================================
 create table tenant_wake_schedule (
     tenant_key bigint not null,

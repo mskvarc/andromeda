@@ -117,7 +117,7 @@ where
 
 -- An `idPattern` that leaves the identifier's start open (clause 5.7.2).
 -- The trigram column is collated under the database's default, the
--- collation `pg_trgm` extracts an indexed string's trigrams under: the
+-- collation `pg_trgm` extracts an indexed string's trigrams under. The
 -- trigrams of a pattern are taken under the collation the pattern is tested
 -- under, and under `"C"` they leave out every letter outside ASCII the
 -- default classifies, so the index would drop strings the pattern matches.
@@ -133,13 +133,17 @@ create index idx_entities_id_trgm on entities using gin (id collate "default" gi
 -- rewrite indexed columns anyway.
 create table entity_search (
     entity_key bigint not null,
-    -- The `xid8` of the transaction that last wrote the row: the insert takes
-    -- it from the default and every update sets it. A broker that keeps an
-    -- in-memory spatial index reads the rows written at or above the `xmin`
-    -- of its previous read's snapshot to catch up with every change,
-    -- whichever process committed it; an `xid8` never wraps, and a
-    -- transaction below a snapshot's `xmin` had finished before the snapshot
-    -- was taken.
+    -- The `xid8` of the transaction that last wrote the row. The insert takes
+    -- it from the default and every update sets it. The broker's in-memory
+    -- spatial index catches up with every change, whichever connection
+    -- committed it, by reading the rows written at or above the `xmin` of its
+    -- previous read's snapshot. An `xid8` never wraps, and a transaction below
+    -- a snapshot's `xmin` had finished before the snapshot was taken. The read
+    -- also stops below its own snapshot's `xmax`, which every row it sees was
+    -- written under. A dump restored into another cluster keeps the source
+    -- cluster's values, which can lie ahead of the new counter, and the bound
+    -- skips such a row until a write restamps it. The full read that seeds the
+    -- index reads every located row whatever its value.
     written_xid xid8 not null default pg_current_xact_id(),
     -- The clause 4.22 `expiresAt` of the hoisted default `location` instance,
     -- NULL when it carries none. A geo-query reads the hoisted instance only
@@ -179,13 +183,12 @@ create table entity_search (
     constraint pk_entity_search primary key (entity_key),
     constraint fk_entity_search_entity foreign key (entity_key) references entities (entity_key) on delete cascade,
     constraint chk_entity_search_entity_type_name_keys_present check (cardinality(entity_type_name_keys) > 0),
-    constraint chk_entity_search_current_attributes_aligned check (cardinality(attribute_instance_name_keys) = cardinality(attribute_instance_kinds)),
+    constraint chk_entity_search_attribute_instances_aligned check (cardinality(attribute_instance_name_keys) = cardinality(attribute_instance_kinds)),
     constraint chk_entity_search_attribute_instance_kinds check (attribute_instance_kinds <@ '{1,2,3,4,5,6,7,8}'::smallint[]),
-    constraint chk_entity_search_scope_spelling check ((scope_paths is null) = (verbatim_scope_paths is null) and (scope_paths is null or (cardinality(scope_paths) > 0 and cardinality(scope_paths) = cardinality(verbatim_scope_paths)))),
-    constraint chk_entity_search_location_valid check (location is null or st_isvalid(location)),
+    constraint chk_entity_search_scope_spelling check ((scope_paths is null) = (verbatim_scope_paths is null) and (scope_paths is null or (cardinality(scope_paths) > 0 and cardinality(scope_paths) = cardinality(verbatim_scope_paths) and array_position(scope_paths, null) is null and array_position(verbatim_scope_paths, null) is null))),
     constraint chk_entity_search_location_srid check (location is null or st_srid(location) = 4326),
     constraint chk_entity_search_location_zm check (location is null or st_zmflag(location) in (0, 2)),
-    constraint chk_entity_search_location_reach check (location_reach is null or (location is not null and st_srid(location_reach) = 4326))
+    constraint chk_entity_search_location_reach check (location_reach is null or (location is not null and st_srid(location_reach) = 4326 and location_reach ~ location))
 )
 with (
     vacuum_truncate = false,

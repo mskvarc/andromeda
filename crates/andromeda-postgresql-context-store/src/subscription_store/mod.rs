@@ -13,6 +13,7 @@
 //! - [`delivery_state`]: the delivery counters and their statements.
 //! - [`projection`]: the read-side projection every subscription query shares.
 //! - [`failure`]: how adapter failures surface at the policy boundary.
+//! - [`surrogate_key`]: the surrogate key of a subscription named by its URI.
 
 /// The fields of a subscription carrying nothing optional.
 #[cfg(test)]
@@ -51,6 +52,8 @@ pub(crate) mod status_code;
 pub(crate) mod stored_kind;
 /// What a subscription row that no longer reads back as a subscription looks like.
 pub mod stored_subscription_error;
+/// The surrogate key of a subscription named by its URI.
+pub(crate) mod surrogate_key;
 /// The number a subscription's `notificationTrigger` list stores each trigger
 /// condition as.
 pub(crate) mod trigger_code;

@@ -4,9 +4,9 @@
 -- Spec: ETSI GS CIM 009 v1.9.1 clause 4.5.2
 --
 -- The composite types the branch relations declare columns of, and the one
--- their writes bind such a column through. They live in
--- `public`, and a Snapshot schema reaches them through its search path, so one
--- definition serves every branch. One definition is also what lets a Snapshot
+-- their writes bind such a column through. They live in `public`, and a
+-- Snapshot schema reaches them through its search path, so one definition
+-- serves every branch. One definition is also what lets a Snapshot
 -- clone copy a column of such a type between two schemas: two composite types
 -- of the same shape in two schemas do not cast to each other.
 --
@@ -18,6 +18,9 @@
 --   sub_attribute.value_kind: 1 number, 2 string, 3 boolean,
 --     4 geometry, 5 object, 6 date-time, 7 uri, 8 date, 9 time,
 --     10 declared-number, 11 declared-boolean
+--   temporal_intent.entry_needs: 1 typed-intent, 2 untyped-observation,
+--     3 attribute-entry, 4 verbatim-instance, 5 scope-entry,
+--     6 untyped-attribute-entry
 -- ============================================================================
 -- One sub-attribute of an attribute instance (clause 4.5.2), an element of
 -- the instance's `sub_attributes` array. The array lists an instance's
@@ -69,12 +72,12 @@ create type sub_attribute_tree as (
 );
 
 -- One top-level attribute instance of an Entity's state outside
--- `current_attributes`: a row of that table without its `entity_key`, without
--- the `sub_eq_keys` a write derives from its sub-attributes and without the
--- `value_geometry_valid` and `value_geometry_reach` a write derives from its
--- geometry, field for
--- field in the table's column order and with the same types, so a record and
--- a current row decode alike. The codes and keys are those of
+-- `current_attributes`, shaped as a row of that table without its
+-- `entity_key`, without the `sub_eq_keys` a write derives from its
+-- sub-attributes and without the `value_geometry_valid` and
+-- `value_geometry_reach` a write derives from its geometry. It follows the
+-- table field for field, in column order and with the same types, so a record
+-- and a current row decode alike. The codes and keys are those of
 -- `sub_attribute`; `ordinal` is the instance's written position among the
 -- Entity's instances, from 0. `dataset_key` is the row's grain key, the empty
 -- string for the default instance; a composite field cannot be declared
@@ -204,7 +207,19 @@ create type temporal_entry as (
 -- that only ends instances; `base_ordinal` is the write ordinal of the first
 -- entry. `entry_needs` are the codes of the application statements' needs the
 -- entries meet, so an application skips a statement no intent reaches without
--- reading `entries`.
+-- reading `entries`. An intent meets:
+--
+--   1 when it states types, which bring a Temporal Evolution into being
+--     (clause 4.5.6);
+--   2 when it states no type and holds no entry, or an entry that does not
+--     end an instance, so it needs an Evolution that exists (clause 4.5.1);
+--   3 when it holds an attribute observation or the end of an attribute
+--     instance;
+--   4 when an attribute entry carries a client-supplied `instanceId`
+--     (clause 4.5.7);
+--   5 when it holds a Scope entry (clause 4.18);
+--   6 when it states no type and holds an attribute entry, whose stream only
+--     an Evolution that exists can carry.
 create type temporal_intent as (
     entity_id text collate "C",
     entity_type_name_keys integer[],

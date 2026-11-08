@@ -1,7 +1,6 @@
 -- ============================================================================
 -- 0007: Functions every branch resolves
 -- ============================================================================
---
 -- The trigger function the dictionaries refuse changes with. It lives in
 -- `public`, and a Snapshot schema reaches it through its search path, so one
 -- definition serves every branch.

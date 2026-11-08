@@ -1,17 +1,12 @@
 //! `foreign-key-column-name`: a referencing column is named like the column it
-//! references, or `<what>_id` for a reference to an `id`, so a join reads as
-//! one name on both sides.
+//! references, alone or behind the role it plays (`<role>_<column>`, so
+//! `<what>_id` for a reference to an `id`), so a join reads as one name on
+//! both sides.
 
 use crate::{
     declared_schema::constraint::ConstraintKind,
     rule::{Rule, RuleContext, RuleFinding},
 };
-
-/// The name of an identifier a reference may extend.
-const IDENTIFIER: &str = "id";
-
-/// The ending of a column referencing an `id`.
-const IDENTIFIER_SUFFIX: &str = "_id";
 
 /// A referencing column named unlike its target.
 #[derive(Debug, derive_more::Display)]
@@ -23,6 +18,12 @@ struct MisnamedReference<'schema> {
     column: &'schema str,
     /// The referenced column.
     referenced: &'schema str,
+}
+
+/// Whether `column` carries the name of `referenced`, alone or behind a role:
+/// `entity_key` and `parent_entity_key` both name a reference to `entity_key`.
+fn names_reference(column: &str, referenced: &str) -> bool {
+    column == referenced || column.strip_suffix(referenced).is_some_and(|role| role.len() > 1 && role.ends_with('_'))
 }
 
 /// Every foreign-key column named unlike the column it references.
@@ -38,7 +39,7 @@ pub fn check(context: &RuleContext<'_>) -> Vec<RuleFinding> {
                 .columns()
                 .iter()
                 .zip(constraint.referenced_columns())
-                .filter(|(column, referenced)| column != referenced && !(*referenced == IDENTIFIER && column.ends_with(IDENTIFIER_SUFFIX)))
+                .filter(|(column, referenced)| !names_reference(column, referenced))
                 .map(move |(column, referenced)| {
                     context.finding(
                         Rule::ForeignKeyColumnName,
@@ -69,6 +70,16 @@ mod tests {
         assert_eq!(
             findings(Rule::ForeignKeyColumnName, &[("branch/0001_notes.sql", sql)])?,
             ["migrations/branch/0001_notes.sql:6:5"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_reference_named_like_its_target_behind_a_role_is_accepted() -> Result<(), FixtureError> {
+        let sql = "create table links (\n    parent_entity_key bigint,\n    child_entity_key bigint,\n    _entity_key bigint,\n    blob_entity_key bigint,\n    constraint fk_links_parent foreign key (parent_entity_key) references entities (entity_key),\n    constraint fk_links_child foreign key (child_entity_key) references entities (entity_key),\n    constraint fk_links_bare foreign key (_entity_key) references entities (entity_key),\n    constraint fk_links_blob foreign key (blob_entity_key) references blobs (entity)\n);\n";
+        assert_eq!(
+            findings(Rule::ForeignKeyColumnName, &[("branch/0001_links.sql", sql)])?,
+            ["migrations/branch/0001_links.sql:8:5", "migrations/branch/0001_links.sql:9:5"]
         );
         Ok(())
     }

@@ -2,6 +2,9 @@
 
 /// The repository struct.
 pub mod repo;
+/// The statements over the two mapping tables, each resolving a subscription's
+/// surrogate key from its URI.
+mod statements;
 pub mod store;
 
 #[cfg(test)]

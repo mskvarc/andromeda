@@ -30,12 +30,12 @@ create table pending_side_effects (
     -- job already queued, and the drain never runs one batch's side effects
     -- twice.
     write_id uuid not null,
-    base_ordinal integer not null,
-    attempt_count integer not null default 0,
     next_attempt_at timestamptz not null default now(),
     lease_until timestamptz,
-    claimed_by uuid,
     exhausted_at timestamptz,
+    base_ordinal integer not null,
+    attempt_count integer not null default 0,
+    claimed_by uuid,
     last_error text compression lz4 collate "C",
     -- The owed changes, in the order the commit made them, each state an
     -- `entity_state_record`, so no state crosses the queue as JSON.

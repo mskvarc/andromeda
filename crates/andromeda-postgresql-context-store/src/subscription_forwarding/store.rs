@@ -2,32 +2,29 @@
 
 use crate::{
     store_fault::{persistence_error, undecodable},
-    subscription_forwarding::repo::SubscriptionForwardingRepository,
+    subscription_forwarding::{
+        repo::SubscriptionForwardingRepository,
+        statements::{
+            companion_of_statement,
+            forwarded_for_registration_statement,
+            forwarded_of_statement,
+            link_companion_statement,
+            local_of_companion_statement,
+            local_of_forwarded_statement,
+            record_forwarded_statement,
+            remove_forwarded_statement,
+        },
+    },
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_postgresql_schema::subscription_forwarding::{ForwardedSubscriptions, SubscriptionCompanions};
 use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_registration::removal_hook::ForwardedSubscriptionCopy;
 use andromeda_subscription::forwarding_hook::ForwardedCopy;
 use andromeda_subscription_forwarding::{error::SubscriptionForwardingError, mapping::SubscriptionForwardingStore};
 use futures::future::BoxFuture;
-use sea_query::{Expr, ExprTrait, OnConflict, Query, SelectStatement};
-use sqlx::{Row, postgres::PgRow};
 
-/// Every copy held at `registration`'s context source, served by
-/// `idx_forwarded_subscriptions_registration`.
-fn forwarded_for_registration_statement(registration: &Identifier) -> SelectStatement {
-    Query::select()
-        .column(ForwardedSubscriptions::LocalSubscriptionId)
-        .column(ForwardedSubscriptions::RemoteSubscriptionId)
-        .from(ForwardedSubscriptions::Table)
-        .and_where(Expr::col(ForwardedSubscriptions::RegistrationId).eq(registration.as_str()))
-        .to_owned()
-}
-
-/// Parse an identifier column back into a URI.
-fn uri_column(row: &PgRow, column: &str) -> Result<Identifier, SubscriptionForwardingError> {
-    let raw: String = row.try_get(column).map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
+/// Parse a stored identifier back into a URI.
+fn uri(raw: &str) -> Result<Identifier, SubscriptionForwardingError> {
     raw.parse::<Identifier>()
         .map_err(|error| SubscriptionForwardingError::from(undecodable(&error)))
 }
@@ -45,18 +42,7 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let mut insert = Query::insert();
-            insert
-                .into_table(SubscriptionCompanions::Table)
-                .columns([SubscriptionCompanions::LocalSubscriptionId, SubscriptionCompanions::CompanionSubscriptionId])
-                .values([Expr::val(local.as_str()), Expr::val(companion.as_str())])
-                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?
-                .on_conflict(
-                    OnConflict::column(SubscriptionCompanions::LocalSubscriptionId)
-                        .update_column(SubscriptionCompanions::CompanionSubscriptionId)
-                        .to_owned(),
-                );
-            insert
+            link_companion_statement(local, companion)?
                 .to_query()
                 .execute(self.pool())
                 .await
@@ -75,16 +61,12 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let row = Query::select()
-                .column(SubscriptionCompanions::CompanionSubscriptionId)
-                .from(SubscriptionCompanions::Table)
-                .and_where(Expr::col(SubscriptionCompanions::LocalSubscriptionId).eq(local.as_str()))
-                .to_owned()
-                .to_query()
+            let row: Option<(String,)> = companion_of_statement(local)
+                .to_query_as()
                 .fetch_optional(self.pool())
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
-            row.map(|row| uri_column(&row, "companion_subscription_id")).transpose()
+            row.map(|(companion,)| uri(&companion)).transpose()
         })
     }
 
@@ -98,16 +80,12 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let row = Query::select()
-                .column(SubscriptionCompanions::LocalSubscriptionId)
-                .from(SubscriptionCompanions::Table)
-                .and_where(Expr::col(SubscriptionCompanions::CompanionSubscriptionId).eq(companion.as_str()))
-                .to_owned()
-                .to_query()
+            let row: Option<(String,)> = local_of_companion_statement(companion)
+                .to_query_as()
                 .fetch_optional(self.pool())
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
-            row.map(|row| uri_column(&row, "local_subscription_id")).transpose()
+            row.map(|(local,)| uri(&local)).transpose()
         })
     }
 
@@ -123,26 +101,7 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let mut insert = Query::insert();
-            insert
-                .into_table(ForwardedSubscriptions::Table)
-                .columns([
-                    ForwardedSubscriptions::LocalSubscriptionId,
-                    ForwardedSubscriptions::RegistrationId,
-                    ForwardedSubscriptions::RemoteSubscriptionId,
-                ])
-                .values([
-                    Expr::val(local.as_str()),
-                    Expr::val(copy.registration.as_str()),
-                    Expr::val(copy.remote_subscription.as_str()),
-                ])
-                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?
-                .on_conflict(
-                    OnConflict::columns([ForwardedSubscriptions::LocalSubscriptionId, ForwardedSubscriptions::RegistrationId])
-                        .update_column(ForwardedSubscriptions::RemoteSubscriptionId)
-                        .to_owned(),
-                );
-            insert
+            record_forwarded_statement(local, copy)?
                 .to_query()
                 .execute(self.pool())
                 .await
@@ -161,21 +120,16 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let rows = Query::select()
-                .column(ForwardedSubscriptions::RegistrationId)
-                .column(ForwardedSubscriptions::RemoteSubscriptionId)
-                .from(ForwardedSubscriptions::Table)
-                .and_where(Expr::col(ForwardedSubscriptions::LocalSubscriptionId).eq(local.as_str()))
-                .to_owned()
-                .to_query()
+            let rows: Vec<(String, String)> = forwarded_of_statement(local)
+                .to_query_as()
                 .fetch_all(self.pool())
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
             rows.iter()
-                .map(|row| {
+                .map(|(registration, remote_subscription)| {
                     Ok(ForwardedCopy {
-                        registration: uri_column(row, "registration_id")?,
-                        remote_subscription: uri_column(row, "remote_subscription_id")?,
+                        registration: uri(registration)?,
+                        remote_subscription: uri(remote_subscription)?,
                     })
                 })
                 .collect()
@@ -192,16 +146,16 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let rows = forwarded_for_registration_statement(registration)
-                .to_query()
+            let rows: Vec<(String, String)> = forwarded_for_registration_statement(registration)
+                .to_query_as()
                 .fetch_all(self.pool())
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
             rows.iter()
-                .map(|row| {
+                .map(|(local_subscription, remote_subscription)| {
                     Ok(ForwardedSubscriptionCopy {
-                        local_subscription: uri_column(row, "local_subscription_id")?,
-                        remote_subscription: uri_column(row, "remote_subscription_id")?,
+                        local_subscription: uri(local_subscription)?,
+                        remote_subscription: uri(remote_subscription)?,
                     })
                 })
                 .collect()
@@ -218,18 +172,12 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let row = Query::select()
-                .column(ForwardedSubscriptions::LocalSubscriptionId)
-                .column(ForwardedSubscriptions::RegistrationId)
-                .from(ForwardedSubscriptions::Table)
-                .and_where(Expr::col(ForwardedSubscriptions::RemoteSubscriptionId).eq(remote_subscription.as_str()))
-                .to_owned()
-                .to_query()
+            let row: Option<(String, String)> = local_of_forwarded_statement(remote_subscription)
+                .to_query_as()
                 .fetch_optional(self.pool())
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
-            row.map(|row| Ok((uri_column(&row, "local_subscription_id")?, uri_column(&row, "registration_id")?)))
-                .transpose()
+            row.map(|(local, registration)| Ok((uri(&local)?, uri(&registration)?))).transpose()
         })
     }
 
@@ -245,34 +193,12 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            Query::delete()
-                .from_table(ForwardedSubscriptions::Table)
-                .and_where(Expr::col(ForwardedSubscriptions::LocalSubscriptionId).eq(local.as_str()))
-                .and_where(Expr::col(ForwardedSubscriptions::RegistrationId).eq(registration.as_str()))
-                .to_owned()
+            remove_forwarded_statement(local, registration)
                 .to_query()
                 .execute(self.pool())
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
             Ok(())
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::subscription_forwarding::store::forwarded_for_registration_statement;
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use pretty_assertions::assert_eq;
-    use sea_query::PostgresQueryBuilder;
-
-    #[test]
-    fn the_copies_held_at_a_registration_are_read_by_its_identifier() {
-        let registration: Identifier = "urn:ngsi-ld:ContextSourceRegistration:b".parse().expect("a URI");
-        let sql = forwarded_for_registration_statement(&registration).to_string(PostgresQueryBuilder);
-        assert_eq!(
-            sql,
-            r#"SELECT "local_subscription_id", "remote_subscription_id" FROM "forwarded_subscriptions" WHERE "registration_id" = 'urn:ngsi-ld:ContextSourceRegistration:b'"#
-        );
     }
 }

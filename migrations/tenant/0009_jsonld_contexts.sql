@@ -18,9 +18,9 @@ create table jsonld_contexts (
     created_at timestamptz not null default now(),
     last_usage timestamptz not null default now(),
     number_of_hits bigint not null default 0,
-    kind smallint not null,
     -- When a cached context must be fetched again.
     expires_at timestamptz,
+    kind smallint not null,
     id text compression lz4 collate "C" not null,
     -- The URL the context was fetched from. Unique, so one remote context is
     -- cached once; NULL for a hosted or implicitly created context with no

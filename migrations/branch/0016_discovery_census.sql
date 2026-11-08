@@ -28,10 +28,17 @@
 --
 -- No foreign key to the dictionaries: `entity_search` holds the same keys
 -- without one, and a key-share lock per written change is not worth it.
+--
+-- No index either. Folded, a ledger is as large as the tenant's vocabulary of
+-- types, attribute names and families, whatever the number of Entities. A
+-- listing sums a whole ledger, and a read of one type or one attribute scans
+-- a ledger of that size. An index would add an entry for every row the entity
+-- write path inserts and every row a fold deletes, to spare such a scan.
+--
 -- Entities per type: `entityCount`, and whether a type exists at all.
 create table entity_type_census (
-    entity_type_name_key integer not null,
     entity_delta bigint not null,
+    entity_type_name_key integer not null,
     constraint chk_entity_type_census_entity_delta check (entity_delta <> 0)
 )
 with (
@@ -48,10 +55,10 @@ with (
 -- Attribute instances per type, attribute name and family: the attributes of
 -- a type and their `attributeTypes`, and the types of an attribute.
 create table entity_type_attribute_census (
+    instance_delta bigint not null,
     entity_type_name_key integer not null,
     attribute_name_key integer not null,
     attribute_kind smallint not null,
-    instance_delta bigint not null,
     constraint chk_entity_type_attribute_census_attribute_kind check (attribute_kind between 1 and 8),
     constraint chk_entity_type_attribute_census_instance_delta check (instance_delta <> 0)
 )
@@ -70,8 +77,8 @@ with (
 -- types: `attributeCount`, which the per-type ledger cannot give, since an
 -- Entity with two types is counted there under each.
 create table attribute_census (
-    attribute_name_key integer not null,
     instance_delta bigint not null,
+    attribute_name_key integer not null,
     constraint chk_attribute_census_instance_delta check (instance_delta <> 0)
 )
 with (

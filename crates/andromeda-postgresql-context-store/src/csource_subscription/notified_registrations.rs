@@ -9,7 +9,7 @@
 use crate::{
     error::ContextStoreError,
     store_fault::{persistence_failure, undecodable},
-    subscription_store::stored_subscription_error::StoredSubscriptionError,
+    subscription_store::{stored_subscription_error::StoredSubscriptionError, surrogate_key::subscription_key_of},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::csource_change_revision::CsourceChangeRevision;
@@ -209,21 +209,12 @@ fn claim_statement(subscription: &Identifier, registrations: &[Identifier]) -> R
     Ok(UnnestAliased::new(statement.clone()).with_columns(aliased, &columns))
 }
 
-/// The surrogate key of `subscription`, as a subquery.
-fn subscription_key(subscription: &Identifier) -> SelectStatement {
-    Query::select()
-        .column(Subscriptions::SubscriptionKey)
-        .from(Subscriptions::Table)
-        .and_where(Expr::col(Subscriptions::Id).eq(subscription.as_str()))
-        .to_owned()
-}
-
 /// Delete the `(subscription, registration)` pair, returning it when it was
 /// present.
 fn release_statement(subscription: &Identifier, registration: &Identifier) -> DeleteStatement {
     Query::delete()
         .from_table(SubscriptionNotifiedRegistrations::Table)
-        .and_where(Expr::col(SubscriptionNotifiedRegistrations::SubscriptionKey).in_subquery(subscription_key(subscription)))
+        .and_where(Expr::col(SubscriptionNotifiedRegistrations::SubscriptionKey).in_subquery(subscription_key_of(subscription)))
         .and_where(Expr::col(SubscriptionNotifiedRegistrations::RegistrationId).eq(registration.as_str()))
         .returning_col(SubscriptionNotifiedRegistrations::RegistrationId)
         .to_owned()
@@ -236,7 +227,7 @@ fn report_statement(subscription: &Identifier, registration: &Identifier, revisi
     Query::update()
         .table(SubscriptionNotifiedRegistrations::Table)
         .value(SubscriptionNotifiedRegistrations::ReportedRevision, i64::from(revision))
-        .and_where(Expr::col(SubscriptionNotifiedRegistrations::SubscriptionKey).in_subquery(subscription_key(subscription)))
+        .and_where(Expr::col(SubscriptionNotifiedRegistrations::SubscriptionKey).in_subquery(subscription_key_of(subscription)))
         .and_where(Expr::col(SubscriptionNotifiedRegistrations::RegistrationId).eq(registration.as_str()))
         .cond_where(
             Cond::any()
@@ -253,7 +244,7 @@ fn unreport_statement(subscription: &Identifier, registration: &Identifier, revi
     Query::update()
         .table(SubscriptionNotifiedRegistrations::Table)
         .value(SubscriptionNotifiedRegistrations::ReportedRevision, Option::<i64>::None)
-        .and_where(Expr::col(SubscriptionNotifiedRegistrations::SubscriptionKey).in_subquery(subscription_key(subscription)))
+        .and_where(Expr::col(SubscriptionNotifiedRegistrations::SubscriptionKey).in_subquery(subscription_key_of(subscription)))
         .and_where(Expr::col(SubscriptionNotifiedRegistrations::RegistrationId).eq(registration.as_str()))
         .and_where(Expr::col(SubscriptionNotifiedRegistrations::ReportedRevision).eq(i64::from(revision)))
         .to_owned()

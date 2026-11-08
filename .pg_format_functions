@@ -7,6 +7,5 @@ GREATEST
 num_nonnulls
 pg_current_xact_id
 refuse_dictionary_change
-ST_IsValid
 ST_SRID
 ST_Zmflag

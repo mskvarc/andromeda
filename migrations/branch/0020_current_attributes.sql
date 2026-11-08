@@ -67,10 +67,10 @@
 -- triggers check the references instead, once per statement over its
 -- transition table. PostgreSQL admits a transition table only on a trigger
 -- with one event, so each check is a pair, one after insert and one after
--- update, sharing one function. A check locks the
--- referenced rows `FOR KEY SHARE`, the lock a foreign key takes, so a
--- concurrent deletion of a referenced Entity waits for the writing
--- transaction or makes the check fail. The attribute name references are
+-- update, sharing one function. A check locks the referenced rows
+-- `FOR KEY SHARE`, the lock a foreign key takes, so a concurrent deletion of
+-- a referenced Entity waits for the writing transaction or makes the check
+-- fail. The attribute name references are
 -- checked on the live branch only, where the dictionaries' references of
 -- every live relation are declared.
 -- ============================================================================
@@ -93,9 +93,10 @@ create table current_attributes (
     value_datatype_key integer,
     -- `entity_type_names` key of the clause 4.5.2 `valueType`.
     value_type_key integer,
-    -- `cefact-units` identity of the clause 4.5.2 `unitCode`. The library
-    -- assigns identities append-only and never reuses one, and the broker
-    -- refuses to decode a value its library does not list.
+    -- The identity of the clause 4.5.2 `unitCode` in the unit code registry
+    -- the broker carries, which assigns one identity per UN/CEFACT
+    -- Recommendation 20 common code, append-only, and never reuses one. The
+    -- broker refuses to decode an identity its registry does not list.
     unit_code_id smallint,
     value_boolean boolean,
     -- The `datasetId`, the empty string for the default instance.
@@ -114,7 +115,10 @@ create table current_attributes (
     value_geometry geometry compression lz4,
     -- The `ST_MakeValid` form of an invalid `value_geometry`, NULL when the
     -- written one is valid. Spatial predicates judge
-    -- `coalesce(value_geometry_valid, value_geometry)`.
+    -- `coalesce(value_geometry_valid, value_geometry)`. The write statement
+    -- decides validity once; no check decides it again, because the
+    -- geometry engine's verdict may change between releases and a restore
+    -- re-checks every row.
     value_geometry_valid geometry compression lz4,
     -- The rectangle the written geometry covers when its edges are read as
     -- the great-circle arcs `near` measures along (clause 4.10), NULL where
@@ -163,8 +167,8 @@ create table current_attributes (
     constraint chk_ca_value_kind_column check ((value_kind = 1 and value_number is not null) or (value_kind = 2 and num_nonnulls(value_string, value_long_text) = 1) or (value_kind = 3 and value_boolean is not null) or (value_kind = 4 and value_geometry is not null) or (value_kind = 5 and value_object is not null) or (value_kind = 6 and value_date_time is not null) or (value_kind = 7 and num_nonnulls(value_uri, value_long_uri) = 1) or (value_kind = 8 and value_string is not null) or (value_kind = 9 and value_string is not null) or (value_kind = 10 and value_number is not null and num_nonnulls(value_datatype_key, value_type_key) > 0) or (value_kind = 11 and value_boolean is not null and num_nonnulls(value_datatype_key, value_type_key) > 0)),
     constraint chk_ca_value_datatype_with_scalar check (value_datatype_key is null or value_kind in (1, 2, 3, 6, 8, 9, 10, 11)),
     constraint chk_ca_value_language_with_string check (value_language is null or (value_kind = 2 and value_datatype_key is null)),
-    constraint chk_ca_value_geometry_members_with_geometry check (value_geometry_members is null or value_geometry is not null),
-    constraint chk_ca_value_geometry_valid check (value_geometry_valid is null or (value_geometry is not null and st_isvalid(value_geometry_valid) and not st_isvalid(value_geometry))),
+    constraint chk_ca_value_geometry_members check (value_geometry_members is null or (value_geometry is not null and jsonb_typeof(value_geometry_members) = 'object')),
+    constraint chk_ca_value_geometry_valid check (value_geometry_valid is null or value_geometry is not null),
     constraint chk_ca_value_geometry_srid check (value_geometry is null or st_srid(value_geometry) = 4326),
     constraint chk_ca_value_geometry_zm check (value_geometry is null or st_zmflag(value_geometry) in (0, 2)),
     constraint chk_ca_value_geometry_reach check (value_geometry_reach is null or (value_geometry is not null and st_srid(value_geometry_reach) = 4326 and value_geometry_reach ~ value_geometry)),
@@ -201,7 +205,7 @@ where
 -- and its 64 kB bound keeps the flush a writer pays, and the list a read
 -- scans, small.
 -- The trigram column is collated under the database's default, the
--- collation `pg_trgm` extracts an indexed string's trigrams under: the
+-- collation `pg_trgm` extracts an indexed string's trigrams under. The
 -- trigrams of a pattern are taken under the collation the pattern is tested
 -- under, and under `"C"` they leave out every letter outside ASCII the
 -- default classifies, so the index would drop strings the pattern matches.

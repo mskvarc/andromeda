@@ -50,16 +50,16 @@
 -- the dictionary keys, as none reaches `stream_key`: the dictionaries are
 -- append-only, and a key is minted in the transaction that writes the row.
 --
--- An instance identifier sits in one of two columns: a broker-minted one as its
--- UUID, rendered through the stable template
+-- An instance identifier sits in one of two columns: a broker-minted one as
+-- its UUID, rendered through the stable template
 -- `urn:ngsi-ld:attribute:instance:{uuid}`; a client-supplied one exactly as
 -- received, because clause 4.5.7 hands it back to the client.
 --
 -- `stream_key` carries no foreign key. TimescaleDB re-adds a hypertable's
 -- foreign keys on every chunk under `SHARE ROW EXCLUSIVE`, which deadlocks
 -- against concurrent upserts on the referenced table. `unit_code_id`
--- references nothing in the database: the identity is the `cefact-units`
--- assignment.
+-- references nothing in the database: it is an identity in the unit code
+-- registry, as on `current_attributes`.
 --
 -- The table has no spatial index. Clause 5.7.4.4 checks a geoquery against
 -- the `GeoProperty` instances of each Entity it selects, so every spatial read
@@ -120,14 +120,17 @@ create table attribute_history (
     constraint chk_attribute_history_unit_code_id_positive check (unit_code_id > 0),
     constraint chk_attribute_history_instance_identity check (num_nonnulls(generated_instance_id, verbatim_instance_id) = 1),
     constraint chk_attribute_history_verbatim_instance_id_length check (octet_length(verbatim_instance_id) <= 1024),
-    constraint chk_attribute_history_value_presence check ((value_kind = 0 and deleted_at is not null and num_nonnulls(value_number, value_string, value_boolean, value_geometry, value_object, value_date_time, value_uri) = 0) or (value_kind <> 0 and num_nonnulls(value_number, value_string, value_boolean, value_geometry, value_object, value_date_time, value_uri) = 1)),
+    -- Only a deletion carries `deletedAt`. An observation carrying one would
+    -- enter the `deletedAt` index and be read as a deletion.
+    constraint chk_attribute_history_deleted_at_tombstone check ((value_kind = 0) = (deleted_at is not null)),
+    constraint chk_attribute_history_value_presence check ((value_kind = 0 and num_nonnulls(value_number, value_string, value_boolean, value_geometry, value_object, value_date_time, value_uri) = 0) or (value_kind <> 0 and num_nonnulls(value_number, value_string, value_boolean, value_geometry, value_object, value_date_time, value_uri) = 1)),
     -- Pins `value_kind` to the populated column, so a value whose declared
     -- shape disagrees with where it sits cannot be stored and is never
     -- repaired by guessing. It also bounds `value_kind` to its codes.
     constraint chk_attribute_history_value_kind_column check (value_kind = 0 or (value_kind = 1 and value_number is not null) or (value_kind = 2 and value_string is not null) or (value_kind = 3 and value_boolean is not null) or (value_kind = 4 and value_geometry is not null) or (value_kind = 5 and value_object is not null) or (value_kind = 6 and value_date_time is not null) or (value_kind = 7 and value_uri is not null) or (value_kind = 8 and value_string is not null) or (value_kind = 9 and value_string is not null) or (value_kind = 10 and value_number is not null and num_nonnulls(value_datatype_key, value_type_key) > 0) or (value_kind = 11 and value_boolean is not null and num_nonnulls(value_datatype_key, value_type_key) > 0)),
     constraint chk_attribute_history_value_datatype_with_scalar check (value_datatype_key is null or value_kind in (1, 2, 3, 6, 8, 9, 10, 11)),
     constraint chk_attribute_history_value_language_with_string check (value_language is null or (value_kind = 2 and value_datatype_key is null)),
-    constraint chk_attribute_history_value_geometry_valid check (value_geometry_valid is null or (value_geometry is not null and st_isvalid(value_geometry_valid) and not st_isvalid(value_geometry))),
+    constraint chk_attribute_history_value_geometry_valid check (value_geometry_valid is null or value_geometry is not null),
     constraint chk_attribute_history_value_geometry_srid check (value_geometry is null or st_srid(value_geometry) = 4326),
     constraint chk_attribute_history_value_geometry_zm check (value_geometry is null or st_zmflag(value_geometry) in (0, 2)),
     constraint chk_attribute_history_value_geometry_reach check (value_geometry_reach is null or (value_geometry is not null and st_srid(value_geometry_reach) = 4326 and value_geometry_reach ~ value_geometry)),

@@ -16,16 +16,23 @@
 -- The queue exists only in the live branch. Deferral buys live ingest
 -- throughput; a Snapshot branch records its history in the write's own
 -- transaction, and no worker drains a branch.
+--
+-- Codes:
+--
+--   entry_needs: 1 typed-intent, 2 untyped-observation, 3 attribute-entry,
+--     4 verbatim-instance, 5 scope-entry, 6 untyped-attribute-entry
+--
+-- The codes are those of `temporal_intent.entry_needs`, which the intent
+-- carries over from the commit that bound it.
 -- ============================================================================
 create table temporal_append_intents (
-    -- No sequence cache. The intents of one Entity take their keys in the
-    -- order its writes commit, and the latest intent is read by key; a block
-    -- of keys cached per session would hand a later write a smaller key.
+    -- No sequence cache. Every enqueue for an Entity runs under its identity
+    -- row's lock, held until the write commits, so the intents of one Entity
+    -- take their keys in the order its writes commit, and the latest intent
+    -- is read by key; a block of keys cached per session would hand a later
+    -- write a smaller key.
     intent_key bigint generated always as identity,
     next_attempt_at timestamptz not null default now(),
-    -- The first ordinal the intent's entries occupy in the write's numbering.
-    base_ordinal integer not null,
-    attempt_count integer not null default 0,
     -- The atomic write the intent belongs to, shared by every intent of that
     -- write, so it is not the intent's identity, and with `entity_id` it is
     -- not either: the identity of an intent is the first ordinal it occupies
@@ -33,9 +40,12 @@ create table temporal_append_intents (
     -- a commit replayed under its write identity enqueue nothing twice.
     write_id uuid not null,
     lease_until timestamptz,
-    claimed_by uuid,
     -- The write's ingestion instant, every entry's `recorded_at`.
     recorded_at timestamptz not null,
+    -- The first ordinal the intent's entries occupy in the write's numbering.
+    base_ordinal integer not null,
+    attempt_count integer not null default 0,
+    claimed_by uuid,
     entity_id text compression lz4 collate "C" not null,
     -- `entity_type_names` keys of the types the Temporal Evolution is recorded
     -- under (clause 4.5.6), empty for an intent that only ends instances.

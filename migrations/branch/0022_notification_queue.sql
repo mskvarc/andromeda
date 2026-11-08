@@ -39,13 +39,14 @@ create table notification_events (
     -- the commit that queued it. A delivery is dropped when its Subscription
     -- last became active after this instant, so a change committed while the
     -- Subscription was paused is never notified once it is active again
-    -- (clause 5.8.6). Both instants come from the same clock whichever broker
-    -- wrote them.
+    -- (clause 5.8.6). Both instants come from the database's clock, whichever
+    -- connection wrote them.
     committed_at timestamptz not null,
-    -- The clause 4.8 createdAt, modifiedAt and expiresAt of an Entity a
-    -- deletion removed. By delivery the Entity's row is gone, so clause 5.8.6
-    -- can only report them from here; a change that leaves the Entity in place
-    -- stores none and the delivery reads them from the Entity.
+    -- The clause 4.8 createdAt, modifiedAt and expiresAt of the Entity as the
+    -- change left it, or as a deletion removed it; NULL when the change
+    -- carried none. Clause 5.8.6 notifies the Entity as the change left it,
+    -- and by delivery a later write may have moved the row's `modified_at` on
+    -- or a deletion removed the row, so the delivery reads them from here.
     entity_created_at timestamptz,
     entity_modified_at timestamptz,
     entity_expires_at timestamptz,
@@ -104,7 +105,6 @@ create table notification_deliveries (
     event_key bigint not null,
     subscription_key bigint not null,
     next_attempt_at timestamptz not null,
-    attempt_count integer not null default 0,
     lease_until timestamptz,
     delivered_at timestamptz,
     exhausted_at timestamptz,
@@ -114,6 +114,7 @@ create table notification_deliveries (
     -- that fails costs a claim nothing, and it keeps its attempt count and its
     -- due instant for when the hold is released.
     held_at timestamptz,
+    attempt_count integer not null default 0,
     claimed_by uuid,
     last_error text compression lz4 collate "C",
     constraint pk_notification_deliveries primary key (delivery_key),

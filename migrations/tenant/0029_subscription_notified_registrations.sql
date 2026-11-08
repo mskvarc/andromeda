@@ -12,7 +12,7 @@
 --
 -- Inserting a row claims the `newlyMatching` notification of its registration
 -- and deleting one claims the `noLongerMatching` notification, so whichever
--- broker evaluates a change first sends it, and a subscription's initial
+-- evaluation reaches a change first sends it, and a subscription's initial
 -- notification and a registration change evaluated at the same moment never
 -- both report one registration.
 --

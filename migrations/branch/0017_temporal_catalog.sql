@@ -112,9 +112,9 @@ create index idx_temporal_attribute_streams_attribute_name_key_shape_mask on tem
 -- inserts, so no counter row is shared, and the census fold keeps the ledger
 -- near one row per key.
 create table stream_type_census (
+    stream_delta bigint not null,
     entity_type_name_key integer not null,
     attribute_name_key integer not null,
-    stream_delta bigint not null,
     constraint chk_stream_type_census_stream_delta check (stream_delta <> 0)
 )
 with (

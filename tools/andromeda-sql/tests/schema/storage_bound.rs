@@ -42,8 +42,8 @@ const PROJECTED_URI_CONSTRAINTS: [&str; 2] = ["chk_ca_value_uri_length", "chk_ca
 const EXTENSION_VERSION_COLUMNS: [&str; 2] = ["installed_version", "shipped_version"];
 
 /// Every constraint that holds an identifier column to [`IDENTIFIER_BYTE_LIMIT`].
-const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 31] = [
-    "chk_forwarded_subscription_routes_minted_id_length",
+const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 28] = [
+    "chk_forwarded_subscription_routes_minted_subscription_id_length",
     "chk_attribute_names_name_length",
     "chk_entity_type_names_name_length",
     "chk_jsonld_contexts_id_length",
@@ -68,9 +68,6 @@ const IDENTIFIER_LENGTH_CONSTRAINTS: [&str; 31] = [
     "chk_subscriptions_id_length",
     "chk_notification_events_entity_id_length",
     "chk_temporal_append_intents_entity_id_length",
-    "chk_subscription_companions_local_subscription_id_length",
-    "chk_subscription_companions_companion_subscription_id_length",
-    "chk_forwarded_subscriptions_local_subscription_id_length",
     "chk_forwarded_subscriptions_registration_id_length",
     "chk_forwarded_subscriptions_remote_subscription_id_length",
     "chk_subscription_notified_registrations_registration_id_length",

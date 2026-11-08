@@ -4,9 +4,9 @@
 -- Spec: ETSI GS CIM 009 v1.9.1 clauses 5.6.1.4, 5.16.1.4
 --
 -- The references from the live relations to `attribute_names` and
--- `entity_type_names`: foreign keys, and for `current_attributes` a
--- statement-level check. They exist on the live
--- relations only, never on a Snapshot schema's copies.
+-- `entity_type_names`, as foreign keys and, for `current_attributes`, a
+-- statement-level check. They exist on the live relations only, never on a
+-- Snapshot schema's copies.
 --
 -- A foreign key locks both of its ends. Declaring one takes `SHARE ROW
 -- EXCLUSIVE` on the referenced table, and dropping one, which every
@@ -35,9 +35,9 @@ alter table entity_type_members
 
 -- The attribute name references of `current_attributes`, those of its rows
 -- and those of every element of `sub_attributes`, which no foreign key
--- reaches. Checked once per statement over its transition table,
--- in an insert and an update trigger, as the Entity references of the same
--- relation are.
+-- reaches. Checked once per statement over its transition table, in an
+-- insert and an update trigger, as the Entity references of the same relation
+-- are.
 create function check_current_attribute_name_keys ()
     returns trigger
     language plpgsql

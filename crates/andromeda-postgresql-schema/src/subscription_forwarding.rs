@@ -8,10 +8,11 @@ use sea_query::Iden;
 pub enum SubscriptionCompanions {
     /// Table name: `subscription_companions`
     Table,
-    /// The local entity subscription.
-    LocalSubscriptionId,
-    /// The minted companion registration subscription.
-    CompanionSubscriptionId,
+    /// The `subscriptions(subscription_key)` of the local entity subscription.
+    LocalSubscriptionKey,
+    /// The `subscriptions(subscription_key)` of the minted companion
+    /// registration subscription.
+    CompanionSubscriptionKey,
 }
 
 /// The tenant-scoped `forwarded_subscriptions` table: the reduced copy of a
@@ -20,8 +21,8 @@ pub enum SubscriptionCompanions {
 pub enum ForwardedSubscriptions {
     /// Table name: `forwarded_subscriptions`
     Table,
-    /// The local entity subscription.
-    LocalSubscriptionId,
+    /// The `subscriptions(subscription_key)` of the local entity subscription.
+    LocalSubscriptionKey,
     /// The registration whose source holds the copy.
     RegistrationId,
     /// The identifier of the copy at the source.
@@ -49,8 +50,10 @@ mod tests {
     #[test]
     fn relation_and_column_names() {
         assert_eq!(SubscriptionCompanions::Table.to_string(), "subscription_companions");
-        assert_eq!(SubscriptionCompanions::CompanionSubscriptionId.to_string(), "companion_subscription_id");
+        assert_eq!(SubscriptionCompanions::LocalSubscriptionKey.to_string(), "local_subscription_key");
+        assert_eq!(SubscriptionCompanions::CompanionSubscriptionKey.to_string(), "companion_subscription_key");
         assert_eq!(ForwardedSubscriptions::Table.to_string(), "forwarded_subscriptions");
+        assert_eq!(ForwardedSubscriptions::LocalSubscriptionKey.to_string(), "local_subscription_key");
         assert_eq!(ForwardedSubscriptions::RemoteSubscriptionId.to_string(), "remote_subscription_id");
         assert_eq!(ForwardedSubscriptionRoutes::Table.to_string(), "forwarded_subscription_routes");
         assert_eq!(ForwardedSubscriptionRoutes::MintedSubscriptionId.to_string(), "minted_subscription_id");

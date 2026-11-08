@@ -16,7 +16,7 @@ create table forwarded_subscription_routes (
     minted_subscription_id text compression lz4 collate "C" not null,
     constraint pk_forwarded_subscription_routes primary key (minted_subscription_id),
     constraint fk_forwarded_subscription_routes_tenant foreign key (tenant_key) references tenants (tenant_key) on delete cascade,
-    constraint chk_forwarded_subscription_routes_minted_id_length check (octet_length(minted_subscription_id) <= 1024)
+    constraint chk_forwarded_subscription_routes_minted_subscription_id_length check (octet_length(minted_subscription_id) <= 1024)
 );
 
 create index idx_forwarded_subscription_routes_tenant on forwarded_subscription_routes (tenant_key);

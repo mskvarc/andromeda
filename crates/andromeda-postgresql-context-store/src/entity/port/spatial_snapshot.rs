@@ -8,6 +8,14 @@
 //! `written_xid` at or above it. Reading the rows written at or above the
 //! previous read's horizon therefore misses no change the previous read did not
 //! already hold, whichever broker process committed it.
+//!
+//! A change read also stops below the `xmax` of its own snapshot. Every row the
+//! snapshot sees was written by a transaction below that `xmax`, so the bound
+//! drops no change. It drops a row restored from a dump of another cluster,
+//! whose `written_xid` may lie ahead of this cluster's counter. The full read
+//! that seeds the index holds such a row already, and without the bound every
+//! change read would return it again until the counter passed it. A later
+//! write restamps the row with this cluster's identifier.
 
 use crate::{
     entity::{
@@ -30,7 +38,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     setting::lift_statement_timeout,
     statement::Statement,
-    transaction_id::{as_transaction_id, snapshot_xmin},
+    transaction_id::{as_transaction_id, snapshot_xmax, snapshot_xmin},
 };
 use async_trait::async_trait;
 use sea_query::{Expr, ExprTrait, JoinType, Query, SelectStatement, UnionType};
@@ -42,8 +50,8 @@ enum LocationFilter {
     /// Every entity that conveys a `location`.
     Located,
     /// Every entity whose search row was written at or above this `xid8`
-    /// position, located or not: an entity that lost its `location` has to
-    /// leave the index.
+    /// position and below the `xmax` of the read's snapshot, located or not:
+    /// an entity that lost its `location` has to leave the index.
     WrittenSince(i64),
 }
 
@@ -72,9 +80,9 @@ fn locations_statement(filter: LocationFilter) -> SelectStatement {
         );
     match filter {
         LocationFilter::Located => entities.and_where(Expr::col((EntitySearch::Table, EntitySearch::Location)).is_not_null()),
-        LocationFilter::WrittenSince(position) => {
-            entities.and_where(Expr::col((EntitySearch::Table, EntitySearch::WrittenXid)).gte(as_transaction_id(Expr::val(position))))
-        }
+        LocationFilter::WrittenSince(position) => entities
+            .and_where(Expr::col((EntitySearch::Table, EntitySearch::WrittenXid)).gte(as_transaction_id(Expr::val(position))))
+            .and_where(Expr::col((EntitySearch::Table, EntitySearch::WrittenXid)).lt(snapshot_xmax())),
     };
     Query::select()
         .expr(snapshot_xmin())
@@ -212,12 +220,12 @@ mod tests {
     }
 
     #[test]
-    fn a_change_read_returns_every_entity_written_at_or_above_the_horizon_located_or_not() {
+    fn a_change_read_returns_every_entity_written_from_the_horizon_to_its_snapshot_ceiling_located_or_not() {
         let (sql, values) = locations_statement(LocationFilter::WrittenSince(42)).build(PostgresQueryBuilder);
         assert_eq!(
             sql,
             format!(
-                r#"SELECT pg_snapshot_xmin(pg_current_snapshot())::text::bigint, NULL::text, NULL::text[], NULL::bytea UNION ALL (SELECT NULL::bigint, "entities"."id", {TYPE_NAMES}, "entity_search"."location"::bytea FROM "entities" JOIN "entity_search" ON "entity_search"."entity_key" = "entities"."entity_key" WHERE "entity_search"."written_xid" >= ($1::text::xid8))"#
+                r#"SELECT pg_snapshot_xmin(pg_current_snapshot())::text::bigint, NULL::text, NULL::text[], NULL::bytea UNION ALL (SELECT NULL::bigint, "entities"."id", {TYPE_NAMES}, "entity_search"."location"::bytea FROM "entities" JOIN "entity_search" ON "entity_search"."entity_key" = "entities"."entity_key" WHERE "entity_search"."written_xid" >= ($1::text::xid8) AND "entity_search"."written_xid" < pg_snapshot_xmax(pg_current_snapshot()))"#
             ),
             "{sql}"
         );
