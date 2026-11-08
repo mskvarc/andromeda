@@ -26,8 +26,8 @@ pub enum LocationError {
     #[error("the answer carries no readable Location")]
     NoLocation,
     /// The `Location` does not resolve against the broker's address.
-    #[error("the Location {0} does not resolve")]
-    Target(String, #[source] url::ParseError),
+    #[error("the Location does not resolve")]
+    Target(#[source] url::ParseError),
     /// The resolved `Location` is not a request target.
     #[error("the resolved Location is not a URI")]
     Uri(#[source] InvalidUri),
@@ -54,11 +54,7 @@ struct Identified {
 /// Returns [`LocationError`] when `headers` carry no `Location` or it does not resolve.
 pub fn request(client: &BrokerClient, headers: &HeaderMap) -> Result<UncheckedRequest, LocationError> {
     let location = header_value(headers, &LOCATION).ok_or(LocationError::NoLocation)?;
-    let resolved = client
-        .endpoint()
-        .base_url()
-        .join(location)
-        .map_err(|error| LocationError::Target(location.to_owned(), error))?;
+    let resolved = client.endpoint().base_url().join(location).map_err(LocationError::Target)?;
     let uri: http::Uri = resolved.as_str().parse().map_err(LocationError::Uri)?;
     Ok(request_to(client, Method::GET, "")?
         .uri(uri)

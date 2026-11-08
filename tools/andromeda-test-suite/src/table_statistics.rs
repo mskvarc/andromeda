@@ -21,7 +21,7 @@ const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(10);
 const LIVE_SCHEMA: &str = "public";
 
 /// A table of a tenant's live branch whose statistics a test reads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr, strum::Display)]
 #[strum(serialize_all = "snake_case")]
 pub enum TenantTable {
     /// `current_attributes`, one row per attribute instance.
@@ -57,7 +57,7 @@ pub enum TableStatisticsError {
     Server(#[from] sqlx::Error),
     /// The database holds no such table.
     #[error("the tenant database holds no table {0}")]
-    NoTable(&'static str),
+    NoTable(TenantTable),
     /// A count the server answered is below zero.
     #[error("the server counted {0} rows")]
     NegativeCount(i64),
@@ -105,7 +105,7 @@ impl TableStatistics {
             .to_query()
             .fetch_optional(&self.pool)
             .await?
-            .ok_or(TableStatisticsError::NoTable(name))?;
+            .ok_or(TableStatisticsError::NoTable(table))?;
         let count = |column: PgStatUserTables| -> Result<u64, TableStatisticsError> {
             let value: i64 = row.try_get(column.unquoted())?;
             u64::try_from(value).map_err(|_| TableStatisticsError::NegativeCount(value))
