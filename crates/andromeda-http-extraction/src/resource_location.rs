@@ -9,11 +9,18 @@
 //! `apiRoot`'s own path, so a client resolving it against the URI it addressed
 //! reaches the resource through the same prefix. The scheme and authority stay
 //! out: the tables prescribe a path.
+//!
+//! The identifier stands in one path segment, which RFC 3986 section 3.3
+//! limits to `pchar`: unreserved characters, percent-encoded octets,
+//! sub-delimiters, `:` and `@`. Every other octet of the identifier's UTF-8,
+//! `%` included, is percent-encoded, so `/`, `?` and `#` stay inside the
+//! segment and the segment decodes back to the identifier as written.
 
 use crate::api_root::{ApiRoot, ConfiguredApiRoot};
 use andromeda_http_headers::location::Location;
 use andromeda_http_response::{api_root_path::api_root_path, headers::with_location};
 use axum::{extract::FromRequestParts, http::request::Parts, response::Response};
+use pct::{PctString, UriReserved};
 use std::{
     convert::Infallible,
     fmt::Display,
@@ -71,13 +78,16 @@ impl ResourceLocator {
         ResourceLocator(api_root)
     }
 
-    /// `{prefix}/ngsi-ld/v1/{collection}/{identifier}`, or `None` when the
-    /// identifier cannot travel in a header field.
+    /// `{prefix}/ngsi-ld/v1/{collection}/{identifier}`, the identifier
+    /// percent-encoded as one path segment, or `None` when the text is no
+    /// valid header value (an encoded identifier and a parsed URL path are
+    /// visible ASCII, so neither produces one).
     #[must_use]
     pub fn location(&self, collection: ResourceCollection, identifier: &impl Display) -> Option<Location> {
         let prefix = api_root_path(self.0.as_ref());
         let collection: &'static str = collection.into();
-        Location::new(format!("{prefix}/ngsi-ld/v1/{collection}/{identifier}"))
+        let segment = PctString::encode_bytes(&identifier.to_string(), UriReserved::Path);
+        Location::new(format!("{prefix}/ngsi-ld/v1/{collection}/{segment}"))
     }
 
     /// `response` with the `Location` of the resource it created.
@@ -119,19 +129,48 @@ mod tests {
         http::{Request, StatusCode},
         response::IntoResponse,
     };
+    use pct::PctStr;
     use std::error::Error;
     use url::Url;
 
     const ID: &str = "urn:ngsi-ld:Vehicle:1";
 
+    const COLLECTIONS: [(ResourceCollection, &str); 9] = [
+        (ResourceCollection::Entities, "entities"),
+        (ResourceCollection::TemporalEntities, "temporal/entities"),
+        (ResourceCollection::EntityMaps, "entityMaps"),
+        (ResourceCollection::TemporalEntityMaps, "temporal/entityMaps"),
+        (ResourceCollection::ContextSourceRegistrations, "csourceRegistrations"),
+        (ResourceCollection::Subscriptions, "subscriptions"),
+        (ResourceCollection::ContextSourceSubscriptions, "csourceSubscriptions"),
+        (ResourceCollection::Snapshots, "snapshots"),
+        (ResourceCollection::JsonldContexts, "jsonldContexts"),
+    ];
+
+    /// Identifiers holding a character outside `pchar` (RFC 3986 section
+    /// 3.3), each with the segment it is written as.
+    const ENCODED: [(&str, &str); 5] = [
+        ("urn:ngsi-ld:Building:x/y", "urn:ngsi-ld:Building:x%2Fy"),
+        ("https://example.org/things/1?x=2", "https:%2F%2Fexample.org%2Fthings%2F1%3Fx=2"),
+        ("urn:ngsi-ld:Building:a#b", "urn:ngsi-ld:Building:a%23b"),
+        ("urn:ngsi-ld:Building:pct%41b", "urn:ngsi-ld:Building:pct%2541b"),
+        ("urn:ngsi-ld:Building:\u{10d}aj", "urn:ngsi-ld:Building:%C4%8Daj"),
+    ];
+
     fn locator(root: &str) -> Result<ResourceLocator, url::ParseError> {
         Ok(ResourceLocator::new(Some(Url::parse(root)?)))
     }
 
+    /// The `Location` text `locator` gives the created resource `id` of
+    /// `collection`.
+    fn located_text(locator: &ResourceLocator, collection: ResourceCollection, id: &str) -> Option<String> {
+        let response = locator.locate(StatusCode::CREATED.into_response(), collection, &id);
+        response.headers().get("location").and_then(|value| value.to_str().ok()).map(str::to_owned)
+    }
+
     /// The `Location` text `locator` gives a created resource of `collection`.
     fn location_text(locator: &ResourceLocator, collection: ResourceCollection) -> Option<String> {
-        let response = locator.locate(StatusCode::CREATED.into_response(), collection, &ID);
-        response.headers().get("location").and_then(|value| value.to_str().ok()).map(str::to_owned)
+        located_text(locator, collection, ID)
     }
 
     #[test]
@@ -169,20 +208,50 @@ mod tests {
     #[test]
     fn each_collection_names_its_own_path() -> Result<(), url::ParseError> {
         let locator = locator("https://gw.example.com/a/b")?;
-        for (collection, path) in [
-            (ResourceCollection::Entities, "entities"),
-            (ResourceCollection::TemporalEntities, "temporal/entities"),
-            (ResourceCollection::EntityMaps, "entityMaps"),
-            (ResourceCollection::TemporalEntityMaps, "temporal/entityMaps"),
-            (ResourceCollection::ContextSourceRegistrations, "csourceRegistrations"),
-            (ResourceCollection::Subscriptions, "subscriptions"),
-            (ResourceCollection::ContextSourceSubscriptions, "csourceSubscriptions"),
-            (ResourceCollection::Snapshots, "snapshots"),
-            (ResourceCollection::JsonldContexts, "jsonldContexts"),
-        ] {
+        for (collection, path) in COLLECTIONS {
             pretty_assertions::assert_eq!(location_text(&locator, collection), Some(format!("/a/b/ngsi-ld/v1/{path}/{ID}")));
         }
         Ok(())
+    }
+
+    #[test]
+    fn an_identifier_outside_pchar_is_percent_encoded_as_one_segment() -> Result<(), url::ParseError> {
+        let locator = locator("https://gw.example.com/broker")?;
+        for (collection, path) in COLLECTIONS {
+            for (id, segment) in ENCODED {
+                pretty_assertions::assert_eq!(located_text(&locator, collection, id), Some(format!("/broker/ngsi-ld/v1/{path}/{segment}")));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_last_segment_decodes_to_the_identifier() {
+        for (collection, path) in COLLECTIONS {
+            let base = format!("/ngsi-ld/v1/{path}/");
+            for (id, _) in ENCODED {
+                let text = located_text(&ResourceLocator::default(), collection, id);
+                let segment = text.as_deref().and_then(|text| text.strip_prefix(base.as_str()));
+                assert!(
+                    segment.is_some_and(|segment| !segment.contains(['/', '?', '#'])),
+                    "{text:?} keeps {id} in one segment"
+                );
+                pretty_assertions::assert_eq!(segment.and_then(|segment| PctStr::new(segment).ok()).map(PctStr::decode), Some(id.to_owned()));
+            }
+        }
+    }
+
+    /// `:`, `@` and the sub-delimiters are `pchar` (RFC 3986 section 3.3).
+    #[test]
+    fn an_identifier_of_pchar_alone_is_written_unchanged() {
+        for id in [ID, "urn:ngsi-ld:Building:a@b!$&'()*+,;=-._~"] {
+            for (collection, path) in COLLECTIONS {
+                pretty_assertions::assert_eq!(
+                    located_text(&ResourceLocator::default(), collection, id),
+                    Some(format!("/ngsi-ld/v1/{path}/{id}"))
+                );
+            }
+        }
     }
 
     #[tokio::test]
