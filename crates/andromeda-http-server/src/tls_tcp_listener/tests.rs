@@ -2,6 +2,7 @@
 
 use crate::{
     close_policy::ClosePolicy,
+    connection_bounds::ConnectionBounds,
     error::HttpServerError,
     execution::serve_listener,
     field_section::HeaderSectionPolicy,
@@ -104,6 +105,10 @@ impl RunningTlsListener {
             ClosePolicy {
                 drain_deadline: Duration::from_secs(2),
                 announced_close_delay: Duration::from_millis(500),
+            },
+            ConnectionBounds {
+                head: Duration::from_secs(30),
+                idle: Duration::from_secs(180),
             },
             HeaderSectionPolicy {
                 limit: HeaderSectionLimit::MAXIMUM,

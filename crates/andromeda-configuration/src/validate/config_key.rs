@@ -48,6 +48,12 @@ pub enum ConfigKey {
     /// `server.announced_close_timeout`.
     #[display("server.announced_close_timeout")]
     ServerAnnouncedCloseTimeout,
+    /// `server.request_head_timeout`.
+    #[display("server.request_head_timeout")]
+    ServerRequestHeadTimeout,
+    /// `server.idle_timeout`.
+    #[display("server.idle_timeout")]
+    ServerIdleTimeout,
     /// `server.transport`.
     #[display("server.transport")]
     ServerTransport,

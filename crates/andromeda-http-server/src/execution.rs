@@ -2,11 +2,16 @@
 
 use crate::{
     announced_close::record_close_announcement,
+    clocked_stream::ClockedStream,
     close_policy::ClosePolicy,
+    connection_bounds::ConnectionBounds,
     connection_builder::connection_builder,
+    connection_clock::ConnectionClock,
+    connection_lifetime::serve_until_closed,
     error::HttpServerError,
     field_section::{HeaderSectionPolicy, refuse_oversized_http1_section},
     listener_security::ListenerSecurity,
+    request_tracking::track_request,
     staged_close_listener::StagedCloseListener,
     tls_tcp_listener::TlsTcpListener,
 };
@@ -19,9 +24,9 @@ use axum::{
     serve::Listener,
 };
 use hyper::body::Incoming;
-use hyper_util::{rt::TokioIo, server::graceful::GracefulShutdown, service::TowerToHyperService};
+use hyper_util::{rt::TokioIo, server::conn::auto::Connection, service::TowerToHyperService};
 use std::{convert::Infallible, future::Future, net::SocketAddr};
-use tokio::{net::TcpListener, time::timeout};
+use tokio::{net::TcpListener, sync::watch, time::timeout};
 use tower::{Layer, Service, ServiceExt};
 
 /// Bind the configured listener and serve until the supplied shutdown future resolves.
@@ -79,18 +84,20 @@ where
     let local_address = listener.local_addr().map_err(|source| HttpServerError::LocalAddress { source })?;
     tracing::info!(address = %local_address, transport = %security.transport(), "HTTP listener accepting connections");
     let policy = ClosePolicy::from(config);
+    let bounds = ConnectionBounds::from(config);
     let header_section = HeaderSectionPolicy {
         limit: max_header_section,
         transport: security.transport(),
     };
     match security {
-        ListenerSecurity::Plaintext => serve_listener(listener, service, shutdown, policy, header_section).await,
+        ListenerSecurity::Plaintext => serve_listener(listener, service, shutdown, policy, bounds, header_section).await,
         ListenerSecurity::Tls { feed, handshake_timeout } => {
             serve_listener(
                 TlsTcpListener::new(listener, feed, handshake_timeout),
                 service,
                 shutdown,
                 policy,
+                bounds,
                 header_section,
             )
             .await
@@ -105,10 +112,12 @@ where
 /// 431 on either. A connection on which a response announced `Connection:
 /// close` closes in stages, delayed by the policy's announced-close delay (see
 /// [`crate::staged_close_stream`]); every other connection closes as soon as
-/// it is done. Every request carries the address of the peer its connection
-/// came from as a `ConnectInfo<SocketAddr>` extension. Once `shutdown`
-/// resolves no connection is accepted, and the open ones finish their
-/// in-flight requests.
+/// it is done. A connection whose request head is later than `bounds` allow
+/// is ended (see [`crate::clocked_stream`]), and one idle for longer than they
+/// allow is shut down gracefully (see [`crate::connection_lifetime`]). Every
+/// request carries the address of the peer its connection came from as a
+/// `ConnectInfo<SocketAddr>` extension. Once `shutdown` resolves no connection
+/// is accepted, and the open ones finish their in-flight requests.
 ///
 /// # Errors
 ///
@@ -119,6 +128,7 @@ pub async fn serve_listener<L, S, F>(
     service: S,
     shutdown: F,
     policy: ClosePolicy,
+    bounds: ConnectionBounds,
     header_section: HeaderSectionPolicy,
 ) -> Result<(), HttpServerError>
 where
@@ -128,24 +138,29 @@ where
     F: Future<Output = ()> + Send,
 {
     let builder = connection_builder(header_section.limit);
-    let service = from_fn(record_close_announcement).layer(from_fn_with_state(header_section, refuse_oversized_http1_section).layer(service));
+    let service = from_fn(track_request)
+        .layer(from_fn(record_close_announcement).layer(from_fn_with_state(header_section, refuse_oversized_http1_section).layer(service)));
     let mut listener = StagedCloseListener::new(listener, policy.announced_close_delay);
-    let graceful = GracefulShutdown::new();
+    let (drain, _) = watch::channel(());
     tokio::pin!(shutdown);
     loop {
         tokio::select! {
             (io, peer) = listener.accept() => {
                 let announcement = io.announcement().clone();
+                let clock = ConnectionClock::opened();
+                let io = ClockedStream::new(io, clock.clone(), bounds.head, announcement.clone());
+                let request_clock = clock.clone();
                 let connection_service = service.clone().map_request(move |request: Request<Incoming>| {
                     let mut request = request.map(Body::new);
                     request.extensions_mut().insert(ConnectInfo(announcement.clone()));
+                    request.extensions_mut().insert(ConnectInfo(request_clock.clone()));
                     request.extensions_mut().insert(ConnectInfo(peer));
                     request
                 });
                 let connection = builder.serve_connection(TokioIo::new(io), TowerToHyperService::new(connection_service)).into_owned();
-                let watched = graceful.watch(connection);
+                let served = serve_until_closed(connection, Connection::graceful_shutdown, clock, bounds.idle, drain.subscribe());
                 tokio::spawn(async move {
-                    if let Err(error) = watched.await {
+                    if let Err(error) = served.await {
                         tracing::trace!(error = %error, "HTTP connection ended with an error");
                     }
                 });
@@ -154,7 +169,8 @@ where
         }
     }
     drop(listener);
-    timeout(policy.drain_deadline, graceful.shutdown())
+    drain.send_modify(|()| {});
+    timeout(policy.drain_deadline, drain.closed())
         .await
         .map_err(|_elapsed| HttpServerError::DrainDeadlineExceeded {
             deadline: policy.drain_deadline,
@@ -162,9 +178,13 @@ where
 }
 
 #[cfg(test)]
+mod bounds_tests;
+
+#[cfg(test)]
 mod tests {
     use crate::{
         close_policy::ClosePolicy,
+        connection_bounds::ConnectionBounds,
         error::HttpServerError,
         execution::serve_listener,
         field_section::{HeaderSectionPolicy, field_section_size},
@@ -203,6 +223,13 @@ mod tests {
     const POLICY: ClosePolicy = ClosePolicy {
         drain_deadline: Duration::from_secs(2),
         announced_close_delay: Duration::from_millis(500),
+    };
+
+    /// The connection bounds every fixture server runs under unless a test
+    /// says otherwise, long enough for no test to reach them.
+    const BOUNDS: ConnectionBounds = ConnectionBounds {
+        head: Duration::from_secs(30),
+        idle: Duration::from_secs(180),
     };
 
     /// The header section policy every fixture server runs under: the
@@ -244,6 +271,7 @@ mod tests {
                 }
             },
             POLICY,
+            BOUNDS,
             HEADER_SECTION,
         ));
         let response = reqwest::get(format!("http://{address}/test")).await?;
@@ -268,6 +296,7 @@ mod tests {
                 }
             },
             POLICY,
+            BOUNDS,
             HEADER_SECTION,
         ));
         let response = reqwest::get(format!("http://{address}/peer")).await?;
@@ -306,6 +335,7 @@ mod tests {
                 }
             },
             POLICY,
+            BOUNDS,
             HEADER_SECTION,
         ));
         let request = tokio::spawn(reqwest::get(format!("http://{address}/slow")));
@@ -335,6 +365,7 @@ mod tests {
                 }
             },
             POLICY,
+            BOUNDS,
             HEADER_SECTION,
         ));
         let upload = vec![b' '; REFUSED_UPLOAD];
@@ -368,6 +399,7 @@ mod tests {
                 }
             },
             POLICY,
+            BOUNDS,
             HEADER_SECTION,
         ));
         let response = reqwest::Client::new()
@@ -404,6 +436,7 @@ mod tests {
                 }
             },
             POLICY,
+            BOUNDS,
             HEADER_SECTION,
         ));
         Ok((address, shutdown_sender, server))

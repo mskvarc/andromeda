@@ -90,17 +90,8 @@ pub enum RawHttpError {
 /// Returns [`RawHttpError`] when the broker is not reachable over plain HTTP, the socket fails or the answer is not
 /// an HTTP response.
 pub async fn send_bytes(role: BrokerRole, method: &Method, target: &str, headers: &[(&str, &str)], body: &[u8]) -> Result<Response<Bytes>, RawHttpError> {
-    let config = SuiteConfig::get().map_err(Clone::clone)?;
-    let origin = config.broker(role)?;
-    let root = origin.join("ngsi-ld/v1/").map_err(|error| RawHttpError::ApiPath(origin.clone(), error))?;
-    let socket = match (root.scheme(), root.host_str(), root.port_or_known_default()) {
-        ("http", Some(host), Some(port)) => Some((host.to_owned(), port)),
-        _ => None,
-    };
-    let Some((host, port)) = socket else {
-        return Err(RawHttpError::Origin(root));
-    };
-    let mut request = format!("{method} {}{target} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n", root.path()).into_bytes();
+    let RawTarget { host, port, api_path } = RawTarget::of(role)?;
+    let mut request = format!("{method} {api_path}{target} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n").into_bytes();
     for (name, value) in headers {
         request.extend_from_slice(format!("{name}: {value}\r\n").as_bytes());
     }
@@ -110,6 +101,38 @@ pub async fn send_bytes(role: BrokerRole, method: &Method, target: &str, headers
     let answer = task::spawn_blocking(move || exchange(&host, port, &request)).await??;
     println!("raw answer:\n{}", String::from_utf8_lossy(&answer));
     parse(&answer)
+}
+
+/// Where a raw exchange with a broker goes.
+#[derive(Debug)]
+pub(crate) struct RawTarget {
+    /// The host the broker listens on.
+    pub(crate) host: String,
+    /// The port the broker listens on.
+    pub(crate) port: u16,
+    /// The path of the broker's API root, with its trailing `/`.
+    pub(crate) api_path: String,
+}
+
+impl RawTarget {
+    /// The plain HTTP socket and API root of the broker of `role`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RawHttpError`] when the configuration does not name the broker, or names it by no plain HTTP origin.
+    pub(crate) fn of(role: BrokerRole) -> Result<RawTarget, RawHttpError> {
+        let config = SuiteConfig::get().map_err(Clone::clone)?;
+        let origin = config.broker(role)?;
+        let root = origin.join("ngsi-ld/v1/").map_err(|error| RawHttpError::ApiPath(origin.clone(), error))?;
+        match (root.scheme(), root.host_str(), root.port_or_known_default()) {
+            ("http", Some(host), Some(port)) => Ok(RawTarget {
+                host: host.to_owned(),
+                port,
+                api_path: root.path().to_owned(),
+            }),
+            _ => Err(RawHttpError::Origin(root)),
+        }
+    }
 }
 
 /// Writes `request` to `host:port` and reads the stream to its end.
@@ -123,7 +146,11 @@ fn exchange(host: &str, port: u16, request: &[u8]) -> Result<Vec<u8>, io::Error>
 }
 
 /// The response in `answer`: its status line, header fields and body, with a chunked body decoded.
-fn parse(answer: &[u8]) -> Result<Response<Bytes>, RawHttpError> {
+///
+/// # Errors
+///
+/// Returns [`RawHttpError`] when `answer` is not an HTTP response.
+pub fn parse(answer: &[u8]) -> Result<Response<Bytes>, RawHttpError> {
     let split = find(answer, b"\r\n\r\n").ok_or(RawHttpError::NoHeadEnd)?;
     let head = String::from_utf8_lossy(&answer[..split]).into_owned();
     let mut lines = head.split("\r\n");
@@ -170,7 +197,7 @@ fn dechunk(mut rest: &[u8]) -> Result<Vec<u8>, RawHttpError> {
 }
 
 /// The offset of the first `needle` in `haystack`.
-fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+pub(crate) fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|window| window == needle)
 }
 

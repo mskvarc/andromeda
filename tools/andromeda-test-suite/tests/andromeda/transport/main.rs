@@ -2,6 +2,7 @@
 //! specification or chooses where the specification leaves it open, each a sequence of requests and the requirements on
 //! their answers, against the brokers of the andromeda stack.
 
+mod connection;
 mod http3;
 mod mutual_tls;
 mod rotation;

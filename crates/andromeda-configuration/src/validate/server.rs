@@ -9,10 +9,14 @@ use crate::validate::{
 /// Port zero is reserved for dynamic binding and cannot be advertised. A zero
 /// announced-close timeout resets a client still sending before it reads the
 /// response, and a connection delaying its close must never outlive the drain.
+/// A zero head or idle timeout closes every connection before it can carry a
+/// request.
 pub(crate) fn rules() -> impl Iterator<Item = Rule> {
     [
         Rule::Positive(ConfigKey::ServerPort),
         Rule::Positive(ConfigKey::ServerAnnouncedCloseTimeout),
+        Rule::Positive(ConfigKey::ServerRequestHeadTimeout),
+        Rule::Positive(ConfigKey::ServerIdleTimeout),
         Rule::Ordered {
             key: ConfigKey::ServerAnnouncedCloseTimeout,
             relation: Relation::Below,
@@ -52,6 +56,16 @@ mod tests {
             |config, value| config.server.announced_close_timeout = value,
             ConfigKey::ServerAnnouncedCloseTimeout,
         );
+    }
+
+    #[test]
+    fn a_zero_request_head_timeout_is_refused() {
+        assert_positive_duration(|config, value| config.server.request_head_timeout = value, ConfigKey::ServerRequestHeadTimeout);
+    }
+
+    #[test]
+    fn a_zero_idle_timeout_is_refused() {
+        assert_positive_duration(|config, value| config.server.idle_timeout = value, ConfigKey::ServerIdleTimeout);
     }
 
     #[test]

@@ -520,6 +520,30 @@ services:
       ANDROMEDA__NOTIFICATIONS__DELIVERY__MAX_MQTT_PACKET: "2 MiB"
       ANDROMEDA__NOTIFICATIONS__DELIVERY__MAX_HTTP_BODY: "1900 KiB"
 
+  postgres-timed:
+    extends:
+      <<: *template
+      service: postgres
+
+  # Gives a request head two seconds and an idle connection six. Only the tests of connections that carry no request
+  # talk to it: an idle bound this short closes pooled connections under any other test, which may reuse one just as
+  # the broker closes it.
+  broker-timed:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-timed:
+        condition: service_healthy
+    environment:
+      ANDROMEDA__SERVER__PORT: "1089"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-timed:5432/andromeda"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-timed"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-timed"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-timed:1089"
+      ANDROMEDA__SERVER__REQUEST_HEAD_TIMEOUT: "2s"
+      ANDROMEDA__SERVER__IDLE_TIMEOUT: "6s"
+
   runner:
     extends:
       <<: *template
@@ -558,6 +582,8 @@ services:
       broker-overloaded:
         condition: service_healthy
       broker-oversized:
+        condition: service_healthy
+      broker-timed:
         condition: service_healthy
       mosquitto-capped:
         condition: service_healthy

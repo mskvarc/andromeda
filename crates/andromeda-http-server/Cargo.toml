@@ -17,6 +17,8 @@ andromeda-configuration.workspace = true
 andromeda-server-tls.workspace = true
 axum = { version = "0.8.9", features = ["http2"] }
 headers = "0.4.2"
+http-body = "1.1.0"
+httpdate = "1.0.3"
 humantime = "2.4.0"
 hyper = "1.12.0"
 hyper-util = { version = "0.1.21", features = ["http1", "http2", "server-auto", "server-graceful", "service", "tokio"] }
@@ -30,6 +32,7 @@ tracing = "0.1.44"
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 andromeda-server-tls = { workspace = true, features = ["test-identity"] }
+hyper = { version = "1.12.0", features = ["client", "http2"] }
 pretty_assertions = "1.4.1"
 reqwest = { version = "0.13.5", features = ["http2"] }
 tokio = { version = "1.54.1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }

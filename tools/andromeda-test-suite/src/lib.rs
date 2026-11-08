@@ -77,6 +77,7 @@ pub mod grouped_query;
 pub mod header_condition;
 pub mod header_matcher;
 pub mod health_check;
+pub mod held_connection;
 pub mod held_retrieval;
 pub mod held_series;
 pub mod host_name;

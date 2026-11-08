@@ -94,6 +94,8 @@ impl ConfigKey {
             ConfigKey::ServerPort
             | ConfigKey::ServerGracefulDrainTimeout
             | ConfigKey::ServerAnnouncedCloseTimeout
+            | ConfigKey::ServerRequestHeadTimeout
+            | ConfigKey::ServerIdleTimeout
             | ConfigKey::ManagementPort
             | ConfigKey::TlsHandshakeTimeout
             | ConfigKey::RequestLimitsTimeout

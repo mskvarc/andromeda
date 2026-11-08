@@ -54,6 +54,22 @@ pub struct ServerConfig {
         description = "How long an HTTP/1.1 connection stays open, unread, after a response that announced `Connection: close`, so the client reads the response before the connection goes. Such a response refuses an upload the broker did not read."
     )]
     pub announced_close_timeout: HumanDuration,
+    /// How long a TCP connection gets to deliver a complete request head, in
+    /// human-readable form (`"30s"`): from its opening until its first request,
+    /// and over HTTP/1.1 from the first octet of each later head. An HTTP/1.1
+    /// connection out of time with part of a head received is answered 408;
+    /// every connection out of time is closed.
+    #[schemars(
+        description = "How long a connection to the API or management listener gets to send a complete request head, counted from when it opens until its first request, and over HTTP/1.1 from the first byte of each later request. When part of an HTTP/1.1 head has arrived, the broker answers `408 Request Timeout` before it closes the connection; otherwise it closes the connection without an answer. A new HTTP/2 connection gets the same time to open its first request."
+    )]
+    pub request_head_timeout: HumanDuration,
+    /// How long a TCP connection may stay open with no request in flight and
+    /// no request head arriving, in human-readable form (`"3m"`), before it is
+    /// closed gracefully: HTTP/1.1 at once, HTTP/2 after a GOAWAY.
+    #[schemars(
+        description = "How long a connection to the API or management listener may stay open with no request in flight before the broker closes it. An HTTP/2 connection is sent a GOAWAY first. Keep it above how long a reverse proxy in front keeps idle upstream connections, commonly 60 to 120 seconds, so the proxy closes an idle connection first and never sends a request on one the broker is closing."
+    )]
+    pub idle_timeout: HumanDuration,
     /// The HTTP/3 listener sharing this listener's host and port.
     #[schemars(description = "The optional HTTP/3 listener on the same host and port as the API.")]
     pub http3: Http3Config,
@@ -68,6 +84,8 @@ impl Default for ServerConfig {
             public_url: None,
             graceful_drain_timeout: HumanDuration::from_secs(30),
             announced_close_timeout: HumanDuration::from_secs(1),
+            request_head_timeout: HumanDuration::from_secs(30),
+            idle_timeout: HumanDuration::from_secs(180),
             http3: Http3Config::default(),
         }
     }

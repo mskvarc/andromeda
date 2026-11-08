@@ -105,6 +105,10 @@ pub enum BrokerRole {
     /// The andromeda stack broker serving its Prometheus metrics, only the test of notifications refused for their
     /// size uses, so the oversized-notification counter moves only with what that test sends.
     Oversized,
+    /// The andromeda stack broker giving a request head two seconds and an idle connection six, only the tests of
+    /// connections that carry no request use, since the short idle bound would close the pooled connections of any
+    /// other test under it.
+    Timed,
     /// The pgbouncer stack broker keeping at most 32 tenants resident and delivering notifications durably, whose
     /// evicted tenants the dormant tests watch.
     Dormant,
