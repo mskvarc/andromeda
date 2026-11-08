@@ -20,7 +20,10 @@ use andromeda_component_report::{
     RustChannel,
     RustVersion,
 };
-use andromeda_configuration::broker_config::BrokerConfig;
+use andromeda_configuration::{
+    broker_config::BrokerConfig,
+    schema::{feature_mode::FeatureMode, tenancy::TenancyConfig},
+};
 use andromeda_postgresql_context_store::component_report;
 use andromeda_postgresql_maintenance::repack_task::RUN_SESSIONS;
 use shadow_rs::shadow;
@@ -81,8 +84,9 @@ pub(crate) async fn collect(pool: &PgPool, config: &BrokerConfig) -> Result<Vec<
 /// visits, the repack task's sessions into the tenant whose table it
 /// repacks, and the peak of every cold build that may run at once. On the request path,
 /// unless a transaction pooler fronts it: the default tenant's serving pool,
-/// one serving pool per tenant the runtime cache holds, and the
-/// dormant-tenant probes. Behind a pooler those reach the pooler, whose own
+/// one serving pool per tenant the runtime cache holds while named tenancy is
+/// on, and the dormant-tenant probes, which the broker builds whether or not
+/// named tenancy is on. Behind a pooler those reach the pooler, whose own
 /// server connections are the pooler's to size.
 fn broker_connection_ceiling(config: &BrokerConfig) -> u32 {
     let database = &config.database;
@@ -98,11 +102,21 @@ fn broker_connection_ceiling(config: &BrokerConfig) -> u32 {
     if database.is_pooled() {
         return direct;
     }
-    let cached = u32::try_from(tenancy.residency.max_resident.get()).unwrap_or(u32::MAX);
     direct
         .saturating_add(tenancy.default_tenant.max_connections.get())
-        .saturating_add(cached.saturating_mul(tenancy.databases.max_connections.get()))
+        .saturating_add(named_tenant_connections(tenancy))
         .saturating_add(REQUEST_PROBE_CONNECTIONS)
+}
+
+/// The serving pools of the named tenants the runtime cache holds at once;
+/// none while named tenancy is off, since only the default tenant exists.
+fn named_tenant_connections(tenancy: &TenancyConfig) -> u32 {
+    match tenancy.mode {
+        FeatureMode::Disabled => 0,
+        FeatureMode::Enabled => u32::try_from(tenancy.residency.max_resident.get())
+            .unwrap_or(u32::MAX)
+            .saturating_mul(tenancy.databases.max_connections.get()),
+    }
 }
 
 /// Construct the report for the running Andromeda build.
@@ -127,7 +141,10 @@ mod tests {
     use andromeda_component_report::ComponentReport;
     use andromeda_configuration::{
         broker_config::BrokerConfig,
-        schema::database::{connection::PostgresConnection, pooler::PoolerConfig},
+        schema::{
+            database::{connection::PostgresConnection, pooler::PoolerConfig},
+            feature_mode::FeatureMode,
+        },
     };
     use pretty_assertions::{assert_eq, assert_ne};
     use std::num::{NonZeroU32, NonZeroUsize};
@@ -149,7 +166,18 @@ mod tests {
     /// cached tenants 20 x 3, probes 2.
     #[test]
     fn a_direct_broker_counts_every_pool_it_opens_against_postgresql() {
-        assert_eq!(broker_connection_ceiling(&sized()), 10 + 3 + 1 + 2 + 8 + 7 + 60 + 2);
+        let mut config = sized();
+        config.tenancy.mode = FeatureMode::Enabled;
+        assert_eq!(broker_connection_ceiling(&config), 10 + 3 + 1 + 2 + 8 + 7 + 60 + 2);
+    }
+
+    /// With named tenancy off only the default tenant's pool serves requests,
+    /// so the 20 x 3 cached tenants drop out and the probes stay.
+    #[test]
+    fn with_named_tenancy_disabled_no_named_tenant_pool_counts() {
+        let mut config = sized();
+        config.tenancy.mode = FeatureMode::Disabled;
+        assert_eq!(broker_connection_ceiling(&config), 10 + 3 + 1 + 2 + 8 + 7 + 2);
     }
 
     /// Behind a pooler the request path reaches the pooler, so only the
