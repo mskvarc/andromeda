@@ -1,6 +1,7 @@
 name: suite
 
-# The trees ci does not run on every commit, weekly, and any single tree on demand.
+# The trees ci does not run on every commit, weekly, and any single tree on demand. The pgbouncer tree is not offered:
+# its fifteen brokers over fifteen PostgreSQL servers are very resource intensive.
 on:
   schedule:
     - cron: "17 2 * * 1"
@@ -17,7 +18,6 @@ on:
           - etsi
           - annex_c
           - distributed
-          - pgbouncer
           - interoperability
 
 concurrency:
@@ -35,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tree: ${{ fromJSON((github.event_name == 'schedule' || inputs.tree == 'weekly') && '["distributed","pgbouncer","interoperability"]' || format('["{0}"]', inputs.tree)) }}
+        tree: ${{ fromJSON((github.event_name == 'schedule' || inputs.tree == 'weekly') && '["distributed","interoperability"]' || format('["{0}"]', inputs.tree)) }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/free-disk-space
