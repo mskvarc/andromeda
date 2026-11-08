@@ -29,12 +29,7 @@ use crate::{
     request_body_limit::RequestBodyLimit,
     request_json_value_limit::RequestJsonValueLimit,
 };
-use andromeda_http_response::{
-    classified_report::ClassifiedReport,
-    extraction_rejection::ExtractorRejection,
-    problem_response::ProblemResponse,
-    request_refusal::RequestRefusal,
-};
+use andromeda_http_response::{classified_report::ClassifiedReport, extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
 use andromeda_ngsi_ld_number::json_value::text_admission::{JsonTextRefusal, admit_json_text};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
@@ -44,7 +39,7 @@ use axum::{
         Request,
         rejection::{BytesRejection, FailedToBufferBody},
     },
-    http::{Uri, Version},
+    http::Uri,
 };
 use thiserror::Error;
 
@@ -105,18 +100,17 @@ where
     S: Send + Sync,
 {
     let limit = request.extensions().get::<RequestBodyLimit>().copied();
-    let version = request.version();
     if let Some(limit) = limit
         && declares_more_than(declared, limit)
     {
-        return Err(payload_too_large(Some(limit), instance, version));
+        return Err(payload_too_large(Some(limit), instance));
     }
     Bytes::from_request(request, state).await.map_err(|rejection| {
         // `BytesRejection` and `FailedToBufferBody` are non-exhaustive, so the
         // limit is singled out and every other failure is a payload the
         // transport did not deliver.
         if matches!(&rejection, BytesRejection::FailedToBufferBody(FailedToBufferBody::LengthLimitError(_))) {
-            payload_too_large(limit, instance, version)
+            payload_too_large(limit, instance)
         } else {
             UnreadablePayload(rejection).into_rejection(instance)
         }
@@ -128,15 +122,15 @@ fn declares_more_than(declared: DeclaredBodyLength, limit: RequestBodyLimit) -> 
     u64::try_from(limit.bytes()).is_ok_and(|limit| declared.bytes().get() > limit)
 }
 
-/// The clause 6.3.2 "Request Entity too large" refusal of a request received
-/// over `version`, naming the limit when the stack published one.
-fn payload_too_large(limit: Option<RequestBodyLimit>, instance: Uri, version: Version) -> ExtractorRejection {
+/// The clause 6.3.2 "Request Entity too large" refusal, naming the limit when
+/// the stack published one.
+fn payload_too_large(limit: Option<RequestBodyLimit>, instance: Uri) -> ExtractorRejection {
     let detail = match limit {
         Some(limit) => PayloadTooLarge::Limited { bytes: limit.bytes() },
         None => PayloadTooLarge::Unpublished,
     };
     let refusal = ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, detail.to_string()).with_instance(instance);
-    ExtractorRejection::Classified(closing_http1_connection(refusal, version))
+    ExtractorRejection::Classified(refusal)
 }
 
 /// A payload body past the size the broker accepts in one request.
@@ -164,16 +158,6 @@ impl RequestRefusal for UnreadablePayload {
     }
 }
 
-/// Announce the close of an HTTP/1.x connection whose request content the
-/// refusal leaves unread; later versions stop the upload with a stream reset.
-fn closing_http1_connection(refusal: ProblemResponse, version: Version) -> ProblemResponse {
-    if version < Version::HTTP_2 {
-        refusal.with_connection_close()
-    } else {
-        refusal
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{request_body_limit::RequestBodyLimit, request_json_value_limit::RequestJsonValueLimit, request_payload::RequestPayload};
@@ -186,8 +170,7 @@ mod tests {
         http::{
             Request,
             StatusCode,
-            Version,
-            header::{CONNECTION, CONTENT_LENGTH, CONTENT_TYPE},
+            header::{CONTENT_LENGTH, CONTENT_TYPE},
         },
         routing::post,
     };
@@ -222,14 +205,6 @@ mod tests {
         let status = response.status();
         let body = to_bytes(response.into_body(), usize::MAX).await.expect("a readable body");
         (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
-    }
-
-    /// The status a router answers `request` with, and the `Connection` header
-    /// it announces.
-    async fn connection_announced(router: Router, request: Request<Body>) -> (StatusCode, Option<String>) {
-        let response = router.oneshot(request).await.expect("the router answers");
-        let connection = response.headers().get(CONNECTION).and_then(|value| value.to_str().ok()).map(str::to_owned);
-        (response.status(), connection)
     }
 
     /// A body `size` bytes long that declares its length.
@@ -315,48 +290,6 @@ mod tests {
         pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
         let detail = problem["detail"].as_str().expect("a detail");
         assert!(detail.contains("/a") && detail.contains("U+0000"), "{detail}");
-    }
-
-    /// RFC 9110 clause 10.1.1: refusing an HTTP/1.1 upload before reading it
-    /// announces that the connection closes after the refusal.
-    #[tokio::test]
-    async fn a_declared_length_over_the_limit_on_http1_announces_the_close() {
-        let (status, connection) = connection_announced(router(true), declared(LIMIT + 1)).await;
-
-        pretty_assertions::assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
-        pretty_assertions::assert_eq!(connection.as_deref(), Some("close"));
-    }
-
-    /// A body refused once it runs past the limit leaves the rest unread, so
-    /// its refusal announces the close too.
-    #[tokio::test]
-    async fn a_body_that_runs_past_the_limit_on_http1_announces_the_close() {
-        let (status, connection) = connection_announced(router(true), understated(LIMIT + 1)).await;
-
-        pretty_assertions::assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
-        pretty_assertions::assert_eq!(connection.as_deref(), Some("close"));
-    }
-
-    /// RFC 9113 clause 8.2.2 forbids `Connection` on HTTP/2, which stops an
-    /// upload with a stream reset instead.
-    #[tokio::test]
-    async fn a_refusal_over_http2_announces_no_close() {
-        let mut request = declared(LIMIT + 1);
-        *request.version_mut() = Version::HTTP_2;
-
-        let (status, connection) = connection_announced(router(true), request).await;
-
-        pretty_assertions::assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
-        pretty_assertions::assert_eq!(connection, None);
-    }
-
-    /// A payload read in full leaves the connection as it was.
-    #[tokio::test]
-    async fn a_payload_at_the_limit_announces_no_close() {
-        let (status, connection) = connection_announced(router(true), declared(LIMIT)).await;
-
-        pretty_assertions::assert_eq!(status, StatusCode::OK);
-        pretty_assertions::assert_eq!(connection, None);
     }
 
     /// Clause 6.3.4: the length precondition comes first.

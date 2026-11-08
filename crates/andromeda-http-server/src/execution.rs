@@ -14,6 +14,7 @@ use crate::{
     request_tracking::track_request,
     staged_close_listener::StagedCloseListener,
     tls_tcp_listener::TlsTcpListener,
+    unread_content::announce_close_of_unread_content,
 };
 use andromeda_configuration::{header_section_limit::HeaderSectionLimit, schema::server::ServerConfig};
 use axum::{
@@ -138,8 +139,10 @@ where
     F: Future<Output = ()> + Send,
 {
     let builder = connection_builder(header_section.limit);
-    let service = from_fn(track_request)
-        .layer(from_fn(record_close_announcement).layer(from_fn_with_state(header_section, refuse_oversized_http1_section).layer(service)));
+    let service = from_fn(track_request).layer(
+        from_fn(record_close_announcement)
+            .layer(from_fn(announce_close_of_unread_content).layer(from_fn_with_state(header_section, refuse_oversized_http1_section).layer(service))),
+    );
     let mut listener = StagedCloseListener::new(listener, policy.announced_close_delay);
     let (drain, _) = watch::channel(());
     tokio::pin!(shutdown);
@@ -181,6 +184,9 @@ where
 mod bounds_tests;
 
 #[cfg(test)]
+mod unread_content_tests;
+
+#[cfg(test)]
 mod tests {
     use crate::{
         close_policy::ClosePolicy,
@@ -193,7 +199,7 @@ mod tests {
     use axum::{
         Router,
         extract::{ConnectInfo, Request},
-        http::{StatusCode, header::CONNECTION},
+        http::StatusCode,
         routing::{get, post},
     };
     use std::{io, net::SocketAddr, num::ParseIntError, sync::Arc, time::Duration};
@@ -248,14 +254,10 @@ mod tests {
         Ok((listener, address))
     }
 
-    /// A router that refuses every upload before reading a byte of it, and
-    /// announces that it closes the connection, as the broker's payload reader
-    /// does for a body over its limit.
+    /// A router that refuses every upload before reading a byte of it, as the
+    /// broker's payload reader does for a body over its limit.
     fn refusing_router() -> Router {
-        Router::new().route(
-            "/upload",
-            post(|| async { (StatusCode::PAYLOAD_TOO_LARGE, [(CONNECTION, "close")], "refused") }),
-        )
+        Router::new().route("/upload", post(|| async { (StatusCode::PAYLOAD_TOO_LARGE, "refused") }))
     }
 
     #[tokio::test]

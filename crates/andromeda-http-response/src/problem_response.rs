@@ -6,18 +6,8 @@ use axum::{
     Json,
     response::{IntoResponse, Response},
 };
-use headers::{Connection, HeaderMapExt, RetryAfter};
+use headers::{HeaderMapExt, RetryAfter};
 use std::time::Duration;
-
-/// Whether the connection carrying a response stays open after it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum ConnectionAfterResponse {
-    /// The connection stays as the protocol leaves it.
-    #[default]
-    Unannounced,
-    /// The response announces `Connection: close`.
-    Closes,
-}
 
 /// A local Axum response wrapper around the framework-independent clause 5.5.3 wire value.
 #[derive(Debug)]
@@ -30,9 +20,6 @@ pub struct ProblemResponse {
     warnings: Vec<NgsiLdWarning>,
     /// Optional delay before a recoverable request should be retried.
     retry_after: Option<Duration>,
-    /// Whether the response announces `Connection: close`, as a refusal of a
-    /// request whose content was not read does (RFC 9110 clause 10.1.1).
-    connection: ConnectionAfterResponse,
 }
 
 impl ProblemResponse {
@@ -43,7 +30,6 @@ impl ProblemResponse {
             problem,
             warnings: Vec::new(),
             retry_after: None,
-            connection: ConnectionAfterResponse::Unannounced,
         }
     }
 
@@ -72,18 +58,6 @@ impl ProblemResponse {
         self.retry_after = Some(retry_after);
         self
     }
-
-    /// Announce that the connection closes after this response.
-    ///
-    /// RFC 9110 clause 10.1.1: "A server that responds with a final status
-    /// code before reading the entire request content SHOULD indicate whether
-    /// it intends to close the connection". The header is HTTP/1.x only;
-    /// RFC 9113 clause 8.2.2 forbids it on HTTP/2.
-    #[must_use]
-    pub const fn with_connection_close(mut self) -> ProblemResponse {
-        self.connection = ConnectionAfterResponse::Closes;
-        self
-    }
 }
 
 impl IntoResponse for ProblemResponse {
@@ -96,10 +70,6 @@ impl IntoResponse for ProblemResponse {
         if let Some(retry_after) = self.retry_after {
             response.headers_mut().typed_insert(RetryAfter::delay(retry_after));
         }
-        match self.connection {
-            ConnectionAfterResponse::Unannounced => {}
-            ConnectionAfterResponse::Closes => response.headers_mut().typed_insert(Connection::close()),
-        }
         response
     }
 }
@@ -111,11 +81,7 @@ mod tests {
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use axum::{
         body::{Body, to_bytes},
-        http::{
-            StatusCode,
-            Uri,
-            header::{CONNECTION, CONTENT_TYPE},
-        },
+        http::{StatusCode, Uri, header::CONTENT_TYPE},
         response::{IntoResponse, Response},
     };
     use serde_json::Value;
@@ -177,28 +143,6 @@ mod tests {
             response.headers().get("ngsild-warning").and_then(|value| value.to_str().ok()),
             Some("199 - \"registration loop detected\"")
         );
-        Ok(())
-    }
-
-    /// RFC 9110 clause 10.1.1: a refusal answered before the content was read
-    /// says the connection closes after it.
-    #[tokio::test]
-    async fn a_problem_response_can_announce_the_connection_close() -> Result<(), serde_json::Error> {
-        let response = ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, "too large")
-            .with_instance(Uri::from_static("/ngsi-ld/v1/entities"))
-            .with_connection_close();
-        let (response, value) = body(response).await?;
-        pretty_assertions::assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
-        pretty_assertions::assert_eq!(response.headers().get(CONNECTION).and_then(|value| value.to_str().ok()), Some("close"));
-        pretty_assertions::assert_eq!(value["status"], 413);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn a_problem_response_keeps_the_connection_unless_told_otherwise() -> Result<(), serde_json::Error> {
-        let response = ClassifiedReport::public(NgsiLdErrorType::BadRequestData, "bad").with_instance(Uri::from_static("/ngsi-ld/v1/entities"));
-        let (response, _) = body(response).await?;
-        pretty_assertions::assert_eq!(response.headers().get(CONNECTION), None);
         Ok(())
     }
 

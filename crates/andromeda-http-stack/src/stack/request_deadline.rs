@@ -8,9 +8,9 @@
 //!
 //! A request whose client has not finished sending its body by then is the
 //! client's failure, not the broker's: RFC 9110 clause 15.5.9 answers it 408
-//! and has the server close the connection, which over HTTP/1.x is said with
-//! `Connection: close`. HTTP/2 and HTTP/3 forbid that field and end only the
-//! stream.
+//! and has the server close the connection. The body is left unread, so the
+//! TCP listener announces that close over HTTP/1.x as it does for every
+//! response to unread content; HTTP/2 and HTTP/3 end only the stream.
 
 use crate::stack::body_arrival::{BodyArrival, HeldUpBy};
 use andromeda_http_extraction::addressed_uri::addressed_request_uri;
@@ -18,11 +18,9 @@ use andromeda_http_response::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
     extract::{Request, State},
-    http::Version,
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use headers::{Connection, HeaderMapExt};
 use std::time::Duration;
 use thiserror::Error;
 use tokio::time::timeout;
@@ -54,7 +52,6 @@ struct BodyLate(Duration);
 /// 500 `InternalError` otherwise.
 pub(super) async fn answer_within_deadline(State(deadline): State<RequestDeadline>, request: Request, next: Next) -> Response {
     let instance = addressed_request_uri(&request);
-    let version = request.version();
     let (request, arrival) = BodyArrival::watch(request);
     match timeout(deadline.0, next.run(request)).await {
         Ok(response) => response,
@@ -62,15 +59,9 @@ pub(super) async fn answer_within_deadline(State(deadline): State<RequestDeadlin
             HeldUpBy::Broker => ClassifiedReport::public(NgsiLdErrorType::InternalError, DeadlinePassed(deadline.0).to_string())
                 .with_instance(instance)
                 .into_response(),
-            HeldUpBy::Client => {
-                let mut response = ClassifiedReport::public(NgsiLdErrorType::RequestTimeout, BodyLate(deadline.0).to_string())
-                    .with_instance(instance)
-                    .into_response();
-                if matches!(version, Version::HTTP_09 | Version::HTTP_10 | Version::HTTP_11) {
-                    response.headers_mut().typed_insert(Connection::close());
-                }
-                response
-            }
+            HeldUpBy::Client => ClassifiedReport::public(NgsiLdErrorType::RequestTimeout, BodyLate(deadline.0).to_string())
+                .with_instance(instance)
+                .into_response(),
         },
     }
 }
@@ -82,12 +73,7 @@ mod tests {
         Router,
         body::{Body, Bytes, to_bytes},
         extract::Request,
-        http::{
-            Error as RequestBuildError,
-            StatusCode,
-            Version,
-            header::{CONNECTION, CONTENT_TYPE},
-        },
+        http::{Error as RequestBuildError, StatusCode, Version, header::CONTENT_TYPE},
         middleware::from_fn_with_state,
         routing::{get, post},
     };
@@ -177,25 +163,12 @@ mod tests {
             .oneshot(stalled_body_request(Version::HTTP_11)?)
             .await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
-        pretty_assertions::assert_eq!(response.headers().get(CONNECTION).and_then(|value| value.to_str().ok()), Some("close"));
         let problem: Value = serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await?)?;
         pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/RequestTimeout");
         pretty_assertions::assert_eq!(problem["title"], "Request timeout");
         pretty_assertions::assert_eq!(problem["status"], 408);
         pretty_assertions::assert_eq!(problem["instance"], "/ngsi-ld/v1/entities");
         pretty_assertions::assert_eq!(problem["detail"], "the request body did not arrive within 20 ms");
-        Ok(())
-    }
-
-    /// RFC 9113 clause 8.2.2 and RFC 9114 clause 4.2 forbid the
-    /// connection-specific `Connection` field.
-    #[tokio::test]
-    async fn a_body_still_arriving_over_http_2_or_3_is_answered_without_a_connection_field() -> Result<(), Box<dyn Error>> {
-        for version in [Version::HTTP_2, Version::HTTP_3] {
-            let response = reading_router(Duration::from_millis(20)).oneshot(stalled_body_request(version)?).await?;
-            pretty_assertions::assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT, "{version:?}");
-            pretty_assertions::assert_eq!(response.headers().get(CONNECTION), None, "{version:?}");
-        }
         Ok(())
     }
 
@@ -207,7 +180,6 @@ mod tests {
         );
         let response = router.oneshot(Request::post("/ngsi-ld/v1/entities").body(Body::from("{}"))?).await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        pretty_assertions::assert_eq!(response.headers().get(CONNECTION), None);
         Ok(())
     }
 
