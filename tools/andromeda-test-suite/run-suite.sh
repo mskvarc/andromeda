@@ -44,7 +44,7 @@ fi
 "${compose[@]}" up --detach --wait
 
 status=0
-"${compose[@]}" run --rm runner cargo nextest run --profile suite-verdict -p andromeda-test-suite "${selection[@]}" || status=$?
+"${compose[@]}" run --rm runner cargo nextest run --tool-config-file runner:/andromeda/tools/andromeda-test-suite/stacks/runner/nextest.toml --profile suite-verdict -p andromeda-test-suite "${selection[@]}" || status=$?
 
 mkdir -p "$report_dir"
 copy_status=0

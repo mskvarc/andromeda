@@ -1,0 +1,4 @@
+# Nextest resolves its store, and every JUnit report in it, against the workspace root rather than the Cargo target
+# directory. The runner mounts the workspace read-only, so the store goes to the writable target volume.
+[store]
+dir = "/target/nextest"
