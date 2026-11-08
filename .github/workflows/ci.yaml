@@ -110,18 +110,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/rust-toolchain
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.149
       # andromeda-sql shells out to pg_format and Squawk and is tested by sql; andromeda-test-suite needs a live stack.
       - name: Workspace unit tests
-        run: cargo test --workspace --exclude andromeda --exclude andromeda-sql --exclude andromeda-test-suite --lib --bins --tests --all-features --locked -- --skip architecture
+        run: cargo nextest run --workspace --exclude andromeda --exclude andromeda-sql --exclude andromeda-test-suite --lib --bins --tests --all-features --locked --no-fail-fast -E 'not test(architecture)'
       # The selection and flags of the step above, so the test binaries it built are run again rather than rebuilt. The
       # architecture checks are generated into every crate; andromeda-sql's run with its tests in sql.
       - name: Architecture checks
         if: ${{ !cancelled() }}
-        run: cargo test --workspace --exclude andromeda --exclude andromeda-sql --exclude andromeda-test-suite --lib --bins --tests --all-features --locked architecture
+        run: cargo nextest run --workspace --exclude andromeda --exclude andromeda-sql --exclude andromeda-test-suite --lib --bins --tests --all-features --locked --no-fail-fast -E 'test(architecture)'
       # The broker's root tests/ need a live stack.
       - name: Broker unit tests
         if: ${{ !cancelled() }}
-        run: cargo test --package andromeda --bins --all-features --locked
+        run: cargo nextest run --package andromeda --bins --all-features --locked --no-fail-fast
 
   sql:
     name: sql
@@ -134,6 +137,9 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/rust-toolchain
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.149
       # The canonical migration layout is the one this pgFormatter release produces. Both tools go under the job's
       # temporary directory, so a runner without sudo installs them the same way. pg_format loads its modules from the
       # directory it sits in, so it runs from the extracted release; its Makefile.PL accepts no install prefix.
@@ -178,7 +184,7 @@ jobs:
           fi
       - name: andromeda-sql tests
         if: ${{ !cancelled() }}
-        run: cargo test --package andromeda-sql --all-features --locked
+        run: cargo nextest run --package andromeda-sql --all-features --locked --no-fail-fast
 
   suite:
     name: suite (${{ matrix.tree }})

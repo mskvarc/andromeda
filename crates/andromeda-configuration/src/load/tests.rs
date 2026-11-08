@@ -26,13 +26,13 @@ use crate::{
 };
 use serial_test::serial;
 use std::{
-    env,
-    fs,
+    io::Write,
     net::IpAddr,
     num::NonZeroU32,
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
+use tempfile::{Builder, TempPath};
 
 /// Load with the connection [`BrokerConfig::local`] names in the environment,
 /// since no layer has a default one.
@@ -52,22 +52,23 @@ fn load_env_only() -> BrokerConfig {
     load_connected(None, ListenerOverrides::default()).expect("config should load").config
 }
 
-fn write_temp_config(contents: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be after unix epoch")
-        .as_nanos();
-    let path = env::temp_dir().join(format!("andromeda-config-{unique}.toml"));
-    fs::write(&path, contents).expect("temp config should be written");
-    path
+/// Write `contents` to a configuration file of its own, removed when the path
+/// drops. The name is created exclusively, so tests running in separate
+/// processes never share a file.
+fn write_temp_config(contents: &str) -> TempPath {
+    let mut file = Builder::new()
+        .prefix("andromeda-config-")
+        .suffix(".toml")
+        .tempfile()
+        .expect("temp config should be created");
+    file.write_all(contents.as_bytes()).expect("temp config should be written");
+    file.into_temp_path()
 }
 
 /// Load `contents` as the configuration file, with what the load ignores.
 fn load_file_reporting(contents: &str) -> Result<LoadedConfiguration, LoadError> {
     let path = write_temp_config(contents);
-    let result = load_connected(Some(&path), ListenerOverrides::default());
-    fs::remove_file(path).expect("temp config should be removed");
-    result
+    load_connected(Some(&path), ListenerOverrides::default())
 }
 
 /// Load `contents` as the configuration file.
@@ -164,9 +165,7 @@ fn the_connection_reads_part_by_part_from_the_environment_with_numeric_text_kept
 fn the_file_and_the_environment_each_give_parts_of_one_connection() {
     let path = write_temp_config("[database.connection]\nhost = \"db.example\"\nuser = \"broker\"\ndatabase = \"andromeda\"\n");
     temp_env::with_vars([("ANDROMEDA__DATABASE__CONNECTION__PASSWORD", Some("s3cret"))], || {
-        let result = load(Some(&path), ListenerOverrides::default());
-        fs::remove_file(&path).expect("temp config should be removed");
-        let config = result.expect("config should load").config;
+        let config = load(Some(&path), ListenerOverrides::default()).expect("config should load").config;
         pretty_assertions::assert_eq!(config.database.direct_url().as_str(), "postgres://broker:s3cret@db.example/andromeda");
     });
 }
@@ -175,9 +174,7 @@ fn the_file_and_the_environment_each_give_parts_of_one_connection() {
 #[serial]
 fn a_misspelt_connection_part_is_ignored_and_named() {
     let path = write_temp_config("[database.connection]\nhost = \"db.example\"\nuser = \"broker\"\npasword = \"s3cret\"\ndatabase = \"andromeda\"\n");
-    let result = load(Some(&path), ListenerOverrides::default());
-    fs::remove_file(&path).expect("temp config should be removed");
-    let loaded = result.expect("config should load");
+    let loaded = load(Some(&path), ListenerOverrides::default()).expect("config should load");
     pretty_assertions::assert_eq!(ignored_settings_of(&loaded), in_file("database.connection.pasword"));
     pretty_assertions::assert_eq!(loaded.config.database.direct_url().as_str(), "postgres://broker@db.example/andromeda");
 }
@@ -456,7 +453,6 @@ fn env_overrides_file() {
     let path = write_temp_config("[server]\nport = 1600\n");
     temp_env::with_vars([("ANDROMEDA__SERVER__PORT", Some("1700"))], || {
         let config = load_connected(Some(&path), ListenerOverrides::default()).expect("config should load").config;
-        fs::remove_file(path).expect("temp config should be removed");
         pretty_assertions::assert_eq!(config.server.port, 1700);
     });
 }
@@ -670,9 +666,7 @@ fn a_file_without_unknown_keys_ignores_nothing() {
 #[serial]
 fn an_ignored_file_key_names_its_path_and_its_file() {
     let path = write_temp_config("[server]\nunknown_key = 1\n");
-    let result = load_connected(Some(&path), ListenerOverrides::default());
-    fs::remove_file(&path).expect("temp config should be removed");
-    let message = result
+    let message = load_connected(Some(&path), ListenerOverrides::default())
         .expect("an unknown key loads")
         .ignored
         .iter()
@@ -712,7 +706,6 @@ fn an_unknown_key_written_by_the_file_and_the_environment_is_reported_for_both()
     let path = write_temp_config("[server]\nunknown_key = 1\n");
     temp_env::with_vars([("ANDROMEDA__SERVER__UNKNOWN_KEY", Some("2"))], || {
         let result = load_connected(Some(&path), ListenerOverrides::default());
-        fs::remove_file(&path).expect("temp config should be removed");
         pretty_assertions::assert_eq!(
             ignored_settings_of(&result.expect("an unknown key loads")),
             vec![("server.unknown_key".to_owned(), "file"), ("server.unknown_key".to_owned(), "environment")]

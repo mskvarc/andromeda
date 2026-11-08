@@ -234,6 +234,7 @@ dependencies = [
  "serial_test",
  "strum",
  "temp-env",
+ "tempfile",
  "textwrap",
  "thiserror 2.0.21",
  "toml",

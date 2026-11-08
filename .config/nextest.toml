@@ -1,4 +1,5 @@
-# The default profile is nextest's own; the profiles below belong to andromeda-test-suite.
+# The default profile runs the workspace's unit tests, locally and in CI; `suite` and `suite-verdict` belong to
+# andromeda-test-suite.
 
 # An inheriting profile takes its parent's overrides from nextest 0.9.145 on; an older nextest would run `suite-verdict`
 # with no test group at all.
@@ -18,6 +19,12 @@ private-tenants = { max-threads = 4 }
 # time fits a host that holds the whole stack; more than one and the servers of the scale tests, each carrying a
 # hundred tenant databases, drive the host past its memory and the brokers die under it.
 pgbouncer = { max-threads = 1 }
+
+# The large geometry test bounds the ratio of two decode times measured in one process; the CPU load of tests running
+# beside it skews that ratio, so it runs alone.
+[[profile.default.overrides]]
+filter = 'package(andromeda-http-extraction) & binary(=large_geometry_body)'
+threads-required = "num-test-threads"
 
 # Every test runs in a process of its own beside every other, against the stack its test target uses. A failure is
 # never retried: an intermittent failure is a defect to find, in the test's isolation or in the broker.

@@ -38,3 +38,4 @@ andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
 serial_test = "4.0.1"
 temp-env = "0.3.6"
+tempfile = "3.27.0"
