@@ -37,7 +37,7 @@ status=0
 
 mkdir -p "$report_dir"
 copy_status=0
-"${compose[@]}" run --rm --no-deps runner cat /andromeda/target/nextest/suite-verdict/junit.xml > "${report_dir}/${tree}.junit.xml" || copy_status=$?
+"${compose[@]}" run --rm --no-deps runner cat /target/nextest/suite-verdict/junit.xml > "${report_dir}/${tree}.junit.xml" || copy_status=$?
 if [ "$status" -eq 0 ]; then
     status="$copy_status"
 fi

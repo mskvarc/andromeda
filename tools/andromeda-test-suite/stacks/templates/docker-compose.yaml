@@ -49,9 +49,13 @@ services:
       context: ../runner
     profiles: ["runner"]
     working_dir: /andromeda/tools/andromeda-test-suite
+    # A mount nested in the read-only checkout needs its mountpoint to exist there already, which a fresh clone's
+    # missing target directory does not, so the build goes to a volume outside the checkout.
+    environment:
+      CARGO_TARGET_DIR: /target
     volumes:
       - ../../../..:/andromeda:ro
-      - target:/andromeda/target
+      - target:/target
       - registry:/usr/local/cargo/registry
 
 volumes:
