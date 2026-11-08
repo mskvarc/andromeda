@@ -1,0 +1,156 @@
+# Written by `andromeda-sql seal`. A sealed migration and its section never change.
+
+algorithm = "sha-256"
+
+[[release]]
+version = "v1.0.0"
+
+[[release.migration]]
+set = "platform"
+name = "0001_tenants.sql"
+sha256 = "0206a68c2fe8b59a6a1e5e73d096f18c919af7416734b6020d2e0819926dd985"
+
+[[release.migration]]
+set = "platform"
+name = "0002_postgresql_maintenance.sql"
+sha256 = "70b1da1d5d50480bd19c57dc811d6b5abd0a4f03a478521a2049f39067d8226e"
+
+[[release.migration]]
+set = "platform"
+name = "0003_forwarded_subscription_routes.sql"
+sha256 = "72c0785118d002b87e8153ba73ea5d30757ea9616235745502bce19ff871c8b5"
+
+[[release.migration]]
+set = "platform"
+name = "0004_tenant_wake_schedule.sql"
+sha256 = "7c8ba84d1f299564cec27e7ec8bacdf1e44b367675d4203d16def0fb0e1f695b"
+
+[[release.migration]]
+set = "tenant"
+name = "0005_extensions.sql"
+sha256 = "e1ea86e3c6c7c33e444af59cb6385406793f5c4335be87825580983aca82c686"
+
+[[release.migration]]
+set = "tenant"
+name = "0006_types.sql"
+sha256 = "879a0d7e3cfe57623c6a5a4f55fdb2df512ed1ca630aab0a3c0ee5f726fc3304"
+
+[[release.migration]]
+set = "tenant"
+name = "0007_functions.sql"
+sha256 = "a02e7e287c874083e67978ac211968d828b72e336cf371b5569c2ac1cb2ffdeb"
+
+[[release.migration]]
+set = "tenant"
+name = "0008_name_dictionaries.sql"
+sha256 = "8b0d893d6450b6c8714093b0f350b6dabb90734a76a87f110882e4869b05dcd5"
+
+[[release.migration]]
+set = "tenant"
+name = "0009_jsonld_contexts.sql"
+sha256 = "8e6eaf533049fcaff3d12ff09f30a1ebb87ecd140b7838360794b12ffed2ba75"
+
+[[release.migration]]
+set = "tenant"
+name = "0010_context_source_registrations.sql"
+sha256 = "8f78b050efd22bc46ba8e1387ba30c2350cfdb4e950a5f467de5d0f47ddabeb9"
+
+[[release.migration]]
+set = "tenant"
+name = "0011_registration_information.sql"
+sha256 = "d2974a85b9f8d6d43f04805259900403ac8a55e2264e933365e7ea6eb23585bb"
+
+[[release.migration]]
+set = "tenant"
+name = "0012_snapshots.sql"
+sha256 = "0ce7dea44be4cf98d2ca7bdbb38909fd7984f18b063550a3b9290919bd247c9a"
+
+[[release.migration]]
+set = "tenant"
+name = "0013_entity_maps.sql"
+sha256 = "ce872a724a17fe7d618eadf8be60f0bc8d43636a9559546adb69e2f43140f800"
+
+[[release.migration]]
+set = "tenant"
+name = "0014_schema_metadata.sql"
+sha256 = "23ac00e0536a5f597e9ff55b0c4b468b30a250a22ff43da044b341ec5ea8ed87"
+
+[[release.migration]]
+set = "branch"
+name = "0015_entities.sql"
+sha256 = "f4a3a2fc5133f3e8c908a3cd3a374284cd272c8f1906f52dda58b36d8d0d6c7f"
+
+[[release.migration]]
+set = "branch"
+name = "0016_discovery_census.sql"
+sha256 = "ee5847c17ce071886508c22e5e8f8e73fd85499e6ddbaaa52763c4b1e39908aa"
+
+[[release.migration]]
+set = "branch"
+name = "0017_temporal_catalog.sql"
+sha256 = "bf9b3e6d9767042113e289d11dea522c21f5c3a3751dc75a1889a1393754085d"
+
+[[release.migration]]
+set = "branch"
+name = "0018_attribute_history.sql"
+sha256 = "606ec85fa8aa486d56a8360d8d0664bedd03ea10ccc012137a425c252bcd9c5c"
+
+[[release.migration]]
+set = "branch"
+name = "0019_scope_history.sql"
+sha256 = "e21c6231375cd60da2c6b06ffb955e375e3ead25bfb0e59df77788f3d145c968"
+
+[[release.migration]]
+set = "branch"
+name = "0020_current_attributes.sql"
+sha256 = "1ce6ecb1957e188c1913f4db2fc54259d2dd5ef6b846c280ff0f7720d75116b4"
+
+[[release.migration]]
+set = "branch"
+name = "0021_subscriptions.sql"
+sha256 = "f80b6b3556616924189ebfba3ead33a788efa6294d701f3e41151bf9fdddf394"
+
+[[release.migration]]
+set = "branch"
+name = "0022_notification_queue.sql"
+sha256 = "551bc6c853fc49361dd24a43c2ebf6f00b32d70c07366ebb2f89389df733ce88"
+
+[[release.migration]]
+set = "tenant"
+name = "0023_pending_side_effects.sql"
+sha256 = "02ea8f1a78e06fda49b89aa64c21c131f5c407a8700a602387f228ff638e1b81"
+
+[[release.migration]]
+set = "tenant"
+name = "0024_temporal_append_intents.sql"
+sha256 = "abbc455750b85be53f3b94a1ff59d86ef814c28f7b78dbf09f8073fd779b6d8a"
+
+[[release.migration]]
+set = "tenant"
+name = "0025_subscription_forwarding.sql"
+sha256 = "b7820400607d6a10e44e6be8ba1255550734081ac03f869c0e7633540f51de20"
+
+[[release.migration]]
+set = "tenant"
+name = "0026_hypertables.sql"
+sha256 = "72b646fd7df5a1f9031758e68bf834ae1830893976ccf1ad57f937ab66aaf102"
+
+[[release.migration]]
+set = "tenant"
+name = "0027_rowstore_history_chunks.sql"
+sha256 = "02554c384c7ff035db465bb5727315c042de93035447bea7b17dabab54bb8a3f"
+
+[[release.migration]]
+set = "tenant"
+name = "0028_live_dictionary_references.sql"
+sha256 = "7248077f0910fcb0d258451d3c7b10fc96d663e4f71635084a7024873af6a40c"
+
+[[release.migration]]
+set = "tenant"
+name = "0029_subscription_notified_registrations.sql"
+sha256 = "1d5a417cac938b6c585f6e078f39ee7b3858ab8d042c0fcfc20d2b37abaf57f6"
+
+[[release.migration]]
+set = "platform"
+name = "0030_tenant_extension_versions.sql"
+sha256 = "011468aec315c1ebaf156c3fb67d865c386621b6877fcc079f7326555615579c"
