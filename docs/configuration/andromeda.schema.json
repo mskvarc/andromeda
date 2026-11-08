@@ -1,0 +1,2959 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Andromeda configuration",
+  "description": "The whole broker configuration, one table per concern. Each table is independent of the others except where a key names another by its dotted path.",
+  "type": "object",
+  "properties": {
+    "database": {
+      "description": "The PostgreSQL database the broker stores in, and how it connects.",
+      "type": "object",
+      "properties": {
+        "acquire_timeout": {
+          "title": "duration",
+          "description": "How long a request waits for a free database connection before it is answered `503` with `Retry-After`.",
+          "type": "string"
+        },
+        "connection": {
+          "description": "The PostgreSQL server and the default tenant's database, as a connection URL or as a table of its parts. It has no default: set it here or in `ANDROMEDA__DATABASE__CONNECTION`, or each part in its own variable such as `ANDROMEDA__DATABASE__CONNECTION__PASSWORD`. It always names PostgreSQL itself, never a proxy: tenant creation, migrations and maintenance connect here even when `database.pooler` is set, and so do requests when it is not.",
+          "anyOf": [
+            {
+              "description": "The whole connection URL, such as `\"postgres://andromeda:secret@db.example:5432/andromeda?sslmode=verify-full\"`. Characters a URL reserves in the user or password are percent-encoded.",
+              "type": "string",
+              "format": "uri"
+            },
+            {
+              "description": "The connection's parts: `host`, `user` and `database`, and optionally `port`, `password` and a `parameters` table, each of which may come from its own environment variable.",
+              "type": "object",
+              "properties": {
+                "database": {
+                  "description": "The database the connection opens.",
+                  "type": "string"
+                },
+                "host": {
+                  "description": "The host PostgreSQL listens on: a DNS name, an IPv4 address, or an IPv6 address without brackets.",
+                  "type": "string"
+                },
+                "parameters": {
+                  "description": "Further libpq connection parameters, such as `sslmode = \"verify-full\"`, which the URL carries as its query string. Left out, there are none.",
+                  "type": "object",
+                  "additionalProperties": {
+                    "description": "The parameter's value, as written.",
+                    "type": "string"
+                  }
+                },
+                "password": {
+                  "description": "The role's password, as written. Left out, the broker signs in without one, as trust or certificate authentication allows.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "port": {
+                  "description": "The port PostgreSQL listens on. Left out, it is 5432.",
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "uint16",
+                  "default": null,
+                  "maximum": 65535,
+                  "minimum": 1
+                },
+                "user": {
+                  "description": "The PostgreSQL role the broker signs in as.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "maintenance": {
+          "description": "The adaptive PostgreSQL inspection and maintenance controller.",
+          "type": "object",
+          "properties": {
+            "max_repack_size": {
+              "description": "The largest table, its heap plus its TOAST, the controller repacks, or `\"unlimited\"` to repack a table of any size.",
+              "anyOf": [
+                {
+                  "description": "No limit.",
+                  "oneOf": [
+                    {
+                      "description": "No limit.",
+                      "type": "string",
+                      "const": "unlimited"
+                    }
+                  ]
+                },
+                {
+                  "title": "size",
+                  "description": "The limit.",
+                  "type": [
+                    "string",
+                    "integer"
+                  ],
+                  "minimum": 0
+                }
+              ]
+            },
+            "mode": {
+              "description": "Whether maintenance is off, only inspects and reports, or also acts on what it finds. Acts by default, so a deployment nobody tunes still gets its wraparound and WAL retention warnings, its catch-up vacuums and its index rebuilds. An action whose right the broker's role lacks is only reported. Set `\"observe\"` where the database is maintained on its own schedule.",
+              "oneOf": [
+                {
+                  "description": "Do not run the controller.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Inspect the databases and report the maintenance the controller decides on, without carrying any of it out.",
+                  "type": "string",
+                  "const": "observe"
+                },
+                {
+                  "description": "Inspect the databases and carry out the maintenance the controller decides on.",
+                  "type": "string",
+                  "const": "automatic"
+                }
+              ]
+            },
+            "profile": {
+              "description": "How often the controller inspects, and how much evidence it needs before it acts.",
+              "oneOf": [
+                {
+                  "description": "Inspect less often and require stronger evidence before acting.",
+                  "type": "string",
+                  "const": "conservative"
+                },
+                {
+                  "description": "Inspect more often and react to smaller signs of degradation.",
+                  "type": "string",
+                  "const": "responsive"
+                }
+              ]
+            },
+            "repack": {
+              "description": "Whether automatic maintenance also runs the online repacks of bloated tables it decides on, or only reports them. A repack copies the table while it stays in use, so the database needs free disk of up to twice the table's size, which the broker cannot measure. Repacks are only reported by default, so their decisions can be checked against the free disk first. In observe mode repacks are reported whatever this says.",
+              "oneOf": [
+                {
+                  "description": "Decide repacks and report them as `would-act`, without running any.",
+                  "type": "string",
+                  "const": "reported"
+                },
+                {
+                  "description": "Run the repacks the controller decides on while `database.maintenance.mode` is `\"automatic\"`.",
+                  "type": "string",
+                  "const": "performed"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "name_cache": {
+          "description": "The in-memory caches of each tenant's attribute and entity type names.",
+          "type": "object",
+          "properties": {
+            "idle_eviction_after": {
+              "description": "How long a cached name may go unused before it is dropped, or `\"unlimited\"` to drop names only when a cache is full.",
+              "anyOf": [
+                {
+                  "description": "No limit.",
+                  "oneOf": [
+                    {
+                      "description": "No limit.",
+                      "type": "string",
+                      "const": "unlimited"
+                    }
+                  ]
+                },
+                {
+                  "title": "duration",
+                  "description": "The limit.",
+                  "type": "string"
+                }
+              ]
+            },
+            "loading": {
+              "description": "When the caches are filled: as the tenant is loaded, or as names are first resolved.",
+              "oneOf": [
+                {
+                  "description": "Read every stored name into the caches when the tenant is loaded, so its first requests resolve names from memory.",
+                  "type": "string",
+                  "const": "eager"
+                },
+                {
+                  "description": "Read a name into its cache the first time it is resolved.",
+                  "type": "string",
+                  "const": "lazy"
+                }
+              ]
+            },
+            "max_size_per_dictionary": {
+              "title": "size",
+              "description": "The memory each of a tenant's two name caches may hold, in each broker process. A tenant holds at most twice this, and only as much as it has resolved. When a cache is full the least valuable names are dropped; a dropped name is read back from the database the next time it is resolved, so a full cache costs reads but never refuses a write.",
+              "type": [
+                "string",
+                "integer"
+              ],
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "platform_max_connections": {
+          "description": "The most connections the platform pool opens, in each broker process. It reads and writes the tenant registry every tenant load consults, the schedule of tenants with due work and the routes of forwarded subscriptions, and always connects to `database.connection`, even when `database.pooler` is set. Tenants size their own pools with `tenancy.default_tenant.max_connections` and `tenancy.databases.max_connections`.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 1
+        },
+        "pooler": {
+          "description": "A transaction-pooling proxy, such as PgBouncer in transaction mode, on the request path. Left out, every connection goes straight to `database.connection`.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "connection": {
+              "description": "The proxy's connection, as a URL or as a table of its parts, used by requests in place of `database.connection`. The proxy forwards to the same PostgreSQL, so it normally differs from `database.connection` only in host and port. Tenant creation, migrations and maintenance keep connecting to `database.connection`.",
+              "anyOf": [
+                {
+                  "description": "The whole connection URL, such as `\"postgres://andromeda:secret@db.example:5432/andromeda?sslmode=verify-full\"`. Characters a URL reserves in the user or password are percent-encoded.",
+                  "type": "string",
+                  "format": "uri"
+                },
+                {
+                  "description": "The connection's parts: `host`, `user` and `database`, and optionally `port`, `password` and a `parameters` table, each of which may come from its own environment variable.",
+                  "type": "object",
+                  "properties": {
+                    "database": {
+                      "description": "The database the connection opens.",
+                      "type": "string"
+                    },
+                    "host": {
+                      "description": "The host PostgreSQL listens on: a DNS name, an IPv4 address, or an IPv6 address without brackets.",
+                      "type": "string"
+                    },
+                    "parameters": {
+                      "description": "Further libpq connection parameters, such as `sslmode = \"verify-full\"`, which the URL carries as its query string. Left out, there are none.",
+                      "type": "object",
+                      "additionalProperties": {
+                        "description": "The parameter's value, as written.",
+                        "type": "string"
+                      }
+                    },
+                    "password": {
+                      "description": "The role's password, as written. Left out, the broker signs in without one, as trust or certificate authentication allows.",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "port": {
+                      "description": "The port PostgreSQL listens on. Left out, it is 5432.",
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "format": "uint16",
+                      "default": null,
+                      "maximum": 65535,
+                      "minimum": 1
+                    },
+                    "user": {
+                      "description": "The PostgreSQL role the broker signs in as.",
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "max_connections_per_tenant": {
+              "description": "The connections each named tenant's pool opens through the proxy, in place of `tenancy.databases.max_connections`. Keep it small: the proxy multiplexes every tenant onto its own backends, so a tenant needs only enough for its concurrent requests, and many loaded tenants do not exhaust the host's ports.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "synchronous_commit": {
+          "description": "The PostgreSQL `synchronous_commit` level set on the default tenant's database and every tenant database. It is installed with `ALTER DATABASE ... SET`, so every session inherits it, including sessions a transaction-pooling proxy hands out. With `\"off\"`, a server crash can lose writes clients were already told succeeded.",
+          "oneOf": [
+            {
+              "description": "Acknowledge a commit once its WAL is flushed to disk, and on synchronous standbys when any are configured.",
+              "type": "string",
+              "const": "on"
+            },
+            {
+              "description": "Acknowledge a commit before its WAL is flushed. Ingest is faster, but a server crash loses the transactions acknowledged in the last three times `wal_writer_delay`, and notifications for them may already have gone out.",
+              "type": "string",
+              "const": "off"
+            },
+            {
+              "description": "Wait for the local WAL flush only, never for synchronous standbys.",
+              "type": "string",
+              "const": "local"
+            },
+            {
+              "description": "Wait until synchronous standbys have applied the WAL, so a read on a standby sees the commit.",
+              "type": "string",
+              "const": "remote-apply"
+            },
+            {
+              "description": "Wait until synchronous standbys have handed the WAL to their operating system, without waiting for it to reach disk.",
+              "type": "string",
+              "const": "remote-write"
+            }
+          ]
+        },
+        "write_reserve_percent": {
+          "description": "The percentage of each tenant pool that read requests (queries, retrievals, discovery and temporal reads) never hold, so writes always find a connection however many reads queue. Rounded down to whole connections: a pool too small to spare one keeps every connection for reads.",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "entity": {
+      "description": "Entity batches, their deferred side effects, and the spatial index.",
+      "type": "object",
+      "properties": {
+        "batch": {
+          "description": "How a batch operation is cut into chunks and run.",
+          "type": "object",
+          "properties": {
+            "async_side_effect_threshold": {
+              "description": "The smallest batch whose notifications and temporal history are deferred to background workers when the client sends `Prefer: respond-async`; a smaller batch runs them before it is answered. At 1, every batch that sends the preference defers them. A batch without the preference, or one scoped to a Snapshot, always runs them before it is answered.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 1
+            },
+            "chunk_size": {
+              "description": "The entities one chunk of a large batch holds.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 1
+            },
+            "large_threshold": {
+              "description": "The batch size from which a batch is split into chunks of `entity.batch.chunk_size`. A smaller batch runs as one.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 1
+            },
+            "max_concurrent_chunk_writes": {
+              "description": "The most chunks of a batch written to the database at once.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 1
+            },
+            "max_concurrent_chunks": {
+              "description": "The most chunks of a batch prepared at once.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 1
+            },
+            "prepare_blocking_threshold": {
+              "description": "The batch size from which entities are prepared on the blocking thread pool rather than on the request's own task.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "side_effects": {
+          "description": "The durable queue of change events a `Prefer: respond-async` batch leaves for a worker.",
+          "type": "object",
+          "properties": {
+            "batch_size": {
+              "description": "The most jobs one pass claims. The pass replays them one after another before the worker claims again.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            },
+            "queue": {
+              "description": "How the queue is polled, claimed and retried. A failed job is retried on a delay that doubles from `entity.side_effects.queue.retry_interval` up to `entity.side_effects.queue.max_retry_interval`, however often it fails, and is never dropped.",
+              "type": "object",
+              "properties": {
+                "lease_timeout": {
+                  "title": "duration",
+                  "description": "How long a claim keeps a job from every other worker. A worker that dies leaves its jobs unclaimable for the rest of the term. It is applied in whole seconds, rounded down.",
+                  "type": "string"
+                },
+                "max_poll_interval": {
+                  "title": "duration",
+                  "description": "The longest the idle backoff grows to while no commit wakes the worker. Also how soon a job committed by another broker process is picked up.",
+                  "type": "string"
+                },
+                "max_retry_interval": {
+                  "title": "duration",
+                  "description": "The longest a retry delay grows to.",
+                  "type": "string"
+                },
+                "poll_interval": {
+                  "title": "duration",
+                  "description": "How soon an idle worker polls again once a commit's wake has been handled: the floor of its idle backoff. A commit in the same broker process wakes the worker at once.",
+                  "type": "string"
+                },
+                "retry_interval": {
+                  "title": "duration",
+                  "description": "The delay before a failed job's first retry. Each later retry waits twice as long as the one before, up to the longest retry delay.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "retention": {
+              "description": "How long a dead-lettered job is kept.",
+              "type": "object",
+              "properties": {
+                "dead_letter_after": {
+                  "title": "duration",
+                  "description": "How long a job whose stored changes cannot be read back is kept, as a record of a batch whose notifications were never raised. A job that succeeds is removed by its own replay, and one that fails is retried for as long as it fails.",
+                  "type": "string"
+                },
+                "sweep_interval": {
+                  "title": "duration",
+                  "description": "How often dead-lettered jobs older than `entity.side_effects.retention.dead_letter_after` are removed.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "stuck_after_attempts": {
+              "description": "Failed attempts from which a job that keeps failing is reported stuck, logged and counted on each further failure. It is never dropped, since it holds the notifications of a write the broker already accepted, and it keeps being retried, never waiting longer than `entity.side_effects.queue.max_retry_interval`.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "spatial_index": {
+          "description": "How each tenant's in-memory spatial index stays consistent with the database.",
+          "type": "object",
+          "properties": {
+            "consistency": {
+              "description": "How the index is kept consistent with the database. `\"commit-synchronous\"` saves a read per geo query but is exact only when a single broker process writes the database.",
+              "oneOf": [
+                {
+                  "description": "Before narrowing a geo query, catch the index up with every location the database changed since its last recorded position. Exact in every deployment, including replicas sharing the database, at the cost of one indexed read per geo query.",
+                  "type": "string",
+                  "const": "watermark"
+                },
+                {
+                  "description": "Update the index with every committed write before the write returns. Exact only when a single broker process writes the database: another process's writes reach this index only at the next rebuild, and until then a geo query here can miss the entity.",
+                  "type": "string",
+                  "const": "commit-synchronous"
+                },
+                {
+                  "description": "Keep no index and let the database evaluate every geo query. Exact in every deployment, at the cost of the database checking every candidate row its own spatial index yields.",
+                  "type": "string",
+                  "const": "store-verified"
+                }
+              ],
+              "x-andromeda-replica-consistent": true
+            },
+            "rebuild_interval": {
+              "title": "duration",
+              "description": "How often each tenant's index is rebuilt from the database. The first rebuild runs when the tenant is loaded, and until it completes the database evaluates every geo query. Later rebuilds drop entities deleted since and, under `\"commit-synchronous\"`, bring in writes from other broker processes.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "expiry": {
+      "description": "The sweeps that delete what is past its `expiresAt`.",
+      "type": "object",
+      "properties": {
+        "batch_size": {
+          "description": "The most expired entities, or entities with expired attributes, one step of the entity sweep reads.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 1
+        },
+        "sweep_interval": {
+          "title": "duration",
+          "description": "How often the expiry sweeps run, over entities and their attributes, subscriptions, context source registrations, Snapshots and Entity Maps. An expired resource may stay in storage for up to one interval, but the API never serves it.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "extensions": {
+      "description": "Andromeda's features beyond the NGSI-LD specification.",
+      "type": "object",
+      "properties": {
+        "accept_language": {
+          "description": "`Accept-Language` read as the language filter. On, a Retrieve or Query of entities, Temporal Evolutions or context source registrations that carries no `lang` takes its filter from `Accept-Language`, and the response carries `Vary: Accept-Language`. Off, the header is ignored.",
+          "type": "object",
+          "properties": {
+            "mode": {
+              "description": "Whether the extension is served. Off, the broker answers as a conformant broker that never implemented it.",
+              "oneOf": [
+                {
+                  "description": "Turn the feature off.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Turn the feature on.",
+                  "type": "string",
+                  "const": "enabled"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "cursor_pagination": {
+          "description": "Opaque cursor page pointers, and how a request that names neither `offset` nor `cursor` is paged.",
+          "type": "object",
+          "properties": {
+            "fresh_requests": {
+              "description": "How a request that names neither `offset` nor `cursor` is paged while cursors are offered. Read only when `extensions.cursor_pagination.mode` is `\"enabled\"`.",
+              "oneOf": [
+                {
+                  "description": "It walks by cursor; `offset` and an empty `cursor=` both remain available.",
+                  "type": "string",
+                  "const": "cursor"
+                },
+                {
+                  "description": "It pages by offset; an empty `cursor=` opts into a cursor walk.",
+                  "type": "string",
+                  "const": "offset"
+                }
+              ]
+            },
+            "mode": {
+              "description": "Whether cursors are offered. Off, collections page by offset only and a `cursor` parameter is refused with `InvalidRequest`. With `extensions.mode` set to `\"conformance\"`, collections page by offset whatever this says.",
+              "oneOf": [
+                {
+                  "description": "Turn the feature off.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Turn the feature on.",
+                  "type": "string",
+                  "const": "enabled"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "mode": {
+          "description": "Whether the extensions follow their own tables (`\"configured\"`) or are all forced off (`\"conformance\"`).",
+          "oneOf": [
+            {
+              "description": "Each extension is served as its own table says.",
+              "type": "string",
+              "const": "configured"
+            },
+            {
+              "description": "Every extension is off, cursor pagination included, whatever its own table says; each override is logged at startup. The ETSI conformance runs set it, so the shipped binary is the one tested.",
+              "type": "string",
+              "const": "conformance"
+            }
+          ]
+        },
+        "near_distance_band": {
+          "description": "A `near` geo-query bounded from both sides. On, a `near` carrying both `minDistance` and `maxDistance` matches the entities between the two, on queries, temporal queries, subscription `geoQ` and registration discovery. Off, the pair is refused with `BadRequestData`.",
+          "type": "object",
+          "properties": {
+            "mode": {
+              "description": "Whether the extension is served. Off, the broker answers as a conformant broker that never implemented it.",
+              "oneOf": [
+                {
+                  "description": "Turn the feature off.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Turn the feature on.",
+                  "type": "string",
+                  "const": "enabled"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "purge_dataset_scope": {
+          "description": "`datasetId` and `deleteAll` on Purge Entities. On, `DELETE /entities` gains the per-`datasetId` precision Delete Attribute already has. Off, a `datasetId` or `deleteAll` there is refused with `InvalidRequest`.",
+          "type": "object",
+          "properties": {
+            "mode": {
+              "description": "Whether the extension is served. Off, the broker answers as a conformant broker that never implemented it.",
+              "oneOf": [
+                {
+                  "description": "Turn the feature off.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Turn the feature on.",
+                  "type": "string",
+                  "const": "enabled"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "q_target_languages": {
+          "description": "What a `q` bracket may name as a target language.",
+          "type": "object",
+          "properties": {
+            "level": {
+              "description": "What a `q` bracket may name while the extension is on. Read only when `extensions.q_target_languages.mode` is `\"enabled\"`.",
+              "oneOf": [
+                {
+                  "description": "Every RFC 5646 language tag, matched by case-insensitive tag equality.",
+                  "type": "string",
+                  "const": "language-tags"
+                },
+                {
+                  "description": "Every RFC 5646 tag and RFC 4647 extended range, matched by extended filtering, so `[en]` selects `en-GB` too. This changes what some queries the specification's grammar admits select.",
+                  "type": "string",
+                  "const": "language-ranges"
+                }
+              ]
+            },
+            "mode": {
+              "description": "Whether a `q` bracket may name a language tag. Off, a bracket names only what the NGSI-LD `q` grammar defines: `[en]` is admitted, `[en-GB]` is refused with `BadRequestData`. A query carrying a target language is held to the level every context source it reaches advertises.",
+              "oneOf": [
+                {
+                  "description": "Turn the feature off.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Turn the feature on.",
+                  "type": "string",
+                  "const": "enabled"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "temporal_aggregation_grouping": {
+          "description": "Grouped temporal aggregation through `aggrGroupBy` and `format=groupedValues`.",
+          "type": "object",
+          "properties": {
+            "max_groups": {
+              "description": "The most distinct groups one grouped aggregation may produce. The groups are counted before they are computed, so a larger grouping is refused whole with `403` `TooManyResults`.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 1
+            },
+            "mode": {
+              "description": "Whether grouped temporal aggregation is served: calendar and cyclic time buckets, per-entity-member keys and value-in-effect keys, with groups of mixed units split rather than refused. Off, `aggrGroupBy` and `groupedValues` are refused with `InvalidRequest`.",
+              "oneOf": [
+                {
+                  "description": "Turn the feature off.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Turn the feature on.",
+                  "type": "string",
+                  "const": "enabled"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "temporal_delete_by_query": {
+          "description": "Temporal delete-by-query on `DELETE /temporal/entities`: a windowed, selector-scoped history purge the NGSI-LD temporal delete operations have no equivalent for.",
+          "type": "object",
+          "properties": {
+            "max_matches": {
+              "description": "The most history instances one delete-by-query may remove. The matches are counted before anything is deleted, so a larger purge is refused whole with `403` `TooManyResults` and deletes nothing.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 1
+            },
+            "mode": {
+              "description": "Whether temporal delete-by-query is served on `DELETE /temporal/entities`. It acts on local history only and is never forwarded.",
+              "oneOf": [
+                {
+                  "description": "Turn the feature off.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Turn the feature on.",
+                  "type": "string",
+                  "const": "enabled"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "temporal_linked_retrieval": {
+          "description": "Linked entity retrieval on the temporal operations. On, Retrieve and Query Temporal Evolution and the temporal Entity Map accept `join`, `joinLevel` and `containedBy` and retrieve the linked entities' temporal evolution over the request's window. Off, those parameters are refused with `InvalidRequest`, and a nested projection, a `q` hop or a retrieving `join` in a query body with `BadRequestData`.",
+          "type": "object",
+          "properties": {
+            "mode": {
+              "description": "Whether the extension is served. Off, the broker answers as a conformant broker that never implemented it.",
+              "oneOf": [
+                {
+                  "description": "Turn the feature off.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Turn the feature on.",
+                  "type": "string",
+                  "const": "enabled"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "tenant_management": {
+          "description": "Tenant management on `/tenants`. On, the broker serves the tenant collection, per-tenant introspection and suspend or resume through `PATCH isActive`, and advertises them at `/info/sourceIdentity`. No API operation ever drops a tenant's database.",
+          "type": "object",
+          "properties": {
+            "mode": {
+              "description": "Whether the extension is served. Off, the broker answers as a conformant broker that never implemented it.",
+              "oneOf": [
+                {
+                  "description": "Turn the feature off.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Turn the feature on.",
+                  "type": "string",
+                  "const": "enabled"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "federation": {
+      "description": "Forwarding to Context Sources, and this broker's identity among them.",
+      "type": "object",
+      "properties": {
+        "cooldown": {
+          "description": "How a context source is held back after a failed forwarded request.",
+          "type": "object",
+          "properties": {
+            "max_retry_interval": {
+              "title": "duration",
+              "description": "The longest a hold grows to in `\"exponential\"` mode.",
+              "type": "string"
+            },
+            "mode": {
+              "description": "How a source is held back after a failed forwarded request. The default, `\"disabled\"`, holds back only registrations that set `management.cooldown`.",
+              "oneOf": [
+                {
+                  "description": "Only a registration's own `management.cooldown` holds a source back.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Every failure holds the source back for `federation.cooldown.retry_interval`.",
+                  "type": "string",
+                  "const": "constant"
+                },
+                {
+                  "description": "Each failure of an unbroken run of failures doubles the hold, from `federation.cooldown.retry_interval` up to `federation.cooldown.max_retry_interval`, with random jitter of up to the hold itself added.",
+                  "type": "string",
+                  "const": "exponential"
+                }
+              ]
+            },
+            "retry_interval": {
+              "title": "duration",
+              "description": "The hold after a failure in `\"constant\"` mode, or after the first failure in `\"exponential\"` mode.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "forwarding": {
+          "description": "How requests reach context sources: fan-out, timeouts and the addresses a source may resolve into.",
+          "type": "object",
+          "properties": {
+            "allowed_addresses": {
+              "description": "IP addresses and subnets (`\"10.8.0.0/16\"`, `\"10.3.0.17\"`, `\"fd00:1234::/48\"`) that a context source may resolve into even though `federation.forwarding.private_addresses` is `\"refused\"`. Empty by default. An entry in `federation.forwarding.denied_addresses` takes precedence.",
+              "type": "array",
+              "items": {
+                "description": "An IP address (`\"203.0.113.9\"`) or a subnet in CIDR notation (`\"10.2.0.0/24\"`, `\"fd00:1234::/48\"`), IPv4 or IPv6. A host name or a port is refused.",
+                "type": "string"
+              }
+            },
+            "connect_timeout": {
+              "title": "duration",
+              "description": "How long connecting to a context source may take.",
+              "type": "string"
+            },
+            "denied_addresses": {
+              "description": "IP addresses and subnets (`\"203.0.113.0/24\"`, `\"198.51.100.9\"`) that a context source must not resolve into, public ones included and whatever `federation.forwarding.private_addresses` is set to. Empty by default. Takes precedence over `federation.forwarding.allowed_addresses`.",
+              "type": "array",
+              "items": {
+                "description": "An IP address (`\"203.0.113.9\"`) or a subnet in CIDR notation (`\"10.2.0.0/24\"`, `\"fd00:1234::/48\"`), IPv4 or IPv6. A host name or a port is refused.",
+                "type": "string"
+              }
+            },
+            "max_concurrent": {
+              "description": "The most forwarded requests one operation has in flight at once.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 1
+            },
+            "private_addresses": {
+              "description": "Whether a context source whose endpoint resolves into private or reserved address space is contacted. Checked against the address actually resolved, not the host name. `federation.forwarding.allowed_addresses` exempts addresses from `\"refused\"`, and `federation.forwarding.denied_addresses` refuses addresses whatever this is set to. A redirect from a context source is never followed, whatever this is set to. Allowed by default because context sources commonly run beside the broker on a private network; set `\"refused\"` when clients you do not trust create registrations.",
+              "oneOf": [
+                {
+                  "description": "Any endpoint the broker's network reaches is contacted.",
+                  "type": "string",
+                  "const": "allowed"
+                },
+                {
+                  "description": "An endpoint whose resolved address is loopback, private or reserved is refused, so a client-supplied endpoint cannot aim the broker at internal hosts. The refusal is recorded as a failed request.",
+                  "type": "string",
+                  "const": "refused"
+                }
+              ]
+            },
+            "request_timeout": {
+              "title": "duration",
+              "description": "How long a forwarded request may take before it counts as failed, connecting and reading the answer included. A registration's own `management.timeout` takes precedence.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "identity": {
+          "description": "The identity the broker reports at `/ngsi-ld/v1/info/sourceIdentity` and uses to detect forwarding loops.",
+          "type": "object",
+          "properties": {
+            "extras": {
+              "description": "Instance-specific information the broker reports verbatim as the NGSI-LD `contextSourceExtras` member at `/ngsi-ld/v1/info/sourceIdentity`, with the enabled extensions listed beside it. Its keys are reported exactly as written and none is reserved, since the member is raw JSON that is never interpreted. Set in the file only. A date-time, `inf` or `nan`, which JSON cannot spell, is refused when the broker starts. Left out, `contextSourceExtras` lists only the enabled extensions, and is absent when none is enabled.",
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "source_alias": {
+              "description": "The name the broker adds to the `Via` header of every request it forwards. A request whose `Via` already holds this name is treated as a forwarding loop, so every broker in a federation needs its own. Must be an HTTP token, as a `Via` entry requires. Left out, it is the host of `server.public_url` without its port, such as `broker.example.org`, and without a `server.public_url`, or with an IPv6 one, the machine's host name. The broker refuses to start when neither gives a token. Set it when two brokers share a host name.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source_id": {
+              "title": "IRI",
+              "description": "The `id` the broker reports at `/ngsi-ld/v1/info/sourceIdentity`. Must be an IRI. Left out, it is `urn:ngsi-ld:ContextSourceIdentity:` followed by the alias in effect, as `federation.identity.source_alias` describes.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "query": {
+          "description": "What a federated query means and how much it may gather from context sources: the `splitEntities` default, the result caps and how aggregated temporal reads are gathered.",
+          "type": "object",
+          "properties": {
+            "aggregation": {
+              "description": "How a distributed temporal query asking for `aggregatedValues` reads its context sources. An entity held by more than one part is aggregated by this broker over the instances of every part. `\"overlapping-instances\"` asks the sources for their aggregates and asks again only for the instances of the entities more than one part holds: cheapest when parts rarely overlap. `\"instances\"` asks for every instance in one round trip: faster when most entities are held by several sources, at the cost of moving and holding every instance.",
+              "oneOf": [
+                {
+                  "description": "Ask the context sources for every instance of the queried window and aggregate every entity they answer here. One round trip, but every instance travels to and is held by this broker. Suits deployments where most entities are held by several sources.",
+                  "type": "string",
+                  "const": "instances"
+                },
+                {
+                  "description": "Ask the context sources for their aggregates, keep the aggregate of an entity only one part holds, and ask again for the instances of the entities more than one part holds. A second round trip only when parts overlap, and only their instances travel.",
+                  "type": "string",
+                  "const": "overlapping-instances"
+                }
+              ]
+            },
+            "max_entities": {
+              "description": "The most distinct entities one federated query gathers from the local store and every context source together. An entity several sources answer counts once, and one only an auxiliary source answers counts too. A query that would gather more is refused with `403` `TooManyResults` rather than answered with a truncated collection.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            },
+            "max_instances": {
+              "description": "The most attribute instances one federated temporal query gathers from the context sources whose history it reads to the end, as an aggregated representation of an entity held in several parts needs. A query that would gather more is refused with `403` `TooManyResults`.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            },
+            "max_source_rows": {
+              "description": "The most entities the context sources of one federated query send together, duplicates included: an entity three sources answer counts three times, and auxiliary sources count too. A query whose sources send more is refused with `403` `TooManyResults`.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            },
+            "split_entities": {
+              "description": "What `splitEntities` means when a request or subscription leaves it unset.",
+              "oneOf": [
+                {
+                  "description": "A single entity may be split across context sources, so filters are applied only after its parts are re-assembled.",
+                  "type": "string",
+                  "const": "split"
+                },
+                {
+                  "description": "Every context source holds complete entities, so filters can be applied by each source.",
+                  "type": "string",
+                  "const": "complete"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "response_cache": {
+          "description": "The per-tenant cache of forwarded `GET` responses.",
+          "type": "object",
+          "properties": {
+            "max_entries": {
+              "description": "The most forwarded `GET /entities` and `GET /entities/{id}` answers each tenant's cache holds, for registrations that set `management.cacheDuration`. An answer served from the cache carries a `110` warning.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "http": {
+      "description": "The web-facing layers in front of the API: forwarded-field trust, `Link` layout, body decoding, CORS, compression, `Server-Timing`, security headers and CSRF.",
+      "type": "object",
+      "properties": {
+        "body_decoding": {
+          "description": "Where request bodies are parsed: on the request's own worker or on a separate thread pool.",
+          "type": "object",
+          "properties": {
+            "blocking_threshold": {
+              "title": "size",
+              "description": "The body size from which a body is parsed on a separate thread pool instead of the request's own worker, so a large body does not stall unrelated requests sharing that worker.",
+              "type": [
+                "string",
+                "integer"
+              ],
+              "minimum": 0
+            },
+            "max_concurrent_blocking": {
+              "description": "How many large bodies are parsed on the separate thread pool at once. A parse holds memory in proportion to its body while it runs; a body waiting for its turn holds only its bytes.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "compression": {
+          "description": "Which codings responses may be compressed with, and how hard.",
+          "type": "object",
+          "properties": {
+            "algorithms": {
+              "description": "The codings responses may be compressed with, chosen against the client's `Accept-Encoding`. Read only when `http.compression.mode` is `\"enabled\"`.",
+              "type": "array",
+              "items": {
+                "description": "One HTTP content coding the broker can compress with or decompress from.",
+                "oneOf": [
+                  {
+                    "description": "The `gzip` coding.",
+                    "type": "string",
+                    "const": "gzip"
+                  },
+                  {
+                    "description": "The Brotli coding, `br` on the wire.",
+                    "type": "string",
+                    "const": "brotli"
+                  },
+                  {
+                    "description": "The `deflate` (zlib) coding.",
+                    "type": "string",
+                    "const": "deflate"
+                  },
+                  {
+                    "description": "The `zstd` Zstandard coding.",
+                    "type": "string",
+                    "const": "zstd"
+                  }
+                ]
+              }
+            },
+            "mode": {
+              "description": "Whether responses are compressed. Turn it off when a proxy in front compresses them.",
+              "oneOf": [
+                {
+                  "description": "Turn the feature off.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Turn the feature on.",
+                  "type": "string",
+                  "const": "enabled"
+                }
+              ]
+            },
+            "quality": {
+              "description": "How hard the compressor works.",
+              "oneOf": [
+                {
+                  "description": "Favours speed over compression ratio.",
+                  "type": "string",
+                  "const": "fastest"
+                },
+                {
+                  "description": "Favours compression ratio over speed.",
+                  "type": "string",
+                  "const": "best"
+                },
+                {
+                  "description": "Uses each coding's own balance of speed and ratio.",
+                  "type": "string",
+                  "const": "default"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "cors": {
+          "description": "The Cross-Origin Resource Sharing policy browser clients see.",
+          "type": "object",
+          "properties": {
+            "allow_headers": {
+              "description": "The request headers allowed: `\"any\"`, `\"mirror\"` to allow whatever the preflight asks for, or a list of header names. Read only when `http.cors.mode` is `\"configured\"`.",
+              "anyOf": [
+                {
+                  "oneOf": [
+                    {
+                      "description": "Allows any request header.",
+                      "const": "any"
+                    },
+                    {
+                      "description": "Allows the headers the request asks for.",
+                      "const": "mirror"
+                    }
+                  ]
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "description": "An HTTP header name, such as `\"Content-Type\"`.",
+                    "type": "string"
+                  }
+                }
+              ]
+            },
+            "allow_methods": {
+              "description": "The methods allowed: `\"any\"`, `\"mirror\"` to allow whatever the preflight asks for, or a list such as `[\"GET\", \"POST\"]`. Read only when `http.cors.mode` is `\"configured\"`.",
+              "anyOf": [
+                {
+                  "oneOf": [
+                    {
+                      "description": "Allows any method.",
+                      "const": "any"
+                    },
+                    {
+                      "description": "Allows the method the request asks for.",
+                      "const": "mirror"
+                    }
+                  ]
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "description": "An HTTP method token, such as `\"GET\"`.",
+                    "type": "string"
+                  }
+                }
+              ]
+            },
+            "allow_origins": {
+              "description": "The origins allowed to read the API: `\"any\"`, or a list such as `[\"https://dashboard.example.org\"]`. Read only when `http.cors.mode` is `\"configured\"`.",
+              "anyOf": [
+                {
+                  "oneOf": [
+                    {
+                      "description": "Accepts requests from any origin.",
+                      "const": "any"
+                    }
+                  ]
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uri"
+                  }
+                }
+              ]
+            },
+            "credentials": {
+              "description": "Whether cookies and HTTP authentication may accompany a cross-origin request. Read only when `http.cors.mode` is `\"configured\"`.",
+              "oneOf": [
+                {
+                  "description": "Grants it.",
+                  "type": "string",
+                  "const": "allowed"
+                },
+                {
+                  "description": "Refuses it.",
+                  "type": "string",
+                  "const": "refused"
+                }
+              ]
+            },
+            "expose_headers": {
+              "description": "The response headers a browser script may read: `\"any\"`, or a list of header names. Read only when `http.cors.mode` is `\"configured\"`.",
+              "anyOf": [
+                {
+                  "oneOf": [
+                    {
+                      "description": "Exposes any response header.",
+                      "const": "any"
+                    }
+                  ]
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "description": "An HTTP header name, such as `\"Content-Type\"`.",
+                    "type": "string"
+                  }
+                }
+              ]
+            },
+            "mode": {
+              "description": "Which CORS policy applies. Only `\"configured\"` reads the other keys of this table. `\"permissive\"` by default, so a browser-based interface works against the broker from any origin, and since it allows no credentials a page cannot act with a user's cookies; set `\"configured\"` to name the origins a deployment serves.",
+              "oneOf": [
+                {
+                  "description": "Adds no CORS headers.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Builds the policy from `http.cors.allow_origins`, `http.cors.allow_methods`, `http.cors.allow_headers`, `http.cors.expose_headers`, `http.cors.credentials`, `http.cors.private_network` and `http.cors.preflight_lifetime`.",
+                  "type": "string",
+                  "const": "configured"
+                },
+                {
+                  "description": "Allows any origin, method and header, without credentials. Every other `[http.cors]` key is ignored.",
+                  "type": "string",
+                  "const": "permissive"
+                },
+                {
+                  "description": "Mirrors the request's origin, method and headers, and allows credentials. Every other `[http.cors]` key is ignored.",
+                  "type": "string",
+                  "const": "very-permissive"
+                }
+              ]
+            },
+            "preflight_lifetime": {
+              "title": "duration",
+              "description": "How long a browser may cache a preflight answer, sent as `Access-Control-Max-Age`. Left out, the broker sends no `Access-Control-Max-Age` and the browser's own default applies. Read only when `http.cors.mode` is `\"configured\"`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "private_network": {
+              "description": "Whether a private-network preflight is answered with `Access-Control-Allow-Private-Network`. Read only when `http.cors.mode` is `\"configured\"`.",
+              "oneOf": [
+                {
+                  "description": "Grants it.",
+                  "type": "string",
+                  "const": "allowed"
+                },
+                {
+                  "description": "Refuses it.",
+                  "type": "string",
+                  "const": "refused"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "csrf": {
+          "description": "Cross-Site Request Forgery protection for browser clients.",
+          "type": "object",
+          "properties": {
+            "mode": {
+              "description": "Whether a cross-site request from an origin outside `http.csrf.trusted_origins` is answered `403`. Same-origin requests, requests with neither `Origin` nor `Sec-Fetch-Site`, and `GET`, `HEAD` and `OPTIONS` always go through. Off by default, since the broker itself authenticates no one. Turn it on when a proxy in front authenticates browsers, by cookie or by HTTP authentication, because a forged cross-site request would then carry the user's credentials.",
+              "oneOf": [
+                {
+                  "description": "Turn the feature off.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Turn the feature on.",
+                  "type": "string",
+                  "const": "enabled"
+                }
+              ]
+            },
+            "trusted_origins": {
+              "description": "The browser origins whose cross-site requests are trusted, in addition to same-origin requests.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uri"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "decompression": {
+          "description": "Which codings a request body may arrive in.",
+          "type": "object",
+          "properties": {
+            "algorithms": {
+              "description": "The codings a request body may arrive in, decoded before the body is read. Read only when `http.decompression.mode` is `\"enabled\"`.",
+              "type": "array",
+              "items": {
+                "description": "One HTTP content coding the broker can compress with or decompress from.",
+                "oneOf": [
+                  {
+                    "description": "The `gzip` coding.",
+                    "type": "string",
+                    "const": "gzip"
+                  },
+                  {
+                    "description": "The Brotli coding, `br` on the wire.",
+                    "type": "string",
+                    "const": "brotli"
+                  },
+                  {
+                    "description": "The `deflate` (zlib) coding.",
+                    "type": "string",
+                    "const": "deflate"
+                  },
+                  {
+                    "description": "The `zstd` Zstandard coding.",
+                    "type": "string",
+                    "const": "zstd"
+                  }
+                ]
+              }
+            },
+            "mode": {
+              "description": "Whether request bodies in a content coding are decoded. Off, every body is read as it arrives, and `http.decompression.unaccepted_encoding` does not apply.",
+              "oneOf": [
+                {
+                  "description": "Turn the feature off.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Turn the feature on.",
+                  "type": "string",
+                  "const": "enabled"
+                }
+              ]
+            },
+            "unaccepted_encoding": {
+              "description": "What happens to a body in a coding that is not listed. Read only when `http.decompression.mode` is `\"enabled\"`.",
+              "oneOf": [
+                {
+                  "description": "Answers the request `415` Unsupported Media Type.",
+                  "type": "string",
+                  "const": "refused"
+                },
+                {
+                  "description": "Passes the body on still encoded.",
+                  "type": "string",
+                  "const": "allowed"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "forwarded": {
+          "description": "Whose `Forwarded`, `X-Forwarded-Proto` and `X-Forwarded-Host` fields decide the scheme and host of the URLs the broker builds. Believe them only from a reverse proxy that overwrites them.",
+          "type": "object",
+          "properties": {
+            "proxies": {
+              "description": "The IP addresses and subnets (`\"10.0.0.0/8\"`, `\"192.0.2.7\"`, `\"fd00::/8\"`) of the proxies whose forwarded fields are believed, matched against the address a request arrives from. An IPv4 peer reaching a dual-stack listener is matched as its IPv4 address.",
+              "type": "array",
+              "items": {
+                "description": "An IP address (`\"203.0.113.9\"`) or a subnet in CIDR notation (`\"10.2.0.0/24\"`, `\"fd00:1234::/48\"`), IPv4 or IPv6. A host name or a port is refused.",
+                "type": "string"
+              }
+            },
+            "trust": {
+              "description": "Whose forwarded fields the broker believes.",
+              "oneOf": [
+                {
+                  "description": "Ignores the fields. The URLs the broker builds carry the scheme its own listener speaks and the host the request addressed.",
+                  "type": "string",
+                  "const": "none"
+                },
+                {
+                  "description": "Believes the fields from every peer. Set it only when nothing but a reverse proxy that overwrites the fields can reach the broker, or any client chooses the scheme and host of the URLs the broker builds, including the stored URL of an `@context` it serves to later readers.",
+                  "type": "string",
+                  "const": "any"
+                },
+                {
+                  "description": "Believes the fields only from a peer `http.forwarded.proxies` lists, and ignores them from every other peer. Each listed proxy must overwrite the fields rather than append to them.",
+                  "type": "string",
+                  "const": "proxies"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "link_field": {
+          "description": "How the `Link` values of a response or an HTTP notification are spread over field lines. All layouts mean the same; pick the one your clients read.",
+          "oneOf": [
+            {
+              "description": "Puts every `Link` value on one field line, separated by commas, for clients that read only one field line.",
+              "type": "string",
+              "const": "combined"
+            },
+            {
+              "description": "Gives the `@context` link, the pagination links and any other values a field line each.",
+              "type": "string",
+              "const": "grouped"
+            },
+            {
+              "description": "Gives every `Link` value its own field line, for clients that never split a line on commas.",
+              "type": "string",
+              "const": "separate"
+            }
+          ]
+        },
+        "security_headers": {
+          "description": "The security headers API responses carry, each set or turned off on its own.",
+          "type": "object",
+          "properties": {
+            "content_security_policy": {
+              "description": "The `Content-Security-Policy` header.",
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "description": "Whether API responses carry a `Content-Security-Policy` header.",
+                  "oneOf": [
+                    {
+                      "description": "Turn the feature off.",
+                      "type": "string",
+                      "const": "disabled"
+                    },
+                    {
+                      "description": "Turn the feature on.",
+                      "type": "string",
+                      "const": "enabled"
+                    }
+                  ]
+                },
+                "policy": {
+                  "description": "The policy the header carries.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "cross_origin_opener_policy": {
+              "description": "The `Cross-Origin-Opener-Policy` header.",
+              "oneOf": [
+                {
+                  "description": "Sends `same-origin`.",
+                  "type": "string",
+                  "const": "same-origin"
+                },
+                {
+                  "description": "Sends `same-origin-allow-popups`.",
+                  "type": "string",
+                  "const": "same-origin-allow-popups"
+                },
+                {
+                  "description": "Sends `unsafe-none`.",
+                  "type": "string",
+                  "const": "unsafe-none"
+                },
+                {
+                  "description": "Sends no `Cross-Origin-Opener-Policy` header.",
+                  "type": "string",
+                  "const": "disabled"
+                }
+              ]
+            },
+            "cross_origin_resource_policy": {
+              "description": "The `Cross-Origin-Resource-Policy` header.",
+              "oneOf": [
+                {
+                  "description": "Sends `same-origin`.",
+                  "type": "string",
+                  "const": "same-origin"
+                },
+                {
+                  "description": "Sends `same-site`.",
+                  "type": "string",
+                  "const": "same-site"
+                },
+                {
+                  "description": "Sends `cross-origin`.",
+                  "type": "string",
+                  "const": "cross-origin"
+                },
+                {
+                  "description": "Sends no `Cross-Origin-Resource-Policy` header.",
+                  "type": "string",
+                  "const": "disabled"
+                }
+              ]
+            },
+            "mode": {
+              "description": "Whether API responses carry the security headers below. Turn it off when a proxy in front sets them all; to drop one header, set its own key to `\"disabled\"`.",
+              "oneOf": [
+                {
+                  "description": "Turn the feature off.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Turn the feature on.",
+                  "type": "string",
+                  "const": "enabled"
+                }
+              ]
+            },
+            "origin_agent_cluster": {
+              "description": "The `Origin-Agent-Cluster` header.",
+              "oneOf": [
+                {
+                  "description": "Sends `?1`, asking the browser to isolate the broker's origin.",
+                  "type": "string",
+                  "const": "origin-keyed"
+                },
+                {
+                  "description": "Sends `?0`, letting the browser share an agent cluster across the site.",
+                  "type": "string",
+                  "const": "site-keyed"
+                },
+                {
+                  "description": "Sends no `Origin-Agent-Cluster` header.",
+                  "type": "string",
+                  "const": "disabled"
+                }
+              ]
+            },
+            "referrer_policy": {
+              "description": "The `Referrer-Policy` header.",
+              "oneOf": [
+                {
+                  "description": "Sends `no-referrer`.",
+                  "type": "string",
+                  "const": "no-referrer"
+                },
+                {
+                  "description": "Sends `no-referrer-when-downgrade`.",
+                  "type": "string",
+                  "const": "no-referrer-when-downgrade"
+                },
+                {
+                  "description": "Sends `origin`.",
+                  "type": "string",
+                  "const": "origin"
+                },
+                {
+                  "description": "Sends `origin-when-cross-origin`.",
+                  "type": "string",
+                  "const": "origin-when-cross-origin"
+                },
+                {
+                  "description": "Sends `same-origin`.",
+                  "type": "string",
+                  "const": "same-origin"
+                },
+                {
+                  "description": "Sends `strict-origin`.",
+                  "type": "string",
+                  "const": "strict-origin"
+                },
+                {
+                  "description": "Sends `strict-origin-when-cross-origin`.",
+                  "type": "string",
+                  "const": "strict-origin-when-cross-origin"
+                },
+                {
+                  "description": "Sends `unsafe-url`.",
+                  "type": "string",
+                  "const": "unsafe-url"
+                },
+                {
+                  "description": "Sends no `Referrer-Policy` header.",
+                  "type": "string",
+                  "const": "disabled"
+                }
+              ]
+            },
+            "strict_transport_security": {
+              "description": "The `Strict-Transport-Security` header, sent only on a response to a request that arrived over the TLS listener.",
+              "type": "object",
+              "properties": {
+                "include_subdomains": {
+                  "description": "Whether the policy also covers every subdomain of the host, the header's `includeSubDomains`.",
+                  "oneOf": [
+                    {
+                      "description": "Turn the feature off.",
+                      "type": "string",
+                      "const": "disabled"
+                    },
+                    {
+                      "description": "Turn the feature on.",
+                      "type": "string",
+                      "const": "enabled"
+                    }
+                  ]
+                },
+                "max_age": {
+                  "title": "duration",
+                  "description": "How long a browser keeps using HTTPS for the host, the header's `max-age`. Zero tells a browser to forget the host.",
+                  "type": "string"
+                },
+                "mode": {
+                  "description": "Whether a response to a request over the TLS listener carries `Strict-Transport-Security`. A browser that sees it uses HTTPS for the host until `max_age` passes. Off by default, since a browser that has seen it cannot reach the host over plain HTTP again until then; turn it on once HTTPS is the only way the host is reached.",
+                  "oneOf": [
+                    {
+                      "description": "Turn the feature off.",
+                      "type": "string",
+                      "const": "disabled"
+                    },
+                    {
+                      "description": "Turn the feature on.",
+                      "type": "string",
+                      "const": "enabled"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            "x_content_type_options": {
+              "description": "The `X-Content-Type-Options` header.",
+              "oneOf": [
+                {
+                  "description": "Sends `nosniff`.",
+                  "type": "string",
+                  "const": "nosniff"
+                },
+                {
+                  "description": "Sends no `X-Content-Type-Options` header.",
+                  "type": "string",
+                  "const": "disabled"
+                }
+              ]
+            },
+            "x_dns_prefetch_control": {
+              "description": "The `X-DNS-Prefetch-Control` header.",
+              "oneOf": [
+                {
+                  "description": "Sends `off`.",
+                  "type": "string",
+                  "const": "off"
+                },
+                {
+                  "description": "Sends `on`.",
+                  "type": "string",
+                  "const": "on"
+                },
+                {
+                  "description": "Sends no `X-DNS-Prefetch-Control` header.",
+                  "type": "string",
+                  "const": "disabled"
+                }
+              ]
+            },
+            "x_download_options": {
+              "description": "The `X-Download-Options` header.",
+              "oneOf": [
+                {
+                  "description": "Sends `noopen`.",
+                  "type": "string",
+                  "const": "noopen"
+                },
+                {
+                  "description": "Sends no `X-Download-Options` header.",
+                  "type": "string",
+                  "const": "disabled"
+                }
+              ]
+            },
+            "x_frame_options": {
+              "description": "The `X-Frame-Options` header.",
+              "oneOf": [
+                {
+                  "description": "Sends `SAMEORIGIN`.",
+                  "type": "string",
+                  "const": "same-origin"
+                },
+                {
+                  "description": "Sends `DENY`.",
+                  "type": "string",
+                  "const": "deny"
+                },
+                {
+                  "description": "Sends no `X-Frame-Options` header.",
+                  "type": "string",
+                  "const": "disabled"
+                }
+              ]
+            },
+            "x_permitted_cross_domain_policies": {
+              "description": "The `X-Permitted-Cross-Domain-Policies` header.",
+              "oneOf": [
+                {
+                  "description": "Sends `none`.",
+                  "type": "string",
+                  "const": "none"
+                },
+                {
+                  "description": "Sends `master-only`.",
+                  "type": "string",
+                  "const": "master-only"
+                },
+                {
+                  "description": "Sends `by-content-type`.",
+                  "type": "string",
+                  "const": "by-content-type"
+                },
+                {
+                  "description": "Sends `by-ftp-filename`.",
+                  "type": "string",
+                  "const": "by-ftp-filename"
+                },
+                {
+                  "description": "Sends `all`.",
+                  "type": "string",
+                  "const": "all"
+                },
+                {
+                  "description": "Sends no `X-Permitted-Cross-Domain-Policies` header.",
+                  "type": "string",
+                  "const": "disabled"
+                }
+              ]
+            },
+            "x_xss_protection": {
+              "description": "The `X-XSS-Protection` header.",
+              "oneOf": [
+                {
+                  "description": "Sends `0`, turning a browser's XSS filter off.",
+                  "type": "string",
+                  "const": "off"
+                },
+                {
+                  "description": "Sends `1`.",
+                  "type": "string",
+                  "const": "on"
+                },
+                {
+                  "description": "Sends `1; mode=block`.",
+                  "type": "string",
+                  "const": "block"
+                },
+                {
+                  "description": "Sends no `X-XSS-Protection` header.",
+                  "type": "string",
+                  "const": "disabled"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "server_timing": {
+          "description": "Whether responses carry a `Server-Timing` header, and what it reports.",
+          "type": "object",
+          "properties": {
+            "mode": {
+              "description": "Whether responses carry a `Server-Timing` header.",
+              "oneOf": [
+                {
+                  "description": "Turn the feature off.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Turn the feature on.",
+                  "type": "string",
+                  "const": "enabled"
+                }
+              ]
+            },
+            "phases": {
+              "description": "Which times the header reports.",
+              "type": "array",
+              "items": {
+                "description": "One time the `Server-Timing` header can report.",
+                "oneOf": [
+                  {
+                    "description": "Reports the whole request, as seen where it enters the HTTP stack. Present whenever `Server-Timing` is on.",
+                    "type": "string",
+                    "const": "total"
+                  },
+                  {
+                    "description": "Reports the time from the HTTP stack's entry to the handler and back.",
+                    "type": "string",
+                    "const": "dispatch"
+                  }
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "jsonld": {
+      "description": "How `@context` documents are resolved.",
+      "type": "object",
+      "properties": {
+        "cache": {
+          "description": "How long resolved contexts are kept in memory.",
+          "type": "object",
+          "properties": {
+            "default_lifetime": {
+              "title": "duration",
+              "description": "How long a downloaded `@context` is kept when its response sets no `Expires` and no `Cache-Control` `max-age` or `s-maxage`, and how long a term-cache entry lives. A response that sets one of those keeps its own lifetime.",
+              "type": "string"
+            },
+            "hit_flush_interval": {
+              "title": "duration",
+              "description": "How often the `numberOfHits` counters of stored `@context`s are written to the database.",
+              "type": "string"
+            },
+            "hosted_revalidation_interval": {
+              "title": "duration",
+              "description": "How long a broker process uses its in-memory copy of a `@context` the broker stores itself before reading it from the database again, since another process sharing the database may have deleted it. It is also the `max-age` sent when such a `@context` is served, in whole seconds.",
+              "type": "string"
+            },
+            "max_entries": {
+              "description": "The most entries each in-process context cache holds.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "fetch": {
+          "description": "Whether and how a remote `@context` is downloaded.",
+          "type": "object",
+          "properties": {
+            "allowed_addresses": {
+              "description": "IP addresses and subnets (`\"10.2.0.0/24\"`, `\"10.3.0.17\"`, `\"fd00:1234::/48\"`) that a `@context` download may resolve into even though `jsonld.fetch.private_addresses` is `\"refused\"`, such as a server in the broker's own network that hosts the contexts its clients use. Empty by default. An entry in `jsonld.fetch.denied_addresses` takes precedence.",
+              "type": "array",
+              "items": {
+                "description": "An IP address (`\"203.0.113.9\"`) or a subnet in CIDR notation (`\"10.2.0.0/24\"`, `\"fd00:1234::/48\"`), IPv4 or IPv6. A host name or a port is refused.",
+                "type": "string"
+              }
+            },
+            "denied_addresses": {
+              "description": "IP addresses and subnets (`\"203.0.113.0/24\"`, `\"198.51.100.9\"`) that a `@context` download must not resolve into, public ones included and whatever `jsonld.fetch.private_addresses` is set to. Empty by default. Takes precedence over `jsonld.fetch.allowed_addresses`.",
+              "type": "array",
+              "items": {
+                "description": "An IP address (`\"203.0.113.9\"`) or a subnet in CIDR notation (`\"10.2.0.0/24\"`, `\"fd00:1234::/48\"`), IPv4 or IPv6. A host name or a port is refused.",
+                "type": "string"
+              }
+            },
+            "max_redirects": {
+              "description": "How many redirects one download may follow. Every redirect target is held to `jsonld.fetch.private_addresses`, `jsonld.fetch.allowed_addresses` and `jsonld.fetch.denied_addresses` as the first URL is.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "max_size": {
+              "title": "size",
+              "description": "The largest `@context` document the broker downloads. A larger one is refused with `504` `LdContextNotAvailable`.",
+              "type": [
+                "string",
+                "integer"
+              ],
+              "minimum": 0
+            },
+            "mode": {
+              "description": "Whether a context that is neither embedded, preloaded, stored nor cached may be downloaded. With `\"disabled\"` nothing is downloaded: only the core `@context` and the W3C Data Integrity context it names, preloaded documents, stored `@context`s and what is already cached are used.",
+              "oneOf": [
+                {
+                  "description": "Turn the feature off.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Turn the feature on.",
+                  "type": "string",
+                  "const": "enabled"
+                }
+              ]
+            },
+            "private_addresses": {
+              "description": "Whether a `@context` URL resolving into private or reserved address space is downloaded, and so every redirect and JSON-LD alternate the download follows. Checked against the address actually resolved, not the host name. `jsonld.fetch.allowed_addresses` exempts addresses from `\"refused\"`, and `jsonld.fetch.denied_addresses` refuses addresses whatever this is set to. A refused download is answered `504` `LdContextNotAvailable`. Set `\"refused\"` when clients you do not trust can name a `@context`.",
+              "oneOf": [
+                {
+                  "description": "Any endpoint the broker's network reaches is contacted.",
+                  "type": "string",
+                  "const": "allowed"
+                },
+                {
+                  "description": "An endpoint whose resolved address is loopback, private or reserved is refused, so a client-supplied endpoint cannot aim the broker at internal hosts. The refusal is recorded as a failed request.",
+                  "type": "string",
+                  "const": "refused"
+                }
+              ]
+            },
+            "timeout": {
+              "title": "duration",
+              "description": "How long one download may take, its redirects included. A download that times out is not retried and is answered `504` `LdContextNotAvailable`. A JSON-LD alternate is a download of its own, and a request naming several remote `@context`s waits for each, so keep it well below `request_limits.timeout`.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "preloaded_contexts": {
+          "description": "Contexts read from files at startup, one `[[jsonld.preloaded_contexts]]` table each with its `url` and `path`. Set in the file only. Left out, no context is preloaded.",
+          "type": "array",
+          "items": {
+            "description": "One `@context` read from a file at startup instead of being downloaded.",
+            "type": "object",
+            "properties": {
+              "path": {
+                "title": "path",
+                "description": "The file the context is read from, which must exist and hold a valid `@context` document. A relative path that does not resolve from the working directory is read relative to the configuration file's directory.",
+                "type": "string"
+              },
+              "url": {
+                "description": "The URL the context is known by. A preloaded URL is never downloaded.",
+                "type": "string",
+                "format": "uri"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "management": {
+      "description": "Where the broker serves its health probes and metrics.",
+      "type": "object",
+      "properties": {
+        "host": {
+          "description": "The address the management listener binds. Read only when `management.mode` is `\"separate-port\"`.",
+          "type": "string",
+          "format": "ip"
+        },
+        "mode": {
+          "description": "Where the management endpoints are served: on a port of their own, on the API port, or not at all. A port of their own by default, so probes and metrics keep answering while the API is saturated or draining.",
+          "oneOf": [
+            {
+              "description": "Serves no management endpoints. The health paths under `/ngsi-ld/v1` on the API port remain.",
+              "type": "string",
+              "const": "disabled"
+            },
+            {
+              "description": "Serves the management endpoints at the root of the API port, behind the API's full web stack (CORS, CSRF, security headers, body limits, compression).",
+              "type": "string",
+              "const": "shared-port"
+            },
+            {
+              "description": "Serves the management endpoints on a listener of their own, `management.host` and `management.port`, on a bare stack, so probes and metrics keep answering while the API is saturated or draining.",
+              "type": "string",
+              "const": "separate-port"
+            }
+          ]
+        },
+        "port": {
+          "description": "The TCP port the management listener binds. Read only when `management.mode` is `\"separate-port\"`.",
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "transport": {
+          "description": "Whether the management listener serves plaintext or terminates TLS with the `[tls]` certificate. Read only when `management.mode` is `\"separate-port\"`.",
+          "oneOf": [
+            {
+              "description": "Serves plaintext HTTP/1.1 and HTTP/2, for a deployment behind a reverse proxy or load balancer that terminates TLS. NGSI-LD calls plaintext HTTP not recommended.",
+              "type": "string",
+              "const": "plaintext"
+            },
+            {
+              "description": "Terminates TLS in the broker with the `[tls]` certificate and serves HTTP/1.1 and HTTP/2 over it.",
+              "type": "string",
+              "const": "tls"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "notifications": {
+      "description": "Delivering notifications, evaluating live changes, and draining periodic subscriptions.",
+      "type": "object",
+      "properties": {
+        "delivery": {
+          "description": "How notifications reach their subscribers, the queue that carries them and how long finished deliveries are kept.",
+          "type": "object",
+          "properties": {
+            "allowed_addresses": {
+              "description": "IP addresses and subnets (`\"10.2.0.0/24\"`, `\"10.3.0.17\"`, `\"fd00:1234::/48\"`) that a notification endpoint (an HTTP URL or an MQTT server) may resolve into even though `notifications.delivery.private_addresses` is `\"refused\"`. Empty by default. An entry in `notifications.delivery.denied_addresses` takes precedence.",
+              "type": "array",
+              "items": {
+                "description": "An IP address (`\"203.0.113.9\"`) or a subnet in CIDR notation (`\"10.2.0.0/24\"`, `\"fd00:1234::/48\"`), IPv4 or IPv6. A host name or a port is refused.",
+                "type": "string"
+              }
+            },
+            "denied_addresses": {
+              "description": "IP addresses and subnets (`\"203.0.113.0/24\"`, `\"198.51.100.9\"`) that a notification endpoint (an HTTP URL or an MQTT server) must not resolve into, public ones included and whatever `notifications.delivery.private_addresses` is set to. Empty by default. Takes precedence over `notifications.delivery.allowed_addresses`.",
+              "type": "array",
+              "items": {
+                "description": "An IP address (`\"203.0.113.9\"`) or a subnet in CIDR notation (`\"10.2.0.0/24\"`, `\"fd00:1234::/48\"`), IPv4 or IPv6. A host name or a port is refused.",
+                "type": "string"
+              }
+            },
+            "max_attempts": {
+              "description": "The attempts a queued notification gets. A delivery that has failed this many times is dead-lettered and kept for `notifications.delivery.retention.dead_letter_after`, as a record of a notification that never arrived.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            },
+            "max_concurrent": {
+              "description": "The most notifications one tenant sends at once, shared by all its Subscriptions. A delivery pass keeps this many in flight while the queue holds due deliveries. Once one Subscription holds half the slots, a freed slot goes to the due Subscription with the fewest in flight, and while another Subscription is active, with a notification in flight or one answered within `notifications.delivery.request_timeout`, the one holding half gets no more. A slow endpoint therefore leaves the others at least half the slots, and a failing one holds a single slot for its retry. A Subscription active on its own uses every slot.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            },
+            "max_error_length": {
+              "description": "The most characters of a failure diagnostic kept with a failed delivery attempt. It may be raised to the longest failure summary the store keeps.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            },
+            "max_http_body": {
+              "title": "size",
+              "description": "The largest notification body sent over HTTP. A larger notification is not sent, and its delivery fails without a retry, since every attempt would send the same body. A notification carries the entities of a change in full, so a limit at `request_limits.max_body` or below could refuse to notify an entity one request wrote.",
+              "type": [
+                "string",
+                "integer"
+              ],
+              "minimum": 0
+            },
+            "max_mqtt_packet": {
+              "title": "size",
+              "description": "The largest MQTT packet a notification is published in, envelope and topic included. It is also the largest packet the broker accepts from an MQTT server. When an MQTT 5 server announces a smaller maximum, that maximum applies on its connection. A larger notification is not published, and its delivery fails without a retry. A notification carries the entities of a change in full, so a limit at `request_limits.max_body` or below could refuse to notify an entity one request wrote. No packet is longer than 256 MiB, so `request_limits.max_body` stays below that.",
+              "type": [
+                "string",
+                "integer"
+              ],
+              "minimum": 0
+            },
+            "mode": {
+              "description": "Whether notifications are sent from memory (`\"live\"`) or through a queue in the tenant database (`\"durable\"`).",
+              "oneOf": [
+                {
+                  "description": "Subscriptions are evaluated and notifications sent from memory, without persistence, retry or dead-lettering; a crashed broker loses the notifications still in flight. Deliveries already queued in the tenant database are still drained, with their retries.",
+                  "type": "string",
+                  "const": "live"
+                },
+                {
+                  "description": "Every notification is written to the durable queue in the transaction that raised it, and sent by a worker with retry, leasing and dead-lettering.",
+                  "type": "string",
+                  "const": "durable"
+                }
+              ]
+            },
+            "private_addresses": {
+              "description": "Whether a notification endpoint (an HTTP URL or an MQTT server) resolving into private or reserved address space is notified. Checked against the address actually resolved, not the host name. `notifications.delivery.allowed_addresses` exempts addresses from `\"refused\"`, and `notifications.delivery.denied_addresses` refuses addresses whatever this is set to. Allowed by default because subscribers and MQTT servers commonly run on the broker's own private network; set `\"refused\"` when clients you do not trust create subscriptions.",
+              "oneOf": [
+                {
+                  "description": "Any endpoint the broker's network reaches is contacted.",
+                  "type": "string",
+                  "const": "allowed"
+                },
+                {
+                  "description": "An endpoint whose resolved address is loopback, private or reserved is refused, so a client-supplied endpoint cannot aim the broker at internal hosts. The refusal is recorded as a failed request.",
+                  "type": "string",
+                  "const": "refused"
+                }
+              ]
+            },
+            "queue": {
+              "description": "How the delivery queue is polled, claimed and retried. A failed delivery is retried on a delay that doubles from `notifications.delivery.queue.retry_interval` up to `notifications.delivery.queue.max_retry_interval`.",
+              "type": "object",
+              "properties": {
+                "lease_timeout": {
+                  "title": "duration",
+                  "description": "How long a claim keeps a job from every other worker. A worker that dies leaves its jobs unclaimable for the rest of the term. It is applied in whole seconds, rounded down.",
+                  "type": "string"
+                },
+                "max_poll_interval": {
+                  "title": "duration",
+                  "description": "The longest the idle backoff grows to while no commit wakes the worker. Also how soon a job committed by another broker process is picked up.",
+                  "type": "string"
+                },
+                "max_retry_interval": {
+                  "title": "duration",
+                  "description": "The longest a retry delay grows to.",
+                  "type": "string"
+                },
+                "poll_interval": {
+                  "title": "duration",
+                  "description": "How soon an idle worker polls again once a commit's wake has been handled: the floor of its idle backoff. A commit in the same broker process wakes the worker at once.",
+                  "type": "string"
+                },
+                "retry_interval": {
+                  "title": "duration",
+                  "description": "The delay before a failed job's first retry. Each later retry waits twice as long as the one before, up to the longest retry delay.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "request_timeout": {
+              "title": "duration",
+              "description": "The longest an outgoing notification may take before it is abandoned, live or queued. A subscription's own `timeout` can shorten it but not lengthen it.",
+              "type": "string"
+            },
+            "retention": {
+              "description": "How long finished deliveries and their change events are kept.",
+              "type": "object",
+              "properties": {
+                "acknowledged_after": {
+                  "title": "duration",
+                  "description": "How long a delivered notification is kept.",
+                  "type": "string"
+                },
+                "dead_letter_after": {
+                  "title": "duration",
+                  "description": "How long a delivery that ran out of attempts is kept, as a record of a notification that never arrived.",
+                  "type": "string"
+                },
+                "orphan_event_after": {
+                  "title": "duration",
+                  "description": "How long a change event no delivery refers to any more is kept.",
+                  "type": "string"
+                },
+                "sweep_interval": {
+                  "title": "duration",
+                  "description": "How often expired deliveries and events are removed. A pass runs only for a tenant that may have written since the last one.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "evaluation": {
+          "description": "How live delivery evaluates committed entity changes.",
+          "type": "object",
+          "properties": {
+            "drain_timeout": {
+              "title": "duration",
+              "description": "The longest a stopping tenant spends evaluating the committed changes it already holds for live delivery, at process shutdown or when the tenant is unloaded. Evaluation that is not finished by then is abandoned and the changes still waiting are dropped, logged and counted. At process shutdown the whole broker stops within `server.graceful_drain_timeout` plus this, 60 seconds by default, so give it the two together plus 10 seconds before your orchestrator kills it. `\"durable\"` delivery records notifications in the commit and is not affected.",
+              "type": "string"
+            },
+            "max_concurrent_changes": {
+              "description": "The most committed entity changes evaluated at once. Changes to one entity are evaluated one at a time in commit order; changes to different entities run side by side, each reading its entity and recording a notification per matched subscription, so they share the tenant's database pool with request handling.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 1
+            },
+            "max_queued_changes": {
+              "description": "The most committed entity changes each tenant buffers for live evaluation. While the broker runs no change is dropped: once the buffer is full, a write waits after its commit until evaluation makes room, so a burst larger than the buffer slows the tenant's writes instead of losing notifications. Changes still waiting when the broker stops or the tenant is unloaded are evaluated first, within `notifications.evaluation.drain_timeout`. A full buffer holds under 4 MB per tenant at the default. `\"durable\"` delivery does not use the buffer.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "periodic": {
+          "description": "How the periodic (`timeInterval`) notification drain waits.",
+          "type": "object",
+          "properties": {
+            "max_poll_interval": {
+              "title": "duration",
+              "description": "The longest the periodic notification drain sleeps while no subscription is due. The drain otherwise sleeps until the next subscription is due, so a change to the periodic subscriptions is noticed within this time; due notifications are sent on time either way.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "observability": {
+      "description": "Logging and metrics.",
+      "type": "object",
+      "properties": {
+        "log": {
+          "description": "What the broker logs, and where.",
+          "type": "object",
+          "properties": {
+            "file": {
+              "description": "The optional structured log file.",
+              "type": "object",
+              "properties": {
+                "compression": {
+                  "description": "Whether rotated files are compressed.",
+                  "oneOf": [
+                    {
+                      "description": "Keeps rotated files uncompressed.",
+                      "type": "string",
+                      "const": "none"
+                    },
+                    {
+                      "description": "Compresses rotated files with gzip.",
+                      "type": "string",
+                      "const": "gzip"
+                    }
+                  ]
+                },
+                "directory": {
+                  "title": "path",
+                  "description": "Where the log files are written. Left out, they go in an `andromeda` directory in the platform state directory (`$XDG_STATE_HOME`, or `~/.local/state`), or in the data directory on a platform without one.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "format": {
+                  "description": "The shape of each record in the file.",
+                  "oneOf": [
+                    {
+                      "description": "One JSON record per line, with the current span and the span list.",
+                      "type": "string",
+                      "const": "json"
+                    },
+                    {
+                      "description": "One compact JSON record per line, without the span fields (JSON Lines).",
+                      "type": "string",
+                      "const": "jsonl"
+                    }
+                  ]
+                },
+                "level": {
+                  "description": "The most verbose level written to the file, independent of `observability.log.level`.",
+                  "oneOf": [
+                    {
+                      "description": "Writes errors only.",
+                      "type": "string",
+                      "const": "error"
+                    },
+                    {
+                      "description": "Writes warnings and errors.",
+                      "type": "string",
+                      "const": "warn"
+                    },
+                    {
+                      "description": "Writes operational information, warnings and errors.",
+                      "type": "string",
+                      "const": "info"
+                    },
+                    {
+                      "description": "Adds debug diagnostics.",
+                      "type": "string",
+                      "const": "debug"
+                    },
+                    {
+                      "description": "Adds full trace diagnostics.",
+                      "type": "string",
+                      "const": "trace"
+                    }
+                  ]
+                },
+                "max_retained_files": {
+                  "description": "The most rotated files kept. Past it, the oldest is deleted.",
+                  "type": "integer",
+                  "format": "uint",
+                  "minimum": 1
+                },
+                "mode": {
+                  "description": "Whether structured records are written to a rotating file.",
+                  "oneOf": [
+                    {
+                      "description": "Turn the feature off.",
+                      "type": "string",
+                      "const": "disabled"
+                    },
+                    {
+                      "description": "Turn the feature on.",
+                      "type": "string",
+                      "const": "enabled"
+                    }
+                  ]
+                },
+                "name": {
+                  "title": "path",
+                  "description": "The name of the current log file, before the rotation suffix.",
+                  "type": "string"
+                },
+                "rotation": {
+                  "description": "How often a new file is started.",
+                  "oneOf": [
+                    {
+                      "description": "Starts a new file once per calendar day.",
+                      "type": "string",
+                      "const": "daily"
+                    },
+                    {
+                      "description": "Starts a new file once per hour.",
+                      "type": "string",
+                      "const": "hourly"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            "level": {
+              "description": "The most verbose level written to standard output. A `RUST_LOG` environment variable takes precedence when it is set.",
+              "oneOf": [
+                {
+                  "description": "Writes errors only.",
+                  "type": "string",
+                  "const": "error"
+                },
+                {
+                  "description": "Writes warnings and errors.",
+                  "type": "string",
+                  "const": "warn"
+                },
+                {
+                  "description": "Writes operational information, warnings and errors.",
+                  "type": "string",
+                  "const": "info"
+                },
+                {
+                  "description": "Adds debug diagnostics.",
+                  "type": "string",
+                  "const": "debug"
+                },
+                {
+                  "description": "Adds full trace diagnostics.",
+                  "type": "string",
+                  "const": "trace"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "metrics": {
+          "description": "Which exporters the broker's metrics go to, one table each.",
+          "type": "object",
+          "properties": {
+            "prometheus": {
+              "description": "Prometheus metrics served at `GET /metrics` on the management endpoints.",
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "description": "Whether metrics are recorded and served at `GET /metrics` on the management endpoints.",
+                  "oneOf": [
+                    {
+                      "description": "Turn the feature off.",
+                      "type": "string",
+                      "const": "disabled"
+                    },
+                    {
+                      "description": "Turn the feature on.",
+                      "type": "string",
+                      "const": "enabled"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "request_limits": {
+      "description": "What one request may cost the broker. Every replica of one deployment runs the same values.",
+      "type": "object",
+      "properties": {
+        "max_attribute_nesting": {
+          "description": "The deepest one written attribute may nest: each sub-attribute, each JSON object or list of a value, and each object or array inside a JSON literal is one level. An attribute nesting deeper is answered `400` `BadRequestData`. It is also the depth a `q` or `orderBy` path may walk. It may be raised to the deepest every stored value reads back at.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "x-andromeda-replica-consistent": true
+        },
+        "max_body": {
+          "title": "size",
+          "description": "The largest request body the broker accepts, counted after decompression. A larger body is answered `413`.",
+          "type": [
+            "string",
+            "integer"
+          ],
+          "minimum": 0
+        },
+        "max_entity_json_values": {
+          "description": "The most JSON values one entity may hold outside its geometries and JSON literals, counted on the expanded document and on the entity a write stores, so several writes cannot grow one entity past it. A write over it is answered `413`. After the limit is lowered, an entity already over it can still be shrunk or rewritten at its size, but not grown.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "x-andromeda-replica-consistent": true
+        },
+        "max_geometry_positions": {
+          "description": "The most positions one geometry may hold, in a written entity and in a query, subscription or registration geometry. A written geometry over it is answered `413`, a query's `403` `TooComplexQuery`.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "x-andromeda-replica-consistent": true
+        },
+        "max_header_section": {
+          "title": "size",
+          "description": "The largest request header section the broker accepts, on HTTP/1.1, HTTP/2 and HTTP/3 alike. Every field, the method, target and authority included, costs its name, its value and 32 bytes. A request over it is answered a bare `431`. The management listener applies the same limit.",
+          "type": [
+            "string",
+            "integer"
+          ],
+          "minimum": 0,
+          "x-andromeda-replica-consistent": true
+        },
+        "max_json_values": {
+          "description": "The most JSON values one request body may hold, counted before it is parsed. Every object, array, string, number, boolean and `null` counts once, so the count follows the cost of processing the body rather than its bytes. A body over it is answered `413`.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "x-andromeda-replica-consistent": true
+        },
+        "max_page_body": {
+          "title": "size",
+          "description": "The largest body one page of a collection may render to, before any compression. A page that renders to more is answered `403` `TooManyResults` naming the size and the ceiling, and none of it is sent; the client asks for a smaller `limit` and follows the next page pointer.",
+          "type": [
+            "string",
+            "integer"
+          ],
+          "minimum": 0,
+          "x-andromeda-replica-consistent": true
+        },
+        "max_q_comparisons": {
+          "description": "The most comparisons one `q` filter may make, in an entity or temporal query, a delete by query, or a subscription. Each Query Term is one comparison, and a value list such as `a==1,2,3` one per value. A filter over it is answered `403` `TooComplexQuery`. A stored subscription is not checked again after the limit is lowered.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "x-andromeda-replica-consistent": true
+        },
+        "max_q_nesting": {
+          "description": "How deep the `;` and `|` combinations of one `q` filter may nest, in an entity or temporal query, a delete by query, or a subscription: `a;b` nests one level, `a;(b|c)` and `a|b;c` two, and parentheses around a single Query Term add none. A filter nesting deeper is answered `403` `TooComplexQuery`. It may be raised to the deepest parentheses are parsed at; parentheses written deeper are refused whatever this holds.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "x-andromeda-replica-consistent": true
+        },
+        "timeout": {
+          "title": "duration",
+          "description": "The longest one request may run. A request whose body is still arriving then is answered `408` `RequestTimeout`, and any other request still running is answered `500` `InternalError`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "server": {
+      "description": "The data-plane listener that serves the NGSI-LD API, and its HTTP/3 sibling.",
+      "type": "object",
+      "properties": {
+        "announced_close_timeout": {
+          "title": "duration",
+          "description": "How long an HTTP/1.1 connection stays open, unread, after a response that announced `Connection: close`, so the client reads the response before the connection goes. Such a response refuses an upload the broker did not read.",
+          "type": "string"
+        },
+        "graceful_drain_timeout": {
+          "title": "duration",
+          "description": "How long open connections get to finish their requests once shutdown begins. Connections still open after it are closed. The whole stop takes at most this plus `notifications.evaluation.drain_timeout` from the stop signal, 60 seconds by default, however many tenants are loaded: the tenants and the background tasks share what the connections leave, and whatever still runs then is abandoned and logged. Give the broker the two together plus 10 seconds to stop before your orchestrator kills it; Docker and Podman wait only 10 seconds unless told otherwise.",
+          "type": "string"
+        },
+        "host": {
+          "description": "The address the API listens on. The `--host` command-line flag overrides it.",
+          "type": "string",
+          "format": "ip"
+        },
+        "http3": {
+          "description": "The optional HTTP/3 listener on the same host and port as the API.",
+          "type": "object",
+          "properties": {
+            "advertisement_lifetime": {
+              "title": "duration",
+              "description": "How long a client may remember the `Alt-Svc` header that announces HTTP/3, sent as its `ma` parameter.",
+              "type": "string"
+            },
+            "mode": {
+              "description": "Whether HTTP/3 is served beside the TCP listener. HTTP/3 has no plaintext form, so enabling it needs `tls.certificate` and `tls.private_key` whatever `server.transport` says.",
+              "oneOf": [
+                {
+                  "description": "Binds no QUIC endpoint and advertises no HTTP/3.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Serves HTTP/3 over UDP on the same host and port as the API, with the `[tls]` certificate, and advertises it in an `Alt-Svc` header.",
+                  "type": "string",
+                  "const": "enabled"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "idle_timeout": {
+          "title": "duration",
+          "description": "How long a connection to the API or management listener may stay open with no request in flight before the broker closes it. An HTTP/2 connection is sent a GOAWAY first. Keep it above how long a reverse proxy in front keeps idle upstream connections, commonly 60 to 120 seconds, so the proxy closes an idle connection first and never sends a request on one the broker is closing.",
+          "type": "string"
+        },
+        "port": {
+          "description": "The TCP port the API listens on. The `--port` command-line flag overrides it.",
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "public_url": {
+          "description": "The address clients and peers reach the API at, path prefix included, such as `https://broker.example.org/context-broker`. Every absolute URL the broker hands out is built on it, including stored `@context` URLs, and forwarded subscriptions name it as the endpoint their notifications come back to. Left out, URLs are built on the origin each request reveals, with no prefix, and subscriptions are not forwarded to context sources.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uri"
+        },
+        "request_head_timeout": {
+          "title": "duration",
+          "description": "How long a connection to the API or management listener gets to send a complete request head, counted from when it opens until its first request, and over HTTP/1.1 from the first byte of each later request. When part of an HTTP/1.1 head has arrived, the broker answers `408 Request Timeout` before it closes the connection; otherwise it closes the connection without an answer. A new HTTP/2 connection gets the same time to open its first request.",
+          "type": "string"
+        },
+        "transport": {
+          "description": "Whether the API listener serves plaintext or terminates TLS with the `[tls]` certificate. One port speaks one or the other, never both.",
+          "oneOf": [
+            {
+              "description": "Serves plaintext HTTP/1.1 and HTTP/2, for a deployment behind a reverse proxy or load balancer that terminates TLS. NGSI-LD calls plaintext HTTP not recommended.",
+              "type": "string",
+              "const": "plaintext"
+            },
+            {
+              "description": "Terminates TLS in the broker with the `[tls]` certificate and serves HTTP/1.1 and HTTP/2 over it.",
+              "type": "string",
+              "const": "tls"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "snapshot": {
+      "description": "Snapshot lifetimes, quotas and preparation.",
+      "type": "object",
+      "properties": {
+        "default_lifetime": {
+          "title": "duration",
+          "description": "The lifetime of a Snapshot created without `snapshotLifetime`.",
+          "type": "string"
+        },
+        "max_lifetime": {
+          "title": "duration",
+          "description": "The longest a Snapshot lives. A longer requested `snapshotLifetime` is cut down to this.",
+          "type": "string"
+        },
+        "preparation": {
+          "description": "How a Snapshot is prepared.",
+          "type": "object",
+          "properties": {
+            "lease_timeout": {
+              "title": "duration",
+              "description": "How long a claim keeps a preparation from every other worker before another may take it over.",
+              "type": "string"
+            },
+            "max_concurrent": {
+              "description": "The most Snapshots prepared at once.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 1
+            },
+            "page_size": {
+              "description": "The results read per page while a Snapshot captures its content.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 1
+            },
+            "recovery_interval": {
+              "title": "duration",
+              "description": "How often preparations a crash or a missed run left unfinished are resumed. Creating a Snapshot starts preparing it at once, so this sweep only recovers.",
+              "type": "string"
+            },
+            "scoped_operation_timeout": {
+              "title": "duration",
+              "description": "How long a request scoped to a Snapshot waits for its capture or clone to finish. A request still waiting then is answered `503` with `Retry-After`.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "quota": {
+          "description": "How many Snapshots, and how much storage, one tenant may keep.",
+          "type": "object",
+          "properties": {
+            "max_per_tenant": {
+              "description": "The most Snapshots one tenant keeps, or `\"unlimited\"` to keep any number.",
+              "anyOf": [
+                {
+                  "description": "No limit.",
+                  "oneOf": [
+                    {
+                      "description": "No limit.",
+                      "type": "string",
+                      "const": "unlimited"
+                    }
+                  ]
+                },
+                {
+                  "description": "The limit.",
+                  "type": "integer",
+                  "format": "uint",
+                  "minimum": 1
+                }
+              ]
+            },
+            "max_storage_per_tenant": {
+              "description": "The most storage one tenant's Snapshots take, or `\"unlimited\"` to let them take any amount.",
+              "anyOf": [
+                {
+                  "description": "No limit.",
+                  "oneOf": [
+                    {
+                      "description": "No limit.",
+                      "type": "string",
+                      "const": "unlimited"
+                    }
+                  ]
+                },
+                {
+                  "title": "size",
+                  "description": "The limit.",
+                  "type": [
+                    "string",
+                    "integer"
+                  ],
+                  "minimum": 0
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "temporal": {
+      "description": "Reading, recording and storing Temporal Evolutions.",
+      "type": "object",
+      "properties": {
+        "history": {
+          "description": "Whether Core API writes are recorded in history, and how the queue that records history is drained.",
+          "type": "object",
+          "properties": {
+            "batch_size": {
+              "description": "The most history writes one pass claims. The pass applies them in one transaction, so a larger batch spreads each statement's cost over more writes.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            },
+            "core_writes": {
+              "description": "Whether Core API writes add to the history of the entities they change. With `\"not-recorded\"` only the Temporal API writes history, for a producer that publishes its history there alone; Core writes change current state, and Core queries see them, either way.",
+              "oneOf": [
+                {
+                  "description": "A Core API write that changes current state records the attribute instances it modified or removed and any Scope it changed or cleared; a write restating what the entity holds records nothing.",
+                  "type": "string",
+                  "const": "recorded"
+                },
+                {
+                  "description": "Core API writes leave history untouched: only the Temporal API adds to it or removes from it.",
+                  "type": "string",
+                  "const": "not-recorded"
+                }
+              ]
+            },
+            "queue": {
+              "description": "The queue of committed history writes, including those of `respond-async` batches. A failed write is retried on a delay that doubles from `temporal.history.queue.retry_interval` up to `temporal.history.queue.max_retry_interval`.",
+              "type": "object",
+              "properties": {
+                "lease_timeout": {
+                  "title": "duration",
+                  "description": "How long a claim keeps a job from every other worker. A worker that dies leaves its jobs unclaimable for the rest of the term. It is applied in whole seconds, rounded down.",
+                  "type": "string"
+                },
+                "max_poll_interval": {
+                  "title": "duration",
+                  "description": "The longest the idle backoff grows to while no commit wakes the worker. Also how soon a job committed by another broker process is picked up.",
+                  "type": "string"
+                },
+                "max_retry_interval": {
+                  "title": "duration",
+                  "description": "The longest a retry delay grows to.",
+                  "type": "string"
+                },
+                "poll_interval": {
+                  "title": "duration",
+                  "description": "How soon an idle worker polls again once a commit's wake has been handled: the floor of its idle backoff. A commit in the same broker process wakes the worker at once.",
+                  "type": "string"
+                },
+                "retry_interval": {
+                  "title": "duration",
+                  "description": "The delay before a failed job's first retry. Each later retry waits twice as long as the one before, up to the longest retry delay.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "stuck_after_attempts": {
+              "description": "Failed attempts from which a history write that keeps failing is reported stuck, logged and counted on each further failure. It is never discarded, since it is history the broker has already accepted, and it keeps being retried, never waiting longer than `temporal.history.queue.max_retry_interval`.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "query": {
+          "description": "How much of a Temporal Evolution one temporal read returns before it is paged.",
+          "type": "object",
+          "properties": {
+            "default_last_n": {
+              "description": "Instances per attribute a temporal read without `lastN` returns before it is paged forwards.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "max_aggregation_instances": {
+              "description": "The most raw instances per attribute one page of an aggregated temporal read folds, beside its `temporal.query.max_last_n` periods. A page that would fold more ends at the start of the period the first instance beyond the bound falls in; a first period holding more than the bound is read whole, since a period is never split.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 1
+            },
+            "max_edge_group": {
+              "description": "The most instances of one attribute sharing one instant that a temporal page carries. A page never splits the instances sharing the instant at its edge, since a client resumes from a timestamp that cannot point inside an instant, so it carries them whole however far past its size that takes it. A larger group is refused with `403` `TooManyResults`.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "max_last_n": {
+              "description": "The largest `lastN` answered in one response. A larger `lastN` is narrowed to this many instances per attribute and paged backwards with a 206 whose `Content-Range` still reports the requested `lastN`. It is also the most whole periods per attribute on one page of an aggregated read.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "storage": {
+          "description": "How history is partitioned, converted to the columnstore and aged out.",
+          "type": "object",
+          "properties": {
+            "chunk_interval": {
+              "title": "duration",
+              "description": "The span of time one history partition covers. Left out, the broker leaves each history table's partitioning as it stands, which is 7 days on a table it created. A change is reconciled against the stored partitioning when the broker next opens the tenant; shorten it if the largest partition still in the rowstore keeps passing 4 GB.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "columnstore": {
+              "description": "When history partitions are converted to the columnstore.",
+              "type": "object",
+              "properties": {
+                "convert_after": {
+                  "title": "duration",
+                  "description": "The age past which a history partition is converted to the columnstore. Only the TimescaleDB TSL edition has a columnstore; on the Apache-2.0 edition the key has no effect.",
+                  "type": "string"
+                },
+                "sweep_interval": {
+                  "title": "duration",
+                  "description": "How often partitions past `temporal.storage.columnstore.convert_after` are converted. The first sweep runs when a tenant opens.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "retention": {
+              "description": "Whether, and at what age, history is deleted.",
+              "type": "object",
+              "properties": {
+                "delete_after": {
+                  "title": "duration",
+                  "description": "How much history to keep. History partitions recorded entirely before this age are dropped, together with the Scope history no remaining instance needs. Left out, no age is set and no history is deleted.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "mode": {
+                  "description": "Whether history older than `temporal.storage.retention.delete_after` is deleted. A broker never deletes history it was not told to.",
+                  "oneOf": [
+                    {
+                      "description": "Turn the feature off.",
+                      "type": "string",
+                      "const": "disabled"
+                    },
+                    {
+                      "description": "Turn the feature on.",
+                      "type": "string",
+                      "const": "enabled"
+                    }
+                  ]
+                },
+                "sweep_interval": {
+                  "title": "duration",
+                  "description": "How often history past `temporal.storage.retention.delete_after` is deleted while retention is enabled. The first sweep runs when a tenant opens.",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "tenancy": {
+      "description": "Named tenants: whether they are served, where their data lives, and how many stay open.",
+      "type": "object",
+      "properties": {
+        "build": {
+          "description": "How a tenant is loaded on its first request.",
+          "type": "object",
+          "properties": {
+            "admission_timeout": {
+              "title": "duration",
+              "description": "How long a request may wait for its tenant to load before it is answered `503` with `Retry-After`. Covers the load itself and every wait ahead of it: another request loading the same tenant, the creation of a new tenant's database, a free loading slot, and a free unloading slot when the cache is full. A tenant still being created or loaded when the time runs out goes on loading, so a retry finds it further along or ready.",
+              "type": "string"
+            },
+            "max_concurrent": {
+              "description": "The most tenants loading at once. Loading opens a pool and, when the tenant's schema is behind or absent, runs migrations over a direct connection. Requests past the bound wait for at most `tenancy.build.admission_timeout`.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "databases": {
+          "description": "How each named tenant's database is named and pooled.",
+          "type": "object",
+          "properties": {
+            "max_connections": {
+              "description": "The most connections each named tenant's pool opens, in each broker process. With `tenancy.residency.max_resident` it bounds the open connections at their product, plus the default tenant's pool. Behind a proxy, `database.pooler.max_connections_per_tenant` applies instead.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            },
+            "name_prefix": {
+              "title": "SQL identifier prefix",
+              "description": "The prefix every tenant database name starts with. Maintenance also uses it to recognise databases on the server that look like a tenant's but belong to none. Must match `[A-Za-z_][A-Za-z0-9_]*`, so the database names need no quoting.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "default_tenant": {
+          "description": "The default tenant's pool.",
+          "type": "object",
+          "properties": {
+            "max_connections": {
+              "description": "The most connections the default tenant's pool opens, in each broker process. Named tenants size theirs with `tenancy.databases.max_connections`.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "mode": {
+          "description": "Whether named tenants are served. With `\"disabled\"` only the default tenant exists, and a request naming a tenant in `NGSILD-Tenant` is answered `501` `NoMultiTenantSupport`. On by default, so a client can name a tenant without any setup on the broker: the first operation that creates something in a tenant creates the tenant.",
+          "oneOf": [
+            {
+              "description": "Turn the feature off.",
+              "type": "string",
+              "const": "disabled"
+            },
+            {
+              "description": "Turn the feature on.",
+              "type": "string",
+              "const": "enabled"
+            }
+          ]
+        },
+        "provisional_tenant_lifetime": {
+          "title": "duration",
+          "description": "How long a new tenant whose database still holds nothing is kept before its database is dropped. A creating operation that names a tenant for the first time prepares its database before it runs, and the tenant is answered as nonexistent until that database holds information; a refused operation leaves such a tenant behind.",
+          "type": "string"
+        },
+        "residency": {
+          "description": "How many tenants stay loaded, and for how long.",
+          "type": "object",
+          "properties": {
+            "idle_eviction_after": {
+              "title": "duration",
+              "description": "How long an unused tenant stays loaded. Unloading a tenant closes its pool and stops its background work.",
+              "type": "string"
+            },
+            "max_concurrent_evictions": {
+              "description": "The most tenants unloading at once. Loaded and unloading tenants together stay within `tenancy.residency.max_resident` plus this. A load that must make room while every slot is busy waits for one within `tenancy.build.admission_timeout`.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 1
+            },
+            "max_resident": {
+              "description": "The most tenants loaded at once. A tenant with requests in flight is never unloaded, nor is a tenant loaded for due work within `tenancy.residency.woken_lifetime`, so the count can exceed this until those requests complete and those lifetimes end. Room is made by unloading the least recently used of the other tenants. A tenant with a periodic notification due within `tenancy.residency.min_wake_interval` is unloaded only when every other candidate has one too. A tenant loaded for a periodic notification takes a place once per `timeInterval`: while every place is taken, until its notification is sent, and otherwise for `tenancy.residency.woken_lifetime`. While those shares add up to more places than this leaves beside the default tenant and the tenants requests use, the broker cannot load tenants as fast as their work falls due: their notifications fall behind without bound, and the broker logs a warning and reports the overdue wakes in `andromeda_tenant_overdue_wakes`.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 1
+            },
+            "max_wakes_per_pass": {
+              "description": "The most unloaded tenants one pass loads: for due work first, then, in what that leaves, for tenants whose extensions are behind the versions the server ships. Woken tenants share `tenancy.build.max_concurrent` with tenants loaded for requests, so this keeps a burst of wakes from crowding requests out.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 1
+            },
+            "min_wake_interval": {
+              "title": "duration",
+              "description": "The shortest wait before a tenant that was just unloaded is loaded again for due work, such as an expiry or a periodic notification. A due time sooner than this is pushed back to it, so a tenant that is only a little overdue is not unloaded and reloaded in a loop. A failed check for due work is retried this far out. A tenant with a periodic notification due within this interval is the last to be unloaded to make room. If it is unloaded all the same, that notification can be late by up to this interval, unless the tenants with due work need more places than `tenancy.residency.max_resident` leaves, as described there.",
+              "type": "string"
+            },
+            "sweep_interval": {
+              "title": "duration",
+              "description": "How often idle tenants are unloaded and provisional tenants settled.",
+              "type": "string"
+            },
+            "woken_lifetime": {
+              "title": "duration",
+              "description": "The longest a tenant loaded for its due work keeps its place. Until its due work has run it is not unloaded, not even to make room for another tenant. While every place is taken, it gives up its place as soon as that work has run, so another tenant with due work can be loaded; while places are free, it keeps its place for this whole time. After it, such a tenant is the first to be unloaded again, yet never displaces a tenant a request used.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "tls": {
+      "description": "The certificate, private key and handshake policy every TLS-terminating listener shares. Read only when some listener terminates TLS.",
+      "type": "object",
+      "properties": {
+        "certificate": {
+          "title": "path",
+          "description": "The PEM certificate chain the broker presents, leaf first. Left out, no listener can terminate TLS. The file is reloaded when it changes.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-andromeda-apply": "reload"
+        },
+        "client_authentication": {
+          "description": "Client certificate authentication (mutual TLS).",
+          "type": "object",
+          "properties": {
+            "ca": {
+              "title": "path",
+              "description": "The PEM bundle of the CAs client certificates must chain to. Left out, no client certificate can be verified.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "x-andromeda-apply": "reload"
+            },
+            "mode": {
+              "description": "Whether clients are asked for a certificate, and whether one is required.",
+              "oneOf": [
+                {
+                  "description": "Asks for no client certificate. Authentication, if any, happens above TLS.",
+                  "type": "string",
+                  "const": "disabled"
+                },
+                {
+                  "description": "Verifies a client certificate when the client sends one and still serves a client without. A certificate from an issuer outside `tls.client_authentication.ca` fails the handshake.",
+                  "type": "string",
+                  "const": "optional"
+                },
+                {
+                  "description": "Serves only clients that present a certificate chaining to `tls.client_authentication.ca`.",
+                  "type": "string",
+                  "const": "required"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "handshake_timeout": {
+          "title": "duration",
+          "description": "How long a TCP client may take to finish its TLS handshake before the connection is dropped.",
+          "type": "string"
+        },
+        "minimum_protocol_version": {
+          "description": "The oldest TLS version a TCP connection may negotiate. HTTP/3 always uses TLS 1.3.",
+          "oneOf": [
+            {
+              "description": "Accepts TLS 1.2 and TLS 1.3. NGSI-LD requires TLS 1.2 support.",
+              "type": "string",
+              "const": "tls1.2"
+            },
+            {
+              "description": "Accepts TLS 1.3 only, for a deployment whose clients all speak it.",
+              "type": "string",
+              "const": "tls1.3"
+            }
+          ]
+        },
+        "private_key": {
+          "title": "path",
+          "description": "The PEM private key of the leaf certificate, as PKCS#8, SEC1 or PKCS#1. Left out, no listener can terminate TLS. The file is reloaded when it changes.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "x-andromeda-apply": "reload"
+        },
+        "reload_settle_after": {
+          "title": "duration",
+          "description": "How long the certificate files must stay unchanged after an edit before the broker loads them again, so a certificate and key replaced one after the other load together.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

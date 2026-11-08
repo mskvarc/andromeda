@@ -1,0 +1,42 @@
+# Continuous integration
+
+## Workflows
+
+| Workflow | Runs on | What it runs |
+|---|---|---|
+| `ci` | every pull request that isn't a draft, every push to `main`, on demand | one job per check, the `ngsi_ld`, `etsi` and `annex_c` suite trees, then the `pr-ok` and `ci-ok` gates |
+| `suite` | weekly, on demand | the `andromeda`, `distributed` and `interoperability` trees, or any single tree except `pgbouncer` picked when it's started by hand |
+| `advisories` | weekly, on demand | `cargo deny check advisories`, for advisories published while nothing is being committed |
+| `postgresql` | pushes to `main` that change `docker/images/postgresql` or the workflow itself, weekly, on demand | builds, checks with [PostgreSQL image checks](testing/postgresql-image-checks.md), publishes and signs the PostgreSQL image |
+| `release` | version tags | the release, as [Release process](release-process.md) describes |
+| `prune-ci-images` | daily, on demand | deletes the `broker-<sha>` and `runner-<sha>` images in `andromeda-ci` once they are 30 days old, and untagged versions in `andromeda-ci`, `andromeda-buildcache` and `postgresql-buildcache` once they are a day old. The published `andromeda` and `postgresql` packages are left alone |
+
+A newer commit on a pull request or on `main` cancels the run still going for the one before it, so only the newest commit of `main` gets a verdict, and a release is tagged on that commit. `[skip ci]` in a commit message skips `ci` for that push.
+
+## Jobs of `ci`
+
+Every check is a job of its own, so a pull request shows each one with its own status.
+
+| Job | Runs |
+|---|---|
+| `fmt` | `cargo fmt --all --check` |
+| `taplo` | `taplo fmt --check --diff` |
+| `machete` | `cargo machete --with-metadata` |
+| `deny` | `cargo deny check`, covering licences, sources, advisories and bans |
+| `shellcheck` | `shellcheck` over every tracked `*.sh` |
+| `clippy` | `cargo clippy` over the whole workspace, the suite included, with warnings denied |
+| `unit` | the workspace unit tests, then the architecture checks, then the broker's unit tests, all under cargo-nextest |
+| `sql` | `andromeda-sql` `format --check`, `lint`, `verify`, and `verify --against` the base of a pull request or the parent of a push, then the package's tests under cargo-nextest |
+| `images` | builds the arm64 broker image and the suite's runner image once for the commit and pushes them to `ghcr.io/<owner>/andromeda-ci` as `broker-<sha>` and `runner-<sha>`. Dependabot's pull requests skip it, since their token can't push packages |
+| `suite (<tree>)` | one job for each of the `ngsi_ld`, `etsi` and `annex_c` trees, through `run-suite.sh` as [Test suite](testing/test-suite.md) describes. Every tree runs the broker and runner images `images` pushed, or builds its own when `images` was skipped, and the published `postgresql:tsl` image |
+
+The `suite` workflow runs its trees the same way, with the published `postgresql:tsl` image and the broker and runner images built from the checkout. A change to `docker/images/postgresql` reaches the suite trees once the `postgresql` workflow has published it from `main`.
+
+When a job runs its checks as separate steps, as `unit` and `sql` do, every step runs whatever an earlier one reported, so one run lists every failure. [Getting started](contributing/getting-started.md) lists the commands that run the same checks locally.
+
+## Gates
+
+- `pr-ok` passes when `fmt`, `taplo`, `machete`, `deny`, `shellcheck`, `clippy`, `unit` and `sql` all passed. A merge into `main` requires it.
+- `ci-ok` passes when `pr-ok` and every suite tree passed. A release requires it on the tagged commit.
+
+So a red suite tree shows on a pull request without blocking the merge. Don't merge a pull request with a red tree unless the same failure is already red on `main`. A red tree on `main` is the next thing to fix, because no later commit can be released until it's fixed.

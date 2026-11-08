@@ -1,0 +1,1881 @@
+# Andromeda configuration.
+#
+# Every key is shown at its built-in default. A key that is not set by
+# default is shown commented out, at an example value, and the comment above
+# it says what leaving it out means. A key with no default, such as
+# database.connection, is shown commented out too: set it here or in the
+# environment, or the broker does not start.
+
+# The data-plane listener that serves the NGSI-LD API, and its HTTP/3 sibling.
+[server]
+
+# The address the API listens on. The `--host` command-line flag overrides it.
+host = "0.0.0.0"
+
+# The TCP port the API listens on. The `--port` command-line flag overrides it.
+#
+# Must be above zero.
+#
+# With `management.mode` at `"separate-port"`, `management.port` differs from
+# `server.port`.
+port = 1056
+
+# Whether the API listener serves plaintext or terminates TLS with the `[tls]`
+# certificate. One port speaks one or the other, never both.
+#
+# One of "plaintext", "tls".
+transport = "plaintext"
+
+# The address clients and peers reach the API at, path prefix included, such as
+# `https://broker.example.org/context-broker`. Every absolute URL the broker
+# hands out is built on it, including stored `@context` URLs, and forwarded
+# subscriptions name it as the endpoint their notifications come back to. Left
+# out, URLs are built on the origin each request reveals, with no prefix, and
+# subscriptions are not forwarded to context sources.
+# public_url = "https://broker.example.org/"
+
+# How long open connections get to finish their requests once shutdown begins.
+# Connections still open after it are closed. The whole stop takes at most this
+# plus `notifications.evaluation.drain_timeout` from the stop signal, 60 seconds
+# by default, however many tenants are loaded: the tenants and the background
+# tasks share what the connections leave, and whatever still runs then is
+# abandoned and logged. Give the broker the two together plus 10 seconds to stop
+# before your orchestrator kills it; Docker and Podman wait only 10 seconds
+# unless told otherwise.
+graceful_drain_timeout = "30s"
+
+# How long an HTTP/1.1 connection stays open, unread, after a response that
+# announced `Connection: close`, so the client reads the response before the
+# connection goes. Such a response refuses an upload the broker did not read.
+#
+# Must be above zero, and below `server.graceful_drain_timeout`.
+announced_close_timeout = "1s"
+
+# How long a connection to the API or management listener gets to send a
+# complete request head, counted from when it opens until its first request, and
+# over HTTP/1.1 from the first byte of each later request. When part of an
+# HTTP/1.1 head has arrived, the broker answers `408 Request Timeout` before it
+# closes the connection; otherwise it closes the connection without an answer. A
+# new HTTP/2 connection gets the same time to open its first request.
+#
+# Must be above zero.
+request_head_timeout = "30s"
+
+# How long a connection to the API or management listener may stay open with no
+# request in flight before the broker closes it. An HTTP/2 connection is sent a
+# GOAWAY first. Keep it above how long a reverse proxy in front keeps idle
+# upstream connections, commonly 60 to 120 seconds, so the proxy closes an idle
+# connection first and never sends a request on one the broker is closing.
+#
+# Must be above zero.
+idle_timeout = "3m"
+
+# The optional HTTP/3 listener on the same host and port as the API.
+[server.http3]
+
+# Whether HTTP/3 is served beside the TCP listener. HTTP/3 has no plaintext
+# form, so enabling it needs `tls.certificate` and `tls.private_key` whatever
+# `server.transport` says.
+#
+# One of "disabled", "enabled".
+mode = "disabled"
+
+# How long a client may remember the `Alt-Svc` header that announces HTTP/3,
+# sent as its `ma` parameter.
+advertisement_lifetime = "1day"
+
+# The certificate, private key and handshake policy every TLS-terminating
+# listener shares. Read only when some listener terminates TLS.
+[tls]
+
+# The PEM certificate chain the broker presents, leaf first. Left out, no
+# listener can terminate TLS. The file is reloaded when it changes.
+#
+# `tls.certificate` and `tls.private_key` are required as soon as a listener
+# terminates TLS: `server.transport` at `"tls"`, `server.http3.mode` at
+# `"enabled"`, or `management.transport` at `"tls"` with `management.mode` at
+# `"separate-port"`.
+# certificate = "/etc/andromeda/tls/tls.crt"
+
+# The PEM private key of the leaf certificate, as PKCS#8, SEC1 or PKCS#1. Left
+# out, no listener can terminate TLS. The file is reloaded when it changes.
+#
+# `tls.certificate` and `tls.private_key` are required as soon as a listener
+# terminates TLS: `server.transport` at `"tls"`, `server.http3.mode` at
+# `"enabled"`, or `management.transport` at `"tls"` with `management.mode` at
+# `"separate-port"`.
+# private_key = "/etc/andromeda/tls/tls.key"
+
+# The oldest TLS version a TCP connection may negotiate. HTTP/3 always uses TLS
+# 1.3.
+#
+# One of "tls1.2", "tls1.3".
+minimum_protocol_version = "tls1.2"
+
+# How long a TCP client may take to finish its TLS handshake before the
+# connection is dropped.
+#
+# Must be above zero.
+handshake_timeout = "10s"
+
+# How long the certificate files must stay unchanged after an edit before the
+# broker loads them again, so a certificate and key replaced one after the other
+# load together.
+reload_settle_after = "2s"
+
+# Client certificate authentication (mutual TLS).
+[tls.client_authentication]
+
+# Whether clients are asked for a certificate, and whether one is required.
+#
+# One of "disabled", "optional", "required".
+#
+# Once a listener terminates TLS, `tls.client_authentication.ca` is required
+# while `tls.client_authentication.mode` is `"optional"` or `"required"`.
+#
+# Once a listener terminates TLS, `tls.client_authentication.ca` is refused
+# while `tls.client_authentication.mode` is `"disabled"`.
+mode = "disabled"
+
+# The PEM bundle of the CAs client certificates must chain to. Left out, no
+# client certificate can be verified.
+#
+# Once a listener terminates TLS, `tls.client_authentication.ca` is required
+# while `tls.client_authentication.mode` is `"optional"` or `"required"`.
+#
+# Once a listener terminates TLS, `tls.client_authentication.ca` is refused
+# while `tls.client_authentication.mode` is `"disabled"`.
+# ca = "/etc/andromeda/tls/clients.pem"
+
+# Where the broker serves its health probes and metrics.
+[management]
+
+# Where the management endpoints are served: on a port of their own, on the API
+# port, or not at all. A port of their own by default, so probes and metrics
+# keep answering while the API is saturated or draining.
+#
+# One of "disabled", "shared-port", "separate-port".
+#
+# With `management.mode` at `"separate-port"`, `management.port` differs from
+# `server.port`.
+#
+# Metrics are served on the management plane, so
+# `observability.metrics.prometheus.mode` at `"enabled"` needs `management.mode`
+# other than `"disabled"`.
+mode = "separate-port"
+
+# The address the management listener binds. Read only when `management.mode` is
+# `"separate-port"`.
+host = "0.0.0.0"
+
+# The TCP port the management listener binds. Read only when `management.mode`
+# is `"separate-port"`.
+#
+# Must be above zero.
+#
+# With `management.mode` at `"separate-port"`, `management.port` differs from
+# `server.port`.
+port = 1086
+
+# Whether the management listener serves plaintext or terminates TLS with the
+# `[tls]` certificate. Read only when `management.mode` is `"separate-port"`.
+#
+# One of "plaintext", "tls".
+transport = "plaintext"
+
+# What one request may cost the broker. Every replica of one deployment runs the
+# same values.
+[request_limits]
+
+# The longest one request may run. A request whose body is still arriving then
+# is answered `408` `RequestTimeout`, and any other request still running is
+# answered `500` `InternalError`.
+#
+# Must be above zero.
+timeout = "30s"
+
+# The largest request body the broker accepts, counted after decompression. A
+# larger body is answered `413`.
+#
+# Must be above zero.
+#
+# It must fit the platform's address width.
+max_body = "64 MiB"
+
+# The largest request header section the broker accepts, on HTTP/1.1, HTTP/2 and
+# HTTP/3 alike. Every field, the method, target and authority included, costs
+# its name, its value and 32 bytes. A request over it is answered a bare `431`.
+# The management listener applies the same limit.
+#
+# Must be at least 8 KiB, and at most 32 KiB.
+max_header_section = "32 KiB"
+
+# The most JSON values one request body may hold, counted before it is parsed.
+# Every object, array, string, number, boolean and `null` counts once, so the
+# count follows the cost of processing the body rather than its bytes. A body
+# over it is answered `413`.
+#
+# Must be above zero.
+max_json_values = 4000000
+
+# The most JSON values one entity may hold outside its geometries and JSON
+# literals, counted on the expanded document and on the entity a write stores,
+# so several writes cannot grow one entity past it. A write over it is answered
+# `413`. After the limit is lowered, an entity already over it can still be
+# shrunk or rewritten at its size, but not grown.
+#
+# Must be above zero.
+max_entity_json_values = 1000000
+
+# The most positions one geometry may hold, in a written entity and in a query,
+# subscription or registration geometry. A written geometry over it is answered
+# `413`, a query's `403` `TooComplexQuery`.
+#
+# Must be above zero.
+max_geometry_positions = 1000000
+
+# The deepest one written attribute may nest: each sub-attribute, each JSON
+# object or list of a value, and each object or array inside a JSON literal is
+# one level. An attribute nesting deeper is answered `400` `BadRequestData`. It
+# is also the depth a `q` or `orderBy` path may walk. It may be raised to the
+# deepest every stored value reads back at.
+#
+# Must be above zero, and at most 62.
+max_attribute_nesting = 32
+
+# The most comparisons one `q` filter may make, in an entity or temporal query,
+# a delete by query, or a subscription. Each Query Term is one comparison, and a
+# value list such as `a==1,2,3` one per value. A filter over it is answered
+# `403` `TooComplexQuery`. A stored subscription is not checked again after the
+# limit is lowered.
+#
+# Must be above zero.
+max_q_comparisons = 1000
+
+# How deep the `;` and `|` combinations of one `q` filter may nest, in an entity
+# or temporal query, a delete by query, or a subscription: `a;b` nests one
+# level, `a;(b|c)` and `a|b;c` two, and parentheses around a single Query Term
+# add none. A filter nesting deeper is answered `403` `TooComplexQuery`. It may
+# be raised to the deepest parentheses are parsed at; parentheses written deeper
+# are refused whatever this holds.
+#
+# Must be above zero, and at most 64.
+max_q_nesting = 16
+
+# The largest body one page of a collection may render to, before any
+# compression. A page that renders to more is answered `403` `TooManyResults`
+# naming the size and the ceiling, and none of it is sent; the client asks for a
+# smaller `limit` and follows the next page pointer.
+#
+# Must be above zero.
+#
+# It must fit the platform's address width.
+max_page_body = "64 MiB"
+
+# The web-facing layers in front of the API: forwarded-field trust, `Link`
+# layout, body decoding, CORS, compression, `Server-Timing`, security headers
+# and CSRF.
+[http]
+
+# How the `Link` values of a response or an HTTP notification are spread over
+# field lines. All layouts mean the same; pick the one your clients read.
+#
+# One of "combined", "grouped", "separate".
+link_field = "combined"
+
+# Where request bodies are parsed: on the request's own worker or on a separate
+# thread pool.
+[http.body_decoding]
+
+# The body size from which a body is parsed on a separate thread pool instead of
+# the request's own worker, so a large body does not stall unrelated requests
+# sharing that worker.
+#
+# It must fit the platform's address width.
+blocking_threshold = "256 KiB"
+
+# How many large bodies are parsed on the separate thread pool at once. A parse
+# holds memory in proportion to its body while it runs; a body waiting for its
+# turn holds only its bytes.
+#
+# Must be above zero.
+max_concurrent_blocking = 4
+
+# The Cross-Origin Resource Sharing policy browser clients see.
+[http.cors]
+
+# Which CORS policy applies. Only `"configured"` reads the other keys of this
+# table. `"permissive"` by default, so a browser-based interface works against
+# the broker from any origin, and since it allows no credentials a page cannot
+# act with a user's cookies; set `"configured"` to name the origins a deployment
+# serves.
+#
+# One of "disabled", "configured", "permissive", "very-permissive".
+#
+# With `http.cors.mode` at `"configured"`, `http.cors.credentials` at
+# `"allowed"` cannot be combined with `"any"` in an allow or expose list.
+mode = "permissive"
+
+# The origins allowed to read the API: `"any"`, or a list such as
+# `["https://dashboard.example.org"]`. Read only when `http.cors.mode` is
+# `"configured"`.
+#
+# With `http.cors.mode` at `"configured"`, `http.cors.credentials` at
+# `"allowed"` cannot be combined with `"any"` in an allow or expose list.
+allow_origins = "any"
+
+# The methods allowed: `"any"`, `"mirror"` to allow whatever the preflight asks
+# for, or a list such as `["GET", "POST"]`. Read only when `http.cors.mode` is
+# `"configured"`.
+#
+# With `http.cors.mode` at `"configured"`, `http.cors.credentials` at
+# `"allowed"` cannot be combined with `"any"` in an allow or expose list.
+allow_methods = "any"
+
+# The request headers allowed: `"any"`, `"mirror"` to allow whatever the
+# preflight asks for, or a list of header names. Read only when `http.cors.mode`
+# is `"configured"`.
+#
+# With `http.cors.mode` at `"configured"`, `http.cors.credentials` at
+# `"allowed"` cannot be combined with `"any"` in an allow or expose list.
+allow_headers = "any"
+
+# The response headers a browser script may read: `"any"`, or a list of header
+# names. Read only when `http.cors.mode` is `"configured"`.
+#
+# With `http.cors.mode` at `"configured"`, `http.cors.credentials` at
+# `"allowed"` cannot be combined with `"any"` in an allow or expose list.
+expose_headers = []
+
+# Whether cookies and HTTP authentication may accompany a cross-origin request.
+# Read only when `http.cors.mode` is `"configured"`.
+#
+# One of "allowed", "refused".
+#
+# With `http.cors.mode` at `"configured"`, `http.cors.credentials` at
+# `"allowed"` cannot be combined with `"any"` in an allow or expose list.
+credentials = "refused"
+
+# Whether a private-network preflight is answered with `Access-Control-Allow-
+# Private-Network`. Read only when `http.cors.mode` is `"configured"`.
+#
+# One of "allowed", "refused".
+private_network = "refused"
+
+# How long a browser may cache a preflight answer, sent as `Access-Control-Max-
+# Age`. Left out, the broker sends no `Access-Control-Max-Age` and the browser's
+# own default applies. Read only when `http.cors.mode` is `"configured"`.
+# preflight_lifetime = "10m"
+
+# Which codings responses may be compressed with, and how hard.
+[http.compression]
+
+# Whether responses are compressed. Turn it off when a proxy in front compresses
+# them.
+#
+# One of "disabled", "enabled".
+#
+# `http.compression.algorithms` must list at least one coding while
+# `http.compression.mode` is `"enabled"`.
+mode = "enabled"
+
+# The codings responses may be compressed with, chosen against the client's
+# `Accept-Encoding`. Read only when `http.compression.mode` is `"enabled"`.
+#
+# `http.compression.algorithms` must list at least one coding while
+# `http.compression.mode` is `"enabled"`.
+algorithms = ["gzip", "brotli", "deflate", "zstd"]
+
+# How hard the compressor works.
+#
+# One of "fastest", "best", "default".
+quality = "default"
+
+# Which codings a request body may arrive in.
+[http.decompression]
+
+# Whether request bodies in a content coding are decoded. Off, every body is
+# read as it arrives, and `http.decompression.unaccepted_encoding` does not
+# apply.
+#
+# One of "disabled", "enabled".
+#
+# `http.decompression.algorithms` must list at least one coding while
+# `http.decompression.mode` is `"enabled"`.
+mode = "enabled"
+
+# The codings a request body may arrive in, decoded before the body is read.
+# Read only when `http.decompression.mode` is `"enabled"`.
+#
+# `http.decompression.algorithms` must list at least one coding while
+# `http.decompression.mode` is `"enabled"`.
+algorithms = ["gzip", "brotli", "deflate", "zstd"]
+
+# What happens to a body in a coding that is not listed. Read only when
+# `http.decompression.mode` is `"enabled"`.
+#
+# One of "refused", "allowed".
+unaccepted_encoding = "refused"
+
+# Whose `Forwarded`, `X-Forwarded-Proto` and `X-Forwarded-Host` fields decide
+# the scheme and host of the URLs the broker builds. Believe them only from a
+# reverse proxy that overwrites them.
+[http.forwarded]
+
+# Whose forwarded fields the broker believes.
+#
+# One of "none", "any", "proxies".
+#
+# `http.forwarded.proxies` must list at least one proxy while
+# `http.forwarded.trust` is `"proxies"`.
+#
+# `http.forwarded.proxies` must be empty while `http.forwarded.trust` is not
+# `"proxies"`.
+trust = "none"
+
+# The IP addresses and subnets (`"10.0.0.0/8"`, `"192.0.2.7"`, `"fd00::/8"`) of
+# the proxies whose forwarded fields are believed, matched against the address a
+# request arrives from. An IPv4 peer reaching a dual-stack listener is matched
+# as its IPv4 address.
+#
+# `http.forwarded.proxies` must list at least one proxy while
+# `http.forwarded.trust` is `"proxies"`.
+#
+# `http.forwarded.proxies` must be empty while `http.forwarded.trust` is not
+# `"proxies"`.
+proxies = []
+
+# Whether responses carry a `Server-Timing` header, and what it reports.
+[http.server_timing]
+
+# Whether responses carry a `Server-Timing` header.
+#
+# One of "disabled", "enabled".
+mode = "enabled"
+
+# Which times the header reports.
+phases = ["total"]
+
+# The security headers API responses carry, each set or turned off on its own.
+[http.security_headers]
+
+# Whether API responses carry the security headers below. Turn it off when a
+# proxy in front sets them all; to drop one header, set its own key to
+# `"disabled"`.
+#
+# One of "disabled", "enabled".
+mode = "enabled"
+
+# The `Cross-Origin-Opener-Policy` header.
+#
+# One of "same-origin", "same-origin-allow-popups", "unsafe-none", "disabled".
+cross_origin_opener_policy = "same-origin"
+
+# The `Cross-Origin-Resource-Policy` header.
+#
+# One of "same-origin", "same-site", "cross-origin", "disabled".
+cross_origin_resource_policy = "same-origin"
+
+# The `Origin-Agent-Cluster` header.
+#
+# One of "origin-keyed", "site-keyed", "disabled".
+origin_agent_cluster = "origin-keyed"
+
+# The `Referrer-Policy` header.
+#
+# One of "no-referrer", "no-referrer-when-downgrade", "origin", "origin-when-
+# cross-origin", "same-origin", "strict-origin", "strict-origin-when-cross-
+# origin", "unsafe-url", "disabled".
+referrer_policy = "no-referrer"
+
+# The `X-Content-Type-Options` header.
+#
+# One of "nosniff", "disabled".
+x_content_type_options = "nosniff"
+
+# The `X-DNS-Prefetch-Control` header.
+#
+# One of "off", "on", "disabled".
+x_dns_prefetch_control = "off"
+
+# The `X-Download-Options` header.
+#
+# One of "noopen", "disabled".
+x_download_options = "noopen"
+
+# The `X-Frame-Options` header.
+#
+# One of "same-origin", "deny", "disabled".
+x_frame_options = "same-origin"
+
+# The `X-Permitted-Cross-Domain-Policies` header.
+#
+# One of "none", "master-only", "by-content-type", "by-ftp-filename", "all",
+# "disabled".
+x_permitted_cross_domain_policies = "none"
+
+# The `X-XSS-Protection` header.
+#
+# One of "off", "on", "block", "disabled".
+x_xss_protection = "off"
+
+# The `Content-Security-Policy` header.
+[http.security_headers.content_security_policy]
+
+# Whether API responses carry a `Content-Security-Policy` header.
+#
+# One of "disabled", "enabled".
+mode = "enabled"
+
+# The policy the header carries.
+policy = "default-src 'self'; base-uri 'self'; font-src 'self' https: data:; form-action 'self'; frame-ancestors 'self'; img-src 'self' data:; object-src 'none'; script-src 'self'; script-src-attr 'none'; style-src 'self' https: 'unsafe-inline'; upgrade-insecure-requests"
+
+# The `Strict-Transport-Security` header, sent only on a response to a request
+# that arrived over the TLS listener.
+[http.security_headers.strict_transport_security]
+
+# Whether a response to a request over the TLS listener carries `Strict-
+# Transport-Security`. A browser that sees it uses HTTPS for the host until
+# `max_age` passes. Off by default, since a browser that has seen it cannot
+# reach the host over plain HTTP again until then; turn it on once HTTPS is the
+# only way the host is reached.
+#
+# One of "disabled", "enabled".
+mode = "disabled"
+
+# How long a browser keeps using HTTPS for the host, the header's `max-age`.
+# Zero tells a browser to forget the host.
+max_age = "180days"
+
+# Whether the policy also covers every subdomain of the host, the header's
+# `includeSubDomains`.
+#
+# One of "disabled", "enabled".
+include_subdomains = "disabled"
+
+# Cross-Site Request Forgery protection for browser clients.
+[http.csrf]
+
+# Whether a cross-site request from an origin outside
+# `http.csrf.trusted_origins` is answered `403`. Same-origin requests, requests
+# with neither `Origin` nor `Sec-Fetch-Site`, and `GET`, `HEAD` and `OPTIONS`
+# always go through. Off by default, since the broker itself authenticates no
+# one. Turn it on when a proxy in front authenticates browsers, by cookie or by
+# HTTP authentication, because a forged cross-site request would then carry the
+# user's credentials.
+#
+# One of "disabled", "enabled".
+mode = "disabled"
+
+# The browser origins whose cross-site requests are trusted, in addition to
+# same-origin requests.
+trusted_origins = []
+
+# The PostgreSQL database the broker stores in, and how it connects.
+[database]
+
+# The PostgreSQL server and the default tenant's database, as a connection URL
+# or as a table of its parts. It has no default: set it here or in
+# `ANDROMEDA__DATABASE__CONNECTION`, or each part in its own variable such as
+# `ANDROMEDA__DATABASE__CONNECTION__PASSWORD`. It always names PostgreSQL
+# itself, never a proxy: tenant creation, migrations and maintenance connect
+# here even when `database.pooler` is set, and so do requests when it is not.
+# connection = "postgres://andromeda:andromeda@localhost:5432/andromeda"
+
+# The most connections the platform pool opens, in each broker process. It reads
+# and writes the tenant registry every tenant load consults, the schedule of
+# tenants with due work and the routes of forwarded subscriptions, and always
+# connects to `database.connection`, even when `database.pooler` is set. Tenants
+# size their own pools with `tenancy.default_tenant.max_connections` and
+# `tenancy.databases.max_connections`.
+#
+# Must be above zero.
+platform_max_connections = 32
+
+# The percentage of each tenant pool that read requests (queries, retrievals,
+# discovery and temporal reads) never hold, so writes always find a connection
+# however many reads queue. Rounded down to whole connections: a pool too small
+# to spare one keeps every connection for reads.
+#
+# Must be below 100.
+write_reserve_percent = 25
+
+# How long a request waits for a free database connection before it is answered
+# `503` with `Retry-After`.
+#
+# Must be above zero, and below `request_limits.timeout`.
+acquire_timeout = "5s"
+
+# The PostgreSQL `synchronous_commit` level set on the default tenant's database
+# and every tenant database. It is installed with `ALTER DATABASE ... SET`, so
+# every session inherits it, including sessions a transaction-pooling proxy
+# hands out. With `"off"`, a server crash can lose writes clients were already
+# told succeeded.
+#
+# One of "on", "off", "local", "remote-apply", "remote-write".
+synchronous_commit = "on"
+
+# A transaction-pooling proxy, such as PgBouncer in transaction mode, on the
+# request path. Left out, every connection goes straight to
+# `database.connection`.
+# [database.pooler]
+
+# The proxy's connection, as a URL or as a table of its parts, used by requests
+# in place of `database.connection`. The proxy forwards to the same PostgreSQL,
+# so it normally differs from `database.connection` only in host and port.
+# Tenant creation, migrations and maintenance keep connecting to
+# `database.connection`.
+# connection = "postgres://andromeda:andromeda@localhost:6432/andromeda"
+
+# The connections each named tenant's pool opens through the proxy, in place of
+# `tenancy.databases.max_connections`. Keep it small: the proxy multiplexes
+# every tenant onto its own backends, so a tenant needs only enough for its
+# concurrent requests, and many loaded tenants do not exhaust the host's ports.
+#
+# Must be above zero, and at most `tenancy.databases.max_connections`.
+# max_connections_per_tenant = 2
+
+# The in-memory caches of each tenant's attribute and entity type names.
+[database.name_cache]
+
+# When the caches are filled: as the tenant is loaded, or as names are first
+# resolved.
+#
+# One of "eager", "lazy".
+loading = "eager"
+
+# The memory each of a tenant's two name caches may hold, in each broker
+# process. A tenant holds at most twice this, and only as much as it has
+# resolved. When a cache is full the least valuable names are dropped; a dropped
+# name is read back from the database the next time it is resolved, so a full
+# cache costs reads but never refuses a write.
+#
+# Must be above zero.
+max_size_per_dictionary = "16 MiB"
+
+# How long a cached name may go unused before it is dropped, or `"unlimited"` to
+# drop names only when a cache is full.
+#
+# Must be above zero.
+idle_eviction_after = "8h"
+
+# The adaptive PostgreSQL inspection and maintenance controller.
+[database.maintenance]
+
+# Whether maintenance is off, only inspects and reports, or also acts on what it
+# finds. Acts by default, so a deployment nobody tunes still gets its wraparound
+# and WAL retention warnings, its catch-up vacuums and its index rebuilds. An
+# action whose right the broker's role lacks is only reported. Set `"observe"`
+# where the database is maintained on its own schedule.
+#
+# One of "disabled", "observe", "automatic".
+mode = "automatic"
+
+# How often the controller inspects, and how much evidence it needs before it
+# acts.
+#
+# One of "conservative", "responsive".
+profile = "conservative"
+
+# Whether automatic maintenance also runs the online repacks of bloated tables
+# it decides on, or only reports them. A repack copies the table while it stays
+# in use, so the database needs free disk of up to twice the table's size, which
+# the broker cannot measure. Repacks are only reported by default, so their
+# decisions can be checked against the free disk first. In observe mode repacks
+# are reported whatever this says.
+#
+# One of "reported", "performed".
+repack = "reported"
+
+# The largest table, its heap plus its TOAST, the controller repacks, or
+# `"unlimited"` to repack a table of any size.
+#
+# Must be above zero.
+max_repack_size = "4 GiB"
+
+# Named tenants: whether they are served, where their data lives, and how many
+# stay open.
+[tenancy]
+
+# Whether named tenants are served. With `"disabled"` only the default tenant
+# exists, and a request naming a tenant in `NGSILD-Tenant` is answered `501`
+# `NoMultiTenantSupport`. On by default, so a client can name a tenant without
+# any setup on the broker: the first operation that creates something in a
+# tenant creates the tenant.
+#
+# One of "disabled", "enabled".
+mode = "enabled"
+
+# How long a new tenant whose database still holds nothing is kept before its
+# database is dropped. A creating operation that names a tenant for the first
+# time prepares its database before it runs, and the tenant is answered as
+# nonexistent until that database holds information; a refused operation leaves
+# such a tenant behind.
+#
+# Must be above zero, and above `request_limits.timeout`.
+provisional_tenant_lifetime = "10m"
+
+# The default tenant's pool.
+[tenancy.default_tenant]
+
+# The most connections the default tenant's pool opens, in each broker process.
+# Named tenants size theirs with `tenancy.databases.max_connections`.
+#
+# Must be above zero.
+max_connections = 32
+
+# How each named tenant's database is named and pooled.
+[tenancy.databases]
+
+# The prefix every tenant database name starts with. Maintenance also uses it to
+# recognise databases on the server that look like a tenant's but belong to
+# none. Must match `[A-Za-z_][A-Za-z0-9_]*`, so the database names need no
+# quoting.
+name_prefix = "andromeda_tenant"
+
+# The most connections each named tenant's pool opens, in each broker process.
+# With `tenancy.residency.max_resident` it bounds the open connections at their
+# product, plus the default tenant's pool. Behind a proxy,
+# `database.pooler.max_connections_per_tenant` applies instead.
+#
+# Must be above zero.
+max_connections = 4
+
+# How many tenants stay loaded, and for how long.
+[tenancy.residency]
+
+# How long an unused tenant stays loaded. Unloading a tenant closes its pool and
+# stops its background work.
+#
+# Must be above zero.
+idle_eviction_after = "15m"
+
+# The most tenants loaded at once. A tenant with requests in flight is never
+# unloaded, nor is a tenant loaded for due work within
+# `tenancy.residency.woken_lifetime`, so the count can exceed this until those
+# requests complete and those lifetimes end. Room is made by unloading the least
+# recently used of the other tenants. A tenant with a periodic notification due
+# within `tenancy.residency.min_wake_interval` is unloaded only when every other
+# candidate has one too. A tenant loaded for a periodic notification takes a
+# place once per `timeInterval`: while every place is taken, until its
+# notification is sent, and otherwise for `tenancy.residency.woken_lifetime`.
+# While those shares add up to more places than this leaves beside the default
+# tenant and the tenants requests use, the broker cannot load tenants as fast as
+# their work falls due: their notifications fall behind without bound, and the
+# broker logs a warning and reports the overdue wakes in
+# `andromeda_tenant_overdue_wakes`.
+#
+# Must be above zero.
+max_resident = 16
+
+# How often idle tenants are unloaded and provisional tenants settled.
+#
+# Must be above zero.
+sweep_interval = "30s"
+
+# The shortest wait before a tenant that was just unloaded is loaded again for
+# due work, such as an expiry or a periodic notification. A due time sooner than
+# this is pushed back to it, so a tenant that is only a little overdue is not
+# unloaded and reloaded in a loop. A failed check for due work is retried this
+# far out. A tenant with a periodic notification due within this interval is the
+# last to be unloaded to make room. If it is unloaded all the same, that
+# notification can be late by up to this interval, unless the tenants with due
+# work need more places than `tenancy.residency.max_resident` leaves, as
+# described there.
+#
+# Must be above zero.
+min_wake_interval = "30s"
+
+# The longest a tenant loaded for its due work keeps its place. Until its due
+# work has run it is not unloaded, not even to make room for another tenant.
+# While every place is taken, it gives up its place as soon as that work has
+# run, so another tenant with due work can be loaded; while places are free, it
+# keeps its place for this whole time. After it, such a tenant is the first to
+# be unloaded again, yet never displaces a tenant a request used.
+#
+# Must be above zero, and below `tenancy.residency.idle_eviction_after`.
+woken_lifetime = "1m"
+
+# The most unloaded tenants one pass loads: for due work first, then, in what
+# that leaves, for tenants whose extensions are behind the versions the server
+# ships. Woken tenants share `tenancy.build.max_concurrent` with tenants loaded
+# for requests, so this keeps a burst of wakes from crowding requests out.
+#
+# Must be above zero.
+max_wakes_per_pass = 4
+
+# The most tenants unloading at once. Loaded and unloading tenants together stay
+# within `tenancy.residency.max_resident` plus this. A load that must make room
+# while every slot is busy waits for one within
+# `tenancy.build.admission_timeout`.
+#
+# Must be above zero.
+max_concurrent_evictions = 8
+
+# How a tenant is loaded on its first request.
+[tenancy.build]
+
+# The most tenants loading at once. Loading opens a pool and, when the tenant's
+# schema is behind or absent, runs migrations over a direct connection. Requests
+# past the bound wait for at most `tenancy.build.admission_timeout`.
+#
+# Must be above zero.
+max_concurrent = 8
+
+# How long a request may wait for its tenant to load before it is answered `503`
+# with `Retry-After`. Covers the load itself and every wait ahead of it: another
+# request loading the same tenant, the creation of a new tenant's database, a
+# free loading slot, and a free unloading slot when the cache is full. A tenant
+# still being created or loaded when the time runs out goes on loading, so a
+# retry finds it further along or ready.
+#
+# Must be above zero, and below `request_limits.timeout`.
+admission_timeout = "20s"
+
+# The sweeps that delete what is past its `expiresAt`.
+[expiry]
+
+# How often the expiry sweeps run, over entities and their attributes,
+# subscriptions, context source registrations, Snapshots and Entity Maps. An
+# expired resource may stay in storage for up to one interval, but the API never
+# serves it.
+#
+# Must be above zero.
+sweep_interval = "30s"
+
+# The most expired entities, or entities with expired attributes, one step of
+# the entity sweep reads.
+#
+# Must be above zero.
+batch_size = 1000
+
+# How `@context` documents are resolved.
+[jsonld]
+
+# Contexts read from files at startup, one `[[jsonld.preloaded_contexts]]` table
+# each with its `url` and `path`. Set in the file only. Left out, no context is
+# preloaded.
+# [[jsonld.preloaded_contexts]]
+
+# The URL the context is known by. A preloaded URL is never downloaded.
+#
+# No two preloaded contexts name the same URL.
+# url = "https://example.org/ngsi-ld/context.jsonld"
+
+# The file the context is read from, which must exist and hold a valid
+# `@context` document. A relative path that does not resolve from the working
+# directory is read relative to the configuration file's directory.
+# path = "contexts/example.jsonld"
+
+# Whether and how a remote `@context` is downloaded.
+[jsonld.fetch]
+
+# Whether a context that is neither embedded, preloaded, stored nor cached may
+# be downloaded. With `"disabled"` nothing is downloaded: only the core
+# `@context` and the W3C Data Integrity context it names, preloaded documents,
+# stored `@context`s and what is already cached are used.
+#
+# One of "disabled", "enabled".
+mode = "enabled"
+
+# How long one download may take, its redirects included. A download that times
+# out is not retried and is answered `504` `LdContextNotAvailable`. A JSON-LD
+# alternate is a download of its own, and a request naming several remote
+# `@context`s waits for each, so keep it well below `request_limits.timeout`.
+#
+# Must be at least 1s, and below `request_limits.timeout`.
+timeout = "10s"
+
+# How many redirects one download may follow. Every redirect target is held to
+# `jsonld.fetch.private_addresses`, `jsonld.fetch.allowed_addresses` and
+# `jsonld.fetch.denied_addresses` as the first URL is.
+max_redirects = 5
+
+# The largest `@context` document the broker downloads. A larger one is refused
+# with `504` `LdContextNotAvailable`.
+#
+# Must be above zero.
+max_size = "2 MiB"
+
+# Whether a `@context` URL resolving into private or reserved address space is
+# downloaded, and so every redirect and JSON-LD alternate the download follows.
+# Checked against the address actually resolved, not the host name.
+# `jsonld.fetch.allowed_addresses` exempts addresses from `"refused"`, and
+# `jsonld.fetch.denied_addresses` refuses addresses whatever this is set to. A
+# refused download is answered `504` `LdContextNotAvailable`. Set `"refused"`
+# when clients you do not trust can name a `@context`.
+#
+# One of "allowed", "refused".
+private_addresses = "allowed"
+
+# IP addresses and subnets (`"10.2.0.0/24"`, `"10.3.0.17"`, `"fd00:1234::/48"`)
+# that a `@context` download may resolve into even though
+# `jsonld.fetch.private_addresses` is `"refused"`, such as a server in the
+# broker's own network that hosts the contexts its clients use. Empty by
+# default. An entry in `jsonld.fetch.denied_addresses` takes precedence.
+allowed_addresses = []
+
+# IP addresses and subnets (`"203.0.113.0/24"`, `"198.51.100.9"`) that a
+# `@context` download must not resolve into, public ones included and whatever
+# `jsonld.fetch.private_addresses` is set to. Empty by default. Takes precedence
+# over `jsonld.fetch.allowed_addresses`.
+denied_addresses = []
+
+# How long resolved contexts are kept in memory.
+[jsonld.cache]
+
+# The most entries each in-process context cache holds.
+#
+# Must be above zero.
+max_entries = 1024
+
+# How long a downloaded `@context` is kept when its response sets no `Expires`
+# and no `Cache-Control` `max-age` or `s-maxage`, and how long a term-cache
+# entry lives. A response that sets one of those keeps its own lifetime.
+#
+# Must be at least 1s.
+default_lifetime = "1h"
+
+# How long a broker process uses its in-memory copy of a `@context` the broker
+# stores itself before reading it from the database again, since another process
+# sharing the database may have deleted it. It is also the `max-age` sent when
+# such a `@context` is served, in whole seconds.
+#
+# Must be at least 1s.
+hosted_revalidation_interval = "1m"
+
+# How often the `numberOfHits` counters of stored `@context`s are written to the
+# database.
+#
+# Must be above zero.
+hit_flush_interval = "5s"
+
+# Entity batches, their deferred side effects, and the spatial index.
+[entity]
+
+# How a batch operation is cut into chunks and run.
+[entity.batch]
+
+# The entities one chunk of a large batch holds.
+#
+# Must be above zero.
+chunk_size = 512
+
+# The batch size from which a batch is split into chunks of
+# `entity.batch.chunk_size`. A smaller batch runs as one.
+#
+# Must be above zero.
+large_threshold = 512
+
+# The batch size from which entities are prepared on the blocking thread pool
+# rather than on the request's own task.
+#
+# Must be above zero.
+prepare_blocking_threshold = 128
+
+# The most chunks of a batch prepared at once.
+#
+# Must be above zero.
+max_concurrent_chunks = 4
+
+# The most chunks of a batch written to the database at once.
+#
+# Must be above zero.
+max_concurrent_chunk_writes = 4
+
+# The smallest batch whose notifications and temporal history are deferred to
+# background workers when the client sends `Prefer: respond-async`; a smaller
+# batch runs them before it is answered. At 1, every batch that sends the
+# preference defers them. A batch without the preference, or one scoped to a
+# Snapshot, always runs them before it is answered.
+#
+# Must be above zero.
+async_side_effect_threshold = 1
+
+# The durable queue of change events a `Prefer: respond-async` batch leaves for
+# a worker.
+[entity.side_effects]
+
+# The most jobs one pass claims. The pass replays them one after another before
+# the worker claims again.
+#
+# Must be above zero.
+batch_size = 32
+
+# Failed attempts from which a job that keeps failing is reported stuck, logged
+# and counted on each further failure. It is never dropped, since it holds the
+# notifications of a write the broker already accepted, and it keeps being
+# retried, never waiting longer than
+# `entity.side_effects.queue.max_retry_interval`.
+#
+# Must be above zero.
+stuck_after_attempts = 5
+
+# How the queue is polled, claimed and retried. A failed job is retried on a
+# delay that doubles from `entity.side_effects.queue.retry_interval` up to
+# `entity.side_effects.queue.max_retry_interval`, however often it fails, and is
+# never dropped.
+[entity.side_effects.queue]
+
+# How soon an idle worker polls again once a commit's wake has been handled: the
+# floor of its idle backoff. A commit in the same broker process wakes the
+# worker at once.
+#
+# Must be above zero.
+poll_interval = "1s"
+
+# The longest the idle backoff grows to while no commit wakes the worker. Also
+# how soon a job committed by another broker process is picked up.
+#
+# Must be at least `entity.side_effects.queue.poll_interval`.
+max_poll_interval = "30s"
+
+# How long a claim keeps a job from every other worker. A worker that dies
+# leaves its jobs unclaimable for the rest of the term. It is applied in whole
+# seconds, rounded down.
+#
+# Must be above zero, and at least `database.acquire_timeout` plus 5s.
+lease_timeout = "30s"
+
+# The delay before a failed job's first retry. Each later retry waits twice as
+# long as the one before, up to the longest retry delay.
+#
+# Must be above zero.
+retry_interval = "2s"
+
+# The longest a retry delay grows to.
+#
+# Must be at least `entity.side_effects.queue.retry_interval`.
+max_retry_interval = "5m"
+
+# How long a dead-lettered job is kept.
+[entity.side_effects.retention]
+
+# How long a job whose stored changes cannot be read back is kept, as a record
+# of a batch whose notifications were never raised. A job that succeeds is
+# removed by its own replay, and one that fails is retried for as long as it
+# fails.
+#
+# Must be above zero.
+dead_letter_after = "7days"
+
+# How often dead-lettered jobs older than
+# `entity.side_effects.retention.dead_letter_after` are removed.
+#
+# Must be above zero.
+sweep_interval = "5m"
+
+# How each tenant's in-memory spatial index stays consistent with the database.
+[entity.spatial_index]
+
+# How the index is kept consistent with the database. `"commit-synchronous"`
+# saves a read per geo query but is exact only when a single broker process
+# writes the database.
+#
+# One of "watermark", "commit-synchronous", "store-verified".
+consistency = "watermark"
+
+# How often each tenant's index is rebuilt from the database. The first rebuild
+# runs when the tenant is loaded, and until it completes the database evaluates
+# every geo query. Later rebuilds drop entities deleted since and, under
+# `"commit-synchronous"`, bring in writes from other broker processes.
+#
+# Must be above zero.
+rebuild_interval = "30m"
+
+# Reading, recording and storing Temporal Evolutions.
+[temporal]
+
+# How much of a Temporal Evolution one temporal read returns before it is paged.
+[temporal.query]
+
+# Instances per attribute a temporal read without `lastN` returns before it is
+# paged forwards.
+#
+# Must be above zero.
+default_last_n = 100
+
+# The largest `lastN` answered in one response. A larger `lastN` is narrowed to
+# this many instances per attribute and paged backwards with a 206 whose
+# `Content-Range` still reports the requested `lastN`. It is also the most whole
+# periods per attribute on one page of an aggregated read.
+#
+# Must be at least `temporal.query.default_last_n`, and at most 5000.
+max_last_n = 1000
+
+# The most instances of one attribute sharing one instant that a temporal page
+# carries. A page never splits the instances sharing the instant at its edge,
+# since a client resumes from a timestamp that cannot point inside an instant,
+# so it carries them whole however far past its size that takes it. A larger
+# group is refused with `403` `TooManyResults`.
+#
+# Must be at least `temporal.query.max_last_n`, and at most 1000000.
+max_edge_group = 100000
+
+# The most raw instances per attribute one page of an aggregated temporal read
+# folds, beside its `temporal.query.max_last_n` periods. A page that would fold
+# more ends at the start of the period the first instance beyond the bound falls
+# in; a first period holding more than the bound is read whole, since a period
+# is never split.
+#
+# Must be above zero, and at most 100000000.
+max_aggregation_instances = 1000000
+
+# Whether Core API writes are recorded in history, and how the queue that
+# records history is drained.
+[temporal.history]
+
+# Whether Core API writes add to the history of the entities they change. With
+# `"not-recorded"` only the Temporal API writes history, for a producer that
+# publishes its history there alone; Core writes change current state, and Core
+# queries see them, either way.
+#
+# One of "recorded", "not-recorded".
+core_writes = "recorded"
+
+# The most history writes one pass claims. The pass applies them in one
+# transaction, so a larger batch spreads each statement's cost over more writes.
+#
+# Must be above zero.
+batch_size = 256
+
+# Failed attempts from which a history write that keeps failing is reported
+# stuck, logged and counted on each further failure. It is never discarded,
+# since it is history the broker has already accepted, and it keeps being
+# retried, never waiting longer than
+# `temporal.history.queue.max_retry_interval`.
+#
+# Must be above zero.
+stuck_after_attempts = 10
+
+# The queue of committed history writes, including those of `respond-async`
+# batches. A failed write is retried on a delay that doubles from
+# `temporal.history.queue.retry_interval` up to
+# `temporal.history.queue.max_retry_interval`.
+[temporal.history.queue]
+
+# How soon an idle worker polls again once a commit's wake has been handled: the
+# floor of its idle backoff. A commit in the same broker process wakes the
+# worker at once.
+#
+# Must be above zero.
+poll_interval = "1s"
+
+# The longest the idle backoff grows to while no commit wakes the worker. Also
+# how soon a job committed by another broker process is picked up.
+#
+# Must be at least `temporal.history.queue.poll_interval`.
+max_poll_interval = "30s"
+
+# How long a claim keeps a job from every other worker. A worker that dies
+# leaves its jobs unclaimable for the rest of the term. It is applied in whole
+# seconds, rounded down.
+#
+# Must be above zero, and at least `database.acquire_timeout` plus 5s.
+lease_timeout = "30s"
+
+# The delay before a failed job's first retry. Each later retry waits twice as
+# long as the one before, up to the longest retry delay.
+#
+# Must be above zero.
+retry_interval = "2s"
+
+# The longest a retry delay grows to.
+#
+# Must be at least `temporal.history.queue.retry_interval`.
+max_retry_interval = "5m"
+
+# How history is partitioned, converted to the columnstore and aged out.
+[temporal.storage]
+
+# The span of time one history partition covers. Left out, the broker leaves
+# each history table's partitioning as it stands, which is 7 days on a table it
+# created. A change is reconciled against the stored partitioning when the
+# broker next opens the tenant; shorten it if the largest partition still in the
+# rowstore keeps passing 4 GB.
+#
+# Must be a whole number of days.
+# chunk_interval = "7days"
+
+# When history partitions are converted to the columnstore.
+[temporal.storage.columnstore]
+
+# The age past which a history partition is converted to the columnstore. Only
+# the TimescaleDB TSL edition has a columnstore; on the Apache-2.0 edition the
+# key has no effect.
+#
+# Must be a whole number of days, and at least
+# `temporal.storage.chunk_interval`.
+convert_after = "30days"
+
+# How often partitions past `temporal.storage.columnstore.convert_after` are
+# converted. The first sweep runs when a tenant opens.
+#
+# Must be above zero.
+sweep_interval = "1h"
+
+# Whether, and at what age, history is deleted.
+[temporal.storage.retention]
+
+# Whether history older than `temporal.storage.retention.delete_after` is
+# deleted. A broker never deletes history it was not told to.
+#
+# One of "disabled", "enabled".
+#
+# `temporal.storage.retention.delete_after` is required while
+# `temporal.storage.retention.mode` is `"enabled"`.
+mode = "disabled"
+
+# How much history to keep. History partitions recorded entirely before this age
+# are dropped, together with the Scope history no remaining instance needs. Left
+# out, no age is set and no history is deleted.
+#
+# Must be a whole number of days.
+#
+# `temporal.storage.retention.delete_after` is required while
+# `temporal.storage.retention.mode` is `"enabled"`.
+# delete_after = "365days"
+
+# How often history past `temporal.storage.retention.delete_after` is deleted
+# while retention is enabled. The first sweep runs when a tenant opens.
+#
+# Must be above zero.
+sweep_interval = "1h"
+
+# Delivering notifications, evaluating live changes, and draining periodic
+# subscriptions.
+[notifications]
+
+# How notifications reach their subscribers, the queue that carries them and how
+# long finished deliveries are kept.
+[notifications.delivery]
+
+# Whether notifications are sent from memory (`"live"`) or through a queue in
+# the tenant database (`"durable"`).
+#
+# One of "live", "durable".
+mode = "live"
+
+# The longest an outgoing notification may take before it is abandoned, live or
+# queued. A subscription's own `timeout` can shorten it but not lengthen it.
+#
+# Must be above zero.
+request_timeout = "10s"
+
+# The most notifications one tenant sends at once, shared by all its
+# Subscriptions. A delivery pass keeps this many in flight while the queue holds
+# due deliveries. Once one Subscription holds half the slots, a freed slot goes
+# to the due Subscription with the fewest in flight, and while another
+# Subscription is active, with a notification in flight or one answered within
+# `notifications.delivery.request_timeout`, the one holding half gets no more. A
+# slow endpoint therefore leaves the others at least half the slots, and a
+# failing one holds a single slot for its retry. A Subscription active on its
+# own uses every slot.
+#
+# Must be above zero, and at most 1024.
+max_concurrent = 20
+
+# The most characters of a failure diagnostic kept with a failed delivery
+# attempt. It may be raised to the longest failure summary the store keeps.
+#
+# Must be above zero, and at most 2048.
+max_error_length = 1024
+
+# Whether a notification endpoint (an HTTP URL or an MQTT server) resolving into
+# private or reserved address space is notified. Checked against the address
+# actually resolved, not the host name.
+# `notifications.delivery.allowed_addresses` exempts addresses from `"refused"`,
+# and `notifications.delivery.denied_addresses` refuses addresses whatever this
+# is set to. Allowed by default because subscribers and MQTT servers commonly
+# run on the broker's own private network; set `"refused"` when clients you do
+# not trust create subscriptions.
+#
+# One of "allowed", "refused".
+private_addresses = "allowed"
+
+# IP addresses and subnets (`"10.2.0.0/24"`, `"10.3.0.17"`, `"fd00:1234::/48"`)
+# that a notification endpoint (an HTTP URL or an MQTT server) may resolve into
+# even though `notifications.delivery.private_addresses` is `"refused"`. Empty
+# by default. An entry in `notifications.delivery.denied_addresses` takes
+# precedence.
+allowed_addresses = []
+
+# IP addresses and subnets (`"203.0.113.0/24"`, `"198.51.100.9"`) that a
+# notification endpoint (an HTTP URL or an MQTT server) must not resolve into,
+# public ones included and whatever `notifications.delivery.private_addresses`
+# is set to. Empty by default. Takes precedence over
+# `notifications.delivery.allowed_addresses`.
+denied_addresses = []
+
+# The largest notification body sent over HTTP. A larger notification is not
+# sent, and its delivery fails without a retry, since every attempt would send
+# the same body. A notification carries the entities of a change in full, so a
+# limit at `request_limits.max_body` or below could refuse to notify an entity
+# one request wrote.
+#
+# Must be above `request_limits.max_body`.
+max_http_body = "128 MiB"
+
+# The largest MQTT packet a notification is published in, envelope and topic
+# included. It is also the largest packet the broker accepts from an MQTT
+# server. When an MQTT 5 server announces a smaller maximum, that maximum
+# applies on its connection. A larger notification is not published, and its
+# delivery fails without a retry. A notification carries the entities of a
+# change in full, so a limit at `request_limits.max_body` or below could refuse
+# to notify an entity one request wrote. No packet is longer than 256 MiB, so
+# `request_limits.max_body` stays below that.
+#
+# Must be above zero, and at most 256 MiB, and above `request_limits.max_body`.
+max_mqtt_packet = "128 MiB"
+
+# The attempts a queued notification gets. A delivery that has failed this many
+# times is dead-lettered and kept for
+# `notifications.delivery.retention.dead_letter_after`, as a record of a
+# notification that never arrived.
+#
+# Must be above zero, and at most 2147483647.
+max_attempts = 5
+
+# How the delivery queue is polled, claimed and retried. A failed delivery is
+# retried on a delay that doubles from
+# `notifications.delivery.queue.retry_interval` up to
+# `notifications.delivery.queue.max_retry_interval`.
+[notifications.delivery.queue]
+
+# How soon an idle worker polls again once a commit's wake has been handled: the
+# floor of its idle backoff. A commit in the same broker process wakes the
+# worker at once.
+#
+# Must be above zero.
+poll_interval = "1s"
+
+# The longest the idle backoff grows to while no commit wakes the worker. Also
+# how soon a job committed by another broker process is picked up.
+#
+# Must be at least `notifications.delivery.queue.poll_interval`.
+max_poll_interval = "30s"
+
+# How long a claim keeps a job from every other worker. A worker that dies
+# leaves its jobs unclaimable for the rest of the term. It is applied in whole
+# seconds, rounded down.
+#
+# Must be above zero, and at least `notifications.delivery.request_timeout` plus
+# 5s, and at most 1day.
+lease_timeout = "30s"
+
+# The delay before a failed job's first retry. Each later retry waits twice as
+# long as the one before, up to the longest retry delay.
+#
+# Must be above zero.
+retry_interval = "5s"
+
+# The longest a retry delay grows to.
+#
+# Must be at least `notifications.delivery.queue.retry_interval`.
+max_retry_interval = "5m"
+
+# How long finished deliveries and their change events are kept.
+[notifications.delivery.retention]
+
+# How long a delivered notification is kept.
+#
+# Must be above zero.
+acknowledged_after = "1day"
+
+# How long a delivery that ran out of attempts is kept, as a record of a
+# notification that never arrived.
+#
+# Must be above zero.
+dead_letter_after = "7days"
+
+# How long a change event no delivery refers to any more is kept.
+#
+# Must be above zero.
+orphan_event_after = "1day"
+
+# How often expired deliveries and events are removed. A pass runs only for a
+# tenant that may have written since the last one.
+#
+# Must be above zero.
+sweep_interval = "5m"
+
+# How live delivery evaluates committed entity changes.
+[notifications.evaluation]
+
+# The most committed entity changes each tenant buffers for live evaluation.
+# While the broker runs no change is dropped: once the buffer is full, a write
+# waits after its commit until evaluation makes room, so a burst larger than the
+# buffer slows the tenant's writes instead of losing notifications. Changes
+# still waiting when the broker stops or the tenant is unloaded are evaluated
+# first, within `notifications.evaluation.drain_timeout`. A full buffer holds
+# under 4 MB per tenant at the default. `"durable"` delivery does not use the
+# buffer.
+#
+# Must be above zero.
+max_queued_changes = 8192
+
+# The most committed entity changes evaluated at once. Changes to one entity are
+# evaluated one at a time in commit order; changes to different entities run
+# side by side, each reading its entity and recording a notification per matched
+# subscription, so they share the tenant's database pool with request handling.
+#
+# Must be above zero.
+max_concurrent_changes = 32
+
+# The longest a stopping tenant spends evaluating the committed changes it
+# already holds for live delivery, at process shutdown or when the tenant is
+# unloaded. Evaluation that is not finished by then is abandoned and the changes
+# still waiting are dropped, logged and counted. At process shutdown the whole
+# broker stops within `server.graceful_drain_timeout` plus this, 60 seconds by
+# default, so give it the two together plus 10 seconds before your orchestrator
+# kills it. `"durable"` delivery records notifications in the commit and is not
+# affected.
+#
+# Must be at least `notifications.delivery.request_timeout`.
+drain_timeout = "30s"
+
+# How the periodic (`timeInterval`) notification drain waits.
+[notifications.periodic]
+
+# The longest the periodic notification drain sleeps while no subscription is
+# due. The drain otherwise sleeps until the next subscription is due, so a
+# change to the periodic subscriptions is noticed within this time; due
+# notifications are sent on time either way.
+#
+# Must be above zero.
+max_poll_interval = "30s"
+
+# Forwarding to Context Sources, and this broker's identity among them.
+[federation]
+
+# How requests reach context sources: fan-out, timeouts and the addresses a
+# source may resolve into.
+[federation.forwarding]
+
+# The most forwarded requests one operation has in flight at once.
+#
+# Must be above zero.
+max_concurrent = 16
+
+# How long connecting to a context source may take.
+#
+# Must be above zero, and at most `federation.forwarding.request_timeout`.
+connect_timeout = "3s"
+
+# How long a forwarded request may take before it counts as failed, connecting
+# and reading the answer included. A registration's own `management.timeout`
+# takes precedence.
+#
+# Must be above zero, and below `request_limits.timeout`.
+request_timeout = "5s"
+
+# Whether a context source whose endpoint resolves into private or reserved
+# address space is contacted. Checked against the address actually resolved, not
+# the host name. `federation.forwarding.allowed_addresses` exempts addresses
+# from `"refused"`, and `federation.forwarding.denied_addresses` refuses
+# addresses whatever this is set to. A redirect from a context source is never
+# followed, whatever this is set to. Allowed by default because context sources
+# commonly run beside the broker on a private network; set `"refused"` when
+# clients you do not trust create registrations.
+#
+# One of "allowed", "refused".
+private_addresses = "allowed"
+
+# IP addresses and subnets (`"10.8.0.0/16"`, `"10.3.0.17"`, `"fd00:1234::/48"`)
+# that a context source may resolve into even though
+# `federation.forwarding.private_addresses` is `"refused"`. Empty by default. An
+# entry in `federation.forwarding.denied_addresses` takes precedence.
+allowed_addresses = []
+
+# IP addresses and subnets (`"203.0.113.0/24"`, `"198.51.100.9"`) that a context
+# source must not resolve into, public ones included and whatever
+# `federation.forwarding.private_addresses` is set to. Empty by default. Takes
+# precedence over `federation.forwarding.allowed_addresses`.
+denied_addresses = []
+
+# What a federated query means and how much it may gather from context sources:
+# the `splitEntities` default, the result caps and how aggregated temporal reads
+# are gathered.
+[federation.query]
+
+# What `splitEntities` means when a request or subscription leaves it unset.
+#
+# One of "split", "complete".
+split_entities = "complete"
+
+# The most distinct entities one federated query gathers from the local store
+# and every context source together. An entity several sources answer counts
+# once, and one only an auxiliary source answers counts too. A query that would
+# gather more is refused with `403` `TooManyResults` rather than answered with a
+# truncated collection.
+#
+# Must be above zero.
+max_entities = 10000
+
+# The most entities the context sources of one federated query send together,
+# duplicates included: an entity three sources answer counts three times, and
+# auxiliary sources count too. A query whose sources send more is refused with
+# `403` `TooManyResults`.
+#
+# Must be above zero, and at least `federation.query.max_entities`.
+max_source_rows = 30000
+
+# The most attribute instances one federated temporal query gathers from the
+# context sources whose history it reads to the end, as an aggregated
+# representation of an entity held in several parts needs. A query that would
+# gather more is refused with `403` `TooManyResults`.
+#
+# Must be above zero.
+max_instances = 100000
+
+# How a distributed temporal query asking for `aggregatedValues` reads its
+# context sources. An entity held by more than one part is aggregated by this
+# broker over the instances of every part. `"overlapping-instances"` asks the
+# sources for their aggregates and asks again only for the instances of the
+# entities more than one part holds: cheapest when parts rarely overlap.
+# `"instances"` asks for every instance in one round trip: faster when most
+# entities are held by several sources, at the cost of moving and holding every
+# instance.
+#
+# One of "instances", "overlapping-instances".
+aggregation = "overlapping-instances"
+
+# The per-tenant cache of forwarded `GET` responses.
+[federation.response_cache]
+
+# The most forwarded `GET /entities` and `GET /entities/{id}` answers each
+# tenant's cache holds, for registrations that set `management.cacheDuration`.
+# An answer served from the cache carries a `110` warning.
+#
+# Must be above zero.
+max_entries = 1024
+
+# How a context source is held back after a failed forwarded request.
+[federation.cooldown]
+
+# How a source is held back after a failed forwarded request. The default,
+# `"disabled"`, holds back only registrations that set `management.cooldown`.
+#
+# One of "disabled", "constant", "exponential".
+#
+# With `federation.cooldown.mode` other than `"disabled"`,
+# `federation.cooldown.retry_interval` is above zero.
+#
+# With `federation.cooldown.mode` at `"exponential"`,
+# `federation.cooldown.max_retry_interval` is at least
+# `federation.cooldown.retry_interval`.
+mode = "disabled"
+
+# The hold after a failure in `"constant"` mode, or after the first failure in
+# `"exponential"` mode.
+#
+# With `federation.cooldown.mode` other than `"disabled"`,
+# `federation.cooldown.retry_interval` is above zero.
+#
+# With `federation.cooldown.mode` at `"exponential"`,
+# `federation.cooldown.max_retry_interval` is at least
+# `federation.cooldown.retry_interval`.
+retry_interval = "1s"
+
+# The longest a hold grows to in `"exponential"` mode.
+#
+# With `federation.cooldown.mode` at `"exponential"`,
+# `federation.cooldown.max_retry_interval` is at least
+# `federation.cooldown.retry_interval`.
+max_retry_interval = "1day"
+
+# The identity the broker reports at `/ngsi-ld/v1/info/sourceIdentity` and uses
+# to detect forwarding loops.
+[federation.identity]
+
+# The `id` the broker reports at `/ngsi-ld/v1/info/sourceIdentity`. Must be an
+# IRI. Left out, it is `urn:ngsi-ld:ContextSourceIdentity:` followed by the
+# alias in effect, as `federation.identity.source_alias` describes.
+# source_id = "urn:ngsi-ld:ContextSourceIdentity:broker-a"
+
+# The name the broker adds to the `Via` header of every request it forwards. A
+# request whose `Via` already holds this name is treated as a forwarding loop,
+# so every broker in a federation needs its own. Must be an HTTP token, as a
+# `Via` entry requires. Left out, it is the host of `server.public_url` without
+# its port, such as `broker.example.org`, and without a `server.public_url`, or
+# with an IPv6 one, the machine's host name. The broker refuses to start when
+# neither gives a token. Set it when two brokers share a host name.
+# source_alias = "broker-a"
+
+# Instance-specific information the broker reports verbatim as the NGSI-LD
+# `contextSourceExtras` member at `/ngsi-ld/v1/info/sourceIdentity`, with the
+# enabled extensions listed beside it. Its keys are reported exactly as written
+# and none is reserved, since the member is raw JSON that is never interpreted.
+# Set in the file only. A date-time, `inf` or `nan`, which JSON cannot spell, is
+# refused when the broker starts. Left out, `contextSourceExtras` lists only the
+# enabled extensions, and is absent when none is enabled.
+# [federation.identity.extras]
+# operator = "Example Operator"
+
+# Snapshot lifetimes, quotas and preparation.
+[snapshot]
+
+# The lifetime of a Snapshot created without `snapshotLifetime`.
+#
+# Must be above zero, and at most `snapshot.max_lifetime`.
+default_lifetime = "1h"
+
+# The longest a Snapshot lives. A longer requested `snapshotLifetime` is cut
+# down to this.
+#
+# Must be above zero.
+max_lifetime = "30days"
+
+# How many Snapshots, and how much storage, one tenant may keep.
+[snapshot.quota]
+
+# The most Snapshots one tenant keeps, or `"unlimited"` to keep any number.
+max_per_tenant = "unlimited"
+
+# The most storage one tenant's Snapshots take, or `"unlimited"` to let them
+# take any amount.
+#
+# Must be above zero.
+max_storage_per_tenant = "unlimited"
+
+# How a Snapshot is prepared.
+[snapshot.preparation]
+
+# The results read per page while a Snapshot captures its content.
+#
+# Must be above zero.
+page_size = 250
+
+# The most Snapshots prepared at once.
+#
+# Must be above zero.
+max_concurrent = 4
+
+# How long a claim keeps a preparation from every other worker before another
+# may take it over.
+#
+# Must be above zero.
+lease_timeout = "30s"
+
+# How often preparations a crash or a missed run left unfinished are resumed.
+# Creating a Snapshot starts preparing it at once, so this sweep only recovers.
+#
+# Must be above zero.
+recovery_interval = "30s"
+
+# How long a request scoped to a Snapshot waits for its capture or clone to
+# finish. A request still waiting then is answered `503` with `Retry-After`.
+#
+# Must be above zero, and below `request_limits.timeout`.
+scoped_operation_timeout = "20s"
+
+# Andromeda's features beyond the NGSI-LD specification.
+[extensions]
+
+# Whether the extensions follow their own tables (`"configured"`) or are all
+# forced off (`"conformance"`).
+#
+# One of "configured", "conformance".
+mode = "configured"
+
+# Opaque cursor page pointers, and how a request that names neither `offset` nor
+# `cursor` is paged.
+[extensions.cursor_pagination]
+
+# Whether cursors are offered. Off, collections page by offset only and a
+# `cursor` parameter is refused with `InvalidRequest`. With `extensions.mode`
+# set to `"conformance"`, collections page by offset whatever this says.
+#
+# One of "disabled", "enabled".
+mode = "enabled"
+
+# How a request that names neither `offset` nor `cursor` is paged while cursors
+# are offered. Read only when `extensions.cursor_pagination.mode` is
+# `"enabled"`.
+#
+# One of "cursor", "offset".
+fresh_requests = "cursor"
+
+# Temporal delete-by-query on `DELETE /temporal/entities`: a windowed, selector-
+# scoped history purge the NGSI-LD temporal delete operations have no equivalent
+# for.
+[extensions.temporal_delete_by_query]
+
+# Whether temporal delete-by-query is served on `DELETE /temporal/entities`. It
+# acts on local history only and is never forwarded.
+#
+# One of "disabled", "enabled".
+mode = "disabled"
+
+# The most history instances one delete-by-query may remove. The matches are
+# counted before anything is deleted, so a larger purge is refused whole with
+# `403` `TooManyResults` and deletes nothing.
+#
+# Must be above zero.
+max_matches = 100000
+
+# Grouped temporal aggregation through `aggrGroupBy` and `format=groupedValues`.
+[extensions.temporal_aggregation_grouping]
+
+# Whether grouped temporal aggregation is served: calendar and cyclic time
+# buckets, per-entity-member keys and value-in-effect keys, with groups of mixed
+# units split rather than refused. Off, `aggrGroupBy` and `groupedValues` are
+# refused with `InvalidRequest`.
+#
+# One of "disabled", "enabled".
+mode = "disabled"
+
+# The most distinct groups one grouped aggregation may produce. The groups are
+# counted before they are computed, so a larger grouping is refused whole with
+# `403` `TooManyResults`.
+#
+# Must be above zero.
+max_groups = 10000
+
+# Linked entity retrieval on the temporal operations. On, Retrieve and Query
+# Temporal Evolution and the temporal Entity Map accept `join`, `joinLevel` and
+# `containedBy` and retrieve the linked entities' temporal evolution over the
+# request's window. Off, those parameters are refused with `InvalidRequest`, and
+# a nested projection, a `q` hop or a retrieving `join` in a query body with
+# `BadRequestData`.
+[extensions.temporal_linked_retrieval]
+
+# Whether the extension is served. Off, the broker answers as a conformant
+# broker that never implemented it.
+#
+# One of "disabled", "enabled".
+mode = "disabled"
+
+# `datasetId` and `deleteAll` on Purge Entities. On, `DELETE /entities` gains
+# the per-`datasetId` precision Delete Attribute already has. Off, a `datasetId`
+# or `deleteAll` there is refused with `InvalidRequest`.
+[extensions.purge_dataset_scope]
+
+# Whether the extension is served. Off, the broker answers as a conformant
+# broker that never implemented it.
+#
+# One of "disabled", "enabled".
+mode = "disabled"
+
+# Tenant management on `/tenants`. On, the broker serves the tenant collection,
+# per-tenant introspection and suspend or resume through `PATCH isActive`, and
+# advertises them at `/info/sourceIdentity`. No API operation ever drops a
+# tenant's database.
+[extensions.tenant_management]
+
+# Whether the extension is served. Off, the broker answers as a conformant
+# broker that never implemented it.
+#
+# One of "disabled", "enabled".
+mode = "disabled"
+
+# A `near` geo-query bounded from both sides. On, a `near` carrying both
+# `minDistance` and `maxDistance` matches the entities between the two, on
+# queries, temporal queries, subscription `geoQ` and registration discovery.
+# Off, the pair is refused with `BadRequestData`.
+[extensions.near_distance_band]
+
+# Whether the extension is served. Off, the broker answers as a conformant
+# broker that never implemented it.
+#
+# One of "disabled", "enabled".
+mode = "disabled"
+
+# `Accept-Language` read as the language filter. On, a Retrieve or Query of
+# entities, Temporal Evolutions or context source registrations that carries no
+# `lang` takes its filter from `Accept-Language`, and the response carries
+# `Vary: Accept-Language`. Off, the header is ignored.
+[extensions.accept_language]
+
+# Whether the extension is served. Off, the broker answers as a conformant
+# broker that never implemented it.
+#
+# One of "disabled", "enabled".
+mode = "disabled"
+
+# What a `q` bracket may name as a target language.
+[extensions.q_target_languages]
+
+# Whether a `q` bracket may name a language tag. Off, a bracket names only what
+# the NGSI-LD `q` grammar defines: `[en]` is admitted, `[en-GB]` is refused with
+# `BadRequestData`. A query carrying a target language is held to the level
+# every context source it reaches advertises.
+#
+# One of "disabled", "enabled".
+mode = "disabled"
+
+# What a `q` bracket may name while the extension is on. Read only when
+# `extensions.q_target_languages.mode` is `"enabled"`.
+#
+# One of "language-tags", "language-ranges".
+level = "language-tags"
+
+# Logging and metrics.
+[observability]
+
+# What the broker logs, and where.
+[observability.log]
+
+# The most verbose level written to standard output. A `RUST_LOG` environment
+# variable takes precedence when it is set.
+#
+# One of "error", "warn", "info", "debug", "trace".
+level = "info"
+
+# The optional structured log file.
+[observability.log.file]
+
+# Whether structured records are written to a rotating file.
+#
+# One of "disabled", "enabled".
+mode = "disabled"
+
+# Where the log files are written. Left out, they go in an `andromeda` directory
+# in the platform state directory (`$XDG_STATE_HOME`, or `~/.local/state`), or
+# in the data directory on a platform without one.
+# directory = "/var/log/andromeda"
+
+# The name of the current log file, before the rotation suffix.
+name = "andromeda.log"
+
+# The shape of each record in the file.
+#
+# One of "json", "jsonl".
+format = "json"
+
+# How often a new file is started.
+#
+# One of "daily", "hourly".
+rotation = "daily"
+
+# Whether rotated files are compressed.
+#
+# One of "none", "gzip".
+compression = "gzip"
+
+# The most rotated files kept. Past it, the oldest is deleted.
+#
+# Must be above zero.
+max_retained_files = 7
+
+# The most verbose level written to the file, independent of
+# `observability.log.level`.
+#
+# One of "error", "warn", "info", "debug", "trace".
+level = "info"
+
+# Which exporters the broker's metrics go to, one table each.
+[observability.metrics]
+
+# Prometheus metrics served at `GET /metrics` on the management endpoints.
+[observability.metrics.prometheus]
+
+# Whether metrics are recorded and served at `GET /metrics` on the management
+# endpoints.
+#
+# One of "disabled", "enabled".
+#
+# Metrics are served on the management plane, so
+# `observability.metrics.prometheus.mode` at `"enabled"` needs `management.mode`
+# other than `"disabled"`.
+mode = "disabled"

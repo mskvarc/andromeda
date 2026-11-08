@@ -1,0 +1,114 @@
+# Schema
+
+Andromeda keeps context in a PostgreSQL schema built for NGSI-LD, not in a table of JSON documents. Names are interned into small dictionaries, an entity is a set of typed rows, the columns whose comparison decides API results fix their own collation, and history lives in a TimescaleDB hypertable. Each of these choices is there so that a request gets the same answer on any PostgreSQL server, and stays fast as a tenant grows.
+
+## Databases
+
+The database in `database.connection` is the platform database. It holds the tenant registry and the broker's own bookkeeping, such as maintenance state, and it's also the default tenant's database. Each named tenant gets a PostgreSQL database of its own, which the broker creates when the tenant first appears. Tenants share nothing, so one tenant's data, indexes and statistics never affect another's.
+
+## Name dictionaries
+
+The same attribute names and entity types repeat across millions of rows, and storing the full IRI on every row would bloat the tables every query reads. So each tenant has two dictionaries, `attribute_names` and `entity_type_names`, which give each expanded IRI an integer key, and every other table stores the key.
+
+A dictionary only grows. A name gets its key the first time it's written and keeps it for the life of the tenant, and the database refuses to update or delete an entry. A write is never refused for bringing a new name. Each broker process caches the dictionaries within a memory budget, and a name missing from the cache costs one indexed read.
+
+## Entities as typed rows
+
+There is no stored entity document. An entity is spread over a few tables that share one entity key.
+
+- `entities` holds identity and lifecycle, meaning the identifier, `createdAt`, `modifiedAt` and expiry. The same row serves the entity's current state and its Temporal Evolution.
+- `entity_search` holds what queries search on, which is the entity's types, the names of its attributes, its Scopes and its `location`.
+- `entity_type_members` has one row per type the entity has, marked as a type of its current state, of its Temporal Evolution, or of both.
+- `current_attributes` has one row per attribute instance, that is, per entity, attribute name and `datasetId`.
+
+An attribute instance keeps its value in exactly one typed column, chosen by the kind of value. The kinds include a number, a string, a boolean, a date-time, a date, a time, a geometry, a URI, and a structured value for anything that isn't a single scalar. A string or URI too long for a B-tree key goes to a long-text column of its own. Database constraints check that exactly one value column is filled and that it matches the kind. Numbers are PostgreSQL `numeric`, so they keep their exact value. Sub-attributes are stored with their instance, in the order they were written.
+
+A read puts the entity back together from these rows, and the history and the notification queues hold instances in the same typed form. That's why a `q` filter compares numbers as numbers and date-times as instants, and why a value reads back as it was validated.
+
+Deleting an entity (clauses 5.6.6 and 5.6.10) removes its current state but not its history, which only Delete Temporal Evolution (clause 5.6.16) removes. An entity with a Temporal Evolution therefore keeps its `entities` row, with `createdAt`, `modifiedAt` and expiry cleared, and keeps its `entity_type_members` rows marked as types of the Temporal Evolution only. Its `entity_search` and `current_attributes` rows go in the same transaction. Core API reads select only current-state members, and type discovery counts from census tables that every write of the search rows keeps up to date in the same statement, so the entity is gone from every Core API answer while a temporal query by type still finds its history. The kept rows go with the history. Delete Temporal Evolution removes them at once, and the retention sweep removes them once `temporal.storage.retention` has deleted the last of the history. An entity without a Temporal Evolution loses every row when it's deleted.
+
+## Collation
+
+Every text column whose comparison decides NGSI-LD behaviour is declared `COLLATE "C"` when it's created. That covers identifiers, dictionary names, `datasetId`, and the string and URI values of attributes. Comparison on those columns is byte by byte, whatever locale the PostgreSQL cluster was initialised with. Equality in `q` is therefore exact, and an `idPattern` that starts with a fixed prefix can use an index range.
+
+Ordering is a separate decision. The ordering operators of `q` and `orderBy` compare strings by the Unicode Collation Algorithm, under the ICU root collation unless the request names another. Every query that orders strings names that collation itself, so the answer doesn't depend on the server's default, and the broker's in-memory evaluation of subscriptions follows the same rule.
+
+Because each column fixes its own collation, a tenant database is created without one. A database default would decide nothing the specification defines.
+
+The trigram indexes are the one place the database default is named. A pattern that leaves the start of its subject open (`name~="Nám\. Ľ.*"`, `idPattern=.*:0123.*`) is answered by a trigram index over the column. `pg_trgm` takes the trigrams of the indexed strings under the database's default collation, whatever the column declares, but those of the pattern under the collation the test runs under. Under `C`, in a database whose default treats `Č` or `Ž` as letters, the two disagree and the index loses strings the pattern matches. So each trigram index column is declared `collate "default"`, and a pattern it answers is tested under the default. The pattern means the same under every collation, because the broker restates it with every class written out as code-point ranges. A pattern that fixes its start (`idPattern=^urn:ngsi-ld:Sensor:.*`) is tested under `C`, which is what lets PostgreSQL read it as a range of the identifier B-tree.
+
+[SQL lint rules](sql-lint-rules.md) describes the `c-collation` rule that holds every migration to this.
+
+## Spatial
+
+Geometries are PostGIS values in WGS 84, with GiST indexes on each entity's `location`, on the geometry values of attribute instances and on the geometries of registrations. The database checks that a stored geometry is in WGS 84 and is flat or three-dimensional.
+
+Each broker process can also keep an in-memory index of entity locations, which narrows a geo-query on `location` before PostgreSQL runs it. It can only add candidates, and PostgreSQL checks every candidate against the full geo-query, so the answer is the same with it or without it.
+
+## Temporal
+
+History is the `attribute_history` table, a TimescaleDB hypertable partitioned by recording time into chunks of `temporal.storage.chunk_interval`, seven days by default. A changed interval is applied when the tenant next opens. Temporal queries and aggregation read it, never the current-state tables. With the TSL edition of TimescaleDB, the broker itself converts chunks older than `temporal.storage.columnstore.convert_after` (30 days by default) to TimescaleDB's compressed column store. The history of each entity's Scope, `scope_history`, is an ordinary table.
+
+### The activity horizon
+
+Each Temporal Evolution has an activity horizon, `evolution_active_until` on its `entities` row. It's an upper bound on every instant the Evolution's attribute instances hold on any time axis (`observedAt`, `createdAt`, `modifiedAt` and `deletedAt`), rounded up to the end of the UTC hour. Every statement that writes an instant into the history raises it to cover that instant. That includes Modify Attribute Instance, since clause 5.6.14 lets the replacement declare any `observedAt`. Nothing lowers the horizon while the Evolution lasts. After Delete Attribute Instance, or a retention sweep that keeps the Evolution, the horizon can stay above what the history still holds, which only makes the Evolution a candidate that the query then rejects. Delete Temporal Evolution, and the retention sweep's removal of an emptied Evolution, clear it along with the Evolution's other columns.
+
+The statement that creates an Evolution's `entities` row also writes its horizon. A Core API create that records its history in the same transaction stamps the horizon of its acceptance instant, which every entry it records carries as `createdAt` and `modifiedAt`. The Temporal API, creating an Evolution its Entity didn't have, stamps the horizon its entries reach. The history recorded right after then finds the horizon in place and leaves the row alone. Raising it there would change an indexed column, so it couldn't be a heap-only update. It would leave a dead version of the row in the heap and an entry in every index on `entities`, including the trigram index over `id`, which takes about a hundred keys for a long identifier. A create whose `observedAt` lies in a later hour is still raised by its history. An Entity created without attributes has no horizon until its first attribute instance.
+
+A temporal query with `timerel=after` or `between` reads its candidates from the horizon. An instance inside the window is at or after the window's start, so every Evolution the query can keep has a horizon at or after the start. The candidates are therefore the Evolutions written within the hour before the start or later, read by a range scan of the horizon index. Entities whose history stopped earlier, like the many deleted Entities whose Temporal Evolution a Core API delete leaves standing (clause 5.6.6), are never read. A `before` window reaches back without limit, so no horizon narrows it. The hour rounding is what keeps this cheap on the write path. A write changes the indexed column only when it moves the horizon into a later hour, which happens about once an hour for an Entity written steadily, and every other write stays a heap-only update of `entities`.
+
+### Ordering the writes of one Entity
+
+A write of an Entity's current state is never stamped earlier than an instant the Entity already holds (clause 4.8). The `entities` row holds all three such instants, `modified_at`, `evolution_modified_at` and `deleted_or_queued_at`. The third holds the instants the other two can't. A core deletion clears `modified_at`, and its tombstones state no type, so they leave `evolution_modified_at` as it was. A queued write's history reaches `evolution_modified_at` only when the drain applies it. So the deletion and every enqueue raise `deleted_or_queued_at` in their own transaction, under the row lock, and a write compares against the greatest of the three on the row it writes or locks. Under READ COMMITTED that row is the latest committed version, whereas a subquery over the queue would read the statement's snapshot and miss an intent committed while the statement waited on the row. The column isn't indexed, so its update stays heap-only.
+
+A commit that writes more than one Entity locks every existing identity row it writes before any of its writes run. It locks them in identifier order, which is byte order, the `C` collation that both `entities.id` and the queue's `entity_id` declare. It takes `FOR UPDATE` when it deletes any of them, and `FOR NO KEY UPDATE` otherwise. The lock is needed because the commit's statements reach their rows in submission order, while the drain locks every identity row of a batch `FOR NO KEY UPDATE`, in identifier order, before its first statement. Locks taken in two orders deadlock. PostgreSQL would break each cycle only after `deadlock_timeout`, by rolling back one side, and a drain that loses falls back to one transaction per intent.
+
+The drain's lock also orders it against a Temporal Evolution deletion, which takes `FOR UPDATE` on the row before it removes the streams, the history and the Evolution. Applying an intent reads whether the Entity holds an Evolution before it gives it a stream or history. Without the row lock, a statement whose snapshot predates the deletion's commit would give a stream to the Evolution the deletion gave up. Every later intent that states types would then bring the Evolution into being again and insert that stream again, which the grain's unique constraint refuses.
+
+A commit that writes one Entity takes no such lock, since it holds one row and waits on no other. A write that records history without changing current state writes no row, so the commit locks its row in the same statement before its history is placed, and the probe for queued history and the intent keys follow commit order for it too. The lock reads the row's version, and the write is held to the version it states. A Temporal Evolution backfill folded against a current state that a concurrent write replaced, a deletion included, records nothing and is folded again. After a deletion it therefore brings the Entity into being again, instead of adding history the fold no longer describes.
+
+A core deletion keeps the identity row while the Entity holds a Temporal Evolution or `deleted_or_queued_at` is set. So an Entity whose history is still queued keeps a row that holds neither a current state nor an Evolution. The drain brings the Evolution into being on that row, and a later create of the identifier lands on it and is held after the deletion. A fresh row would be compared with nothing, and could take on the history of the Entity the deletion removed.
+
+Giving up the Temporal Evolution (clause 5.6.16, or retention) keeps the row while it holds a current state, or while an intent of the Entity is still queued. A row kept by its current state clears the column unless such an intent waits, because the current state's `modifiedAt` already follows every earlier deletion and the history the drained writes left is gone. A row kept for its queue alone keeps the column, and only the retention sweep leaves one. A deletion queued behind the Evolution it gave up is a later write, and a create of the identifier is held after that deletion when it lands on the row.
+
+A Temporal Evolution deletion leaves no queue behind. Reads count queued history as recorded, and clause 5.6.16 removes all of it, so under the row lock the deletion removes every queued intent of the Entity instead of applying them first. That leaves the state that applying them and then deleting would leave, reached in one transaction, whether or not a queued write could still apply. An Evolution that queued history alone brought into being is given up the same way. On the live branch, giving an Evolution up counts a row holding the column as holding one, so once its intents are gone, the row is either removed or keeps its current state with the column cleared. The statement reads the queue after the caller has locked the row in a statement of its own, so it sees every intent committed before, and no writer queues more until the caller commits. A deletion of an Entity with neither an Evolution nor queued history therefore removes its row.
+
+No Snapshot branch holds such a row. A capture writes every Entity it captures through the store's own writes, from the current state and history that the live branch's readers serve, and those readers skip a row that holds neither. A clone copies the published branch of another Snapshot, never the live branch. A Snapshot branch has no queue, so its deletions keep a row only for an Evolution, and giving the Evolution up there clears the column.
+
+### Reading a page of history
+
+The statement that cuts a candidate page keeps one generic plan per connection. Each of its branches reads one access path, whatever the request binds. The short walk and the full walk probe each Evolution in identifier order, and the candidates come from the step's own index (the horizon, the identifier trigrams, the Scope paths or the stream extents). A plan made with the bound values would choose nothing different that matters, and planning a statement of three history reads costs about a millisecond, several times its execution. It runs without parallel workers, since a `Gather` under a branch whose gate fails still launches its workers. A page that needs more matches than the short walk visits can't be filled there, so its statement holds no short walk, and its candidates decide alone between the candidate branch and the full walk.
+
+Once the candidates are cut to a page, the history of every Entity on it is read in one statement, and its Scope events in one more. The identifiers are bound as one array, and each Entity is read in a `LATERAL` over it, its streams through their own indexes, as a read of one Entity would be. The per-Entity read ends in `OFFSET 0`, so PostgreSQL runs it once per identifier. If it were pulled up into the outer join, the planner might read every stream of the branch, and run each stream's page read, before dropping the Entities the page doesn't name. A page therefore costs the same statements whatever its size, each one round trip and one planning. The rows come back ordered by Entity and are decoded one Entity at a time, so an Entity whose stored history doesn't read back drops from the response with a warning while the rest of the page answers. The aggregated representation is read the same way.
+
+An aggregated page holds at most `temporal.query.max_last_n` periods per stream. It finds where it stops by a skip-scan over the stream's axis index, one probe per period that holds an instance. When the window is bounded at both ends and the period has a fixed length (days and time, no years or months), the window overlaps at most ⌈span / period⌉ + 1 periods. When that number, plus one for the rounding of a fractional period, fits within the page, the period count can never end the page. The read then takes only the first probe, which the instance bound still needs, instead of walking every period of the window.
+
+### Index direction
+
+The direction of each history B-tree follows how PostgreSQL splits a full leaf. When a key is no wider than two eight-byte columns and a new entry lands at the end of a run sharing its leading column, the split is made at the new entry and the left page stays full. Otherwise the page is halved, and the half that receives no further entries stays half empty.
+
+Every history row a write records, through the Core API or the Temporal API, holds the write instant on `createdAt` and `modifiedAt`, and Modify Attribute Instance moves only `modifiedAt`, to the instant of the modification. Each stream therefore receives both instants in increasing order, so `(stream_key, created_at)` and `(stream_key, modified_at)` ascend. Measured on PostgreSQL 18 with 2.5 million rows per chunk, the ascending key is 41% smaller at 10,000 rows per stream, 15% smaller at 1,000, and within 2% at 300 or at 10. Around 100 rows per stream, a run shorter than one leaf, it's up to 7% larger. A cached `lastN` reads the ascending index backward and costs about 2% more.
+
+The entity-led `scope_history` keys descend. A Scope changes rarely, so an Entity holds few events, where the direction leaves the size unchanged, and every read of them is a head lookup that a descending key answers with a forward scan.
+
+The `observedAt` and `deletedAt` keys add the write's identity as tie-breakers, its write id and the row's ordinal within the write, and leave the write instant out. Write ids come from one version 7 counter per broker process, which keeps rising when the clock steps back, and a write mints its id after the read its compare-and-set is checked against. So a stream's rows tied on an instant sort by write id, in the order their writes committed. The identity makes those keys too wide for the split at the new entry, so their size is the same in both directions. They descend, the order a `lastN` reads, because a backward scan of an ascending key costs a `lastN` 5 to 7%.
+
+## Disk space
+
+A table gives back no disk space on its own. Vacuum turns removed rows into free space inside the table's pages, which only new rows of the same table reuse. So a work queue that a burst filled and that then drained, or a `current_attributes` thinned out by deletions, keeps its size. History chunks are different. Past the retention horizon they are dropped whole, and converting a chunk to the columnstore rewrites it compactly. For the other tables, the maintenance controller measures the free space of each table and its TOAST table and, once it has lasted, repacks the table online through `pg_repack`, which copies the rows into new files and swaps them in. [Online repack](online-repack.md) describes how it decides and how a run proceeds.
+
+## Snapshots
+
+A Snapshot is a schema of its own inside the tenant's database, with its own copy of the entities, their history and the subscriptions. The same migrations build the live tables and every Snapshot's copy, so a Snapshot is read with the same queries as the live data.
+
+## Migrations
+
+The broker carries its migrations and applies them itself. They come in three sets.
+
+- The platform set runs in the platform database.
+- The tenant set runs in every tenant database, the platform database included, since it holds the default tenant. In a tenant's live schema, the tenant migrator runs the tenant and branch files together, in version order.
+- The branch set runs on its own inside every Snapshot's schema.
+
+Each migrator records what it applied in its own ledger table (`_andromeda_tenant_migrations` for the tenant and branch files of a tenant, `_andromeda_branch_migrations` in a Snapshot schema), with the checksum of every file, and refuses a database where an applied migration was edited or is missing. Every tenant database is also stamped with its schema version and a digest of the tenant and branch migrations that built it. A broker migrates a tenant whose stamp is behind and advances the stamp, once the applied ledger rows digest to the value the stamp claims. It refuses to serve a tenant whose digest differs at the same version, whose stamp is ahead of its own, or whose ledger doesn't confirm the stamp, so a stale or foreign database can't be used by accident.
+
+A migration that a stable release has sealed never changes, so from then on the schema only grows by new migrations. A migration no release has sealed yet is still edited in place, which means a newer build can refuse a database an older build created. [Migration sealing](migration-sealing.md) describes the contract, and [SQL tooling](sql-tooling.md) the tool that keeps the migrations in shape.
