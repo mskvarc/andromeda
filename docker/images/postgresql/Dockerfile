@@ -31,10 +31,16 @@ RUN set -eux; \
 # TIMESCALEDB_VERSION, and it updates each tenant database's extensions to
 # these versions when it opens the tenant. The maintenance controller drives
 # pg_repack's SQL interface itself and only on the release line it was
-# written for, so pg_repack is pinned like the others.
+# written for, so pg_repack is pinned like the others. timescaledb-tune, in
+# timescaledb-tools, rewrites the server's settings on every start and the
+# entrypoint derives more from them, so a full tag keeps its settings only with
+# the tuner pinned too. The tsl edition's TimescaleDB Toolkit is pinned for the
+# same reason as the extensions: a rebuild of a full tag ships the same one.
 ARG TIMESCALEDB_VERSION=2.31.0
 ARG POSTGIS_VERSION=3.6.4
 ARG PG_REPACK_VERSION=1.5.3
+ARG TIMESCALEDB_TUNE_VERSION=0.19.0
+ARG TIMESCALEDB_TOOLKIT_VERSION=1.27.0
 RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -43,7 +49,7 @@ RUN set -eux; \
         "postgresql-18-repack=${PG_REPACK_VERSION}-*" \
         "timescaledb-2-postgresql-18=${TIMESCALEDB_VERSION}~*" \
         "timescaledb-2-loader-postgresql-18=${TIMESCALEDB_VERSION}~*" \
-        timescaledb-tools; \
+        "timescaledb-tools=${TIMESCALEDB_TUNE_VERSION}~*"; \
     rm -rf /var/lib/apt/lists/*
 
 # apache: strip the TSL module and skip the TSL-licensed toolkit. The license
@@ -55,7 +61,7 @@ RUN set -eux; \
         tsl) \
             apt-get update; \
             DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-                timescaledb-toolkit-postgresql-18; \
+                "timescaledb-toolkit-postgresql-18=1:${TIMESCALEDB_TOOLKIT_VERSION}~*"; \
             rm -rf /var/lib/apt/lists/* \
             ;; \
         apache) \

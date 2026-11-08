@@ -136,6 +136,11 @@ logs_mention() {
 
 budget_warning='warning: memory ceilings'
 
+# The values below are what this tuner version writes, and the entrypoint derives
+# its own settings from them, so another version fails the check.
+tuner_version="$(docker run --rm --entrypoint timescaledb-tune "${run_args[@]}" "$image" --version | awk '{ print $2 }')"
+expect 'timescaledb-tune version' "$tuner_version" 0.19.0
+
 start limits-2g --memory 2g --cpus 2 --
 # timescaledb-tune: shared_buffers 25% and effective_cache_size 75% of memory.
 expect '2g max_connections defaults to 200' "$(sql limits-2g 'SHOW max_connections')" 200
@@ -174,6 +179,16 @@ else
 	license=apache
 fi
 expect "timescaledb.license matches the installed edition" "$(sql limits-2g 'SHOW timescaledb.license')" "$license"
+# dpkg writes the Toolkit's version as 1:1.27.0~debian13: an epoch, then the
+# upstream version, then the distribution suffix.
+toolkit_version="$(docker exec "$prefix-limits-2g" dpkg-query -W -f '${Version}' timescaledb-toolkit-postgresql-18 2> /dev/null || :)"
+toolkit_version="${toolkit_version#*:}"
+toolkit_version="${toolkit_version%%~*}"
+if [ "$license" = timescale ]; then
+	expect 'TimescaleDB Toolkit version' "$toolkit_version" 1.27.0
+else
+	expect 'the apache edition ships no TimescaleDB Toolkit' "$toolkit_version" ''
+fi
 expect 'pg_stat_statements.max' "$(sql limits-2g 'SHOW pg_stat_statements.max')" 20000
 expect 'autovacuum_naptime overrides the tuner' "$(sql limits-2g 'SHOW autovacuum_naptime')" 1min
 policy_keys="$(docker exec "$prefix-limits-2g" sed -n 's/^\([a-z_.]*\) = .*/\1/p' /etc/postgresql/andromeda.conf.d/10-andromeda.conf)"
