@@ -11,24 +11,24 @@
 //! `NGSILD-EntityMap` of the request travel in headers, which the client
 //! sends again.
 
-use crate::link_target::{append_typed_links, rebuilt_target};
+use crate::link_target::{PointedRequest, append_typed_links, rebuilt_target};
 use andromeda_http_headers::{link::relation_type::RelationType, media_type::ResponseMediaType};
 use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
 use andromeda_ngsi_ld_query::temporal::continuation::TemporalContinuation;
 use andromeda_ngsi_ld_request::query_parameter::QueryParameter;
-use axum::{http::Uri, response::Response};
+use axum::response::Response;
 
 /// The query parameters a continuation replaces (clause 6.3.10 and Table
 /// 6.19.3.1-1).
 const CONTINUATION_PARAMETERS: [&str; 4] = ["timerel", "timeAt", "endTimeAt", "lastN"];
 
 /// Append the `rel="next"` pointer at the request `next` describes to
-/// `response`, a partial answer to the request `uri` addressed, typed as the
-/// response's `media_type` (clause 6.3.10).
+/// `response`, a partial answer to `request`, typed as the response's
+/// `media_type` (clause 6.3.10).
 ///
 /// Instants are written at the microsecond, as the `Content-Range` writes
 /// them, so the continuation opens exactly where the page left off.
-pub fn append_continuation_link(response: &mut Response, uri: &Uri, next: &TemporalContinuation, media_type: ResponseMediaType) {
+pub fn append_continuation_link(response: &mut Response, request: &PointedRequest, next: &TemporalContinuation, media_type: ResponseMediaType) {
     let (timerel, time_at, end_time_at) = next.interval.parts();
     let timerel = timerel.map(|relation| relation.to_string());
     let time_at = time_at.map(instant_text);
@@ -47,30 +47,47 @@ pub fn append_continuation_link(response: &mut Response, uri: &Uri, next: &Tempo
         replaced.push(name);
         set.push((name, origin));
     }
-    let target = rebuilt_target(uri, &replaced, &set);
+    let target = rebuilt_target(request, &replaced, &set);
     append_typed_links(response, vec![(RelationType::Next, target)], media_type);
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::temporal_continuation::append_continuation_link;
+    use crate::{link_target::PointedRequest, temporal_continuation::append_continuation_link};
     use andromeda_http_headers::media_type::ResponseMediaType;
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_query::temporal::{continuation::TemporalContinuation, window::TimeInterval};
     use axum::{
-        http::{HeaderValue, StatusCode, Uri, header::LINK},
+        http::{HeaderValue, StatusCode, header::LINK},
         response::{IntoResponse, Response},
     };
     use chrono::{DateTime, Utc};
     use std::num::NonZeroU32;
-    use url::form_urlencoded;
+    use url::{Url, form_urlencoded};
 
     fn at(raw: &str) -> DateTime<Utc> {
         raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
     }
 
-    fn uri(raw: &str) -> Uri {
-        raw.parse().expect("a valid URI")
+    /// The request `raw` reached the broker with, under no configured `apiRoot`.
+    fn pointed(raw: &str) -> PointedRequest {
+        PointedRequest::new(None, raw.parse().expect("a valid URI"))
+    }
+
+    /// The target of the `rel="next"` pointer `response` carries.
+    fn next_target(response: &Response) -> String {
+        let header = response
+            .headers()
+            .get_all(LINK)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .find(|value| value.contains(r#"rel="next""#))
+            .expect("a next pointer");
+        header
+            .split_once('<')
+            .and_then(|(_, rest)| rest.split_once('>'))
+            .map(|(target, _)| target.to_owned())
+            .expect("a link target")
     }
 
     fn forward(interval: TimeInterval) -> TemporalContinuation {
@@ -84,18 +101,7 @@ mod tests {
     /// The decoded query parameters of the `rel="next"` target `response`
     /// points at.
     fn next_parameters(response: &Response) -> Vec<(String, String)> {
-        let header = response
-            .headers()
-            .get_all(LINK)
-            .iter()
-            .filter_map(|value| value.to_str().ok())
-            .find(|value| value.contains(r#"rel="next""#))
-            .expect("a next pointer");
-        let target = header
-            .split_once('<')
-            .and_then(|(_, rest)| rest.split_once('>'))
-            .map(|(target, _)| target)
-            .expect("a link target");
+        let target = next_target(response);
         let query = target.split_once('?').map_or("", |(_, query)| query);
         form_urlencoded::parse(query.as_bytes()).into_owned().collect()
     }
@@ -106,7 +112,7 @@ mod tests {
 
     fn continued(request: &str, next: &TemporalContinuation, media_type: ResponseMediaType) -> Response {
         let mut response = StatusCode::PARTIAL_CONTENT.into_response();
-        append_continuation_link(&mut response, &uri(request), next, media_type);
+        append_continuation_link(&mut response, &pointed(request), next, media_type);
         response
     }
 
@@ -244,7 +250,7 @@ mod tests {
         response.headers_mut().insert(LINK, HeaderValue::from_static(context));
         append_continuation_link(
             &mut response,
-            &uri("/t?timerel=after&timeAt=2020-01-01T00:00:00Z"),
+            &pointed("/t?timerel=after&timeAt=2020-01-01T00:00:00Z"),
             &forward(TimeInterval::After(at("2020-01-02T00:00:00Z"))),
             ResponseMediaType::Json,
         );
@@ -252,5 +258,29 @@ mod tests {
         pretty_assertions::assert_eq!(values.len(), 2, "{values:?}");
         pretty_assertions::assert_eq!(values[0], context);
         assert!(values[1].contains(r#"rel="next""#), "{values:?}");
+    }
+
+    /// Clause 6.2: a configured `apiRoot` under a prefix puts that prefix before
+    /// the path the request reached the broker on.
+    #[test]
+    fn the_continuation_starts_with_the_configured_api_root_path() {
+        let request = PointedRequest::new(
+            Some(Url::parse("https://proxy.example/context-broker").expect("a valid URL")),
+            "/ngsi-ld/v1/temporal/entities/urn:ngsi-ld:Vehicle:1?timerel=after&timeAt=2020-01-01T00:00:00Z"
+                .parse()
+                .expect("a valid URI"),
+        );
+        let mut response = StatusCode::PARTIAL_CONTENT.into_response();
+        append_continuation_link(
+            &mut response,
+            &request,
+            &forward(TimeInterval::After(at("2020-01-02T00:00:00Z"))),
+            ResponseMediaType::Json,
+        );
+        let target = next_target(&response);
+        assert!(
+            target.starts_with("/context-broker/ngsi-ld/v1/temporal/entities/urn:ngsi-ld:Vehicle:1?"),
+            "{target}"
+        );
     }
 }

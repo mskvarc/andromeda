@@ -110,6 +110,7 @@ pub(crate) async fn query(
         policy: pagination,
         context: page_context,
         query: page_query,
+        pointed,
     }: RequestPagination,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
@@ -182,7 +183,7 @@ pub(crate) async fn query(
     // walk continues past every registration the store scanned.
     append_page_links(
         &mut response,
-        &uri,
+        &pointed,
         &page_context,
         &window,
         PageOutcome {

@@ -5,7 +5,6 @@ use andromeda_http_headers::{media_type::ResponseMediaType, ngsild_warning::Ngsi
 use andromeda_http_response::rendered_response::RenderedResponse;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::page_reach::PageReach;
-use axum::http::Uri as HttpUri;
 
 /// The metadata a query's response carries beside its rendered collection.
 pub(crate) struct QueryCollectionMetadata {
@@ -28,13 +27,7 @@ pub(crate) struct QueryCollectionMetadata {
 }
 
 /// Assemble the response around a rendered collection.
-pub(crate) fn query_response(
-    rendered: RenderedResponse,
-    metadata: QueryCollectionMetadata,
-    page: &QueryPage,
-    media_type: ResponseMediaType,
-    instance: &HttpUri,
-) -> Response {
+pub(crate) fn query_response(rendered: RenderedResponse, metadata: QueryCollectionMetadata, page: &QueryPage, media_type: ResponseMediaType) -> Response {
     let QueryCollectionMetadata {
         status,
         warnings,
@@ -53,6 +46,6 @@ pub(crate) fn query_response(
         response = response.with_entity_map_uri(map_uri);
     }
     let mut response = response.into_response();
-    page.append_links(&mut response, instance, media_type, total_count, reach, boundary);
+    page.append_links(&mut response, media_type, total_count, reach, boundary);
     response
 }

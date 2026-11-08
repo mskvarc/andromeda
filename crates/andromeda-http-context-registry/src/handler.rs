@@ -100,6 +100,7 @@ pub(crate) async fn query(
         policy: pagination,
         context,
         query,
+        pointed,
     }: RequestPagination,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
 ) -> Result<Response, ProblemResponse> {
@@ -129,7 +130,7 @@ pub(crate) async fn query(
     let mut response = (StatusCode::OK, Json(page.contexts)).into_response();
     append_page_links(
         &mut response,
-        &uri,
+        &pointed,
         &context,
         &window,
         PageOutcome {

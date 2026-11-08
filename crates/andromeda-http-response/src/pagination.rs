@@ -18,7 +18,7 @@
 //! the digest of the query the page answered, and the policy refuses the
 //! cursor replayed over any other.
 
-use crate::link_target::{append_typed_links, rebuilt_target};
+use crate::link_target::{PointedRequest, append_typed_links, rebuilt_target};
 use andromeda_http_headers::{link::relation_type::RelationType, media_type::ResponseMediaType};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
@@ -30,7 +30,7 @@ use andromeda_ngsi_ld_request::pagination::{
     page_context::{PAGE_CONTEXT_PARAMETER, PageContext},
     page_query::{PAGE_QUERY_PARAMETER, PageQuery},
 };
-use axum::{http::Uri, response::Response};
+use axum::response::Response;
 
 /// What a page cut by a window returned, as far as its pointers depend on it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,16 +56,34 @@ pub struct PageOutcome {
 /// from, so it carries no pointer, just as an empty offset collection carries
 /// none; neither does a `limit=0` page, which asked for no element at all.
 ///
-/// Every pointer carries `context`, the `@context` the page was read under,
-/// and every cursor pointer the digest of the query `uri` names.
+/// Every pointer is `request` with its pagination parameters replaced, and
+/// carries `context`, the `@context` the page was read under; every cursor
+/// pointer also carries the digest of the query `request` names.
 ///
 /// The pointers are appended rather than inserted: a response rendered with
 /// the `@context` in the headers (clause 6.3.5) already carries a `Link`
 /// header, and replacing it would drop the context the client needs.
-pub fn append_page_links(response: &mut Response, uri: &Uri, context: &PageContext, window: &PageWindow, outcome: PageOutcome, media_type: ResponseMediaType) {
+pub fn append_page_links(
+    response: &mut Response,
+    request: &PointedRequest,
+    context: &PageContext,
+    window: &PageWindow,
+    outcome: PageOutcome,
+    media_type: ResponseMediaType,
+) {
     if let Some(links) = PageLinks::of_window(window, outcome) {
-        let query = PageQuery::of(uri.query()).encode();
-        append_pagination_links(response, &PageUri { uri, context, query: &query }, window, links, media_type);
+        let query = PageQuery::of(request.query()).encode();
+        append_pagination_links(
+            response,
+            &PageUri {
+                request,
+                context,
+                query: &query,
+            },
+            window,
+            links,
+            media_type,
+        );
     }
 }
 
@@ -164,8 +182,8 @@ const PAGINATION_PARAMS: &[&str] = &["limit", "offset", "cursor", PAGE_CONTEXT_P
 /// The request a page answered, as every pointer of the page is built from it.
 #[derive(Debug, Clone, Copy)]
 struct PageUri<'request> {
-    /// The URI the client addressed.
-    uri: &'request Uri,
+    /// The request the page answered, as a client reaches it.
+    request: &'request PointedRequest,
     /// The `@context` the page was read under.
     context: &'request PageContext,
     /// The encoded digest of the query the page answered, which a cursor
@@ -181,9 +199,9 @@ struct PageUri<'request> {
 /// (clause 5.5.9.1), so a rebuilt link replaces exactly those parameters and
 /// the context the walk is held to, and keeps the rest of the query intact.
 fn build_page_link(page: PageUri<'_>, set: &[(&str, &str)]) -> String {
-    let PageUri { uri, context, .. } = page;
+    let PageUri { request, context, .. } = page;
     let set: Vec<(&str, &str)> = set.iter().copied().chain([(PAGE_CONTEXT_PARAMETER, context.as_str())]).collect();
-    rebuilt_target(uri, PAGINATION_PARAMS, &set)
+    rebuilt_target(request, PAGINATION_PARAMS, &set)
 }
 
 /// Append the pagination `Link` header `links` describes over a page of
@@ -306,8 +324,14 @@ fn cursor_targets(uri: PageUri<'_>, limit: i64, cursors: &CursorPointers) -> Vec
 
 #[cfg(test)]
 mod tests {
-    use crate::pagination::{CursorPointers, PageExtent, PageLinks, PageOutcome, PageUri, append_page_links, append_pagination_links};
-    use andromeda_http_headers::{link::header::Link, media_type::ResponseMediaType};
+    use crate::{
+        link_target::PointedRequest,
+        pagination::{CursorPointers, PageExtent, PageLinks, PageOutcome, PageUri, append_page_links, append_pagination_links},
+    };
+    use andromeda_http_headers::{
+        link::{header::Link, relation_type::RelationType},
+        media_type::ResponseMediaType,
+    };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::{
         cursor::{NeighbourCursors, PageCursor},
@@ -316,10 +340,12 @@ mod tests {
     };
     use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_query::PageQuery};
     use axum::{
-        http::{StatusCode, Uri, header::LINK},
+        http::{StatusCode, header::LINK},
         response::{IntoResponse, Response},
     };
+    use headers::HeaderMapExt;
     use iri_rs::IriBuf;
+    use url::Url;
 
     fn ngsi_ld_uri(value: &str) -> Identifier {
         value.parse().expect("valid URI")
@@ -410,7 +436,7 @@ mod tests {
         let mut response = empty_response();
         append_page_links(
             &mut response,
-            &parse_uri("/entities?limit=2"),
+            &pointed("/entities?limit=2"),
             &core(),
             &window,
             outcome,
@@ -470,8 +496,14 @@ mod tests {
         StatusCode::OK.into_response()
     }
 
-    fn parse_uri(s: &str) -> Uri {
-        s.parse().expect("valid URI")
+    /// The request `raw` reached the broker with, under no configured `apiRoot`.
+    fn pointed(raw: &str) -> PointedRequest {
+        PointedRequest::new(None, raw.parse().expect("valid URI"))
+    }
+
+    /// The request `raw` reached the broker with, reached through `api_root`.
+    fn pointed_under(api_root: &str, raw: &str) -> PointedRequest {
+        PointedRequest::new(Some(Url::parse(api_root).expect("a valid URL")), raw.parse().expect("valid URI"))
     }
 
     fn offset(offset: i64, extent: PageExtent) -> PageLinks {
@@ -487,11 +519,11 @@ mod tests {
     #[test]
     fn counted_first_page_adds_last_and_next_without_first_or_prev() {
         let mut response = empty_response();
-        let uri = parse_uri("/subscriptions?limit=10&offset=0");
+        let uri = pointed("/subscriptions?limit=10&offset=0");
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -509,11 +541,11 @@ mod tests {
     #[test]
     fn counted_page_has_first_last_prev_next_past_the_first_page() {
         let mut response = empty_response();
-        let uri = parse_uri("/subscriptions?limit=10&offset=10");
+        let uri = pointed("/subscriptions?limit=10&offset=10");
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -535,11 +567,11 @@ mod tests {
     #[test]
     fn counted_single_page_emits_no_pagination_links() {
         let mut response = empty_response();
-        let uri = parse_uri("/subscriptions");
+        let uri = pointed("/subscriptions");
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -555,11 +587,11 @@ mod tests {
     #[test]
     fn no_offset_pagination_link_carries_a_page_parameter() {
         let mut response = empty_response();
-        let uri = parse_uri("/csourceSubscriptions?limit=10&offset=10");
+        let uri = pointed("/csourceSubscriptions?limit=10&offset=10");
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -576,11 +608,11 @@ mod tests {
     #[test]
     fn offset_full_includes_first_last() {
         let mut response = empty_response();
-        let uri = parse_uri("/csourceRegistrations?limit=10&offset=10");
+        let uri = pointed("/csourceRegistrations?limit=10&offset=10");
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -598,11 +630,11 @@ mod tests {
     #[test]
     fn no_links_when_total_is_zero() {
         let mut response = empty_response();
-        let uri = parse_uri("/subscriptions");
+        let uri = pointed("/subscriptions");
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -618,11 +650,11 @@ mod tests {
         let mut response = empty_response();
         let context = IriBuf::new("https://example.com/ctx.jsonld".to_string()).expect("an absolute IRI");
         Link::insert_jsonld_context(response.headers_mut(), context);
-        let uri = parse_uri("/subscriptions?limit=1&offset=1");
+        let uri = pointed("/subscriptions?limit=1&offset=1");
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -645,11 +677,11 @@ mod tests {
     #[test]
     fn no_links_when_limit_is_zero() {
         let mut response = empty_response();
-        let uri = parse_uri("/subscriptions");
+        let uri = pointed("/subscriptions");
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -665,11 +697,11 @@ mod tests {
     #[test]
     fn link_type_reflects_the_negotiated_media_type() {
         let mut response = empty_response();
-        let uri = parse_uri("/entities?limit=10&offset=0");
+        let uri = pointed("/entities?limit=10&offset=0");
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -687,11 +719,11 @@ mod tests {
     #[test]
     fn an_uncounted_page_that_continues_offers_next() {
         let mut response = empty_response();
-        let uri = parse_uri("/entities?limit=10&offset=0");
+        let uri = pointed("/entities?limit=10&offset=0");
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -738,11 +770,11 @@ mod tests {
     #[test]
     fn an_uncounted_page_that_exhausted_the_collection_offers_no_next() {
         let mut response = empty_response();
-        let uri = parse_uri("/entities?limit=10&offset=10");
+        let uri = pointed("/entities?limit=10&offset=10");
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -761,7 +793,7 @@ mod tests {
     #[test]
     fn cursor_mode_emits_first_prev_next_last_with_cursor_not_offset() {
         let mut response = empty_response();
-        let uri = parse_uri("/entities?type=Vehicle&limit=10&cursor=AURN");
+        let uri = pointed("/entities?type=Vehicle&limit=10&cursor=AURN");
         let cursors = CursorPointers {
             prev: Some("cHJldg".to_string()),
             next: Some("bmV4dA".to_string()),
@@ -770,7 +802,7 @@ mod tests {
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -798,7 +830,7 @@ mod tests {
     #[test]
     fn cursor_first_page_omits_prev_and_first() {
         let mut response = empty_response();
-        let uri = parse_uri("/entities?type=Vehicle&limit=10");
+        let uri = pointed("/entities?type=Vehicle&limit=10");
         let cursors = CursorPointers {
             prev: None,
             next: Some("bmV4dA".to_string()),
@@ -807,7 +839,7 @@ mod tests {
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -827,7 +859,7 @@ mod tests {
     #[test]
     fn cursor_last_page_offers_only_prev() {
         let mut response = empty_response();
-        let uri = parse_uri("/entities?type=Vehicle&limit=10&cursor=AURN");
+        let uri = pointed("/entities?type=Vehicle&limit=10&cursor=AURN");
         let cursors = CursorPointers {
             prev: Some("cHJldg".to_string()),
             next: None,
@@ -836,7 +868,7 @@ mod tests {
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -856,11 +888,11 @@ mod tests {
     #[test]
     fn counted_last_page_offers_only_prev() {
         let mut response = empty_response();
-        let uri = parse_uri("/subscriptions?limit=10&offset=20");
+        let uri = pointed("/subscriptions?limit=10&offset=20");
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -880,11 +912,11 @@ mod tests {
     #[test]
     fn counted_page_past_the_end_offers_only_prev() {
         let mut response = empty_response();
-        let uri = parse_uri("/subscriptions?limit=10&offset=40");
+        let uri = pointed("/subscriptions?limit=10&offset=40");
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -903,7 +935,7 @@ mod tests {
     #[test]
     fn cursor_links_preserve_the_query_parameters() {
         let mut response = empty_response();
-        let uri = parse_uri("/entities?type=Vehicle&q=speed%3E10&limit=10");
+        let uri = pointed("/entities?type=Vehicle&q=speed%3E10&limit=10");
         let cursors = CursorPointers {
             prev: None,
             next: Some("bmV4dA".to_string()),
@@ -912,7 +944,7 @@ mod tests {
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -931,7 +963,7 @@ mod tests {
     #[test]
     fn first_link_is_a_cursor_walk_start() {
         let mut response = empty_response();
-        let uri = parse_uri("/entities?type=V&limit=10&cursor=AURN");
+        let uri = pointed("/entities?type=V&limit=10&cursor=AURN");
         let cursors = CursorPointers {
             prev: Some("cHJldg".to_string()),
             next: Some("bmV4dA".to_string()),
@@ -940,7 +972,7 @@ mod tests {
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &core(),
                 query: DIGEST,
             },
@@ -960,7 +992,7 @@ mod tests {
     #[test]
     fn the_link_limit_is_the_window_limit() {
         let mut response = empty_response();
-        let uri = parse_uri("/entities?type=V&limit=5000");
+        let uri = pointed("/entities?type=V&limit=5000");
         let window = PageWindow::offset(1000, 0);
         let outcome = PageOutcome {
             total: None,
@@ -978,7 +1010,7 @@ mod tests {
     #[test]
     fn every_offset_pointer_carries_the_page_context() {
         let mut response = empty_response();
-        let uri = parse_uri("/entities?type=V&limit=10&offset=10&pageContext=https%3A%2F%2Fexample.com%2Fold.jsonld");
+        let uri = pointed("/entities?type=V&limit=10&offset=10&pageContext=https%3A%2F%2Fexample.com%2Fold.jsonld");
         let context = PageContext::try_from("https://example.com/a.jsonld").expect("an IRI");
         let window = PageWindow::offset(10, 10);
         let outcome = PageOutcome {
@@ -997,7 +1029,7 @@ mod tests {
     #[test]
     fn every_cursor_pointer_carries_the_page_context() {
         let mut response = empty_response();
-        let uri = parse_uri("/entities?type=V&limit=2&cursor=AURN");
+        let uri = pointed("/entities?type=V&limit=2&cursor=AURN");
         let context = PageContext::try_from("https://example.com/a.jsonld").expect("an IRI");
         let cursors = CursorPointers {
             prev: Some("cHJldg".to_string()),
@@ -1007,7 +1039,7 @@ mod tests {
         append_pagination_links(
             &mut response,
             &PageUri {
-                uri: &uri,
+                request: &uri,
                 context: &context,
                 query: DIGEST,
             },
@@ -1024,7 +1056,7 @@ mod tests {
     #[test]
     fn every_cursor_pointer_carries_the_digest_of_the_query() {
         let mut response = empty_response();
-        let uri = parse_uri("/entities?type=V&limit=2&cursor=AURN&pageQuery=b2xk");
+        let uri = pointed("/entities?type=V&limit=2&cursor=AURN&pageQuery=b2xk");
         let window = PageWindow {
             limit: 2,
             start: PageStart::Cursor(Some(PageCursor::After(ngsi_ld_uri("urn:e:2")))),
@@ -1046,7 +1078,7 @@ mod tests {
     #[test]
     fn an_offset_pointer_carries_no_digest() {
         let mut response = empty_response();
-        let uri = parse_uri("/entities?type=V&limit=10&offset=10");
+        let uri = pointed("/entities?type=V&limit=10&offset=10");
         let outcome = PageOutcome {
             total: Some(50),
             reach: PageReach::Continues,
@@ -1055,5 +1087,86 @@ mod tests {
         append_page_links(&mut response, &uri, &core(), &PageWindow::offset(10, 10), outcome, ResponseMediaType::JsonLd);
         let link_str = link_header(&response);
         assert!(!link_str.contains("pageQuery="), "{link_str}");
+    }
+
+    /// The relations a page with neighbours on both sides points by.
+    const EVERY_RELATION: [RelationType; 4] = [RelationType::First, RelationType::Prev, RelationType::Next, RelationType::Last];
+
+    /// The target of the `relation` pointer `response` carries.
+    fn pointer_target(response: &Response, relation: &RelationType) -> String {
+        let link = response.headers().typed_get::<Link>().expect("a Link header");
+        let value = link.find_by_rel(relation.clone()).next().expect("a pointer of the relation");
+        value.link().as_str().to_owned()
+    }
+
+    /// An offset page with neighbours on both sides, so it carries every relation.
+    fn offset_page_pointers(request: &PointedRequest) -> Response {
+        let mut response = empty_response();
+        let outcome = PageOutcome {
+            total: Some(10),
+            reach: PageReach::Continues,
+            boundary: None,
+        };
+        append_page_links(&mut response, request, &core(), &PageWindow::offset(2, 2), outcome, ResponseMediaType::JsonLd);
+        response
+    }
+
+    /// A cursor page with neighbours on both sides, so it carries every relation.
+    fn cursor_page_pointers(request: &PointedRequest) -> Response {
+        let mut response = empty_response();
+        let window = PageWindow {
+            limit: 2,
+            start: PageStart::Cursor(Some(PageCursor::Before(ngsi_ld_uri("urn:e:5")))),
+        };
+        let outcome = PageOutcome {
+            total: None,
+            reach: PageReach::Continues,
+            boundary: Some((ngsi_ld_uri("urn:e:3"), ngsi_ld_uri("urn:e:4"))),
+        };
+        append_page_links(&mut response, request, &core(), &window, outcome, ResponseMediaType::JsonLd);
+        response
+    }
+
+    /// Clause 6.2: a configured `apiRoot` under a prefix puts that prefix before
+    /// the path the request reached the broker on, which a proxy serving the
+    /// broker under the prefix has stripped.
+    #[test]
+    fn every_pointer_of_an_offset_page_starts_with_the_configured_api_root_path() {
+        let response = offset_page_pointers(&pointed_under("https://proxy.example/context-broker", "/ngsi-ld/v1/entities?type=V&limit=2"));
+        for relation in EVERY_RELATION {
+            let target = pointer_target(&response, &relation);
+            assert!(target.starts_with("/context-broker/ngsi-ld/v1/entities?"), "{relation}: {target}");
+        }
+    }
+
+    #[test]
+    fn every_pointer_of_a_cursor_page_starts_with_the_configured_api_root_path() {
+        let response = cursor_page_pointers(&pointed_under("https://proxy.example/context-broker", "/ngsi-ld/v1/entities?type=V&limit=2"));
+        for relation in EVERY_RELATION {
+            let target = pointer_target(&response, &relation);
+            assert!(target.starts_with("/context-broker/ngsi-ld/v1/entities?"), "{relation}: {target}");
+        }
+    }
+
+    #[test]
+    fn every_pointer_under_an_api_root_without_a_path_starts_with_the_request_path() {
+        let request = pointed_under("https://proxy.example", "/ngsi-ld/v1/entities?type=V&limit=2");
+        for response in [offset_page_pointers(&request), cursor_page_pointers(&request)] {
+            for relation in EVERY_RELATION {
+                let target = pointer_target(&response, &relation);
+                assert!(target.starts_with("/ngsi-ld/v1/entities?"), "{relation}: {target}");
+            }
+        }
+    }
+
+    #[test]
+    fn every_pointer_without_a_configured_api_root_starts_with_the_request_path() {
+        let request = pointed("/ngsi-ld/v1/entities?type=V&limit=2");
+        for response in [offset_page_pointers(&request), cursor_page_pointers(&request)] {
+            for relation in EVERY_RELATION {
+                let target = pointer_target(&response, &relation);
+                assert!(target.starts_with("/ngsi-ld/v1/entities?"), "{relation}: {target}");
+            }
+        }
     }
 }

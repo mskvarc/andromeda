@@ -12,3 +12,6 @@ mod a_lim_pgp_9002;
 mod a_lim_pgp_9003;
 mod a_lim_pgp_9004;
 mod a_lim_pgp_9005;
+mod a_lim_pgp_9006;
+mod a_lim_pgp_9007;
+mod a_lim_pgp_9008;

@@ -52,6 +52,7 @@ pub async fn query(
         policy: pagination,
         context,
         query,
+        pointed,
     }: RequestPagination,
     ValidatedQuery(params): ValidatedQuery<TenantListParams>,
 ) -> Result<Response, ProblemResponse> {
@@ -96,7 +97,7 @@ pub async fn query(
     response.headers_mut().typed_insert(NgsiLdResultsCount::new(count));
     append_page_links(
         &mut response,
-        &uri,
+        &pointed,
         &context,
         &window,
         PageOutcome {

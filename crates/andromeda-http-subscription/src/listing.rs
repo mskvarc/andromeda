@@ -12,6 +12,7 @@ use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     internal_failure_summary::InternalFailureSummary,
+    link_target::PointedRequest,
     pagination::{PageOutcome, append_page_links},
     problem_response::ProblemResponse,
     rendered_response::RenderedResponse,
@@ -41,6 +42,8 @@ pub(crate) struct ListingRequest {
     pub(crate) options: ListOptions,
     /// The `@context` the listing is paged under (clause 5.5.9.1).
     context: PageContext,
+    /// The request every pointer rebuilds.
+    pointed: PointedRequest,
 }
 
 impl ListingRequest {
@@ -55,7 +58,12 @@ impl ListingRequest {
     /// Returns the `InvalidRequest` of an `options` value clauses 6.3.11 and
     /// 6.3.13 do not define, and whatever the pagination policy refuses.
     pub(crate) fn of(pagination: RequestPagination, params: &ListParams, instance: &Uri) -> Result<ListingRequest, ProblemResponse> {
-        let RequestPagination { policy, context, query } = pagination;
+        let RequestPagination {
+            policy,
+            context,
+            query,
+            pointed,
+        } = pagination;
         let options = params.list_options().with_subscription_instance(instance)?;
         let window = policy
             .window(
@@ -70,7 +78,12 @@ impl ListingRequest {
                 },
             )
             .with_subscription_instance(instance)?;
-        Ok(ListingRequest { window, options, context })
+        Ok(ListingRequest {
+            window,
+            options,
+            context,
+            pointed,
+        })
     }
 
     /// The collection response of a rendered page: the clause 6.3.13 count
@@ -103,7 +116,7 @@ impl ListingRequest {
         let mut response = response.into_response();
         append_page_links(
             &mut response,
-            instance,
+            &self.pointed,
             &self.context,
             &self.window,
             PageOutcome {

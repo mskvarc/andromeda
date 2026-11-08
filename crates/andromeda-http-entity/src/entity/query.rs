@@ -192,7 +192,14 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         // Clause 5.7.2.4: with `splitEntities`, `q`, the geoquery and `scopeQ`
         // are decided on the merged entities rather than by any one source.
         let deferred = split_entities.then(|| query.defer_split_filters());
-        let page = QueryPage::of(window, count, forwarded.as_ref(), binding.page_pointers(), pagination.context);
+        let page = QueryPage::of(
+            window,
+            count,
+            forwarded.as_ref(),
+            binding.page_pointers(),
+            pagination.context,
+            pagination.pointed,
+        );
 
         // Clause 4.21: the request's `pick`/`omit` (or `attrs`) govern the
         // merged entities, which hold every member their sources returned, and,
@@ -261,7 +268,6 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
             },
             &page,
             accept.media_type(),
-            &uri,
         ))
     })
     .await

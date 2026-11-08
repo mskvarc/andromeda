@@ -3,10 +3,13 @@
 //!
 //! A pointer names the request the response answered with some of its query
 //! parameters replaced, so a followed pointer asks the same question of
-//! another part of the answer. Every pointer is typed with the negotiated
-//! response media type, so the client follows it in the representation it
-//! asked for.
+//! another part of the answer. Its path is the request's path below the
+//! configured `apiRoot`'s path, so a client behind a proxy that serves the
+//! broker under a prefix follows it through that prefix (clause 6.2). Every
+//! pointer is typed with the negotiated response media type, so the client
+//! follows it in the representation it asked for.
 
+use crate::api_root_path::api_root_path;
 use andromeda_http_headers::{
     link::{header::Link, relation_type::RelationType, value::LinkValue},
     media_type::ResponseMediaType,
@@ -17,13 +20,45 @@ use axum::{
 };
 use iri_rs::IriRefBuf;
 use mediatype::MediaTypeBuf;
-use url::form_urlencoded;
+use url::{Url, form_urlencoded};
 
-/// The target `uri` rebuilt with every parameter named in `replaced` removed
-/// from its query string and `set` appended in order; every other parameter
-/// keeps its place and value.
-pub(crate) fn rebuilt_target(uri: &Uri, replaced: &[&str], set: &[(&str, &str)]) -> String {
-    let kept = uri
+/// The request a response's pointers rebuild, as a client reaches it through
+/// the `apiRoot`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PointedRequest {
+    /// The configured `apiRoot`, whose path every pointer starts with; `None`
+    /// when none is configured and the request's own path is the one a client
+    /// reaches.
+    api_root: Option<Url>,
+    /// The URI the request reached the broker with, mount prefix included.
+    addressed: Uri,
+}
+
+impl PointedRequest {
+    /// The request that reached the broker with `addressed`, reached by a
+    /// client through `api_root`.
+    #[must_use]
+    pub const fn new(api_root: Option<Url>, addressed: Uri) -> PointedRequest {
+        PointedRequest { api_root, addressed }
+    }
+
+    /// The query string the request carried.
+    #[must_use]
+    pub fn query(&self) -> Option<&str> {
+        self.addressed.query()
+    }
+
+    /// The path a client reaches the request's resource on.
+    fn path(&self) -> String {
+        format!("{}{}", api_root_path(self.api_root.as_ref()), self.addressed.path())
+    }
+}
+
+/// The target `request` rebuilt with every parameter named in `replaced`
+/// removed from its query string and `set` appended in order; every other
+/// parameter keeps its place and value.
+pub(crate) fn rebuilt_target(request: &PointedRequest, replaced: &[&str], set: &[(&str, &str)]) -> String {
+    let kept = request
         .query()
         .map(|query| {
             form_urlencoded::parse(query.as_bytes())
@@ -35,11 +70,8 @@ pub(crate) fn rebuilt_target(uri: &Uri, replaced: &[&str], set: &[(&str, &str)])
         .extend_pairs(kept)
         .extend_pairs(set.iter().copied())
         .finish();
-    if query.is_empty() {
-        uri.path().to_owned()
-    } else {
-        format!("{}?{}", uri.path(), query)
-    }
+    let path = request.path();
+    if query.is_empty() { path } else { format!("{path}?{query}") }
 }
 
 /// Append one `Link` header holding every `(relation, target)` of `links` to
@@ -66,9 +98,12 @@ pub(crate) fn append_typed_links(response: &mut Response, links: Vec<(RelationTy
 
 #[cfg(test)]
 mod tests {
-    use crate::link_target::rebuilt_target;
-    use axum::http::Uri;
-    use url::form_urlencoded;
+    use crate::link_target::{PointedRequest, rebuilt_target};
+    use url::{Url, form_urlencoded};
+
+    fn request(api_root: Option<&str>, raw: &str) -> PointedRequest {
+        PointedRequest::new(api_root.map(|root| Url::parse(root).expect("a valid URL")), raw.parse().expect("a valid URI"))
+    }
 
     fn pairs(target: &str) -> Vec<(String, String)> {
         let query = target.split_once('?').map_or("", |(_, query)| query);
@@ -83,10 +118,11 @@ mod tests {
     /// order, and the set ones follow them, percent-encoded.
     #[test]
     fn a_rebuilt_target_replaces_the_named_parameters_and_keeps_the_others_in_order() {
-        let uri: Uri = "/ngsi-ld/v1/temporal/entities/urn:e:1?attrs=speed&timeAt=2020-01-01T00%3A00%3A00Z&options=temporalValues&lastN=5"
-            .parse()
-            .expect("a valid URI");
-        let target = rebuilt_target(&uri, &["timeAt", "lastN"], &[("timeAt", "2020-01-01T01:19:00Z"), ("lastN", "4")]);
+        let pointed = request(
+            None,
+            "/ngsi-ld/v1/temporal/entities/urn:e:1?attrs=speed&timeAt=2020-01-01T00%3A00%3A00Z&options=temporalValues&lastN=5",
+        );
+        let target = rebuilt_target(&pointed, &["timeAt", "lastN"], &[("timeAt", "2020-01-01T01:19:00Z"), ("lastN", "4")]);
         assert!(target.starts_with("/ngsi-ld/v1/temporal/entities/urn:e:1?"), "{target}");
         assert!(target.contains("timeAt=2020-01-01T01%3A19%3A00Z"), "{target}");
         pretty_assertions::assert_eq!(
@@ -102,7 +138,22 @@ mod tests {
 
     #[test]
     fn a_rebuilt_target_without_any_parameter_is_the_bare_path() {
-        let uri: Uri = "/ngsi-ld/v1/entities?limit=10".parse().expect("a valid URI");
-        pretty_assertions::assert_eq!(rebuilt_target(&uri, &["limit"], &[]), "/ngsi-ld/v1/entities");
+        let pointed = request(None, "/ngsi-ld/v1/entities?limit=10");
+        pretty_assertions::assert_eq!(rebuilt_target(&pointed, &["limit"], &[]), "/ngsi-ld/v1/entities");
+    }
+
+    #[test]
+    fn a_rebuilt_target_starts_with_the_path_of_the_configured_api_root() {
+        let pointed = request(Some("https://proxy.example/context-broker"), "/ngsi-ld/v1/entities?type=V&limit=2");
+        pretty_assertions::assert_eq!(
+            rebuilt_target(&pointed, &["limit"], &[("limit", "3")]),
+            "/context-broker/ngsi-ld/v1/entities?type=V&limit=3"
+        );
+    }
+
+    #[test]
+    fn a_rebuilt_target_under_an_api_root_without_a_path_is_the_request_path() {
+        let pointed = request(Some("https://proxy.example"), "/ngsi-ld/v1/entities?type=V&limit=2");
+        pretty_assertions::assert_eq!(rebuilt_target(&pointed, &["limit"], &[("limit", "3")]), "/ngsi-ld/v1/entities?type=V&limit=3");
     }
 }

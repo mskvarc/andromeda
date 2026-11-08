@@ -84,6 +84,6 @@ pub(crate) fn query_response(
     // links bound how many entities the page carries. Neither suppresses the
     // other, so a truncated page still says whether more matches follow.
     let mut response = response.into_response();
-    page.append_links(&mut response, instance, accept.media_type(), total_count, reach, boundary);
+    page.append_links(&mut response, accept.media_type(), total_count, reach, boundary);
     Ok(response)
 }

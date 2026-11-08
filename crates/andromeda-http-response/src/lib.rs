@@ -2,6 +2,7 @@
 //!
 //! This crate owns every Axum response adapter and HTTP wire projection, including extraction rejections, batch projection and temporal range metadata. It also owns the classifiers of the policy failures more than one route binding answers (entity, temporal, forwarding, JSON-LD, query and parameter failures), so each such failure has exactly one HTTP classification; a binding supplies its own exhaustive classifier only for the failures it alone answers.
 
+pub mod api_root_path;
 pub mod batch;
 pub mod batch_projection;
 pub mod classified_report;
@@ -17,7 +18,7 @@ pub mod forwarding_failure;
 pub mod headers;
 pub mod internal_failure_summary;
 pub mod jsonld_failure;
-mod link_target;
+pub mod link_target;
 mod linked_entity_unresolved;
 pub mod linked_resolution_warning;
 pub mod method_not_allowed;

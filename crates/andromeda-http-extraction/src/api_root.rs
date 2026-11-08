@@ -77,6 +77,12 @@ impl ApiRoot {
     pub const fn url(&self) -> Option<&Url> {
         self.0.as_ref()
     }
+
+    /// The `apiRoot`, when one is known, given up by the request.
+    #[must_use]
+    pub fn into_url(self) -> Option<Url> {
+        self.0
+    }
 }
 
 /// The request's fields when its forwarded fields may be believed, or `None`

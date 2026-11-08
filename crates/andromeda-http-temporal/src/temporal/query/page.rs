@@ -18,7 +18,10 @@
 use crate::temporal::query::forwarding::ForwardedHistory;
 use andromeda_http_extraction::pagination_policy::RequestPagination;
 use andromeda_http_headers::media_type::ResponseMediaType;
-use andromeda_http_response::pagination::{PageOutcome, append_page_links};
+use andromeda_http_response::{
+    link_target::PointedRequest,
+    pagination::{PageOutcome, append_page_links},
+};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_reach::PageReach, page_window::PageWindow};
 use andromeda_ngsi_ld_request::{
@@ -30,7 +33,7 @@ use andromeda_ngsi_ld_request::{
     },
     query::{QUERY_PAGE_SIZE, temporal::TemporalQueryParameters},
 };
-use axum::{http::Uri, response::Response};
+use axum::response::Response;
 use std::borrow::Cow;
 
 /// The window of matching entities a temporal query answers with.
@@ -46,6 +49,8 @@ pub(crate) struct QueriedPage {
     /// The `@context` the query is paged under, which every pointer carries
     /// (clause 5.5.9.1).
     context: PageContext,
+    /// The request every pointer rebuilds.
+    pointed: PointedRequest,
 }
 
 /// What the local temporal store reads for one query.
@@ -61,13 +66,15 @@ pub(crate) struct LocalRead<'page> {
 
 impl QueriedPage {
     /// The element page `window` selects, counted as `count` says, on a binding
-    /// whose pointers `pointers` describes, paged under `context`.
-    pub(crate) const fn of(window: PageWindow, count: CountPolicy, pointers: PagePointers, context: PageContext) -> QueriedPage {
+    /// whose pointers `pointers` describes, paged under `context`, whose
+    /// pointers rebuild `pointed`.
+    pub(crate) const fn of(window: PageWindow, count: CountPolicy, pointers: PagePointers, context: PageContext, pointed: PointedRequest) -> QueriedPage {
         QueriedPage {
             window,
             count,
             pointers,
             context,
+            pointed,
         }
     }
 
@@ -96,7 +103,7 @@ impl QueriedPage {
             query: &pagination.query,
         };
         let window = pagination.policy.window(&params.page, request)?;
-        Ok(QueriedPage::of(window, count, pointers, pagination.context))
+        Ok(QueriedPage::of(window, count, pointers, pagination.context, pagination.pointed))
     }
 
     /// Whether the client asked for the total (clause 6.3.13).
@@ -146,7 +153,6 @@ impl QueriedPage {
     pub(crate) fn append_links(
         &self,
         response: &mut Response,
-        instance: &Uri,
         media_type: ResponseMediaType,
         total: Option<usize>,
         reach: PageReach,
@@ -158,7 +164,7 @@ impl QueriedPage {
                 let total = total.map(|count| i64::try_from(count).unwrap_or(i64::MAX));
                 append_page_links(
                     response,
-                    instance,
+                    &self.pointed,
                     &self.context,
                     &self.window,
                     PageOutcome { total, reach, boundary },
@@ -173,6 +179,7 @@ impl QueriedPage {
 mod tests {
     use crate::temporal::query::page::QueriedPage;
     use andromeda_http_headers::media_type::ResponseMediaType;
+    use andromeda_http_response::link_target::PointedRequest;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
@@ -204,6 +211,7 @@ mod tests {
             CountPolicy::Omit,
             pointers,
             PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
+            PointedRequest::new(None, instance()),
         )
     }
 
@@ -217,6 +225,7 @@ mod tests {
             CountPolicy::Omit,
             PagePointers::OverRequestUri,
             PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
+            PointedRequest::new(None, instance()),
         )
     }
 
@@ -235,7 +244,7 @@ mod tests {
         let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, PageReach::Continues, None);
+        page.append_links(&mut response, ResponseMediaType::JsonLd, None, PageReach::Continues, None);
 
         let link = links(&response);
         assert!(link.contains("rel=\"next\""), "{link}");
@@ -249,7 +258,7 @@ mod tests {
         let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, PageReach::Exhausted, None);
+        page.append_links(&mut response, ResponseMediaType::JsonLd, None, PageReach::Exhausted, None);
 
         pretty_assertions::assert_eq!(links(&response), String::new());
     }
@@ -261,7 +270,7 @@ mod tests {
         let page = offset_page(2, 4, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, PageReach::Exhausted, None);
+        page.append_links(&mut response, ResponseMediaType::JsonLd, None, PageReach::Exhausted, None);
 
         let link = links(&response);
         assert!(link.contains("rel=\"prev\""), "{link}");
@@ -275,7 +284,7 @@ mod tests {
         let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(7), PageReach::Continues, None);
+        page.append_links(&mut response, ResponseMediaType::JsonLd, Some(7), PageReach::Continues, None);
 
         let link = links(&response);
         assert!(link.contains("rel=\"next\""), "{link}");
@@ -290,7 +299,7 @@ mod tests {
         let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(2), PageReach::Continues, None);
+        page.append_links(&mut response, ResponseMediaType::JsonLd, Some(2), PageReach::Continues, None);
 
         pretty_assertions::assert_eq!(links(&response), String::new());
     }
@@ -303,7 +312,7 @@ mod tests {
         let page = offset_page(2, 2, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(7), PageReach::Continues, None);
+        page.append_links(&mut response, ResponseMediaType::JsonLd, Some(7), PageReach::Continues, None);
 
         let link = links(&response);
         assert!(link.contains("rel=\"first\""), "{link}");
@@ -323,7 +332,7 @@ mod tests {
         let page = offset_page(2, 4, PagePointers::NotDereferenceable);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, Some(99), PageReach::Continues, None);
+        page.append_links(&mut response, ResponseMediaType::JsonLd, Some(99), PageReach::Continues, None);
 
         pretty_assertions::assert_eq!(links(&response), String::new());
     }
@@ -335,7 +344,7 @@ mod tests {
         let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::Json, None, PageReach::Continues, None);
+        page.append_links(&mut response, ResponseMediaType::Json, None, PageReach::Continues, None);
 
         let link = links(&response);
         assert!(link.contains("type=\"application/json\""), "{link}");
@@ -354,7 +363,7 @@ mod tests {
         let mut response = StatusCode::OK.into_response();
 
         let boundary = Some((element_id("urn:ngsi-ld:E:001"), element_id("urn:ngsi-ld:E:002")));
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, PageReach::Continues, boundary);
+        page.append_links(&mut response, ResponseMediaType::JsonLd, None, PageReach::Continues, boundary);
 
         let link = links(&response);
         assert!(!link.contains("rel=\"first\""), "{link}");
@@ -374,7 +383,7 @@ mod tests {
         let mut response = StatusCode::OK.into_response();
 
         let boundary = Some((element_id("urn:ngsi-ld:E:003"), element_id("urn:ngsi-ld:E:004")));
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, PageReach::Continues, boundary);
+        page.append_links(&mut response, ResponseMediaType::JsonLd, None, PageReach::Continues, boundary);
 
         let link = links(&response);
         assert!(link.contains("rel=\"prev\""), "{link}");
@@ -390,7 +399,7 @@ mod tests {
         let page = cursor_page(None);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, &instance(), ResponseMediaType::JsonLd, None, PageReach::Exhausted, None);
+        page.append_links(&mut response, ResponseMediaType::JsonLd, None, PageReach::Exhausted, None);
 
         pretty_assertions::assert_eq!(links(&response), String::new());
     }

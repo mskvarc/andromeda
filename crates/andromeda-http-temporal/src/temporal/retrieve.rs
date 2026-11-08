@@ -41,6 +41,7 @@ use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_wa
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     content_range::build_content_range,
+    link_target::PointedRequest,
     rendered_response::RenderedResponse,
     temporal_continuation::append_continuation_link,
 };
@@ -177,7 +178,7 @@ pub(crate) async fn get(
         rendered,
     );
     if let Some(next) = next {
-        append_continuation_link(&mut response, &uri, &next, accept.media_type());
+        append_continuation_link(&mut response, &PointedRequest::new(api_root.into_url(), uri), &next, accept.media_type());
     }
     Ok(response)
 }

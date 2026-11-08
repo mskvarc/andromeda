@@ -64,6 +64,7 @@ pub(crate) fn membership_window(
 mod tests {
     use crate::membership_window::membership_window;
     use andromeda_http_extraction::pagination_policy::RequestPagination;
+    use andromeda_http_response::link_target::PointedRequest;
     use andromeda_ngsi_ld_query::{ordering::parameters::OrderingParameters, page_window::PageWindow};
     use andromeda_ngsi_ld_request::pagination::{
         cursor_request::CursorRequest,
@@ -83,6 +84,7 @@ mod tests {
             policy: PaginationPolicy::CursorDefault,
             context: PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
             query: PageQuery::of(None),
+            pointed: PointedRequest::new(None, uri()),
         }
     }
 

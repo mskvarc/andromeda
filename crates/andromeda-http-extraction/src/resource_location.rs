@@ -12,7 +12,7 @@
 
 use crate::api_root::{ApiRoot, ConfiguredApiRoot};
 use andromeda_http_headers::location::Location;
-use andromeda_http_response::headers::with_location;
+use andromeda_http_response::{api_root_path::api_root_path, headers::with_location};
 use axum::{extract::FromRequestParts, http::request::Parts, response::Response};
 use std::{
     convert::Infallible,
@@ -75,7 +75,7 @@ impl ResourceLocator {
     /// identifier cannot travel in a header field.
     #[must_use]
     pub fn location(&self, collection: ResourceCollection, identifier: &impl Display) -> Option<Location> {
-        let prefix = self.0.as_ref().map_or("", |root| root.path().trim_end_matches('/'));
+        let prefix = api_root_path(self.0.as_ref());
         let collection: &'static str = collection.into();
         Location::new(format!("{prefix}/ngsi-ld/v1/{collection}/{identifier}"))
     }
