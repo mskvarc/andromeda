@@ -91,7 +91,7 @@ async fn a_lim_pgp_9006_with_a_configured_api_root_prefix_every_pointer_of_a_que
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .temporal()
         .retrieve(&history_id)
-        .temporal_q(temporal_query::after("2024-01-01T00:00:00Z".parse()?))
+        .temporal_q(temporal_query::after("2023-12-31T00:00:00Z".parse()?))
         .send()
         .await?;
     expect_that!(retrieved.status, eq(StatusCode::PARTIAL_CONTENT));

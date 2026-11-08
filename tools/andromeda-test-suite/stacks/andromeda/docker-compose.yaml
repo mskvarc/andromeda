@@ -328,6 +328,7 @@ services:
   # collections page by offset alone, where the edge broker offers cursors. It runs the language-tags level of
   # q_target_languages, which admits every RFC 5646 tag as a q target language and conflicts with the edge broker's
   # level; the front broker keeps the clause 4.9 grammar, which Annex C.5.13.2's marque[en-GB] is refused under.
+  # Tenant management is on, so the tenant collection pages under the prefix too.
   broker-prefixed:
     extends:
       <<: *template
@@ -344,6 +345,7 @@ services:
       ANDROMEDA__EXTENSIONS__CURSOR_PAGINATION__MODE: "disabled"
       ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__MODE: "enabled"
       ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__LEVEL: "language-tags"
+      ANDROMEDA__EXTENSIONS__TENANT_MANAGEMENT__MODE: "enabled"
 
   postgres-observed:
     extends:
