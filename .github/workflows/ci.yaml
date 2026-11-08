@@ -186,18 +186,69 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo nextest run --package andromeda-sql --all-features --locked --no-fail-fast
 
+  # The broker and runner images every suite tree runs, built once per commit. A release publishes this broker image
+  # as its arm64 image. Dependabot's token cannot push packages, so its pull requests skip this job and each tree
+  # builds the images itself.
+  images:
+    name: images
+    if: ${{ !github.event.pull_request.draft && github.actor != 'dependabot[bot]' }}
+    runs-on: *runner
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    env:
+      CI_IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda-ci
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/free-disk-space
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/broker-image
+        with:
+          platform: linux/arm64
+          image: ${{ env.CI_IMAGE }}:broker-${{ github.sha }}
+          cache: ghcr.io/${{ github.repository_owner }}/andromeda-buildcache:linux-arm64
+      - name: Build and push the runner image
+        uses: docker/build-push-action@v7
+        with:
+          context: tools/andromeda-test-suite/stacks/runner
+          platforms: linux/arm64
+          provenance: false
+          cache-from: type=registry,ref=${{ env.CI_IMAGE }}:runner-buildcache
+          cache-to: type=registry,ref=${{ env.CI_IMAGE }}:runner-buildcache,mode=max,image-manifest=true,oci-mediatypes=true
+          outputs: type=image,name=${{ env.CI_IMAGE }}:runner-${{ github.sha }},push=true
+
+  # The database image is the published one, which the postgresql workflow rebuilds whenever its directory changes.
   suite:
     name: suite (${{ matrix.tree }})
-    if: *ready
+    needs: images
+    if: ${{ !cancelled() && !github.event.pull_request.draft && (needs.images.result == 'success' || needs.images.result == 'skipped') }}
     runs-on: *runner
     timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
         tree: [ngsi_ld, andromeda, etsi, annex_c]
+    env:
+      ANDROMEDA_IMAGE: ${{ needs.images.result == 'success' && format('ghcr.io/{0}/andromeda-ci:broker-{1}', github.repository_owner, github.sha) || '' }}
+      ANDROMEDA_TEST_SUITE_RUNNER_IMAGE: ${{ needs.images.result == 'success' && format('ghcr.io/{0}/andromeda-ci:runner-{1}', github.repository_owner, github.sha) || '' }}
+      ANDROMEDA_POSTGRES_IMAGE: ghcr.io/${{ github.repository_owner }}/postgresql:tsl
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/free-disk-space
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - uses: ./.github/actions/suite-tree
         with:
           tree: ${{ matrix.tree }}

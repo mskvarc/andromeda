@@ -1,0 +1,51 @@
+name: Broker image
+description: Builds the broker image for one platform from the checkout and pushes it under one tag, with the labels that depend on the commit.
+
+inputs:
+  platform:
+    description: The platform to build, such as linux/arm64.
+    required: true
+  image:
+    description: The reference the image is pushed as, tag included.
+    required: true
+  cache:
+    description: The registry reference holding the layer cache for the platform.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # Dependabot bumps the runtime FROM, so the base labels follow it. The version and creation time are known only
+    # when a release tags the image, so the release puts them on its index instead.
+    - name: Resolve the commit-dependent labels
+      shell: bash
+      run: |
+        set -euo pipefail
+        from="$(sed -n 's/^FROM \(.*\) AS runtime$/\1/p' docker/images/andromeda/Dockerfile)"
+        case "$from" in
+          *@sha256:*) ;;
+          *) echo "no digest-pinned runtime FROM line in docker/images/andromeda/Dockerfile" >&2; exit 1 ;;
+        esac
+        {
+          echo "BASE_NAME=${from%@*}"
+          echo "BASE_DIGEST=${from#*@}"
+        } >> "$GITHUB_ENV"
+
+    # The layer cache lives in the registry, which keeps it out of the Actions cache.
+    - name: Build and push
+      uses: docker/build-push-action@v7
+      with:
+        context: .
+        file: docker/images/andromeda/Dockerfile
+        platforms: ${{ inputs.platform }}
+        # One manifest per image, with no attestation manifests beside it, so every untagged version is one the
+        # pruning may delete.
+        provenance: false
+        cache-from: type=registry,ref=${{ inputs.cache }}
+        cache-to: type=registry,ref=${{ inputs.cache }},mode=max,image-manifest=true,oci-mediatypes=true
+        outputs: type=image,name=${{ inputs.image }},push=true
+        labels: |
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}
+          org.opencontainers.image.base.name=${{ env.BASE_NAME }}
+          org.opencontainers.image.base.digest=${{ env.BASE_DIGEST }}

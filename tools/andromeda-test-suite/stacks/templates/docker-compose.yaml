@@ -4,11 +4,14 @@
 # brokers share a server, a database or a tenant database.
 #
 # The images are tagged :local and built from the working tree when missing; `up --build` rebuilds them first.
-# ANDROMEDA_IMAGE and ANDROMEDA_POSTGRES_IMAGE name another image, such as a pulled release.
+# ANDROMEDA_IMAGE, ANDROMEDA_POSTGRES_IMAGE and ANDROMEDA_TEST_SUITE_RUNNER_IMAGE name another image, such as a pulled
+# release. ANDROMEDA_PULL_POLICY and ANDROMEDA_POSTGRES_PULL_POLICY override when the broker and database images are
+# pulled or built.
 
 services:
   postgres:
     image: ${ANDROMEDA_POSTGRES_IMAGE:-andromeda-postgresql:local}
+    pull_policy: ${ANDROMEDA_POSTGRES_PULL_POLICY:-missing}
     build:
       context: ../../../../docker/images/postgresql
     # Docker's default 64 MB /dev/shm holds Postgres's dynamic shared memory: the cumulative statistics hash grows
@@ -26,6 +29,7 @@ services:
   # is the broker's default unless the stack says otherwise.
   broker:
     image: ${ANDROMEDA_IMAGE:-andromeda:local}
+    pull_policy: ${ANDROMEDA_PULL_POLICY:-missing}
     build:
       context: ../../../..
       dockerfile: docker/images/andromeda/Dockerfile
@@ -44,7 +48,7 @@ services:
   # The repository is mounted read-only; builds go to the target volume, and the registry volume keeps dependencies
   # between runs. Every stack shares both volumes, so a target compiled for one stack serves the others.
   runner:
-    image: andromeda-test-suite-runner:local
+    image: ${ANDROMEDA_TEST_SUITE_RUNNER_IMAGE:-andromeda-test-suite-runner:local}
     build:
       context: ../runner
     profiles: ["runner"]

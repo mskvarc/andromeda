@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Runs one tree of andromeda-test-suite against the stack it needs, with the broker and database images rebuilt from the
-# working tree, and copies the tree's JUnit report to REPORT_DIR (default target/suite-reports). The stack is taken down
+# Runs one tree of andromeda-test-suite against the stack it needs, and copies the tree's JUnit report to REPORT_DIR
+# (default target/suite-reports). The broker, database and runner images are rebuilt from the working tree, except each
+# one ANDROMEDA_IMAGE, ANDROMEDA_POSTGRES_IMAGE or ANDROMEDA_TEST_SUITE_RUNNER_IMAGE names, which is pulled instead. The stack is taken down
 # afterwards with its databases, keeping the shared test-suite-target and test-suite-cargo-registry volumes. Two runs on
 # one Docker host cannot overlap: every stack has a fixed project name and shares those volumes.
 set -euo pipefail
@@ -29,8 +30,18 @@ report_dir="${REPORT_DIR:-target/suite-reports}"
 
 trap '"${compose[@]}" --profile runner rm --stop --force -v; "${compose[@]}" down --remove-orphans' EXIT
 
-"${compose[@]}" --profile runner build runner
-"${compose[@]}" up --detach --wait --build
+if [ -n "${ANDROMEDA_IMAGE:-}" ]; then export ANDROMEDA_PULL_POLICY=always; else export ANDROMEDA_PULL_POLICY=build; fi
+if [ -n "${ANDROMEDA_POSTGRES_IMAGE:-}" ]; then
+    export ANDROMEDA_POSTGRES_PULL_POLICY=always
+else
+    export ANDROMEDA_POSTGRES_PULL_POLICY=build
+fi
+if [ -n "${ANDROMEDA_TEST_SUITE_RUNNER_IMAGE:-}" ]; then
+    "${compose[@]}" --profile runner pull runner
+else
+    "${compose[@]}" --profile runner build runner
+fi
+"${compose[@]}" up --detach --wait
 
 status=0
 "${compose[@]}" run --rm runner cargo nextest run --profile suite-verdict -p andromeda-test-suite "${selection[@]}" || status=$?

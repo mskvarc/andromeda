@@ -1,0 +1,59 @@
+name: prune-ci-images
+
+# ci pushes a broker and a runner image for every commit it checks, and every build that refreshes a layer cache leaves
+# the cache it replaced untagged. A commit's images stay for thirty days, long enough to release it; an untagged
+# manifest stays one day, so a push still in flight keeps the manifest it is about to tag. The published andromeda and
+# postgresql packages are never touched: their untagged versions are the platform manifests of a release.
+on:
+  schedule:
+    - cron: "37 5 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: prune-ci-images
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prune:
+    name: prune
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    permissions:
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OWNER: ${{ github.repository_owner }}
+    steps:
+      - name: Delete expired versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit_cutoff="$(date -u -d '30 days ago' +%s)"
+          untagged_cutoff="$(date -u -d '1 day ago' +%s)"
+          for package in andromeda-ci andromeda-buildcache postgresql-buildcache; do
+            if ! ids="$(gh api --paginate "users/${OWNER}/packages/container/${package}/versions?per_page=100" --jq "
+              .[]
+              | (.updated_at | fromdateiso8601) as \$updated
+              | .metadata.container.tags as \$tags
+              | select(
+                  (\$tags == [] and \$updated < ${untagged_cutoff})
+                  or (\$tags != [] and all(\$tags[]; test(\"^(broker|runner)-[0-9a-f]{40}\$\")) and \$updated < ${commit_cutoff})
+                )
+              | .id" 2> list-error.txt)"; then
+              if grep -q 'HTTP 404' list-error.txt; then
+                echo "${package}: no such package"
+                continue
+              fi
+              cat list-error.txt >&2
+              exit 1
+            fi
+            count=0
+            for id in $ids; do
+              gh api --method DELETE "users/${OWNER}/packages/container/${package}/versions/${id}"
+              count=$((count + 1))
+            done
+            echo "${package}: deleted ${count} versions"
+          done
