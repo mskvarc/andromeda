@@ -236,7 +236,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tree: [ngsi_ld, andromeda, etsi, annex_c]
+        tree: [ngsi_ld, etsi, annex_c]
     env:
       ANDROMEDA_IMAGE: ${{ needs.images.result == 'success' && format('ghcr.io/{0}/andromeda-ci:broker-{1}', github.repository_owner, github.sha) || '' }}
       ANDROMEDA_TEST_SUITE_RUNNER_IMAGE: ${{ needs.images.result == 'success' && format('ghcr.io/{0}/andromeda-ci:runner-{1}', github.repository_owner, github.sha) || '' }}

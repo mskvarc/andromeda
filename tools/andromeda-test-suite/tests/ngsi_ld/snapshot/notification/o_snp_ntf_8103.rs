@@ -62,7 +62,9 @@ async fn o_snp_ntf_8103_deleting_purging_or_expiring_a_snapshot_sends_no_notific
     let snapshot_3 = Snapshot::builder()
         .id(format!("urn:ngsi-ld:Snapshot:{namespace}-expired").parse::<SnapshotId>()?)
         .query(QueryDocument::builder().entities([vehicle_type.as_str()]).build()?)
-        .lifetime("PT2S".parse()?)
+        // Outlasts the Snapshot's preparation on a loaded host, so its terminal notification is sent before it expires,
+        // and still expires within the deadline of the retried read below.
+        .lifetime("PT20S".parse()?)
         .endpoint(sink.endpoint(1)?)
         .build()?;
     broker.snapshots().create(&snapshot_3).send().await?;
