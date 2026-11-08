@@ -171,16 +171,17 @@ pub struct TenantBuildConfig {
         description = "The most tenants loading at once. Loading opens a pool and, when the tenant's schema is behind or absent, runs migrations over a direct connection. Requests past the bound wait for at most `tenancy.build.admission_timeout`."
     )]
     pub max_concurrent: NonZeroUsize,
-    /// How long a request may wait to be admitted to a cold build before it is
+    /// How long a request may wait for its tenant's runtime before it is
     /// answered 503 with `Retry-After`, in human-readable form (`"20s"`).
     ///
-    /// Covers every wait ahead of the build itself: another request's build of
-    /// the same tenant, a new tenant's provisioning, a build permit, and a
-    /// teardown slot when the cache is full. A provisioning still running at
-    /// the deadline runs on, so the retry finds it further along or done.
-    /// Below `request_limits.timeout`, which it would otherwise race.
+    /// Covers the build itself and every wait ahead of it: another request's
+    /// build of the same tenant, a new tenant's provisioning, a build permit,
+    /// and a teardown slot when the cache is full. A provisioning or build
+    /// still running at the deadline runs on, so the retry finds it further
+    /// along or done. Below `request_limits.timeout`, which it would otherwise
+    /// race.
     #[schemars(
-        description = "How long a request may wait for its tenant to start loading before it is answered `503` with `Retry-After`. Covers every wait ahead of the load itself: another request loading the same tenant, the creation of a new tenant's database, a free loading slot, and a free unloading slot when the cache is full. A tenant still being created when the time runs out goes on being created, so a retry finds it further along or ready."
+        description = "How long a request may wait for its tenant to load before it is answered `503` with `Retry-After`. Covers the load itself and every wait ahead of it: another request loading the same tenant, the creation of a new tenant's database, a free loading slot, and a free unloading slot when the cache is full. A tenant still being created or loaded when the time runs out goes on loading, so a retry finds it further along or ready."
     )]
     pub admission_timeout: HumanDuration,
 }

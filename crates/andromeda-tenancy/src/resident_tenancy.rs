@@ -8,8 +8,10 @@
 //! default tenant and the named tenants the test lists, and whose factory hands
 //! every tenant the same state.
 //!
-//! The module exists only under the `resident-tenancy` feature, which the
-//! crates testing such routes enable for their tests alone.
+//! The registry, factory, runtime, probe and schedule it is built from are
+//! public too, for the tests of compositions that need a manager over no
+//! store. The module exists only under the `resident-tenancy` feature, which
+//! the crates testing such routes enable for their tests alone.
 
 use crate::{
     creation_policy::TenantCreationPolicy,
@@ -53,14 +55,14 @@ impl<S: Send + Sync + 'static> ResidentTenancy<S> {
     #[must_use]
     pub fn new(state: Arc<S>, named: Vec<TenantName>) -> ResidentTenancy<S> {
         let config = TenancyConfig::default();
-        let provisioning_slots = KeyedSlots::new(config.build.max_concurrent, CancellationToken::new());
+        let loading_slots = KeyedSlots::new(config.build.max_concurrent, CancellationToken::new());
         let manager = TenantRuntimeManager::new(
             config,
-            Arc::new(FixedRegistry { named }),
-            Arc::new(FixedStateFactory { state }),
+            Arc::new(FixedRegistry::new(named)),
+            Arc::new(FixedStateFactory::new(state)),
             Arc::new(NothingDue),
             Arc::new(NoWakes),
-            provisioning_slots,
+            loading_slots,
         );
         ResidentTenancy { manager }
     }
@@ -78,12 +80,19 @@ impl<S: Send + Sync + 'static> ResidentTenancy<S> {
 
 /// A registry holding a fixed set of established named tenants, none of them
 /// suspended or provisional.
-struct FixedRegistry {
+pub struct FixedRegistry {
     /// The registered named tenants.
     named: Vec<TenantName>,
 }
 
 impl FixedRegistry {
+    /// A registry holding the unnamed default and the established tenants
+    /// `named`; provisioning any other tenant refuses it as unknown.
+    #[must_use]
+    pub const fn new(named: Vec<TenantName>) -> FixedRegistry {
+        FixedRegistry { named }
+    }
+
     /// The registry row of a registered tenant.
     fn record(name: &TenantName) -> TenantRecord {
         TenantRecord::new(
@@ -138,9 +147,17 @@ impl TenantDatabase for FixedRegistry {
 }
 
 /// A factory handing every tenant the same state.
-struct FixedStateFactory<S> {
+pub struct FixedStateFactory<S> {
     /// The state every tenant is served.
     state: Arc<S>,
+}
+
+impl<S> FixedStateFactory<S> {
+    /// A factory serving `state` to every tenant.
+    #[must_use]
+    pub const fn new(state: Arc<S>) -> FixedStateFactory<S> {
+        FixedStateFactory { state }
+    }
 }
 
 #[async_trait]
@@ -154,7 +171,7 @@ impl<S: Send + Sync + 'static> TenantStateFactory for FixedStateFactory<S> {
 }
 
 /// A runtime holding nothing open.
-struct InertRuntime;
+pub struct InertRuntime;
 
 #[async_trait]
 impl TenantRuntime for InertRuntime {
@@ -189,7 +206,7 @@ impl DueWorkSource for InertRuntime {
 }
 
 /// A probe finding nothing due in any tenant.
-struct NothingDue;
+pub struct NothingDue;
 
 #[async_trait]
 impl PendingWorkProbe for NothingDue {
@@ -199,7 +216,7 @@ impl PendingWorkProbe for NothingDue {
 }
 
 /// A wake schedule that records nothing and claims nothing.
-struct NoWakes;
+pub struct NoWakes;
 
 #[async_trait]
 impl TenantWakeSchedule for NoWakes {

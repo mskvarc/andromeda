@@ -103,6 +103,7 @@ shadow-rs = "2.0.0"
 andromeda-architecture-checks.workspace = true
 andromeda-server-tls = { workspace = true, features = ["test-identity"] }
 andromeda-subscription = { workspace = true, features = ["test-support"] }
+andromeda-tenancy = { workspace = true, features = ["resident-tenancy"] }
 axum = "0.8.9"
 bytes = "1.12.1"
 h3 = "0.0.8"

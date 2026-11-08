@@ -84,7 +84,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-temporal",
         "andromeda-tenancy",
     ],
-    allow_workspace_dev_dependencies: ["andromeda-server-tls", "andromeda-subscription"],
+    allow_workspace_dev_dependencies: ["andromeda-server-tls", "andromeda-subscription", "andromeda-tenancy"],
     allow_production_dependencies: all,
 }
 

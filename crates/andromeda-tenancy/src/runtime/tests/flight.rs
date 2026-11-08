@@ -3,7 +3,9 @@
 //! provisioning runs on, and the request that retries joins it rather than
 //! starting over. A provisioning not admitted by its deadline never runs, the
 //! provisional sweep leaves a tenant whose provisioning is under way, and
-//! finishing the slots cuts off the provisioning and sheds its waiters.
+//! finishing the slots cuts off the provisioning and sheds its waiters. A
+//! runtime build runs the same way, and the runtime it caches serves the
+//! retry.
 
 use crate::{
     creation_policy::TenantCreationPolicy,
@@ -13,8 +15,8 @@ use crate::{
     registered_tenant::RegisteredTenant,
     runtime::{
         TenantRuntimeManager,
-        provisioning_flight::ProvisioningSlot,
-        tests::{FakeFactory, FakeProbe, FakeRegistry, FakeSchedule, GatedFactory, bounded_config, deadline_config, named, provisioning_slots},
+        flight::FlightSlot,
+        tests::{FakeFactory, FakeProbe, FakeRegistry, FakeSchedule, GatedFactory, bounded_config, deadline_config, loading_slots, named},
     },
     saturated_wait::SaturatedWait,
     state_factory::TenantStateFactory,
@@ -123,7 +125,7 @@ impl TenantDatabase for HeldProvisioning {
 type Manager = TenantRuntimeManager<HeldProvisioning, FakeFactory>;
 
 /// A manager over `registry` whose admission deadline is 300 ms.
-fn manager(registry: &Arc<HeldProvisioning>, factory: &Arc<FakeFactory>, slots: KeyedSlots<ProvisioningSlot>) -> Arc<Manager> {
+fn manager(registry: &Arc<HeldProvisioning>, factory: &Arc<FakeFactory>, slots: KeyedSlots<FlightSlot>) -> Arc<Manager> {
     TenantRuntimeManager::new(
         deadline_config(64, 8, 8),
         Arc::clone(registry),
@@ -161,7 +163,7 @@ async fn landed<F: TenantStateFactory>(manager: &TenantRuntimeManager<HeldProvis
 async fn a_provisioning_outlasting_the_admission_deadline_sheds_the_request_and_runs_on_for_the_retry() {
     let registry = Arc::new(HeldProvisioning::new(&[]));
     let factory = factory();
-    let manager = manager(&registry, &factory, provisioning_slots());
+    let manager = manager(&registry, &factory, loading_slots());
     let tenant = TenantRef::Named(named("fresh"));
 
     let shed = create(&manager, &tenant).await;
@@ -203,7 +205,7 @@ async fn every_request_waiting_for_a_failed_provisioning_reads_its_failure_and_t
             cause: PersistenceFailure::StatementRejected,
         });
     let factory = factory();
-    let manager = manager(&registry, &factory, provisioning_slots());
+    let manager = manager(&registry, &factory, loading_slots());
     let tenant = TenantRef::Named(named("fresh"));
     let first = create(&manager, &tenant).await;
     assert!(matches!(first, Err(TenancyError::Saturated { .. })), "{first:?}");
@@ -253,7 +255,7 @@ async fn a_provisioning_not_admitted_by_its_deadline_never_runs() {
         Arc::clone(&factory),
         Arc::new(FakeProbe::none()),
         Arc::new(FakeSchedule::inert()),
-        provisioning_slots(),
+        loading_slots(),
     );
     let slow = {
         let manager = Arc::clone(&manager);
@@ -271,8 +273,9 @@ async fn a_provisioning_not_admitted_by_its_deadline_never_runs() {
         .resolve_state(&TenantRef::Named(named("fresh")), TenantCreationPolicy::CreateOnDemand)
         .await;
     assert!(matches!(refused, Err(TenancyError::Saturated { .. })), "{:?}", refused.err());
+    let slow = slow.await.expect("the slow build joins");
+    assert!(matches!(slow, Err(TenancyError::Saturated { .. })), "{:?}", slow.err());
     gate.notify_waiters();
-    assert!(slow.await.expect("the slow build joins").is_ok());
     landed(&manager, &named("fresh")).await;
 
     pretty_assertions::assert_eq!(registry.provisioned(), 0, "a provisioning past its deadline is dropped unstarted");
@@ -282,7 +285,7 @@ async fn a_provisioning_not_admitted_by_its_deadline_never_runs() {
 async fn the_provisional_sweep_leaves_a_tenant_whose_provisioning_is_under_way() {
     let registry = Arc::new(HeldProvisioning::new(&[]));
     let factory = factory();
-    let manager = manager(&registry, &factory, provisioning_slots());
+    let manager = manager(&registry, &factory, loading_slots());
     let shed = create(&manager, &TenantRef::Named(named("fresh"))).await;
     assert!(matches!(shed, Err(TenancyError::Saturated { .. })), "{shed:?}");
 
@@ -304,7 +307,7 @@ async fn the_provisional_sweep_leaves_a_tenant_whose_provisioning_is_under_way()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn finishing_the_provisioning_slots_cuts_off_the_provisioning_and_sheds_its_waiter_at_once() {
+async fn finishing_the_loading_slots_cuts_off_the_provisioning_and_sheds_its_waiter_at_once() {
     let registry = Arc::new(HeldProvisioning::new(&[]));
     let factory = factory();
     let bounded = bounded_config(64, 8, 8);
@@ -354,4 +357,144 @@ async fn finishing_the_provisioning_slots_cuts_off_the_provisioning_and_sheds_it
     );
     assert!(!manager.provisioning.is_in_flight(&named("fresh")), "a cut-off provisioning leaves the flights");
     pretty_assertions::assert_eq!(factory.built.load(Ordering::SeqCst), 0);
+}
+
+/// A manager of the established tenant `acme` whose builds wait on `gate`,
+/// with `config` and `slots`.
+fn gated_manager(
+    config: TenancyConfig,
+    gate: &Arc<Notify>,
+    slots: KeyedSlots<FlightSlot>,
+) -> (Arc<TenantRuntimeManager<HeldProvisioning, GatedFactory>>, Arc<GatedFactory>) {
+    let factory = Arc::new(GatedFactory {
+        built: AtomicUsize::new(0),
+        shutdowns: Arc::new(AtomicUsize::new(0)),
+        gate: Arc::clone(gate),
+    });
+    let manager = TenantRuntimeManager::new(
+        config,
+        Arc::new(HeldProvisioning::new(&["acme"])),
+        Arc::clone(&factory),
+        Arc::new(FakeProbe::none()),
+        Arc::new(FakeSchedule::inert()),
+        slots,
+    );
+    (manager, factory)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_build_outlasting_the_admission_deadline_sheds_the_request_and_serves_the_retry_that_joins_it() {
+    let gate = Arc::new(Notify::new());
+    let (manager, factory) = gated_manager(deadline_config(64, 8, 8), &gate, loading_slots());
+    let tenant = TenantRef::Named(named("acme"));
+
+    let shed = manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.map(|leased| leased.state);
+    assert!(
+        matches!(
+            shed,
+            Err(TenancyError::Saturated {
+                wait: SaturatedWait::RuntimeBuild,
+                ..
+            })
+        ),
+        "{:?}",
+        shed.err()
+    );
+    assert!(manager.builds.is_in_flight(&tenant), "the build runs on past the request");
+
+    let retry = {
+        let manager = Arc::clone(&manager);
+        let tenant = tenant.clone();
+        tokio::spawn(async move { manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.map(|leased| leased.state) })
+    };
+    sleep(Duration::from_millis(50)).await;
+    gate.notify_waiters();
+    let served = retry.await.expect("the retry joins");
+
+    assert!(served.is_ok(), "{:?}", served.err());
+    pretty_assertions::assert_eq!(
+        factory.built.load(Ordering::SeqCst),
+        1,
+        "the retry joined the build instead of starting another"
+    );
+    assert!(!manager.builds.is_in_flight(&tenant), "the build has landed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_build_nobody_waits_for_any_more_still_caches_its_runtime_and_lets_it_go() {
+    let gate = Arc::new(Notify::new());
+    let (manager, factory) = gated_manager(deadline_config(64, 8, 8), &gate, loading_slots());
+    let tenant = TenantRef::Named(named("acme"));
+    let shed = manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.map(|leased| leased.state);
+    assert!(matches!(shed, Err(TenancyError::Saturated { .. })), "{:?}", shed.err());
+
+    gate.notify_waiters();
+    timeout(Duration::from_secs(5), async {
+        while manager.builds.is_in_flight(&tenant) {
+            sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the build lands");
+
+    // The cache holds the origin's one other reference, so a count of one
+    // means no lease is left, the build's own included.
+    timeout(Duration::from_secs(5), async {
+        while manager.runtimes.get(&tenant).is_none_or(|cached| Arc::strong_count(&cached.origin) > 1) {
+            sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the runtime the build made is cached and, once nobody reads the build's outcome, unleased");
+    let served = manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await;
+    assert!(served.is_ok(), "the retry is served from the cache");
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn finishing_the_loading_slots_cuts_off_a_build_and_sheds_its_waiter_at_once() {
+    let bounded = bounded_config(64, 8, 8);
+    let patient = TenancyConfig {
+        build: TenantBuildConfig {
+            admission_timeout: HumanDuration::from_secs(30),
+            ..bounded.build
+        },
+        ..bounded
+    };
+    let slots = KeyedSlots::new(NonZeroUsize::MIN.saturating_add(7), CancellationToken::new());
+    let gate = Arc::new(Notify::new());
+    let (manager, factory) = gated_manager(patient, &gate, slots.clone());
+    let tenant = TenantRef::Named(named("acme"));
+    let waiting = {
+        let manager = Arc::clone(&manager);
+        let tenant = tenant.clone();
+        tokio::spawn(async move { manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.map(|leased| leased.state) })
+    };
+    sleep(Duration::from_millis(50)).await;
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::SeqCst), 1);
+
+    let finishing = Instant::now();
+    timeout(Duration::from_secs(5), slots.finish()).await.expect("the slots finish");
+    let shed = timeout(Duration::from_secs(5), waiting)
+        .await
+        .expect("the waiter is answered")
+        .expect("the waiter joins");
+
+    assert!(
+        matches!(
+            shed,
+            Err(TenancyError::Saturated {
+                wait: SaturatedWait::RuntimeBuild,
+                ..
+            })
+        ),
+        "{:?}",
+        shed.err()
+    );
+    assert!(
+        finishing.elapsed() < Duration::from_secs(2),
+        "the waiter is shed when the build is cut off, not at its deadline"
+    );
+    assert!(!manager.builds.is_in_flight(&tenant), "a cut-off build leaves the flights");
+    assert!(!manager.runtimes.contains_key(&tenant), "a cut-off build caches nothing");
 }

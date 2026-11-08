@@ -15,9 +15,7 @@
 //! named tenancy is enabled: a single-tenant broker holds one never-evicted
 //! runtime with no dormancy to manage.
 
-use crate::tenant_factory::BrokerTenantFactory;
 use andromeda_configuration::schema::tenancy::TenancyConfig;
-use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
 use andromeda_retry::{schedule::BackoffSchedule, schedule_error::BackoffScheduleError};
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
@@ -35,10 +33,12 @@ use andromeda_task_runtime::{
 };
 use andromeda_tenancy::{
     catch_up::{CatchUpCandidates, CatchUpError},
+    database::TenantDatabase,
     runtime::{
         TenantRuntimeManager,
         wake_pass::{NextWakePass, WakePassError},
     },
+    state_factory::TenantStateFactory,
     wake_schedule::{TenantWakeSchedule, WakeScheduleError},
 };
 use std::{convert::Infallible, sync::Arc, time::Duration};
@@ -73,9 +73,6 @@ const RECONCILIATION_JITTER: Duration = Duration::from_secs(5);
 /// crashes between claiming a tenant and settling its schedule.
 const CLAIM_LEASE: Duration = Duration::from_secs(60);
 
-/// The manager whose dormant tenants the waker loads.
-type Manager = Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>;
-
 /// Failure while assembling the dormant-tenant wake schedule.
 #[derive(Debug, Error)]
 pub(crate) enum TenantWakerRegistrationError {
@@ -94,9 +91,9 @@ pub(crate) enum TenantWakerRegistrationError {
 }
 
 /// Register the waker and reconciliation tasks, unless named tenancy is off.
-pub(crate) fn register_tenant_waker(
+pub(crate) fn register_tenant_waker<D: TenantDatabase, F: TenantStateFactory>(
     supervisor: &TaskSupervisor,
-    manager: Manager,
+    manager: Arc<TenantRuntimeManager<D, F>>,
     schedule: Arc<dyn TenantWakeSchedule>,
     catch_up: Arc<dyn CatchUpCandidates>,
     tenancy: &TenancyConfig,
@@ -110,7 +107,11 @@ pub(crate) fn register_tenant_waker(
 
 /// Register the task that wakes the due tenants, then catches up lagging ones,
 /// and the task that rings it when its alarm does.
-fn register_waker(supervisor: &TaskSupervisor, manager: Manager, catch_up: Arc<dyn CatchUpCandidates>) -> Result<(), TenantWakerRegistrationError> {
+fn register_waker<D: TenantDatabase, F: TenantStateFactory>(
+    supervisor: &TaskSupervisor,
+    manager: Arc<TenantRuntimeManager<D, F>>,
+    catch_up: Arc<dyn CatchUpCandidates>,
+) -> Result<(), TenantWakerRegistrationError> {
     let fallback = DrainFallbackPolicy::new(WAKER_FLOOR, WAKER_CEILING)?;
     let registration = TaskRegistration::new(
         TaskName::try_from("tenant-waker")?,
@@ -152,7 +153,11 @@ const fn next_pass(next: NextWakePass) -> DrainPassOutcome {
 }
 
 /// Register the task that wakes the waker each time its alarm rings.
-fn register_alarm(supervisor: &TaskSupervisor, manager: Manager, wake: WakeHandle) -> Result<(), TenantWakerRegistrationError> {
+fn register_alarm<D: TenantDatabase, F: TenantStateFactory>(
+    supervisor: &TaskSupervisor,
+    manager: Arc<TenantRuntimeManager<D, F>>,
+    wake: WakeHandle,
+) -> Result<(), TenantWakerRegistrationError> {
     let registration = TaskRegistration::new(
         TaskName::try_from("tenant-wake-alarm")?,
         TaskCriticality::Observed,
@@ -179,9 +184,9 @@ fn register_alarm(supervisor: &TaskSupervisor, manager: Manager, wake: WakeHandl
 
 /// Register the crash-recovery sweep that re-probes the least-recently-probed
 /// tenants so a wake a crashed replica never fired is eventually picked up.
-fn register_reconciliation(
+fn register_reconciliation<D: TenantDatabase, F: TenantStateFactory>(
     supervisor: &TaskSupervisor,
-    manager: Manager,
+    manager: Arc<TenantRuntimeManager<D, F>>,
     schedule: Arc<dyn TenantWakeSchedule>,
     limit: usize,
 ) -> Result<(), TenantWakerRegistrationError> {

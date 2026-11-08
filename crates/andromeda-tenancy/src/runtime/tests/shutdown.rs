@@ -7,7 +7,7 @@ use crate::{
     error::TenancyError,
     runtime::{
         TenantRuntimeManager,
-        tests::{FakeDueWork, FakeProbe, FakeRegistry, FakeSchedule, Unobserved, bounded_config, named, provisioning_slots},
+        tests::{FakeDueWork, FakeProbe, FakeRegistry, FakeSchedule, Unobserved, bounded_config, loading_slots, named},
     },
     state_factory::{RuntimeActivity, TenantRuntime, TenantStateFactory},
     teardown_bound::TeardownBound,
@@ -132,7 +132,7 @@ async fn loaded(hold: Duration, handling: DeadlineHandling) -> (Arc<TenantRuntim
         }),
         Arc::new(FakeProbe::none()),
         Arc::new(FakeSchedule::inert()),
-        provisioning_slots(),
+        loading_slots(),
     );
     for name in &names {
         drop(

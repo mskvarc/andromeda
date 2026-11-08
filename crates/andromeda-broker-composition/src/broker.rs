@@ -307,7 +307,7 @@ async fn construct(
         Arc::clone(&extension_versions),
     ));
     let tenants = start_tenancy(
-        &config,
+        &config.tenancy,
         &process_tasks,
         &registry,
         &factory,

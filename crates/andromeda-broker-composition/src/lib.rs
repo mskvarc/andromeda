@@ -28,7 +28,7 @@ mod startup_report;
 mod stop_deadline;
 mod tenancy_startup;
 mod tenant_factory;
-mod tenant_provisioning;
+mod tenant_loading;
 mod tenant_state;
 mod tenant_waker;
 

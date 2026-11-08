@@ -21,10 +21,7 @@ use crate::{
     tenant_ref::TenantRef,
 };
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
-use andromeda_telemetry::{
-    operation::Outcome,
-    tenancy::{record_build_admission_wait, record_cold_build},
-};
+use andromeda_telemetry::{operation::Outcome, tenancy::record_cold_build};
 use dashmap::mapref::entry::Entry;
 use std::{sync::Arc, time::Instant as StdInstant};
 use tokio::{
@@ -157,54 +154,80 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     }
 
     /// The cold path under the tenant's single-flight lock: re-check the cache,
-    /// find the tenant's database, take a build permit and build.
+    /// then join the build under way or find the tenant's database and launch
+    /// one, and hand out the runtime it cached.
     ///
-    /// A cold build is timed from finding the database, a new tenant's
-    /// provisioning included, to the runtime being cached, less the wait for a
-    /// build permit, which is reported on its own.
+    /// The build runs on its own and is waited for until `deadline`, so a build
+    /// outlasting it sheds the request while the runtime is still built and
+    /// cached for the retry.
     async fn resolve_state_locked(&self, tenant: &TenantRef, policy: TenantCreationPolicy, deadline: Instant) -> Result<LeasedState<F::State>, TenancyError> {
         if let Some(cached) = self.cached_lease(tenant)? {
             return self.admit_cached(tenant, policy, cached).await;
         }
-
-        // The database is found, and a new tenant's provisioned, before a build
-        // permit is taken. A provisioning takes a permit of its own, which a
-        // request holding one while it waits would keep from it.
-        let locating_started = StdInstant::now();
-        let located = self.admitted_database(tenant, policy, deadline).await;
-        let locating = locating_started.elapsed();
-        let (database, existence) = match located {
-            Ok(located) => located,
-            Err(error) => {
-                record_cold_build(Outcome::Error, locating.as_secs_f64());
-                return Err(error);
-            }
+        let built = match self.builds.joined(tenant, tenant, deadline, SaturatedWait::RuntimeBuild).await {
+            Some(joined) => joined?,
+            None => self.launch_build(tenant, policy, deadline).await?,
         };
-
-        // Admission: only a genuine cold build past the second cache check waits
-        // here, so the number of runtimes being built at once, and with it the
-        // direct migrator connections and pools they open, is bounded.
-        let admission_started = StdInstant::now();
-        let permit = timeout_at(deadline, self.build_permits.acquire()).await;
-        record_build_admission_wait(admission_started.elapsed().as_secs_f64());
-        let permit = permit.map_err(|_| saturated(tenant, SaturatedWait::BuildPermit))?.ok();
-
-        let build_started = StdInstant::now();
-        let result = self.resolve_state_cold(tenant, database, existence, deadline).await;
-        record_cold_build(Outcome::of(&result), (locating + build_started.elapsed()).as_secs_f64());
-
-        // Release the admission permit before the trim: the trim bounds only the
-        // cache size, and holding a build permit across it would charge another
-        // tenant's teardown against the concurrent-build budget.
-        drop(permit);
+        // The build's lease keeps the runtime resident until this request
+        // holds a lease of its own.
+        let cached = self.cached_lease(tenant)?;
+        drop(built);
+        let Some(cached) = cached else {
+            return Err(saturated(tenant, SaturatedWait::RuntimeBuild));
+        };
 
         // Bring the cache back inside runtime_max_cached if concurrent builds
         // overshot it. The freshly built runtime is leased and protected, so it
         // is never itself the victim.
-        if result.is_ok() {
-            self.detach_trim_excess_runtimes(tenant).await;
-        }
-        result
+        self.detach_trim_excess_runtimes(tenant).await;
+        self.admit_cached(tenant, policy, cached).await
+    }
+
+    /// Find the tenant's database, a new tenant's provisioning included, make
+    /// room for its runtime, and launch the build, waited for until `deadline`.
+    ///
+    /// A cold build is timed from finding the database to the runtime being
+    /// cached, less the wait for a build permit, which is reported on its own.
+    async fn launch_build(&self, tenant: &TenantRef, policy: TenantCreationPolicy, deadline: Instant) -> Result<RuntimeLease, TenancyError> {
+        let preparing_started = StdInstant::now();
+        let prepared = self.prepare_build(tenant, policy, deadline).await;
+        let preparing = preparing_started.elapsed();
+        let (database, existence) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                record_cold_build(Outcome::Error, preparing.as_secs_f64());
+                return Err(error);
+            }
+        };
+        let Some(manager) = self.this.upgrade() else {
+            return Err(saturated(tenant, SaturatedWait::RuntimeBuild));
+        };
+        let built = tenant.clone();
+        let work = move || async move {
+            let build_started = StdInstant::now();
+            let result = manager.resolve_state_cold(&built, database, existence).await;
+            record_cold_build(Outcome::of(&result), (preparing + build_started.elapsed()).as_secs_f64());
+            result.map(|leased| leased.lease)
+        };
+        self.builds
+            .outcome(tenant, tenant, deadline, SaturatedWait::RuntimeBuild, &self.build_permits, work)
+            .await
+    }
+
+    /// Where the tenant's data lives and whether it exists yet, with room made
+    /// in the cache for its runtime, each wait answering to `deadline`.
+    ///
+    /// Room is made before a build permit is taken, so a build waiting for a
+    /// teardown slot holds no permit another tenant's build could use.
+    async fn prepare_build(
+        &self,
+        tenant: &TenantRef,
+        policy: TenantCreationPolicy,
+        deadline: Instant,
+    ) -> Result<(TenantDatabaseName, TenantExistence), TenancyError> {
+        let located = self.admitted_database(tenant, policy, deadline).await?;
+        self.make_room(tenant, deadline).await?;
+        Ok(located)
     }
 
     /// The build lock for a tenant, creating it on the first request.
@@ -222,9 +245,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         tenant: &TenantRef,
         database: TenantDatabaseName,
         existence: TenantExistence,
-        deadline: Instant,
     ) -> Result<LeasedState<F::State>, TenancyError> {
-        self.make_room(tenant, deadline).await?;
         let (state, runtime) = self.factory.build(tenant, &database).await?;
 
         // A concurrent caller may have won the race between the in-flight
@@ -291,7 +312,13 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 Ok((database, TenantExistence::Established))
             }
             (Some(RegisteredTenant::Provisional { .. }) | None, TenantCreationPolicy::CreateOnDemand) => {
-                let database = self.provisioning.provisioned(&self.database, &self.build_permits, name, deadline).await?;
+                let database = Arc::clone(&self.database);
+                let provisioned = name.clone();
+                let work = move || async move { database.provision(&provisioned).await };
+                let database = self
+                    .provisioning
+                    .outcome(name, tenant, deadline, SaturatedWait::Provisioning, &self.build_permits, work)
+                    .await?;
                 Ok((database, TenantExistence::Provisional))
             }
             (None, TenantCreationPolicy::MustExist) => Err(unknown(name)),

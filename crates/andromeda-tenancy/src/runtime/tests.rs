@@ -11,7 +11,7 @@ use crate::{
     pending_work::{PendingWork, PendingWorkError, PendingWorkProbe},
     provisional::{Establishment, Retirement},
     registered_tenant::RegisteredTenant,
-    runtime::{TenantRuntimeManager, last_used::LastUsed, provisional_sweep::ProvisionalSettlement, provisioning_flight::ProvisioningSlot},
+    runtime::{TenantRuntimeManager, flight::FlightSlot, last_used::LastUsed, provisional_sweep::ProvisionalSettlement},
     runtime_build_failure::RuntimeBuildFailure,
     saturated_wait::SaturatedWait,
     state_factory::{RuntimeActivity, TenantRuntime, TenantStateFactory},
@@ -54,9 +54,9 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 mod backlog_eviction;
+mod flight;
 mod overdue_wakes;
 mod periodic_eviction;
-mod provisioning_flight;
 mod reconcile;
 mod shutdown;
 mod wake_pass;
@@ -241,10 +241,11 @@ fn named(raw: &str) -> TenantName {
     TenantName::try_from(raw.to_string()).expect("a valid tenant name")
 }
 
-/// Slots for the provisioning a manager launches, stopped by nothing but the
-/// end of the test.
-fn provisioning_slots() -> KeyedSlots<ProvisioningSlot> {
-    KeyedSlots::new(NonZeroUsize::MIN.saturating_add(7), CancellationToken::new())
+/// Slots for the loading a manager launches, wider than any test's build
+/// bound so that the build permits alone bound it, and stopped by nothing but
+/// the end of the test.
+fn loading_slots() -> KeyedSlots<FlightSlot> {
+    KeyedSlots::new(NonZeroUsize::MIN.saturating_add(63), CancellationToken::new())
 }
 
 fn config(enabled: bool, max_cached: usize) -> TenancyConfig {
@@ -733,7 +734,7 @@ fn harness(registered: &[&str], enabled: bool, max_cached: usize) -> Harness {
         Arc::clone(&factory),
         Arc::new(FakeProbe::none()),
         Arc::new(FakeSchedule::inert()),
-        provisioning_slots(),
+        loading_slots(),
     );
     Harness {
         manager,
@@ -802,7 +803,7 @@ async fn a_tenant_whose_build_met_an_unreachable_store_builds_again_on_the_next_
         Arc::clone(&factory),
         Arc::new(FakeProbe::none()),
         Arc::new(FakeSchedule::inert()),
-        provisioning_slots(),
+        loading_slots(),
     );
     let tenant = TenantRef::Named(named("acme"));
 
@@ -867,7 +868,7 @@ async fn concurrent_first_requests_for_one_tenant_trigger_a_single_build() {
         Arc::clone(&factory),
         Arc::new(FakeProbe::none()),
         Arc::new(FakeSchedule::inert()),
-        provisioning_slots(),
+        loading_slots(),
     );
     let tenant = TenantRef::Named(named("acme"));
 
@@ -1024,7 +1025,7 @@ async fn a_concurrent_cold_build_is_never_evicted_by_another_builds_insert_trim(
         Arc::clone(&factory),
         Arc::new(FakeProbe::none()),
         Arc::new(FakeSchedule::inert()),
-        provisioning_slots(),
+        loading_slots(),
     );
 
     let mut handles = Vec::new();
@@ -1120,7 +1121,7 @@ async fn a_suspended_tenant_is_not_woken() {
         Arc::clone(&factory),
         Arc::new(FakeProbe::due_at(SystemTime::now())),
         schedule_handle,
-        provisioning_slots(),
+        loading_slots(),
     );
 
     let outcome = manager.wake(&named("acme")).await;
@@ -1220,7 +1221,7 @@ async fn a_registry_that_cannot_be_read_evicts_nothing_rather_than_everything() 
         factory,
         Arc::new(FakeProbe::none()),
         Arc::new(FakeSchedule::inert()),
-        provisioning_slots(),
+        loading_slots(),
     );
     manager
         .resolve_state(&TenantRef::Named(named("acme")), TenantCreationPolicy::MustExist)
@@ -1396,7 +1397,7 @@ async fn cold_builds_across_tenants_never_exceed_the_configured_bound() {
         Arc::clone(&factory),
         Arc::new(FakeProbe::none()),
         Arc::new(FakeSchedule::inert()),
-        provisioning_slots(),
+        loading_slots(),
     );
 
     let mut handles = Vec::new();
@@ -1504,7 +1505,7 @@ async fn evictions_overlap_up_to_the_bound() {
         factory,
         Arc::new(FakeProbe::none()),
         Arc::new(FakeSchedule::inert()),
-        provisioning_slots(),
+        loading_slots(),
     );
 
     for index in 0..TENANTS {
@@ -1601,7 +1602,7 @@ async fn insert_trim_does_not_await_victim_shutdown() {
         factory,
         Arc::new(FakeProbe::none()),
         Arc::new(FakeSchedule::inert()),
-        provisioning_slots(),
+        loading_slots(),
     );
 
     // Resolve `a`; its lease drops at the statement's end, so `a` is unleased.
@@ -1655,7 +1656,7 @@ async fn a_woken_build_that_lost_to_a_request_holds_no_cache_shard_while_its_run
         }),
         Arc::new(FakeProbe::none()),
         Arc::new(FakeSchedule::inert()),
-        provisioning_slots(),
+        loading_slots(),
     );
     let tenant = TenantRef::Named(named("raced"));
     drop(
@@ -1707,7 +1708,7 @@ fn wake_manager(
     let registry = Arc::new(FakeRegistry::new(registered));
     let shutdowns = Arc::new(AtomicUsize::new(0));
     let factory = Arc::new(FakeFactory::new(Arc::clone(&shutdowns)));
-    let manager = TenantRuntimeManager::new(config(true, max_cached), registry, Arc::clone(&factory), probe, schedule, provisioning_slots());
+    let manager = TenantRuntimeManager::new(config(true, max_cached), registry, Arc::clone(&factory), probe, schedule, loading_slots());
     (manager, factory, shutdowns)
 }
 
@@ -1850,7 +1851,7 @@ fn wake_manager_with_lifetime(
         factory,
         Arc::new(FakeProbe::due_at(SystemTime::now())),
         Arc::new(FakeSchedule::inert()),
-        provisioning_slots(),
+        loading_slots(),
     );
     (manager, shutdowns)
 }
@@ -1961,7 +1962,7 @@ async fn a_wake_deferred_by_a_woken_runtime_is_retried_no_later_than_its_woken_l
         Arc::new(FakeFactory::new(Arc::new(AtomicUsize::new(0)))),
         Arc::new(FakeProbe::due_at(SystemTime::now())),
         Arc::clone(&schedule) as Arc<dyn TenantWakeSchedule>,
-        provisioning_slots(),
+        loading_slots(),
     );
     pretty_assertions::assert_eq!(manager.wake(&named("first")).await, WakeOutcome::Loaded);
     let deferred_at = SystemTime::now();
@@ -2250,7 +2251,7 @@ async fn the_eviction_probe_runs_after_shutdown_so_a_committed_obligation_is_see
     });
     let schedule_concrete = Arc::clone(&schedule);
     let schedule_handle: Arc<dyn TenantWakeSchedule> = schedule_concrete;
-    let manager = TenantRuntimeManager::new(config(true, 1), Arc::clone(&registry), factory, probe, schedule_handle, provisioning_slots());
+    let manager = TenantRuntimeManager::new(config(true, 1), Arc::clone(&registry), factory, probe, schedule_handle, loading_slots());
 
     // Resolve the victim first so it is the older, unleased entry; the cold insert
     // of `keep` trims it back to the cache bound of one.
@@ -2379,7 +2380,7 @@ async fn live_runtimes_never_exceed_the_cache_plus_the_teardown_slots_while_tear
         Arc::clone(&factory),
         Arc::new(FakeProbe::none()),
         Arc::new(FakeSchedule::inert()),
-        provisioning_slots(),
+        loading_slots(),
     );
 
     for name in ["t0", "t1", "t2", "t3"] {
@@ -2426,11 +2427,12 @@ async fn live_runtimes_never_exceed_the_cache_plus_the_teardown_slots_while_tear
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_request_waiting_on_another_requests_build_is_refused_at_the_admission_deadline() {
+async fn requests_waiting_on_a_build_past_the_admission_deadline_are_refused_while_the_build_runs_on() {
     // A second request for a tenant whose runtime is still being built waits on
-    // the single-flight lock. The wait answers to the admission deadline: past
-    // it the request is refused as saturated (503 + Retry-After at the HTTP
-    // layer) rather than stalling into the request timeout.
+    // the single-flight lock, then on the build itself. Both waits, and the
+    // first request's own, answer to the admission deadline: past it each
+    // request is refused as saturated (503 + Retry-After at the HTTP layer)
+    // rather than stalling into the request timeout, and the build runs on.
     let registry = Arc::new(FakeRegistry::new(&["acme"]));
     let gate = Arc::new(Notify::new());
     let factory = Arc::new(GatedFactory {
@@ -2444,7 +2446,7 @@ async fn a_request_waiting_on_another_requests_build_is_refused_at_the_admission
         Arc::clone(&factory),
         Arc::new(FakeProbe::none()),
         Arc::new(FakeSchedule::inert()),
-        provisioning_slots(),
+        loading_slots(),
     );
     let tenant = TenantRef::Named(named("acme"));
 
@@ -2462,17 +2464,40 @@ async fn a_request_waiting_on_another_requests_build_is_refused_at_the_admission
         matches!(
             waiting,
             Err(TenancyError::Saturated {
-                wait: SaturatedWait::BuildLock,
+                wait: SaturatedWait::BuildLock | SaturatedWait::RuntimeBuild,
                 ..
             })
         ),
         "a request still waiting on another's build at the deadline is refused as saturated"
     );
+    let launched = building.await.expect("task joins");
+    assert!(
+        matches!(
+            launched,
+            Err(TenancyError::Saturated {
+                wait: SaturatedWait::RuntimeBuild,
+                ..
+            })
+        ),
+        "the request whose build outlasts its deadline is refused as saturated too"
+    );
 
     gate.notify_waiters();
-    let built = building.await.expect("task joins");
-    assert!(built.is_ok(), "the build the refused request waited on still completes");
-    pretty_assertions::assert_eq!(factory.built.load(Ordering::SeqCst), 1, "the refused request never built");
+    until_cached(&manager, &tenant).await;
+    let served = manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await;
+    assert!(served.is_ok(), "the build the refused requests waited on still completes for the retry");
+    pretty_assertions::assert_eq!(factory.built.load(Ordering::SeqCst), 1, "the refused requests never built again");
+}
+
+/// Wait until a runtime for `tenant` is cached.
+async fn until_cached<D: TenantDatabase, F: TenantStateFactory>(manager: &TenantRuntimeManager<D, F>, tenant: &TenantRef) {
+    timeout(Duration::from_secs(5), async {
+        while !manager.runtimes.contains_key(tenant) {
+            sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the runtime is cached");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -2493,7 +2518,7 @@ async fn a_cold_build_waiting_for_a_build_permit_is_refused_at_the_admission_dea
         Arc::clone(&factory),
         Arc::new(FakeProbe::none()),
         Arc::new(FakeSchedule::inert()),
-        provisioning_slots(),
+        loading_slots(),
     );
 
     let slow = {
@@ -2520,9 +2545,20 @@ async fn a_cold_build_waiting_for_a_build_permit_is_refused_at_the_admission_dea
         "a cold build still waiting for a permit at the deadline is refused as saturated"
     );
     pretty_assertions::assert_eq!(factory.built.load(Ordering::SeqCst), 1, "the refused cold build never ran");
+    let slow = slow.await.expect("task joins");
+    assert!(
+        matches!(
+            slow,
+            Err(TenancyError::Saturated {
+                wait: SaturatedWait::RuntimeBuild,
+                ..
+            })
+        ),
+        "the slow build outlasts its own request's deadline"
+    );
 
     gate.notify_waiters();
-    assert!(slow.await.expect("task joins").is_ok());
+    until_cached(&manager, &TenantRef::Named(named("slow"))).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -2761,7 +2797,7 @@ async fn the_sweep_retires_nothing_when_the_registry_cannot_be_read() {
         Arc::new(FakeFactory::new(Arc::new(AtomicUsize::new(0)))),
         Arc::new(FakeProbe::none()),
         Arc::new(FakeSchedule::inert()),
-        provisioning_slots(),
+        loading_slots(),
     );
     pretty_assertions::assert_eq!(manager.settle_provisional().await, ProvisionalSettlement::default());
 }
@@ -2864,7 +2900,7 @@ async fn a_provisional_tenant_with_work_due_is_woken_and_stays_provisional() {
         factory,
         Arc::clone(&probe) as Arc<dyn PendingWorkProbe>,
         Arc::new(FakeSchedule::inert()),
-        provisioning_slots(),
+        loading_slots(),
     );
 
     pretty_assertions::assert_eq!(manager.wake(&named("acme")).await, WakeOutcome::Loaded);

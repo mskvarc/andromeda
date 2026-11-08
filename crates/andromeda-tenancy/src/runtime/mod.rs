@@ -6,11 +6,11 @@ mod admission;
 mod cached_runtime;
 mod eviction;
 mod eviction_rank;
+pub mod flight;
 mod last_used;
 mod overdue_report;
 mod process_epoch;
 mod provisional_sweep;
-pub mod provisioning_flight;
 mod resident_view;
 mod shed_report;
 mod teardown;
@@ -33,9 +33,9 @@ use crate::{
     residency::TenantResidency,
     runtime::{
         cached_runtime::CachedRuntime,
-        lease::LeaseOrigin,
+        flight::{FlightSlot, Flights},
+        lease::{LeaseOrigin, RuntimeLease},
         overdue_report::OverdueReport,
-        provisioning_flight::{ProvisioningFlights, ProvisioningSlot},
         shed_report::report_shed,
     },
     state_factory::{TenantRuntime, TenantStateFactory},
@@ -51,12 +51,12 @@ use crate::{
     waker::WakerPolicy,
 };
 use andromeda_configuration::schema::tenancy::TenancyConfig;
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
 use andromeda_task_runtime::keyed_slots::KeyedSlots;
 use andromeda_telemetry::tenancy::set_runtimes_cached;
 use async_trait::async_trait;
 use dashmap::DashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use tokio::{
     sync::{Mutex, Notify, Semaphore},
     task::{JoinHandle, JoinSet},
@@ -70,6 +70,9 @@ use tokio::{
 /// here. The unnamed default tenant is never evicted, by any of the eviction
 /// paths in [`eviction`].
 pub struct TenantRuntimeManager<D: TenantDatabase, F: TenantStateFactory> {
+    /// This manager, for the cold builds that run detached from the request
+    /// that launched them.
+    this: Weak<TenantRuntimeManager<D, F>>,
     /// Limits and intervals.
     config: TenancyConfig,
     /// Where each tenant's data lives.
@@ -89,15 +92,19 @@ pub struct TenantRuntimeManager<D: TenantDatabase, F: TenantStateFactory> {
     /// provisioned, at once.
     ///
     /// A permit is acquired only past the second cache check, so it is taken
-    /// for a genuine cold build and never for a cache hit. A build holds it
-    /// across the build and releases it before the cache trim; a provisioning
-    /// holds one of its own for as long as it runs. A burst of first requests
-    /// for distinct tenants therefore cannot open more than this many
+    /// for a genuine cold build and never for a cache hit. The request
+    /// launching a build or a provisioning takes it and hands it to the work,
+    /// which holds it until it ends, before the cache trim. A burst of first
+    /// requests for distinct tenants therefore cannot open more than this many
     /// connection pools and migrator connections at once.
     build_permits: Arc<Semaphore>,
     /// The provisioning under way for each new tenant, each run to its end in
     /// a supervised slot whatever becomes of the request that asked for it.
-    provisioning: ProvisioningFlights,
+    provisioning: Flights<TenantName, TenantDatabaseName>,
+    /// The cold build under way for each tenant, run the same way. Its outcome
+    /// is a lease that keeps the built runtime resident until every request
+    /// waiting for it has taken its own.
+    builds: Flights<TenantRef, RuntimeLease>,
     /// Bounds how many evicted tenant runtimes are alive at once.
     ///
     /// Every eviction path takes a permit before it removes a runtime from the
@@ -141,18 +148,19 @@ pub struct TenantRuntimeManager<D: TenantDatabase, F: TenantStateFactory> {
 
 impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// A manager over the given registry, factory, pending-work probe and wake
-    /// schedule, provisioning new tenants in `provisioning_slots`.
+    /// schedule, provisioning new tenants and building runtimes in
+    /// `loading_slots`.
     ///
     /// The slots belong to whoever supervises them. Finishing them at shutdown
-    /// cuts off every provisioning still under way, which the next provisioning
-    /// of the tenant resumes.
+    /// cuts off every provisioning and build still under way, which the next
+    /// request for the tenant resumes.
     pub fn new(
         config: TenancyConfig,
         database: Arc<D>,
         factory: Arc<F>,
         probe: Arc<dyn PendingWorkProbe>,
         schedule: Arc<dyn TenantWakeSchedule>,
-        provisioning_slots: KeyedSlots<ProvisioningSlot>,
+        loading_slots: KeyedSlots<FlightSlot>,
     ) -> Arc<TenantRuntimeManager<D, F>> {
         let build_permits = Arc::new(Semaphore::new(config.build.max_concurrent.get()));
         let eviction_permits = Arc::new(Semaphore::new(config.residency.max_concurrent_evictions.get()));
@@ -163,14 +171,16 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             config.residency.idle_eviction_after.duration(),
             config.residency.max_wakes_per_pass.get(),
         );
-        Arc::new(TenantRuntimeManager {
+        Arc::new_cyclic(|this| TenantRuntimeManager {
+            this: Weak::clone(this),
             config,
             database,
             factory,
             runtimes: DashMap::new(),
             build_locks: DashMap::new(),
             build_permits,
-            provisioning: ProvisioningFlights::new(provisioning_slots),
+            provisioning: Flights::new(loading_slots.clone()),
+            builds: Flights::new(loading_slots),
             eviction_permits,
             wake_probe_permits,
             eviction_set: Mutex::new(JoinSet::new()),
