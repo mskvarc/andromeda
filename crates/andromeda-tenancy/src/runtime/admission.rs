@@ -51,7 +51,8 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// suspended (including a cached runtime a suspend retired while a request
     /// held it).
     /// Returns [`TenancyError::Saturated`] when the request cannot be admitted
-    /// to a cold build within `build_admission_timeout`. Reading the registry,
+    /// to a cold build within `build_admission_timeout`, a new tenant's
+    /// provisioning not ending in that time included. Reading the registry,
     /// provisioning the tenant and building its runtime each surface the
     /// failure the store or the factory reported, a saturated pool among them
     /// as [`TenancyError::Saturated`] naming the step that waited. Every
@@ -71,10 +72,11 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             return self.admit_cached(tenant, policy, cached).await;
         }
 
-        // Every wait ahead of the build (the single-flight lock, the build
-        // permit and a teardown slot to make room) answers to one deadline, so
-        // an overloaded broker sheds the request as retryable backpressure before
-        // the HTTP request deadline instead of stalling into it.
+        // Every wait ahead of the build (the single-flight lock, a new tenant's
+        // provisioning, the build permit and a teardown slot to make room)
+        // answers to one deadline, so an overloaded broker sheds the request as
+        // retryable backpressure before the HTTP request deadline instead of
+        // stalling into it.
         let deadline = Instant::now() + self.config.build.admission_timeout.duration();
 
         // Single-flight the cold build: concurrent first requests for one tenant
@@ -155,11 +157,29 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     }
 
     /// The cold path under the tenant's single-flight lock: re-check the cache,
-    /// take a build permit and build.
+    /// find the tenant's database, take a build permit and build.
+    ///
+    /// A cold build is timed from finding the database, a new tenant's
+    /// provisioning included, to the runtime being cached, less the wait for a
+    /// build permit, which is reported on its own.
     async fn resolve_state_locked(&self, tenant: &TenantRef, policy: TenantCreationPolicy, deadline: Instant) -> Result<LeasedState<F::State>, TenancyError> {
         if let Some(cached) = self.cached_lease(tenant)? {
             return self.admit_cached(tenant, policy, cached).await;
         }
+
+        // The database is found, and a new tenant's provisioned, before a build
+        // permit is taken. A provisioning takes a permit of its own, which a
+        // request holding one while it waits would keep from it.
+        let locating_started = StdInstant::now();
+        let located = self.admitted_database(tenant, policy, deadline).await;
+        let locating = locating_started.elapsed();
+        let (database, existence) = match located {
+            Ok(located) => located,
+            Err(error) => {
+                record_cold_build(Outcome::Error, locating.as_secs_f64());
+                return Err(error);
+            }
+        };
 
         // Admission: only a genuine cold build past the second cache check waits
         // here, so the number of runtimes being built at once, and with it the
@@ -170,8 +190,8 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         let permit = permit.map_err(|_| saturated(tenant, SaturatedWait::BuildPermit))?.ok();
 
         let build_started = StdInstant::now();
-        let result = self.resolve_state_cold(tenant, policy, deadline).await;
-        record_cold_build(Outcome::of(&result), build_started.elapsed().as_secs_f64());
+        let result = self.resolve_state_cold(tenant, database, existence, deadline).await;
+        record_cold_build(Outcome::of(&result), (locating + build_started.elapsed()).as_secs_f64());
 
         // Release the admission permit before the trim: the trim bounds only the
         // cache size, and holding a build permit across it would charge another
@@ -195,10 +215,15 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         Arc::clone(self.build_locks.entry(tenant.clone()).or_insert_with(|| Arc::new(Mutex::new(()))).value())
     }
 
-    /// Build a runtime for a tenant that has none open, returning it leased.
-    async fn resolve_state_cold(&self, tenant: &TenantRef, policy: TenantCreationPolicy, deadline: Instant) -> Result<LeasedState<F::State>, TenancyError> {
-        let (database, existence) = self.admitted_database(tenant, policy).await?;
-
+    /// Build a runtime over `database` for a tenant that has none open,
+    /// returning it leased.
+    async fn resolve_state_cold(
+        &self,
+        tenant: &TenantRef,
+        database: TenantDatabaseName,
+        existence: TenantExistence,
+        deadline: Instant,
+    ) -> Result<LeasedState<F::State>, TenancyError> {
         self.make_room(tenant, deadline).await?;
         let (state, runtime) = self.factory.build(tenant, &database).await?;
 
@@ -245,8 +270,14 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// refused the same way under [`TenantCreationPolicy::MustExist`] until its
     /// database holds information. A request that may create the tenant
     /// provisions it, which also prepares the database of a provisional tenant
-    /// whose provisioning was interrupted.
-    async fn admitted_database(&self, tenant: &TenantRef, policy: TenantCreationPolicy) -> Result<(TenantDatabaseName, TenantExistence), TenancyError> {
+    /// whose provisioning was interrupted. The provisioning runs on its own and
+    /// is waited for until `deadline`.
+    async fn admitted_database(
+        &self,
+        tenant: &TenantRef,
+        policy: TenantCreationPolicy,
+        deadline: Instant,
+    ) -> Result<(TenantDatabaseName, TenantExistence), TenancyError> {
         let TenantRef::Named(name) = tenant else {
             return Ok((self.database.default_database(), TenantExistence::Established));
         };
@@ -260,7 +291,8 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
                 Ok((database, TenantExistence::Established))
             }
             (Some(RegisteredTenant::Provisional { .. }) | None, TenantCreationPolicy::CreateOnDemand) => {
-                Ok((self.database.provision(name).await?, TenantExistence::Provisional))
+                let database = self.provisioning.provisioned(&self.database, &self.build_permits, name, deadline).await?;
+                Ok((database, TenantExistence::Provisional))
             }
             (None, TenantCreationPolicy::MustExist) => Err(unknown(name)),
         }
@@ -308,6 +340,6 @@ fn unknown(name: &TenantName) -> TenancyError {
 
 /// The backpressure refusal for a request that could not be admitted in time,
 /// naming the wait it gave up on.
-fn saturated(tenant: &TenantRef, wait: SaturatedWait) -> TenancyError {
+pub(super) fn saturated(tenant: &TenantRef, wait: SaturatedWait) -> TenancyError {
     TenancyError::Saturated { tenant: tenant.clone(), wait }
 }

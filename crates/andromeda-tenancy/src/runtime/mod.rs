@@ -10,6 +10,7 @@ mod last_used;
 mod overdue_report;
 mod process_epoch;
 mod provisional_sweep;
+pub mod provisioning_flight;
 mod resident_view;
 mod shed_report;
 mod teardown;
@@ -30,7 +31,13 @@ use crate::{
     provisional::Establishment,
     registered_tenant::RegisteredTenant,
     residency::TenantResidency,
-    runtime::{cached_runtime::CachedRuntime, lease::LeaseOrigin, overdue_report::OverdueReport, shed_report::report_shed},
+    runtime::{
+        cached_runtime::CachedRuntime,
+        lease::LeaseOrigin,
+        overdue_report::OverdueReport,
+        provisioning_flight::{ProvisioningFlights, ProvisioningSlot},
+        shed_report::report_shed,
+    },
     state_factory::{TenantRuntime, TenantStateFactory},
     status::TenantStatus,
     tenant_listing::TenantListing,
@@ -45,6 +52,7 @@ use crate::{
 };
 use andromeda_configuration::schema::tenancy::TenancyConfig;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_task_runtime::keyed_slots::KeyedSlots;
 use andromeda_telemetry::tenancy::set_runtimes_cached;
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -77,14 +85,19 @@ pub struct TenantRuntimeManager<D: TenantDatabase, F: TenantStateFactory> {
     /// connection pools. Concurrent requests share one lock; the first builds,
     /// the rest re-check `runtimes` under the lock and reuse what it inserted.
     build_locks: DashMap<TenantRef, Arc<Mutex<()>>>,
-    /// Bounds how many tenant runtimes are cold-built at once.
+    /// Bounds how many tenant runtimes are cold-built, and new tenants
+    /// provisioned, at once.
     ///
     /// A permit is acquired only past the second cache check, so it is taken
-    /// for a genuine cold build and never for a cache hit. Held across the
-    /// build and released before the cache trim, so a burst of first requests
-    /// for distinct tenants cannot open more than this many connection pools
-    /// and migrator connections at once.
-    build_permits: Semaphore,
+    /// for a genuine cold build and never for a cache hit. A build holds it
+    /// across the build and releases it before the cache trim; a provisioning
+    /// holds one of its own for as long as it runs. A burst of first requests
+    /// for distinct tenants therefore cannot open more than this many
+    /// connection pools and migrator connections at once.
+    build_permits: Arc<Semaphore>,
+    /// The provisioning under way for each new tenant, each run to its end in
+    /// a supervised slot whatever becomes of the request that asked for it.
+    provisioning: ProvisioningFlights,
     /// Bounds how many evicted tenant runtimes are alive at once.
     ///
     /// Every eviction path takes a permit before it removes a runtime from the
@@ -128,15 +141,20 @@ pub struct TenantRuntimeManager<D: TenantDatabase, F: TenantStateFactory> {
 
 impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// A manager over the given registry, factory, pending-work probe and wake
-    /// schedule.
+    /// schedule, provisioning new tenants in `provisioning_slots`.
+    ///
+    /// The slots belong to whoever supervises them. Finishing them at shutdown
+    /// cuts off every provisioning still under way, which the next provisioning
+    /// of the tenant resumes.
     pub fn new(
         config: TenancyConfig,
         database: Arc<D>,
         factory: Arc<F>,
         probe: Arc<dyn PendingWorkProbe>,
         schedule: Arc<dyn TenantWakeSchedule>,
+        provisioning_slots: KeyedSlots<ProvisioningSlot>,
     ) -> Arc<TenantRuntimeManager<D, F>> {
-        let build_permits = Semaphore::new(config.build.max_concurrent.get());
+        let build_permits = Arc::new(Semaphore::new(config.build.max_concurrent.get()));
         let eviction_permits = Arc::new(Semaphore::new(config.residency.max_concurrent_evictions.get()));
         let wake_probe_permits = Arc::new(Semaphore::new(config.residency.max_concurrent_evictions.get()));
         let waker = WakerPolicy::new(
@@ -152,6 +170,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             runtimes: DashMap::new(),
             build_locks: DashMap::new(),
             build_permits,
+            provisioning: ProvisioningFlights::new(provisioning_slots),
             eviction_permits,
             wake_probe_permits,
             eviction_set: Mutex::new(JoinSet::new()),

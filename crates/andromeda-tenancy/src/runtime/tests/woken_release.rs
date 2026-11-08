@@ -15,6 +15,7 @@ use crate::{
             FakeRegistry,
             config,
             named,
+            provisioning_slots,
             wake_pass::FakeCatchUp,
             wake_timing::{TimedSchedule, resident, run_waker},
         },
@@ -68,6 +69,7 @@ fn harness(registered: &[&str], max_resident: usize, per_pass: usize) -> Release
         Arc::clone(&factory),
         Arc::new(FakeProbe::due_as_answered()) as Arc<dyn PendingWorkProbe>,
         Arc::clone(&schedule) as Arc<dyn TenantWakeSchedule>,
+        provisioning_slots(),
     );
     ReleaseHarness { manager, factory, schedule }
 }

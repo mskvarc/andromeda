@@ -8,7 +8,7 @@ use crate::{
     creation_policy::TenantCreationPolicy,
     runtime::{
         TenantRuntimeManager,
-        tests::{FakeFactory, FakeProbe, FakeRegistry, FakeSchedule, config, named, wake_pass::FakeCatchUp},
+        tests::{FakeFactory, FakeProbe, FakeRegistry, FakeSchedule, config, named, provisioning_slots, wake_pass::FakeCatchUp},
         wake_pass::NextWakePass,
     },
     tenant_ref::TenantRef,
@@ -138,6 +138,7 @@ async fn a_pass_that_claims_its_whole_budget_is_followed_at_once_until_every_due
         Arc::new(FakeFactory::new(Arc::new(AtomicUsize::new(0)))),
         Arc::new(FakeProbe::due_as_answered()),
         Arc::new(FakeSchedule::claiming(&names)),
+        provisioning_slots(),
     );
     let catch_up = FakeCatchUp::listing(&[]);
 
@@ -162,6 +163,7 @@ async fn a_pass_that_leaves_budget_over_reports_the_earliest_wake_the_schedule_h
         Arc::new(FakeFactory::new(Arc::new(AtomicUsize::new(0)))),
         Arc::new(FakeProbe::due_as_answered()),
         Arc::clone(&schedule) as Arc<dyn TenantWakeSchedule>,
+        provisioning_slots(),
     );
     let catch_up = FakeCatchUp::listing(&[]);
     let now = SystemTime::now();
@@ -185,6 +187,7 @@ async fn a_tenant_unloaded_with_a_wake_recorded_for_t_and_no_other_wake_pending_
         Arc::new(FakeFactory::new(Arc::new(AtomicUsize::new(0)))),
         Arc::new(FakeProbe::due_at(due)),
         Arc::new(TimedSchedule::default()),
+        provisioning_slots(),
     );
     let waker = tokio::spawn(run_waker(Arc::clone(&manager)));
     drop(

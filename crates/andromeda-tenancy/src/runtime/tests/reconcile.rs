@@ -7,7 +7,7 @@ use crate::{
     pending_work::PendingWorkProbe,
     runtime::{
         TenantRuntimeManager,
-        tests::{FakeFactory, FakeProbe, FakeRegistry, config, named, wake_timing::TimedSchedule},
+        tests::{FakeFactory, FakeProbe, FakeRegistry, config, named, provisioning_slots, wake_timing::TimedSchedule},
     },
     tenant_ref::TenantRef,
     wake_schedule::TenantWakeSchedule,
@@ -36,6 +36,7 @@ fn harness(tenant: &str, probe: FakeProbe) -> (Arc<Manager>, Arc<FakeFactory>, A
         Arc::clone(&factory),
         Arc::new(probe) as Arc<dyn PendingWorkProbe>,
         Arc::clone(&schedule) as Arc<dyn TenantWakeSchedule>,
+        provisioning_slots(),
     );
     (manager, factory, schedule)
 }

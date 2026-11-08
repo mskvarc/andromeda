@@ -56,6 +56,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-configuration",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-persistence-failure",
+        "andromeda-task-runtime",
         "andromeda-telemetry",
     ],
     allow_workspace_dev_dependencies: [

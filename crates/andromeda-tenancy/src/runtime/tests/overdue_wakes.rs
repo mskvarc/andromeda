@@ -5,7 +5,7 @@
 use crate::{
     runtime::{
         TenantRuntimeManager,
-        tests::{FakeFactory, FakeProbe, FakeRegistry, config, named, wake_pass::FakeCatchUp, wake_timing::TimedSchedule},
+        tests::{FakeFactory, FakeProbe, FakeRegistry, config, named, provisioning_slots, wake_pass::FakeCatchUp, wake_timing::TimedSchedule},
         wake_pass::WakePassReport,
     },
     wake_backlog::OverdueWakes,
@@ -37,6 +37,7 @@ fn manager(registered: &[&str], max_resident: usize, woken_lifetime: HumanDurati
         Arc::new(FakeFactory::new(Arc::new(AtomicUsize::new(0)))),
         Arc::new(FakeProbe::due_at(due)),
         schedule,
+        provisioning_slots(),
     )
 }
 

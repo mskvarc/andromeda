@@ -175,10 +175,12 @@ pub struct TenantBuildConfig {
     /// answered 503 with `Retry-After`, in human-readable form (`"20s"`).
     ///
     /// Covers every wait ahead of the build itself: another request's build of
-    /// the same tenant, a build permit, and a teardown slot when the cache is
-    /// full. Below `request_limits.timeout`, which it would otherwise race.
+    /// the same tenant, a new tenant's provisioning, a build permit, and a
+    /// teardown slot when the cache is full. A provisioning still running at
+    /// the deadline runs on, so the retry finds it further along or done.
+    /// Below `request_limits.timeout`, which it would otherwise race.
     #[schemars(
-        description = "How long a request may wait for its tenant to start loading before it is answered `503` with `Retry-After`. Covers every wait ahead of the load itself: another request loading the same tenant, a free loading slot, and a free unloading slot when the cache is full."
+        description = "How long a request may wait for its tenant to start loading before it is answered `503` with `Retry-After`. Covers every wait ahead of the load itself: another request loading the same tenant, the creation of a new tenant's database, a free loading slot, and a free unloading slot when the cache is full. A tenant still being created when the time runs out goes on being created, so a retry finds it further along or ready."
     )]
     pub admission_timeout: HumanDuration,
 }

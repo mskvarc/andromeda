@@ -9,8 +9,9 @@ use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 /// A failure that came from a store or a composition root this crate cannot
 /// name arrives classified, as a [`PersistenceFailure`] or a
 /// [`RuntimeBuildFailure`]; the store's own detail is recorded for operators
-/// where it is classified.
-#[derive(Debug, thiserror::Error)]
+/// where it is classified. Cloneable so that one provisioning's failure reaches
+/// every request waiting for it.
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum TenancyError {
     /// A named tenant was addressed on a deployment that serves only the
     /// unnamed default.

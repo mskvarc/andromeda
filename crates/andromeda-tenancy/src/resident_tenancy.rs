@@ -32,12 +32,14 @@ use crate::{
 };
 use andromeda_configuration::schema::tenancy::TenancyConfig;
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
+use andromeda_task_runtime::keyed_slots::KeyedSlots;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::{
     sync::Arc,
     time::{Duration, SystemTime},
 };
+use tokio_util::sync::CancellationToken;
 
 /// A runtime cache whose every tenant is served the same state.
 pub struct ResidentTenancy<S: Send + Sync + 'static> {
@@ -50,12 +52,15 @@ impl<S: Send + Sync + 'static> ResidentTenancy<S> {
     /// `named`; any other named tenant is unknown.
     #[must_use]
     pub fn new(state: Arc<S>, named: Vec<TenantName>) -> ResidentTenancy<S> {
+        let config = TenancyConfig::default();
+        let provisioning_slots = KeyedSlots::new(config.build.max_concurrent, CancellationToken::new());
         let manager = TenantRuntimeManager::new(
-            TenancyConfig::default(),
+            config,
             Arc::new(FixedRegistry { named }),
             Arc::new(FixedStateFactory { state }),
             Arc::new(NothingDue),
             Arc::new(NoWakes),
+            provisioning_slots,
         );
         ResidentTenancy { manager }
     }

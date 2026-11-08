@@ -8,7 +8,7 @@ use crate::{
     creation_policy::TenantCreationPolicy,
     runtime::{
         TenantRuntimeManager,
-        tests::{FakeFactory, FakeProbe, FakeRegistry, FakeSchedule, config, named},
+        tests::{FakeFactory, FakeProbe, FakeRegistry, FakeSchedule, config, named, provisioning_slots},
         wake_pass::{NextWakePass, WakePassReport},
     },
     tenant_ref::TenantRef,
@@ -71,6 +71,7 @@ fn pass_harness(registered: &[&str], max_cached: usize, due: &[&str]) -> PassHar
         Arc::clone(&factory),
         Arc::new(FakeProbe::due_as_answered()),
         Arc::new(FakeSchedule::claiming(due)),
+        provisioning_slots(),
     );
     PassHarness { manager, registry, factory }
 }

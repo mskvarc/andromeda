@@ -31,13 +31,17 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// requires it to exist, so this sweep is what establishes it, and with it
     /// what admits it to the database maintenance that visits established
     /// tenants only.
+    ///
+    /// A tenant whose provisioning is under way is left to a later sweep. Its
+    /// database may still be migrating, so it holds neither information to
+    /// establish it nor a settled emptiness to retire it on.
     pub(super) async fn settle_provisional(&self) -> ProvisionalSettlement {
         let Ok(names) = self.database.provisional_tenants().await else {
             // An unreadable registry settles nothing; the next tick reads again.
             return ProvisionalSettlement::default();
         };
         let mut settlement = ProvisionalSettlement::default();
-        for name in names {
+        for name in names.into_iter().filter(|name| !self.provisioning.is_in_flight(name)) {
             let tenant = TenantRef::Named(name.clone());
             if self.runtimes.contains_key(&tenant) {
                 self.establish_cached(&name, &mut settlement).await;

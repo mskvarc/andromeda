@@ -17,10 +17,8 @@ use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_subscription::stored_subscription::StoredSubscription;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
-    failure::TaskFailure,
     keyed_slots::KeyedSlots,
     registration::TaskRegistration,
-    resident_task::ResidentTask,
     restart_policy::RestartPolicy,
     shutdown_policy::ShutdownPolicy,
     supervisor::TaskSupervisor,
@@ -136,8 +134,6 @@ where
 /// Returns [`TenantAssemblyError`] when the task name is rejected or the
 /// supervisor refuses the registration.
 pub(super) fn register_periodic_evaluations(supervisor: &TaskSupervisor) -> Result<KeyedSlots<SubscriptionKey>, TenantAssemblyError> {
-    // A child token: finishing the slots must not cancel the tenant's other tasks.
-    let slots = KeyedSlots::new(PERIODIC_EVALUATION_WIDTH, supervisor.cancellation_token().child_token());
     let grace = Duration::from_secs(1);
     let name = TaskName::try_from("notification-periodic-evaluations").map_err(AssemblyInvariant::from)?;
     let registration = TaskRegistration::new(
@@ -146,18 +142,9 @@ pub(super) fn register_periodic_evaluations(supervisor: &TaskSupervisor) -> Resu
         RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(grace)),
         ShutdownPolicy::new(grace),
     );
-    let owned = slots.clone();
-    let task = ResidentTask::new(registration, move |execution| {
-        let slots = owned.clone();
-        async move {
-            execution.mark_running();
-            execution.cancellation().cancelled().await;
-            slots.finish().await;
-            Ok::<(), TaskFailure<NotificationError>>(())
-        }
-    });
-    supervisor.register_resident(task).map_err(AssemblyInvariant::from)?;
-    Ok(slots)
+    supervisor
+        .register_keyed_slots(registration, PERIODIC_EVALUATION_WIDTH)
+        .map_err(|error| TenantAssemblyError::from(AssemblyInvariant::from(error)))
 }
 
 #[cfg(test)]

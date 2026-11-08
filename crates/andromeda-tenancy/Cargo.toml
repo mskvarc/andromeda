@@ -14,12 +14,13 @@ workspace = true
 
 [features]
 # The resident tenant runtime cache route tests resolve their leases through.
-resident-tenancy = []
+resident-tenancy = ["dep:tokio-util"]
 
 [dependencies]
 andromeda-configuration.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-persistence-failure.workspace = true
+andromeda-task-runtime.workspace = true
 andromeda-telemetry.workspace = true
 async-trait = "0.1.92"
 chrono = { version = "0.4.45", features = ["clock"] }
@@ -27,9 +28,11 @@ dashmap = { version = "6.2.1", features = ["inline"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["macros", "rt", "sync", "time"] }
+tokio-util = { version = "0.7.20", optional = true }
 tracing = "0.1.44"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "test-util"] }
+tokio-util = "0.7.20"

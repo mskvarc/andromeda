@@ -2298,6 +2298,7 @@ dependencies = [
  "andromeda-configuration",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-persistence-failure",
+ "andromeda-task-runtime",
  "andromeda-telemetry",
  "async-trait",
  "chrono",
@@ -2306,6 +2307,7 @@ dependencies = [
  "strum",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 

@@ -19,6 +19,10 @@ pub enum SaturatedWait {
     /// A teardown slot to release a cached runtime and make room for this one,
     /// past the build admission deadline.
     TeardownSlot,
+    /// The tenant's provisioning, under way for this or an earlier request,
+    /// past the build admission deadline, or cut off by a broker shutdown. The
+    /// provisioning runs on, so a retry finds it further along or done.
+    Provisioning,
     /// A platform pool connection to read the tenant's registry row.
     RegistryRead,
     /// A platform pool connection to write the tenant's registry row: settling
@@ -44,6 +48,7 @@ mod tests {
             (SaturatedWait::BuildLock, "build-lock"),
             (SaturatedWait::BuildPermit, "build-permit"),
             (SaturatedWait::TeardownSlot, "teardown-slot"),
+            (SaturatedWait::Provisioning, "provisioning"),
             (SaturatedWait::RegistryRead, "registry-read"),
             (SaturatedWait::RegistryWrite, "registry-write"),
             (SaturatedWait::RegistrationTransaction, "registration-transaction"),

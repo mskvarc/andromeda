@@ -27,8 +27,8 @@ use crate::{
     },
     startup_report::report_startup,
     stop_deadline::StopClock,
+    tenancy_startup::{TenancyStartupError, start_tenancy},
     tenant_factory::BrokerTenantFactory,
-    tenant_waker::{TenantWakerRegistrationError, register_tenant_waker},
 };
 use andromeda_configuration::{broker_config::BrokerConfig, load::LoadedConfiguration, schema::feature_mode::FeatureMode};
 use andromeda_extensions::{enabled::EnabledExtensions, startup_log::log_conformance_override};
@@ -62,10 +62,7 @@ use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_telemetry::{build_info::BrokerVersion, error::TelemetryError, recorder::TelemetryRecorder};
 use andromeda_tenancy::{
     administration::TenantAdministration,
-    creation_policy::TenantCreationPolicy,
-    error::TenancyError,
     runtime::TenantRuntimeManager,
-    tenant_ref::TenantRef,
     usage_probe::TenantUsageProbe,
     wake_schedule::TenantWakeSchedule,
 };
@@ -104,9 +101,9 @@ enum BrokerStartupError {
     /// The PostgreSQL tenant registry could not be constructed.
     #[error("tenant registry startup failed: {0}")]
     ContextStore(#[from] ContextStoreError),
-    /// The default tenant could not be constructed and published.
-    #[error("default tenant startup failed: {0}")]
-    Tenancy(#[from] TenancyError),
+    /// The tenant runtime cache could not be started.
+    #[error(transparent)]
+    Tenancy(#[from] TenancyStartupError),
     /// Active component discovery failed.
     #[error(transparent)]
     ComponentReport(#[from] ComponentReportError),
@@ -119,9 +116,6 @@ enum BrokerStartupError {
     /// The process-scoped maintenance task could not be registered.
     #[error(transparent)]
     MaintenanceTask(#[from] MaintenanceRegistrationError),
-    /// The dormant-tenant wake tasks could not be registered.
-    #[error(transparent)]
-    WakerTask(#[from] TenantWakerRegistrationError),
     /// A fallible inbound HTTP middleware layer could not be built.
     #[error(transparent)]
     HttpStack(#[from] HttpStackBuildError),
@@ -312,22 +306,16 @@ async fn construct(
         Arc::clone(&forwarded_subscription_router),
         Arc::clone(&extension_versions),
     ));
-    let tenants = TenantRuntimeManager::new(
-        config.tenancy.clone(),
-        Arc::clone(&registry),
-        Arc::clone(&factory),
+    let tenants = start_tenancy(
+        &config,
+        &process_tasks,
+        &registry,
+        &factory,
         pending_work_probe,
-        Arc::clone(&wake_schedule),
-    );
-    drop(tenants.spawn_janitor());
-    // The wake tasks share the schedule with the manager and run only when named
-    // tenancy is enabled; registered after the janitor so a woken runtime is
-    // subject to the same eviction sweeps.
-    register_tenant_waker(&process_tasks, Arc::clone(&tenants), wake_schedule, extension_versions, &config.tenancy)?;
-    // Warm the unnamed default so its runtime is built before the first
-    // request. The returned lease is dropped at once: the default is never
-    // evicted, so it needs no hold to stay resident.
-    drop(tenants.resolve_state(&TenantRef::UnnamedDefault, TenantCreationPolicy::MustExist).await?);
+        wake_schedule,
+        extension_versions,
+    )
+    .await?;
 
     let health = broker_health(&registry, &factory, &process_tasks, &tenants);
     let component_reports = collect_component_reports(registry.main_pool(), &config).await?;

@@ -21,6 +21,7 @@ mod failure_report;
 pub mod keyed_lanes;
 /// Bounded detached work that runs at most once per key at a time.
 pub mod keyed_slots;
+mod keyed_slots_registration;
 /// Observable task lifecycle events.
 pub mod lifecycle_event;
 /// Periodic scheduling policy.
