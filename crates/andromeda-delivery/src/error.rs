@@ -84,6 +84,14 @@ pub enum TransportError {
     /// known, so there is no URI to name and no placeholder is invented for one.
     #[error("HTTP client initialization failed: {}", error_chain_text(.0))]
     ClientInitializationFailed(#[source] reqwest::Error),
+
+    /// The TLS client configuration `mqtts` connections are opened with could
+    /// not be built.
+    ///
+    /// Carries no endpoint: like an HTTP client that cannot be built, it fails
+    /// once, at startup, before any endpoint is known.
+    #[error("MQTT TLS client initialization failed: {0}")]
+    MqttTlsInitializationFailed(#[source] rustls::Error),
 }
 
 impl TransportError {
@@ -105,9 +113,10 @@ impl TransportError {
     /// Reaching the endpoint failed transiently for connection, timeout, TLS and
     /// DNS errors, so a later attempt may connect. A payload over the limit, a
     /// blocked endpoint, or a payload that cannot be serialised will fail the
-    /// same way on every attempt, so retrying only wastes the budget. A client
-    /// that could not be built is a startup misconfiguration, not a per-delivery
-    /// condition, so it is likewise not retryable.
+    /// same way on every attempt, so retrying only wastes the budget. An HTTP
+    /// client or MQTT TLS configuration that could not be built is a startup
+    /// misconfiguration, not a per-delivery condition, so it is likewise not
+    /// retryable.
     #[must_use]
     pub const fn is_retryable(&self) -> bool {
         match self {
@@ -118,7 +127,8 @@ impl TransportError {
             TransportError::Oversized(_)
             | TransportError::PrivateIpBlocked { .. }
             | TransportError::PayloadSerialization { .. }
-            | TransportError::ClientInitializationFailed(_) => false,
+            | TransportError::ClientInitializationFailed(_)
+            | TransportError::MqttTlsInitializationFailed(_) => false,
         }
     }
 }

@@ -7,6 +7,7 @@
 //! indicator, rather than a single transport.
 
 pub mod ack;
+pub mod client_tls;
 pub mod config;
 pub mod connection;
 pub mod connection_key;

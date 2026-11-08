@@ -299,6 +299,7 @@ mod tests {
         host_port::HostPort,
         mqtt::{
             ack::AckKind,
+            client_tls::mqtt_client_tls,
             config::MqttPoolConfig,
             connection::{ConnectionState, MqttClientVariant, MqttConnection},
             connection_key::MqttConnectionKey,
@@ -384,7 +385,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_pool_that_has_opened_nothing_reports_no_connections() {
-        let pool = MqttTransportPool::new(MqttPoolConfig::default(), Arc::new(RumqttcDialer));
+        let pool = MqttTransportPool::new(
+            MqttPoolConfig::default(),
+            Arc::new(RumqttcDialer::new(
+                mqtt_client_tls().expect("the system trust store yields a TLS client configuration"),
+            )),
+        );
         assert!(pool.connection_health_summaries().await.is_empty());
     }
 
@@ -409,7 +415,12 @@ mod tests {
             reconnect_backoff: BackoffSchedule::new(Duration::from_millis(200), Duration::from_millis(400), Growth::Doubling),
             ..MqttPoolConfig::default()
         };
-        let pool = MqttTransportPool::new(config, Arc::new(RumqttcDialer));
+        let pool = MqttTransportPool::new(
+            config,
+            Arc::new(RumqttcDialer::new(
+                mqtt_client_tls().expect("the system trust store yields a TLS client configuration"),
+            )),
+        );
         let endpoint = refused_endpoint();
 
         // First dial: the broker refuses, so the connection fails and the backoff

@@ -143,7 +143,7 @@ mod tests {
         },
         error::TransportError,
         host_port::HostPort,
-        mqtt::{config::MqttPoolConfig, dial::RumqttcDialer, envelope::build_envelope, pool::MqttTransportPool},
+        mqtt::{client_tls::mqtt_client_tls, config::MqttPoolConfig, dial::RumqttcDialer, envelope::build_envelope, pool::MqttTransportPool},
         notification_body::NotificationBody,
         notification_context::NotificationContext,
         outcome::DeliveryOutcome,
@@ -394,7 +394,12 @@ mod tests {
     }
 
     fn pool(config: MqttPoolConfig) -> Arc<MqttTransportPool> {
-        Arc::new(MqttTransportPool::new(config, Arc::new(RumqttcDialer)))
+        Arc::new(MqttTransportPool::new(
+            config,
+            Arc::new(RumqttcDialer::new(
+                mqtt_client_tls().expect("the system trust store yields a TLS client configuration"),
+            )),
+        ))
     }
 
     fn packet_limit_mib(mib: u64) -> MqttPacketLimit {

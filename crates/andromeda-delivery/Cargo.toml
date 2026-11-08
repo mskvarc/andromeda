@@ -32,8 +32,9 @@ headers = "0.4.2"
 humantime = "2.4.0"
 iri-rs = "4.1.0"
 reqwest = { version = "0.13.5", features = ["json"] }
-rumqttc = { version = "0.25.1", features = ["use-rustls"] }
-rustls = { version = "0.23.46", default-features = false, features = ["std"] }
+rumqttc = { version = "0.25.1", features = ["use-rustls-no-provider"] }
+rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+rustls-platform-verifier = "0.7.1"
 secrecy = "0.10.3"
 serde = "1.0.229"
 serde_json = { version = "1.0.154", features = ["arbitrary_precision", "raw_value"] }

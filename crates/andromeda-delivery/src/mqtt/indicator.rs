@@ -91,6 +91,7 @@ mod tests {
         endpoint::mqtt::MqttVersion,
         host_port::HostPort,
         mqtt::{
+            client_tls::mqtt_client_tls,
             config::MqttPoolConfig,
             dial::RumqttcDialer,
             health::{ConnectionHealth, MqttConnectionHealthSummary},
@@ -103,7 +104,12 @@ mod tests {
     use std::{str::FromStr, sync::Arc};
 
     fn indicator() -> MqttHealthIndicator {
-        MqttHealthIndicator::new(Arc::new(MqttTransportPool::new(MqttPoolConfig::default(), Arc::new(RumqttcDialer))))
+        MqttHealthIndicator::new(Arc::new(MqttTransportPool::new(
+            MqttPoolConfig::default(),
+            Arc::new(RumqttcDialer::new(
+                mqtt_client_tls().expect("the system trust store yields a TLS client configuration"),
+            )),
+        )))
     }
 
     #[test]

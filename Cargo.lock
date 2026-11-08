@@ -329,6 +329,7 @@ dependencies = [
  "reqwest",
  "rumqttc",
  "rustls",
+ "rustls-platform-verifier",
  "secrecy",
  "serde",
  "serde_json",

@@ -5,7 +5,7 @@ use crate::{
     endpoint_failure::EndpointFailure,
     error::TransportError,
     http::{config::HttpTransportConfig, transport::HttpTransport},
-    mqtt::{config::MqttPoolConfig, dial::RumqttcDialer, handle::MqttTransportHandle, pool::MqttTransportPool},
+    mqtt::{client_tls::mqtt_client_tls, config::MqttPoolConfig, dial::RumqttcDialer, handle::MqttTransportHandle, pool::MqttTransportPool},
     outcome::DeliveryOutcome,
     request::DeliveryRequest,
     transport::NotificationTransport,
@@ -73,12 +73,15 @@ impl TransportDispatcher {
     /// # Errors
     ///
     /// Returns [`TransportError::ClientInitializationFailed`] when the HTTP
-    /// client cannot be built from `http_config`. The MQTT pool is constructed
-    /// without a fallible step, so no other variant can arise here.
+    /// client cannot be built from `http_config`, and
+    /// [`TransportError::MqttTlsInitializationFailed`] when the TLS client
+    /// configuration for `mqtts` brokers cannot be built. No other variant can
+    /// arise here.
     pub fn new(http_config: HttpTransportConfig, mqtt_config: MqttPoolConfig) -> Result<TransportDispatcher, TransportError> {
+        let mqtt_tls = mqtt_client_tls().map_err(TransportError::MqttTlsInitializationFailed)?;
         Ok(TransportDispatcher {
             http: HttpTransport::new(http_config)?,
-            mqtt_pool: Arc::new(MqttTransportPool::new(mqtt_config, Arc::new(RumqttcDialer))),
+            mqtt_pool: Arc::new(MqttTransportPool::new(mqtt_config, Arc::new(RumqttcDialer::new(mqtt_tls)))),
         })
     }
 

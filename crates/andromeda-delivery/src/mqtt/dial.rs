@@ -26,6 +26,7 @@ use rumqttc::{
     Outgoing,
     Packet,
     QoS,
+    TlsConfiguration,
     Transport,
     v5::{
         AsyncClient as AsyncClientV5,
@@ -34,6 +35,7 @@ use rumqttc::{
         mqttbytes::{QoS as QoSV5, v5::Packet as PacketV5},
     },
 };
+use rustls::ClientConfig;
 use secrecy::ExposeSecret;
 use std::{future::Future, pin::Pin, str, sync::Arc};
 use strum::IntoEnumIterator;
@@ -64,8 +66,19 @@ pub trait MqttDialer: Send + Sync {
 }
 
 /// The production dialer backed by `rumqttc`.
-#[derive(Debug, Default)]
-pub struct RumqttcDialer;
+#[derive(Debug)]
+pub struct RumqttcDialer {
+    /// The TLS client configuration every `mqtts` connection is opened with.
+    tls: Arc<ClientConfig>,
+}
+
+impl RumqttcDialer {
+    /// A dialer that opens every `mqtts` connection with `tls`.
+    #[must_use]
+    pub const fn new(tls: Arc<ClientConfig>) -> RumqttcDialer {
+        RumqttcDialer { tls }
+    }
+}
 
 impl MqttDialer for RumqttcDialer {
     fn dial<'a>(
@@ -75,7 +88,7 @@ impl MqttDialer for RumqttcDialer {
         pool: &'a MqttPoolConfig,
         state: &'a Arc<ConnectionState>,
     ) -> DialFuture<'a> {
-        Box::pin(dial(key, endpoint, pool, state))
+        Box::pin(dial(key, endpoint, pool, state, &self.tls))
     }
 }
 
@@ -92,7 +105,8 @@ struct BrokerLabel {
     version: MqttVersion,
 }
 
-/// Open a connection to the broker the key names.
+/// Open a connection to the broker the key names, over TLS configured by `tls`
+/// when the key asks for it.
 ///
 /// # Errors
 ///
@@ -107,16 +121,27 @@ pub async fn dial(
     endpoint: &MqttEndpointConfig,
     pool: &MqttPoolConfig,
     state: &Arc<ConnectionState>,
+    tls: &Arc<ClientConfig>,
 ) -> Result<(MqttClientVariant, JoinHandle<()>), TransportError> {
     let client_id = format!("andromeda-{}", Uuid::new_v4());
     let label = BrokerLabel {
         endpoint_uri: endpoint.endpoint_uri.clone(), // clone: the label outlives this borrow of the endpoint
         version: key.version,
     };
+    let transport = transport_for(key, tls);
 
     match key.version {
-        MqttVersion::V5 => dial_v5(&client_id, key, endpoint, pool, state, label).await,
-        MqttVersion::V311 => dial_v311(&client_id, key, endpoint, pool, state, label).await,
+        MqttVersion::V5 => dial_v5(&client_id, key, endpoint, pool, state, transport, label).await,
+        MqttVersion::V311 => dial_v311(&client_id, key, endpoint, pool, state, transport, label).await,
+    }
+}
+
+/// The transport a connection to the broker the key names runs over.
+fn transport_for(key: &MqttConnectionKey, tls: &Arc<ClientConfig>) -> Transport {
+    if key.use_tls {
+        Transport::tls_with_config(TlsConfiguration::Rustls(Arc::clone(tls)))
+    } else {
+        Transport::Tcp
     }
 }
 
@@ -153,14 +178,13 @@ async fn dial_v5(
     endpoint: &MqttEndpointConfig,
     pool: &MqttPoolConfig,
     state: &Arc<ConnectionState>,
+    transport: Transport,
     label: BrokerLabel,
 ) -> Result<(MqttClientVariant, JoinHandle<()>), TransportError> {
     let mut options = MqttOptionsV5::new(client_id, key.authority.host_str(), key.authority.port());
     options.set_keep_alive(pool.keepalive);
     options.set_max_packet_size(Some(pool.max_packet_size.octets()));
-    if key.use_tls {
-        options.set_transport(Transport::tls_with_default_config());
-    }
+    options.set_transport(transport);
     if let Some(username) = endpoint.username.as_ref() {
         let password = endpoint.password.as_ref().map_or_else(String::new, |secret| secret.expose_secret().to_owned());
         options.set_credentials(username.clone(), password); // clone: `set_credentials` takes ownership
@@ -242,6 +266,7 @@ async fn dial_v311(
     endpoint: &MqttEndpointConfig,
     pool: &MqttPoolConfig,
     state: &Arc<ConnectionState>,
+    transport: Transport,
     label: BrokerLabel,
 ) -> Result<(MqttClientVariant, JoinHandle<()>), TransportError> {
     let mut options = MqttOptions::new(client_id, key.authority.host_str(), key.authority.port());
@@ -249,9 +274,7 @@ async fn dial_v311(
     let packet_ceiling = MqttPacketCeiling::Configured(pool.max_packet_size);
     let max_packet_size = pool.max_packet_size.octets() as usize;
     options.set_max_packet_size(max_packet_size, max_packet_size);
-    if key.use_tls {
-        options.set_transport(Transport::tls_with_default_config());
-    }
+    options.set_transport(transport);
     if let Some(username) = endpoint.username.as_ref() {
         let password = endpoint.password.as_ref().map_or_else(String::new, |secret| secret.expose_secret().to_owned());
         options.set_credentials(username.clone(), password); // clone: `set_credentials` takes ownership
@@ -311,4 +334,81 @@ async fn dial_v311(
     });
 
     Ok((MqttClientVariant::V311 { client, packet_ceiling }, task))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        connection_failure::ConnectionFailure,
+        endpoint::{
+            mqtt::{MqttEndpointConfig, MqttQoS, MqttVersion},
+            topic::MqttTopic,
+        },
+        error::TransportError,
+        host_port::HostPort,
+        mqtt::{client_tls::mqtt_client_tls, config::MqttPoolConfig, connection::ConnectionState, connection_key::MqttConnectionKey, dial::dial},
+    };
+    use rumqttc::{ConnectionError, v5::ConnectionError as ConnectionErrorV5};
+    use std::{str::FromStr, sync::Arc};
+    use tokio::net::TcpListener;
+    use url::Url;
+
+    /// A loopback peer that accepts every TCP connection and closes it before
+    /// sending a TLS record.
+    async fn handshake_dropping_peer() -> HostPort {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("a loopback port binds");
+        let port = listener.local_addr().expect("the listener has an address").port();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                drop(stream);
+            }
+        });
+        HostPort::from_str(&format!("127.0.0.1:{port}")).expect("a valid authority")
+    }
+
+    /// An `mqtts` endpoint on `authority`, speaking `version`.
+    fn tls_endpoint(authority: HostPort, version: MqttVersion) -> MqttEndpointConfig {
+        MqttEndpointConfig {
+            endpoint_uri: Url::parse(&format!("mqtts://{authority}/andromeda/test")).expect("a valid endpoint URI"),
+            authority,
+            topic: MqttTopic::from_str("andromeda/test").expect("a valid topic"),
+            use_tls: true,
+            version,
+            qos: MqttQoS::AtMost,
+            username: None,
+            password: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn an_mqtts_dial_whose_handshake_is_cut_fails_on_the_tls_layer_in_both_protocol_versions() {
+        let tls = mqtt_client_tls().expect("the system trust store yields a TLS client configuration");
+        for version in [MqttVersion::V311, MqttVersion::V5] {
+            let endpoint = tls_endpoint(handshake_dropping_peer().await, version);
+            let key = MqttConnectionKey::from_config(&endpoint);
+            let state = Arc::new(ConnectionState::connected());
+
+            let failure = dial(&key, &endpoint, &MqttPoolConfig::default(), &state, &tls)
+                .await
+                .map(drop)
+                .expect_err("the peer never completes a TLS handshake");
+
+            assert!(
+                matches!(
+                    &failure,
+                    TransportError::ConnectionFailed {
+                        cause: ConnectionFailure::MqttV311Connect(cause),
+                        ..
+                    } if matches!(**cause, ConnectionError::Tls(_))
+                ) || matches!(
+                    &failure,
+                    TransportError::ConnectionFailed {
+                        cause: ConnectionFailure::MqttV5Connect(cause),
+                        ..
+                    } if matches!(**cause, ConnectionErrorV5::Tls(_))
+                ),
+                "{version}: {failure:?}"
+            );
+        }
+    }
 }
