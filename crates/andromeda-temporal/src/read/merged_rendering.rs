@@ -25,6 +25,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_compaction::{aggregated_entity::aggregated_entity, entity_compactor::EntityCompactor};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
+use andromeda_ngsi_ld_query::projection::attrs_selection::AttrsAdmission;
 use andromeda_ngsi_ld_render::temporal::whole_range::WholeRange;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use chrono::Utc;
@@ -67,7 +68,9 @@ impl TemporalService {
         parts: Vec<EntityParts>,
     ) -> Result<MergedRendering, TemporalError> {
         let QueryReading { context, language_targeting } = reading;
-        let mut compiled = self.compile_temporal_query(params, context, language_targeting).await?;
+        let mut compiled = self
+            .compile_temporal_query(params, context, language_targeting, AttrsAdmission::ReifiedScopeAdmitted)
+            .await?;
         compiled.instances.page = compiled.instances.page.unpaged();
         let compiled = compiled;
         let entity_ids: Vec<Identifier> = parts

@@ -67,7 +67,8 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::ParamEndTimeAtWithoutBetween
         | QueryError::ParamEndTimeAtNotAfterTimeAt
         | QueryError::ProjectionKeywordWithLinkedTerm { .. }
-        | QueryError::ProjectionMemberPickedAndOmitted { .. } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
+        | QueryError::AttrsReservedMember { .. }
+        | QueryError::ProjectionMemberPickedAndOmitted { .. } =>ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
         // Clause 5.5.6: a query "so complex that cannot be resolved" raises
         // TooComplexQuery, which Table 6.3.2-1 answers with 403.
         QueryError::ReferenceGeometryTooComplex { .. } | QueryError::QTooManyComparisons { .. } | QueryError::QNestedTooDeep { .. } => {

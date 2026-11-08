@@ -49,7 +49,6 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::FilterDepthExceedsJoinLevel { .. }
         | ParameterError::LinkedRetrievalUnavailable { .. }
         | ParameterError::InlineJoinWithoutInstances(_)
-        | ParameterError::AttrsReservedMember(_)
         | ParameterError::TimerelTimeatRequired
         | ParameterError::SelectorRequired(_)
         | ParameterError::AggrMethodsRequired

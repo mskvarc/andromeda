@@ -20,7 +20,7 @@ use andromeda_linked_retrieval::{
 use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_rel::TimeRel};
 use andromeda_ngsi_ld_model::temporal::{temporal_body::TemporalBody, temporal_entity::TemporalEntity, temporal_history::TemporalHistory};
-use andromeda_ngsi_ld_query::projection::grammar::ProjectionList;
+use andromeda_ngsi_ld_query::projection::{attrs_selection::AttrsAdmission, grammar::ProjectionList};
 use andromeda_ngsi_ld_render::temporal::temporal_evolutions::TemporalEvolutions;
 use andromeda_ngsi_ld_representation::{
     join_mode::JoinMode,
@@ -212,7 +212,7 @@ fn bare(id: &str) -> TemporalBody {
 /// The join `params` asks for from `roots`.
 async fn joined(service: &TemporalService, roots: &[TemporalBody], params: &TemporalQueryParameters) -> TemporalLinkedJoin {
     service
-        .join_linked_temporal(&live_target(), roots, params, &context())
+        .join_linked_temporal(&live_target(), roots, params, &context(), AttrsAdmission::ReifiedScopeAdmitted)
         .await
         .expect("resolves")
         .expect("the request asked for a join")
@@ -256,7 +256,7 @@ async fn no_retrieving_join_traverses_nothing() {
     params.join = Some(JoinMode::None);
     let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
     let joined = service(StubBroker::new([(uri("urn:ngsi-ld:T:B"), Vec::new())]))
-        .join_linked_temporal(&live_target(), &roots, &params, &context())
+        .join_linked_temporal(&live_target(), &roots, &params, &context(), AttrsAdmission::ReifiedScopeAdmitted)
         .await
         .expect("resolves");
     assert!(joined.is_none());

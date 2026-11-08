@@ -32,7 +32,10 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
-use andromeda_ngsi_ld_query::split_filter::{LeafTruths, SplitFilter};
+use andromeda_ngsi_ld_query::{
+    projection::attrs_selection::AttrsAdmission,
+    split_filter::{LeafTruths, SplitFilter},
+};
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use std::collections::{HashMap, HashSet};
@@ -77,7 +80,9 @@ impl TemporalService {
         answered: &AnsweredParts<'_>,
         local: &LocalInEffect,
     ) -> Result<SplitSettlement, TemporalError> {
-        let compiled = self.compile_temporal_query(params, reading.context, reading.language_targeting).await?;
+        let compiled = self
+            .compile_temporal_query(params, reading.context, reading.language_targeting, AttrsAdmission::ReifiedScopeAdmitted)
+            .await?;
         let filter = SplitFilter::of(&compiled.entities);
         let mut parts: HashMap<&Identifier, Vec<&TemporalDocument>> = HashMap::new();
         for part in answered.in_window.iter().chain(&answered.in_effect) {

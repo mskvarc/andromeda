@@ -145,9 +145,6 @@ pub enum ParameterError {
     /// per-instance nesting site.
     #[error("join=inline is not applicable to the {0} representation, which has no attribute instance to nest a linked entity under")]
     InlineJoinWithoutInstances(TemporalFormat),
-    /// The deprecated `attrs` parameter named a structural Entity member.
-    #[error("'{0}' is an Entity member and is not allowed in attrs")]
-    AttrsReservedMember(AttributeName),
     /// A temporal query was issued without the required `timerel`/`timeAt` pair.
     #[error("timerel and timeAt are required for temporal query")]
     TimerelTimeatRequired,

@@ -17,6 +17,7 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     dataset::DatasetFilter,
     page_window::PageWindow,
+    projection::attrs_selection::AttrsAdmission,
     temporal::{
         compiled::CompiledTemporalQuery,
         history_delete::{AttributeDeleteScope, TemporalHistoryDeleteScope},
@@ -61,7 +62,10 @@ impl TemporalService {
     ) -> Result<TemporalDeleteOutcome, TemporalError> {
         params.validate()?;
         let selection = params.selection_params();
-        let compiled = self.compile_temporal_query(&selection, context, self.language_targeting()).await?;
+        // The delete selection carries no `attrs`, so the admission never sees a name.
+        let compiled = self
+            .compile_temporal_query(&selection, context, self.language_targeting(), AttrsAdmission::ReifiedScopeAdmitted)
+            .await?;
 
         // Stage 1 entity resolution, unpaged: the delete addresses every
         // matching entity, not one page of them. A cheap guard first — no entity

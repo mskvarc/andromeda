@@ -16,8 +16,9 @@ use crate::{error::EntityError, query::EntityQueryService};
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::projection::{
+    attrs_selection::{AttrsAdmission, expand_attrs_admitted},
     compiled::Projection,
-    expansion::{expand_attrs, expand_projection},
+    expansion::expand_projection,
     grammar::RawProjectionTerm,
 };
 use iri_rs::IriBuf;
@@ -50,19 +51,24 @@ impl EntityQueryService {
     }
 
     /// Expand a request's `attrs` names (clause 5.7.2) against the active
-    /// context.
+    /// context, refusing a name that spells a structural Entity member.
+    ///
+    /// Table 6.5.3.1-1 restricts `attrs` to "an Attribute (Property or
+    /// Relationship) name" and says outright that "id, type, scope are not
+    /// allowed". Clause 4.18 agrees for this representation: an Entity
+    /// retrieval leaves the Scope non-reified, so it is no Attribute here.
     ///
     /// # Errors
     ///
     /// Returns [`EntityError`] when a name cannot be expanded through the
-    /// context.
+    /// context, or names an Entity member.
     pub async fn expand_attribute_names(&self, names: &[AttributeName], context: &ContextSpec) -> Result<Vec<IriBuf>, EntityError> {
         if names.is_empty() {
             return Ok(Vec::new());
         }
         let prepared_context = self.engine().prepare_term_context(context);
         let expander = ContextualExpander::new(self.engine(), &prepared_context);
-        Ok(expand_attrs(names, &expander).await?)
+        Ok(expand_attrs_admitted(names, AttrsAdmission::AttributeNamesOnly, &expander).await?)
     }
 }
 

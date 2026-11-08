@@ -1,7 +1,6 @@
 //! Entity-query semantic validation and option resolution.
 
 use crate::{
-    attribute_selection::{AttrsAdmission, validate_attrs},
     entity_map_lifetime::require_entity_map_for_lifetime,
     error::ParameterError,
     query::entity::{
@@ -62,8 +61,7 @@ impl EntityQueryParameters {
     ///
     /// # Errors
     ///
-    /// Returns [`ParameterError::AttrsReservedMember`] when `attrs` names an
-    /// Entity member, [`ParameterError::WildcardTypeWithLocalFalse`] when
+    /// Returns [`ParameterError::WildcardTypeWithLocalFalse`] when
     /// `type=*` is combined with `local=false`, [`ParameterError::Projection`]
     /// for the clause 4.21 selector conflicts,
     /// [`ParameterError::LimitZeroWithoutCount`] for `limit=0` without the
@@ -81,12 +79,6 @@ impl EntityQueryParameters {
         // Clause 5.7.2.4: a query naming no type, attribute, filter, geoquery
         // or local scope asks for everything the broker holds.
         require_narrowing(&self.narrowing_inputs())?;
-        // Table 6.4.3.2-1 restricts `attrs` to "an Attribute (Property or
-        // Relationship) name", which is the whole restriction whether or not
-        // the row repeats `pick`'s exception. A query answers in an Entity
-        // representation, where clause 4.18 leaves the Scope non-reified and so
-        // not an Attribute at all, so `scope` names nothing the row admits.
-        validate_attrs(self.attrs.as_deref(), AttrsAdmission::AttributeNamesOnly)?;
         require_wildcard_locality(self.local, self.entity_type.as_ref(), &self.entity_selectors)?;
         check_projection_exclusivity(ProjectionSelectors {
             pick: Presence::of(self.pick.as_deref()),

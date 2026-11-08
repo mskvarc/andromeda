@@ -24,7 +24,7 @@ use andromeda_ngsi_ld_model::{
     entity_system_times::EntitySystemTimes,
     temporal::{TemporalHistoryRow, temporal_document::TemporalDocument},
 };
-use andromeda_ngsi_ld_query::split_filter::SplitFilter;
+use andromeda_ngsi_ld_query::{projection::attrs_selection::AttrsAdmission, split_filter::SplitFilter};
 use andromeda_ngsi_ld_render::temporal::history_row::neutral_row_to_instance;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
@@ -73,7 +73,9 @@ impl TemporalService {
         reading: QueryReading<'_>,
         entity_ids: &[Identifier],
     ) -> Result<LocalInEffect, TemporalError> {
-        let compiled = self.compile_temporal_query(params, reading.context, reading.language_targeting).await?;
+        let compiled = self
+            .compile_temporal_query(params, reading.context, reading.language_targeting, AttrsAdmission::ReifiedScopeAdmitted)
+            .await?;
         let filter = SplitFilter::of(&compiled.entities);
         if entity_ids.is_empty() || filter.is_empty() || compiled.window.in_effect_start().is_none() {
             return Ok(LocalInEffect::default());

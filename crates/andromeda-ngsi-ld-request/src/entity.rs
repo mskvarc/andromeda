@@ -1,7 +1,6 @@
 //! Query parameter types for entity API endpoints.
 
 use crate::{
-    attribute_selection::{AttrsAdmission, validate_attrs},
     entity_map_lifetime::require_entity_map_for_lifetime,
     error::ParameterError,
     language_filter::deserialize_optional_language_filter,
@@ -255,8 +254,7 @@ impl GetEntityParams {
     ///
     /// # Errors
     ///
-    /// Returns [`ParameterError::AttrsReservedMember`] when `attrs` names an
-    /// Entity member, [`ParameterError::Projection`] when the clause 4.21
+    /// Returns [`ParameterError::Projection`] when the clause 4.21
     /// selectors contradict each other, and
     /// [`ParameterError::ProjectionLinkedTermsWithoutJoin`] or
     /// [`ParameterError::ProjectionDepthExceedsJoinLevel`] when a nested
@@ -271,11 +269,6 @@ impl GetEntityParams {
         // define is refused here rather than during deserialisation, where the
         // error type would have been lost.
         self.resolve_render_mode()?;
-        // Table 6.5.3.1-1 restricts `attrs` to "an Attribute (Property or
-        // Relationship) name" and says outright that "id, type, scope are not
-        // allowed". Clause 4.18 agrees for this representation: an Entity
-        // retrieval leaves the Scope non-reified, so it is no Attribute here.
-        validate_attrs(self.attrs.as_deref(), AttrsAdmission::AttributeNamesOnly)?;
         // Clause 4.21: the retrieval carries the same three selectors a query
         // does, and so the same rule about combining them.
         check_projection_exclusivity(ProjectionSelectors {

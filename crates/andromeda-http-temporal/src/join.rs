@@ -62,7 +62,10 @@ pub(crate) async fn apply_temporal_join(
     roots: &[TemporalBody],
     warnings: Vec<NgsiLdWarning>,
 ) -> Result<(ResolvedJoin, Vec<NgsiLdWarning>), TemporalError> {
-    let joined = read.service.join_linked_temporal(read.target, roots, read.params, read.context).await?;
+    let joined = read
+        .service
+        .join_linked_temporal(read.target, roots, read.params, read.context, read.attrs_admission)
+        .await?;
     let warnings = match &joined {
         Some(joined) => with_linked_resolution_warnings(warnings, joined.failures()),
         None => warnings,

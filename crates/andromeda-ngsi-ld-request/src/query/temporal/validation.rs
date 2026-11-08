@@ -6,7 +6,6 @@
 //! constraints a retrieval and a query each have to meet.
 
 use crate::{
-    attribute_selection::{AttrsAdmission, validate_attrs},
     entity_map_lifetime::require_entity_map_for_lifetime,
     error::ParameterError,
     query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation},
@@ -25,23 +24,6 @@ use andromeda_ngsi_ld_query::{
     },
 };
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, sys_attrs::SysAttrsInclusion};
-
-/// Which Entity members `attrs` admits at each of the temporal operations.
-///
-/// Both tables restrict `attrs` to "an Attribute (Property or Relationship)
-/// name", and clause 4.18 makes the Scope "a special scope Property that is
-/// non-reified in the normalized Entity representation and reified in the
-/// temporal representation of an Entity" — so on a temporal answer `scope` is
-/// an Attribute name and Table 6.18.3.2-1 excludes nothing further. Table
-/// 6.19.3.1-1 excludes it explicitly on the retrieval, "except that id, type,
-/// scope are not allowed", and an explicit prohibition beats an inference from
-/// the representation, so the same spelling is a bad request there.
-const fn attrs_admission(operation: TemporalQueryOperation) -> AttrsAdmission {
-    match operation {
-        TemporalQueryOperation::Query | TemporalQueryOperation::EntityMap => AttrsAdmission::ReifiedScopeAdmitted,
-        TemporalQueryOperation::Retrieve => AttrsAdmission::AttributeNamesOnly,
-    }
-}
 
 impl TemporalQueryParameters {
     /// Returns whether the query should be local-only (no distributed forwarding).
@@ -139,8 +121,7 @@ impl TemporalQueryParameters {
     ///
     /// # Errors
     ///
-    /// Returns [`ParameterError::AttrsReservedMember`] when `attrs` names an
-    /// Entity member, [`ParameterError::WildcardTypeWithLocalFalse`] when
+    /// Returns [`ParameterError::WildcardTypeWithLocalFalse`] when
     /// `type=*` meets `local=false`, [`ParameterError::Projection`] for the
     /// clause 4.21 selector conflicts, the Linked Entity admission errors when a nested
     /// projection term, a `q` hop or a retrieving `join` references a Linked
@@ -164,7 +145,6 @@ impl TemporalQueryParameters {
         // define is refused here rather than during deserialisation, where the
         // error type would have been lost.
         self.parse_format()?;
-        validate_attrs(self.attrs.as_deref(), attrs_admission(operation))?;
         // Table 6.18.3.2-1: with `type=*`, "local is implicitly set to true and
         // shall not be explicitly set to false".
         require_wildcard_locality(self.local, self.entity_type.as_ref(), &self.entity_selectors)?;

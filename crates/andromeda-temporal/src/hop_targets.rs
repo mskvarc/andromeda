@@ -41,6 +41,7 @@ use andromeda_ngsi_ld_model::temporal::{
     temporal_history::TemporalHistory,
 };
 use andromeda_ngsi_ld_query::{
+    projection::attrs_selection::AttrsAdmission,
     queried_entity::linked_entities::LinkedEntities,
     split_filter::HopReads,
     temporal::{compiled::CompiledTemporalQuery, window::TemporalWindow},
@@ -171,7 +172,14 @@ impl TemporalService {
                     .map(|names| names.iter().map(|name| (*name).clone()).collect()), // clone: the window owns the names it asks for
                 ..TemporalLinkedWindow::of_request(params)
             };
-            let compiled = self.compile_temporal_query(&window.to_parameters(), context, self.language_targeting()).await?;
+            let compiled = self
+                .compile_temporal_query(
+                    &window.to_parameters(),
+                    context,
+                    self.language_targeting(),
+                    AttrsAdmission::ReifiedScopeAdmitted,
+                )
+                .await?;
             let read = TargetRead {
                 target,
                 scope: &scope,

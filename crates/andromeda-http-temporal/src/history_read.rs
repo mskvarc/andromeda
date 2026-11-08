@@ -10,7 +10,7 @@
 
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
+use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, projection::attrs_selection::AttrsAdmission};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_temporal::service::TemporalService;
 
@@ -28,4 +28,6 @@ pub(crate) struct TemporalHistoryRead<'a> {
     /// What the query's target languages may be and how they select
     /// languageMap keys.
     pub(crate) language_targeting: LanguageTargeting,
+    /// Which Entity members the read's `attrs` admits, set by the operation the read answers.
+    pub(crate) attrs_admission: AttrsAdmission,
 }

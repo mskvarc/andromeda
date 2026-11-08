@@ -31,7 +31,11 @@ use andromeda_linked_retrieval::{
     traversal::traverse,
 };
 use andromeda_ngsi_ld_model::temporal::temporal_body::TemporalBody;
-use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection, expansion::expand_attrs};
+use andromeda_ngsi_ld_query::projection::{
+    attribute_iri_index::AttributeIriIndex,
+    attrs_selection::{AttrsAdmission, expand_attrs_admitted},
+    compiled::Projection,
+};
 use andromeda_ngsi_ld_render::temporal::temporal_evolutions::TemporalEvolutions;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
@@ -95,12 +99,20 @@ impl TemporalService {
         roots: &[TemporalBody],
         params: &TemporalQueryParameters,
         context: &ContextSpec,
+        attrs_admission: AttrsAdmission,
     ) -> Result<Option<TemporalLinkedJoin>, TemporalError> {
         let Some(join) = RetrievingJoin::from_mode(params.join) else {
             return Ok(None);
         };
         let window = TemporalLinkedWindow::of_request(params);
-        let compiled = self.compile_temporal_query(&window.to_parameters(), context, self.language_targeting()).await?;
+        let compiled = self
+            .compile_temporal_query(
+                &window.to_parameters(),
+                context,
+                self.language_targeting(),
+                AttrsAdmission::ReifiedScopeAdmitted,
+            )
+            .await?;
         let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
         let source = TemporalLinkedSource::new(self, target, scope, &compiled, &window, context);
         let bounds = TraversalBounds::of(params.join_level, params.contained_by.as_deref());
@@ -112,7 +124,7 @@ impl TemporalService {
             join,
             graph,
             projection: compile_projection(params, &expander).await?,
-            attrs: expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?,
+            attrs: expand_attrs_admitted(params.attrs.as_deref().unwrap_or_default(), attrs_admission, &expander).await?,
             index: AttributeIriIndex::default(),
         };
         // A list that narrows nothing matches nothing, and needs no index.

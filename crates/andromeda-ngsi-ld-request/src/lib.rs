@@ -17,7 +17,6 @@
 //! a silently ignored `?limitt=1000` is a wrong answer rather than a slow one.
 
 pub mod attribute_deletion;
-mod attribute_selection;
 pub mod body;
 pub mod deferred_split_filters;
 pub mod discovery;

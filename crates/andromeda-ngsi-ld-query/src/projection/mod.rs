@@ -3,6 +3,7 @@
 //! delete-by-query operation (clause 5.6.21).
 
 pub mod attribute_iri_index;
+pub mod attrs_selection;
 pub mod compiled;
 pub mod exclusivity;
 pub mod expansion;

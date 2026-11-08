@@ -15,7 +15,6 @@
 //! operation compiles.
 
 use crate::{
-    attribute_selection::{AttrsAdmission, validate_attrs},
     error::ParameterError,
     pagination::parameters::PageParameters,
     query::{
@@ -145,8 +144,7 @@ impl PurgeEntitiesParameters {
     /// # Errors
     ///
     /// Returns [`ParameterError::SelectorRequired`] for a purge none of the
-    /// clause 5.6.21.4 inputs narrows, [`ParameterError::AttrsReservedMember`]
-    /// when `attrs` names an Entity member,
+    /// clause 5.6.21.4 inputs narrows,
     /// [`ParameterError::WildcardTypeWithLocalFalse`] when `type=*` meets
     /// `local=false`, [`ParameterError::DropKeepExclusive`] when `drop` and
     /// `keep` are both present, [`ParameterError::DatasetIdWithDeleteAll`]
@@ -165,7 +163,6 @@ impl PurgeEntitiesParameters {
                 .local_scope(self.execution_scope())
                 .build(),
         )?;
-        validate_attrs(self.attrs.as_deref(), AttrsAdmission::AttributeNamesOnly)?;
         require_wildcard_locality(self.local, self.entity_type.as_ref(), &[])?;
         if self.drop.is_some() && self.keep.is_some() {
             return Err(ParameterError::DropKeepExclusive);

@@ -15,8 +15,9 @@ use andromeda_ngsi_ld_query::{
     },
     geo::{compile as geo_compile, query::GeoQuery},
     projection::{
+        attrs_selection::{AttrsAdmission, expand_attrs_admitted},
         compiled::Projection,
-        expansion::{expand_attrs, expand_projection},
+        expansion::expand_projection,
         projected_members::ProjectedMembers,
     },
     temporal::{
@@ -53,6 +54,7 @@ impl TemporalService {
         params: &TemporalQueryParameters,
         context: &ContextSpec,
         language_targeting: LanguageTargeting,
+        attrs_admission: AttrsAdmission,
     ) -> Result<CompiledTemporalQuery, TemporalError> {
         let prepared_context = self.engine.prepare_term_context(context);
         let expander = ContextualExpander::new(&self.engine, &prepared_context);
@@ -61,7 +63,7 @@ impl TemporalService {
         // cannot disagree on what a selection means.
         let selectors = compile_entity_selectors(&self.engine, &prepared_context, &params.selectors()).await?;
 
-        let attr_filter = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
+        let attr_filter = expand_attrs_admitted(params.attrs.as_deref().unwrap_or_default(), attrs_admission, &expander).await?;
         let projection = compile_projection(params, &expander).await?;
 
         let dataset_id_filter = params
@@ -282,6 +284,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         error::QueryError,
         filter::{expansion::expand_json_keys, language_targeting::LanguageTargeting},
+        projection::attrs_selection::AttrsAdmission,
         temporal::{aggregation_period::AggregationPeriod, grouping::group_key::GroupKey, instance_page::InstancePage, period_budget::PeriodBudget},
     };
     use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
@@ -471,7 +474,12 @@ mod tests {
                 ..TemporalQueryParameters::default()
             };
             let result = service
-                .compile_temporal_query(&params, &ContextSpec::core_only(), LanguageTargeting::Specification)
+                .compile_temporal_query(
+                    &params,
+                    &ContextSpec::core_only(),
+                    LanguageTargeting::Specification,
+                    AttrsAdmission::ReifiedScopeAdmitted,
+                )
                 .await;
             if admitted {
                 assert!(result.is_ok(), "{q}: {result:?}");

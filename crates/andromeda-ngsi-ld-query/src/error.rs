@@ -227,6 +227,12 @@ pub enum QueryError {
         /// The offending keyword.
         keyword: AttributeName,
     },
+    /// The deprecated `attrs` parameter named an Entity member its operation does not admit. The refusal is decided on the expanded name, so a context alias of the Scope is refused as the Scope itself.
+    #[error("'{term}' is an Entity member and is not allowed in attrs")]
+    AttrsReservedMember {
+        /// The name as the request spelled it.
+        term: AttributeName,
+    },
     /// `pick` and `omit` name the same member of the same Entity once both are expanded against the request `@context`, so its pick selects nothing (clause 4.21).
     #[error("'{member}' is named in both pick and omit")]
     ProjectionMemberPickedAndOmitted {

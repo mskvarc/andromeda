@@ -27,7 +27,8 @@ use andromeda_ngsi_ld_query::{
         term::{CompiledOrderTerm, OrderTarget, RawOrderTarget},
     },
     projection::{
-        expansion::{expand_attrs, expand_projection},
+        attrs_selection::{AttrsAdmission, expand_attrs_admitted},
+        expansion::expand_projection,
         projected_members::ProjectedMembers,
     },
     term_expander::TermExpander,
@@ -90,7 +91,11 @@ impl EntityQueryService {
         let selectors = compile_entity_selectors(self.engine(), &prepared_context, &params.selectors()).await?;
 
         let expander = ContextualExpander::new(self.engine(), &prepared_context);
-        let attrs = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
+        // Table 6.4.3.2-1 restricts `attrs` to "an Attribute (Property or
+        // Relationship) name". A query answers in an Entity representation, where
+        // clause 4.18 leaves the Scope non-reified, so `scope` names nothing the
+        // row admits.
+        let attrs = expand_attrs_admitted(params.attrs.as_deref().unwrap_or_default(), AttrsAdmission::AttributeNamesOnly, &expander).await?;
         let json_keys = expand_json_keys(params.json_keys.as_deref(), &expander).await?;
         if let Some(q) = &params.q {
             self.filter_complexity.admit(q)?;

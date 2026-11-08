@@ -23,6 +23,7 @@ use andromeda_ngsi_ld_query::{
     candidate_filters::CandidateFilters,
     count_policy::CountPolicy,
     page_window::PageWindow,
+    projection::attrs_selection::AttrsAdmission,
     temporal::compiled::CompiledTemporalQuery,
 };
 use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation};
@@ -54,7 +55,9 @@ impl TemporalService {
         let result = async {
             params.validate(TemporalQueryOperation::Retrieve, self.linked_retrieval)?;
 
-            let compiled = self.compile_temporal_query(params, context, self.language_targeting()).await?;
+            let compiled = self
+                .compile_temporal_query(params, context, self.language_targeting(), AttrsAdmission::AttributeNamesOnly)
+                .await?;
             ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
             if shapes_decide_eligibility(&compiled) {
                 let every = self.reader.read_scope(target, ScopeReach::Every).await?;
@@ -183,7 +186,9 @@ impl TemporalService {
         let timer = temporal::start(TemporalOperation::QueryIds);
         let result = async {
             params.validate(TemporalQueryOperation::Query, self.linked_retrieval)?;
-            let mut compiled = self.compile_temporal_query(params, context, language_targeting).await?;
+            let mut compiled = self
+                .compile_temporal_query(params, context, language_targeting, AttrsAdmission::ReifiedScopeAdmitted)
+                .await?;
             match identifiers {
                 RequestedIdentifiers::Narrow => {}
                 RequestedIdentifiers::Ignore => compiled.entities.without_identifier_narrowing(),

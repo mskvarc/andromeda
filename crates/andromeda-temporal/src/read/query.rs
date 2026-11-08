@@ -25,6 +25,7 @@ use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Id
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     page_window::PageWindow,
+    projection::attrs_selection::AttrsAdmission,
     temporal::{compiled::CompiledTemporalQuery, contributed_entities::ContributedEntities},
 };
 use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation};
@@ -71,7 +72,9 @@ impl TemporalService {
         let result = async {
             params.validate(TemporalQueryOperation::Query, self.linked_retrieval)?;
 
-            let mut compiled = self.compile_temporal_query(params, context, language_targeting).await?;
+            let mut compiled = self
+                .compile_temporal_query(params, context, language_targeting, AttrsAdmission::ReifiedScopeAdmitted)
+                .await?;
             compiled.contributed = contributed;
             let compiled = compiled;
 

@@ -33,6 +33,7 @@ use crate::{
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
+use andromeda_ngsi_ld_query::projection::attrs_selection::AttrsAdmission;
 use andromeda_ngsi_ld_render::structural_projection::StructuralProjection;
 use andromeda_temporal::{
     error::TemporalError,
@@ -172,6 +173,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         params: &params,
         context: &context,
         language_targeting: admitted.language.targeting,
+        attrs_admission: AttrsAdmission::ReifiedScopeAdmitted,
     };
     // The histories are compacted under the request context once every holder's
     // part has been merged into them (clause 5.7.3); the join then reads the
