@@ -4,7 +4,7 @@ use andromeda_test_suite::{
     answered_status::AnsweredStatus,
     broker,
     cleanup::Cleanup,
-    config::{BrokerRole, SuiteConfig},
+    config::BrokerRole,
     context_source::ContextSource,
     eventually::retried,
     namespace::Namespace,
@@ -34,23 +34,11 @@ use std::time::Duration;
 async fn a_snp_qry_8140_an_operation_under_a_snapshot_preparing_past_the_wait_is_refused_with_retry_after() -> Result<()> {
     let namespace = Namespace::fresh();
     let source = ContextSource::start().await?;
-    let config = SuiteConfig::get()?;
     let broker_snapshot = broker::client(BrokerRole::Durable)?;
-    let broker_snapshot_tenant = broker_snapshot.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let provisioning_sentinel_type = namespace.entity_type("ProvisioningSentinel")?;
+    let broker_snapshot_tenant = broker::private_tenant(&broker_snapshot, &namespace).await?;
     let registration_id = namespace.registration_id(1)?;
     let slow_type = namespace.entity_type("Slow")?;
     let snapshot_id = format!("urn:ngsi-ld:Snapshot:{namespace}-1").parse::<SnapshotId>()?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([provisioning_sentinel_type.as_str()]).build()?])
-        .build()?;
-    broker_snapshot_tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&broker_snapshot_tenant).registration(&registration_provision_id);
-    broker_snapshot_tenant.registrations().delete(&registration_provision_id).send().await?;
     let source_entities = [];
     source
         .answer_when(

@@ -1,17 +1,10 @@
 //! A tenant over its snapshot quota loses its lowest priority snapshot first.
 
-use andromeda_test_suite::{
-    broker,
-    cleanup::Cleanup,
-    config::{BrokerRole, SuiteConfig},
-    namespace::Namespace,
-    problem::answered,
-};
+use andromeda_test_suite::{broker, config::BrokerRole, namespace::Namespace, problem::answered};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
     http::headers::Accept,
-    registration::{CSourceRegistration, RegistrationInfo},
     snapshot::{QueryDocument, Snapshot, SnapshotId},
 };
 
@@ -24,26 +17,14 @@ use ngsi_ld::{
 #[tokio::test]
 async fn a_snp_lim_8140_a_tenant_over_its_snapshot_quota_loses_its_lowest_priority_snapshot_first() -> Result<()> {
     let namespace = Namespace::fresh();
-    let config = SuiteConfig::get()?;
     let broker_snapshot = broker::client(BrokerRole::Durable)?;
-    let broker_snapshot_tenant = broker_snapshot.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let provisioning_sentinel_type = namespace.entity_type("ProvisioningSentinel")?;
+    let broker_snapshot_tenant = broker::private_tenant(&broker_snapshot, &namespace).await?;
     let snapshot_low_id = format!("urn:ngsi-ld:Snapshot:{namespace}-low").parse::<SnapshotId>()?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
     let snapshot_early_id = format!("urn:ngsi-ld:Snapshot:{namespace}-early").parse::<SnapshotId>()?;
     let snapshot_late_id = format!("urn:ngsi-ld:Snapshot:{namespace}-late").parse::<SnapshotId>()?;
     let snapshot_high_id = format!("urn:ngsi-ld:Snapshot:{namespace}-high").parse::<SnapshotId>()?;
     let snapshot_fifth_id = format!("urn:ngsi-ld:Snapshot:{namespace}-fifth").parse::<SnapshotId>()?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([provisioning_sentinel_type.as_str()]).build()?])
-        .build()?;
-    broker_snapshot_tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&broker_snapshot_tenant).registration(&registration_provision_id);
-    broker_snapshot_tenant.registrations().delete(&registration_provision_id).send().await?;
     let snapshot = Snapshot::builder()
         .id(format!("urn:ngsi-ld:Snapshot:{namespace}-low").parse::<SnapshotId>()?)
         .query(QueryDocument::builder().entities([vehicle_type.as_str()]).build()?)

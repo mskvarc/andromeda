@@ -2,8 +2,6 @@
 
 use andromeda_test_suite::{
     broker,
-    cleanup::Cleanup,
-    config::SuiteConfig,
     evolution_matcher::has_evolution,
     identity_matcher::has_id,
     namespace::Namespace,
@@ -16,7 +14,6 @@ use ngsi_ld::{
     http::headers::Accept,
     model::{NgsiLdMediaType, Property, evolution::TemporalEntity},
     query::temporal_query,
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Query Temporal Evolution of Entities with attrs=load and no type, limit 2, over Evolutions of the types
@@ -33,10 +30,7 @@ use ngsi_ld::{
 async fn o_tmp_qry_9079_an_attrs_selection_pages_the_holders_of_every_type_once_in_identifier_order() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let vehicle_0006_id = namespace.urn("Vehicle", "0006")?;
     let bus_type = namespace.entity_type("Bus")?;
     let vehicle_0002_id = namespace.urn("Vehicle", "0002")?;
@@ -46,15 +40,6 @@ async fn o_tmp_qry_9079_an_attrs_selection_pages_the_holders_of_every_type_once_
     let vehicle_0004_id = namespace.urn("Vehicle", "0004")?;
     let truck_type = namespace.entity_type("Truck")?;
     let vehicle_0001_id = namespace.urn("Vehicle", "0001")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let vehicle_0006_evolution = TemporalEntity::builder()
         .id(vehicle_0006_id.clone())
         .entity_type(bus_type.clone())

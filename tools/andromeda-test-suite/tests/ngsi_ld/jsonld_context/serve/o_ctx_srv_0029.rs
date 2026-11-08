@@ -1,12 +1,11 @@
 //! Serve any spelling of the core context url is resource not found.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, namespace::Namespace, problem::problem};
+use andromeda_test_suite::{broker, namespace::Namespace, problem::problem};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
     http::headers::Accept,
     model::{ContextId, ErrorType},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Serve @context of the core @context, under the v1.9 URL, the versionless URL and the v1.8 URL, answers
@@ -21,19 +20,7 @@ use ngsi_ld::{
 async fn o_ctx_srv_0029_serve_any_spelling_of_the_core_context_url_is_resource_not_found() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let answer = tenant
         .with_responses()
         .with_accept(Accept::any())

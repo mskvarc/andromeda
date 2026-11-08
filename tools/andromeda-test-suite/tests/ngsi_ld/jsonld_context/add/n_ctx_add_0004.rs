@@ -1,13 +1,12 @@
 //! An array body is bad request data.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, namespace::Namespace, problem::problem, wire::request_to};
+use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, wire::request_to};
 use bytes::Bytes;
 use googletest::prelude::*;
 use http::{HeaderName, HeaderValue, Method, StatusCode, header::CONTENT_TYPE};
 use ngsi_ld::{
     http::{headers::Accept, operation::ContextKindFilter},
     model::ErrorType,
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Add @context with a JSON array holding an @context object is refused as `BadRequestData` without a
@@ -20,19 +19,7 @@ use ngsi_ld::{
 async fn n_ctx_add_0004_an_array_body_is_bad_request_data() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     // The body is no document holding only an @context, which the model cannot write, so it is sent as written.
     let request = request_to(&tenant, Method::POST, "jsonldContexts")?
         .append_header(CONTENT_TYPE, HeaderValue::from_static("application/json"))

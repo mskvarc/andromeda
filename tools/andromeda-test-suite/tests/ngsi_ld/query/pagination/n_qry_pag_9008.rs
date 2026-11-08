@@ -3,7 +3,6 @@
 use andromeda_test_suite::{
     broker,
     cleanup::Cleanup,
-    config::SuiteConfig,
     context_source::ContextSource,
     identity_matcher::has_id,
     namespace::Namespace,
@@ -34,24 +33,12 @@ async fn n_qry_pag_9008_an_entity_whose_holder_was_not_consulted_stays_in_the_ma
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let source = ContextSource::start().await?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let em_holder_id = namespace.urn("EmHolder", 1)?;
     let em_holder_type = namespace.entity_type("EmHolder")?;
     let em_holder_2_id = namespace.urn("EmHolder", 2)?;
     let em_holder_remote_id = namespace.urn("EmHolder", "remote")?;
     let registration_id = namespace.registration_id(1)?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let entities = [
         Entity::builder()
             .id(em_holder_id.clone())

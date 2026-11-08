@@ -3,7 +3,6 @@
 use andromeda_test_suite::{
     attribute_matcher::any_attribute,
     broker,
-    config::SuiteConfig,
     context_terms::{defines_terms, listed_entries},
     core_context::core_entry,
     entity_matcher::{has_attribute, member_count},
@@ -16,7 +15,6 @@ use iri_rs::IriRefBuf;
 use ngsi_ld::{
     http::{ContextDelivery, headers::Accept, operation::QueryMethod},
     model::{Context, ContextEntry, Entity, EntityTypeName, InlineContext, NgsiLdMediaType, OneOrMany},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Query Entities by POST as application/ld+json under an inline definition, and under the v1.8 core followed
@@ -36,10 +34,7 @@ async fn o_ctx_cmp_0038_a_body_rendered_under_a_body_context_reads_as_the_stored
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let contexts = RemoteContexts::start().await?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let tenant_linked = tenant.with_context(Context::Single(contexts.reference("jc/user/terms.jsonld")?))?;
     let device_id = namespace.urn("Device", 1)?;
     let device_type = namespace.entity_type("Device")?;
@@ -58,12 +53,6 @@ async fn o_ctx_cmp_0038_a_body_rendered_under_a_body_context_reads_as_the_stored
             contexts.reference("jc/user/terms.jsonld")?,
         ]))?
         .with_context_delivery(ContextDelivery::LdJsonBody);
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     contexts
         .serve(
             "jc/user/terms.jsonld",

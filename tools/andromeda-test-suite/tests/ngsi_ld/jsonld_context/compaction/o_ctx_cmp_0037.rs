@@ -14,7 +14,6 @@ use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,
     model::{Context, Entity, EntityTypeName, NgsiLdMediaType, OneOrMany},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Retrieve Entity as application/ld+json under a Link naming a URL ending with the core, a user @context
@@ -36,9 +35,7 @@ async fn o_ctx_cmp_0037_a_body_rendered_under_a_linked_context_reads_as_the_stor
     let broker = broker::front()?;
     let contexts = RemoteContexts::start().await?;
     let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let core = config.core_context();
     let served = contexts.url("")?;
     let tenant_linked = tenant.with_context(Context::Single(contexts.reference("jc/user/terms.jsonld")?))?;
@@ -46,12 +43,6 @@ async fn o_ctx_cmp_0037_a_body_rendered_under_a_linked_context_reads_as_the_stor
     let device_type = namespace.entity_type("Device")?;
     let stored_type = format!("https://test.andromeda/{namespace}/Device").parse::<EntityTypeName>()?;
     let speed_iri = format!("https://test.andromeda/{namespace}/speed");
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     contexts
         .serve(
             "jc/user/terms.jsonld",

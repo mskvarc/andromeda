@@ -2,7 +2,6 @@
 
 use andromeda_test_suite::{
     broker,
-    config::SuiteConfig,
     minted_wrapper::{linked_context, listed_wrapper_ids, minted_wrapper},
     namespace::Namespace,
     outcome::Done,
@@ -12,7 +11,6 @@ use googletest::prelude::*;
 use ngsi_ld::{
     http::{headers::Accept, operation::ContextKindFilter},
     model::{Context, Entity, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Two json Retrieve Entity requests and a json Query Entities under the same user @context without the core
@@ -29,19 +27,10 @@ async fn o_ctx_cmp_0010_the_same_compound_request_twice_links_one_wrapper() -> R
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let contexts = RemoteContexts::start().await?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let tenant_linked = tenant.with_context(Context::Single(contexts.reference("jc/user/terms.jsonld")?))?;
     let device_id = namespace.urn("Device", 1)?;
     let device_type = namespace.entity_type("Device")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     contexts
         .serve(
             "jc/user/terms.jsonld",

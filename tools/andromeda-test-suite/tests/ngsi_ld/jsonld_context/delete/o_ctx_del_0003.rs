@@ -1,6 +1,6 @@
 //! Reload an implicitly created context is bad request data.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, hosted_context::HostedContext, namespace::Namespace, problem::problem};
+use andromeda_test_suite::{broker, config::SuiteConfig, hosted_context::HostedContext, namespace::Namespace, problem::problem};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
@@ -10,7 +10,6 @@ use ngsi_ld::{
         operation::{ContextDeletion, ContextKindFilter},
     },
     model::{Context, ContextEntry, ErrorType, InlineContext},
-    registration::{CSourceRegistration, RegistrationInfo},
     subscription::{Endpoint, NotificationParams, Subscription},
 };
 
@@ -27,9 +26,7 @@ async fn o_ctx_del_0003_reload_an_implicitly_created_context_is_bad_request_data
     let broker = broker::front()?;
     let config = SuiteConfig::get()?;
     let unreachable = config.unreachable_origin().origin().ascii_serialization();
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let tenant_body_context = tenant
         .with_context(Context::Multiple(vec![
             ContextEntry::Inline(format!(r#"{{"T1_{namespace}": "https://test.andromeda/{namespace}/T1"}}"#).parse::<InlineContext>()?),
@@ -38,15 +35,6 @@ async fn o_ctx_del_0003_reload_an_implicitly_created_context_is_bad_request_data
         .with_context_delivery(ContextDelivery::LdJsonBody);
     let subscription_id = namespace.subscription_id(1)?;
     let t1_type = namespace.entity_type("T1")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let subscription = Subscription::builder()
         .id(subscription_id.clone())
         .entities([t1_type.as_str()])

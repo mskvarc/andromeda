@@ -1,11 +1,10 @@
 //! A chain at the depth limit is admitted and named alone.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, namespace::Namespace, outcome::Done, remote_context::RemoteContexts};
+use andromeda_test_suite::{broker, config::SuiteConfig, namespace::Namespace, outcome::Done, remote_context::RemoteContexts};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,
     model::{Context, Entity, EntityTypeName, NgsiLdMediaType, OneOrMany},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: A create under a Link naming the first of eight documents, each naming the next and the last ending with
@@ -20,24 +19,13 @@ async fn a_ctx_exp_0040_a_chain_at_the_depth_limit_is_admitted_and_named_alone()
     let broker = broker::front()?;
     let contexts = RemoteContexts::start().await?;
     let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let core = config.core_context();
     let served = contexts.url("")?;
     let tenant_linked = tenant.with_context(Context::Single(contexts.reference("jc/at-limit/1.jsonld")?))?;
     let device_id = namespace.urn("Device", 1)?;
     let device_type = namespace.entity_type("Device")?;
     let device_type_2 = format!("https://test.andromeda/{namespace}/Device").parse::<EntityTypeName>()?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     contexts
         .serve(
             "jc/at-limit/8.jsonld",

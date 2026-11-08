@@ -1,15 +1,6 @@
 //! A create after a refused one creates the tenant.
 
-use andromeda_test_suite::{
-    attribute_matcher::any_attribute,
-    broker,
-    cleanup::Cleanup,
-    config::SuiteConfig,
-    entity_matcher::has_attribute,
-    namespace::Namespace,
-    outcome::Done,
-    problem::problem,
-};
+use andromeda_test_suite::{attribute_matcher::any_attribute, broker, entity_matcher::has_attribute, namespace::Namespace, outcome::Done, problem::problem};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
@@ -19,7 +10,6 @@ use ngsi_ld::{
         operation::CreateEntity,
     },
     model::{Entity, ErrorType, Lossless, NgsiLdMediaType, Property, RawJson, Tenant},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Create Entity on a new Tenant refused with 400 `BadRequestData`, then the same Create Entity with a valid
@@ -34,22 +24,10 @@ use ngsi_ld::{
 async fn o_ten_imp_9008_a_create_after_a_refused_one_creates_the_tenant() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let provisioning_sentinel_type = namespace.entity_type("ProvisioningSentinel")?;
+    broker::private_tenant(&broker, &namespace).await?;
     let new_tenant = broker.with_tenant(format!("{namespace}-new").parse()?);
     let vehicle_id = namespace.urn("Vehicle", 1)?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([provisioning_sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let vehicle = Entity::builder().id(vehicle_id.clone()).entity_type(vehicle_type.clone()).build()?;
     // The model refuses it (invalid timestamp at speed), so `speed` is written as text.
     let speed: RawJson = r#"{"type": "Property", "value": 55, "observedAt": "2024-01-01T00:00:00.1234567Z"}"#.parse()?;

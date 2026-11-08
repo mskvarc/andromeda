@@ -3,7 +3,6 @@
 use andromeda_test_suite::{
     attribute_matcher::any_attribute,
     broker,
-    config::SuiteConfig,
     context_details,
     core_context::core_entry,
     entity_matcher::has_attribute,
@@ -16,7 +15,6 @@ use googletest::prelude::*;
 use ngsi_ld::{
     http::{headers::Accept, operation::ContextKindFilter},
     model::{Context, Entity, EntityTypeName, NgsiLdMediaType, OneOrMany, StoredContextKind},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: A json Retrieve Entity under a user @context without the core links one wrapper with an absolute minted URL
@@ -34,20 +32,11 @@ async fn o_ctx_cmp_0008_a_user_context_without_the_core_is_linked_through_one_ho
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let contexts = RemoteContexts::start().await?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let tenant_linked = tenant.with_context(Context::Single(contexts.reference("jc/user/terms.jsonld")?))?;
     let device_id = namespace.urn("Device", 1)?;
     let device_type = namespace.entity_type("Device")?;
     let stored_type = format!("https://test.andromeda/{namespace}/Device").parse::<EntityTypeName>()?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     contexts
         .serve(
             "jc/user/terms.jsonld",

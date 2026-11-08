@@ -1,12 +1,11 @@
 //! A tenant snapshot is reached only with its tenant.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, eventually::retried, namespace::Namespace, outcome::Done, problem::problem};
+use andromeda_test_suite::{broker, eventually::retried, namespace::Namespace, outcome::Done, problem::problem};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
     http::headers::Accept,
     model::{Entity, ErrorType, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
     snapshot::{QueryDocument, Snapshot, SnapshotId, SnapshotStatus},
 };
 
@@ -21,22 +20,10 @@ use ngsi_ld::{
 async fn o_snp_qry_6403_a_tenant_snapshot_is_reached_only_with_its_tenant() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let vehicle_id = namespace.urn("Vehicle", 1)?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
     let snapshot_id = format!("urn:ngsi-ld:Snapshot:{namespace}-1").parse::<SnapshotId>()?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let vehicle = Entity::builder()
         .id(vehicle_id)
         .entity_type(vehicle_type.clone())

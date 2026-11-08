@@ -4,8 +4,7 @@ use andromeda_test_suite::{
     attribute_matcher::any_attribute,
     attribute_member::Member,
     broker,
-    cleanup::Cleanup,
-    config::{BrokerRole, SuiteConfig},
+    config::BrokerRole,
     entity_matcher::has_attribute,
     evolution_matcher::has_evolution,
     namespace::Namespace,
@@ -17,7 +16,6 @@ use http::StatusCode;
 use ngsi_ld::{
     http::headers::Accept,
     model::{Entity, EntityFragment, ErrorType, NgsiLdMediaType, Property, evolution::TemporalEntity},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: in a named tenant, Update Attributes of a seeded Entity and Create Entity of another answer 204 and 201
@@ -32,23 +30,11 @@ use ngsi_ld::{
 #[tokio::test]
 async fn a_tmp_cwh_0029_a_named_tenant_leaves_core_writes_out_of_history_too() -> Result<()> {
     let namespace = Namespace::fresh();
-    let config = SuiteConfig::get()?;
     let broker_not_recorded = broker::client(BrokerRole::NotRecorded)?;
-    let broker_not_recorded_tenant = broker_not_recorded.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let provisioning_sentinel_type = namespace.entity_type("ProvisioningSentinel")?;
+    let broker_not_recorded_tenant = broker::private_tenant(&broker_not_recorded, &namespace).await?;
     let sensor_id = namespace.urn("Sensor", 1)?;
     let sensor_type = namespace.entity_type("Sensor")?;
     let sensor_2_id = namespace.urn("Sensor", 2)?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([provisioning_sentinel_type.as_str()]).build()?])
-        .build()?;
-    broker_not_recorded_tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&broker_not_recorded_tenant).registration(&registration_provision_id);
-    broker_not_recorded_tenant.registrations().delete(&registration_provision_id).send().await?;
     let sensor_evolution = TemporalEntity::builder()
         .id(sensor_id.clone())
         .entity_type(sensor_type.clone())

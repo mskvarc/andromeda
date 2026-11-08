@@ -2,7 +2,6 @@
 
 use andromeda_test_suite::{
     broker,
-    config::SuiteConfig,
     context_terms::{defines_terms, listed_entries},
     core_context::core_entry,
     identity_matcher::has_id,
@@ -16,7 +15,6 @@ use ngsi_ld::{
     http::{ContextDelivery, headers::Accept, operation::QueryMethod},
     model::{Context, ContextEntry, Entity, InlineContext, NgsiLdMediaType},
     query::temporal_query::{self, TemporalProperty},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Query Entities and Query Temporal Evolution of Entities by POST as application/ld+json under an inline
@@ -36,10 +34,7 @@ async fn o_ctx_cmp_0033_a_post_query_under_an_inline_import_of_an_older_core_rel
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let contexts = RemoteContexts::start().await?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let tenant_linked = tenant.with_context(Context::Single(contexts.reference("jc/user/terms.jsonld")?))?;
     let device_id = namespace.urn("Device", 1)?;
     let device_type = namespace.entity_type("Device")?;
@@ -51,12 +46,6 @@ async fn o_ctx_cmp_0033_a_post_query_under_an_inline_import_of_an_older_core_rel
         .with_context_delivery(ContextDelivery::LdJsonBody);
     let device_iri = format!("https://test.andromeda/{namespace}/Device");
     let speed_iri = format!("https://test.andromeda/{namespace}/speed");
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     contexts
         .serve(
             "jc/user/terms.jsonld",

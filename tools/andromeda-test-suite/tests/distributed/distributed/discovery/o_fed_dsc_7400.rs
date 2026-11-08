@@ -1,12 +1,6 @@
 //! A type only a registration promises is listed.
 
-use andromeda_test_suite::{
-    broker,
-    cleanup::Cleanup,
-    config::{PeerRole, SuiteConfig},
-    namespace::Namespace,
-    problem::answered,
-};
+use andromeda_test_suite::{broker, cleanup::Cleanup, config::PeerRole, namespace::Namespace, problem::answered};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
@@ -28,21 +22,9 @@ use ngsi_ld::{
 async fn o_fed_dsc_7400_a_type_only_a_registration_promises_is_listed() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let provisioning_sentinel_type = namespace.entity_type("ProvisioningSentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let registration_id = namespace.registration_id(1)?;
     let aircraft_type = namespace.entity_type("Aircraft")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([provisioning_sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let registration = CSourceRegistration::builder(broker::peer(PeerRole::B)?)
         .id(registration_id.clone())
         .information([RegistrationInfo::builder().entities([aircraft_type.as_str()]).build()?])

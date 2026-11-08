@@ -2,8 +2,6 @@
 
 use andromeda_test_suite::{
     broker,
-    cleanup::Cleanup,
-    config::SuiteConfig,
     identity_matcher::has_id,
     namespace::Namespace,
     nth::nth,
@@ -15,7 +13,6 @@ use ngsi_ld::{
     http::headers::Accept,
     model::{Input, NgsiLdMediaType, Property, evolution::TemporalEntity},
     query::temporal_query,
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Query Temporal Evolution of Entities without local, limit 2 over seven entities, answers cursor pointers,
@@ -32,10 +29,7 @@ use ngsi_ld::{
 async fn o_tmp_qry_0025_without_local_the_walk_goes_by_cursor_over_every_entity() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let sensor_0000_id = namespace.urn("Sensor", "0000")?;
     let sensor_type = namespace.entity_type("Sensor")?;
     let sensor_0001_id = namespace.urn("Sensor", "0001")?;
@@ -44,15 +38,6 @@ async fn o_tmp_qry_0025_without_local_the_walk_goes_by_cursor_over_every_entity(
     let sensor_0004_id = namespace.urn("Sensor", "0004")?;
     let sensor_0005_id = namespace.urn("Sensor", "0005")?;
     let sensor_0006_id = namespace.urn("Sensor", "0006")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let evolutions = (0..=6)
         .map(|n| -> Result<TemporalEntity<Input>> {
             Ok(TemporalEntity::builder()

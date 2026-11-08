@@ -21,21 +21,10 @@ async fn n_csr_qry_0015_each_discovery_dimension_returns_the_registrations_the_d
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let registration_id = namespace.registration_id(1)?;
     let device_id = namespace.urn("Device", 1)?;
     let registration_2_id = namespace.registration_id(2)?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let registration = CSourceRegistration::builder(config.unreachable_origin().as_str())
         .id(registration_id.clone())
         .information([RegistrationInfo::builder()

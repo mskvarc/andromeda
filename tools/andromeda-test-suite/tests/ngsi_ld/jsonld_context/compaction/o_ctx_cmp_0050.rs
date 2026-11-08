@@ -12,7 +12,6 @@ use googletest::prelude::*;
 use ngsi_ld::{
     http::{ContextDelivery, headers::Accept, operation::ContextKindFilter},
     model::{Context, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
     subscription::{Endpoint, NotificationParams, Subscription},
 };
 
@@ -33,9 +32,7 @@ async fn o_ctx_cmp_0050_a_csource_subscription_with_a_context_array_is_given_a_h
     let config = SuiteConfig::get()?;
     let unreachable = config.unreachable_origin().origin().ascii_serialization();
     let core = config.core_context();
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let subscription_id = namespace.subscription_id(1)?;
     let device_type = namespace.entity_type("Device")?;
     let tenant_body_context = tenant
@@ -44,12 +41,6 @@ async fn o_ctx_cmp_0050_a_csource_subscription_with_a_context_array_is_given_a_h
             contexts.reference("jc/user/importing.jsonld")?,
         ]))?
         .with_context_delivery(ContextDelivery::LdJsonBody);
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     contexts
         .serve(
             "jc/user/terms.jsonld",

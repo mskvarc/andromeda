@@ -2,7 +2,6 @@
 
 use andromeda_test_suite::{
     broker,
-    config::SuiteConfig,
     core_context::core_entry,
     minted_wrapper::{listed_wrapper_ids, minted_wrapper, served_document},
     namespace::Namespace,
@@ -15,7 +14,6 @@ use http::StatusCode;
 use ngsi_ld::{
     http::{headers::Accept, operation::ContextKindFilter},
     model::{Context, Entity, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: A wrapper linked for a non-default tenant names no tenant in its URL, dereferences under that tenant's
@@ -31,27 +29,11 @@ async fn o_ctx_cmp_0017_a_tenants_wrapper_is_served_and_listed_only_for_that_ten
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let contexts = RemoteContexts::start().await?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let other_tenant = broker.with_tenant(format!("{namespace}-other").parse()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let registration_provision_other_id = namespace.registration_id("provision-other")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
+    let other_tenant = broker::provisioned_tenant(&broker, format!("{namespace}-other").parse()?, &namespace).await?;
     let tenant_linked = tenant.with_context(Context::Single(contexts.reference("jc/user/terms.jsonld")?))?;
     let device_id = namespace.urn("Device", 1)?;
     let device_type = namespace.entity_type("Device")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    tenant.registrations().delete(&registration_provision_id).send().await?;
-    let registration_provision_other = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_other_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    other_tenant.registrations().register(&registration_provision_other).send().await?;
-    other_tenant.registrations().delete(&registration_provision_other_id).send().await?;
     contexts
         .serve(
             "jc/user/terms.jsonld",

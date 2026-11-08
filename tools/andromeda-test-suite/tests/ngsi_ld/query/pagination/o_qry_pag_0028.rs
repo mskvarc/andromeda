@@ -1,11 +1,10 @@
 //! Following next without local returns every entity once in identifier order.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, identity_matcher::has_id, namespace::Namespace, nth::nth, outcome::Done};
+use andromeda_test_suite::{broker, identity_matcher::has_id, namespace::Namespace, nth::nth, outcome::Done};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,
     model::{Entity, Input, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Query Entities with limit 2 over 7 members without local, followed by its next pointers, answers every
@@ -20,10 +19,7 @@ use ngsi_ld::{
 async fn o_qry_pag_0028_following_next_without_local_returns_every_entity_once_in_identifier_order() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let building_0000_id = namespace.urn("Building", "0000")?;
     let building_type = namespace.entity_type("Building")?;
     let building_0001_id = namespace.urn("Building", "0001")?;
@@ -32,15 +28,6 @@ async fn o_qry_pag_0028_following_next_without_local_returns_every_entity_once_i
     let building_0004_id = namespace.urn("Building", "0004")?;
     let building_0005_id = namespace.urn("Building", "0005")?;
     let building_0006_id = namespace.urn("Building", "0006")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let entities = (0..=6)
         .map(|n| -> Result<Entity<Input>> {
             Ok(Entity::builder()

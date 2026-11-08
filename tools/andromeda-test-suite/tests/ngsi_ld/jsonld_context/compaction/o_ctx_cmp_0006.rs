@@ -13,7 +13,6 @@ use ngsi_ld::{
     http::{ContextDelivery, headers::Accept, operation::QueryMethod},
     model::{Context, Entity, NgsiLdMediaType},
     query::temporal_query::{self, TemporalProperty},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Query Temporal Evolution of Entities by POST answered as json links its body @context itself when it is one
@@ -33,9 +32,7 @@ async fn o_ctx_cmp_0006_a_temporal_post_query_answered_as_json_names_one_context
     let broker = broker::front()?;
     let contexts = RemoteContexts::start().await?;
     let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let core = config.core_context();
     let served = contexts.url("")?;
     let tenant_linked = tenant.with_context(Context::Single(contexts.reference("jc/user/terms.jsonld")?))?;
@@ -50,12 +47,6 @@ async fn o_ctx_cmp_0006_a_temporal_post_query_answered_as_json_names_one_context
             contexts.reference("jc/user/importing.jsonld")?,
         ]))?
         .with_context_delivery(ContextDelivery::LdJsonBody);
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     contexts
         .serve(
             "jc/user/terms.jsonld",

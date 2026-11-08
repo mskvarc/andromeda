@@ -3,7 +3,6 @@
 use andromeda_test_suite::{
     broker,
     cleanup::Cleanup,
-    config::SuiteConfig,
     context_source::ContextSource,
     eventually::retried,
     identity_matcher::has_id,
@@ -32,10 +31,7 @@ async fn n_fed_qry_9019_a_query_of_several_selectors_reaches_only_the_registrati
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let source = ContextSource::start().await?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let alpha_id = namespace.urn("Alpha", 1)?;
     let alpha_type = namespace.entity_type("Alpha")?;
     let beta_id = namespace.urn("Beta", 1)?;
@@ -43,15 +39,6 @@ async fn n_fed_qry_9019_a_query_of_several_selectors_reaches_only_the_registrati
     let other_id = namespace.urn("Other", 1)?;
     let other_type = namespace.entity_type("Other")?;
     let registration_id = namespace.registration_id(1)?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let alpha = Entity::builder()
         .id(alpha_id.clone())
         .entity_type(alpha_type.clone())

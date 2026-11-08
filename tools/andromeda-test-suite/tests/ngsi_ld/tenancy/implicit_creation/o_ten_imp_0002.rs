@@ -1,12 +1,11 @@
 //! An operation that creates no tenant is nonexistent tenant on an unknown one.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, namespace::Namespace, problem::problem};
+use andromeda_test_suite::{broker, namespace::Namespace, problem::problem};
 use googletest::prelude::*;
 use http::{HeaderName, StatusCode};
 use ngsi_ld::{
     http::headers::Accept,
     model::{Context, ContextEntry, Entity, EntityFragment, ErrorType, InlineContext, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Batch Entity Upsert, Batch Entity Merge, Update Attributes, Append Attributes, Delete Entity, Batch Entity
@@ -22,10 +21,7 @@ use ngsi_ld::{
 async fn o_ten_imp_0002_an_operation_that_creates_no_tenant_is_nonexistent_tenant_on_an_unknown_one() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let provisioning_sentinel_type = namespace.entity_type("ProvisioningSentinel")?;
+    broker::private_tenant(&broker, &namespace).await?;
     let u1_tenant = broker.with_tenant(format!("{namespace}-u1").parse()?);
     let vehicle_id = namespace.urn("Vehicle", 1)?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
@@ -35,15 +31,6 @@ async fn o_ten_imp_0002_an_operation_that_creates_no_tenant_is_nonexistent_tenan
     let u5_tenant = broker.with_tenant(format!("{namespace}-u5").parse()?);
     let u6_tenant = broker.with_tenant(format!("{namespace}-u6").parse()?);
     let u7_tenant = broker.with_tenant(format!("{namespace}-u7").parse()?);
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([provisioning_sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     // Batch Upsert and Batch Merge create entities but are not among the operations clause 5.5.10 lists as creating a Tenant.
     let entities = [Entity::builder()
         .id(vehicle_id.clone())

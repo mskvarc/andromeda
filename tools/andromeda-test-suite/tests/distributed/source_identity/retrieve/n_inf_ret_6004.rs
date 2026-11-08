@@ -1,12 +1,8 @@
 //! The alias under a tenant differs from the default tenant alias.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, namespace::Namespace};
+use andromeda_test_suite::{broker, namespace::Namespace};
 use googletest::prelude::*;
-use ngsi_ld::{
-    http::headers::Accept,
-    model::NgsiLdMediaType,
-    registration::{CSourceRegistration, RegistrationInfo},
-};
+use ngsi_ld::{http::headers::Accept, model::NgsiLdMediaType};
 
 /// Pins: Retrieve Context Source Identity Information under NGSILD-Tenant answers the `contextSourceAlias` of that
 /// Tenant, which differs from the alias answered without the header, with the same id
@@ -17,19 +13,7 @@ use ngsi_ld::{
 async fn n_inf_ret_6004_the_alias_under_a_tenant_differs_from_the_default_tenant_alias() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let provisioning_sentinel_type = namespace.entity_type("ProvisioningSentinel")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([provisioning_sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let identity = broker.with_accept(Accept::new(NgsiLdMediaType::Json)).source_identity().send().await?;
     let id_default = identity.id;
     let alias_default = identity.alias;

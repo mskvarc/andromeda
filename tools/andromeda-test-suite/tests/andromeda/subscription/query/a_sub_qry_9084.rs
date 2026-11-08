@@ -2,7 +2,6 @@
 
 use andromeda_test_suite::{
     broker,
-    cleanup::Cleanup,
     config::SuiteConfig,
     followed_link::request_replacing,
     identity_matcher::ids_in_order,
@@ -14,7 +13,6 @@ use http::{HeaderValue, StatusCode, header::ACCEPT};
 use ngsi_ld::{
     http::headers::{Accept, Link, RelationType},
     model::{ErrorType, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
     subscription::{Endpoint, NotificationParams, Subscription},
 };
 
@@ -30,17 +28,7 @@ async fn a_sub_qry_9084_a_subscription_cursor_with_a_forged_query_digest_is_refu
     let broker = broker::front()?;
     let config = SuiteConfig::get()?;
     let unreachable = config.unreachable_origin().origin().ascii_serialization();
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([namespace.entity_type("Sentinel")?.to_string()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let building_type = namespace.entity_type("Building")?;
     let ids = [
         namespace.subscription_id("0000")?,

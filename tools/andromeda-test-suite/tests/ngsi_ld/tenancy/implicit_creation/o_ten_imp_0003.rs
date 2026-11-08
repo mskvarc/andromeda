@@ -3,8 +3,6 @@
 use andromeda_test_suite::{
     attribute_matcher::any_attribute,
     broker,
-    cleanup::Cleanup,
-    config::SuiteConfig,
     entity_matcher::has_attribute,
     namespace::Namespace,
     nth::nth,
@@ -22,7 +20,6 @@ use ngsi_ld::{
         operation::BatchCreate,
     },
     model::{Entity, ErrorType, Lossless, NgsiLdMediaType, RawJson, Tenant},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Batch Entity Creation on a new Tenant in which one entity is refused answers 207 echoing the tenant,
@@ -37,23 +34,11 @@ use ngsi_ld::{
 async fn o_ten_imp_0003_a_batch_create_with_a_refused_entity_still_creates_the_tenant() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let provisioning_sentinel_type = namespace.entity_type("ProvisioningSentinel")?;
+    broker::private_tenant(&broker, &namespace).await?;
     let new_tenant = broker.with_tenant(format!("{namespace}-new").parse()?);
     let vehicle_created_id = namespace.urn("Vehicle", "created")?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
     let vehicle_refused_id = namespace.urn("Vehicle", "refused")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([provisioning_sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     // A null Property value is refused for its entity alone (clause 5.5.4).
     let vehicle_created = Entity::builder()
         .id(vehicle_created_id.clone())

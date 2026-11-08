@@ -3,8 +3,6 @@
 use andromeda_test_suite::{
     body_pattern::BodyPattern,
     broker,
-    cleanup::Cleanup,
-    config::SuiteConfig,
     identity_matcher::has_id,
     namespace::Namespace,
     notification_sink::NotificationSink,
@@ -14,7 +12,6 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use ngsi_ld::{
     model::{Entity, Lossless, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
     subscription::{Endpoint, NotificationParams, Subscription},
 };
 
@@ -28,24 +25,12 @@ async fn n_ten_iso_0003_a_subscription_is_not_notified_of_another_tenant_s_entit
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let sink = NotificationSink::start().await?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let provisioning_sentinel_type = namespace.entity_type("ProvisioningSentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let subscription_id = namespace.subscription_id(1)?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
     let b_tenant = broker.with_tenant(format!("{namespace}-b").parse()?);
     let vehicle_b1_id = namespace.urn("Vehicle", "b1")?;
     let vehicle_a1_id = namespace.urn("Vehicle", "a1")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([provisioning_sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let subscription = Subscription::builder()
         .id(subscription_id.clone())
         .entities([vehicle_type.as_str()])

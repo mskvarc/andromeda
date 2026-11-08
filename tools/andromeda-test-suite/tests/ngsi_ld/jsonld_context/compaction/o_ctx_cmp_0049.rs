@@ -13,7 +13,6 @@ use googletest::prelude::*;
 use ngsi_ld::{
     http::{ContextDelivery, headers::Accept, operation::ContextKindFilter},
     model::{Context, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
     subscription::{Endpoint, NotificationParams, NotificationTrigger, Subscription},
 };
 
@@ -33,9 +32,7 @@ async fn o_ctx_cmp_0049_a_subscription_with_one_context_url_stores_it_or_a_wrapp
     let sink = NotificationSink::start().await?;
     let contexts = RemoteContexts::start().await?;
     let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let core = config.core_context();
     let served = contexts.url("")?;
     let subscription_id = namespace.subscription_id(1)?;
@@ -47,12 +44,6 @@ async fn o_ctx_cmp_0049_a_subscription_with_one_context_url_stores_it_or_a_wrapp
     let tenant_body_context_2 = tenant
         .with_context(Context::Single(contexts.reference("jc/user/terms.jsonld")?))?
         .with_context_delivery(ContextDelivery::LdJsonBody);
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     contexts
         .serve(
             "jc/user/terms.jsonld",

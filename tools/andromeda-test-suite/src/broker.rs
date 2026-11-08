@@ -14,7 +14,7 @@ use crate::{
 use ngsi_ld::{
     client::{Client, ClientError, ReqwestError, ReqwestTransport},
     http::EndpointError,
-    model::{BuildError, UriError},
+    model::{BuildError, Tenant, UriError},
     registration::{CSourceRegistration, Problem, RegistrationId, RegistrationInfo},
 };
 use reqwest::redirect::Policy;
@@ -141,7 +141,18 @@ pub fn front() -> Result<BrokerClient, BrokerError> {
 /// The status a broker answers while the tenant it is bringing up is saturated, asking to be asked again.
 const SATURATED: u16 = 503;
 
-/// Brings up the tenant named after `namespace` on the broker `client` speaks to, and returns `client` on it.
+/// Brings up the tenant named after `namespace` on the broker `client` speaks to, and returns `client` on it, as
+/// [`provisioned_tenant`] does.
+///
+/// # Errors
+///
+/// Returns [`BrokerError`] as [`provisioned_tenant`] does, or when `namespace` names no tenant.
+pub async fn private_tenant(client: &BrokerClient, namespace: &Namespace) -> Result<BrokerClient, BrokerError> {
+    provisioned_tenant(client, namespace.tenant()?, namespace).await
+}
+
+/// Brings up `tenant` on the broker `client` speaks to, and returns `client` on it. The registration that brings it up
+/// is named after `namespace`.
 ///
 /// Add @context is not one of the operations clause 5.5.10 lets create a tenant, so the tenant comes up with Create
 /// Context Source Registration, which is, and the registration is deleted again: the tenant then holds only the core
@@ -155,8 +166,8 @@ const SATURATED: u16 = 503;
 ///
 /// Returns [`BrokerError::Provisioning`] when the broker answers the create with anything but 201 or the delete with
 /// anything but 204.
-pub async fn private_tenant(client: &BrokerClient, namespace: &Namespace) -> Result<BrokerClient, BrokerError> {
-    let tenant = client.with_tenant(namespace.tenant()?);
+pub async fn provisioned_tenant(client: &BrokerClient, tenant: Tenant, namespace: &Namespace) -> Result<BrokerClient, BrokerError> {
+    let tenant = client.with_tenant(tenant);
     let config = SuiteConfig::get().map_err(|error| BrokerError::Config(error.clone()))?;
     let id: RegistrationId = namespace
         .urn_text("ContextSourceRegistration", "provision")

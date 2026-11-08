@@ -2,8 +2,6 @@
 
 use andromeda_test_suite::{
     broker,
-    cleanup::Cleanup,
-    config::SuiteConfig,
     core_context::core_entry,
     identity_matcher::has_id,
     namespace::Namespace,
@@ -17,7 +15,6 @@ use ngsi_ld::{
     http::{ContextDelivery, headers::Accept, operation::QueryMethod},
     model::{Context, ContextEntry, Entity, NgsiLdMediaType},
     query::temporal_query::{self, TemporalProperty},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Query Entities and Query Temporal Evolution of Entities by POST as application/ld+json under a user
@@ -36,10 +33,7 @@ async fn o_ctx_cmp_0030_a_post_query_under_an_older_core_release_after_a_user_co
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let contexts = RemoteContexts::start().await?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let tenant_linked = tenant.with_context(Context::Single(contexts.reference("jc/user/terms.jsonld")?))?;
     let device_id = namespace.urn("Device", 1)?;
     let device_type = namespace.entity_type("Device")?;
@@ -49,15 +43,6 @@ async fn o_ctx_cmp_0030_a_post_query_under_an_older_core_release_after_a_user_co
             ContextEntry::Reference(IriRefBuf::new("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.6.jsonld".to_owned())?),
         ]))?
         .with_context_delivery(ContextDelivery::LdJsonBody);
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     contexts
         .serve(
             "jc/user/terms.jsonld",

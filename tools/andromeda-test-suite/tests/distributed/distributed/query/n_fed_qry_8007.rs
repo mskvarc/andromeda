@@ -4,7 +4,7 @@ use andromeda_test_suite::{
     attribute_matcher::any_attribute,
     broker,
     cleanup::Cleanup,
-    config::{BrokerRole, PeerRole, SuiteConfig},
+    config::{BrokerRole, PeerRole},
     entity_matcher::has_attribute,
     namespace::Namespace,
     nth::nth,
@@ -30,26 +30,11 @@ use ngsi_ld::{
 async fn n_fed_qry_8007_a_registration_naming_a_tenant_reads_the_peer_entity_of_that_tenant_only() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
     let broker_b = broker::client(BrokerRole::B)?;
-    let broker_b_tenant = broker_b.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let broker_b_tenant = broker::private_tenant(&broker_b, &namespace).await?;
     let building_id = namespace.urn("Building", 1)?;
     let building_type = namespace.entity_type("Building")?;
     let registration_id = namespace.registration_id(1)?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder()
-            .entities([EntityInfo::new(sentinel_type).with_id_pattern(namespace.id_pattern("Sentinel")?)])
-            .build()?])
-        .operations([DistributedOperation::QueryEntity])
-        .build()?;
-    broker_b_tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&broker_b_tenant).registration(&registration_provision_id);
-    broker_b_tenant.registrations().delete(&registration_provision_id).send().await?;
     let building = Entity::builder()
         .id(building_id.clone())
         .entity_type(building_type.clone())

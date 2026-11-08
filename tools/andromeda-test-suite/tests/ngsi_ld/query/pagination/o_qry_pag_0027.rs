@@ -2,8 +2,6 @@
 
 use andromeda_test_suite::{
     broker,
-    cleanup::Cleanup,
-    config::SuiteConfig,
     namespace::Namespace,
     outcome::Done,
     page_link::{carries_parameter, links},
@@ -12,7 +10,6 @@ use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,
     model::{Entity, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Query Entities with limit 2 over three members answers a first page whose Link offers next and last
@@ -28,23 +25,11 @@ use ngsi_ld::{
 async fn o_qry_pag_0027_the_default_first_page_offers_opaque_cursor_pointers_without_local() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let building_0000_id = namespace.urn("Building", "0000")?;
     let building_type = namespace.entity_type("Building")?;
     let building_0001_id = namespace.urn("Building", "0001")?;
     let building_0002_id = namespace.urn("Building", "0002")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let building_0000 = Entity::builder()
         .id(building_0000_id)
         .entity_type(building_type.clone())

@@ -25,7 +25,6 @@ use ngsi_ld::{
         operation::{ContextKindFilter, QueryMethod},
     },
     model::{Context, Entity, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Query Entities by POST answered as json links the same wrapper for inline definitions differing only in
@@ -44,9 +43,7 @@ async fn o_ctx_cmp_0011_formatting_does_not_split_a_wrapper_and_array_order_does
     let broker = broker::front()?;
     let contexts = RemoteContexts::start().await?;
     let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let core = config.core_context();
     let tenant_linked = tenant.with_context(Context::Single(contexts.reference("jc/user/terms.jsonld")?))?;
     let device_id = namespace.urn("Device", 1)?;
@@ -63,12 +60,6 @@ async fn o_ctx_cmp_0011_formatting_does_not_split_a_wrapper_and_array_order_does
             contexts.reference("jc/user/terms.jsonld")?,
         ]))?
         .with_context_delivery(ContextDelivery::LdJsonBody);
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     contexts
         .serve(
             "jc/user/terms.jsonld",

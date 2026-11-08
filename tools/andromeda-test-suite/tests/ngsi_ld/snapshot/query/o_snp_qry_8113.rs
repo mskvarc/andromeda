@@ -1,14 +1,9 @@
 //! A snapshot header on a tenant that does not exist creates no tenant.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, namespace::Namespace, problem::problem};
+use andromeda_test_suite::{broker, namespace::Namespace, problem::problem};
 use googletest::prelude::*;
 use http::StatusCode;
-use ngsi_ld::{
-    http::headers::Accept,
-    model::ErrorType,
-    registration::{CSourceRegistration, RegistrationInfo},
-    snapshot::SnapshotId,
-};
+use ngsi_ld::{http::headers::Accept, model::ErrorType, snapshot::SnapshotId};
 
 /// Pins: Query Entities naming a Tenant that does not exist and a Snapshot answers 404 `NonexistentTenant`, and a
 /// later query on that Tenant answers `NonexistentTenant` again
@@ -22,21 +17,9 @@ use ngsi_ld::{
 async fn o_snp_qry_8113_a_snapshot_header_on_a_tenant_that_does_not_exist_creates_no_tenant() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let provisioning_sentinel_type = namespace.entity_type("ProvisioningSentinel")?;
+    broker::private_tenant(&broker, &namespace).await?;
     let unknown_tenant = broker.with_tenant(format!("{namespace}-unknown").parse()?);
     let snapshot_absent_id = format!("urn:ngsi-ld:Snapshot:{namespace}-absent").parse::<SnapshotId>()?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([provisioning_sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let answer = unknown_tenant
         .with_responses()
         .with_accept(Accept::any())

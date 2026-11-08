@@ -5,7 +5,6 @@ use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,
     model::{Context, Entity, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Query Entities as application/geo+json names the @context once on the `FeatureCollection` and on no Feature,
@@ -24,9 +23,7 @@ async fn o_ctx_cmp_0036_a_feature_collection_names_the_context_once_and_a_featur
     let broker = broker::front()?;
     let contexts = RemoteContexts::start().await?;
     let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let core = config.core_context();
     let served = contexts.url("")?;
     let tenant_linked = tenant.with_context(Context::Single(contexts.reference("jc/user/terms.jsonld")?))?;
@@ -34,12 +31,6 @@ async fn o_ctx_cmp_0036_a_feature_collection_names_the_context_once_and_a_featur
     let device_type = namespace.entity_type("Device")?;
     let tenant_linked_2 = tenant.with_context(Context::Single(contexts.reference("jc/user/wrapper.jsonld")?))?;
     let device_iri = format!("https://test.andromeda/{namespace}/Device");
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     contexts
         .serve(
             "jc/user/terms.jsonld",

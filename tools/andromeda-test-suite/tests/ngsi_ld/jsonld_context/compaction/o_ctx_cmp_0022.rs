@@ -41,9 +41,7 @@ async fn o_ctx_cmp_0022_every_resource_a_context_defining_terms_after_importing_
     let contexts = RemoteContexts::start().await?;
     let config = SuiteConfig::get()?;
     let unreachable = config.unreachable_origin().origin().ascii_serialization();
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let core = config.core_context();
     let tenant_linked = tenant.with_context(Context::Single(contexts.reference("jc/user/terms.jsonld")?))?;
     let device_id = namespace.urn("Device", 1)?;
@@ -57,15 +55,6 @@ async fn o_ctx_cmp_0022_every_resource_a_context_defining_terms_after_importing_
         .with_context(Context::Single(contexts.reference("jc/user/terms.jsonld")?))?
         .with_context_delivery(ContextDelivery::LdJsonBody);
     let tenant_linked_2 = tenant.with_context(Context::Single(contexts.reference("jc/user/importing.jsonld")?))?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     contexts
         .serve(
             "jc/user/terms.jsonld",

@@ -1,14 +1,6 @@
 //! A counted cursor page without local counts the whole collection.
 
-use andromeda_test_suite::{
-    broker,
-    config::SuiteConfig,
-    followed_link::request_with,
-    identity_matcher::ids_in_order,
-    namespace::Namespace,
-    outcome::Upserted,
-    temporal_page_body,
-};
+use andromeda_test_suite::{broker, followed_link::request_with, identity_matcher::ids_in_order, namespace::Namespace, outcome::Upserted, temporal_page_body};
 use googletest::prelude::*;
 use http::{HeaderValue, StatusCode, header::ACCEPT};
 use ngsi_ld::{
@@ -18,7 +10,6 @@ use ngsi_ld::{
     },
     model::{Input, NgsiLdMediaType, Property, evolution::TemporalEntity},
     query::temporal_query,
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Query Temporal Evolution of Entities without local followed by its next pointer with count true added, over
@@ -35,19 +26,10 @@ use ngsi_ld::{
 async fn o_tmp_qry_0027_a_counted_cursor_page_without_local_counts_the_whole_collection() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let sensor_type = namespace.entity_type("Sensor")?;
     let sensor_0002_id = namespace.urn("Sensor", "0002")?;
     let sensor_0003_id = namespace.urn("Sensor", "0003")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let evolutions = (0..=4)
         .map(|n| -> Result<TemporalEntity<Input>> {
             Ok(TemporalEntity::builder()

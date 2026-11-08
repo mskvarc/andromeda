@@ -1,22 +1,12 @@
 //! An expiry on a resting tenant is swept within the cadence.
 
-use andromeda_test_suite::{
-    broker,
-    cleanup::Cleanup,
-    clock_wait::wait_past,
-    config::SuiteConfig,
-    eventually::retried,
-    namespace::Namespace,
-    outcome::Done,
-    problem::answered,
-};
+use andromeda_test_suite::{broker, clock_wait::wait_past, eventually::retried, namespace::Namespace, outcome::Done, problem::answered};
 use chrono::{TimeDelta, Utc};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
     http::headers::Accept,
     model::{DateTime, Entity, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: In a tenant idle for four seconds, an Entity then created with an `expiresAt` two seconds ahead is gone
@@ -32,23 +22,11 @@ use ngsi_ld::{
 async fn a_ent_del_9001_an_expiry_on_a_resting_tenant_is_swept_within_the_cadence() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let vehicle_warm_id = namespace.urn("Vehicle", "warm")?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
     let vehicle_expiring_id = namespace.urn("Vehicle", "expiring")?;
     // A registration created and deleted again brings the tenant into existence and leaves nothing in it.
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let vehicle_warm = Entity::builder().id(vehicle_warm_id).entity_type(vehicle_type.clone()).build()?;
     tenant.entities().create(&vehicle_warm).send().await?.done()?;
     let slept_until = (Utc::now() + TimeDelta::seconds(4)).timestamp();

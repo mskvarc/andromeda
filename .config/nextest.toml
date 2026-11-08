@@ -59,13 +59,17 @@ package(andromeda-test-suite) & binary(~andromeda_) & (
 threads-required = "num-test-threads"
 
 [[profile.suite.overrides]]
-filter = 'package(andromeda-test-suite) & binary(~ngsi_ld_) & test(/(^|::)(n_snp_cln_8109|n_snp_cre_8108)_/)'
+filter = '''
+package(andromeda-test-suite) & binary(~ngsi_ld_)
+  & test(/(^|::)(n_fed_qry_9006|n_ntf_dlv_9004|n_ntf_dlv_9005|n_ntf_trg_9001|n_snp_cln_8109|n_snp_cre_8108)_/)'''
 threads-required = "num-test-threads"
 
 # A test that bounds a broker's answer or its notifications by wall-clock time measures the broker alone; on a host of
 # two CPUs, the tests running beside it push the broker past the bound, so it runs alone.
 [[profile.suite.overrides]]
-filter = 'package(andromeda-test-suite) & binary(~ngsi_ld_) & test(/(^|::)(n_css_ntf_9013|n_snp_cre_8126)_/)'
+filter = '''
+package(andromeda-test-suite) & binary(~ngsi_ld_)
+  & test(/(^|::)(n_css_ntf_9013|n_ntf_trg_9029|n_ntf_trg_9030|n_ntf_trg_9034|n_snp_cre_8126)_/)'''
 threads-required = "num-test-threads"
 
 # A pgbouncer test evicts a tenant under the pressure of 40 others and waits up to 150 s to see it dormant, then a

@@ -1,12 +1,11 @@
 //! Retrieve on a tenant that does not exist is nonexistent tenant.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, namespace::Namespace, problem::problem};
+use andromeda_test_suite::{broker, namespace::Namespace, problem::problem};
 use googletest::prelude::*;
 use http::{HeaderName, StatusCode};
 use ngsi_ld::{
     http::headers::Accept,
     model::{ErrorType, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Retrieve Entity on a Tenant that does not exist answers 404 `NonexistentTenant` and echoes the
@@ -21,21 +20,9 @@ use ngsi_ld::{
 async fn o_ten_imp_0001_retrieve_on_a_tenant_that_does_not_exist_is_nonexistent_tenant() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let provisioning_sentinel_type = namespace.entity_type("ProvisioningSentinel")?;
+    broker::private_tenant(&broker, &namespace).await?;
     let unknown_tenant = broker.with_tenant(format!("{namespace}-unknown").parse()?);
     let vehicle_id = namespace.urn("Vehicle", 1)?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([provisioning_sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let answer = unknown_tenant
         .with_responses()
         .with_accept(Accept::new(NgsiLdMediaType::Json))

@@ -33,17 +33,9 @@ async fn o_ten_imp_0004_each_creating_operation_creates_the_tenant_it_names() ->
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let provisioning_sentinel_type = namespace.entity_type("ProvisioningSentinel")?;
+    broker::private_tenant(&broker, &namespace).await?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
     let notify = config.unreachable_origin().join("notify")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([provisioning_sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let tenants = (1..=6).map(|n| format!("{namespace}-t{n}").parse::<Tenant>()).collect::<Result<Vec<_>, _>>()?;
     let [t1, t2, t3, t4, t5, t6] = tenants.as_slice() else {
         return fail!("six tenants are named");

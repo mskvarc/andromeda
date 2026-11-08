@@ -1,11 +1,10 @@
 //! Following prev from the second page returns the first page.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, identity_matcher::has_id, namespace::Namespace, nth::nth};
+use andromeda_test_suite::{broker, config::SuiteConfig, identity_matcher::has_id, namespace::Namespace, nth::nth};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,
     model::NgsiLdMediaType,
-    registration::{CSourceRegistration, RegistrationInfo},
     subscription::{Endpoint, NotificationParams, Subscription},
 };
 
@@ -21,9 +20,7 @@ async fn n_sub_qry_0004_following_prev_from_the_second_page_returns_the_first_pa
     let broker = broker::front()?;
     let config = SuiteConfig::get()?;
     let unreachable = config.unreachable_origin().origin().ascii_serialization();
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let subscription_0000_id = namespace.subscription_id("0000")?;
     let building_type = namespace.entity_type("Building")?;
     let subscription_0001_id = namespace.subscription_id("0001")?;
@@ -31,15 +28,6 @@ async fn n_sub_qry_0004_following_prev_from_the_second_page_returns_the_first_pa
     let subscription_0003_id = namespace.subscription_id("0003")?;
     let subscription_0004_id = namespace.subscription_id("0004")?;
     let subscription_0005_id = namespace.subscription_id("0005")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let subscription_0000 = Subscription::builder()
         .id(subscription_0000_id.clone())
         .entities([building_type.as_str()])

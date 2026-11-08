@@ -1,20 +1,10 @@
 //! A change followed by a burst of changes is still notified.
 
-use andromeda_test_suite::{
-    broker,
-    cleanup::Cleanup,
-    config::SuiteConfig,
-    identity_matcher::has_id,
-    namespace::Namespace,
-    notification_sink::NotificationSink,
-    nth::nth,
-    outcome::Done,
-};
+use andromeda_test_suite::{broker, identity_matcher::has_id, namespace::Namespace, notification_sink::NotificationSink, nth::nth, outcome::Done};
 use googletest::prelude::*;
 use ngsi_ld::{
     model::{Entity, EntityFragment, Input, Lossless, NgsiLdMediaType},
     query::{EntitySelector, Join, builders::SelectorTypeBuilder},
-    registration::{CSourceRegistration, RegistrationInfo},
     subscription::{Endpoint, NotificationParams, Subscription},
 };
 use std::iter;
@@ -31,10 +21,7 @@ async fn n_ntf_dlv_9001_a_change_followed_by_a_burst_of_changes_is_still_notifie
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let sink = NotificationSink::start().await?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let building_0_id = namespace.urn("Building", "0")?;
     let building_type = namespace.entity_type("Building")?;
     let building_9_id = namespace.urn("Building", 9)?;
@@ -49,15 +36,6 @@ async fn n_ntf_dlv_9001_a_change_followed_by_a_burst_of_changes_is_still_notifie
     let victim_type = namespace.entity_type("Victim")?;
     let victim_id = namespace.urn("Victim", 1)?;
     let filler_type = namespace.entity_type("Filler")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let entities = (0..=8)
         .map(|n| -> Result<Entity<Input>> {
             Ok(Entity::builder()

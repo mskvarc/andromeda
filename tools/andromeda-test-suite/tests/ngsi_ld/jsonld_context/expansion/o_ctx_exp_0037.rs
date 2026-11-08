@@ -3,8 +3,6 @@
 use andromeda_test_suite::{
     attribute_matcher::any_attribute,
     broker,
-    cleanup::Cleanup,
-    config::SuiteConfig,
     entity_matcher::has_attribute,
     namespace::Namespace,
     outcome::Done,
@@ -20,7 +18,6 @@ use ngsi_ld::{
         operation::{ContextKindFilter, QueryMethod},
     },
     model::{Context, Entity, EntityFragment, ErrorType, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Retrieve Entity, Create Entity and Update Attributes under a Link naming a document whose @context names a
@@ -37,10 +34,7 @@ async fn o_ctx_exp_0037_a_reference_cycle_is_refused_and_the_broker_keeps_servin
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let contexts = RemoteContexts::start().await?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let served = contexts.url("")?;
     let tenant_linked = tenant.with_context(Context::Single(contexts.reference("jc/user/terms.jsonld")?))?;
     let device_id = namespace.urn("Device", 1)?;
@@ -54,15 +48,6 @@ async fn o_ctx_exp_0037_a_reference_cycle_is_refused_and_the_broker_keeps_servin
     let tenant_body_context_2 = tenant
         .with_context(Context::Single(contexts.reference("jc/cycle/a.jsonld")?))?
         .with_context_delivery(ContextDelivery::LdJsonBody);
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     contexts
         .serve(
             "jc/user/terms.jsonld",

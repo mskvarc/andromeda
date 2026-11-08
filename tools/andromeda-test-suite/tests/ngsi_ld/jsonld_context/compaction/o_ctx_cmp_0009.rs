@@ -14,7 +14,6 @@ use googletest::prelude::*;
 use ngsi_ld::{
     http::{ContextDelivery, headers::Accept, operation::QueryMethod},
     model::{Context, ContextEntry, Entity, InlineContext, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Query Entities by POST answered as json under a body @context of two URLs, of an inline definition, or of a
@@ -32,9 +31,7 @@ async fn o_ctx_cmp_0009_a_compound_or_inline_body_context_is_linked_through_a_wr
     let broker = broker::front()?;
     let contexts = RemoteContexts::start().await?;
     let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let core = config.core_context();
     let served = contexts.url("")?;
     let tenant_linked = tenant.with_context(Context::Single(contexts.reference("jc/user/terms.jsonld")?))?;
@@ -57,12 +54,6 @@ async fn o_ctx_cmp_0009_a_compound_or_inline_body_context_is_linked_through_a_wr
     let tenant_body_context_3 = tenant
         .with_context(Context::Multiple(vec![contexts.reference("jc/user/wrapper.jsonld")?, core_entry()?]))?
         .with_context_delivery(ContextDelivery::LdJsonBody);
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     contexts
         .serve(
             "jc/user/terms.jsonld",

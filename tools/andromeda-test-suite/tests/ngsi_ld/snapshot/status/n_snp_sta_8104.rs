@@ -1,12 +1,11 @@
 //! A snapshot belongs to the tenant it was created in.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, namespace::Namespace, problem::problem};
+use andromeda_test_suite::{broker, namespace::Namespace, problem::problem};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
     http::headers::Accept,
     model::{ErrorType, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
     snapshot::{QueryDocument, Snapshot, SnapshotId, SnapshotPriority},
 };
 
@@ -20,23 +19,11 @@ use ngsi_ld::{
 async fn n_snp_sta_8104_a_snapshot_belongs_to_the_tenant_it_was_created_in() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let provisioning_sentinel_type = namespace.entity_type("ProvisioningSentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let snapshot_id = format!("urn:ngsi-ld:Snapshot:{namespace}-1").parse::<SnapshotId>()?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
     let snapshot_2_id = format!("urn:ngsi-ld:Snapshot:{namespace}-2").parse::<SnapshotId>()?;
     let unknown_tenant = broker.with_tenant(format!("{namespace}-unknown").parse()?);
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([provisioning_sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let snapshot = Snapshot::builder()
         .id(format!("urn:ngsi-ld:Snapshot:{namespace}-1").parse::<SnapshotId>()?)
         .query(QueryDocument::builder().entities([vehicle_type.as_str()]).build()?)

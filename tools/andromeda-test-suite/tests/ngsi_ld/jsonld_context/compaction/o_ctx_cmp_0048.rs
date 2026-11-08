@@ -2,7 +2,6 @@
 
 use andromeda_test_suite::{
     broker,
-    config::SuiteConfig,
     context_terms::{defines_terms, listed_entries},
     core_context::core_entry,
     minted_wrapper::{listed_wrapper_ids, minted_at, served_document},
@@ -13,7 +12,6 @@ use googletest::prelude::*;
 use ngsi_ld::{
     http::{ContextDelivery, headers::Accept, operation::ContextKindFilter},
     model::{Context, ContextEntry, InlineContext, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
     subscription::{Endpoint, NotificationParams, NotificationTrigger, Subscription},
 };
 
@@ -31,10 +29,7 @@ async fn o_ctx_cmp_0048_a_subscription_with_an_inline_context_is_given_a_hosted_
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let sink = NotificationSink::start().await?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let subscription_id = namespace.subscription_id(1)?;
     let device_iri = format!("https://test.andromeda/{namespace}/Device");
     let speed_iri = format!("https://test.andromeda/{namespace}/speed");
@@ -44,12 +39,6 @@ async fn o_ctx_cmp_0048_a_subscription_with_an_inline_context_is_given_a_hosted_
             format!(r#"{{"{device_term}": "{device_iri}", "speed": "{speed_iri}"}}"#).parse::<InlineContext>()?,
         )))?
         .with_context_delivery(ContextDelivery::LdJsonBody);
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let subscription = Subscription::builder()
         .id(subscription_id.clone())
         .entities([device_iri.clone()])

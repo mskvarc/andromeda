@@ -1,12 +1,11 @@
 //! An error response echoes the tenant.
 
-use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, namespace::Namespace, problem::problem};
+use andromeda_test_suite::{broker, namespace::Namespace, problem::problem};
 use googletest::prelude::*;
 use http::{HeaderName, StatusCode};
 use ngsi_ld::{
     http::{UncheckedDocument, operation::CreateEntity},
     model::{Entity, ErrorType, Lossless},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: Create Entity naming a Tenant with a body lacking its id is refused with 400 `BadRequestData` and the
@@ -18,22 +17,10 @@ use ngsi_ld::{
 async fn n_ten_hdr_0001_an_error_response_echoes_the_tenant() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let provisioning_sentinel_type = namespace.entity_type("ProvisioningSentinel")?;
+    broker::private_tenant(&broker, &namespace).await?;
     let error_tenant = broker.with_tenant(format!("{namespace}-error").parse()?);
     let vehicle_type = namespace.entity_type("Vehicle")?;
     let placeholder_id = namespace.urn("Placeholder", 1)?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([provisioning_sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let entity = Entity::builder().id(placeholder_id).entity_type(vehicle_type).build()?;
     // The model requires `id`, which the request leaves out, so it is written for a placeholder and removed.
     let document = UncheckedDocument::from_entity(&entity, Lossless::Normalized).remove_member("id");

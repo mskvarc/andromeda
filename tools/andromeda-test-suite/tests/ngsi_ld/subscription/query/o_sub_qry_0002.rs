@@ -2,7 +2,6 @@
 
 use andromeda_test_suite::{
     broker,
-    cleanup::Cleanup,
     config::SuiteConfig,
     namespace::Namespace,
     page_link::{carries_parameter, links},
@@ -11,7 +10,6 @@ use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,
     model::NgsiLdMediaType,
-    registration::{CSourceRegistration, RegistrationInfo},
     subscription::{Endpoint, NotificationParams, Subscription},
 };
 
@@ -29,22 +27,11 @@ async fn o_sub_qry_0002_the_default_first_page_offers_opaque_cursor_pointers() -
     let broker = broker::front()?;
     let config = SuiteConfig::get()?;
     let unreachable = config.unreachable_origin().origin().ascii_serialization();
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let subscription_0000_id = namespace.subscription_id("0000")?;
     let building_type = namespace.entity_type("Building")?;
     let subscription_0001_id = namespace.subscription_id("0001")?;
     let subscription_0002_id = namespace.subscription_id("0002")?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     let subscription_0000 = Subscription::builder()
         .id(subscription_0000_id)
         .entities([building_type.as_str()])

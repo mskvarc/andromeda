@@ -1,14 +1,6 @@
 //! An ld json answer never hosts a wrapper.
 
-use andromeda_test_suite::{
-    broker,
-    cleanup::Cleanup,
-    config::SuiteConfig,
-    header_matcher::absent,
-    namespace::Namespace,
-    outcome::Done,
-    remote_context::RemoteContexts,
-};
+use andromeda_test_suite::{broker, config::SuiteConfig, header_matcher::absent, namespace::Namespace, outcome::Done, remote_context::RemoteContexts};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::{
@@ -16,7 +8,6 @@ use ngsi_ld::{
         operation::ContextKindFilter,
     },
     model::{Context, Entity, NgsiLdMediaType},
-    registration::{CSourceRegistration, RegistrationInfo},
 };
 
 /// Pins: An application/ld+json Retrieve Entity under a user @context without the core, one importing the core and
@@ -32,9 +23,7 @@ async fn o_ctx_cmp_0005_an_ld_json_answer_never_hosts_a_wrapper() -> Result<()> 
     let broker = broker::front()?;
     let contexts = RemoteContexts::start().await?;
     let config = SuiteConfig::get()?;
-    let tenant = broker.with_tenant(namespace.tenant()?);
-    let registration_provision_id = namespace.registration_id("provision")?;
-    let sentinel_type = namespace.entity_type("Sentinel")?;
+    let tenant = broker::private_tenant(&broker, &namespace).await?;
     let core = config.core_context();
     let served = contexts.url("")?;
     let tenant_linked = tenant.with_context(Context::Single(contexts.reference("jc/user/terms.jsonld")?))?;
@@ -42,15 +31,6 @@ async fn o_ctx_cmp_0005_an_ld_json_answer_never_hosts_a_wrapper() -> Result<()> 
     let device_type = namespace.entity_type("Device")?;
     let tenant_linked_2 = tenant.with_context(Context::Single(contexts.reference("jc/user/importing.jsonld")?))?;
     let tenant_linked_3 = tenant.with_context(Context::Single(contexts.reference("jc/user/outer.jsonld")?))?;
-    let registration_provision = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_provision_id.clone())
-        .information([RegistrationInfo::builder().entities([sentinel_type.as_str()]).build()?])
-        .build()?;
-    tenant.registrations().register(&registration_provision).send().await?;
-    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-    // cooldown that opens there holds back a later test's registration naming the same endpoint.
-    let _registration_provision_cleanup = Cleanup::of(&tenant).registration(&registration_provision_id);
-    tenant.registrations().delete(&registration_provision_id).send().await?;
     contexts
         .serve(
             "jc/user/terms.jsonld",
