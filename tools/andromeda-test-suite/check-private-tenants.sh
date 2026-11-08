@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Checks that the `private-tenants` test group of .config/nextest.toml lists exactly the tests that work in a tenant of
-# their own. A test is private when its file calls `broker::private_tenant(` or carries a `/// Tenant: private` line. For
-# each profile that puts tests in the group, and each tree the group covers (ngsi_ld, andromeda, distributed), the script
-# fails with `path:line` for a private test the group omits and for a listed test that is not private. A test id is the
-# file stem of its source file.
+# their own. A test is private when its file declares a test and calls `broker::private_tenant(` or carries a
+# `/// Tenant: private` line. For each profile that puts tests in the group, and each tree the group covers (ngsi_ld,
+# andromeda, distributed, etsi, annex_c), the script fails with `path:line` for a private test the group omits and for
+# a listed test that is not private. A test id is the file stem of its source file.
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
@@ -11,8 +11,10 @@ cd "$root"
 
 config=.config/nextest.toml
 tests=tools/andromeda-test-suite/tests
-trees=(ngsi_ld andromeda distributed)
+trees=(ngsi_ld andromeda distributed etsi annex_c)
 marker='broker::private_tenant\(|^[[:space:]]*///[[:space:]]*Tenant:[[:space:]]*private'
+# A helper module that provisions tenants for the tests of other files declares no test of its own.
+test_attribute='^[[:space:]]*#\[(gtest|(tokio::)?test)'
 
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
@@ -20,6 +22,7 @@ trap 'rm -rf "$scratch"' EXIT
 # Lines of `tree<TAB>id<TAB>path:line`, one per private test.
 for tree in "${trees[@]}"; do
     while IFS= read -r file; do
+        grep -qE "$test_attribute" "$file" || continue
         line="$(grep -nE -m1 "$marker" "$file" | cut -d: -f1)"
         printf '%s\t%s\t%s:%s\n' "$tree" "$(basename "$file" .rs)" "$file" "$line"
     done < <(grep -rlE "$marker" "$tests/$tree" | sort)
@@ -47,14 +50,22 @@ awk -v config="$config" '
     }
     inside && /^test-group = .private-tenants.$/ { listed = 1; next }
     inside {
+        # A tree of several test targets is selected by their common prefix, a tree of one target by its name.
         if (match($0, /binary\(~[a-z_]+_\)/)) {
             tree = substr($0, RSTART + 8, RLENGTH - 10)
+        } else if (match($0, /binary\(=[a-z_]+\)/)) {
+            tree = substr($0, RSTART + 8, RLENGTH - 9)
         }
+        # Each test(/(^|::)(id|id|...)_/) lists ids as an alternation of file stems.
         rest = $0
-        while (match(rest, /[a-z]_[a-z][a-z][a-z]_[a-z][a-z][a-z]_[0-9][0-9][0-9][0-9]/)) {
-            ids[++count] = substr(rest, RSTART, RLENGTH)
-            lines[count] = NR
+        while (match(rest, /\(\^\|::\)\([a-z0-9_|]+\)_\//)) {
+            alternation = substr(rest, RSTART + 7, RLENGTH - 10)
             rest = substr(rest, RSTART + RLENGTH)
+            n = split(alternation, stems, "|")
+            for (i = 1; i <= n; i++) {
+                ids[++count] = stems[i]
+                lines[count] = NR
+            }
         }
     }
     END { flush() }

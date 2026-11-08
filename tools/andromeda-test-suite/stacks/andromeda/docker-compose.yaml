@@ -11,11 +11,19 @@ name: test-suite-andromeda
 x-template: &template
   file: ../templates/docker-compose.yaml
 
+# Seventeen servers share one host. A server sizes its buffers and its work memory from the memory it sees, so each
+# would size itself for the whole host and together they would outgrow it; tuned for 512 MB, they fit beside the
+# brokers on a host of 8 GB.
+x-postgres: &postgres
+  extends:
+    <<: *template
+    service: postgres
+  environment:
+    TS_TUNE_MEMORY: 512MB
+
 services:
   postgres:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   broker:
     extends:
@@ -46,9 +54,7 @@ services:
       ANDROMEDA__REQUEST_LIMITS__MAX_PAGE_BODY: "8 MiB"
 
   postgres-conformance:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   # Conformance mode forces every extension off, which no test of another broker can share; the flags stay on to
   # show the mode overrides them.
@@ -73,9 +79,7 @@ services:
       ANDROMEDA__EXTENSIONS__ACCEPT_LANGUAGE__MODE: "enabled"
 
   postgres-not-recorded:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   # Leaves Core writes out of the Temporal Evolution, a process-wide history mode the front broker's tests read back
   # from /temporal. Every other setting is the broker default, the extension flags and the position budget included.
@@ -98,9 +102,7 @@ services:
       ANDROMEDA__HTTP__FORWARDED__PROXIES: "192.0.2.0/24"
 
   postgres-tls:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   # Terminates TLS itself on TCP and serves HTTP/3 over QUIC on the same port number, both presenting the shared
   # identity in ./tls, a transport no plain-HTTP test can reach. Client certificates from client-ca.crt are optional,
@@ -147,9 +149,7 @@ services:
         chmod 0644 /identities/mutual/tls.crt /identities/mutual/tls.key /identities/rotating/tls.crt /identities/rotating/tls.key
 
   postgres-mutual:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   # A TLS 1.3 floor and required client certificates, which refuse the clients of the TLS broker's tests that present
   # none or offer TLS 1.2. Its identity, the leaf mutual.crt for the name broker-mutual, sits in a volume a test
@@ -181,9 +181,7 @@ services:
       - mutual-identity:/etc/andromeda/identity:ro
 
   postgres-rotating:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   # Its identity, the leaf rotating.crt or rotated.crt for the name broker-rotating, sits in a volume a test swaps
   # between the two; a test of the certificate another broker presents would see the swap.
@@ -209,9 +207,7 @@ services:
       - rotating-identity:/etc/andromeda/identity:ro
 
   postgres-durable:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   # Durable notification delivery: every notification is queued in the tenant database and sent by the delivery
   # worker, a process-wide mode under which the live-delivery tests of the front broker would assert another path. A
@@ -235,9 +231,7 @@ services:
       ANDROMEDA__SNAPSHOT__PREPARATION__SCOPED_OPERATION_TIMEOUT: "2s"
 
   postgres-single-tenant:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   # Multi-tenancy off, so a request naming a tenant is refused: no test that works in a private tenant can run here.
   # Durable delivery with a request body limit of 4 KiB and an HTTP notification body limit of 5 KiB, and a queue that
@@ -270,9 +264,7 @@ services:
       ANDROMEDA__JSONLD__FETCH__MODE: "disabled"
 
   postgres-edge:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   # Trusts the Forwarded and X-Forwarded-Proto fields a client sends, as a broker behind a TLS terminator does, so it
   # mints the scheme they name; the front broker's tests mint the origin they addressed. It advertises no URL of its
@@ -319,9 +311,7 @@ services:
       retries: 30
 
   postgres-prefixed:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   # Advertises an apiRoot under a path prefix on an origin nothing serves, the URL a reverse proxy mounting the broker
   # under /broker would publish, which every URL another broker's tests read would carry. Cursor pagination is off, so
@@ -348,9 +338,7 @@ services:
       ANDROMEDA__EXTENSIONS__TENANT_MANAGEMENT__MODE: "enabled"
 
   postgres-observed:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   # Serves its Prometheus metrics on the management port. Only the metrics tests talk to it, since a request from any
   # other test would move the series they read, and a write from one would keep a gauge fresh that they wait to see
@@ -370,9 +358,7 @@ services:
       ANDROMEDA__OBSERVABILITY__METRICS__PROMETHEUS__MODE: "enabled"
 
   postgres-waker:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   # Four tenants loaded at once, the default tenant among them, so ten tenants with periodic work keep the waker
   # loading one about every 0.7 s. A woken tenant is protected for one second, so the slots it holds free again in
@@ -396,9 +382,7 @@ services:
       ANDROMEDA__TENANCY__RESIDENCY__WOKEN_LIFETIME: "1s"
 
   postgres-backlog:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   # Four tenants loaded at once, the default tenant among them, a woken tenant kept loaded for five seconds and an
   # unloaded tenant woken again after one: forty tenants notified every second need forty loads a second from three
@@ -423,9 +407,7 @@ services:
       ANDROMEDA__TENANCY__RESIDENCY__WOKEN_LIFETIME: "5s"
 
   postgres-roomy:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   # A five-second woken lifetime and a five-second wait before an unloaded tenant is woken again, with room for forty
   # tenants beside the default one, so forty tenants stay loaded and no wake is overdue. Two connections per tenant keep 41 loaded tenants and the platform pool
@@ -450,9 +432,7 @@ services:
       ANDROMEDA__TENANCY__RESIDENCY__WOKEN_LIFETIME: "5s"
 
   postgres-overloaded:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   # The backlog broker's places and wake timings: forty tenants notified every second need forty loads a second from
   # three places, so every place stays taken and the waker has room only as a woken tenant's work drains or its
@@ -492,9 +472,7 @@ services:
       start_interval: 1s
 
   postgres-oversized:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   # Serves its Prometheus metrics, and only the test of notifications refused for their size talks to it, so the
   # oversized-notification counter it exposes moves only with what that test sends.
@@ -521,9 +499,7 @@ services:
       ANDROMEDA__NOTIFICATIONS__DELIVERY__MAX_HTTP_BODY: "1900 KiB"
 
   postgres-timed:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   # Gives a request head two seconds and an idle connection six. Only the tests of connections that carry no request
   # talk to it: an idle bound this short closes pooled connections under any other test, which may reuse one just as

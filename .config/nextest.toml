@@ -42,6 +42,26 @@ final-status-level = "fail"
 filter = 'binary_id(andromeda-test-suite::interoperability)'
 test-group = 'interoperability'
 
+# A test at one of the broker's size bounds (an entity value or geometry position budget, a request body limit, tens of
+# thousands of instances, a chain of a thousand Relationships, thousands of federated Entities, tens of tenants loaded
+# at once) keeps a broker and its database server busy for seconds of CPU per request. On a host of two CPUs, a test
+# running beside it holds its requests past the broker's request deadline, so it runs alone.
+[[profile.suite.overrides]]
+filter = '''
+package(andromeda-test-suite) & binary(~andromeda_) & (
+    test(/(^|::)(a_att_del_9234|a_att_del_9235|a_att_del_9236|a_bat_upd_0012|a_fed_qry_9001|a_fed_qry_9002|a_fed_qry_9003|a_fed_qry_9005)_/)
+  | test(/(^|::)(a_fed_tmp_9001|a_fed_tmp_9002|a_fed_tmp_9003|a_lim_idn_9010|a_lim_pay_9002|a_lim_pay_9003|a_lim_pay_9004|a_lim_pay_9005)_/)
+  | test(/(^|::)(a_lim_pay_9006|a_lim_pay_9007|a_lim_pay_9008|a_lim_pay_9009|a_lim_pay_9010|a_lim_pay_9011|a_lim_pay_9012|a_lim_pay_9016)_/)
+  | test(/(^|::)(a_lim_pay_9017|a_lim_pay_9018|a_lim_pay_9019|a_lim_pay_9020|a_lim_pay_9021|a_lim_pgp_9005|a_lnk_tmp_0016|a_lnk_tmp_0017)_/)
+  | test(/(^|::)(a_ntf_trg_0014|a_ntf_trg_0015|a_ntf_trg_0016|a_ntf_trg_0017|a_ntf_trg_0018|a_ntf_trg_9017|a_obs_wbk_9001|a_obs_wbk_9002)_/)
+  | test(/(^|::)(a_obs_wbk_9003|a_qry_qlg_9070|a_snp_cln_9170|a_snp_cln_9171)_/)
+)'''
+threads-required = "num-test-threads"
+
+[[profile.suite.overrides]]
+filter = 'package(andromeda-test-suite) & binary(~ngsi_ld_) & test(/(^|::)(n_snp_cln_8109|n_snp_cre_8108)_/)'
+threads-required = "num-test-threads"
+
 # A pgbouncer test evicts a tenant under the pressure of 40 others and waits up to 150 s to see it dormant, then a
 # retry interval that has grown with the eviction, or drives load runs of a minute each over a hundred tenants it
 # brings up first; one still running after ten minutes hangs.
@@ -112,6 +132,26 @@ package(andromeda-test-suite) & binary(~distributed_) & (
   | test(/(^|::)(n_map_qen_9316|n_map_qen_9317|n_map_qen_9397|n_map_qte_9312|n_map_qte_9313|n_map_qte_9314|n_map_qte_9315|n_map_qte_9397)_/)
   | test(/(^|::)(n_ntf_dlv_7600|n_ntf_trg_6800|n_snp_qry_6402|n_ten_hdr_7200|n_ten_iso_6001|o_fed_dsc_7400|o_fed_dsc_7401|o_fed_dsc_7402)_/)
   | test(/(^|::)(o_fed_dsc_7403|o_snp_qry_6403)_/)
+)'''
+test-group = 'private-tenants'
+
+[[profile.suite.overrides]]
+filter = '''
+package(andromeda-test-suite) & binary(=etsi) & (
+    test(/(^|::)(d001_02_inc|d010_01_aux|d010_01_inc|d010_02_inc|d010_03_inc|d011_01_01_inc|d011_01_02_inc|d011_01_03_inc)_/)
+  | test(/(^|::)(d011_01_04_inc|d011_01_05_inc|d011_01_aux|d011_01_red|d011_02_inc|d011_02_red|d011_03_inc|d011_04_inc)_/)
+  | test(/(^|::)(d017_01_inc|d017_01_red|e019_01|e019_02|e019_25|e021_25|e022_01|e023_01)_/)
+  | test(/(^|::)(e024_01|e025_01|e026_01|e027_01|e031_01|e031_02|e033_02|e033_05)_/)
+  | test(/(^|::)(e033_08|e033_10|e034_02|e037_01|e037_05|e037_10|e041_01|e041_02)_/)
+  | test(/(^|::)(e041_03|e050_03|e051_07|e051_08|e051_09|e052_02|e052_03|e052_05)_/)
+  | test(/(^|::)(e052_06|e052_07|e059_01|e060_01|e060_03)_/)
+)'''
+test-group = 'private-tenants'
+
+[[profile.suite.overrides]]
+filter = '''
+package(andromeda-test-suite) & binary(=annex_c) & (
+    test(/(^|::)(c_5_10|c_5_11|c_5_12|c_5_7|c_5_8|c_5_9)_/)
 )'''
 test-group = 'private-tenants'
 

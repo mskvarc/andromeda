@@ -9,6 +9,16 @@ name: test-suite-multi
 x-template: &template
   file: ../templates/docker-compose.yaml
 
+# Six servers share one host. A server sizes its buffers and its work memory from the memory it sees, so each would
+# size itself for the whole host and together they would outgrow it; tuned for 1 GB, they fit beside the brokers on a
+# host of 8 GB.
+x-postgres: &postgres
+  extends:
+    <<: *template
+    service: postgres
+  environment:
+    TS_TUNE_MEMORY: 1GB
+
 # /info/sourceIdentity carries a deployment-specific member (Table 5.2.40-1), a table the configuration file alone
 # sets.
 x-configured: &configured
@@ -18,29 +28,17 @@ x-configured: &configured
 
 services:
   postgres-a:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
   postgres-b:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
   postgres-c:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
   postgres-d:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
   postgres-e:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
   postgres-f:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   broker-a:
     <<: *configured

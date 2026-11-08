@@ -8,11 +8,19 @@ name: test-suite-interoperability
 x-template: &template
   file: ../templates/docker-compose.yaml
 
+# Five servers share one host. A server sizes its buffers and its work memory from the memory it sees, so each would
+# size itself for the whole host and together they would outgrow it; tuned for 1 GB, they fit beside the brokers on a
+# host of 8 GB.
+x-postgres: &postgres
+  extends:
+    <<: *template
+    service: postgres
+  environment:
+    TS_TUNE_MEMORY: 1GB
+
 services:
   postgres-1:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   broker-1:
     extends:
@@ -29,9 +37,7 @@ services:
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-1:1056"
 
   postgres-2:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   broker-2:
     extends:
@@ -48,9 +54,7 @@ services:
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-2:1056"
 
   postgres-3:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   broker-3:
     extends:
@@ -67,9 +71,7 @@ services:
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-3:1056"
 
   postgres-4:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   broker-4:
     extends:
@@ -86,9 +88,7 @@ services:
       ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-4:1056"
 
   postgres-5:
-    extends:
-      <<: *template
-      service: postgres
+    <<: *postgres
 
   broker-5:
     extends:
