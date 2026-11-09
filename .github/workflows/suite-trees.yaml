@@ -63,8 +63,8 @@ jobs:
         uses: ./.github/actions/keyed-runner-image
 
   # The database image is the published one, which the postgresql workflow rebuilds whenever its directory changes. A
-  # tree's verdict is keyed on the keys of both images' inputs, the stack definitions, the runner configuration and the
-  # database image's digest.
+  # tree's verdict is keyed on the keys of both images' inputs, the stack definitions, the run script, the runner
+  # configuration and the database image's digest.
   suite:
     name: suite (${{ matrix.tree }})
     needs: [broker-image, runner-image]

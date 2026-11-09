@@ -238,9 +238,11 @@ jobs:
           # A registry reads a multi-platform image's description from the index, so the index carries the platform
           # image's labels as annotations.
           annotation_args=()
+          docker buildx imagetools inspect "${refs[0]}" --format '{{json .Image.Config.Labels}}' \
+            | jq -r '(. // {}) | to_entries[] | "\(.key)=\(.value)"' > labels.txt
           while IFS= read -r annotation; do
             annotation_args+=(--annotation "index:${annotation}")
-          done < <(docker buildx imagetools inspect "${refs[0]}" --format '{{json .Image.Config.Labels}}' | jq -r '(. // {}) | to_entries[] | "\(.key)=\(.value)"')
+          done < labels.txt
           docker buildx imagetools create "${annotation_args[@]}" "${tag_args[@]}" "${refs[@]}"
 
       - name: Resolve manifest list digest

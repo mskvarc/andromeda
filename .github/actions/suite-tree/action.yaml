@@ -1,5 +1,5 @@
 name: Suite tree
-description: Runs one tree of andromeda-test-suite against its stack, from the images ANDROMEDA_IMAGE, ANDROMEDA_TEST_SUITE_RUNNER_IMAGE and ANDROMEDA_POSTGRES_IMAGE name, so it compiles nothing, unless a run on main recorded a pass of the tree with the same broker and runner image inputs, stack definitions, runner configuration and database image.
+description: Runs one tree of andromeda-test-suite against its stack, from the images ANDROMEDA_IMAGE, ANDROMEDA_TEST_SUITE_RUNNER_IMAGE and ANDROMEDA_POSTGRES_IMAGE name, so it compiles nothing, unless a run on main recorded a pass of the tree with the same broker and runner image inputs, stack definitions, run script, runner configuration and database image.
 
 inputs:
   tree:
@@ -41,6 +41,11 @@ runs:
           broker ${{ inputs.broker-key }}
           runner ${{ inputs.runner-key }}
           database ${{ steps.database.outputs.digest }}
+
+    # A tree pulls the runner image, which carries the toolchain and every tree's test binaries, the broker and database
+    # images and the other services of its stack, and the stack writes its databases on top.
+    - if: ${{ steps.verdict.outputs.reused != 'true' }}
+      uses: ./.github/actions/free-disk-space
 
     - name: Run the tree
       if: ${{ steps.verdict.outputs.reused != 'true' }}
