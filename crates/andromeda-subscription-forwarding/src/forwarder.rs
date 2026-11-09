@@ -19,7 +19,7 @@ use andromeda_ngsi_ld_model::{
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
     subscription::Subscription,
 };
-use andromeda_subscription::{deleted_members::DeletedMembers, forwarding_hook::ForwardedCopy};
+use andromeda_subscription::deleted_members::DeletedMembers;
 use chrono::Utc;
 use tracing::{debug, warn};
 
@@ -98,29 +98,8 @@ impl SubscriptionForwardingService {
                 let minted = mint_subscription_id()?;
                 // Boxed: the copy is held across the forward, and the request is a wide value.
                 let copy = Box::new(ReducedSubscription::reduce(subscription, registration, &self.receiver, &minted, carriage).request);
-                let forwarded = self
-                    .federation
-                    .forward_subscription(registration, SubscriptionForward::Create { body: &copy, context })
-                    .await;
-                if forwarded.admission == SubscriptionForwardAdmission::NotAdvertised {
-                    debug!(subscription = %subscription.id, registration = %registration.id, "registration does not advertise createSubscription");
-                    return Ok(());
-                }
-                if let Some(failure) = forwarded.failure() {
-                    warn!(subscription = %subscription.id, registration = %registration.id, %failure, "reduced subscription copy was not accepted by the source");
-                    return Ok(());
-                }
-                let remote = forwarded.assigned_id(&minted);
-                self.mappings
-                    .record_forwarded(
-                        &subscription.id,
-                        &ForwardedCopy {
-                            registration: registration.id.clone(),
-                            remote_subscription: remote.clone(), // clone: the route registers the same identifier after the mapping takes its copy
-                        },
-                    )
+                self.place_copy(subscription, registration, &minted, SubscriptionForward::Create { body: &copy, context })
                     .await?;
-                self.router.register(&remote, &self.tenant).await?;
             }
             ForwardDecision::Update { remote } => {
                 // Boxed: the fragment is held across the forward, and the request is a wide value.

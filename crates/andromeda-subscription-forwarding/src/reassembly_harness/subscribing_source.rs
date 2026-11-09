@@ -1,16 +1,19 @@
-//! A context source that accepts every subscription placed at it and every
-//! deletion of one, registered for `Vehicle` and one attribute named by a user
-//! term, which a placement of a reduced copy is read off.
+//! A context source that answers every subscription placed at it, accepting
+//! it unless told otherwise, and accepts every deletion of one, registered for
+//! `Vehicle` and one attribute named by a user term, which a placement of a
+//! reduced copy is read off.
 
 use crate::reassembly_harness::default_iri;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use http::Method;
 use serde_json::{Value, json};
+use std::time::Duration;
 use wiremock::{
     Mock,
     MockServer,
     Request,
+    Respond,
     ResponseTemplate,
     matchers::{method, path, path_regex},
 };
@@ -31,10 +34,16 @@ impl SubscribingSource {
     /// A source registered as `registration_id`, inclusive, advertising the
     /// creation and deletion of subscriptions for `Vehicle` and [`SPEED`].
     pub(crate) async fn start(registration_id: &Identifier) -> SubscribingSource {
+        SubscribingSource::start_answering(registration_id, ResponseTemplate::new(201)).await
+    }
+
+    /// The source [`SubscribingSource::start`] starts, answering a placed
+    /// subscription with `placement`.
+    pub(crate) async fn start_answering(registration_id: &Identifier, placement: impl Respond + 'static) -> SubscribingSource {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/ngsi-ld/v1/subscriptions"))
-            .respond_with(ResponseTemplate::new(201))
+            .respond_with(placement)
             .mount(&server)
             .await;
         Mock::given(method("DELETE"))
@@ -60,6 +69,22 @@ impl SubscribingSource {
     /// expanded.
     pub(crate) fn stored(&self) -> ContextSourceRegistration {
         serde_json::from_value(self.registration.clone()).expect("a valid registration")
+    }
+
+    /// The registration as the registration store keeps it, with a
+    /// `management.timeout` of `timeout` (clause 5.2.34).
+    pub(crate) fn stored_timing_out_after(&self, timeout: Duration) -> ContextSourceRegistration {
+        let mut registration = self.registration.clone();
+        registration["management"] = json!({"timeout": timeout.as_millis()});
+        serde_json::from_value(registration).expect("a valid registration")
+    }
+
+    /// The registration as the registration store keeps it, advertising the
+    /// deletion of subscriptions but not their creation.
+    pub(crate) fn stored_without_subscription_creation(&self) -> ContextSourceRegistration {
+        let mut registration = self.registration.clone();
+        registration["operations"] = json!(["deleteSubscription"]);
+        serde_json::from_value(registration).expect("a valid registration")
     }
 
     /// The registration as a companion notification writes it, compacted under

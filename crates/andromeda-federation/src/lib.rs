@@ -148,6 +148,8 @@ mod registration_payload;
 mod registration_selection;
 /// What a context source answered a forwarded request with when it failed it.
 pub mod remote_answer;
+/// What a forwarded write that did not complete may have left at its source.
+pub mod remote_effect;
 /// Typed forwarding inputs.
 pub mod request;
 /// The distinct entities and source rows one forwarded query may gather.

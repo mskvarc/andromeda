@@ -1,16 +1,14 @@
 //! The identifier mappings of a re-assembly test: one local subscription, the
 //! copy a source holds of it, and the companion that mirrors it. A copy
-//! withdrawn is forgotten, while a copy placed is read off the source and not
-//! recorded here.
+//! withdrawn is forgotten. A copy claimed or recorded is noted in the order it
+//! was, but not added to the copies the sources hold, so the placements of one
+//! test are compared off the source; only a source the scene says holds a copy
+//! declines a claim.
 
-use crate::{
-    error::SubscriptionForwardingError,
-    mapping::{ForwardedSubscriptionRouter, SubscriptionForwardingStore},
-};
+use crate::{error::SubscriptionForwardingError, forwarded_claim::ForwardedClaim, mapping::SubscriptionForwardingStore};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_registration::removal_hook::ForwardedSubscriptionCopy;
 use andromeda_subscription::forwarding_hook::ForwardedCopy;
-use andromeda_tenancy::tenant_ref::TenantRef;
 use async_trait::async_trait;
 use std::sync::{
     Mutex,
@@ -35,6 +33,11 @@ pub(crate) struct ForwardingMaps {
     copies_asked: AtomicUsize,
     /// The registrations whose copy mapping was removed, in the order they were.
     removed: Mutex<Vec<Identifier>>,
+    /// The copies claimed before they were sent, in the order they were.
+    claimed: Mutex<Vec<ForwardedCopy>>,
+    /// The copies recorded under the identifier a source assigned, in the order
+    /// they were.
+    recorded: Mutex<Vec<ForwardedCopy>>,
 }
 
 impl ForwardingMaps {
@@ -49,6 +52,8 @@ impl ForwardingMaps {
             copies: Mutex::new(copies),
             copies_asked: AtomicUsize::new(0),
             removed: Mutex::new(Vec::new()),
+            claimed: Mutex::new(Vec::new()),
+            recorded: Mutex::new(Vec::new()),
         }
     }
 
@@ -65,6 +70,16 @@ impl ForwardingMaps {
     /// The registrations whose copy mapping was removed, in the order they were.
     pub(crate) fn removed(&self) -> Vec<Identifier> {
         self.removed.lock().expect("the removal record is never poisoned").clone()
+    }
+
+    /// The copies claimed before they were sent, in the order they were.
+    pub(crate) fn claimed(&self) -> Vec<ForwardedCopy> {
+        self.claimed.lock().expect("the claims are never poisoned").clone()
+    }
+
+    /// The copies recorded under the identifier a source assigned.
+    pub(crate) fn recorded(&self) -> Vec<ForwardedCopy> {
+        self.recorded.lock().expect("the records are never poisoned").clone()
     }
 }
 
@@ -83,7 +98,22 @@ impl SubscriptionForwardingStore for ForwardingMaps {
         Ok((*companion == self.companion()).then(|| self.local.clone()))
     }
 
-    async fn record_forwarded(&self, _local: &Identifier, _copy: &ForwardedCopy) -> Result<(), SubscriptionForwardingError> {
+    async fn claim_forwarded(&self, _local: &Identifier, copy: &ForwardedCopy) -> Result<ForwardedClaim, SubscriptionForwardingError> {
+        let held = self
+            .copies
+            .lock()
+            .expect("the copies are never poisoned")
+            .iter()
+            .any(|held| held.registration == copy.registration);
+        if held {
+            return Ok(ForwardedClaim::Declined);
+        }
+        self.claimed.lock().expect("the claims are never poisoned").push(copy.clone());
+        Ok(ForwardedClaim::Claimed)
+    }
+
+    async fn record_forwarded(&self, _local: &Identifier, copy: &ForwardedCopy) -> Result<(), SubscriptionForwardingError> {
+        self.recorded.lock().expect("the records are never poisoned").push(copy.clone());
         Ok(())
     }
 
@@ -110,24 +140,6 @@ impl SubscriptionForwardingStore for ForwardingMaps {
             .expect("the copies are never poisoned")
             .retain(|copy| copy.registration != *registration);
         self.removed.lock().expect("the removal record is never poisoned").push(registration.clone());
-        Ok(())
-    }
-}
-
-/// A router that accepts every identifier and knows none.
-pub(crate) struct DiscardingRouter;
-
-#[async_trait]
-impl ForwardedSubscriptionRouter for DiscardingRouter {
-    async fn register(&self, _minted: &Identifier, _tenant: &TenantRef) -> Result<(), SubscriptionForwardingError> {
-        Ok(())
-    }
-
-    async fn tenant_of(&self, _minted: &Identifier) -> Result<Option<TenantRef>, SubscriptionForwardingError> {
-        Ok(None)
-    }
-
-    async fn unregister(&self, _minted: &Identifier) -> Result<(), SubscriptionForwardingError> {
         Ok(())
     }
 }
