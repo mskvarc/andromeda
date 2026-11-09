@@ -36,7 +36,17 @@ runs:
           echo "BASE_DIGEST=${from#*@}"
         } >> "$GITHUB_ENV"
 
-    # The layer cache lives in the registry, which keeps it out of the Actions cache.
+    # The compiler cache keeps compiled crates in the Actions cache. Its credentials reach only actions, so they are
+    # exported here and handed to the build as secrets, which stay out of every layer.
+    - name: Export the Actions cache credentials
+      uses: actions/github-script@v7
+      with:
+        script: |
+          core.setSecret(process.env.ACTIONS_RUNTIME_TOKEN || '');
+          core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+          core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+    # The layer cache lives in the registry, so only the compiler cache uses the Actions cache.
     - name: Build and push
       uses: docker/build-push-action@v7
       with:
@@ -49,6 +59,9 @@ runs:
         cache-from: type=registry,ref=${{ inputs.cache }}
         cache-to: type=registry,ref=${{ inputs.cache }},mode=max,image-manifest=true,oci-mediatypes=true
         outputs: type=image,name=${{ inputs.image }},push=true
+        secrets: |
+          ACTIONS_RESULTS_URL=${{ env.ACTIONS_RESULTS_URL }}
+          ACTIONS_RUNTIME_TOKEN=${{ env.ACTIONS_RUNTIME_TOKEN }}
         labels: |
           org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           org.opencontainers.image.base.name=${{ env.BASE_NAME }}
