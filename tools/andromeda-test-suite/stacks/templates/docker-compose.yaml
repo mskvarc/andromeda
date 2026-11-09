@@ -19,11 +19,17 @@ services:
     shm_size: 1gb
     environment:
       POSTGRES_PASSWORD: andromeda
+    # Probed over TCP. The server the entrypoint starts to initialise a new data directory listens on the socket alone,
+    # and a broker started against it is refused once that server stops for the real one. Every server of a stack
+    # initialises at once, which takes about a minute on a host of two CPUs, so a probe failing in the first two minutes
+    # does not count.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U andromeda"]
+      test: ["CMD-SHELL", "pg_isready -q -h 127.0.0.1 -U andromeda"]
       interval: 2s
       timeout: 3s
       retries: 40
+      start_period: 2m
+      start_interval: 1s
 
   # Only the settings that differ from the broker's defaults, all timings and pool sizes: every behaviour a test reads
   # is the broker's default unless the stack says otherwise.
