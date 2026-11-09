@@ -3,8 +3,9 @@ name: prune-ci-images
 # ci tags a broker image index for each platform and a runner image index for every commit it checks, builds an image
 # only for inputs no image exists for yet, and every build that refreshes a layer cache leaves the cache it replaced
 # untagged. A commit's tags stay for thirty days, long enough to release it, and an input image stays until the last
-# commit index pointing at it is gone. The tags of the commit at the head of main stay whatever their age, since the
-# weekly suite run tests that commit on them. An untagged manifest stays one day, so a push still in flight keeps the
+# commit index pointing at it is gone, tagged or not, because two builds of one key at once leave the first untagged
+# while commit indexes point at it. The tags of the commit at the head of main stay whatever their age, since the weekly
+# suite run tests that commit on them. An untagged manifest stays at least one day, so a push still in flight keeps the
 # manifest it is about to tag. The published andromeda and postgresql packages are never touched: their untagged
 # versions are the platform manifests of a release.
 on:
@@ -43,7 +44,7 @@ jobs:
           commit_cutoff="$(date -u -d '30 days ago' +%s)"
           untagged_cutoff="$(date -u -d '1 day ago' +%s)"
           main_head="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
-          echo "keeping broker-${main_head} and runner-${main_head}, the images of the head of main"
+          echo "keeping the commit tags of ${main_head}, the head of main"
           for package in andromeda-ci andromeda-buildcache postgresql-buildcache; do
             if ! gh api --paginate "users/${OWNER}/packages/container/${package}/versions?per_page=100" \
               --jq '.[] | {id, name, updated: (.updated_at | fromdateiso8601), tags: .metadata.container.tags}' \
@@ -65,10 +66,9 @@ jobs:
             ids="$(jq -r --argjson commit_cutoff "$commit_cutoff" --argjson untagged_cutoff "$untagged_cutoff" \
               --arg main_head "$main_head" --slurpfile referenced referenced.json '
               select(
-                (.tags == [] and .updated < $untagged_cutoff)
-                or (.tags != [] and all(.tags[]; test("^(broker|broker-amd64|runner)-[0-9a-f]{40}$") and (endswith("-" + $main_head) | not))
+                (.tags != [] and all(.tags[]; test("^(broker|broker-amd64|runner)-[0-9a-f]{40}$") and (endswith("-" + $main_head) | not))
                   and .updated < $commit_cutoff)
-                or (.tags != [] and all(.tags[]; test("^(broker|broker-amd64|runner)-input-[0-9a-f]{64}$")) and .updated < $untagged_cutoff
+                or ((.tags == [] or all(.tags[]; test("^(broker|broker-amd64|runner)-input-[0-9a-f]{64}$"))) and .updated < $untagged_cutoff
                   and (.name as $name | $referenced[0] | any(.[]; . == $name) | not))
               )
               | .id' versions.jsonl)"

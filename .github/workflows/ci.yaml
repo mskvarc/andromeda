@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       fresh:
-        description: Run every job in full, ignoring the passes runs on main recorded and the images built before.
+        description: Run every check in full, ignoring the passes runs on main recorded. Images of the same inputs are still reused.
         type: boolean
         default: false
 
@@ -327,8 +327,8 @@ jobs:
           paths: ${{ steps.cache.outputs.paths }}
 
   # The arm64 broker image every suite tree runs. It is built only when no image of the commit's broker inputs exists
-  # yet, under broker-input-<key>, or when the run was started with fresh; broker-<sha> is an index over that image with
-  # the commit as its revision. A release publishes it as its arm64 image.
+  # yet, under broker-input-<key>, even in a run started with fresh; broker-<sha> is an index over that image with the
+  # commit as its revision. A release publishes it as its arm64 image.
   broker-image:
     name: broker-image
     if: &beyond-pull-request ${{ github.event_name != 'pull_request' }}
@@ -352,7 +352,6 @@ jobs:
         uses: ./.github/actions/keyed-broker-image
         with:
           platform: ${{ env.PLATFORM }}
-          fresh: ${{ inputs.fresh }}
 
   # The amd64 broker image a release publishes beside the arm64 one, keyed on the same inputs on a native amd64 runner,
   # under broker-amd64-input-<key> and broker-amd64-<sha>. No suite tree runs it and no gate waits for it; it is there
@@ -370,8 +369,9 @@ jobs:
     steps: *broker-image-steps
 
   # The runner image every suite tree runs, with the suite compiled into it as a nextest archive, so the trees compile
-  # nothing. It is built only when no image of the commit's suite inputs exists yet, under runner-input-<key>, or when
-  # the run was started with fresh; runner-<sha> is an index over that image with the commit as its revision.
+  # nothing. It is built only when no image of the commit's suite inputs exists yet, under runner-input-<key>, even in a
+  # run started with fresh, because commit indexes point at its manifest by digest; runner-<sha> is an index over that
+  # image with the commit as its revision.
   runner-image:
     name: runner-image
     if: *beyond-pull-request
@@ -399,7 +399,7 @@ jobs:
         uses: ./.github/actions/image-lookup
         with:
           image: ${{ env.CI_IMAGE }}:runner-input-${{ steps.inputs.outputs.key }}
-      - if: &build ${{ inputs.fresh || steps.existing.outputs.found != 'true' }}
+      - if: &build ${{ steps.existing.outputs.found != 'true' }}
         uses: ./.github/actions/free-disk-space
       - if: *build
         uses: docker/setup-buildx-action@v4

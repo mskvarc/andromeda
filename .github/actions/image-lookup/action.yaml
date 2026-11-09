@@ -1,5 +1,5 @@
 name: Image lookup
-description: Reports whether the registry holds an image under a reference. A lookup that fails for any other reason reports it missing, which costs a build but never a wrong image.
+description: Reports whether the registry holds an image under a reference. A lookup that fails for any reason but the reference being missing fails the step, so a registry error never builds an image again and moves its tag off the manifest commit indexes point at.
 
 inputs:
   image:
@@ -21,8 +21,11 @@ runs:
         IMAGE: ${{ inputs.image }}
       run: |
         set -euo pipefail
-        if docker buildx imagetools inspect "$IMAGE" > /dev/null; then
+        if error="$(docker buildx imagetools inspect --raw "$IMAGE" 2>&1 > /dev/null)"; then
           echo "found=true" >> "$GITHUB_OUTPUT"
-        else
+        elif grep -Fqx "ERROR: ${IMAGE}: not found" <<< "$error"; then
           echo "found=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "$error" >&2
+          exit 1
         fi
