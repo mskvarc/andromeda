@@ -12,6 +12,7 @@ pub(crate) mod answering_source;
 pub(crate) mod forwarding_maps;
 pub(crate) mod held_entities;
 pub(crate) mod inert_ports;
+pub(crate) mod recording_router;
 pub(crate) mod recording_subscriptions;
 pub(crate) mod scripted_registrations;
 pub(crate) mod stored_forms;
@@ -22,9 +23,10 @@ use crate::{
     forwarder::ForwardDecision,
     inbound::Inbound,
     reassembly_harness::{
-        forwarding_maps::{DiscardingRouter, ForwardingMaps},
+        forwarding_maps::ForwardingMaps,
         held_entities::HeldEntities,
         inert_ports::{AcceptingEndpoints, NoLocalTypes, offline_engine},
+        recording_router::RecordingRouter,
         recording_subscriptions::RecordingSubscriptions,
         scripted_registrations::ScriptedRegistrations,
         stored_forms::{stored_companion, stored_subscription},
@@ -107,8 +109,11 @@ pub(crate) struct ReassemblyScene {
     service: SubscriptionForwardingService,
     /// The subscription store, which counts slots claimed and outcomes recorded.
     subscriptions: Arc<RecordingSubscriptions>,
-    /// The mappings, which count how often the copies were asked for.
+    /// The mappings, which count how often the copies were asked for and note
+    /// every claim.
     maps: Arc<ForwardingMaps>,
+    /// The platform route, which notes every identifier routed and forgotten.
+    router: Arc<RecordingRouter>,
     /// The loopback receiver the local subscription's endpoint names.
     receiver: MockServer,
     /// The endpoint of the local subscription, which the receiver serves.
@@ -170,6 +175,7 @@ impl ReassemblyScene {
             companion_subscription(),
             copies,
         ));
+        let router = Arc::new(RecordingRouter::default());
         let transport = TransportDispatcher::new(HttpTransportConfig::default(), MqttPoolConfig::default()).expect("the dispatcher builds");
         let csource_subscriptions = SubscriptionService::new(
             subscriptions.clone(),
@@ -216,7 +222,7 @@ impl ReassemblyScene {
             .subscriptions(subscriptions.clone())
             .csource_subscriptions(Arc::new(csource_subscriptions))
             .mappings(maps.clone())
-            .router(Arc::new(DiscardingRouter))
+            .router(router.clone())
             .federation(Arc::new(federation))
             .entity_query(Arc::new(entity_query))
             .transport(Arc::new(transport))
@@ -226,6 +232,7 @@ impl ReassemblyScene {
             service,
             subscriptions,
             maps,
+            router,
             receiver,
             endpoint,
             returned: 0,
@@ -275,6 +282,17 @@ impl ReassemblyScene {
     /// The registrations whose copy mapping was removed.
     pub(crate) fn removed_mappings(&self) -> Vec<Identifier> {
         self.maps.removed()
+    }
+
+    /// The mappings, for a double that reads them while a request is in flight.
+    pub(crate) fn maps(&self) -> Arc<ForwardingMaps> {
+        Arc::clone(&self.maps)
+    }
+
+    /// The platform route, for a double that reads it while a request is in
+    /// flight.
+    pub(crate) fn router(&self) -> Arc<RecordingRouter> {
+        Arc::clone(&self.router)
     }
 
     /// The companion the mappings link to the local subscription.

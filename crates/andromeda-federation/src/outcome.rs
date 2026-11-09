@@ -3,6 +3,7 @@
 use crate::{
     answer_body::AnswerBody,
     error::FederationError,
+    remote_effect::RemoteEffect,
     source_continuation::SourceContinuation,
     source_read_warning::SourceReadWarning,
     temporal_history_walk::least_range_end,
@@ -74,6 +75,20 @@ impl TransportFailure {
     #[must_use]
     pub const fn is_timeout(&self) -> bool {
         matches!(self, TransportFailure::TimedOut { .. } | TransportFailure::CoolingDown { .. })
+    }
+
+    /// What the write this failure ended may have left at the source.
+    ///
+    /// A request whose connection was never made, or that was never sent, left
+    /// nothing. One sent over an open connection that got no answer, or no
+    /// readable one, may have been carried out.
+    #[must_use]
+    pub fn remote_effect(&self) -> RemoteEffect {
+        match self {
+            TransportFailure::Undelivered(error) if error.is_connect() => RemoteEffect::Untouched,
+            TransportFailure::CoolingDown { .. } | TransportFailure::Unprepared(_) | TransportFailure::Refused(_) => RemoteEffect::Untouched,
+            TransportFailure::TimedOut { .. } | TransportFailure::Undelivered(_) | TransportFailure::Unreadable(_) => RemoteEffect::Possible,
+        }
     }
 }
 

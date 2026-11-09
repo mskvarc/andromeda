@@ -9,6 +9,7 @@
 use crate::{store_fault::persistence_error, subscription_store::surrogate_key::subscription_key_of};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::{
+    csr::Csr,
     subscription_forwarding::{ForwardedSubscriptions, SubscriptionCompanions},
     subscriptions::Subscriptions,
 };
@@ -73,6 +74,47 @@ pub(crate) fn local_of_companion_statement(companion: &Identifier) -> SelectStat
     reading_subscription_uri(SubscriptionCompanions::Table, SubscriptionCompanions::LocalSubscriptionKey)
         .and_where(Expr::col((Alias::new(MAPPING), SubscriptionCompanions::CompanionSubscriptionKey)).in_subquery(subscription_key_of(companion)))
         .to_owned()
+}
+
+/// Claim `copy` as the copy of `local` at `copy.registration`, returning the
+/// key of a row it inserted.
+///
+/// Nothing is inserted, and nothing returned, when a copy of `local` at the
+/// registration is recorded already, or when `local` or the registration no
+/// longer exists: the subscription is read for its key and the registration
+/// tested for, rather than the key columns and the registration foreign key
+/// refusing the row.
+pub(crate) fn claim_forwarded_statement(local: &Identifier, copy: &ForwardedCopy) -> Result<InsertStatement, SubscriptionForwardingError> {
+    let registered = Query::select()
+        .expr(Expr::val(1))
+        .from(Csr::Table)
+        .and_where(Expr::col(Csr::Id).eq(copy.registration.as_str()))
+        .to_owned();
+    let claimed = Query::select()
+        .column(Subscriptions::SubscriptionKey)
+        .expr(Expr::val(copy.registration.as_str()))
+        .expr(Expr::val(copy.remote_subscription.as_str()))
+        .from(Subscriptions::Table)
+        .and_where(Expr::col(Subscriptions::Id).eq(local.as_str()))
+        .and_where(Expr::exists(registered))
+        .to_owned();
+    let mut insert = Query::insert();
+    insert
+        .into_table(ForwardedSubscriptions::Table)
+        .columns([
+            ForwardedSubscriptions::LocalSubscriptionKey,
+            ForwardedSubscriptions::RegistrationId,
+            ForwardedSubscriptions::RemoteSubscriptionId,
+        ])
+        .select_from(claimed)
+        .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?
+        .on_conflict(
+            OnConflict::columns([ForwardedSubscriptions::LocalSubscriptionKey, ForwardedSubscriptions::RegistrationId])
+                .do_nothing()
+                .to_owned(),
+        )
+        .returning_col(ForwardedSubscriptions::LocalSubscriptionKey);
+    Ok(insert)
 }
 
 /// Record the copy of `local` placed at `copy.registration`, replacing the
@@ -144,6 +186,7 @@ pub(crate) fn remove_forwarded_statement(local: &Identifier, registration: &Iden
 #[cfg(test)]
 mod tests {
     use crate::subscription_forwarding::statements::{
+        claim_forwarded_statement,
         companion_of_statement,
         forwarded_for_registration_statement,
         forwarded_of_statement,
@@ -221,6 +264,21 @@ mod tests {
                 r#"INSERT INTO "forwarded_subscriptions" ("local_subscription_key", "registration_id", "remote_subscription_id") VALUES ({}, 'urn:ngsi-ld:ContextSourceRegistration:b', 'urn:ngsi-ld:Subscription:remote') ON CONFLICT ("local_subscription_key", "registration_id") DO UPDATE SET "remote_subscription_id" = "excluded"."remote_subscription_id""#,
                 key_of("local")
             )
+        );
+    }
+
+    #[test]
+    fn a_claim_inserts_only_for_a_subscription_and_registration_that_exist_and_never_replaces_a_recorded_copy() {
+        let copy = ForwardedCopy {
+            registration: uri("urn:ngsi-ld:ContextSourceRegistration:b"),
+            remote_subscription: uri("urn:ngsi-ld:Subscription:minted"),
+        };
+        let sql = claim_forwarded_statement(&uri("urn:ngsi-ld:Subscription:local"), &copy)
+            .expect("the claim builds")
+            .to_string(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            r#"INSERT INTO "forwarded_subscriptions" ("local_subscription_key", "registration_id", "remote_subscription_id") SELECT "subscription_key", 'urn:ngsi-ld:ContextSourceRegistration:b', 'urn:ngsi-ld:Subscription:minted' FROM "subscriptions" WHERE "id" = 'urn:ngsi-ld:Subscription:local' AND EXISTS(SELECT 1 FROM "context_source_registrations" WHERE "id" = 'urn:ngsi-ld:ContextSourceRegistration:b') ON CONFLICT ("local_subscription_key", "registration_id") DO NOTHING RETURNING "local_subscription_key""#
         );
     }
 

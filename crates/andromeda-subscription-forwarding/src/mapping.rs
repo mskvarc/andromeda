@@ -8,7 +8,7 @@
 //! notification, which carries no tenant of ours (clause 6.3.14), can still be
 //! routed to the right tenant.
 
-use crate::error::SubscriptionForwardingError;
+use crate::{error::SubscriptionForwardingError, forwarded_claim::ForwardedClaim};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_registration::removal_hook::ForwardedSubscriptionCopy;
 use andromeda_subscription::forwarding_hook::ForwardedCopy;
@@ -55,7 +55,22 @@ pub trait SubscriptionForwardingStore: Send + Sync + 'static {
         'life1: 'async_trait,
         Self: 'async_trait;
 
-    /// Record the copy of `local` placed at `copy.registration`.
+    /// Record `copy` as the copy of `local` at `copy.registration` before it is
+    /// sent there, unless a copy of `local` is recorded there already or either
+    /// `local` or the registration no longer exists.
+    fn claim_forwarded<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        local: &'life1 Identifier,
+        copy: &'life2 ForwardedCopy,
+    ) -> BoxFuture<'async_trait, Result<ForwardedClaim, SubscriptionForwardingError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait;
+
+    /// Record the copy of `local` placed at `copy.registration`, replacing the
+    /// identifier the copy recorded there carried.
     fn record_forwarded<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         local: &'life1 Identifier,

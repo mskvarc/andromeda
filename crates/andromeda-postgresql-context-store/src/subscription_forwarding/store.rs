@@ -5,6 +5,7 @@ use crate::{
     subscription_forwarding::{
         repo::SubscriptionForwardingRepository,
         statements::{
+            claim_forwarded_statement,
             companion_of_statement,
             forwarded_for_registration_statement,
             forwarded_of_statement,
@@ -20,7 +21,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_registration::removal_hook::ForwardedSubscriptionCopy;
 use andromeda_subscription::forwarding_hook::ForwardedCopy;
-use andromeda_subscription_forwarding::{error::SubscriptionForwardingError, mapping::SubscriptionForwardingStore};
+use andromeda_subscription_forwarding::{error::SubscriptionForwardingError, forwarded_claim::ForwardedClaim, mapping::SubscriptionForwardingStore};
 use futures::future::BoxFuture;
 
 /// Parse a stored identifier back into a URI.
@@ -86,6 +87,27 @@ impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
                 .await
                 .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
             row.map(|(local,)| uri(&local)).transpose()
+        })
+    }
+
+    fn claim_forwarded<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        local: &'life1 Identifier,
+        copy: &'life2 ForwardedCopy,
+    ) -> BoxFuture<'async_trait, Result<ForwardedClaim, SubscriptionForwardingError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            let inserted: Option<(i64,)> = claim_forwarded_statement(local, copy)?
+                .to_query_as()
+                .fetch_optional(self.pool())
+                .await
+                .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
+            Ok(inserted.map_or(ForwardedClaim::Declined, |_| ForwardedClaim::Claimed))
         })
     }
 

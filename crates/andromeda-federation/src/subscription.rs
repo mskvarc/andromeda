@@ -60,6 +60,18 @@ impl SubscriptionForward<'_> {
             SubscriptionForward::Delete { .. } => ForwardingOperation::DeleteSubscription,
         }
     }
+
+    /// Whether `registration` advertises the operation this forward needs
+    /// (clause 5.8.1.4: "if the Context Source Registration indicates support
+    /// for ..."), so a caller can tell before the forward whether it is sent.
+    #[must_use]
+    pub fn admission(&self, registration: &ContextSourceRegistration) -> SubscriptionForwardAdmission {
+        if self.operation().matches(registration) {
+            SubscriptionForwardAdmission::Forwarded
+        } else {
+            SubscriptionForwardAdmission::NotAdvertised
+        }
+    }
 }
 
 /// Whether a registration advertises the operation a forward needs.
@@ -126,19 +138,17 @@ impl ForwardedSubscription {
 
 impl FederationService {
     /// Forward one subscription operation to `registration`, when it
-    /// advertises the operation (clause 5.8.1.4: "if the Context Source
-    /// Registration indicates support for ...").
+    /// advertises the operation ([`SubscriptionForward::admission`]).
     pub async fn forward_subscription(&self, registration: &ContextSourceRegistration, forward: SubscriptionForward<'_>) -> ForwardedSubscription {
-        if !forward.operation().matches(registration) {
-            return ForwardedSubscription {
+        match forward.admission(registration) {
+            SubscriptionForwardAdmission::NotAdvertised => ForwardedSubscription {
                 admission: SubscriptionForwardAdmission::NotAdvertised,
                 outcome: None,
-            };
-        }
-        let outcome = self.send_subscription_forward(registration, forward).await;
-        ForwardedSubscription {
-            admission: SubscriptionForwardAdmission::Forwarded,
-            outcome: Some(outcome),
+            },
+            SubscriptionForwardAdmission::Forwarded => ForwardedSubscription {
+                admission: SubscriptionForwardAdmission::Forwarded,
+                outcome: Some(self.send_subscription_forward(registration, forward).await),
+            },
         }
     }
 

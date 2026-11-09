@@ -10,11 +10,18 @@
 
 /// The companion context source registration subscription of a local subscription.
 pub mod companion;
+/// Placing one reduced copy: claimed before it is sent, settled by the answer.
+mod copy_placement;
+/// What placing one reduced copy records, routes and keeps.
+#[cfg(test)]
+mod copy_placement_tests;
 /// Failures of the distributed subscription side.
 pub mod error;
 /// What an expired subscription leaves at the context sources.
 #[cfg(test)]
 mod expiry_withdrawal_tests;
+/// Whether a copy is claimed at a registration before it is sent there.
+pub mod forwarded_claim;
 /// Placing, updating and removing reduced copies at context sources.
 pub mod forwarder;
 /// The invariants the distributed subscription side relies on.
