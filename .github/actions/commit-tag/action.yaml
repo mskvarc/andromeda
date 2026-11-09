@@ -1,5 +1,5 @@
 name: Commit tag
-description: Tags an image for the commit as an index over it, with the commit as the index's revision annotation, so the tag shares every layer with the image.
+description: Tags an image for the commit as an index over it, with the commit as the index's revision annotation, so the tag shares every layer with the image. The index also carries the tag <tag>-<digest hex>, naming the manifest it points at, which the pruning reads instead of fetching the index.
 
 inputs:
   image:
@@ -12,6 +12,8 @@ inputs:
 runs:
   using: composite
   steps:
+    # The index is built from the manifest the image's tag names now, by digest, so the digest its second tag names is
+    # the one it points at even when the image's tag moves meanwhile.
     - name: Tag the image for the commit
       shell: bash
       env:
@@ -19,7 +21,9 @@ runs:
         TAG: ${{ inputs.tag }}
       run: |
         set -euo pipefail
+        digest="$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest}}' | jq -er .digest)"
         docker buildx imagetools create \
           --annotation "index:org.opencontainers.image.revision=${GITHUB_SHA}" \
+          --tag "${TAG}-${digest#sha256:}" \
           --tag "$TAG" \
-          "$IMAGE"
+          "${IMAGE%:*}@${digest}"

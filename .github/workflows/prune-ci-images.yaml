@@ -7,7 +7,8 @@ name: prune-ci-images
 # untagged while commit indexes point at it. The tags of the commit at the head of main stay whatever their age, so that
 # commit can be released without going through ci again. An untagged manifest stays at least one day, so a push still in
 # flight keeps the manifest it is about to tag. The published andromeda and postgresql packages are never touched: their
-# untagged versions are the platform manifests of a release.
+# untagged versions are the platform manifests of a release. Each package is pruned by a job of its own, so a failure in
+# one leaves the others pruned.
 on:
   schedule:
     - cron: "37 5 * * *"
@@ -22,21 +23,25 @@ permissions:
 
 jobs:
   prune:
-    name: prune
+    name: prune (${{ matrix.package }})
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [andromeda-ci, andromeda-buildcache, postgresql-buildcache]
     env:
       GH_TOKEN: ${{ github.token }}
       OWNER: ${{ github.repository_owner }}
+      PACKAGE: ${{ matrix.package }}
     steps:
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      # A commit index is tagged <prefix>-<sha> and <prefix>-<sha>-<digest hex>, the second naming the manifest it
+      # points at, so the references come from the version list and no manifest is fetched. A kept index without that
+      # tag leaves its reference unknown, so no input image or untagged version is deleted then. A failed deletion is
+      # reported and the rest go on.
       - name: Delete expired versions
         shell: bash
         run: |
@@ -45,37 +50,47 @@ jobs:
           untagged_cutoff="$(date -u -d '1 day ago' +%s)"
           main_head="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
           echo "keeping the commit tags of ${main_head}, the head of main"
-          for package in andromeda-ci andromeda-buildcache postgresql-buildcache; do
-            if ! gh api --paginate "users/${OWNER}/packages/container/${package}/versions?per_page=100" \
-              --jq '.[] | {id, name, updated: (.updated_at | fromdateiso8601), tags: .metadata.container.tags}' \
-              > versions.jsonl 2> list-error.txt; then
-              if grep -q 'HTTP 404' list-error.txt; then
-                echo "${package}: no such package"
-                continue
-              fi
-              cat list-error.txt >&2
-              exit 1
+          if ! gh api --paginate "users/${OWNER}/packages/container/${PACKAGE}/versions?per_page=100" \
+            --jq '.[] | {id, name, updated: (.updated_at | fromdateiso8601), tags: .metadata.container.tags}' \
+            > versions.jsonl 2> list-error.txt; then
+            if grep -q 'HTTP 404' list-error.txt; then
+              echo "${PACKAGE}: no such package"
+              exit 0
             fi
-            # The input images the commit indexes still kept point at, the head of main's among them.
-            jq -r --argjson cutoff "$commit_cutoff" --arg main_head "$main_head" '
-              select(.tags != [] and all(.tags[]; test("^(broker|broker-amd64|runner)-[0-9a-f]{40}$"))
-                and (.updated >= $cutoff or any(.tags[]; endswith("-" + $main_head)))) | .name' \
-              versions.jsonl | while IFS= read -r digest; do
-              docker buildx imagetools inspect --raw "ghcr.io/${OWNER}/${package}@${digest}" | jq -r '.manifests[]?.digest'
-            done | jq -R . | jq -s . > referenced.json
-            ids="$(jq -r --argjson commit_cutoff "$commit_cutoff" --argjson untagged_cutoff "$untagged_cutoff" \
-              --arg main_head "$main_head" --slurpfile referenced referenced.json '
-              select(
-                (.tags != [] and all(.tags[]; test("^(broker|broker-amd64|runner)-[0-9a-f]{40}$") and (endswith("-" + $main_head) | not))
-                  and .updated < $commit_cutoff)
-                or ((.tags == [] or all(.tags[]; test("^(broker|broker-amd64|runner)-input-[0-9a-f]{64}$"))) and .updated < $untagged_cutoff
-                  and (.name as $name | $referenced[0] | any(.[]; . == $name) | not))
-              )
-              | .id' versions.jsonl)"
-            count=0
-            for id in $ids; do
-              gh api --method DELETE "users/${OWNER}/packages/container/${package}/versions/${id}"
-              count=$((count + 1))
-            done
-            echo "${package}: deleted ${count} versions"
+            cat list-error.txt >&2
+            exit 1
+          fi
+          commit_tag='^(broker|broker-amd64|runner)-[0-9a-f]{40}(-[0-9a-f]{64})?$'
+          input_tag='^(broker|broker-amd64|runner)-input-[0-9a-f]{64}$'
+          main_tag="-${main_head}(-[0-9a-f]{64})?\$"
+          references="$(jq -sc --arg commit_tag "$commit_tag" --arg main_tag "$main_tag" --argjson cutoff "$commit_cutoff" '
+            [.[] | select(.tags != [] and all(.tags[]; test($commit_tag)) and (.updated >= $cutoff or any(.tags[]; test($main_tag))))]
+            | {
+                digests: ([.[].tags[] | capture("-(?<hex>[0-9a-f]{64})$").hex | "sha256:" + .] | unique),
+                unnamed: [.[] | select(any(.tags[]; test("-[0-9a-f]{64}$")) | not) | .name]
+              }' versions.jsonl)"
+          unnamed="$(jq -r '.unnamed | join(" ")' <<< "$references")"
+          if [ -n "$unnamed" ]; then
+            echo "::error::${PACKAGE}: commit indexes without a digest tag, so no input image or untagged version is deleted: ${unnamed}"
+          fi
+          ids="$(jq -r --arg commit_tag "$commit_tag" --arg main_tag "$main_tag" --arg input_tag "$input_tag" \
+            --argjson references "$references" --argjson commit_cutoff "$commit_cutoff" --argjson untagged_cutoff "$untagged_cutoff" '
+            select(
+              (.tags != [] and all(.tags[]; test($commit_tag)) and (any(.tags[]; test($main_tag)) | not) and .updated < $commit_cutoff)
+              or ($references.unnamed == [] and (.tags == [] or all(.tags[]; test($input_tag))) and .updated < $untagged_cutoff
+                and (.name | IN($references.digests[]) | not))
+            )
+            | .id' versions.jsonl)"
+          deleted=0
+          failed=0
+          for id in $ids; do
+            if gh api --method DELETE "users/${OWNER}/packages/container/${PACKAGE}/versions/${id}" > /dev/null; then
+              deleted=$((deleted + 1))
+            else
+              failed=$((failed + 1))
+            fi
           done
+          echo "${PACKAGE}: deleted ${deleted} versions, ${failed} deletions failed"
+          if [ -n "$unnamed" ] || [ "$failed" -gt 0 ]; then
+            exit 1
+          fi
