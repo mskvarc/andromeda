@@ -60,6 +60,12 @@ threads-required = "num-test-threads"
 
 [[profile.suite.overrides]]
 filter = '''
+package(andromeda-test-suite) & binary(~distributed_)
+  & test(/(^|::)(n_fed_tmp_7435|n_map_qen_8001|n_snp_cre_8163|n_snp_cre_8164)_/)'''
+threads-required = "num-test-threads"
+
+[[profile.suite.overrides]]
+filter = '''
 package(andromeda-test-suite) & binary(~ngsi_ld_)
   & test(/(^|::)(n_fed_qry_9006|n_ntf_dlv_9004|n_ntf_dlv_9005|n_ntf_trg_9001|n_snp_cln_8109|n_snp_cre_8108)_/)'''
 threads-required = "num-test-threads"
