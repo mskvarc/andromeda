@@ -26,7 +26,7 @@ use ngsi_ld::{
 async fn o_fed_dsc_7401_a_promised_type_is_described_with_its_type_name() -> Result<()> {
     let namespace = Namespace::fresh();
     let tenant = broker::private_tenant(&broker::front()?, &namespace).await?;
-    let broker_b = broker::client(BrokerRole::B)?.with_tenant(namespace.tenant()?);
+    let broker_b = broker::private_tenant(&broker::client(BrokerRole::B)?, &namespace).await?;
     let aircraft_id = namespace.urn("Aircraft", 1)?;
     let aircraft_type = namespace.entity_type("Aircraft")?;
     let aircraft_2_id = namespace.urn("Aircraft", 2)?;
