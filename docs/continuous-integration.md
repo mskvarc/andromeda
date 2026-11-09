@@ -35,11 +35,28 @@ Both images are named by the key of their inputs, a SHA-256 over the path, mode 
 
 The runner image compiles the suite in the `suite` stage of `tools/andromeda-test-suite/stacks/runner/Dockerfile`. The suite's third-party dependencies come from a cargo-chef layer that stays while the manifests, the lockfile and the toolchain do, so a change to the suite alone compiles the suite and `andromeda-postgresql-seaquery`, the one other workspace crate it uses.
 
-When the broker image is built, in `ci` or in a release, sccache takes every library crate compiled before from the Actions cache and stores the ones it compiles, so a change to one workspace crate or one dependency compiles that crate and the crates that depend on it. Each compile step of the build log ends with sccache's hit and miss counts. Binaries, build scripts and procedural macros are linked, which sccache can't cache, so they compile every time. The Actions cache holds 10 GB for the repository, shared with the dependency caches of `clippy`, `unit` and `sql`, and GitHub evicts the least recently used entries beyond that, so the newest build's entries stay.
+When the broker image is built, in `ci` or in a release, sccache takes every library crate compiled before from the Actions cache and stores the ones it compiles, so a change to one workspace crate or one dependency compiles that crate and the crates that depend on it. Each compile step of the build log ends with sccache's hit and miss counts. Binaries, build scripts and procedural macros are linked, which sccache can't cache, so they compile every time. The Actions cache holds 10 GB for the repository, shared with the dependency caches of `clippy`, `unit` and `sql` and the recorded passes, and GitHub evicts the least recently used entries beyond that, so the newest build's entries stay.
 
 The `suite` workflow runs its trees the same way, with the published `postgresql:tsl` image and the `broker-<sha>` and `runner-<sha>` images that `broker-image` and `runner-image` gave the commit it runs. Those exist for every commit `ci` ran on outside a pull request, for thirty days or for as long as the commit is the head of `main`, so a `suite` run started by hand on another branch needs a `ci` run started by hand on that branch first. A change to `docker/images/postgresql` reaches the suite trees once the `postgresql` workflow has published it from `main`.
 
 When a job runs its checks as separate steps, as `unit` and `sql` do, every step runs whatever an earlier one reported, so one run lists every failure. [Getting started](contributing/getting-started.md) lists the commands that run the same checks locally.
+
+## Recorded passes
+
+Every job of `ci` except `deny` and the image jobs, and every tree of `suite`, first computes a key over everything it reads, without building anything. When a run on `main` recorded a pass under that key, the job passes without running its checks, and a notice in its log names the run that recorded it. Only a job that runs its checks on `main` and passes records its key, as an Actions cache entry named `verdict-<job>-<key>`. A pull request reuses a pass but never records one, and a failed or cancelled job records nothing. A pass the cache has evicted is run again. `deny` runs on every commit, because its advisory check reads the day's advisory database rather than the commit.
+
+A job's inputs are every tracked file outside `.github/` that its exclusions don't name, so a new file is an input until it is excluded. The workflow file and every action under `.github/actions/` are inputs of every job.
+
+- `clippy` and `unit` exclude the documentation pages, every `*.md` and `docs/assets/`, and the image and stack definitions, `docker/`, `tools/andromeda-test-suite/stacks/` and `.dockerignore`. The generated configuration template, schema and descriptor stay inputs, because `unit` compares them with what the code generates.
+- `sql` excludes what `clippy` does, and also the broker's `src/` and `tools/andromeda-test-suite/`.
+- `fmt` also excludes JSON, JSON-LD and ABNF files, `docs/configuration/`, `migrations/`, the SQL formatter and linter settings, shell scripts and the settings of the other tools. That leaves the Rust sources, the manifests, the lockfile, `rust-toolchain.toml`, `.cargo/` and `rustfmt.toml`.
+- `machete` excludes what `fmt` does and `rustfmt.toml`.
+- `taplo` and `shellcheck` pick their files by extension, as the tools do. `taplo` reads every TOML file and the configuration schema, and `shellcheck` every `*.sh`.
+- A suite tree's key covers the keys of the broker and runner image inputs, `tools/andromeda-test-suite/stacks/`, `.config/nextest.toml` and the digest of the PostgreSQL image, which the tree then runs by that digest.
+
+So a push that changes only documentation reuses every job except `deny`, and the image jobs find both images already built. A pass of `sql` is reused on its inputs alone, so a pull request whose migrations match a commit that passed on `main` doesn't run `verify --against` its base again.
+
+Starting `ci` or `suite` by hand with `fresh` set ignores every recorded pass and runs each job in full. In `ci` it also builds both images again.
 
 ## Gates
 

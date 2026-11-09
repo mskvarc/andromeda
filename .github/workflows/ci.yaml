@@ -8,6 +8,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
+    inputs:
+      fresh:
+        description: Run every job in full, ignoring the passes runs on main recorded and the images built before.
+        type: boolean
+        default: false
 
 # A newer commit on the same branch or pull request cancels the run before it, so only the newest commit of main
 # carries ci-ok, and a tag goes on that commit.
@@ -30,6 +35,10 @@ env:
   # The release andromeda-sql pins; it refuses any other.
   SQUAWK_VERSION: "2.70.0"
 
+# Every job but deny first looks up its verdict: when a run on main recorded a pass of the job under the key of
+# everything the job reads, the job passes without running its checks and names that run. Only a job that runs its
+# checks on main and passes records its key. deny always runs, because its advisory check reads the day's advisory
+# database rather than the commit.
 jobs:
   fmt:
     name: fmt
@@ -38,9 +47,20 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - id: verdict
+        uses: ./.github/actions/verdict-lookup
+        with:
+          check: fmt
+          fresh: ${{ inputs.fresh }}
       - name: Install pinned toolchain
+        if: &unless-reused ${{ steps.verdict.outputs.reused != 'true' }}
         run: rustup toolchain install --profile minimal
-      - run: cargo fmt --all --check
+      - if: *unless-reused
+        run: cargo fmt --all --check
+      - if: *unless-reused
+        uses: ./.github/actions/verdict-record
+        with:
+          key: ${{ steps.verdict.outputs.key }}
 
   taplo:
     name: taplo
@@ -49,10 +69,21 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: taiki-e/install-action@v2
+      - id: verdict
+        uses: ./.github/actions/verdict-lookup
+        with:
+          check: taplo
+          fresh: ${{ inputs.fresh }}
+      - if: *unless-reused
+        uses: taiki-e/install-action@v2
         with:
           tool: taplo@0.10.0
-      - run: taplo fmt --check --diff
+      - if: *unless-reused
+        run: taplo fmt --check --diff
+      - if: *unless-reused
+        uses: ./.github/actions/verdict-record
+        with:
+          key: ${{ steps.verdict.outputs.key }}
 
   machete:
     name: machete
@@ -61,12 +92,24 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - id: verdict
+        uses: ./.github/actions/verdict-lookup
+        with:
+          check: machete
+          fresh: ${{ inputs.fresh }}
       - name: Install pinned toolchain
+        if: *unless-reused
         run: rustup toolchain install --profile minimal
-      - uses: taiki-e/install-action@v2
+      - if: *unless-reused
+        uses: taiki-e/install-action@v2
         with:
           tool: cargo-machete@0.9.2
-      - run: cargo machete --with-metadata
+      - if: *unless-reused
+        run: cargo machete --with-metadata
+      - if: *unless-reused
+        uses: ./.github/actions/verdict-record
+        with:
+          key: ${{ steps.verdict.outputs.key }}
 
   deny:
     name: deny
@@ -89,10 +132,21 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: taiki-e/install-action@v2
+      - id: verdict
+        uses: ./.github/actions/verdict-lookup
+        with:
+          check: shellcheck
+          fresh: ${{ inputs.fresh }}
+      - if: *unless-reused
+        uses: taiki-e/install-action@v2
         with:
           tool: shellcheck@0.11.0
-      - run: git ls-files -z '*.sh' | xargs -0 shellcheck
+      - if: *unless-reused
+        run: git ls-files -z '*.sh' | xargs -0 shellcheck
+      - if: *unless-reused
+        uses: ./.github/actions/verdict-record
+        with:
+          key: ${{ steps.verdict.outputs.key }}
 
   clippy:
     name: clippy
@@ -101,8 +155,19 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/rust-toolchain
-      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - id: verdict
+        uses: ./.github/actions/verdict-lookup
+        with:
+          check: clippy
+          fresh: ${{ inputs.fresh }}
+      - if: *unless-reused
+        uses: ./.github/actions/rust-toolchain
+      - if: *unless-reused
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - if: *unless-reused
+        uses: ./.github/actions/verdict-record
+        with:
+          key: ${{ steps.verdict.outputs.key }}
 
   unit:
     name: unit
@@ -111,22 +176,34 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/rust-toolchain
-      - uses: taiki-e/install-action@v2
+      - id: verdict
+        uses: ./.github/actions/verdict-lookup
+        with:
+          check: unit
+          fresh: ${{ inputs.fresh }}
+      - if: *unless-reused
+        uses: ./.github/actions/rust-toolchain
+      - if: *unless-reused
+        uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest@0.9.149
       # andromeda-sql shells out to pg_format and Squawk and is tested by sql; andromeda-test-suite needs a live stack.
       - name: Workspace unit tests
+        if: *unless-reused
         run: cargo nextest run --workspace --exclude andromeda --exclude andromeda-sql --exclude andromeda-test-suite --lib --bins --tests --all-features --locked --no-fail-fast -E 'not test(architecture)'
       # The selection and flags of the step above, so the test binaries it built are run again rather than rebuilt. The
       # architecture checks are generated into every crate; andromeda-sql's run with its tests in sql.
       - name: Architecture checks
-        if: ${{ !cancelled() }}
+        if: &unless-reused-or-cancelled ${{ !cancelled() && steps.verdict.outputs.reused != 'true' }}
         run: cargo nextest run --workspace --exclude andromeda --exclude andromeda-sql --exclude andromeda-test-suite --lib --bins --tests --all-features --locked --no-fail-fast -E 'test(architecture)'
       # The broker's root tests/ need a live stack.
       - name: Broker unit tests
-        if: ${{ !cancelled() }}
+        if: *unless-reused-or-cancelled
         run: cargo nextest run --package andromeda --bins --all-features --locked --no-fail-fast
+      - if: *unless-reused
+        uses: ./.github/actions/verdict-record
+        with:
+          key: ${{ steps.verdict.outputs.key }}
 
   sql:
     name: sql
@@ -138,14 +215,22 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: ./.github/actions/rust-toolchain
-      - uses: taiki-e/install-action@v2
+      - id: verdict
+        uses: ./.github/actions/verdict-lookup
+        with:
+          check: sql
+          fresh: ${{ inputs.fresh }}
+      - if: *unless-reused
+        uses: ./.github/actions/rust-toolchain
+      - if: *unless-reused
+        uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest@0.9.149
       # The canonical migration layout is the one this pgFormatter release produces. Both tools go under the job's
       # temporary directory, so a runner without sudo installs them the same way. pg_format loads its modules from the
       # directory it sits in, so it runs from the extracted release; its Makefile.PL accepts no install prefix.
       - name: Install pgFormatter and Squawk
+        if: *unless-reused
         run: |
           set -euo pipefail
           tools="${RUNNER_TEMP}/sql-tools"
@@ -164,33 +249,38 @@ jobs:
           "${tools}/bin/squawk" --version
       # Each check below runs whatever an earlier one reported, so one run lists every failure.
       - name: Migration layout
+        if: *unless-reused
         run: cargo run --package andromeda-sql --locked -- format --check
       - name: Migration lint
-        if: ${{ !cancelled() }}
+        if: *unless-reused-or-cancelled
         run: cargo run --package andromeda-sql --locked -- lint
       - name: Migration seal
-        if: ${{ !cancelled() }}
+        if: *unless-reused-or-cancelled
         run: cargo run --package andromeda-sql --locked -- verify
       # A sealed section must be unchanged from the branch a pull request merges into, or from the commit a push builds on.
       - name: Migration seal against the base
-        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        if: ${{ !cancelled() && steps.verdict.outputs.reused != 'true' && github.event_name == 'pull_request' }}
         env:
           BASE_REF: ${{ github.base_ref }}
         run: cargo run --package andromeda-sql --locked -- verify --against "origin/${BASE_REF}"
       - name: Migration seal against the parent commit
-        if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+        if: ${{ !cancelled() && steps.verdict.outputs.reused != 'true' && github.event_name != 'pull_request' }}
         run: |
           set -euo pipefail
           if git rev-parse --verify --quiet HEAD^ > /dev/null; then
             cargo run --package andromeda-sql --locked -- verify --against HEAD^
           fi
       - name: andromeda-sql tests
-        if: ${{ !cancelled() }}
+        if: *unless-reused-or-cancelled
         run: cargo nextest run --package andromeda-sql --all-features --locked --no-fail-fast
+      - if: *unless-reused
+        uses: ./.github/actions/verdict-record
+        with:
+          key: ${{ steps.verdict.outputs.key }}
 
   # The arm64 broker image every suite tree runs. It is built only when no image of the commit's broker inputs exists
-  # yet, under broker-input-<key>; broker-<sha> is an index over that image with the commit as its revision. A release
-  # publishes it as its arm64 image.
+  # yet, under broker-input-<key>, or when the run was started with fresh; broker-<sha> is an index over that image with
+  # the commit as its revision. A release publishes it as its arm64 image.
   broker-image:
     name: broker-image
     if: &beyond-pull-request ${{ github.event_name != 'pull_request' }}
@@ -201,6 +291,8 @@ jobs:
       packages: write
     env:
       CI_IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda-ci
+    outputs:
+      key: ${{ steps.inputs.outputs.key }}
     steps:
       - uses: actions/checkout@v7
       - id: inputs
@@ -216,11 +308,11 @@ jobs:
         uses: ./.github/actions/image-lookup
         with:
           image: ${{ env.CI_IMAGE }}:broker-input-${{ steps.inputs.outputs.key }}
-      - if: ${{ steps.existing.outputs.found != 'true' }}
+      - if: &build ${{ inputs.fresh || steps.existing.outputs.found != 'true' }}
         uses: ./.github/actions/free-disk-space
-      - if: ${{ steps.existing.outputs.found != 'true' }}
+      - if: *build
         uses: docker/setup-buildx-action@v4
-      - if: ${{ steps.existing.outputs.found != 'true' }}
+      - if: *build
         uses: ./.github/actions/broker-image
         with:
           platform: linux/arm64
@@ -233,8 +325,8 @@ jobs:
           tag: ${{ env.CI_IMAGE }}:broker-${{ github.sha }}
 
   # The runner image every suite tree runs, with the suite compiled into it as a nextest archive, so the trees compile
-  # nothing. It is built only when no image of the commit's suite inputs exists yet, under runner-input-<key>;
-  # runner-<sha> is an index over that image with the commit as its revision.
+  # nothing. It is built only when no image of the commit's suite inputs exists yet, under runner-input-<key>, or when
+  # the run was started with fresh; runner-<sha> is an index over that image with the commit as its revision.
   runner-image:
     name: runner-image
     if: *beyond-pull-request
@@ -245,6 +337,8 @@ jobs:
       packages: write
     env:
       CI_IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda-ci
+    outputs:
+      key: ${{ steps.inputs.outputs.key }}
     steps:
       - uses: actions/checkout@v7
       - id: inputs
@@ -260,12 +354,12 @@ jobs:
         uses: ./.github/actions/image-lookup
         with:
           image: ${{ env.CI_IMAGE }}:runner-input-${{ steps.inputs.outputs.key }}
-      - if: ${{ steps.existing.outputs.found != 'true' }}
+      - if: *build
         uses: ./.github/actions/free-disk-space
-      - if: ${{ steps.existing.outputs.found != 'true' }}
+      - if: *build
         uses: docker/setup-buildx-action@v4
       # The layer cache keeps the toolchain and the suite's compiled third-party dependencies between builds.
-      - if: ${{ steps.existing.outputs.found != 'true' }}
+      - if: *build
         name: Build and push the runner image
         uses: docker/build-push-action@v7
         with:
@@ -282,7 +376,9 @@ jobs:
           image: ${{ env.CI_IMAGE }}:runner-input-${{ steps.inputs.outputs.key }}
           tag: ${{ env.CI_IMAGE }}:runner-${{ github.sha }}
 
-  # The database image is the published one, which the postgresql workflow rebuilds whenever its directory changes.
+  # The database image is the published one, which the postgresql workflow rebuilds whenever its directory changes. A
+  # tree's verdict is keyed on the keys of both images' inputs, the stack definitions, the runner configuration and the
+  # database image's digest.
   suite:
     name: suite (${{ matrix.tree }})
     needs: [broker-image, runner-image]
@@ -302,7 +398,6 @@ jobs:
       ANDROMEDA_POSTGRES_IMAGE: ghcr.io/${{ github.repository_owner }}/postgresql:tsl
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/free-disk-space
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -311,6 +406,9 @@ jobs:
       - uses: ./.github/actions/suite-tree
         with:
           tree: ${{ matrix.tree }}
+          broker-key: ${{ needs.broker-image.outputs.key }}
+          runner-key: ${{ needs.runner-image.outputs.key }}
+          fresh: ${{ inputs.fresh }}
 
   pr-ok:
     name: pr-ok
