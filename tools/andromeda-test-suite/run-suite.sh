@@ -44,7 +44,9 @@ fi
 "${compose[@]}" up --detach --wait
 
 status=0
-"${compose[@]}" run --rm runner cargo nextest run --tool-config-file runner:/andromeda/tools/andromeda-test-suite/stacks/runner/nextest.toml --profile suite-verdict -p andromeda-test-suite "${selection[@]}" || status=$?
+# The stack is up and healthy. Without --no-deps, run starts the services it depends on again, so a locally built image
+# is rebuilt and every container from it recreated under a new address, which a proxy that resolved the old one keeps.
+"${compose[@]}" run --rm --no-deps runner cargo nextest run --tool-config-file runner:/andromeda/tools/andromeda-test-suite/stacks/runner/nextest.toml --profile suite-verdict -p andromeda-test-suite "${selection[@]}" || status=$?
 
 mkdir -p "$report_dir"
 copy_status=0
