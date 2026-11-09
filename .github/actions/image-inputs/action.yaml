@@ -29,7 +29,10 @@ runs:
     # The inputs are the sources of the package the image compiles and of every workspace crate it compiles through
     # normal and build dependencies, the manifest of every workspace package, the lockfile, the toolchain and build
     # configuration, and the image's own paths: its image definition, and for the broker the migrations it embeds and
-    # the licence files it copies. A package whose directory is the repository root counts only its src/.
+    # the licence files it copies. The package counts only the directories the image compiles from it, and every other
+    # crate leaves out its tests, benches and examples, which the image never compiles. The actions that build the image
+    # are inputs of the key but not of the context: they set the platform, the target and the labels, and assemble the
+    # context.
     - name: Compute the key and assemble the context
       id: inputs
       shell: bash
@@ -37,9 +40,20 @@ runs:
         IMAGE: ${{ inputs.image }}
       run: |
         set -euo pipefail
+        build=(.github/actions/image-inputs/action.yaml)
         case "$IMAGE" in
-          broker) package=andromeda; paths=(migrations/ docker/images/andromeda/ .dockerignore LICENSE.md) ;;
-          runner) package=andromeda-test-suite; paths=(tools/andromeda-test-suite/stacks/runner/) ;;
+          broker)
+            package=andromeda
+            compiles=(src/)
+            paths=(migrations/ docker/images/andromeda/ LICENSE.md)
+            build+=(.github/actions/keyed-broker-image/action.yaml .github/actions/broker-image/action.yaml)
+            ;;
+          runner)
+            package=andromeda-test-suite
+            compiles=(src/ tests/)
+            paths=(tools/andromeda-test-suite/stacks/runner/Dockerfile)
+            build+=(.github/actions/keyed-runner-image/action.yaml)
+            ;;
           *) echo "unknown image: ${IMAGE}" >&2; exit 1 ;;
         esac
         workspace="${RUNNER_TEMP}/workspace.json"
@@ -50,14 +64,17 @@ runs:
               | if $next == $names then $names else reach($next) end;
           reach([$package])' "$workspace")"
         mapfile -t inputs < <({
-          jq -r --argjson compiled "$compiled" '
+          jq -r --argjson compiled "$compiled" --arg package "$package" --args '
             .workspace_root as $root
             | def relative: ltrimstr($root + "/");
-            (.packages[] | select(.name | IN($compiled[])) | .manifest_path | relative | rtrimstr("Cargo.toml") | if . == "" then "src/" else . end),
-            (.packages[] | .manifest_path | relative)' "$workspace"
+            def directory: .manifest_path | relative | rtrimstr("Cargo.toml");
+            (.packages[] | select(.name == $package) | directory as $directory | $ARGS.positional[] | $directory + .),
+            (.packages[] | select(.name | IN($compiled[])) | select(.name != $package) | directory
+              | if . == "" then "src/" else ., ":(exclude)" + . + ("tests/", "benches/", "examples/") end),
+            (.packages[] | .manifest_path | relative)' "${compiles[@]}" < "$workspace"
           printf '%s\n' Cargo.lock rust-toolchain.toml .cargo/ "${paths[@]}"
         } | sort -u)
-        key="$(git ls-files --stage --error-unmatch -z -- "${inputs[@]}" | sha256sum | cut -d ' ' -f 1)"
+        key="$(git ls-files --stage --error-unmatch -z -- "${inputs[@]}" "${build[@]}" | sha256sum | cut -d ' ' -f 1)"
         context="${RUNNER_TEMP}/${IMAGE}-context"
         rm -rf "$context"
         mkdir -p "$context"
