@@ -9,7 +9,7 @@
 | `advisories` | weekly, on demand | `cargo deny check advisories`, for advisories published while nothing is being committed |
 | `postgresql` | pushes to `main` that change `docker/images/postgresql` or the workflow itself, weekly, on demand | builds, checks with [PostgreSQL image checks](testing/postgresql-image-checks.md), publishes and signs the PostgreSQL image |
 | `release` | version tags | the release, as [Release process](release-process.md) describes |
-| `prune-ci-images` | daily, on demand | deletes the `broker-<sha>` and `runner-<sha>` images in `andromeda-ci` once they are 30 days old, and untagged versions in `andromeda-ci`, `andromeda-buildcache` and `postgresql-buildcache` once they are a day old. The published `andromeda` and `postgresql` packages are left alone |
+| `prune-ci-images` | daily, on demand | deletes the `broker-<sha>` and `runner-<sha>` images in `andromeda-ci` once they are 30 days old, except those of the commit at the head of `main`, and untagged versions in `andromeda-ci`, `andromeda-buildcache` and `postgresql-buildcache` once they are a day old. The published `andromeda` and `postgresql` packages are left alone |
 
 A newer commit on a pull request or on `main` cancels the run still going for the one before it, so only the newest commit of `main` gets a verdict, and a release is tagged on that commit. `[skip ci]` in a commit message skips `ci` for that push.
 
@@ -30,7 +30,7 @@ Every check is a job of its own, so a pull request shows each one with its own s
 | `images` | builds the arm64 broker image and the suite's runner image once for the commit and pushes them to `ghcr.io/<owner>/andromeda-ci` as `broker-<sha>` and `runner-<sha>`. A pull request skips it |
 | `suite (<tree>)` | one job for each of the `ngsi_ld`, `etsi` and `annex_c` trees, through `run-suite.sh` as [Test suite](testing/test-suite.md) describes, with the broker and runner images `images` pushed and the published `postgresql:tsl` image. A pull request skips them |
 
-The `suite` workflow runs its trees the same way, with the published `postgresql:tsl` image and the broker and runner images built from the checkout. A change to `docker/images/postgresql` reaches the suite trees once the `postgresql` workflow has published it from `main`.
+The `suite` workflow runs its trees the same way, with the published `postgresql:tsl` image and the broker and runner images that `images` pushed for the commit it runs. Those exist for every commit `ci` ran on outside a pull request, for thirty days or for as long as the commit is the head of `main`, so a `suite` run started by hand on another branch needs a `ci` run started by hand on that branch first. A change to `docker/images/postgresql` reaches the suite trees once the `postgresql` workflow has published it from `main`.
 
 When a job runs its checks as separate steps, as `unit` and `sql` do, every step runs whatever an earlier one reported, so one run lists every failure. [Getting started](contributing/getting-started.md) lists the commands that run the same checks locally.
 
