@@ -1,98 +1,163 @@
-//! Placing one reduced copy at a context source (clause 5.8.1.4): claimed
-//! before it is sent, then kept, released or re-recorded by what the source
-//! answered.
+//! Placing one reduced copy at a context source (clause 5.8.1.4), claimed
+//! before it is sent, then settled, released or recorded again by what the
+//! source answered.
 
-use crate::{error::SubscriptionForwardingError, forwarded_claim::ForwardedClaim, service::SubscriptionForwardingService};
+use crate::{
+    error::SubscriptionForwardingError,
+    forwarded_claim::{ClaimOrigin, ForwardedClaim},
+    minted_subscription_id::mint_subscription_id,
+    reduced_copy::{FilterCarriage, ReducedSubscription},
+    service::SubscriptionForwardingService,
+};
 use andromeda_federation::{
     remote_effect::RemoteEffect,
     subscription::{SubscriptionForward, SubscriptionForwardAdmission},
+    subscription_forward_failure::SubscriptionForwardFailure,
 };
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription::Subscription};
 use andromeda_subscription::forwarding_hook::ForwardedCopy;
 use tracing::{debug, warn};
 
+/// What a forward that left nothing at the source does to the claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UntouchedClaim {
+    /// The claim and the route are released.
+    Release,
+    /// The claim and the route stay to the lease, and a later pass sends the
+    /// copy again.
+    KeepToLease,
+}
+
+/// What `failure`, which left nothing at the source, does to a claim of
+/// `origin`.
+///
+/// A source that answered with an error status holds nothing, since one
+/// holding the copy answers `AlreadyExists`, so the claim is released either
+/// way. A forward that never reached the source (a cooldown, a refused
+/// connection, a request that could not be prepared, a loop) leaves nothing
+/// of its own there, which releases a claim recorded with the copy. A claim
+/// taken over may name a copy an earlier send left at the source, and such a
+/// forward learned nothing of it, so the claim stays.
+const fn untouched_claim(origin: ClaimOrigin, failure: &SubscriptionForwardFailure) -> UntouchedClaim {
+    match (origin, failure) {
+        (
+            ClaimOrigin::TakenOver,
+            SubscriptionForwardFailure::Transport(_) | SubscriptionForwardFailure::LoopDetected | SubscriptionForwardFailure::NotAdvertised,
+        ) => UntouchedClaim::KeepToLease,
+        (ClaimOrigin::TakenOver, SubscriptionForwardFailure::Answered(_))
+        | (
+            ClaimOrigin::Recorded,
+            SubscriptionForwardFailure::Answered(_)
+            | SubscriptionForwardFailure::Transport(_)
+            | SubscriptionForwardFailure::LoopDetected
+            | SubscriptionForwardFailure::NotAdvertised,
+        ) => UntouchedClaim::Release,
+    }
+}
+
 impl SubscriptionForwardingService {
-    /// Place the copy `create` carries at `registration`'s source under
-    /// `minted`.
+    /// Place a reduced copy of `subscription` at `registration`'s source, with
+    /// its filters carried as `carriage` and its terms written under `context`.
     ///
-    /// The copy is recorded and its identifier routed before it is sent, so a
-    /// notification the source sends under it the moment it holds it finds
-    /// both. A failure that left nothing at the source releases them. A forward
-    /// that got no answer keeps them, since the source may hold the copy and
-    /// notify under it. A source that assigned another identifier has the
-    /// copy recorded and routed under that one.
+    /// The copy is claimed under a lease and its identifier routed before it is
+    /// sent, so a notification the source sends under it the moment it holds it
+    /// finds both. A claim that took over an abandoned one sends the copy under
+    /// the identifier recorded. An answer saying the source holds the copy
+    /// settles the claim, under an identifier the source assigned when it
+    /// assigned one. An error status from the source releases the claim and
+    /// the route. A forward that never reached the source releases them too
+    /// when the claim was recorded with the copy, and leaves them to the lease
+    /// when the claim was taken over, since an earlier send may have left the
+    /// copy there. A forward that got no answer keeps both under the lease,
+    /// since the source may hold the copy and notify under it, and the copy is
+    /// sent again once the lease runs out. A route that cannot be written
+    /// leaves the claim to its lease too, as a placement cut off there would.
     ///
     /// # Errors
     ///
-    /// Propagates the mapping-store and router failures.
+    /// Propagates the mapping-store and router failures, and the failure to
+    /// mint an identifier.
     pub(crate) async fn place_copy(
         &self,
         subscription: &Subscription,
         registration: &ContextSourceRegistration,
-        minted: &Identifier,
-        create: SubscriptionForward<'_>,
+        carriage: FilterCarriage,
+        context: &ContextSpec,
     ) -> Result<(), SubscriptionForwardingError> {
-        if create.admission(registration) == SubscriptionForwardAdmission::NotAdvertised {
+        if SubscriptionForwardAdmission::of_creation(registration) == SubscriptionForwardAdmission::NotAdvertised {
             debug!(subscription = %subscription.id, registration = %registration.id, "registration does not advertise createSubscription");
             return Ok(());
         }
-        let claim = ForwardedCopy {
+        let candidate = ForwardedCopy {
             registration: registration.id.clone(),
-            remote_subscription: minted.clone(), // clone: the claim owns the identifier the route and the forward still name
+            remote_subscription: mint_subscription_id()?,
         };
-        match self.mappings.claim_forwarded(&subscription.id, &claim).await? {
-            ForwardedClaim::Claimed => {}
+        let (remote, origin) = match self.mappings.claim_forwarded(&subscription.id, &candidate, self.placement_lease).await? {
+            ForwardedClaim::Claimed { remote, origin } => (remote, origin),
             ForwardedClaim::Declined => {
                 debug!(subscription = %subscription.id, registration = %registration.id, "a copy is already recorded at the registration, or either no longer exists");
                 return Ok(());
             }
-        }
-        if let Err(error) = self.router.register(minted, &self.tenant).await {
-            self.mappings.remove_forwarded(&subscription.id, &registration.id).await?;
-            return Err(error);
-        }
-        let forwarded = self.federation.forward_subscription(registration, create).await;
+        };
+        self.router.register(&remote, &self.tenant).await?;
+        // Boxed, since the copy is held across the forward and the request is a wide value.
+        let copy = Box::new(ReducedSubscription::reduce(subscription, registration, &self.receiver, &remote, carriage).request);
+        let forwarded = self
+            .federation
+            .forward_subscription(registration, SubscriptionForward::Create { body: &copy, context })
+            .await;
         let Some(failure) = forwarded.failure() else {
-            return self
-                .adopt_assigned(&subscription.id, registration, minted, &forwarded.assigned_id(minted))
-                .await;
+            return self.settle_held(&subscription.id, registration, &remote, &forwarded.assigned_id(&remote)).await;
         };
         match failure.remote_effect() {
+            RemoteEffect::Present => {
+                debug!(subscription = %subscription.id, registration = %registration.id, %failure, "the source already holds the reduced subscription copy");
+                self.mappings.settle_forwarded(&subscription.id, &registration.id).await
+            }
             RemoteEffect::Possible => {
-                warn!(subscription = %subscription.id, registration = %registration.id, %failure, "reduced subscription copy got no answer from the source and stays recorded, since the source may hold it");
+                warn!(subscription = %subscription.id, registration = %registration.id, %failure, "reduced subscription copy got no answer from the source and stays claimed, since the source may hold it; it is sent again once its lease runs out");
                 Ok(())
             }
-            RemoteEffect::Untouched => {
-                warn!(subscription = %subscription.id, registration = %registration.id, %failure, "reduced subscription copy was not accepted by the source");
-                self.router.unregister(minted).await?;
-                self.mappings.remove_forwarded(&subscription.id, &registration.id).await
-            }
+            RemoteEffect::Untouched => match untouched_claim(origin, &failure) {
+                UntouchedClaim::Release => {
+                    warn!(subscription = %subscription.id, registration = %registration.id, %failure, "reduced subscription copy was not accepted by the source");
+                    self.router.unregister(&remote).await?;
+                    self.mappings.remove_forwarded(&subscription.id, &registration.id).await
+                }
+                UntouchedClaim::KeepToLease => {
+                    warn!(subscription = %subscription.id, registration = %registration.id, %failure, "reduced subscription copy sent again did not reach the source and stays claimed, since an earlier send may have left it there; it is sent again once its lease runs out");
+                    Ok(())
+                }
+            },
         }
     }
 
-    /// Record and route the copy of `local` at `registration` under
-    /// `assigned`, when the source assigned it in place of `minted`.
-    async fn adopt_assigned(
+    /// Settle the copy of `local` that `registration`'s source accepted under
+    /// `assigned`, after it was sent under `claimed`. A source that assigned
+    /// another identifier notifies under that one (clause 5.2.12), so the copy
+    /// is recorded and routed under it and `claimed` is forgotten.
+    async fn settle_held(
         &self,
         local: &Identifier,
         registration: &ContextSourceRegistration,
-        minted: &Identifier,
+        claimed: &Identifier,
         assigned: &Identifier,
     ) -> Result<(), SubscriptionForwardingError> {
-        if assigned == minted {
-            return Ok(());
+        if assigned == claimed {
+            return self.mappings.settle_forwarded(local, &registration.id).await;
         }
         self.mappings
             .record_forwarded(
                 local,
                 &ForwardedCopy {
                     registration: registration.id.clone(),
-                    remote_subscription: assigned.clone(), // clone: the route registers the same identifier after the mapping takes its copy
+                    remote_subscription: assigned.clone(),
                 },
             )
             .await?;
         self.router.register(assigned, &self.tenant).await?;
-        self.router.unregister(minted).await
+        self.router.unregister(claimed).await
     }
 }

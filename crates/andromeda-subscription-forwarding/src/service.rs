@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_subscription::{csource::CsrSubscriptionVariant, lifecycle::SubscriptionService, store::SubscriptionStore};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use lockable::LockPool;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use typed_builder::TypedBuilder;
 
 /// The capabilities one tenant's distributed subscription side is built from.
@@ -41,6 +41,10 @@ pub struct SubscriptionForwardingService {
     pub(crate) transport: Arc<TransportDispatcher>,
     /// JSON-LD processing for the entities re-assembled.
     pub(crate) engine: JsonLdEngine,
+    /// How long a copy placement holds its claim before the claim counts as
+    /// abandoned and is taken over. It outlasts every placement still under
+    /// way, so a claim is never taken from a placement that may yet send.
+    pub(crate) placement_lease: Duration,
     /// One lock per local subscription whose lifecycle step is in flight.
     ///
     /// The steps of one subscription (creation, update, expiry, deletion) read

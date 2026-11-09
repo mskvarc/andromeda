@@ -66,11 +66,7 @@ impl SubscriptionForward<'_> {
     /// for ..."), so a caller can tell before the forward whether it is sent.
     #[must_use]
     pub fn admission(&self, registration: &ContextSourceRegistration) -> SubscriptionForwardAdmission {
-        if self.operation().matches(registration) {
-            SubscriptionForwardAdmission::Forwarded
-        } else {
-            SubscriptionForwardAdmission::NotAdvertised
-        }
+        SubscriptionForwardAdmission::of(self.operation(), registration)
     }
 }
 
@@ -81,6 +77,25 @@ pub enum SubscriptionForwardAdmission {
     Forwarded,
     /// The registration does not advertise the operation; nothing was sent.
     NotAdvertised,
+}
+
+impl SubscriptionForwardAdmission {
+    /// Whether `registration` advertises the creation of subscriptions, so a
+    /// caller can tell before it builds a copy whether one would be sent.
+    #[must_use]
+    pub fn of_creation(registration: &ContextSourceRegistration) -> SubscriptionForwardAdmission {
+        SubscriptionForwardAdmission::of(ForwardingOperation::CreateSubscription, registration)
+    }
+
+    /// Whether `registration` advertises `operation` (clause 5.8.1.4, "if the
+    /// Context Source Registration indicates support for ...").
+    fn of(operation: ForwardingOperation, registration: &ContextSourceRegistration) -> SubscriptionForwardAdmission {
+        if operation.matches(registration) {
+            SubscriptionForwardAdmission::Forwarded
+        } else {
+            SubscriptionForwardAdmission::NotAdvertised
+        }
+    }
 }
 
 /// The identity a source answers a created subscription with, when it echoes

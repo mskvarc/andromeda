@@ -1,7 +1,7 @@
 //! How the distributed subscription side places one reduced copy at a context
-//! source (clause 5.8.1.4): what it records and routes before the source
-//! receives the copy, and what it keeps once the source has answered, run
-//! against a service wired to in-memory doubles.
+//! source (clause 5.8.1.4), meaning what it records and routes before the
+//! source receives the copy and what it keeps once the source has answered,
+//! run against a service wired to in-memory doubles.
 
 use crate::reassembly_harness::{
     ReassemblyScene,
@@ -124,6 +124,24 @@ async fn a_copy_the_source_refuses_is_released() {
     pretty_assertions::assert_eq!(scene.router().unregistered(), vec![claim.remote_subscription]);
 }
 
+/// A claim recorded with its copy had nothing sent before it, so a first send
+/// that never reaches the source (here a refused connection) leaves nothing
+/// there, and the claim and the route are released.
+#[tokio::test]
+async fn a_copy_whose_first_send_never_reached_its_source_is_released() {
+    let scene = scene_holding(Vec::new()).await;
+    let source = SubscribingSource::start(&identifier(SOURCE)).await;
+
+    scene
+        .place_as_at_creation(&source.stored_at_a_closed_port())
+        .await
+        .expect("the placement is settled");
+
+    let claim = the_claim(&scene.maps());
+    pretty_assertions::assert_eq!(scene.removed_mappings(), vec![identifier(SOURCE)]);
+    pretty_assertions::assert_eq!(scene.router().unregistered(), vec![claim.remote_subscription]);
+}
+
 /// A source that does not answer within the registration's timeout may still
 /// create the copy and notify under it, so the claim and the route stay.
 #[tokio::test]
@@ -143,8 +161,29 @@ async fn a_copy_the_source_does_not_answer_in_time_stays_recorded_and_routed() {
     pretty_assertions::assert_eq!(scene.router().unregistered(), Vec::<Identifier>::new());
 }
 
-/// Clause 5.2.12: a source that echoes the copy under an identifier of its own
-/// notifies under that one, so the copy is recorded and routed under it, and
+/// A source that answers the copy with `AlreadyExists` (clause 5.5.2) holds a
+/// subscription under its identifier, so the claim is settled and the route
+/// kept.
+#[tokio::test]
+async fn a_copy_the_source_answers_already_exists_for_is_settled() {
+    let scene = scene_holding(Vec::new()).await;
+    let already_exists = ResponseTemplate::new(409).set_body_json(json!({
+        "type": "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists",
+        "detail": "a subscription with this id already exists"
+    }));
+    let source = SubscribingSource::start_answering(&identifier(SOURCE), already_exists).await;
+
+    scene.place_as_at_creation(&source.stored()).await.expect("the placement is settled");
+
+    let claim = the_claim(&scene.maps());
+    pretty_assertions::assert_eq!(scene.maps().settled(), vec![identifier(SOURCE)]);
+    pretty_assertions::assert_eq!(scene.removed_mappings(), Vec::<Identifier>::new());
+    pretty_assertions::assert_eq!(scene.router().registered(), vec![claim.remote_subscription]);
+    pretty_assertions::assert_eq!(scene.router().unregistered(), Vec::<Identifier>::new());
+}
+
+/// A source that echoes the copy under an identifier of its own notifies under
+/// that one (clause 5.2.12), so the copy is recorded and routed under it, and
 /// the minted identifier is forgotten.
 #[tokio::test]
 async fn a_copy_the_source_holds_under_another_identifier_is_recorded_and_routed_under_it() {
@@ -168,8 +207,8 @@ async fn a_copy_the_source_holds_under_another_identifier_is_recorded_and_routed
 }
 
 /// Two placements of the same copy, such as the one a creation makes and the
-/// one the companion's notification asks for, send it once: the second finds
-/// the first recorded and sends nothing.
+/// one the companion's notification asks for, send it once, since the second
+/// finds the first recorded and sends nothing.
 #[tokio::test]
 async fn a_source_already_holding_a_copy_is_sent_none() {
     let scene = scene_holding(vec![ForwardedCopy {

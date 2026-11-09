@@ -23,7 +23,7 @@ use crate::{
     forwarder::ForwardDecision,
     inbound::Inbound,
     reassembly_harness::{
-        forwarding_maps::ForwardingMaps,
+        forwarding_maps::{ClaimKeeping, ForwardingMaps},
         held_entities::HeldEntities,
         inert_ports::{AcceptingEndpoints, NoLocalTypes, offline_engine},
         recording_router::RecordingRouter,
@@ -61,13 +61,17 @@ use andromeda_subscription::{
 };
 use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
 use serde_json::Value;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use url::Url;
 use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
 /// The vocabulary a context-free name expands under (clause 5.5.7: the default
 /// context), which is how a source spells an entity under the core context.
 const DEFAULT_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
+
+/// How long a placement holds its claim before the claim counts as abandoned.
+/// A test ends a lease by hand rather than by waiting it out.
+const PLACEMENT_LEASE: Duration = Duration::from_secs(60);
 
 /// The expanded IRI the default context gives `name`.
 pub(crate) fn default_iri(name: &str) -> String {
@@ -90,6 +94,8 @@ pub(crate) struct SceneSpec {
     pub(crate) copies: Vec<ForwardedCopy>,
     /// Whether the store holds the companion the mappings link.
     pub(crate) companion: StoredCompanion,
+    /// How the mappings keep the copies placements claim.
+    pub(crate) claims: ClaimKeeping,
 }
 
 /// Whether the store holds the companion the mappings link to the local
@@ -158,6 +164,7 @@ impl ReassemblyScene {
             registration_failures,
             copies,
             companion,
+            claims,
         } = spec;
         let receiver = MockServer::start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(204)).mount(&receiver).await;
@@ -174,6 +181,7 @@ impl ReassemblyScene {
             copy_subscription(),
             companion_subscription(),
             copies,
+            claims,
         ));
         let router = Arc::new(RecordingRouter::default());
         let transport = TransportDispatcher::new(HttpTransportConfig::default(), MqttPoolConfig::default()).expect("the dispatcher builds");
@@ -227,6 +235,7 @@ impl ReassemblyScene {
             .entity_query(Arc::new(entity_query))
             .transport(Arc::new(transport))
             .engine(offline_engine())
+            .placement_lease(PLACEMENT_LEASE)
             .build();
         ReassemblyScene {
             service,
@@ -350,6 +359,11 @@ impl ReassemblyScene {
         self.service
             .apply_forward_decision(&self.stored().await, registration, ForwardDecision::Create, &DeletedMembers::default())
             .await
+    }
+
+    /// Run one pass of the background resumption of abandoned placements.
+    pub(crate) async fn resume_stale_placements(&self) -> Result<(), SubscriptionForwardingError> {
+        self.service.resume_stale_placements().await
     }
 
     /// Tell the service the expiry sweep transitioned the local subscription.

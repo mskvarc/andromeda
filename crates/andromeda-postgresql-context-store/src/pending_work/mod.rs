@@ -2,11 +2,12 @@
 //!
 //! Implements the tenancy crate's [`PendingWorkProbe`] port, and answers a
 //! resident tenant's background pacer through [`earliest_obligation`]. A tenant
-//! no request is touching still owes background work: durable-delivery
+//! no request is touching still owes background work, namely durable-delivery
 //! retries, snapshot status and preparation, pending side effects, temporal
 //! append intents, every `expiresAt` sweep, clause-5.8.6 and clause-5.11.7
-//! periodic notifications, and the clause-5.13.1 invalidation of every
-//! `"Cached"` `@context` whose expiration time has passed. The probe answers
+//! periodic notifications, the clause-5.13.1 invalidation of every
+//! `"Cached"` `@context` whose expiration time has passed, and the clause
+//! 5.8.1.4 copy placements cut off before their source answered. The probe answers
 //! the single earliest instant any of those falls due, over a transient
 //! one-connection pool so it adds no permanent backend and is safe through a
 //! transaction pooler. The pool reaches an established tenant over its request
@@ -157,8 +158,9 @@ fn readable(state: TenantSchemaState, database: &TenantDatabaseName) -> Result<(
 
 /// The earliest instant any background obligation of the database behind
 /// `pool` falls due (a durable-queue item, a preparing Snapshot, an
-/// `expiresAt` of any kind, or a clause-5.8.6 periodic notification), or
-/// `None` when nothing is outstanding.
+/// `expiresAt` of any kind, a clause-5.8.6 periodic notification, or the end
+/// of an unsettled subscription copy claim's lease), or `None` when nothing is
+/// outstanding.
 ///
 /// One index-backed `SELECT LEAST(...)`, one delivery-queue read per published
 /// Snapshot branch, and the periodic-notification anchors.

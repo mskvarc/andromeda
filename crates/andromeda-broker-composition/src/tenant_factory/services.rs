@@ -132,6 +132,7 @@ pub(super) fn construct_services(
             q_complexity: filter_complexity_limits(&config.request_limits),
             language_targeting: EnabledExtensions::from(&config.extensions).language_targeting(),
         },
+        config.request_limits.timeout.duration(),
     );
     let state = AndromedaState {
         live_target: storage.live_target.clone(),

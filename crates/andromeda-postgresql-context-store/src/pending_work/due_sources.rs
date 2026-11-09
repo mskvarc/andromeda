@@ -27,6 +27,7 @@ use andromeda_postgresql_schema::{
     notification::NotificationDeliveries,
     queue::{PendingSideEffects, TemporalAppendIntents},
     snapshot::{SnapshotNotificationOutbox, SnapshotPreparation, Snapshots, branch_is_current},
+    subscription_forwarding::ForwardedSubscriptionClaims,
     subscriptions::Subscriptions,
 };
 use andromeda_postgresql_seaquery::{clock::now, queue::claimable_at};
@@ -95,6 +96,9 @@ pub(crate) fn least_due_select(current: BranchSchemaVersion) -> SelectStatement 
         orphan_branch_due(),
         earliest_min(EntityMaps::Table, EntityMaps::ExpiresAt),
         cached_context_expiry_min(),
+        // A copy placement cut off before its source answered is placed again
+        // once its claim's lease ends.
+        earliest_min(ForwardedSubscriptionClaims::Table, ForwardedSubscriptionClaims::LeaseUntil),
     ];
     Query::select().expr_as(Func::least(sources), Alias::new("due")).to_owned()
 }
@@ -388,6 +392,14 @@ mod tests {
             )),
             "{sql}"
         );
+    }
+
+    /// An abandoned copy placement is placed again when its claim's lease
+    /// ends, read through the index on the claims' lease ends.
+    #[test]
+    fn the_probe_reads_the_earliest_lease_end_of_an_unsettled_copy_claim() {
+        let sql = least_sql();
+        assert!(sql.contains(r#"(SELECT MIN("lease_until") FROM "forwarded_subscription_claims")"#), "{sql}");
     }
 
     #[test]

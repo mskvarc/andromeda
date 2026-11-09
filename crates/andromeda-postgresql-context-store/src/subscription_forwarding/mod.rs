@@ -1,5 +1,7 @@
 //! Persistence of the tenant-scoped subscription forwarding mappings.
 
+/// The statements over the claims of copies whose source has not answered yet.
+mod claim_statements;
 /// The repository struct.
 pub mod repo;
 /// The statements over the two mapping tables, each resolving a subscription's
