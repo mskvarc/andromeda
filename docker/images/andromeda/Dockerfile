@@ -56,10 +56,13 @@ RUN --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
     with-sccache cargo chef cook --profile dist --locked --recipe-path recipe.json
 
 COPY . .
+# The binary moves out and the target directory goes in the same layer, so the layer cache keeps the binary alone.
 RUN --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=ACTIONS_RUNTIME_TOKEN,env=ACTIONS_RUNTIME_TOKEN \
     --mount=type=cache,id=andromeda-sccache,target=/var/cache/sccache,sharing=locked \
-    with-sccache cargo build --profile dist --locked --bin andromeda
+    with-sccache cargo build --profile dist --locked --bin andromeda \
+    && install -D -m 0755 target/dist/andromeda /dist/andromeda \
+    && rm -rf target
 
 # Owned by the broker's user in the runtime image, which has no shell to create them.
 RUN mkdir -p /rootfs/etc/andromeda /rootfs/var/lib/andromeda
@@ -68,7 +71,7 @@ RUN mkdir -p /rootfs/etc/andromeda /rootfs/var/lib/andromeda
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cc66d222f0a7ec996b78a99fe76a969bc80b539a5016ad866c14d1949bc6d0ab AS runtime
 
 COPY --from=builder --chown=10001:10001 /rootfs/ /
-COPY --from=builder /build/target/dist/andromeda /usr/local/bin/andromeda
+COPY --from=builder /dist/andromeda /usr/local/bin/andromeda
 
 COPY LICENSE.md crates/andromeda-ngsi-ld-vocabulary/context/LICENSE-*.md crates/andromeda-http-headers/LICENSE-MIT.md /usr/share/doc/andromeda/
 
