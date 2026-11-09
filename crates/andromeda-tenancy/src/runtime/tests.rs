@@ -1059,6 +1059,8 @@ async fn a_concurrent_cold_build_is_never_evicted_by_another_builds_insert_trim(
 
     // Dropping the leases lets the next trim bring the cache back to the cap.
     drop(leases);
+    // Each build's flight releases the lease it published on another worker, after the request it served returned.
+    until_unleased(&manager).await;
     let trimmed = manager.trim_excess_runtimes(None).await;
     pretty_assertions::assert_eq!(trimmed, TENANTS - CAP, "the trim releases the overshoot once leases drop");
     pretty_assertions::assert_eq!(manager.runtimes.len(), CAP, "the cache settles at the cap");
@@ -1514,6 +1516,8 @@ async fn evictions_overlap_up_to_the_bound() {
             .await
             .expect("resolves");
     }
+    // Each build's flight releases the lease it published on another worker, after the request it served returned.
+    until_unleased(&manager).await;
 
     let idle = manager.idle_runtimes(Duration::ZERO);
     pretty_assertions::assert_eq!(idle.len(), TENANTS, "every runtime is idle at zero TTL");
@@ -2498,6 +2502,17 @@ async fn until_cached<D: TenantDatabase, F: TenantStateFactory>(manager: &Tenant
     })
     .await
     .expect("the runtime is cached");
+}
+
+/// Wait until no cached runtime is leased.
+async fn until_unleased<D: TenantDatabase, F: TenantStateFactory>(manager: &TenantRuntimeManager<D, F>) {
+    timeout(Duration::from_secs(5), async {
+        while manager.runtimes.iter().any(|cached| cached.value().is_leased()) {
+            sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("every lease is released");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
