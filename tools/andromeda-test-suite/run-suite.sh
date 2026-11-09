@@ -4,8 +4,9 @@
 # one ANDROMEDA_IMAGE, ANDROMEDA_POSTGRES_IMAGE or ANDROMEDA_TEST_SUITE_RUNNER_IMAGE names, which is pulled instead. The stack is taken down
 # afterwards with its databases, keeping the shared test-suite-target and test-suite-cargo-registry volumes. Two runs on
 # one Docker host cannot overlap: every stack has a fixed project name and shares those volumes. A runner image that
-# carries the suite's nextest archive, as the one CI builds does, runs the tree from it and compiles nothing; any other
-# compiles the tree from the working tree.
+# ANDROMEDA_TEST_SUITE_RUNNER_IMAGE names carries the suite's nextest archive, as the one CI builds does, and the tree
+# runs from it and compiles nothing; one that lacks it fails the run. A runner built here compiles the tree from the
+# working tree.
 set -euo pipefail
 
 if [ "$#" -ne 1 ]; then
@@ -49,6 +50,9 @@ fi
 nextest=(cargo nextest run --tool-config-file runner:/andromeda/tools/andromeda-test-suite/stacks/runner/nextest.toml --profile suite-verdict)
 if "${compose[@]}" run --rm --no-deps runner test -f "$archive"; then
     nextest+=(--archive-file "$archive" --workspace-remap /andromeda -E "binary_id(#andromeda-test-suite::${binaries})")
+elif [ -n "${ANDROMEDA_TEST_SUITE_RUNNER_IMAGE:-}" ]; then
+    echo "${ANDROMEDA_TEST_SUITE_RUNNER_IMAGE} has no ${archive}, or its container did not start" >&2
+    exit 1
 else
     nextest+=(-p andromeda-test-suite --test "$binaries")
 fi

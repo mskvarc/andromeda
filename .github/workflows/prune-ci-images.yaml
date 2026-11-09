@@ -40,8 +40,9 @@ jobs:
     steps:
       # A commit index is tagged <prefix>-<sha> and <prefix>-<sha>-<digest hex>, the second naming the manifest it
       # points at, so the references come from the version list and no manifest is fetched. A kept index without that
-      # tag leaves its reference unknown, so no input image or untagged version is deleted then. A failed deletion is
-      # reported and the rest go on.
+      # tag leaves its reference unknown, so no input image or untagged version is deleted then. The references are read
+      # again just before input images and untagged versions go, so an index a run tagged since the first read keeps the
+      # manifest it points at. A failed deletion is reported and the rest go on.
       - name: Delete expired versions
         shell: bash
         run: |
@@ -50,9 +51,34 @@ jobs:
           untagged_cutoff="$(date -u -d '1 day ago' +%s)"
           main_head="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
           echo "keeping the commit tags of ${main_head}, the head of main"
-          if ! gh api --paginate "users/${OWNER}/packages/container/${PACKAGE}/versions?per_page=100" \
-            --jq '.[] | {id, name, updated: (.updated_at | fromdateiso8601), tags: .metadata.container.tags}' \
-            > versions.jsonl 2> list-error.txt; then
+          commit_tag='^(broker|broker-amd64|runner)-[0-9a-f]{40}(-[0-9a-f]{64})?$'
+          input_tag='^(broker|broker-amd64|runner)-input-[0-9a-f]{64}$'
+          main_tag="-${main_head}(-[0-9a-f]{64})?\$"
+          list_versions() {
+            gh api --paginate "users/${OWNER}/packages/container/${PACKAGE}/versions?per_page=100" \
+              --jq '.[] | {id, name, updated: (.updated_at | fromdateiso8601), tags: .metadata.container.tags}' > "$1"
+          }
+          references_in() {
+            jq -sc --arg commit_tag "$commit_tag" --arg main_tag "$main_tag" --argjson cutoff "$commit_cutoff" '
+              [.[] | select(.tags != [] and all(.tags[]; test($commit_tag)) and (.updated >= $cutoff or any(.tags[]; test($main_tag))))]
+              | {
+                  digests: ([.[].tags[] | capture("-(?<hex>[0-9a-f]{64})$").hex | "sha256:" + .] | unique),
+                  unnamed: [.[] | select(any(.tags[]; test("-[0-9a-f]{64}$")) | not) | .name]
+                }' "$1"
+          }
+          deleted=0
+          failed=0
+          delete_versions() {
+            local id
+            for id in "$@"; do
+              if gh api --method DELETE "users/${OWNER}/packages/container/${PACKAGE}/versions/${id}" > /dev/null; then
+                deleted=$((deleted + 1))
+              else
+                failed=$((failed + 1))
+              fi
+            done
+          }
+          if ! list_versions versions.jsonl 2> list-error.txt; then
             if grep -q 'HTTP 404' list-error.txt; then
               echo "${PACKAGE}: no such package"
               exit 0
@@ -60,36 +86,37 @@ jobs:
             cat list-error.txt >&2
             exit 1
           fi
-          commit_tag='^(broker|broker-amd64|runner)-[0-9a-f]{40}(-[0-9a-f]{64})?$'
-          input_tag='^(broker|broker-amd64|runner)-input-[0-9a-f]{64}$'
-          main_tag="-${main_head}(-[0-9a-f]{64})?\$"
-          references="$(jq -sc --arg commit_tag "$commit_tag" --arg main_tag "$main_tag" --argjson cutoff "$commit_cutoff" '
-            [.[] | select(.tags != [] and all(.tags[]; test($commit_tag)) and (.updated >= $cutoff or any(.tags[]; test($main_tag))))]
-            | {
-                digests: ([.[].tags[] | capture("-(?<hex>[0-9a-f]{64})$").hex | "sha256:" + .] | unique),
-                unnamed: [.[] | select(any(.tags[]; test("-[0-9a-f]{64}$")) | not) | .name]
-              }' versions.jsonl)"
+          jq -r --arg commit_tag "$commit_tag" --arg main_tag "$main_tag" --argjson cutoff "$commit_cutoff" '
+            select(.tags != [] and all(.tags[]; test($commit_tag)) and (any(.tags[]; test($main_tag)) | not) and .updated < $cutoff)
+            | .id' versions.jsonl > expired.txt
+          mapfile -t expired < expired.txt
+          delete_versions "${expired[@]}"
+          references="$(references_in versions.jsonl)"
           unnamed="$(jq -r '.unnamed | join(" ")' <<< "$references")"
           if [ -n "$unnamed" ]; then
             echo "::error::${PACKAGE}: commit indexes without a digest tag, so no input image or untagged version is deleted: ${unnamed}"
-          fi
-          ids="$(jq -r --arg commit_tag "$commit_tag" --arg main_tag "$main_tag" --arg input_tag "$input_tag" \
-            --argjson references "$references" --argjson commit_cutoff "$commit_cutoff" --argjson untagged_cutoff "$untagged_cutoff" '
-            select(
-              (.tags != [] and all(.tags[]; test($commit_tag)) and (any(.tags[]; test($main_tag)) | not) and .updated < $commit_cutoff)
-              or ($references.unnamed == [] and (.tags == [] or all(.tags[]; test($input_tag))) and .updated < $untagged_cutoff
-                and (.name | IN($references.digests[]) | not))
-            )
-            | .id' versions.jsonl)"
-          deleted=0
-          failed=0
-          for id in $ids; do
-            if gh api --method DELETE "users/${OWNER}/packages/container/${PACKAGE}/versions/${id}" > /dev/null; then
-              deleted=$((deleted + 1))
-            else
-              failed=$((failed + 1))
+          else
+            guarded="$(jq -c --arg input_tag "$input_tag" --argjson references "$references" --argjson cutoff "$untagged_cutoff" '
+              select((.tags == [] or all(.tags[]; test($input_tag))) and .updated < $cutoff and (.name | IN($references.digests[]) | not))
+              | {id, name}' versions.jsonl)"
+            if [ -n "$guarded" ]; then
+              if list_versions versions-again.jsonl; then
+                references="$(references_in versions-again.jsonl)"
+                unnamed="$(jq -r '.unnamed | join(" ")' <<< "$references")"
+                if [ -n "$unnamed" ]; then
+                  echo "::error::${PACKAGE}: commit indexes without a digest tag, so no input image or untagged version is deleted: ${unnamed}"
+                else
+                  jq -r --argjson references "$references" '
+                    select(.name | IN($references.digests[]) | not) | .id' <<< "$guarded" > unreferenced.txt
+                  mapfile -t unreferenced < unreferenced.txt
+                  delete_versions "${unreferenced[@]}"
+                fi
+              else
+                echo "::error::${PACKAGE}: the versions could not be read again, so no input image or untagged version is deleted"
+                failed=$((failed + 1))
+              fi
             fi
-          done
+          fi
           echo "${PACKAGE}: deleted ${deleted} versions, ${failed} deletions failed"
           if [ -n "$unnamed" ] || [ "$failed" -gt 0 ]; then
             exit 1

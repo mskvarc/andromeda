@@ -63,7 +63,8 @@ runs:
               ([$names[] | $packages[.].dependencies[] | select(.path != null and (.kind == null or .kind == "build")) | .name] + $names | unique) as $next
               | if $next == $names then $names else reach($next) end;
           reach([$package])' "$workspace")"
-        mapfile -t inputs < <({
+        list="${RUNNER_TEMP}/${IMAGE}-inputs"
+        {
           jq -r --argjson compiled "$compiled" --arg package "$package" --args '
             .workspace_root as $root
             | def relative: ltrimstr($root + "/");
@@ -73,7 +74,8 @@ runs:
               | if . == "" then "src/" else ., ":(exclude)" + . + ("tests/", "benches/", "examples/") end),
             (.packages[] | .manifest_path | relative)' "${compiles[@]}" < "$workspace"
           printf '%s\n' Cargo.lock rust-toolchain.toml .cargo/ "${paths[@]}"
-        } | sort -u)
+        } | sort -u > "$list"
+        mapfile -t inputs < "$list"
         key="$(git ls-files --stage --error-unmatch -z -- "${inputs[@]}" "${build[@]}" | sha256sum | cut -d ' ' -f 1)"
         context="${RUNNER_TEMP}/${IMAGE}-context"
         rm -rf "$context"

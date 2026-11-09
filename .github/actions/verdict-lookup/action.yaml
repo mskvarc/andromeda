@@ -52,7 +52,7 @@ runs:
           shellcheck) included=('**/*.sh' '**/.shellcheckrc'); excluded=() ;;
           clippy | unit) included=(.); excluded=("${pages[@]}" "${images[@]}") ;;
           sql) included=(.); excluded=("${pages[@]}" "${images[@]}" 'src/**' 'tools/andromeda-test-suite/**') ;;
-          suite-*) included=('tools/andromeda-test-suite/stacks/**' .config/nextest.toml); excluded=() ;;
+          suite-*) included=('tools/andromeda-test-suite/stacks/**' tools/andromeda-test-suite/run-suite.sh .config/nextest.toml); excluded=() ;;
           *) echo "unknown check: ${CHECK}" >&2; exit 1 ;;
         esac
         digest="$({

@@ -31,7 +31,8 @@ runs:
         key: ${{ inputs.key }}
         path: ${{ inputs.paths }}
 
-    # A save that failed, or that found the key taken, leaves the earlier builds in place.
+    # A save that failed, or that found the key taken, leaves the earlier builds in place. Cleanup never fails the job: a
+    # build it could not delete only takes cache space until GitHub evicts it.
     - name: Delete the job's earlier builds
       if: ${{ github.ref == 'refs/heads/main' }}
       shell: bash
@@ -42,11 +43,16 @@ runs:
       run: |
         set -euo pipefail
         builds="${RUNNER_TEMP}/job-builds.json"
-        gh cache list --ref refs/heads/main --key "cargo-${GITHUB_JOB}-" --limit 100 --json id,key > "$builds"
+        if ! gh cache list --ref refs/heads/main --key "cargo-${GITHUB_JOB}-" --limit 100 --json id,key > "$builds"; then
+          echo "::warning::the job's builds could not be listed, so the earlier ones stay"
+          exit 0
+        fi
         if ! jq -e --arg key "$KEY" 'any(.[]; .key == $key)' "$builds" > /dev/null; then
           echo "::warning::this build was not saved, so the job's earlier builds stay"
           exit 0
         fi
         jq -r --arg key "$KEY" '.[] | select(.key != $key) | .id' "$builds" | while IFS= read -r id; do
-          gh cache delete "$id"
+          if ! gh cache delete "$id"; then
+            echo "::warning::build ${id} could not be deleted, so it stays until GitHub evicts it"
+          fi
         done
