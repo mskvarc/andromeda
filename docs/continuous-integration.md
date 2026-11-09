@@ -51,13 +51,13 @@ Every job of `ci` except `deny` and the image jobs, and every tree of `suite`, f
 A job's inputs are every tracked file outside `.github/` that its exclusions don't name, so a new file is an input until it is excluded. The workflow file and every action under `.github/actions/` are inputs of every job.
 
 - `clippy` and `unit` exclude the documentation pages, every `*.md` and `docs/assets/`, and the image and stack definitions, `docker/`, `tools/andromeda-test-suite/stacks/` and `.dockerignore`. The generated configuration template, schema and descriptor stay inputs, because `unit` compares them with what the code generates.
-- `sql` excludes what `clippy` does, and also the broker's `src/` and `tools/andromeda-test-suite/`.
+- `sql` excludes what `clippy` does, and also the broker's `src/` and `tools/andromeda-test-suite/`. Its key also covers `migrations/seal-ledger.toml` as the base holds it, the branch a pull request merges into or the parent of a push, because `verify --against` compares the working copy with that ledger.
 - `fmt` also excludes JSON, JSON-LD and ABNF files, `docs/configuration/`, `migrations/`, the SQL formatter and linter settings, shell scripts and the settings of the other tools. That leaves the Rust sources, the manifests, the lockfile, `rust-toolchain.toml`, `.cargo/` and `rustfmt.toml`.
 - `machete` excludes what `fmt` does and `rustfmt.toml`.
 - `taplo` and `shellcheck` pick their files by extension, as the tools do. `taplo` reads every TOML file and the configuration schema, and `shellcheck` every `*.sh`.
 - A suite tree's key covers the keys of the broker and runner image inputs, `tools/andromeda-test-suite/stacks/`, `.config/nextest.toml` and the digest of the PostgreSQL image, which the tree then runs by that digest.
 
-So a push that changes only documentation reuses every job except `deny`, and the image jobs find both images already built. A pass of `sql` is reused on its inputs alone, so a pull request whose migrations match a commit that passed on `main` doesn't run `verify --against` its base again.
+So a push that changes only documentation reuses every job except `deny`, and the image jobs find both images already built. A pass of `sql` is reused only when the base's ledger matches as well, so a pull request that brings back the migrations of an earlier commit on `main`, as a revert of a seal does, still runs `verify --against` its base.
 
 Starting `ci` or `suite` by hand with `fresh` set ignores every recorded pass and runs each job in full. In `ci` it also builds both images again.
 
