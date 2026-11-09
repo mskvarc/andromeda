@@ -91,6 +91,15 @@ slow-timeout = { period = "60s", terminate-after = 10 }
 filter = 'package(andromeda-test-suite) & binary(=andromeda_observability) & test(/(^|::)a_obs_met_9001_/)'
 slow-timeout = { period = "60s", terminate-after = 10 }
 
+# The wake backlog tests bring up forty tenants on a broker that keeps four loaded and then watch its wakes for up to a
+# minute, and the clone tests first build a Snapshot of 40,000 Entities. On a host of two CPUs each takes two minutes or
+# more, so one still running after five minutes hangs.
+[[profile.suite.overrides]]
+filter = '''
+package(andromeda-test-suite) & binary(~andromeda_)
+  & test(/(^|::)(a_obs_wbk_9001|a_obs_wbk_9002|a_obs_wbk_9003|a_snp_cln_9170|a_snp_cln_9171)_/)'''
+slow-timeout = { period = "60s", terminate-after = 5 }
+
 [[profile.suite.overrides]]
 filter = '''
 package(andromeda-test-suite) & binary(~ngsi_ld_) & (

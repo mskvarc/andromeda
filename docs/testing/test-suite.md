@@ -114,7 +114,7 @@ The tests at one of the broker's size bounds run alone, with no other test besid
 
 A test that works in a tenant of its own brings it up through `broker::private_tenant`, or `broker::provisioned_tenant` for a tenant named otherwise, never with a registration of its own: the broker answers that registration 503 while it brings many tenants up at once, and only the helper sends it again until the delivery deadline.
 
-The metrics test `a_obs_met_9001` gets ten minutes in both profiles, which share the override. It scrapes `broker-observed` again six minutes after its write, past the broker's five-minute idle timeout for gauges and counters.
+The metrics test `a_obs_met_9001` gets ten minutes in both profiles, which share the override. It scrapes `broker-observed` again six minutes after its write, past the broker's five-minute idle timeout for gauges and counters. The wake backlog tests `a_obs_wbk_9001` to `a_obs_wbk_9003` and the clone tests `a_snp_cln_9170` and `a_snp_cln_9171` get five minutes. The wake backlog tests bring up forty tenants on a broker that keeps four loaded and then watch its wakes for up to a minute, the clone tests first build a Snapshot of 40,000 Entities, and on two CPUs each takes two minutes or more.
 
 ## Running
 
