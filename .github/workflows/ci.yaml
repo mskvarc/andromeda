@@ -182,6 +182,7 @@ jobs:
         with:
           key: ${{ steps.cache.outputs.key }}
           paths: ${{ steps.cache.outputs.paths }}
+          job-status: ${{ job.status }}
 
   unit:
     name: unit
@@ -227,6 +228,7 @@ jobs:
         with:
           key: ${{ steps.cache.outputs.key }}
           paths: ${{ steps.cache.outputs.paths }}
+          job-status: ${{ job.status }}
 
   sql:
     name: sql
@@ -325,6 +327,7 @@ jobs:
         with:
           key: ${{ steps.cache.outputs.key }}
           paths: ${{ steps.cache.outputs.paths }}
+          job-status: ${{ job.status }}
 
   # The arm64 broker image every suite tree runs. It is built only when no image of the commit's broker inputs exists
   # yet, under broker-input-<key>, even in a run started with fresh; broker-<sha> is an index over that image with the

@@ -8,13 +8,19 @@ inputs:
   paths:
     description: The paths the build cache restore named.
     required: true
+  job-status:
+    description: The job's `job.status` when the save runs; only `success` records the commit.
+    required: true
 
 runs:
   using: composite
   steps:
-    # The next restore sets the files that differ from this commit to now, so their build scripts run again.
+    # The next restore sets the files that differ from the recorded commit to now, so their build scripts run again.
+    # Only a job that passed records its commit. A failed one can stop before a build script whose input changed, and
+    # recording its commit would date that input 2000 on the next restore, older than the script's last run. The
+    # restored record stays then, so the next restore dates everything changed since it.
     - name: Record the commit
-      if: ${{ github.ref == 'refs/heads/main' }}
+      if: ${{ github.ref == 'refs/heads/main' && inputs.job-status == 'success' }}
       shell: bash
       run: echo "$GITHUB_SHA" > target/.ci-source-commit
 
