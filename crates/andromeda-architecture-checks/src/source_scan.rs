@@ -1,4 +1,4 @@
-//! Shared Rust-source discovery and parsing for source-based guards.
+//! Shared file discovery and Rust-source parsing for source-based guards.
 
 use std::{
     fs,
@@ -82,7 +82,7 @@ pub(crate) fn every_workspace_source(workspace_root: &Path) -> Vec<RustSource> {
         .chain(SOURCE_DIRECTORIES)
         .flat_map(|root| {
             let path = workspace_root.join(root);
-            if path.is_file() { vec![path] } else { rust_file_paths(&path) }
+            if path.is_file() { vec![path] } else { file_paths(&path, is_rust_source) }
         })
         .collect::<Vec<_>>();
     paths.sort();
@@ -104,22 +104,28 @@ pub(crate) fn every_workspace_source(workspace_root: &Path) -> Vec<RustSource> {
 pub(crate) fn source_tree_paths(workspace_root: &Path) -> Vec<PathBuf> {
     let mut paths = SOURCE_DIRECTORIES
         .into_iter()
-        .flat_map(|directory| rust_file_paths(&workspace_root.join(directory)))
+        .flat_map(|directory| file_paths(&workspace_root.join(directory), is_rust_source))
         .collect::<Vec<_>>();
     paths.sort();
     paths
 }
 
-/// Recursively discover every Rust source below one directory, ordered by path.
+/// Whether a file is a Rust source.
+pub(crate) fn is_rust_source(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| extension == "rs")
+}
+
+/// Recursively discover every file below one directory that `wanted` selects,
+/// ordered by path.
 ///
-/// A directory that does not exist holds no sources. One that exists but cannot
+/// A directory that does not exist holds no files. One that exists but cannot
 /// be listed fails the guard that asked for it: a scan that quietly skips a
 /// subtree reads as enforcement while providing none.
 ///
 /// # Panics
 ///
 /// Panics when a directory below `root` cannot be listed.
-pub(crate) fn rust_file_paths(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn file_paths(root: &Path, wanted: fn(&Path) -> bool) -> Vec<PathBuf> {
     if !root.exists() {
         return Vec::new();
     }
@@ -144,7 +150,7 @@ pub(crate) fn rust_file_paths(root: &Path) -> Vec<PathBuf> {
             };
             if path.is_dir() {
                 directories.push(path);
-            } else if path.extension().is_some_and(|extension| extension == "rs") {
+            } else if wanted(&path) {
                 paths.push(path);
             }
         }

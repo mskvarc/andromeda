@@ -1,6 +1,6 @@
 //! That a specification crate does not spell SQL, read from its own sources.
 
-use crate::source_scan::rust_file_paths;
+use crate::source_scan::{file_paths, is_rust_source};
 use std::{fs, path::Path};
 
 /// Fragments that only ever appear in a rendering, never in a grammar.
@@ -100,7 +100,7 @@ fn rust_sources(root: &Path) -> Vec<(String, String)> {
     let mut sources = Vec::new();
     let mut unreadable = Vec::new();
 
-    for path in rust_file_paths(root) {
+    for path in file_paths(root, is_rust_source) {
         match fs::read_to_string(&path) {
             Ok(source) => {
                 let relative = path.strip_prefix(root).unwrap_or(&path).display().to_string();

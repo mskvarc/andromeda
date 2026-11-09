@@ -110,6 +110,12 @@ macro_rules! workspace_architecture {
                 $crate::module_naming::assert_no_dumping_ground_modules(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
+            /// An image that names its toolchain names the one the workspace pins.
+            #[test]
+            fn images_install_the_pinned_toolchain() {
+                $crate::toolchain_pin::assert_images_install_the_pinned_toolchain(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
             /// No production source names a `dyn Error` trait object off the baseline.
             #[test]
             fn errors_are_typed_not_erased() {
