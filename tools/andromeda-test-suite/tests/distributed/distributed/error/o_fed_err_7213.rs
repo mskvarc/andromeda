@@ -14,7 +14,7 @@ use ngsi_ld::{
 };
 use std::time::Duration;
 
-/// Pins: Delete Entity after a Retrieve Entity whose inclusive source answered after the registration timeout of 300 ms, under a registration with no cooldown, is forwarded and the source receives the delete
+/// Pins: Delete Entity after a Retrieve Entity whose inclusive source answered after the registration timeout of 3000 ms, under a registration with no cooldown, is forwarded and the source receives the delete
 /// Clause: 6.3.17, 5.2.34
 /// Recorded: clause 6.3.17 lets a broker optionally decline further requests to a failed endpoint during its cooldown; Andromeda holds a failed source back only when its registration sets management.cooldown
 #[gtest]
@@ -41,7 +41,7 @@ async fn o_fed_err_7213_a_write_after_a_timed_out_read_reaches_a_source_whose_re
         .operations([DistributedOperation::RetrieveEntity, DistributedOperation::DeleteEntity])
         .build()?;
     // The model refuses it (a registration management), so `management` is written as text.
-    let management: RawJson = r#"{"timeout": 300}"#.parse()?;
+    let management: RawJson = r#"{"timeout": 3000}"#.parse()?;
     let document = UncheckedDocument::try_from(registration.render())?.set_member("management", &management);
     let request = broker.unchecked(&RegisterContextSource { registration: &registration })?.document(&document);
     let answer = broker.send_unchecked(request).await;
@@ -54,7 +54,7 @@ async fn o_fed_err_7213_a_write_after_a_timed_out_read_reaches_a_source_whose_re
         .answer(
             Method::GET,
             &format!("/a/ngsi-ld/v1/entities/{vehicle_id}"),
-            source_answer::entity(&source_entity).set_delay(Duration::from_millis(3000)),
+            source_answer::entity(&source_entity).set_delay(Duration::from_millis(10_000)),
         )
         .await?;
     source
