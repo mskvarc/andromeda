@@ -1,9 +1,12 @@
 name: Broker image
-description: Builds the broker image for one platform from the checkout and pushes it under one tag, with the labels that depend on the commit.
+description: Builds the broker image for one platform from a build context and pushes it under one tag. The image carries no commit.
 
 inputs:
   platform:
     description: The platform to build, such as linux/arm64.
+    required: true
+  context:
+    description: The build context, as the broker-inputs action assembles it.
     required: true
   image:
     description: The reference the image is pushed as, tag included.
@@ -15,13 +18,15 @@ inputs:
 runs:
   using: composite
   steps:
-    # Dependabot bumps the runtime FROM, so the base labels follow it. The version and creation time are known only
-    # when a release tags the image, so the release puts them on its index instead.
-    - name: Resolve the commit-dependent labels
+    # Dependabot bumps the runtime FROM, so the base labels follow it. The revision, version and creation time are known
+    # only when a commit or a release tags the image, so they go on the index that tag points at.
+    - name: Resolve the base image labels
       shell: bash
+      env:
+        DOCKERFILE: ${{ inputs.context }}/docker/images/andromeda/Dockerfile
       run: |
         set -euo pipefail
-        from="$(sed -n 's/^FROM \(.*\) AS runtime$/\1/p' docker/images/andromeda/Dockerfile)"
+        from="$(sed -n 's/^FROM \(.*\) AS runtime$/\1/p' "$DOCKERFILE")"
         case "$from" in
           *@sha256:*) ;;
           *) echo "no digest-pinned runtime FROM line in docker/images/andromeda/Dockerfile" >&2; exit 1 ;;
@@ -35,8 +40,8 @@ runs:
     - name: Build and push
       uses: docker/build-push-action@v7
       with:
-        context: .
-        file: docker/images/andromeda/Dockerfile
+        context: ${{ inputs.context }}
+        file: ${{ inputs.context }}/docker/images/andromeda/Dockerfile
         platforms: ${{ inputs.platform }}
         # One manifest per image, with no attestation manifests beside it, so every untagged version is one the
         # pruning may delete.
@@ -46,6 +51,5 @@ runs:
         outputs: type=image,name=${{ inputs.image }},push=true
         labels: |
           org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          org.opencontainers.image.revision=${{ github.sha }}
           org.opencontainers.image.base.name=${{ env.BASE_NAME }}
           org.opencontainers.image.base.digest=${{ env.BASE_DIGEST }}

@@ -82,6 +82,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v7
+      - id: inputs
+        uses: ./.github/actions/broker-inputs
       - uses: ./.github/actions/free-disk-space
       - uses: docker/setup-buildx-action@v4
 
@@ -94,6 +96,7 @@ jobs:
       - uses: ./.github/actions/broker-image
         with:
           platform: linux/amd64
+          context: ${{ steps.inputs.outputs.context }}
           image: ghcr.io/${{ github.repository_owner }}/andromeda:run-${{ github.run_id }}-linux-amd64
           cache: ghcr.io/${{ github.repository_owner }}/andromeda-buildcache:linux-amd64
 
@@ -156,14 +159,16 @@ jobs:
             [ -n "$tag" ] && tag_args+=(-t "$tag")
           done <<< "$TAGS"
           # A registry reads a multi-platform image's description from the index, so the index carries the platform
-          # image's labels as annotations.
+          # image's labels as annotations. Both platform images carry the same labels, and the amd64 one is a single
+          # manifest whose labels read directly.
           annotation_args=(
+            --annotation "index:org.opencontainers.image.revision=${GITHUB_SHA}"
             --annotation "index:org.opencontainers.image.version=${VERSION}"
             --annotation "index:org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           )
           while IFS= read -r annotation; do
             annotation_args+=(--annotation "index:${annotation}")
-          done < <(docker buildx imagetools inspect "${refs[0]}" --format '{{json .Image.Config.Labels}}' | jq -r '(. // {}) | to_entries[] | "\(.key)=\(.value)"')
+          done < <(docker buildx imagetools inspect "${refs[1]}" --format '{{json .Image.Config.Labels}}' | jq -r '(. // {}) | to_entries[] | "\(.key)=\(.value)"')
           docker buildx imagetools create "${annotation_args[@]}" "${tag_args[@]}" "${refs[@]}"
 
       - name: Resolve manifest list digest
