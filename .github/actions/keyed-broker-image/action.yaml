@@ -5,10 +5,6 @@ inputs:
   platform:
     description: "`linux/arm64` or `linux/amd64`."
     required: true
-  fresh:
-    description: "`true` builds the image even when one of the same inputs exists."
-    required: false
-    default: "false"
 
 outputs:
   key:
@@ -52,11 +48,13 @@ runs:
       with:
         image: ${{ steps.names.outputs.image }}
 
-    - if: ${{ inputs.fresh == 'true' || steps.existing.outputs.found != 'true' }}
+    # An input image is built once for its key and its tag never moves, because commit indexes point at its manifest by
+    # digest.
+    - if: ${{ steps.existing.outputs.found != 'true' }}
       uses: ./.github/actions/free-disk-space
-    - if: ${{ inputs.fresh == 'true' || steps.existing.outputs.found != 'true' }}
+    - if: ${{ steps.existing.outputs.found != 'true' }}
       uses: docker/setup-buildx-action@v4
-    - if: ${{ inputs.fresh == 'true' || steps.existing.outputs.found != 'true' }}
+    - if: ${{ steps.existing.outputs.found != 'true' }}
       uses: ./.github/actions/broker-image
       with:
         platform: ${{ inputs.platform }}
