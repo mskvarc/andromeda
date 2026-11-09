@@ -36,7 +36,7 @@ updates:
 
   - package-ecosystem: docker-compose
     directories:
-      - /docker/compose/dev
+      - /docker/compose
       - /tools/andromeda-test-suite/stacks/andromeda
       - /tools/andromeda-test-suite/stacks/base
       - /tools/andromeda-test-suite/stacks/interoperability
