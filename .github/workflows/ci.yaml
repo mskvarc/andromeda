@@ -329,134 +329,39 @@ jobs:
           paths: ${{ steps.cache.outputs.paths }}
           job-status: ${{ job.status }}
 
-  # The arm64 broker image every suite tree runs. It is built only when no image of the commit's broker inputs exists
-  # yet, under broker-input-<key>, even in a run started with fresh; broker-<sha> is an index over that image with the
-  # commit as its revision. A release publishes it as its arm64 image.
-  broker-image:
-    name: broker-image
-    if: &beyond-pull-request ${{ github.event_name != 'pull_request' }}
-    runs-on: *runner
-    timeout-minutes: 90
-    permissions:
-      contents: read
-      packages: write
-    env:
-      PLATFORM: linux/arm64
-    outputs:
-      key: ${{ steps.image.outputs.key }}
-    steps: &broker-image-steps
-      - uses: actions/checkout@v7
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - id: image
-        uses: ./.github/actions/keyed-broker-image
-        with:
-          platform: ${{ env.PLATFORM }}
-
   # The amd64 broker image a release publishes beside the arm64 one, keyed on the same inputs on a native amd64 runner,
   # under broker-amd64-input-<key> and broker-amd64-<sha>. No suite tree runs it and no gate waits for it; it is there
   # so a release of the commit finds it built.
   broker-image-amd64:
     name: broker-image (linux/amd64)
-    if: *beyond-pull-request
+    if: &beyond-pull-request ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
       contents: read
       packages: write
-    env:
-      PLATFORM: linux/amd64
-    steps: *broker-image-steps
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/keyed-broker-image
+        with:
+          platform: linux/amd64
 
-  # The runner image every suite tree runs, with the suite compiled into it as a nextest archive, so the trees compile
-  # nothing. It is built only when no image of the commit's suite inputs exists yet, under runner-input-<key>, even in a
-  # run started with fresh, because commit indexes point at its manifest by digest; runner-<sha> is an index over that
-  # image with the commit as its revision.
-  runner-image:
-    name: runner-image
+  # The arm64 broker image, the runner image and the trees ci-ok requires, run as the suite workflow runs its trees.
+  trees:
+    name: trees
     if: *beyond-pull-request
-    runs-on: *runner
-    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
-    env:
-      CI_IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda-ci
-    outputs:
-      key: ${{ steps.inputs.outputs.key }}
-    steps:
-      - uses: actions/checkout@v7
-      - id: inputs
-        uses: ./.github/actions/image-inputs
-        with:
-          image: runner
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - id: existing
-        uses: ./.github/actions/image-lookup
-        with:
-          image: ${{ env.CI_IMAGE }}:runner-input-${{ steps.inputs.outputs.key }}
-      - if: &build ${{ steps.existing.outputs.found != 'true' }}
-        uses: ./.github/actions/free-disk-space
-      - if: *build
-        uses: docker/setup-buildx-action@v4
-      # The layer cache keeps the toolchain and the suite's compiled third-party dependencies between builds.
-      - if: *build
-        name: Build and push the runner image
-        uses: docker/build-push-action@v7
-        with:
-          context: ${{ steps.inputs.outputs.context }}
-          file: ${{ steps.inputs.outputs.context }}/tools/andromeda-test-suite/stacks/runner/Dockerfile
-          target: suite
-          platforms: linux/arm64
-          provenance: false
-          cache-from: type=registry,ref=${{ env.CI_IMAGE }}:runner-buildcache
-          cache-to: type=registry,ref=${{ env.CI_IMAGE }}:runner-buildcache,mode=max,image-manifest=true,oci-mediatypes=true
-          outputs: type=image,name=${{ env.CI_IMAGE }}:runner-input-${{ steps.inputs.outputs.key }},push=true
-      - uses: ./.github/actions/commit-tag
-        with:
-          image: ${{ env.CI_IMAGE }}:runner-input-${{ steps.inputs.outputs.key }}
-          tag: ${{ env.CI_IMAGE }}:runner-${{ github.sha }}
-
-  # The database image is the published one, which the postgresql workflow rebuilds whenever its directory changes. A
-  # tree's verdict is keyed on the keys of both images' inputs, the stack definitions, the runner configuration and the
-  # database image's digest.
-  suite:
-    name: suite (${{ matrix.tree }})
-    needs: [broker-image, runner-image]
-    if: *beyond-pull-request
-    runs-on: *runner
-    timeout-minutes: 120
-    permissions:
-      contents: read
-      packages: read
-    strategy:
-      fail-fast: false
-      matrix:
-        tree: [ngsi_ld, etsi, annex_c]
-    env:
-      ANDROMEDA_IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda-ci:broker-${{ github.sha }}
-      ANDROMEDA_TEST_SUITE_RUNNER_IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda-ci:runner-${{ github.sha }}
-      ANDROMEDA_POSTGRES_IMAGE: ghcr.io/${{ github.repository_owner }}/postgresql:tsl
-    steps:
-      - uses: actions/checkout@v7
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: ./.github/actions/suite-tree
-        with:
-          tree: ${{ matrix.tree }}
-          broker-key: ${{ needs.broker-image.outputs.key }}
-          runner-key: ${{ needs.runner-image.outputs.key }}
-          fresh: ${{ inputs.fresh }}
+    uses: ./.github/workflows/suite-trees.yaml
+    with:
+      trees: '["ngsi_ld", "etsi", "annex_c"]'
+      fresh: ${{ inputs.fresh == true }}
 
   pr-ok:
     name: pr-ok
@@ -482,7 +387,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: ${{ !cancelled() && github.event_name != 'pull_request' }}
-    needs: [pr-ok, suite]
+    needs: [pr-ok, trees]
     runs-on: *runner
     timeout-minutes: 5
     steps: *require-every-job

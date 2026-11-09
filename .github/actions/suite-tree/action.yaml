@@ -1,5 +1,5 @@
 name: Suite tree
-description: Runs one tree of andromeda-test-suite against its stack, unless a run on main recorded a pass of the tree with the same broker and runner image inputs, stack definitions, runner configuration and database image.
+description: Runs one tree of andromeda-test-suite against its stack, from the images ANDROMEDA_IMAGE, ANDROMEDA_TEST_SUITE_RUNNER_IMAGE and ANDROMEDA_POSTGRES_IMAGE name, so it compiles nothing, unless a run on main recorded a pass of the tree with the same broker and runner image inputs, stack definitions, runner configuration and database image.
 
 inputs:
   tree:
@@ -26,7 +26,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        digest="$(docker buildx imagetools inspect "$ANDROMEDA_POSTGRES_IMAGE" --format '{{json .Manifest}}' | jq -r .digest)"
+        digest="$(docker buildx imagetools inspect "$ANDROMEDA_POSTGRES_IMAGE" --format '{{json .Manifest}}' | jq -er .digest)"
         {
           echo "digest=${digest}"
           echo "image=${ANDROMEDA_POSTGRES_IMAGE}@${digest}"
@@ -41,9 +41,6 @@ runs:
           broker ${{ inputs.broker-key }}
           runner ${{ inputs.runner-key }}
           database ${{ steps.database.outputs.digest }}
-
-    - if: ${{ steps.verdict.outputs.reused != 'true' }}
-      uses: ./.github/actions/free-disk-space
 
     - name: Run the tree
       if: ${{ steps.verdict.outputs.reused != 'true' }}

@@ -1,0 +1,59 @@
+name: Keyed runner image
+description: Gives the commit its runner image in andromeda-ci, with the suite compiled into it as a nextest archive, building it only when no image of the commit's suite inputs exists yet. The job logs in to ghcr.io first.
+
+outputs:
+  key:
+    description: The key of the commit's suite inputs.
+    value: ${{ steps.inputs.outputs.key }}
+
+runs:
+  using: composite
+  steps:
+    - id: inputs
+      uses: ./.github/actions/image-inputs
+      with:
+        image: runner
+
+    # The image is runner-input-<key> and runner-<sha>, an index over it with the commit as its revision.
+    - name: Name the images
+      id: names
+      shell: bash
+      env:
+        KEY: ${{ steps.inputs.outputs.key }}
+      run: |
+        set -euo pipefail
+        {
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER}/andromeda-ci:runner-input-${KEY}"
+          echo "commit=ghcr.io/${GITHUB_REPOSITORY_OWNER}/andromeda-ci:runner-${GITHUB_SHA}"
+          echo "cache=ghcr.io/${GITHUB_REPOSITORY_OWNER}/andromeda-ci:runner-buildcache"
+        } >> "$GITHUB_OUTPUT"
+
+    - id: existing
+      uses: ./.github/actions/image-lookup
+      with:
+        image: ${{ steps.names.outputs.image }}
+
+    # An input image is built once for its key and its tag never moves, because commit indexes point at its manifest by
+    # digest.
+    - if: ${{ steps.existing.outputs.found != 'true' }}
+      uses: ./.github/actions/free-disk-space
+    - if: ${{ steps.existing.outputs.found != 'true' }}
+      uses: docker/setup-buildx-action@v4
+    # The layer cache keeps the toolchain and the suite's compiled third-party dependencies between builds.
+    - if: ${{ steps.existing.outputs.found != 'true' }}
+      name: Build and push the runner image
+      uses: docker/build-push-action@v7
+      with:
+        context: ${{ steps.inputs.outputs.context }}
+        file: ${{ steps.inputs.outputs.context }}/tools/andromeda-test-suite/stacks/runner/Dockerfile
+        target: suite
+        platforms: linux/arm64
+        provenance: false
+        cache-from: type=registry,ref=${{ steps.names.outputs.cache }}
+        cache-to: type=registry,ref=${{ steps.names.outputs.cache }},mode=max,image-manifest=true,oci-mediatypes=true
+        outputs: type=image,name=${{ steps.names.outputs.image }},push=true
+
+    - uses: ./.github/actions/commit-tag
+      with:
+        image: ${{ steps.names.outputs.image }}
+        tag: ${{ steps.names.outputs.commit }}

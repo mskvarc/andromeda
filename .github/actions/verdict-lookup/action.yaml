@@ -27,7 +27,8 @@ runs:
   steps:
     # A check's inputs are every tracked file outside .github/ that its exclusions don't name, so a new file is an input
     # until it is excluded. taplo and shellcheck select their files by extension themselves, so their inputs are named
-    # the same way. The workflow file and every action are inputs of each check.
+    # the same way. Every workflow and every action are inputs of each check: a check runs from them, and a reusable
+    # workflow is not the one GITHUB_WORKFLOW_REF names, which is its caller.
     - name: Compute the key
       id: key
       shell: bash
@@ -54,11 +55,9 @@ runs:
           suite-*) included=('tools/andromeda-test-suite/stacks/**' .config/nextest.toml); excluded=() ;;
           *) echo "unknown check: ${CHECK}" >&2; exit 1 ;;
         esac
-        workflow="${GITHUB_WORKFLOW_REF#"${GITHUB_REPOSITORY}/"}"
-        workflow="${workflow%%@*}"
         digest="$({
           git ls-files --stage -z -- "${included[@]}" ':(exclude).github/**' "${excluded[@]/#/:(exclude)}"
-          git ls-files --stage -z -- "$workflow" '.github/actions/**'
+          git ls-files --stage -z -- '.github/workflows/**' '.github/actions/**'
           printf '%s\n' "$PARTS"
         } | sha256sum | cut -d ' ' -f 1)"
         echo "key=verdict-${CHECK}-${digest}" >> "$GITHUB_OUTPUT"
