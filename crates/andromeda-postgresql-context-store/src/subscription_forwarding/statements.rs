@@ -76,15 +76,15 @@ pub(crate) fn local_of_companion_statement(companion: &Identifier) -> SelectStat
         .to_owned()
 }
 
-/// Claim `copy` as the copy of `local` at `copy.registration`, returning the
-/// key of a row it inserted.
+/// Record `copy` as the copy of `local` at `copy.registration` unless one is
+/// recorded there already, returning the identifier of a row it inserted.
 ///
 /// Nothing is inserted, and nothing returned, when a copy of `local` at the
 /// registration is recorded already, or when `local` or the registration no
-/// longer exists: the subscription is read for its key and the registration
+/// longer exists. The subscription is read for its key and the registration
 /// tested for, rather than the key columns and the registration foreign key
 /// refusing the row.
-pub(crate) fn claim_forwarded_statement(local: &Identifier, copy: &ForwardedCopy) -> Result<InsertStatement, SubscriptionForwardingError> {
+pub(crate) fn record_absent_copy_statement(local: &Identifier, copy: &ForwardedCopy) -> Result<InsertStatement, SubscriptionForwardingError> {
     let registered = Query::select()
         .expr(Expr::val(1))
         .from(Csr::Table)
@@ -113,7 +113,7 @@ pub(crate) fn claim_forwarded_statement(local: &Identifier, copy: &ForwardedCopy
                 .do_nothing()
                 .to_owned(),
         )
-        .returning_col(ForwardedSubscriptions::LocalSubscriptionKey);
+        .returning_col(ForwardedSubscriptions::RemoteSubscriptionId);
     Ok(insert)
 }
 
@@ -186,13 +186,13 @@ pub(crate) fn remove_forwarded_statement(local: &Identifier, registration: &Iden
 #[cfg(test)]
 mod tests {
     use crate::subscription_forwarding::statements::{
-        claim_forwarded_statement,
         companion_of_statement,
         forwarded_for_registration_statement,
         forwarded_of_statement,
         link_companion_statement,
         local_of_companion_statement,
         local_of_forwarded_statement,
+        record_absent_copy_statement,
         record_forwarded_statement,
         remove_forwarded_statement,
     };
@@ -268,17 +268,17 @@ mod tests {
     }
 
     #[test]
-    fn a_claim_inserts_only_for_a_subscription_and_registration_that_exist_and_never_replaces_a_recorded_copy() {
+    fn an_absent_copy_is_recorded_only_for_a_subscription_and_registration_that_exist_and_never_replaces_a_recorded_one() {
         let copy = ForwardedCopy {
             registration: uri("urn:ngsi-ld:ContextSourceRegistration:b"),
             remote_subscription: uri("urn:ngsi-ld:Subscription:minted"),
         };
-        let sql = claim_forwarded_statement(&uri("urn:ngsi-ld:Subscription:local"), &copy)
-            .expect("the claim builds")
+        let sql = record_absent_copy_statement(&uri("urn:ngsi-ld:Subscription:local"), &copy)
+            .expect("the record builds")
             .to_string(PostgresQueryBuilder);
         assert_eq!(
             sql,
-            r#"INSERT INTO "forwarded_subscriptions" ("local_subscription_key", "registration_id", "remote_subscription_id") SELECT "subscription_key", 'urn:ngsi-ld:ContextSourceRegistration:b', 'urn:ngsi-ld:Subscription:minted' FROM "subscriptions" WHERE "id" = 'urn:ngsi-ld:Subscription:local' AND EXISTS(SELECT 1 FROM "context_source_registrations" WHERE "id" = 'urn:ngsi-ld:ContextSourceRegistration:b') ON CONFLICT ("local_subscription_key", "registration_id") DO NOTHING RETURNING "local_subscription_key""#
+            r#"INSERT INTO "forwarded_subscriptions" ("local_subscription_key", "registration_id", "remote_subscription_id") SELECT "subscription_key", 'urn:ngsi-ld:ContextSourceRegistration:b', 'urn:ngsi-ld:Subscription:minted' FROM "subscriptions" WHERE "id" = 'urn:ngsi-ld:Subscription:local' AND EXISTS(SELECT 1 FROM "context_source_registrations" WHERE "id" = 'urn:ngsi-ld:ContextSourceRegistration:b') ON CONFLICT ("local_subscription_key", "registration_id") DO NOTHING RETURNING "remote_subscription_id""#
         );
     }
 

@@ -10,7 +10,7 @@
 
 /// The companion context source registration subscription of a local subscription.
 pub mod companion;
-/// Placing one reduced copy: claimed before it is sent, settled by the answer.
+/// Placing one reduced copy, claimed before it is sent and settled by the answer.
 mod copy_placement;
 /// What placing one reduced copy records, routes and keeps.
 #[cfg(test)]
@@ -42,6 +42,11 @@ mod minted_subscription_id;
 mod notification_narrowing;
 /// Whether a local subscription holds a companion and forwarded copies.
 mod participation;
+/// Placing again the copies whose claim was abandoned before the source answered.
+mod placement_resumption;
+/// What placing a copy again after its claim was abandoned sends and settles.
+#[cfg(test)]
+mod placement_resumption_tests;
 /// Re-assembling an inbound notification for the local subscriber.
 pub mod reassembly;
 /// The distributed subscription side wired to in-memory doubles.

@@ -11,6 +11,7 @@ mod notification_delivery;
 mod notification_schedule;
 mod notification_worker_failure;
 mod periodic_evaluation;
+mod placement_resumption;
 mod pool_gauges;
 mod retention;
 mod snapshot;
@@ -45,6 +46,7 @@ use crate::{
             maintenance::{register_entity_side_effects, register_spatial_workers},
             notification_delivery::{DeliveryDrainDrive, delivery_queue},
             periodic_evaluation::register_periodic_evaluations,
+            placement_resumption::register_placement_resumption,
             pool_gauges::register_pool_gauges,
             snapshot::{PreparationRecovery, SnapshotStatusWake, register_snapshot_workers},
             table_size_gauges::register_table_size_gauges,
@@ -301,6 +303,9 @@ pub(super) fn supervise_tasks(
         },
     )?;
     register_expiry_workers(&task_supervisor, config, storage, &services.state, &registration, &pacer)?;
+    if let Some(forwarding) = &services.state.subscription_forwarding {
+        register_placement_resumption(&task_supervisor, Arc::clone(&pacer), Arc::clone(forwarding))?;
+    }
     let periodic = PeriodicSweepDrive {
         pacing: periodic,
         evaluations: register_periodic_evaluations(&task_supervisor)?,

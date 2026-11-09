@@ -79,6 +79,23 @@ impl SubscribingSource {
         serde_json::from_value(registration).expect("a valid registration")
     }
 
+    /// The registration with its endpoint moved to the discard port of the
+    /// loopback address, where nothing listens, so a forward to it is refused
+    /// before any request is written.
+    pub(crate) fn stored_at_a_closed_port(&self) -> ContextSourceRegistration {
+        let mut registration = self.registration.clone();
+        registration["endpoint"] = json!("http://127.0.0.1:9/");
+        serde_json::from_value(registration).expect("a valid registration")
+    }
+
+    /// The registration as the registration store keeps it once it was made
+    /// auxiliary, so its source takes no copy of a subscription.
+    pub(crate) fn stored_as_auxiliary(&self) -> ContextSourceRegistration {
+        let mut registration = self.registration.clone();
+        registration["mode"] = json!("auxiliary");
+        serde_json::from_value(registration).expect("a valid registration")
+    }
+
     /// The registration as the registration store keeps it, advertising the
     /// deletion of subscriptions but not their creation.
     pub(crate) fn stored_without_subscription_creation(&self) -> ContextSourceRegistration {

@@ -30,8 +30,17 @@ use andromeda_subscription_forwarding::{
     service::SubscriptionForwardingService,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use url::Url;
+
+/// How long a copy placement holds its claim before the claim counts as
+/// abandoned, twice `request_deadline`. A placement runs inside a request, or
+/// inside the resumption pass, whose forward the configuration keeps below the
+/// request deadline, so a placement still under way never holds its claim
+/// that long.
+const fn placement_lease(request_deadline: Duration) -> Duration {
+    request_deadline.saturating_mul(2)
+}
 
 /// The subscription services one tenant answers requests with.
 pub(super) struct SubscriptionServices {
@@ -78,7 +87,8 @@ impl<'edge> DistributedSubscriptionEdge<'edge> {
     }
 }
 
-/// Compose both subscription services and the distributed side joining them.
+/// Compose both subscription services and the distributed side joining them,
+/// whose copy placements are bounded by `request_deadline`.
 pub(super) fn compose_subscription_services(
     storage: &TenantStorage,
     signals: &TenantSignals,
@@ -86,6 +96,7 @@ pub(super) fn compose_subscription_services(
     edge: Option<DistributedSubscriptionEdge<'_>>,
     entity_query: &Arc<EntityQueryService>,
     filter_admission: SubscriptionFilterAdmission,
+    request_deadline: Duration,
 ) -> SubscriptionServices {
     let endpoint_validator: Arc<dyn SubscriptionEndpointValidator> = Arc::new(DeliverySubscriptionEndpointValidator);
     let csource = Arc::new(SubscriptionService::new(
@@ -97,7 +108,8 @@ pub(super) fn compose_subscription_services(
         filter_admission,
     ));
     let store = Arc::new(SubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
-    let forwarding = edge.map(|edge| compose_subscription_forwarding(edge, storage, dispatcher, entity_query, &csource, &store));
+    let forwarding =
+        edge.map(|edge| compose_subscription_forwarding(edge, storage, dispatcher, entity_query, &csource, &store, placement_lease(request_deadline)));
     let mut entity = SubscriptionService::new(
         Arc::clone(&store),
         storage.engine.clone(),
@@ -120,7 +132,8 @@ pub(super) fn compose_subscription_services(
     }
 }
 
-/// Compose the distributed side of subscriptions for one tenant.
+/// Compose the distributed side of subscriptions for one tenant, with copy
+/// placements holding their claims for `placement_lease`.
 fn compose_subscription_forwarding(
     edge: DistributedSubscriptionEdge<'_>,
     storage: &TenantStorage,
@@ -128,6 +141,7 @@ fn compose_subscription_forwarding(
     entity_query: &Arc<EntityQueryService>,
     csource_subscriptions: &Arc<SubscriptionService<CsrSubscriptionVariant>>,
     subscriptions: &Arc<dyn SubscriptionStore>,
+    placement_lease: Duration,
 ) -> Arc<SubscriptionForwardingService> {
     Arc::new(
         SubscriptionForwardingService::builder()
@@ -142,6 +156,20 @@ fn compose_subscription_forwarding(
             .entity_query(Arc::clone(entity_query))
             .transport(Arc::clone(dispatcher))
             .engine(storage.engine.clone())
+            .placement_lease(placement_lease)
             .build(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tenant_factory::subscription_services::placement_lease;
+    use std::time::Duration;
+
+    /// The lease outlasts a placement inside a request and one inside the
+    /// resumption pass, both bounded by the request deadline.
+    #[test]
+    fn a_placement_lease_is_twice_the_request_deadline() {
+        pretty_assertions::assert_eq!(placement_lease(Duration::from_secs(30)), Duration::from_secs(60));
+    }
 }

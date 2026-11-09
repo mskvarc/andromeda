@@ -8,12 +8,16 @@
 //! notification, which carries no tenant of ours (clause 6.3.14), can still be
 //! routed to the right tenant.
 
-use crate::{error::SubscriptionForwardingError, forwarded_claim::ForwardedClaim};
+use crate::{
+    error::SubscriptionForwardingError,
+    forwarded_claim::{ForwardedClaim, StaleClaim},
+};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_registration::removal_hook::ForwardedSubscriptionCopy;
 use andromeda_subscription::forwarding_hook::ForwardedCopy;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use futures::future::BoxFuture;
+use std::time::Duration;
 
 /// The tenant-scoped mappings of the distributed subscription side.
 ///
@@ -56,12 +60,18 @@ pub trait SubscriptionForwardingStore: Send + Sync + 'static {
         Self: 'async_trait;
 
     /// Record `copy` as the copy of `local` at `copy.registration` before it is
-    /// sent there, unless a copy of `local` is recorded there already or either
-    /// `local` or the registration no longer exists.
+    /// sent there, under a lease of `lease` from now.
+    ///
+    /// A copy of `local` already recorded at the registration whose lease has
+    /// run out is taken over instead. Its lease starts again and the claim
+    /// answers the identifier it was recorded with. Nothing is recorded when a
+    /// copy there is settled or still under its lease, or when either `local`
+    /// or the registration no longer exists.
     fn claim_forwarded<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         local: &'life1 Identifier,
         copy: &'life2 ForwardedCopy,
+        lease: Duration,
     ) -> BoxFuture<'async_trait, Result<ForwardedClaim, SubscriptionForwardingError>>
     where
         'life0: 'async_trait,
@@ -69,8 +79,28 @@ pub trait SubscriptionForwardingStore: Send + Sync + 'static {
         'life2: 'async_trait,
         Self: 'async_trait;
 
-    /// Record the copy of `local` placed at `copy.registration`, replacing the
-    /// identifier the copy recorded there carried.
+    /// Settle the claimed copy of `local` at `registration`, now that its
+    /// source holds it, so its lease no longer runs.
+    fn settle_forwarded<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        local: &'life1 Identifier,
+        registration: &'life2 Identifier,
+    ) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait;
+
+    /// Up to `limit` claims whose lease has run out before their source's
+    /// answer settled them, the longest overdue first.
+    fn stale_claims<'life0, 'async_trait>(&'life0 self, limit: u32) -> BoxFuture<'async_trait, Result<Vec<StaleClaim>, SubscriptionForwardingError>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
+
+    /// Record the copy of `local` its source holds at `copy.registration`,
+    /// settled, replacing the identifier the copy recorded there carried.
     fn record_forwarded<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         local: &'life1 Identifier,

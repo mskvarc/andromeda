@@ -5,7 +5,6 @@
 use crate::{
     error::SubscriptionForwardingError,
     inbound::InboundCsourceNotification,
-    minted_subscription_id::mint_subscription_id,
     participation::stays_local,
     reduced_copy::{FilterCarriage, ReducedSubscription},
     service::SubscriptionForwardingService,
@@ -94,13 +93,7 @@ impl SubscriptionForwardingService {
         let carriage = FilterCarriage::for_split(self.federation.split_entities(subscription.delivery.split_entities));
         let context = &ContextSpec::for_subscription_context(subscription.delivery.jsonld_context.as_ref());
         match decision {
-            ForwardDecision::Create => {
-                let minted = mint_subscription_id()?;
-                // Boxed: the copy is held across the forward, and the request is a wide value.
-                let copy = Box::new(ReducedSubscription::reduce(subscription, registration, &self.receiver, &minted, carriage).request);
-                self.place_copy(subscription, registration, &minted, SubscriptionForward::Create { body: &copy, context })
-                    .await?;
-            }
+            ForwardDecision::Create => self.place_copy(subscription, registration, carriage, context).await?,
             ForwardDecision::Update { remote } => {
                 // Boxed: the fragment is held across the forward, and the request is a wide value.
                 let fragment =
