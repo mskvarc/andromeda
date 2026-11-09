@@ -11,8 +11,9 @@ use ngsi_ld::{
 /// Pins: On a broker with cursor pagination off and an offset default, Query Entities with an empty cursor answers
 /// 400 `InvalidRequest`, and the same query without it answers a next pointer carrying offset=2
 /// Clause: 5.5.9, 6.3.10, 6.3.2
-/// Recorded: Andromeda pages by an opaque cursor by default; `[pagination]` `default_mode` = "offset" makes a fresh
-/// query page by offset, and `[extensions]` `cursor_pagination` = "disabled" withdraws the cursor parameter
+/// Recorded: Andromeda pages a fresh query by offset by default and walks by an opaque cursor once it sends an empty
+/// `cursor`; `[extensions.cursor_pagination]` `fresh_requests` = "cursor" makes a fresh query walk by cursor, and
+/// `mode` = "disabled" withdraws the cursor parameter
 #[gtest]
 #[tokio::test]
 async fn a_lim_pgp_9004_a_broker_without_cursor_pagination_refuses_a_cursor() -> Result<()> {

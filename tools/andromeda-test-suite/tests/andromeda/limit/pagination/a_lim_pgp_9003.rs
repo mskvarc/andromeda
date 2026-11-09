@@ -18,8 +18,9 @@ use ngsi_ld::{http::headers::RelationType, model::Entity};
 /// Pins: On a broker whose default pagination is offset, Query Entities with limit 2 and an empty cursor over five
 /// Entities answers cursor pointers and no offset, and following next walks the five once in identifier order
 /// Clause: 5.5.9.1, 6.3.10
-/// Recorded: Andromeda pages by an opaque cursor by default; `[pagination]` `default_mode` = "offset" makes a fresh
-/// query page by offset, and `[extensions]` `cursor_pagination` = "disabled" withdraws the cursor parameter
+/// Recorded: Andromeda pages a fresh query by offset by default and walks by an opaque cursor once it sends an empty
+/// `cursor`; `[extensions.cursor_pagination]` `fresh_requests` = "cursor" makes a fresh query walk by cursor, and
+/// `mode` = "disabled" withdraws the cursor parameter
 #[gtest]
 #[tokio::test]
 async fn a_lim_pgp_9003_an_offset_default_broker_walks_by_cursor_after_an_empty_cursor() -> Result<()> {

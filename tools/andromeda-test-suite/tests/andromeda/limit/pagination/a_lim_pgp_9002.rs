@@ -18,8 +18,9 @@ use ngsi_ld::{
 /// Pins: On a broker whose default pagination is offset, Query Entities with limit 2 over three Entities answers
 /// the first two with a next pointer carrying offset=2 and no cursor
 /// Clause: 5.5.9, 6.3.10
-/// Recorded: Andromeda pages by an opaque cursor by default; `[pagination]` `default_mode` = "offset" makes a fresh
-/// query page by offset, and `[extensions]` `cursor_pagination` = "disabled" withdraws the cursor parameter
+/// Recorded: Andromeda pages a fresh query by offset by default and walks by an opaque cursor once it sends an empty
+/// `cursor`; `[extensions.cursor_pagination]` `fresh_requests` = "cursor" makes a fresh query walk by cursor, and
+/// `mode` = "disabled" withdraws the cursor parameter
 #[gtest]
 #[tokio::test]
 async fn a_lim_pgp_9002_an_offset_default_broker_hands_out_offset_links() -> Result<()> {

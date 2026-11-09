@@ -1,18 +1,19 @@
 //! The last pointer leads to the final page.
 
-use andromeda_test_suite::{broker, identity_matcher::has_id, namespace::Namespace, outcome::Upserted};
+use andromeda_test_suite::{broker, cursor_walk, identity_matcher::has_id, namespace::Namespace, outcome::Upserted};
 use googletest::prelude::*;
 use ngsi_ld::{
-    http::headers::Accept,
-    model::{Input, NgsiLdMediaType, Property, evolution::TemporalEntity},
-    query::{Locality, temporal_query},
+    http::{headers::Accept, operation::QueryTemporalEvolution},
+    model::{Input, Lossless, NgsiLdMediaType, Property, evolution::TemporalEntity},
+    query::{Locality, builders::SelectorTypeBuilder, temporal_query},
 };
 
-/// Pins: Query Temporal Evolution of Entities with limit 2 over five members offers a last pointer leading to a page of
-/// two members holding the greatest identifier, with no next pointer
+/// Pins: Query Temporal Evolution of Entities with limit 2 and an empty cursor over five members offers a last pointer
+/// leading to a page of two members holding the greatest identifier, with no next pointer
 /// Clause: 5.5.9.1, 5.5.9.2, 6.3.10
 /// Recorded: 5.5.9.2 lets the pointers of 5.5.9.1 be "implemented in a completely opaque way"; Andromeda walks a query
-/// in its default order by an opaque cursor and offers first and last pointers beside next and prev
+/// in its default order by an opaque cursor once the request sends an empty `cursor`, and offers first and last pointers
+/// beside next and prev
 #[gtest]
 #[tokio::test]
 async fn o_tmp_qry_0021_the_last_pointer_leads_to_the_final_page() -> Result<()> {
@@ -33,14 +34,16 @@ async fn o_tmp_qry_0021_the_last_pointer_leads_to_the_final_page() -> Result<()>
         broker.temporal().create_or_update(evolution).send().await?.created()?;
     }
     let json_ld = broker.with_accept(Accept::new(NgsiLdMediaType::JsonLd));
-    let first = json_ld
-        .temporal()
-        .query(temporal_query::after("1970-01-01T00:00:00Z".parse()?))
-        .entity_type(&sensor_type)
+    let window = temporal_query::after("1970-01-01T00:00:00Z".parse()?).build()?;
+    let selector = SelectorTypeBuilder::from(&sensor_type).build()?;
+    let query = QueryTemporalEvolution::builder()
+        .temporal_q(&window)
+        .entity_type(&selector)
         .locality(Locality::Local)
         .limit(2)
-        .send()
-        .await?;
+        .format(Lossless::Normalized)
+        .build();
+    let first = cursor_walk::first_page(&json_ld, &query).await?.page;
     let last = json_ld.send(&first.last_page().or_fail()?).await?;
     expect_that!(last.items(), len(eq(2)));
     expect_that!(last.items(), contains(has_id(&sensor_0004_id)));

@@ -1,21 +1,22 @@
 //! The last pointer leads to the final page.
 
-use andromeda_test_suite::{broker, config::SuiteConfig, identity_matcher::has_id, namespace::Namespace};
+use andromeda_test_suite::{broker, config::SuiteConfig, cursor_walk, identity_matcher::has_id, namespace::Namespace};
 use googletest::prelude::*;
 use ngsi_ld::{
-    http::headers::Accept,
+    http::{headers::Accept, operation::QuerySubscriptions},
     model::NgsiLdMediaType,
-    subscription::{Endpoint, NotificationParams, Subscription},
+    subscription::{Endpoint, NotificationParams, RegistrationSubscription, Subscription},
 };
 
-/// Pins: Query Context Source Registration Subscriptions with limit 2 over five members offers a last pointer
-/// leading to a page of two members holding the greatest identifier, with no next pointer
+/// Pins: Query Context Source Registration Subscriptions with limit 2 and an empty cursor over five members offers a
+/// last pointer leading to a page of two members holding the greatest identifier, with no next pointer
 /// Clause: 5.5.9.1, 5.5.9.2, 6.3.10
 /// Tenant: private (Query Context Source Registration Subscriptions pages through every one of the tenant, so in
 /// the shared tenant the subscriptions of other files fill the pages; clause 4.14 keeps each tenant's subscriptions
 /// its own)
 /// Recorded: 5.5.9.2 lets the pointers of 5.5.9.1 be "implemented in a completely opaque way"; Andromeda walks a
-/// query in its default order by an opaque cursor and offers first and last pointers beside next and prev
+/// query in its default order by an opaque cursor once the request sends an empty `cursor`, and offers first and last
+/// pointers beside next and prev
 #[gtest]
 #[tokio::test]
 async fn o_css_qry_0007_the_last_pointer_leads_to_the_final_page() -> Result<()> {
@@ -34,7 +35,8 @@ async fn o_css_qry_0007_the_last_pointer_leads_to_the_final_page() -> Result<()>
         tenant.registration_subscriptions().create(&subscription).send().await?;
     }
     let json_ld = tenant.with_accept(Accept::new(NgsiLdMediaType::JsonLd));
-    let first = json_ld.registration_subscriptions().query().limit(2).send().await?;
+    let query = QuerySubscriptions::builder().kind(RegistrationSubscription).limit(2).build();
+    let first = cursor_walk::first_page(&json_ld, &query).await?.page;
     let final_page = json_ld.send(&first.last_page().or_fail()?).await?;
     expect_that!(final_page.next(), none());
     expect_that!(final_page.items(), len(eq(2)));

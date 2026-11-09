@@ -1,7 +1,7 @@
 name: test-suite-andromeda
 
 # Brokers configured for Andromeda's own behaviour, for the andromeda tree. The front broker runs on the broker's
-# defaults with every extension enabled. Settings that conflict with neither the front broker's nor each other's share
+# defaults with every extension enabled and a fresh query walking by cursor. Settings that conflict with neither the front broker's nor each other's share
 # a broker; a broker of its own is kept only for a process-wide mode, or for a setting that changes what another
 # broker's tests assert, and its comment names that conflict.
 #
@@ -45,6 +45,8 @@ services:
       ANDROMEDA__EXTENSIONS__NEAR_DISTANCE_BAND__MODE: "enabled"
       ANDROMEDA__EXTENSIONS__TENANT_MANAGEMENT__MODE: "enabled"
       ANDROMEDA__EXTENSIONS__ACCEPT_LANGUAGE__MODE: "enabled"
+      # A fresh query walks by cursor, the paging the front broker's tests of cursor walks read.
+      ANDROMEDA__EXTENSIONS__CURSOR_PAGINATION__FRESH_REQUESTS: "cursor"
       # Bounds small enough for one file's own data to reach the TooManyResults refusal.
       ANDROMEDA__EXTENSIONS__TEMPORAL_DELETE_BY_QUERY__MAX_MATCHES: "2"
       ANDROMEDA__EXTENSIONS__TEMPORAL_AGGREGATION_GROUPING__MAX_GROUPS: "3"

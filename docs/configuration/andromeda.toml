@@ -1694,7 +1694,7 @@ mode = "enabled"
 # `"enabled"`.
 #
 # One of "cursor", "offset".
-fresh_requests = "cursor"
+fresh_requests = "offset"
 
 # Temporal delete-by-query on `DELETE /temporal/entities`: a windowed, selector-
 # scoped history purge the NGSI-LD temporal delete operations have no equivalent

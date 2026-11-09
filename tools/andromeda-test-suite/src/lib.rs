@@ -41,6 +41,7 @@ pub mod context_source;
 pub mod context_source_property;
 pub mod context_terms;
 pub mod core_context;
+pub mod cursor_walk;
 pub mod cut_stream;
 pub mod data_integrity_proof;
 pub mod database_name;

@@ -4819,7 +4819,7 @@
       "sensitive": false,
       "type_name": "string",
       "presence": "default",
-      "value": "\"cursor\"",
+      "value": "\"offset\"",
       "choices": [
         {
           "value": "\"cursor\"",

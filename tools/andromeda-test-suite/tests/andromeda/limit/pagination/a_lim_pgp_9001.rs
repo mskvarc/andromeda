@@ -25,8 +25,9 @@ use ngsi_ld::{
 /// Pins: On a broker in conformance mode, Query Entities with limit 2 over three Entities answers a next pointer
 /// carrying offset=2, and the same query with an empty cursor parameter answers 400
 /// Clause: 5.5.9, 6.3.10
-/// Recorded: Andromeda pages by an opaque cursor by default; conformance mode turns every extension off, cursor
-/// pagination with them, and pages by offset as clause 5.5.9 describes
+/// Recorded: Andromeda pages a fresh query by offset by default and walks by an opaque cursor once it sends an empty
+/// `cursor`; conformance mode turns every extension off, cursor pagination with them, and pages by offset as clause
+/// 5.5.9 describes
 #[gtest]
 #[tokio::test]
 async fn a_lim_pgp_9001_conformance_mode_pages_by_offset_and_refuses_a_cursor() -> Result<()> {

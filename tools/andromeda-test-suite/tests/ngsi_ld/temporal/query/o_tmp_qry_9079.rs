@@ -2,6 +2,7 @@
 
 use andromeda_test_suite::{
     broker,
+    cursor_walk,
     evolution_matcher::has_evolution,
     identity_matcher::has_id,
     namespace::Namespace,
@@ -11,15 +12,20 @@ use andromeda_test_suite::{
 };
 use googletest::prelude::*;
 use ngsi_ld::{
-    http::headers::Accept,
-    model::{NgsiLdMediaType, Property, evolution::TemporalEntity},
+    http::{headers::Accept, operation::QueryTemporalEvolution},
+    model::{
+        Lossless,
+        NgsiLdMediaType,
+        Property,
+        evolution::{TemporalAttributeName, TemporalEntity},
+    },
     query::temporal_query,
 };
 
-/// Pins: Query Temporal Evolution of Entities with attrs=load and no type, limit 2, over Evolutions of the types
-/// Truck, Bus and Car, answers by cursor every Evolution holding load once in ascending identifier order: one
-/// recorded under both Truck and Bus and one holding two dataset instances of load appear once, and a Truck without
-/// load is left out
+/// Pins: Query Temporal Evolution of Entities with attrs=load and no type, limit 2 and an empty cursor, over Evolutions
+/// of the types Truck, Bus and Car, answers by cursor every Evolution holding load once in ascending identifier order:
+/// one recorded under both Truck and Bus and one holding two dataset instances of load appear once, and a Truck
+/// without load is left out
 /// Clause: 5.5.9.1, 5.5.9.2, 5.7.4.4, 6.3.10
 /// Tenant: private (a query without local walks by cursor only while no registration of the tenant can contribute
 /// to it; in the shared tenant a registration of another file naming no entity type matches every type (clause
@@ -82,14 +88,17 @@ async fn o_tmp_qry_9079_an_attrs_selection_pages_the_holders_of_every_type_once_
         .property("load", Property::builder(1).observed_at("2020-01-01T00:00:00Z".parse()?))
         .build()?;
     tenant.temporal().create_or_update(&vehicle_0001_evolution).send().await?.created()?;
-    let page = tenant
-        .with_accept(Accept::new(NgsiLdMediaType::JsonLd))
-        .temporal()
-        .query(temporal_query::after("1970-01-01T00:00:00Z".parse()?))
-        .attrs(vec!["load".parse()?])
+    let window = temporal_query::after("1970-01-01T00:00:00Z".parse()?).build()?;
+    let attrs: [TemporalAttributeName; 1] = ["load".parse()?];
+    let query = QueryTemporalEvolution::builder()
+        .temporal_q(&window)
+        .attrs(&attrs)
         .limit(2)
-        .send()
-        .await?;
+        .format(Lossless::Normalized)
+        .build();
+    let page = cursor_walk::first_page(&tenant.with_accept(Accept::new(NgsiLdMediaType::JsonLd)), &query)
+        .await?
+        .page;
     expect_that!(links(&page), contains(carries_parameter("cursor")));
     expect_that!(page.items(), len(eq(2)));
     expect_that!(page.items(), nth(0, has_id(&vehicle_0001_id)));

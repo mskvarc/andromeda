@@ -1,15 +1,16 @@
 //! Following prev without local returns the first page.
 
-use andromeda_test_suite::{broker, identity_matcher::has_id, namespace::Namespace, nth::nth, outcome::Upserted};
+use andromeda_test_suite::{broker, cursor_walk, identity_matcher::has_id, namespace::Namespace, nth::nth, outcome::Upserted};
 use googletest::prelude::*;
 use ngsi_ld::{
-    http::headers::Accept,
-    model::{Input, NgsiLdMediaType, Property, evolution::TemporalEntity},
-    query::temporal_query,
+    http::{headers::Accept, operation::QueryTemporalEvolution},
+    model::{Input, Lossless, NgsiLdMediaType, Property, evolution::TemporalEntity},
+    query::{builders::SelectorTypeBuilder, temporal_query},
 };
 
-/// Pins: Query Temporal Evolution of Entities with limit 2 over six members answers a first page whose next pointer
-/// leads to a full second page, and that page's prev pointer leads back to the members of the first page
+/// Pins: Query Temporal Evolution of Entities with limit 2 and an empty cursor over six members answers a first page
+/// whose next pointer leads to a full second page, and that page's prev pointer leads back to the members of the
+/// first page
 /// Clause: 5.5.9.1, 6.3.10
 /// Tenant: private (a query without local walks by cursor only while no registration of the tenant can contribute
 /// to it; in the shared tenant a registration of another file naming no entity type matches every type (clause
@@ -38,14 +39,17 @@ async fn o_tmp_qry_0026_following_prev_without_local_returns_the_first_page() ->
     for evolution in &evolutions {
         tenant.temporal().create_or_update(evolution).send().await?.created()?;
     }
-    let page = tenant
-        .with_accept(Accept::new(NgsiLdMediaType::JsonLd))
-        .temporal()
-        .query(temporal_query::after("1970-01-01T00:00:00Z".parse()?))
-        .entity_type(&sensor_type)
+    let window = temporal_query::after("1970-01-01T00:00:00Z".parse()?).build()?;
+    let selector = SelectorTypeBuilder::from(&sensor_type).build()?;
+    let query = QueryTemporalEvolution::builder()
+        .temporal_q(&window)
+        .entity_type(&selector)
         .limit(2)
-        .send()
-        .await?;
+        .format(Lossless::Normalized)
+        .build();
+    let page = cursor_walk::first_page(&tenant.with_accept(Accept::new(NgsiLdMediaType::JsonLd)), &query)
+        .await?
+        .page;
     expect_that!(page.items(), len(eq(2)));
     expect_that!(page.items(), nth(0, has_id(&sensor_0000_id)));
     expect_that!(page.items(), nth(1, has_id(&sensor_0001_id)));

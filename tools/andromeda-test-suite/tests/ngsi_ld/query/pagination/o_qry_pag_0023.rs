@@ -1,15 +1,15 @@
 //! An entity created mid walk ahead of it appears in the walk.
 
-use andromeda_test_suite::{broker, identity_matcher::has_id, namespace::Namespace, nth::nth, outcome::Done};
+use andromeda_test_suite::{broker, cursor_walk, identity_matcher::has_id, namespace::Namespace, nth::nth, outcome::Done};
 use googletest::prelude::*;
 use ngsi_ld::{
-    http::headers::Accept,
-    model::{Entity, NgsiLdMediaType},
-    query::Locality,
+    http::{headers::Accept, operation::QueryEntities},
+    model::{Entity, Lossless, NgsiLdMediaType},
+    query::{Locality, builders::SelectorTypeBuilder},
 };
 
-/// Pins: Query Entities with limit 2 over four entities, with an entity of a greater identifier created after the
-/// first page, answers that entity on a later page of the walk its next pointers continue
+/// Pins: Query Entities with limit 2 and an empty cursor over four entities, with an entity of a greater identifier
+/// created after the first page, answers that entity on a later page of the walk its next pointers continue
 /// Clause: 5.5.9.1, 5.5.9.2, 6.3.10
 /// Recorded: 5.5.9.1 lets an implementation detect changes to the result set during pagination ("may"); Andromeda
 /// continues a cursor walk after the last identifier seen, so changes behind or ahead of the walk shift no page
@@ -49,15 +49,16 @@ async fn o_qry_pag_0023_an_entity_created_mid_walk_ahead_of_it_appears_in_the_wa
         .property("name", "b3")
         .build()?;
     broker.entities().create(&building_0003).send().await?.done()?;
-    let page = broker
-        .with_accept(Accept::new(NgsiLdMediaType::JsonLd))
-        .entities()
-        .query()
-        .entity_type(&building_type)
+    let selector = SelectorTypeBuilder::from(&building_type).build()?;
+    let query = QueryEntities::builder()
+        .entity_type(&selector)
         .locality(Locality::Local)
         .limit(2)
-        .send()
-        .await?;
+        .format(Lossless::Normalized)
+        .build();
+    let page = cursor_walk::first_page(&broker.with_accept(Accept::new(NgsiLdMediaType::JsonLd)), &query)
+        .await?
+        .page;
     expect_that!(page.items(), len(eq(2)));
     expect_that!(page.items(), nth(0, has_id(&building_0000_id)));
     expect_that!(page.items(), nth(1, has_id(&building_0001_id)));

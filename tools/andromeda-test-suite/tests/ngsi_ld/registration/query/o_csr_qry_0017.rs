@@ -1,27 +1,30 @@
-//! The default first page offers opaque cursor pointers.
+//! The first page of a cursor walk offers opaque cursor pointers.
 
 use andromeda_test_suite::{
     broker,
     cleanup::Cleanup,
     config::SuiteConfig,
+    cursor_walk,
     namespace::Namespace,
     page_link::{carries_parameter, links},
 };
 use googletest::prelude::*;
 use ngsi_ld::{
-    http::headers::Accept,
+    http::{headers::Accept, operation::QueryRegistrations},
     model::NgsiLdMediaType,
+    query::type_selection,
     registration::{CSourceRegistration, EntityInfo, RegistrationInfo},
 };
 
-/// Pins: Query Context Source Registrations with limit 2 over three members answers a first page whose Link offers
-/// next and last pointers carrying a cursor and no offset, and no first or prev
+/// Pins: Query Context Source Registrations with limit 2 and an empty cursor over three members answers a first page
+/// whose Link offers next and last pointers carrying a cursor and no offset, and no first or prev
 /// Clause: 5.5.9.1, 5.5.9.2, 6.3.10
 /// Recorded: 5.5.9.2 lets the pointers of 5.5.9.1 be "implemented in a completely opaque way"; Andromeda walks a
-/// query in its default order by an opaque cursor and offers first and last pointers beside next and prev
+/// query in its default order by an opaque cursor once the request sends an empty `cursor`, and offers first and last
+/// pointers beside next and prev
 #[gtest]
 #[tokio::test]
-async fn o_csr_qry_0017_the_default_first_page_offers_opaque_cursor_pointers() -> Result<()> {
+async fn o_csr_qry_0017_the_first_page_of_a_cursor_walk_offers_opaque_cursor_pointers() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let config = SuiteConfig::get()?;
@@ -58,14 +61,11 @@ async fn o_csr_qry_0017_the_default_first_page_offers_opaque_cursor_pointers() -
         .build()?;
     broker.registrations().register(&registration_0002).send().await?;
     let _registration_0002_cleanup = Cleanup::of(&broker).registration(&registration_0002_id);
-    let page = broker
-        .with_accept(Accept::new(NgsiLdMediaType::Json))
-        .registrations()
-        .query()
-        .entity_type(&building_type)
-        .limit(2)
-        .send()
-        .await?;
+    let selection = type_selection::entity_type(&building_type).build()?;
+    let query = QueryRegistrations::builder().entity_type(&selection).limit(2).build();
+    let page = cursor_walk::first_page(&broker.with_accept(Accept::new(NgsiLdMediaType::Json)), &query)
+        .await?
+        .page;
     expect_that!(page.next(), some(anything()));
     expect_that!(page.last(), some(anything()));
     expect_that!(page.first(), none());

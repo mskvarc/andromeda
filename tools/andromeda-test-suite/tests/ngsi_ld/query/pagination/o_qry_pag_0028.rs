@@ -1,14 +1,15 @@
 //! Following next without local returns every entity once in identifier order.
 
-use andromeda_test_suite::{broker, identity_matcher::has_id, namespace::Namespace, nth::nth, outcome::Done};
+use andromeda_test_suite::{broker, cursor_walk, identity_matcher::has_id, namespace::Namespace, nth::nth, outcome::Done};
 use googletest::prelude::*;
 use ngsi_ld::{
-    http::headers::Accept,
-    model::{Entity, Input, NgsiLdMediaType},
+    http::{headers::Accept, operation::QueryEntities},
+    model::{Entity, Input, Lossless, NgsiLdMediaType},
+    query::builders::SelectorTypeBuilder,
 };
 
-/// Pins: Query Entities with limit 2 over 7 members without local, followed by its next pointers, answers every
-/// member once in ascending identifier order, the last page with a prev pointer and no next
+/// Pins: Query Entities with limit 2 and an empty cursor over 7 members without local, followed by its next pointers,
+/// answers every member once in ascending identifier order, the last page with a prev pointer and no next
 /// Clause: 5.5.9.1, 5.5.9.2, 6.3.10
 /// Tenant: private (a query without local walks by cursor only while no registration of the tenant can contribute
 /// to it; in the shared tenant a registration of another file naming no entity type matches every type (clause
@@ -40,14 +41,11 @@ async fn o_qry_pag_0028_following_next_without_local_returns_every_entity_once_i
     for entity in &entities {
         tenant.entities().create(entity).send().await?.done()?;
     }
-    let page = tenant
-        .with_accept(Accept::new(NgsiLdMediaType::JsonLd))
-        .entities()
-        .query()
-        .entity_type(&building_type)
-        .limit(2)
-        .send()
-        .await?;
+    let selector = SelectorTypeBuilder::from(&building_type).build()?;
+    let query = QueryEntities::builder().entity_type(&selector).limit(2).format(Lossless::Normalized).build();
+    let page = cursor_walk::first_page(&tenant.with_accept(Accept::new(NgsiLdMediaType::JsonLd)), &query)
+        .await?
+        .page;
     expect_that!(page.items(), len(eq(2)));
     expect_that!(page.items(), nth(0, has_id(&building_0000_id)));
     expect_that!(page.items(), nth(1, has_id(&building_0001_id)));

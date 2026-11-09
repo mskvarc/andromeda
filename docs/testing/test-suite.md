@@ -30,11 +30,11 @@ Every broker in every stack runs over a PostgreSQL server of its own. Replicas a
 
 ### The andromeda stack
 
-`stacks/andromeda` is a front broker on the broker's defaults with every extension but `q_target_languages` enabled, plus the brokers below. Settings that conflict neither with the front broker's nor with each other share a broker. A broker gets a service of its own only for a process-wide mode, or for a setting that would change what another broker's tests assert. Each compose service says which conflict it exists for.
+`stacks/andromeda` is a front broker on the broker's defaults with every extension but `q_target_languages` enabled and a fresh query walking by cursor, plus the brokers below. Settings that conflict neither with the front broker's nor with each other share a broker. A broker gets a service of its own only for a process-wide mode, or for a setting that would change what another broker's tests assert. Each compose service says which conflict it exists for.
 
 | Service | Role | Settings |
 |---|---|---|
-| `broker` | `FRONT` | every extension but `q_target_languages` enabled, small delete-by-query and grouping bounds, 100,000 geometry positions, an 8 MiB page limit |
+| `broker` | `FRONT` | every extension but `q_target_languages` enabled, a fresh query walking by cursor, small delete-by-query and grouping bounds, 100,000 geometry positions, an 8 MiB page limit |
 | `broker-conformance` | `CONFORMANCE` | conformance mode, with five extension flags still set to show that the mode overrides them |
 | `broker-not-recorded` | `NOT_RECORDED` | Core writes not recorded, no advertised URL, forwarded fields believed only from a range the runner is never in, every other setting at its default |
 | `broker-tls` | `TLS`, `TLS_MANAGEMENT`, `TLS_PLAINTEXT`, `TLS_MANAGEMENT_PLAINTEXT` | TLS and HTTP/3 on the API listener, TLS on the management listener, optional client certificates, with the identities in `stacks/andromeda/tls`; the two plaintext roles address its TLS ports without TLS |

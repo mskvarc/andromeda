@@ -264,8 +264,8 @@ mod tests {
     }
 
     #[test]
-    fn a_default_broker_walks_by_cursor() {
-        assert_eq!(PaginationPolicy::from(&ExtensionsConfig::default()), PaginationPolicy::CursorDefault);
+    fn a_default_broker_pages_a_fresh_request_by_offset() {
+        assert_eq!(PaginationPolicy::from(&ExtensionsConfig::default()), PaginationPolicy::OffsetDefault);
     }
 
     #[test]

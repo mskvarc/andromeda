@@ -134,15 +134,16 @@ impl From<QTargetLanguages> for QTargetLanguagesConfig {
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[schemars(deny_unknown_fields)]
 #[schemars(
-    description = "Andromeda's features beyond the NGSI-LD specification, one table each. Each is off by default except `cursor_pagination`, and an extension that is off answers as a conformant broker does. `cursor_pagination` is on because NGSI-LD permits page pointers implemented in a completely opaque way and `offset` keeps working beside it; `extensions.mode = \"conformance\"` turns it off with the rest."
+    description = "Andromeda's features beyond the NGSI-LD specification, one table each. Each is off by default except `cursor_pagination`, and an extension that is off answers as a conformant broker does. `cursor_pagination` is on because NGSI-LD permits page pointers implemented in a completely opaque way, and a fresh request still pages by offset until it sends an empty `cursor=`; `extensions.mode = \"conformance\"` turns it off with the rest."
 )]
 pub struct ExtensionsConfig {
     /// Whether the extensions follow their own tables (`configured`) or are
     /// all forced off (`conformance`), as the ETSI conformance runs set.
     #[schemars(description = "Whether the extensions follow their own tables (`\"configured\"`) or are all forced off (`\"conformance\"`).")]
     pub mode: ExtensionsMode,
-    /// Opaque, keyset-backed cursor pagination (clause 5.5.9.1), the default
-    /// paging of a fresh request unless set otherwise.
+    /// Opaque, keyset-backed cursor pagination (clause 5.5.9.1), offered
+    /// beside offset; a fresh request walks by cursor only when
+    /// `fresh_requests` says so.
     #[schemars(description = "Opaque cursor page pointers, and how a request that names neither `offset` nor `cursor` is paged.")]
     pub cursor_pagination: CursorPaginationConfig,
     /// Temporal delete-by-query on `DELETE /temporal/entities`.
@@ -279,7 +280,7 @@ mod tests {
     fn every_extension_but_cursor_pagination_is_off_by_default() {
         let config = ExtensionsConfig::default();
         assert_eq!(config.mode, ExtensionsMode::Configured);
-        assert_eq!(CursorPaginationMode::from(&config.cursor_pagination), CursorPaginationMode::Default);
+        assert_eq!(CursorPaginationMode::from(&config.cursor_pagination), CursorPaginationMode::Available);
         assert_eq!(config.temporal_delete_by_query.mode, FeatureMode::Disabled);
         assert_eq!(config.temporal_aggregation_grouping.mode, FeatureMode::Disabled);
         for switch in [

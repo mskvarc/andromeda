@@ -2,6 +2,7 @@
 
 use andromeda_test_suite::{
     broker,
+    cursor_walk,
     identity_matcher::has_id,
     namespace::Namespace,
     nth::nth,
@@ -10,17 +11,18 @@ use andromeda_test_suite::{
 };
 use googletest::prelude::*;
 use ngsi_ld::{
-    http::headers::Accept,
-    model::{Entity, Input, NgsiLdMediaType},
-    query::Locality,
+    http::{headers::Accept, operation::QueryEntities},
+    model::{Entity, Input, Lossless, NgsiLdMediaType},
+    query::{Locality, builders::SelectorTypeBuilder},
 };
 
-/// Pins: Query Entities with limit 2 over six members answers a first page whose next pointer leads to a full
-/// second page, and that page's prev pointer leads back to the members of the first page
+/// Pins: Query Entities with limit 2 and an empty cursor over six members answers a first page whose next pointer
+/// leads to a full second page, and that page's prev pointer leads back to the members of the first page
 /// Clause: 5.5.9.1, 6.3.10
 /// Recorded: no order is fixed for a query without `orderBy`; Andromeda pages in ascending identifier order
 /// Recorded: 5.5.9.2 lets the pointers of 5.5.9.1 be "implemented in a completely opaque way"; Andromeda walks a
-/// query in its default order by an opaque cursor and offers first and last pointers beside next and prev
+/// query in its default order by an opaque cursor once the request sends an empty `cursor`, and offers first and last
+/// pointers beside next and prev
 #[gtest]
 #[tokio::test]
 async fn o_qry_pag_0019_following_prev_from_the_second_page_returns_the_first_page() -> Result<()> {
@@ -43,15 +45,16 @@ async fn o_qry_pag_0019_following_prev_from_the_second_page_returns_the_first_pa
     for entity in &entities {
         broker.entities().create(entity).send().await?.done()?;
     }
-    let page = broker
-        .with_accept(Accept::new(NgsiLdMediaType::JsonLd))
-        .entities()
-        .query()
-        .entity_type(&building_type)
+    let selector = SelectorTypeBuilder::from(&building_type).build()?;
+    let query = QueryEntities::builder()
+        .entity_type(&selector)
         .locality(Locality::Local)
         .limit(2)
-        .send()
-        .await?;
+        .format(Lossless::Normalized)
+        .build();
+    let page = cursor_walk::first_page(&broker.with_accept(Accept::new(NgsiLdMediaType::JsonLd)), &query)
+        .await?
+        .page;
     expect_that!(links(&page), contains(carries_parameter("cursor")));
     expect_that!(links(&page), each(not(carries_parameter("offset"))));
     expect_that!(page.items(), len(eq(2)));

@@ -14,10 +14,10 @@ use strum::{Display, EnumString};
 #[schemars(description = "How a request that names neither `offset` nor `cursor` is paged.")]
 pub enum FreshRequestPaging {
     /// It walks by cursor; `offset` and `cursor=` both remain available.
-    #[default]
     #[schemars(description = "It walks by cursor; `offset` and an empty `cursor=` both remain available.")]
     Cursor,
     /// It pages by offset; an empty `cursor=` opts into a walk.
+    #[default]
     #[schemars(description = "It pages by offset; an empty `cursor=` opts into a cursor walk.")]
     Offset,
 }
@@ -41,11 +41,13 @@ pub enum CursorPaginationMode {
 /// Collections hand out `prev`/`next`/`last` pointers carrying an opaque
 /// `cursor` token and follow them back. Clause 5.5.9.1 permits pointers
 /// "implemented in a completely opaque way", which is why this is the one
-/// extension a default broker serves.
+/// extension a default broker serves. A default broker still pages a fresh
+/// request by offset, so a client that never sends `cursor` sees clause
+/// 5.5.9.2 paging.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[schemars(deny_unknown_fields)]
 #[schemars(
-    description = "Opaque, keyset-backed pagination pointers: collections hand out `prev`, `next` and `last` links carrying an opaque `cursor` token. The one extension a default broker serves, since NGSI-LD permits pointers implemented in a completely opaque way."
+    description = "Opaque, keyset-backed pagination pointers: collections hand out `prev`, `next` and `last` links carrying an opaque `cursor` token. The one extension a default broker serves, since NGSI-LD permits pointers implemented in a completely opaque way. A default broker pages a fresh request by offset and walks by cursor once a request sends an empty `cursor=`."
 )]
 pub struct CursorPaginationConfig {
     /// Whether cursors are offered.
@@ -88,8 +90,8 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn a_default_broker_walks_by_cursor() {
-        assert_eq!(CursorPaginationMode::from(&CursorPaginationConfig::default()), CursorPaginationMode::Default);
+    fn a_default_broker_offers_cursors_and_pages_a_fresh_request_by_offset() {
+        assert_eq!(CursorPaginationMode::from(&CursorPaginationConfig::default()), CursorPaginationMode::Available);
     }
 
     #[test]
