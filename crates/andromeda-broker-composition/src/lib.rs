@@ -4,6 +4,7 @@ mod background_task_health;
 mod blocking_executor;
 mod broker;
 mod broker_health;
+pub mod build_metadata;
 mod cached_context_invalidation;
 mod component_report;
 pub mod configuration;

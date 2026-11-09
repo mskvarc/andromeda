@@ -9,7 +9,8 @@ use googletest::prelude::*;
 use http::{Method, StatusCode, header::CONTENT_TYPE};
 
 /// Pins: GET /ngsi-ld/v1/version answers a plain JSON `ComponentReportList` with no @context, whose andromeda
-/// component carries its version and build metadata, and which names andromeda and postgresql once each
+/// component carries its version and toolchain and no member naming the repository or the time of the build, and
+/// which names andromeda and postgresql once each
 /// Clause: -
 /// Recorded: Andromeda extension, not v1.9.1: the version endpoint and its `ComponentReportList` body
 #[gtest]
@@ -31,10 +32,6 @@ async fn a_mgt_ver_0002_the_component_report_names_the_build_and_the_storage() -
     expect_that!(report.of(ComponentName::Postgresql).count(), eq(1));
     let andromeda = report.of(ComponentName::Andromeda).next().or_fail()?;
     expect_that!(andromeda.version, contains_regex("^v[0-9]"));
-    expect_that!(andromeda.build_time, some(anything()));
-    expect_that!(andromeda.branch, some(anything()));
-    expect_that!(andromeda.commit, some(anything()));
-    expect_that!(andromeda.git_clean, some(anything()));
     expect_that!(andromeda.rust_version, some(contains_regex("^rustc ")));
     expect_that!(andromeda.rust_channel, some(contains_regex(".")));
     expect_that!(andromeda.cargo_version, some(contains_regex("^cargo ")));

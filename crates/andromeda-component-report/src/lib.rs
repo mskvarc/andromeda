@@ -18,31 +18,20 @@ report_text!(
     ComponentVersion
 );
 report_text!(
-    /// RFC 3339 build timestamp emitted by the build metadata generator.
-    BuildTimestamp
-);
-report_text!(
-    /// Source-control branch recorded at build time.
-    BuildBranch
-);
-report_text!(
-    /// Source-control commit identifier recorded at build time.
-    BuildCommit
-);
-report_text!(
-    /// Rust compiler version recorded at build time.
+    /// The compiler's version line, as `rustc --version` prints it.
     RustVersion
 );
 report_text!(
-    /// Rust release channel recorded at build time.
+    /// The compiler's release channel: `stable`, `beta`, `nightly` or `dev`.
     RustChannel
 );
 report_text!(
-    /// Cargo version recorded at build time.
+    /// Cargo's version line, as `cargo --version` prints it.
     CargoVersion
 );
 report_text!(
-    /// Build host operating-system description.
+    /// Operating system and architecture of the machine that compiled the
+    /// broker, as `os-arch`.
     BuildOperatingSystem
 );
 report_text!(
@@ -107,18 +96,12 @@ impl ConnectionCapacity {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "component", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ComponentReport {
-    /// Andromeda build metadata.
+    /// The broker's own build: its release, and the toolchain and target it
+    /// was compiled with. It names nothing of the repository or of when the
+    /// build ran, so the same sources report the same build.
     Andromeda {
         /// Andromeda package version.
         version: ComponentVersion,
-        /// Build timestamp.
-        build_time: BuildTimestamp,
-        /// Source-control branch.
-        branch: BuildBranch,
-        /// Source-control commit.
-        commit: BuildCommit,
-        /// Whether the source tree was clean when built.
-        git_clean: bool,
         /// Rust compiler version.
         rust_version: RustVersion,
         /// Rust release channel.
@@ -156,7 +139,42 @@ pub enum ComponentReport {
 
 #[cfg(test)]
 mod tests {
-    use crate::{CapacityVerdict, ComponentReport, ComponentVersion, ConnectionCapacity};
+    use crate::{
+        BuildOperatingSystem,
+        BuildTarget,
+        CapacityVerdict,
+        CargoVersion,
+        ComponentReport,
+        ComponentVersion,
+        ConnectionCapacity,
+        RustChannel,
+        RustVersion,
+    };
+
+    #[test]
+    fn the_andromeda_component_carries_its_release_and_toolchain_and_nothing_else() -> Result<(), serde_json::Error> {
+        let value = serde_json::to_value(ComponentReport::Andromeda {
+            version: ComponentVersion::from("v1.0.0".to_owned()),
+            rust_version: RustVersion::from("rustc 1.99.0-nightly (0123456789 2026-08-20)".to_owned()),
+            rust_channel: RustChannel::from("nightly".to_owned()),
+            cargo_version: CargoVersion::from("cargo 1.99.0-nightly (abcdef0123 2026-08-19)".to_owned()),
+            build_operating_system: BuildOperatingSystem::from("linux-aarch64".to_owned()),
+            build_target: BuildTarget::from("aarch64-unknown-linux-gnu".to_owned()),
+        })?;
+        pretty_assertions::assert_eq!(
+            value,
+            serde_json::json!({
+                "component": "andromeda",
+                "version": "v1.0.0",
+                "rustVersion": "rustc 1.99.0-nightly (0123456789 2026-08-20)",
+                "rustChannel": "nightly",
+                "cargoVersion": "cargo 1.99.0-nightly (abcdef0123 2026-08-19)",
+                "buildOperatingSystem": "linux-aarch64",
+                "buildTarget": "aarch64-unknown-linux-gnu",
+            })
+        );
+        Ok(())
+    }
 
     #[test]
     fn component_variants_use_stable_product_names() -> Result<(), serde_json::Error> {

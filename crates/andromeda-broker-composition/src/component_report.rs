@@ -1,18 +1,9 @@
 //! Active-component assembly from composition metadata and selected adapters.
 
-#![expect(
-    clippy::absolute_paths,
-    unreachable_pub,
-    reason = "shadow generates absolute standard-library paths, and its constants as `pub` inside this private module"
-)]
-
-use crate::broker::MAINTENANCE_PLATFORM_POOL_CONNECTIONS;
+use crate::{broker::MAINTENANCE_PLATFORM_POOL_CONNECTIONS, build_metadata};
 use andromeda_component_report::{
-    BuildBranch,
-    BuildCommit,
     BuildOperatingSystem,
     BuildTarget,
-    BuildTimestamp,
     CapacityVerdict,
     CargoVersion,
     ComponentReport,
@@ -26,11 +17,8 @@ use andromeda_configuration::{
 };
 use andromeda_postgresql_context_store::component_report;
 use andromeda_postgresql_maintenance::repack_task::RUN_SESSIONS;
-use shadow_rs::shadow;
 use sqlx::PgPool;
 use thiserror::Error;
-
-shadow!(build);
 
 /// Failure while discovering active concrete broker components.
 #[derive(Debug, Error)]
@@ -122,22 +110,18 @@ fn named_tenant_connections(tenancy: &TenancyConfig) -> u32 {
 /// Construct the report for the running Andromeda build.
 fn andromeda_report() -> ComponentReport {
     ComponentReport::Andromeda {
-        version: ComponentVersion::from(format!("v{}", build::PKG_VERSION)),
-        build_time: BuildTimestamp::from(build::BUILD_TIME_3339.to_owned()),
-        branch: BuildBranch::from(build::BRANCH.to_owned()),
-        commit: BuildCommit::from(build::COMMIT_HASH.to_owned()),
-        git_clean: build::GIT_CLEAN,
-        rust_version: RustVersion::from(build::RUST_VERSION.to_owned()),
-        rust_channel: RustChannel::from(build::RUST_CHANNEL.to_owned()),
-        cargo_version: CargoVersion::from(build::CARGO_VERSION.to_owned()),
-        build_operating_system: BuildOperatingSystem::from(build::BUILD_OS.to_owned()),
-        build_target: BuildTarget::from(build::BUILD_TARGET.to_owned()),
+        version: ComponentVersion::from(format!("v{}", build_metadata::VERSION)),
+        rust_version: RustVersion::from(build_metadata::RUST_VERSION.to_owned()),
+        rust_channel: RustChannel::from(build_metadata::RUST_CHANNEL.to_owned()),
+        cargo_version: CargoVersion::from(build_metadata::CARGO_VERSION.to_owned()),
+        build_operating_system: BuildOperatingSystem::from(build_metadata::BUILD_OPERATING_SYSTEM.to_owned()),
+        build_target: BuildTarget::from(build_metadata::BUILD_TARGET.to_owned()),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::component_report::{andromeda_report, broker_connection_ceiling, build};
+    use crate::component_report::{andromeda_report, broker_connection_ceiling};
     use andromeda_component_report::ComponentReport;
     use andromeda_configuration::{
         broker_config::BrokerConfig,
@@ -146,7 +130,7 @@ mod tests {
             feature_mode::FeatureMode,
         },
     };
-    use pretty_assertions::{assert_eq, assert_ne};
+    use pretty_assertions::assert_eq;
     use std::num::{NonZeroU32, NonZeroUsize};
     use url_macro::url;
 
@@ -193,8 +177,27 @@ mod tests {
     }
 
     #[test]
-    fn andromeda_report_uses_build_constants() {
-        assert!(matches!(andromeda_report(), ComponentReport::Andromeda { .. }));
-        assert_ne!(build::BUILD_TIME_3339, "");
+    fn the_andromeda_report_names_the_release_and_the_toolchain() {
+        let report = andromeda_report();
+        let ComponentReport::Andromeda {
+            version,
+            rust_version,
+            rust_channel,
+            cargo_version,
+            build_operating_system,
+            build_target,
+        } = &report
+        else {
+            panic!("the broker's own report is not the andromeda component: {report:?}");
+        };
+        assert_eq!(version.to_string(), concat!("v", env!("CARGO_PKG_VERSION")));
+        assert!(rust_version.to_string().starts_with("rustc "), "{rust_version}");
+        assert!(
+            ["stable", "beta", "nightly", "dev"].contains(&rust_channel.to_string().as_str()),
+            "{rust_channel}"
+        );
+        assert!(cargo_version.to_string().starts_with("cargo "), "{cargo_version}");
+        assert!(build_operating_system.to_string().contains('-'), "{build_operating_system}");
+        assert!(build_target.to_string().contains('-'), "{build_target}");
     }
 }
