@@ -11,7 +11,7 @@ use andromeda_ngsi_ld_query::{
     page_window::PageWindow,
 };
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use andromeda_postgresql_pool::sql_state::violates_unique_constraint;
+use andromeda_postgresql_pool::{pool_share::PoolShare, sql_state::violates_unique_constraint};
 use andromeda_registration::{
     error::RegistrationError,
     resolved_update::ResolvedCsrUpdate,
@@ -42,19 +42,25 @@ const PK_CSR: &str = "pk_csr";
 /// registration row, so no reader observes one without the other.
 #[derive(Debug)]
 pub struct PostgresRegistrationStore {
-    /// Tenant-scoped PostgreSQL connection pool.
+    /// Tenant-scoped PostgreSQL connection pool, which the reads and the
+    /// forwarding outcomes run on.
     pub(super) pool: PgPool,
+    /// The tenant's clock-writer share of the pool, which every write that
+    /// advances the context source change clock begins its transaction on.
+    pub(super) clock_writers: PoolShare,
     /// The tenant's attribute-name dictionary, which the information rows
     /// intern registered property and relationship names through.
     pub(super) attribute_names: Arc<dyn NameLookup<AttributeName>>,
 }
 
 impl PostgresRegistrationStore {
-    /// Create a registration store backed by the supplied tenant pool and the
-    /// tenant's shared attribute-name dictionary.
-    pub fn new(pool: &PgPool, attribute_names: Arc<dyn NameLookup<AttributeName>>) -> PostgresRegistrationStore {
+    /// Create a registration store backed by the supplied tenant pool, the
+    /// tenant's clock-writer share of it and the tenant's shared
+    /// attribute-name dictionary.
+    pub fn new(pool: &PgPool, clock_writers: PoolShare, attribute_names: Arc<dyn NameLookup<AttributeName>>) -> PostgresRegistrationStore {
         PostgresRegistrationStore {
             pool: pool.clone(),
+            clock_writers,
             attribute_names,
         }
     }

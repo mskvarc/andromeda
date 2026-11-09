@@ -118,7 +118,7 @@ mod tests {
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
     use andromeda_postgresql_name_dictionary::name_cache::NameCache;
-    use andromeda_postgresql_pool::read_share::ReadShare;
+    use andromeda_postgresql_pool::pool_share::PoolShare;
     use andromeda_postgresql_temporal_store::{columnstore_capability::ColumnstoreSupport, recorder::TemporalRecorder, repo::TemporalRepository};
     use andromeda_temporal::port::temporal_intent_publisher::NoTemporalIntentPublisher;
     use sqlx::postgres::PgPoolOptions;
@@ -132,7 +132,7 @@ mod tests {
             .expect("a lazy pool is built without connecting");
         let recorder = Arc::new(TemporalRecorder::new(Arc::new(TemporalRepository::new(
             &pool,
-            ReadShare::of(&pool, WriteReserve::DEFAULT),
+            PoolShare::of_reads(&pool, WriteReserve::DEFAULT),
             Arc::new(NameCache::<AttributeName>::new(&pool, &NameCacheConfig::default())),
             Arc::new(NameCache::<EntityTypeName>::new(&pool, &NameCacheConfig::default())),
             ColumnstoreSupport::Absent,

@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_ngsi_ld_query::ordering::compiled::ResultOrdering;
 use andromeda_postgresql_collation::provisioned_collations::ProvisionedCollations;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use andromeda_postgresql_pool::read_share::{PoolLane, ReadShare};
+use andromeda_postgresql_pool::pool_share::{PoolLane, PoolShare};
 use andromeda_postgresql_seaquery::statement::Statement;
 use sea_query::SelectStatement;
 use sqlx::postgres::{PgPool, PgRow};
@@ -31,7 +31,7 @@ pub struct EntityRepository {
     /// run on.
     pub(super) pool: PgPool,
     /// The connections of the pool read requests may hold.
-    pub(super) reads: ReadShare,
+    pub(super) reads: PoolShare,
     /// The attribute-name dictionary, shared with the temporal store.
     pub(super) attribute_names: Arc<dyn NameLookup<AttributeName>>,
     /// The entity-type-name dictionary, shared with the temporal store.
@@ -50,7 +50,7 @@ impl EntityRepository {
     /// its read requests drawing on `reads`.
     pub fn new(
         pool: &PgPool,
-        reads: ReadShare,
+        reads: PoolShare,
         attribute_names: Arc<dyn NameLookup<AttributeName>>,
         entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
     ) -> EntityRepository {

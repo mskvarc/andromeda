@@ -121,6 +121,9 @@ pub enum PgStatActivity {
     /// The start of the session's current transaction, NULL while it is in
     /// none.
     XactStart,
+    /// The kind of event the session waits for, `Lock` while it waits on a
+    /// heavyweight lock, NULL while it waits for nothing.
+    WaitEventType,
 }
 
 /// `pg_stat_user_tables`: one row per user table of the current database,

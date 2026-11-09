@@ -4,17 +4,24 @@
 //! reserve a read load takes every connection in arrival order and the writes'
 //! throughput follows how many readers there are; with one, read requests hold
 //! at most the rest of the pool and writes always find the reserve.
+//!
+//! The writes that advance the context source change clock queue on one row
+//! lock, so they hold at most the reserve themselves, and no burst of them
+//! alone takes the whole pool.
 
 use derive_more::Into;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// A percentage of a tenant pool read requests never hold.
+/// A percentage of a tenant pool read requests never hold, and the most of it
+/// the writes advancing the context source change clock hold.
 ///
 /// Below 100, so a read request always has a connection to wait for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Into, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "A percentage of a tenant pool that read requests never hold, from 0 to 99.")]
+#[schemars(
+    description = "A percentage of a tenant pool that read requests never hold, from 0 to 99. The writes that advance the context source change clock hold at most this part of the pool, and at least one connection."
+)]
 #[serde(try_from = "u8", into = "u8")]
 pub struct WriteReserve(u8);
 
@@ -55,6 +62,17 @@ impl WriteReserve {
         let reserved = max_connections / 100 * percent + max_connections % 100 * percent / 100;
         max_connections - reserved
     }
+
+    /// How many connections of a pool of `max_connections` the reserve keeps
+    /// from read requests, the rest of the pool beside
+    /// [`WriteReserve::read_connections`].
+    ///
+    /// Rounded down like the read share, so a pool too small to spare a whole
+    /// connection reserves none.
+    #[must_use]
+    pub fn reserved_connections(self, max_connections: u32) -> u32 {
+        max_connections - self.read_connections(max_connections)
+    }
 }
 
 #[cfg(test)]
@@ -90,6 +108,34 @@ mod tests {
     #[test]
     fn no_reserve_leaves_reads_the_whole_pool() {
         assert_eq!(reserve(0).read_connections(32), 32);
+    }
+
+    #[test]
+    fn the_default_reserve_keeps_a_quarter_of_the_pool_for_writes() {
+        assert_eq!(WriteReserve::DEFAULT.reserved_connections(32), 8);
+        assert_eq!(WriteReserve::DEFAULT.reserved_connections(16), 4);
+    }
+
+    #[test]
+    fn a_pool_too_small_to_spare_a_whole_connection_reserves_none() {
+        assert_eq!(WriteReserve::DEFAULT.reserved_connections(3), 0);
+        assert_eq!(WriteReserve::DEFAULT.reserved_connections(2), 0);
+        assert_eq!(WriteReserve::DEFAULT.reserved_connections(1), 0);
+        assert_eq!(WriteReserve::DEFAULT.reserved_connections(4), 1);
+    }
+
+    #[test]
+    fn the_read_and_reserved_connections_add_up_to_the_pool() {
+        for max_connections in [1, 2, 3, 4, 16, 32, 100, u32::MAX] {
+            for percent in [0, 25, 99] {
+                let reserve = reserve(percent);
+                assert_eq!(
+                    reserve.read_connections(max_connections) + reserve.reserved_connections(max_connections),
+                    max_connections,
+                    "{percent} percent of {max_connections}"
+                );
+            }
+        }
     }
 
     #[test]

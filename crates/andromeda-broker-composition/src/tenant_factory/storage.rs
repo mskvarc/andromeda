@@ -35,6 +35,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_postgresql_context_store::{
     context_space::resolve_live_target,
     csource_registration::{pattern_forms_refresh::refresh_stale_pattern_forms, registration_store::PostgresRegistrationStore},
+    csource_subscription::repo::CsourceSubscriptionRepository,
     database_defaults::{DatabaseDefaults, DefaultsReconciliation, reconcile_database_defaults},
     entity::repo::EntityRepository,
     entity_map::repo::EntityMapRepository,
@@ -47,7 +48,7 @@ use andromeda_postgresql_context_store::{
     tenant_migration::{TenantSchemaState, migrate_single_tenant_db, tenant_schema_state, upgrade_single_tenant_snapshot_branches},
 };
 use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_lookup::NameLookup, schema_epoch::read_established_epoch};
-use andromeda_postgresql_pool::{pool_options::configure_pool_options, read_share::ReadShare};
+use andromeda_postgresql_pool::{pool_options::configure_pool_options, pool_share::PoolShare};
 use andromeda_postgresql_temporal_store::{columnstore_capability::ColumnstoreSupport, repo::TemporalRepository};
 use andromeda_registration::store::RegistrationStore;
 use andromeda_snapshot::store::SnapshotStore;
@@ -64,6 +65,10 @@ pub(super) struct TenantStorage {
     pub(super) tenant: TenantRef,
     /// The tenant's serving pool, opened against its migrated schema.
     pub(super) pool: PgPool,
+    /// The share of the serving pool every write that advances the context
+    /// source change clock begins its transaction on, shared by the
+    /// registration store and every context source subscription repository.
+    pub(super) clock_writers: PoolShare,
     /// The tenant's live context-space target, as opposed to a Snapshot branch.
     pub(super) live_target: ContextTarget,
     /// The tenant's JSON-LD engine; every service holds a clone of the handle.
@@ -94,6 +99,15 @@ pub(super) struct TenantStorage {
     /// Which spatial index, if any, the tenant's geo queries are narrowed
     /// through, seeded from the store.
     pub(super) spatial: SpatialAcceleration,
+}
+
+impl TenantStorage {
+    /// A context source subscription repository over the tenant's pool, whose
+    /// writes that advance the change clock draw on the tenant's one
+    /// clock-writer share beside the registration store's.
+    pub(super) fn csource_subscription_repository(&self) -> CsourceSubscriptionRepository {
+        CsourceSubscriptionRepository::new(&self.pool, self.clock_writers.clone(), Arc::clone(&self.attribute_names))
+    }
 }
 
 /// The background workers one tenant runs over its stored `@contexts`.
@@ -286,9 +300,12 @@ pub(super) async fn initialize_storage(
     // reconciler below enables the columnstore only where this finds one, so an
     // Apache tenant never calls a procedure its edition does not ship.
     let columnstore = ColumnstoreSupport::detect(&pool).await?;
-    // One share for the tenant: entity and temporal read requests together hold
-    // no more of the pool than the write reserve leaves them.
-    let reads = ReadShare::of(&pool, config.database.write_reserve_percent);
+    // One share for the tenant, so entity and temporal read requests together
+    // hold no more of the pool than the write reserve leaves them.
+    let reads = PoolShare::of_reads(&pool, config.database.write_reserve_percent);
+    // Writes queued on the change clock's row lock each hold a connection, so
+    // together they hold no more of the pool than the write reserve keeps.
+    let clock_writers = PoolShare::of_reserve(&pool, config.database.write_reserve_percent);
     let temporal_repo = Arc::new(TemporalRepository::new(
         &pool,
         reads.clone(),
@@ -313,7 +330,7 @@ pub(super) async fn initialize_storage(
         deletion_outline: Arc::clone(&entity_repository) as Arc<dyn DeletionOutlineReader>,
         entity_types: entity_repository as Arc<dyn EntityTypeReader>,
     };
-    let registration_repository = Arc::new(PostgresRegistrationStore::new(&pool, Arc::clone(&attribute_names)));
+    let registration_repository = Arc::new(PostgresRegistrationStore::new(&pool, clock_writers.clone(), Arc::clone(&attribute_names)));
     let registry_type_source = Arc::clone(&registration_repository) as Arc<dyn RegistryTypeSource>;
     let registration_store = registration_repository as Arc<dyn RegistrationStore>;
     let entity_map_store = Arc::new(EntityMapRepository::new(&pool)) as Arc<dyn EntityMapStore>;
@@ -329,6 +346,7 @@ pub(super) async fn initialize_storage(
     Ok(TenantStorage {
         tenant: tenant.clone(),
         pool,
+        clock_writers,
         live_target,
         engine,
         context_workers,

@@ -39,7 +39,7 @@ use andromeda_postgresql_attribute_instance::{
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_context_query::entity_head::{EntityHead, select_head};
-use andromeda_postgresql_pool::read_share::PoolLane;
+use andromeda_postgresql_pool::pool_share::PoolLane;
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use andromeda_postgresql_schema::current::{CurrentAttributes, E, Entities, EntitySearch};
 use sea_query::{Expr, ExprTrait, Iden, JoinType, Query, SelectStatement};

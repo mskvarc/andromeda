@@ -15,7 +15,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::port::stored_entry::StoredEntry;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_postgresql_pool::read_share::PoolLane;
+use andromeda_postgresql_pool::pool_share::PoolLane;
 use andromeda_postgresql_schema::current::{E, Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{operator::array_contains_key, statement::Statement};
 use sea_query::{Expr, ExprTrait, Order, SelectStatement};
