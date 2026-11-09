@@ -4,7 +4,7 @@
 
 | Workflow | Runs on | What it runs |
 |---|---|---|
-| `ci` | every pull request that isn't a draft, every push to `main`, on demand | one job per check, the `ngsi_ld`, `etsi` and `annex_c` suite trees, then the `pr-ok` and `ci-ok` gates |
+| `ci` | every pull request that isn't a draft, every push to `main`, on demand | one job per check and the `pr-ok` gate, and except on a pull request the `ngsi_ld`, `etsi` and `annex_c` suite trees and the `ci-ok` gate |
 | `suite` | weekly, on demand | the `andromeda`, `distributed` and `interoperability` trees, or any single tree except `pgbouncer` picked when it's started by hand |
 | `advisories` | weekly, on demand | `cargo deny check advisories`, for advisories published while nothing is being committed |
 | `postgresql` | pushes to `main` that change `docker/images/postgresql` or the workflow itself, weekly, on demand | builds, checks with [PostgreSQL image checks](testing/postgresql-image-checks.md), publishes and signs the PostgreSQL image |
@@ -27,8 +27,8 @@ Every check is a job of its own, so a pull request shows each one with its own s
 | `clippy` | `cargo clippy` over the whole workspace, the suite included, with warnings denied |
 | `unit` | the workspace unit tests, then the architecture checks, then the broker's unit tests, all under cargo-nextest |
 | `sql` | `andromeda-sql` `format --check`, `lint`, `verify`, and `verify --against` the base of a pull request or the parent of a push, then the package's tests under cargo-nextest |
-| `images` | builds the arm64 broker image and the suite's runner image once for the commit and pushes them to `ghcr.io/<owner>/andromeda-ci` as `broker-<sha>` and `runner-<sha>`. Dependabot's pull requests skip it, since their token can't push packages |
-| `suite (<tree>)` | one job for each of the `ngsi_ld`, `etsi` and `annex_c` trees, through `run-suite.sh` as [Test suite](testing/test-suite.md) describes. Every tree runs the broker and runner images `images` pushed, or builds its own when `images` was skipped, and the published `postgresql:tsl` image |
+| `images` | builds the arm64 broker image and the suite's runner image once for the commit and pushes them to `ghcr.io/<owner>/andromeda-ci` as `broker-<sha>` and `runner-<sha>`. A pull request skips it |
+| `suite (<tree>)` | one job for each of the `ngsi_ld`, `etsi` and `annex_c` trees, through `run-suite.sh` as [Test suite](testing/test-suite.md) describes, with the broker and runner images `images` pushed and the published `postgresql:tsl` image. A pull request skips them |
 
 The `suite` workflow runs its trees the same way, with the published `postgresql:tsl` image and the broker and runner images built from the checkout. A change to `docker/images/postgresql` reaches the suite trees once the `postgresql` workflow has published it from `main`.
 
@@ -37,6 +37,6 @@ When a job runs its checks as separate steps, as `unit` and `sql` do, every step
 ## Gates
 
 - `pr-ok` passes when `fmt`, `taplo`, `machete`, `deny`, `shellcheck`, `clippy`, `unit` and `sql` all passed. A merge into `main` requires it.
-- `ci-ok` passes when `pr-ok` and every suite tree passed. A release requires it on the tagged commit.
+- `ci-ok` passes when `pr-ok` and every suite tree passed. It runs on a push to `main` and on a run started by hand, never on a pull request. A release requires it on the tagged commit.
 
-So a red suite tree shows on a pull request without blocking the merge. Don't merge a pull request with a red tree unless the same failure is already red on `main`. A red tree on `main` is the next thing to fix, because no later commit can be released until it's fixed.
+So the suite trees don't gate a merge, and a tree that a change breaks turns red only once the change is on `main`. Run the trees your change touches before you merge it, with `run-suite.sh` as [Test suite](testing/test-suite.md) describes. A red tree on `main` is the next thing to fix, because no later commit can be released until it's fixed.

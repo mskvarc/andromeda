@@ -46,4 +46,4 @@ The PostgreSQL image in `docker/images/postgresql` has check scripts of its own 
 - Where the specification leaves a choice to the implementation, a test asserts the choice Andromeda made and cites the clause that leaves it open. Where the outcome is simply undefined, such as the order of notifications when no clause defines one, a test asserts nothing about it.
 - When the broker disagrees with the specification, the test asserts the specification and fails until the fix lands. A deviation is never pinned as expected behaviour, even where the clause only says "should".
 - A flaky test is a defect. Reproduce it, find the cause and fix the broker or the test's isolation. Never rerun at lower parallelism to get a pass.
-- When you ran suites that CI doesn't run, or ran them against a live stack yourself, say so in the Verification section of the pull request.
+- CI runs no suite tree on a pull request. Say in the Verification section of the pull request which trees you ran.

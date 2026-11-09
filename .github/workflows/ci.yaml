@@ -1,7 +1,7 @@
 name: ci
 
-# One run per commit: a pull request is checked through its pull_request events, and a commit reaches push only when it
-# lands on main. pr-ok is the required status check; ci-ok adds the suite trees and is the check a tag requires.
+# One run per commit. A pull request runs the checks pr-ok gathers, the required status check. A push to main, or a run
+# started by hand, also builds the images and runs the suite trees that ci-ok adds, the check a tag requires.
 on:
   push:
     branches: [main]
@@ -189,11 +189,10 @@ jobs:
         run: cargo nextest run --package andromeda-sql --all-features --locked --no-fail-fast
 
   # The broker and runner images every suite tree runs, built once per commit. A release publishes this broker image
-  # as its arm64 image. Dependabot's token cannot push packages, so its pull requests skip this job and each tree
-  # builds the images itself.
+  # as its arm64 image.
   images:
     name: images
-    if: ${{ !github.event.pull_request.draft && github.actor != 'dependabot[bot]' }}
+    if: &beyond-pull-request ${{ github.event_name != 'pull_request' }}
     runs-on: *runner
     timeout-minutes: 90
     permissions:
@@ -229,7 +228,7 @@ jobs:
   suite:
     name: suite (${{ matrix.tree }})
     needs: images
-    if: ${{ !cancelled() && !github.event.pull_request.draft && (needs.images.result == 'success' || needs.images.result == 'skipped') }}
+    if: *beyond-pull-request
     runs-on: *runner
     timeout-minutes: 120
     permissions:
@@ -240,8 +239,8 @@ jobs:
       matrix:
         tree: [ngsi_ld, etsi, annex_c]
     env:
-      ANDROMEDA_IMAGE: ${{ needs.images.result == 'success' && format('ghcr.io/{0}/andromeda-ci:broker-{1}', github.repository_owner, github.sha) || '' }}
-      ANDROMEDA_TEST_SUITE_RUNNER_IMAGE: ${{ needs.images.result == 'success' && format('ghcr.io/{0}/andromeda-ci:runner-{1}', github.repository_owner, github.sha) || '' }}
+      ANDROMEDA_IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda-ci:broker-${{ github.sha }}
+      ANDROMEDA_TEST_SUITE_RUNNER_IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda-ci:runner-${{ github.sha }}
       ANDROMEDA_POSTGRES_IMAGE: ghcr.io/${{ github.repository_owner }}/postgresql:tsl
     steps:
       - uses: actions/checkout@v7
@@ -278,7 +277,7 @@ jobs:
 
   ci-ok:
     name: ci-ok
-    if: *settled
+    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
     needs: [pr-ok, suite]
     runs-on: *runner
     timeout-minutes: 5
