@@ -39,7 +39,7 @@ runs:
     # The compiler cache keeps compiled crates in the Actions cache. Its credentials reach only actions, so they are
     # exported here and handed to the build as secrets, which stay out of every layer.
     - name: Export the Actions cache credentials
-      uses: actions/github-script@v7
+      uses: actions/github-script@v9
       with:
         script: |
           core.setSecret(process.env.ACTIONS_RUNTIME_TOKEN || '');

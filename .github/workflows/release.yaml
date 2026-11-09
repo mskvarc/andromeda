@@ -205,7 +205,7 @@ jobs:
 
       - name: Attest SBOM
         if: ${{ github.event.repository.visibility == 'public' }}
-        uses: actions/attest-sbom@v4
+        uses: actions/attest@v4
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.digest.outputs.digest }}
