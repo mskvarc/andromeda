@@ -19,6 +19,10 @@ on:
           - annex_c
           - distributed
           - interoperability
+      fresh:
+        description: Run the trees in full, ignoring the passes runs on main recorded.
+        type: boolean
+        default: false
 
 concurrency:
   group: suite-${{ github.ref }}
@@ -27,6 +31,9 @@ concurrency:
 permissions:
   contents: read
 
+# The broker and runner images are built from the checkout. A tree's verdict is keyed as in ci, on the keys of both
+# images' inputs, the stack definitions, the runner configuration and the database image's digest, so a weekly run whose
+# trees read nothing new passes them without running.
 jobs:
   suite:
     name: suite (${{ matrix.tree }})
@@ -47,7 +54,14 @@ jobs:
         tree: ${{ fromJSON((github.event_name == 'schedule' || inputs.tree == 'weekly') && '["andromeda","distributed","interoperability"]' || format('["{0}"]', inputs.tree)) }}
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/free-disk-space
+      - id: broker
+        uses: ./.github/actions/image-inputs
+        with:
+          image: broker
+      - id: runner
+        uses: ./.github/actions/image-inputs
+        with:
+          image: runner
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -56,3 +70,6 @@ jobs:
       - uses: ./.github/actions/suite-tree
         with:
           tree: ${{ matrix.tree }}
+          broker-key: ${{ steps.broker.outputs.key }}
+          runner-key: ${{ steps.runner.outputs.key }}
+          fresh: ${{ inputs.fresh }}

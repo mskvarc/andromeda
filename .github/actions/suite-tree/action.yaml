@@ -1,16 +1,59 @@
 name: Suite tree
-description: Runs one tree of andromeda-test-suite against its stack, built from the working tree.
+description: Runs one tree of andromeda-test-suite against its stack, unless a run on main recorded a pass of the tree with the same broker and runner image inputs, stack definitions, runner configuration and database image.
 
 inputs:
   tree:
     description: The tree to run, as run-suite.sh names it.
     required: true
+  broker-key:
+    description: The key of the broker image's inputs.
+    required: true
+  runner-key:
+    description: The key of the runner image's inputs.
+    required: true
+  fresh:
+    description: "`true` runs the tree whatever was recorded."
+    required: false
+    default: "false"
 
 runs:
   using: composite
   steps:
+    # The tree runs the database image ANDROMEDA_POSTGRES_IMAGE names by its digest, so the key names the image the tree
+    # runs even when the tag moves meanwhile.
+    - name: Pin the database image
+      id: database
+      shell: bash
+      run: |
+        set -euo pipefail
+        digest="$(docker buildx imagetools inspect "$ANDROMEDA_POSTGRES_IMAGE" --format '{{json .Manifest}}' | jq -r .digest)"
+        {
+          echo "digest=${digest}"
+          echo "image=${ANDROMEDA_POSTGRES_IMAGE}@${digest}"
+        } >> "$GITHUB_OUTPUT"
+
+    - id: verdict
+      uses: ./.github/actions/verdict-lookup
+      with:
+        check: suite-${{ inputs.tree }}
+        fresh: ${{ inputs.fresh }}
+        parts: |
+          broker ${{ inputs.broker-key }}
+          runner ${{ inputs.runner-key }}
+          database ${{ steps.database.outputs.digest }}
+
+    - if: ${{ steps.verdict.outputs.reused != 'true' }}
+      uses: ./.github/actions/free-disk-space
+
     - name: Run the tree
+      if: ${{ steps.verdict.outputs.reused != 'true' }}
       shell: bash
       env:
         TREE: ${{ inputs.tree }}
+        ANDROMEDA_POSTGRES_IMAGE: ${{ steps.database.outputs.image }}
       run: tools/andromeda-test-suite/run-suite.sh "$TREE"
+
+    - if: ${{ steps.verdict.outputs.reused != 'true' }}
+      uses: ./.github/actions/verdict-record
+      with:
+        key: ${{ steps.verdict.outputs.key }}

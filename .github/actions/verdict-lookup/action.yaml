@@ -1,0 +1,88 @@
+name: Verdict lookup
+description: Computes the key of everything a check reads and reports whether a run on main recorded a pass under it, naming that run.
+
+inputs:
+  check:
+    description: The check whose inputs are keyed, `fmt`, `taplo`, `machete`, `shellcheck`, `clippy`, `unit`, `sql` or `suite-<tree>`.
+    required: true
+  parts:
+    description: What the check reads besides tracked files, one value per line, such as the keys of the images a suite tree runs.
+    required: false
+    default: ""
+  fresh:
+    description: "`true` reports no recorded pass, so the check runs in full."
+    required: false
+    default: "false"
+
+outputs:
+  key:
+    description: The Actions cache key a pass of the check is recorded under.
+    value: ${{ steps.key.outputs.key }}
+  reused:
+    description: "`true` when a run on main recorded a pass under the key, so the check passes without running."
+    value: ${{ steps.report.outputs.reused }}
+
+runs:
+  using: composite
+  steps:
+    # A check's inputs are every tracked file outside .github/ that its exclusions don't name, so a new file is an input
+    # until it is excluded. taplo and shellcheck select their files by extension themselves, so their inputs are named
+    # the same way. The workflow file and every action are inputs of each check.
+    - name: Compute the key
+      id: key
+      shell: bash
+      env:
+        CHECK: ${{ inputs.check }}
+        PARTS: ${{ inputs.parts }}
+        GIT_GLOB_PATHSPECS: "1"
+      run: |
+        set -euo pipefail
+        pages=('**/*.md' 'docs/assets/**')
+        images=('docker/**' 'tools/andromeda-test-suite/stacks/**' .dockerignore)
+        # What Rust code compiles in or its tests read, besides the sources: the generated configuration reference
+        # included, which unit compares with what the code generates.
+        fixtures=('**/*.json' '**/*.jsonld' '**/*.abnf' 'docs/configuration/**')
+        sql=('migrations/**' '.pg_format*' .squawk.toml)
+        settings=(clippy.toml .taplo.toml deny.toml cliff.toml '.config/**')
+        case "$CHECK" in
+          fmt) included=(.); excluded=("${pages[@]}" "${images[@]}" "${fixtures[@]}" "${sql[@]}" "${settings[@]}" '**/*.sh') ;;
+          machete) included=(.); excluded=("${pages[@]}" "${images[@]}" "${fixtures[@]}" "${sql[@]}" "${settings[@]}" '**/*.sh' rustfmt.toml) ;;
+          taplo) included=('**/*.toml' docs/configuration/andromeda.schema.json); excluded=() ;;
+          shellcheck) included=('**/*.sh' '**/.shellcheckrc'); excluded=() ;;
+          clippy | unit) included=(.); excluded=("${pages[@]}" "${images[@]}") ;;
+          sql) included=(.); excluded=("${pages[@]}" "${images[@]}" 'src/**' 'tools/andromeda-test-suite/**') ;;
+          suite-*) included=('tools/andromeda-test-suite/stacks/**' .config/nextest.toml); excluded=() ;;
+          *) echo "unknown check: ${CHECK}" >&2; exit 1 ;;
+        esac
+        workflow="${GITHUB_WORKFLOW_REF#"${GITHUB_REPOSITORY}/"}"
+        workflow="${workflow%%@*}"
+        digest="$({
+          git ls-files --stage -z -- "${included[@]}" ':(exclude).github/**' "${excluded[@]/#/:(exclude)}"
+          git ls-files --stage -z -- "$workflow" '.github/actions/**'
+          printf '%s\n' "$PARTS"
+        } | sha256sum | cut -d ' ' -f 1)"
+        echo "key=verdict-${CHECK}-${digest}" >> "$GITHUB_OUTPUT"
+
+    - name: Look up a recorded pass
+      id: restore
+      if: ${{ inputs.fresh != 'true' }}
+      uses: actions/cache/restore@v6
+      with:
+        key: ${{ steps.key.outputs.key }}
+        path: ${{ runner.temp }}/verdict
+
+    - name: Report the verdict
+      id: report
+      shell: bash
+      env:
+        CHECK: ${{ inputs.check }}
+        HIT: ${{ steps.restore.outputs.cache-hit }}
+        RECORD: ${{ runner.temp }}/verdict/run
+      run: |
+        set -euo pipefail
+        if [ "$HIT" = true ]; then
+          echo "::notice title=${CHECK} reused a pass::$(cat "$RECORD")"
+          echo "reused=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "reused=false" >> "$GITHUB_OUTPUT"
+        fi

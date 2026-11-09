@@ -1,0 +1,29 @@
+name: Verdict record
+description: Records in the Actions cache that a check passed in this run, under the key the verdict lookup computed. Only a run on main records, so no pull request can mark a check as passed.
+
+inputs:
+  key:
+    description: The key the verdict lookup computed for the check.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Write the record
+      if: ${{ github.ref == 'refs/heads/main' }}
+      shell: bash
+      env:
+        RECORD: ${{ runner.temp }}/verdict/run
+        RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$(dirname "$RECORD")"
+        echo "passed in ${RUN} on ${GITHUB_SHA}" > "$RECORD"
+
+    # A key already recorded stays as it is, and saving it again only warns.
+    - name: Record the pass
+      if: ${{ github.ref == 'refs/heads/main' }}
+      uses: actions/cache/save@v6
+      with:
+        key: ${{ inputs.key }}
+        path: ${{ runner.temp }}/verdict
