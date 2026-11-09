@@ -83,8 +83,8 @@ async fn n_map_qen_8001_a_map_over_four_domains_counts_every_entity_and_scoped_q
             .management(RegistrationManagementInfo::builder().timeout(FORWARDING_TIMEOUT_MS).build()?)
             .build()?;
         hub.registrations().register(&registration).send().await?;
-        // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
-        // cooldown that opens there holds back a later test's registration naming the same endpoint.
+        // Registrations are deleted when the test ends. One left behind is matched against every later query on broker
+        // A, and each query it covers is forwarded to that domain's broker.
         registrations_cleanup = registrations_cleanup.registration_of(&registration);
         let buildings = domain_buildings(&namespace, &building_type, domain)?;
         broker::client(domain.broker)?.entities().batch_create(&buildings).send().await?.done()?;
