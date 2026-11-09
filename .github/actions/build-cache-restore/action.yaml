@@ -20,7 +20,9 @@ runs:
   steps:
     # The toolchain and cargo configuration make every artifact compiled before unusable when they change, so a key
     # never falls back across them. The dependency state, the lockfile and the manifests, changes every workspace
-    # crate's artifact names, so a build of another state is restored only when this one has none.
+    # crate's artifact names, so a build of another state is restored only when this one has none, and only in a run
+    # that saves nothing. A run on main saves its build, and starting from another state's would keep that state's
+    # superseded third-party crates in it, so the saved build would grow with every dependency change.
     - name: Compute the key
       id: key
       shell: bash
@@ -28,13 +30,18 @@ runs:
         JOB: ${{ inputs.job }}
         TOOLCHAIN_HASH: ${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}
         STATE_HASH: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/*/Cargo.toml', 'tools/*/Cargo.toml') }}
+        SAVES: ${{ github.ref == 'refs/heads/main' }}
       run: |
         set -euo pipefail
         toolchain="cargo-${JOB}-${TOOLCHAIN_HASH}-"
         state="${toolchain}${STATE_HASH}-"
+        other_state="$toolchain"
+        if [ "$SAVES" = true ]; then
+          other_state=""
+        fi
         {
-          echo "toolchain=${toolchain}"
           echo "state=${state}"
+          echo "other-state=${other_state}"
           echo "key=${state}${GITHUB_SHA}"
           echo "paths<<EOF"
           printf '%s\n' ~/.cargo/registry/index/ ~/.cargo/registry/cache/ ~/.cargo/git/db/ target/
@@ -48,7 +55,7 @@ runs:
         key: ${{ steps.key.outputs.key }}
         restore-keys: |
           ${{ steps.key.outputs.state }}
-          ${{ steps.key.outputs.toolchain }}
+          ${{ steps.key.outputs.other-state }}
         path: ${{ steps.key.outputs.paths }}
 
     # Cargo compares the content of every file rustc reads with what it compiled, so a fresh checkout's modification
