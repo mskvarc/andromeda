@@ -58,6 +58,10 @@ jobs:
           fetch-depth: 0
       - name: Install pinned toolchain
         run: rustup toolchain install --profile minimal
+      # The SQL tool as the sql job of ci compiled it for the newest commit of main. A release saves no build.
+      - uses: ./.github/actions/build-cache-restore
+        with:
+          job: sql
       # Via env: never parsed as shell.
       - name: Verify the seal for the tag
         env:
@@ -70,37 +74,29 @@ jobs:
           fi
           cargo run --package andromeda-sql --locked -- verify --release "$TAG" "${against[@]}"
 
-  # The arm64 image is the one ci built and ran the suite trees against for the tagged commit, so only amd64 is built
-  # here.
+  # The arm64 image is the one ci built and ran the suite trees against for the tagged commit. The amd64 image is the
+  # one ci built from the same broker inputs, and is built here only when ci has none.
   image:
     name: image (linux/amd64)
     needs: seal
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
       contents: read
       packages: write
+    outputs:
+      image: ${{ steps.image.outputs.image }}
     steps:
       - uses: actions/checkout@v7
-      - id: inputs
-        uses: ./.github/actions/image-inputs
-        with:
-          image: broker
-      - uses: ./.github/actions/free-disk-space
-      - uses: docker/setup-buildx-action@v4
-
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: ./.github/actions/broker-image
+      - id: image
+        uses: ./.github/actions/keyed-broker-image
         with:
           platform: linux/amd64
-          context: ${{ steps.inputs.outputs.context }}
-          image: ghcr.io/${{ github.repository_owner }}/andromeda:run-${{ github.run_id }}-linux-amd64
-          cache: ghcr.io/${{ github.repository_owner }}/andromeda-buildcache:linux-amd64
 
   image-merge:
     needs: image
@@ -153,9 +149,10 @@ jobs:
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
           VERSION: ${{ steps.version.outputs.version }}
+          AMD64_IMAGE: ${{ needs.image.outputs.image }}
         run: |
           set -euo pipefail
-          refs=("${CI_IMAGE}:broker-${GITHUB_SHA}" "${IMAGE}:run-${GITHUB_RUN_ID}-linux-amd64")
+          refs=("${CI_IMAGE}:broker-${GITHUB_SHA}" "$AMD64_IMAGE")
           tag_args=()
           while IFS= read -r tag; do
             [ -n "$tag" ] && tag_args+=(-t "$tag")

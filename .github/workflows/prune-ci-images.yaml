@@ -1,12 +1,12 @@
 name: prune-ci-images
 
-# ci tags a broker and a runner image index for every commit it checks, builds an image only for inputs no image exists
-# for yet, and every build that refreshes a layer cache leaves the cache it replaced untagged. A commit's tags stay for
-# thirty days, long enough to release it, and an input image stays until the last commit index pointing at it is gone.
-# The tags of the commit at the head of main stay whatever their age, since the weekly suite run tests that commit on
-# them. An untagged manifest stays one day, so a push still in flight keeps the manifest it is about to tag. The
-# published andromeda and postgresql packages are never touched: their untagged versions are the platform manifests of a
-# release.
+# ci tags a broker image index for each platform and a runner image index for every commit it checks, builds an image
+# only for inputs no image exists for yet, and every build that refreshes a layer cache leaves the cache it replaced
+# untagged. A commit's tags stay for thirty days, long enough to release it, and an input image stays until the last
+# commit index pointing at it is gone. The tags of the commit at the head of main stay whatever their age, since the
+# weekly suite run tests that commit on them. An untagged manifest stays one day, so a push still in flight keeps the
+# manifest it is about to tag. The published andromeda and postgresql packages are never touched: their untagged
+# versions are the platform manifests of a release.
 on:
   schedule:
     - cron: "37 5 * * *"
@@ -57,7 +57,7 @@ jobs:
             fi
             # The input images the commit indexes still kept point at, the head of main's among them.
             jq -r --argjson cutoff "$commit_cutoff" --arg main_head "$main_head" '
-              select(.tags != [] and all(.tags[]; test("^(broker|runner)-[0-9a-f]{40}$"))
+              select(.tags != [] and all(.tags[]; test("^(broker|broker-amd64|runner)-[0-9a-f]{40}$"))
                 and (.updated >= $cutoff or any(.tags[]; endswith("-" + $main_head)))) | .name' \
               versions.jsonl | while IFS= read -r digest; do
               docker buildx imagetools inspect --raw "ghcr.io/${OWNER}/${package}@${digest}" | jq -r '.manifests[]?.digest'
@@ -66,9 +66,9 @@ jobs:
               --arg main_head "$main_head" --slurpfile referenced referenced.json '
               select(
                 (.tags == [] and .updated < $untagged_cutoff)
-                or (.tags != [] and all(.tags[]; test("^(broker|runner)-[0-9a-f]{40}$") and (endswith("-" + $main_head) | not))
+                or (.tags != [] and all(.tags[]; test("^(broker|broker-amd64|runner)-[0-9a-f]{40}$") and (endswith("-" + $main_head) | not))
                   and .updated < $commit_cutoff)
-                or (.tags != [] and all(.tags[]; test("^(broker|runner)-input-[0-9a-f]{64}$")) and .updated < $untagged_cutoff
+                or (.tags != [] and all(.tags[]; test("^(broker|broker-amd64|runner)-input-[0-9a-f]{64}$")) and .updated < $untagged_cutoff
                   and (.name as $name | $referenced[0] | any(.[]; . == $name) | not))
               )
               | .id' versions.jsonl)"

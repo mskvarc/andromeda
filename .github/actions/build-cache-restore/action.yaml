@@ -1,6 +1,12 @@
 name: Build cache restore
 description: Restores the job's cargo registry and target directory from the newest build of the same job, and makes cargo decide by file content which of the restored crates are fresh.
 
+inputs:
+  job:
+    description: The job whose build is restored, the running job unless another job compiles the same crates.
+    required: false
+    default: ${{ github.job }}
+
 outputs:
   key:
     description: The key this commit's build is saved under.
@@ -19,11 +25,12 @@ runs:
       id: key
       shell: bash
       env:
+        JOB: ${{ inputs.job }}
         TOOLCHAIN_HASH: ${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}
         STATE_HASH: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/*/Cargo.toml', 'tools/*/Cargo.toml') }}
       run: |
         set -euo pipefail
-        toolchain="cargo-${GITHUB_JOB}-${TOOLCHAIN_HASH}-"
+        toolchain="cargo-${JOB}-${TOOLCHAIN_HASH}-"
         state="${toolchain}${STATE_HASH}-"
         {
           echo "toolchain=${toolchain}"
