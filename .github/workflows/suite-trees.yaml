@@ -1,0 +1,96 @@
+name: suite-trees
+
+# The images and suite trees of one commit, called by ci and suite so that every tree runs the same way in both. The
+# arm64 broker image and the runner image are keyed on their inputs and built only when no image of those inputs exists
+# yet, and every tree runs them with the published database image, so a tree compiles nothing.
+on:
+  workflow_call:
+    inputs:
+      trees:
+        description: The trees to run, as a JSON array of the names run-suite.sh takes.
+        type: string
+        required: true
+      fresh:
+        description: Run every tree in full, ignoring the passes runs on main recorded.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  # The arm64 broker image every suite tree runs, under broker-input-<key>, and broker-<sha>, an index over it with the
+  # commit as its revision. A release publishes it as its arm64 image.
+  broker-image:
+    name: broker-image
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      key: ${{ steps.image.outputs.key }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: image
+        uses: ./.github/actions/keyed-broker-image
+        with:
+          platform: linux/arm64
+
+  # The runner image every suite tree runs, with every tree's test binaries in its nextest archive.
+  runner-image:
+    name: runner-image
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      key: ${{ steps.image.outputs.key }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: image
+        uses: ./.github/actions/keyed-runner-image
+
+  # The database image is the published one, which the postgresql workflow rebuilds whenever its directory changes. A
+  # tree's verdict is keyed on the keys of both images' inputs, the stack definitions, the runner configuration and the
+  # database image's digest.
+  suite:
+    name: suite (${{ matrix.tree }})
+    needs: [broker-image, runner-image]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        tree: ${{ fromJSON(inputs.trees) }}
+    env:
+      ANDROMEDA_IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda-ci:broker-${{ github.sha }}
+      ANDROMEDA_TEST_SUITE_RUNNER_IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda-ci:runner-${{ github.sha }}
+      ANDROMEDA_POSTGRES_IMAGE: ghcr.io/${{ github.repository_owner }}/postgresql:tsl
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/suite-tree
+        with:
+          tree: ${{ matrix.tree }}
+          broker-key: ${{ needs.broker-image.outputs.key }}
+          runner-key: ${{ needs.runner-image.outputs.key }}
+          fresh: ${{ inputs.fresh }}
