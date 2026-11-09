@@ -1,0 +1,75 @@
+name: Broker inputs
+description: Computes the key of every file the broker image is built from, and assembles a build context holding only those files.
+
+outputs:
+  key:
+    description: The SHA-256 of the path, mode and content of every input, which names the broker image built from them.
+    value: ${{ steps.inputs.outputs.key }}
+  context:
+    description: The directory holding the build context.
+    value: ${{ steps.inputs.outputs.context }}
+
+runs:
+  using: composite
+  steps:
+    # Stable cargo reads the manifests, so the pinned nightly is not installed for this, and --no-deps keeps it off the
+    # network.
+    - name: Read the workspace
+      shell: bash
+      run: |
+        set -euo pipefail
+        rustup toolchain install stable --profile minimal --no-self-update
+        cargo +stable metadata --format-version 1 --no-deps --locked > "${RUNNER_TEMP}/workspace.json"
+
+    # The inputs are the sources of the broker and of every workspace crate it compiles through normal and build
+    # dependencies, the manifest of every workspace package, the lockfile, the migrations, the toolchain and build
+    # configuration, the image definition and the licence files the image copies. The broker's own package directory
+    # is the repository root, so only its src/ counts.
+    - name: Compute the key and assemble the context
+      id: inputs
+      shell: bash
+      run: |
+        set -euo pipefail
+        workspace="${RUNNER_TEMP}/workspace.json"
+        compiled="$(jq -c '
+          (.packages | map({key: .name, value: .}) | from_entries) as $packages
+          | def reach($names):
+              ([$names[] | $packages[.].dependencies[] | select(.path != null and (.kind == null or .kind == "build")) | .name] + $names | unique) as $next
+              | if $next == $names then $names else reach($next) end;
+          reach(["andromeda"])' "$workspace")"
+        mapfile -t inputs < <(jq -r --argjson compiled "$compiled" '
+          .workspace_root as $root
+          | def relative: ltrimstr($root + "/");
+          (
+            (.packages[] | select(.name | IN($compiled[])) | .manifest_path | relative | rtrimstr("Cargo.toml") | if . == "" then "src/" else . end),
+            (.packages[] | .manifest_path | relative),
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            ".cargo/",
+            "migrations/",
+            "docker/images/andromeda/",
+            ".dockerignore",
+            "LICENSE.md"
+          )' "$workspace" | sort -u)
+        key="$(git ls-files --stage --error-unmatch -z -- "${inputs[@]}" | sha256sum | cut -d ' ' -f 1)"
+        context="${RUNNER_TEMP}/broker-context"
+        rm -rf "$context"
+        mkdir -p "$context"
+        git archive --format=tar HEAD -- "${inputs[@]}" | tar -x -C "$context"
+        # cargo reads every workspace member, so a member the broker doesn't compile gets an empty file at each of its
+        # library, binary and build script paths. Nothing compiles them.
+        jq -r --argjson compiled "$compiled" '
+          .workspace_root as $root
+          | .packages[]
+          | select(.name | IN($compiled[]) | not)
+          | .targets[]
+          | select(.kind | all(. != "test" and . != "bench" and . != "example"))
+          | .src_path
+          | ltrimstr($root + "/")' "$workspace" | while IFS= read -r path; do
+          mkdir -p "$context/$(dirname "$path")"
+          : > "$context/$path"
+        done
+        {
+          echo "key=${key}"
+          echo "context=${context}"
+        } >> "$GITHUB_OUTPUT"

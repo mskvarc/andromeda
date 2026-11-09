@@ -1,7 +1,7 @@
 name: ci
 
 # One run per commit. A pull request runs the checks pr-ok gathers, the required status check. A push to main, or a run
-# started by hand, also builds the images and runs the suite trees that ci-ok adds, the check a tag requires.
+# started by hand, also gives the commit its images and runs the suite trees that ci-ok adds, the check a tag requires.
 on:
   push:
     branches: [main]
@@ -188,10 +188,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo nextest run --package andromeda-sql --all-features --locked --no-fail-fast
 
-  # The broker and runner images every suite tree runs, built once per commit. A release publishes this broker image
-  # as its arm64 image.
-  images:
-    name: images
+  # The arm64 broker image every suite tree runs. It is built only when no image of the commit's broker inputs exists
+  # yet, under broker-input-<key>; broker-<sha> is an index over that image with the commit as its revision. A release
+  # publishes it as its arm64 image.
+  broker-image:
+    name: broker-image
     if: &beyond-pull-request ${{ github.event_name != 'pull_request' }}
     runs-on: *runner
     timeout-minutes: 90
@@ -202,18 +203,66 @@ jobs:
       CI_IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda-ci
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/free-disk-space
+      - id: inputs
+        uses: ./.github/actions/broker-inputs
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # A failed lookup for any other reason than a missing image builds it again, which costs time but never a wrong
+      # image.
+      - name: Look for an image of the broker inputs
+        id: existing
+        env:
+          KEY_IMAGE: ${{ env.CI_IMAGE }}:broker-input-${{ steps.inputs.outputs.key }}
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect "$KEY_IMAGE" > /dev/null; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: ${{ steps.existing.outputs.found != 'true' }}
+        uses: ./.github/actions/free-disk-space
+      - if: ${{ steps.existing.outputs.found != 'true' }}
+        uses: docker/setup-buildx-action@v4
+      - if: ${{ steps.existing.outputs.found != 'true' }}
+        uses: ./.github/actions/broker-image
+        with:
+          platform: linux/arm64
+          context: ${{ steps.inputs.outputs.context }}
+          image: ${{ env.CI_IMAGE }}:broker-input-${{ steps.inputs.outputs.key }}
+          cache: ghcr.io/${{ github.repository_owner }}/andromeda-buildcache:linux-arm64
+      - name: Tag the image for the commit
+        env:
+          KEY_IMAGE: ${{ env.CI_IMAGE }}:broker-input-${{ steps.inputs.outputs.key }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --annotation "index:org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --tag "${CI_IMAGE}:broker-${GITHUB_SHA}" \
+            "$KEY_IMAGE"
+
+  # The suite's runner image, built once per commit.
+  runner-image:
+    name: runner-image
+    if: *beyond-pull-request
+    runs-on: *runner
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      CI_IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda-ci
+    steps:
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: ./.github/actions/broker-image
-        with:
-          platform: linux/arm64
-          image: ${{ env.CI_IMAGE }}:broker-${{ github.sha }}
-          cache: ghcr.io/${{ github.repository_owner }}/andromeda-buildcache:linux-arm64
       - name: Build and push the runner image
         uses: docker/build-push-action@v7
         with:
@@ -227,7 +276,7 @@ jobs:
   # The database image is the published one, which the postgresql workflow rebuilds whenever its directory changes.
   suite:
     name: suite (${{ matrix.tree }})
-    needs: images
+    needs: [broker-image, runner-image]
     if: *beyond-pull-request
     runs-on: *runner
     timeout-minutes: 120

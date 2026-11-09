@@ -1,10 +1,12 @@
 name: prune-ci-images
 
-# ci pushes a broker and a runner image for every commit it checks, and every build that refreshes a layer cache leaves
-# the cache it replaced untagged. A commit's images stay for thirty days, long enough to release it; an untagged
-# manifest stays one day, so a push still in flight keeps the manifest it is about to tag. The images of the commit at
-# the head of main stay whatever their age, since the weekly suite run tests that commit on them. The published
-# andromeda and postgresql packages are never touched: their untagged versions are the platform manifests of a release.
+# ci tags a broker image index and a runner image for every commit it checks, builds a broker image only for broker
+# inputs no image exists for yet, and every build that refreshes a layer cache leaves the cache it replaced untagged. A
+# commit's tags stay for thirty days, long enough to release it, and a broker input image stays until the last commit
+# index pointing at it is gone. The tags of the commit at the head of main stay whatever their age, since the weekly
+# suite run tests that commit on them. An untagged manifest stays one day, so a push still in flight keeps the manifest
+# it is about to tag. The published andromeda and postgresql packages are never touched: their untagged versions are the
+# platform manifests of a release.
 on:
   schedule:
     - cron: "37 5 * * *"
@@ -21,7 +23,7 @@ jobs:
   prune:
     name: prune
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -29,6 +31,11 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       OWNER: ${{ github.repository_owner }}
     steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Delete expired versions
         shell: bash
         run: |
@@ -38,15 +45,9 @@ jobs:
           main_head="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
           echo "keeping broker-${main_head} and runner-${main_head}, the images of the head of main"
           for package in andromeda-ci andromeda-buildcache postgresql-buildcache; do
-            if ! ids="$(gh api --paginate "users/${OWNER}/packages/container/${package}/versions?per_page=100" --jq "
-              .[]
-              | (.updated_at | fromdateiso8601) as \$updated
-              | .metadata.container.tags as \$tags
-              | select(
-                  (\$tags == [] and \$updated < ${untagged_cutoff})
-                  or (\$tags != [] and all(\$tags[]; test(\"^(broker|runner)-[0-9a-f]{40}\$\") and (endswith(\"-${main_head}\") | not)) and \$updated < ${commit_cutoff})
-                )
-              | .id" 2> list-error.txt)"; then
+            if ! gh api --paginate "users/${OWNER}/packages/container/${package}/versions?per_page=100" \
+              --jq '.[] | {id, name, updated: (.updated_at | fromdateiso8601), tags: .metadata.container.tags}' \
+              > versions.jsonl 2> list-error.txt; then
               if grep -q 'HTTP 404' list-error.txt; then
                 echo "${package}: no such package"
                 continue
@@ -54,6 +55,23 @@ jobs:
               cat list-error.txt >&2
               exit 1
             fi
+            # The broker input images the commit indexes still kept point at, the head of main's among them.
+            jq -r --argjson cutoff "$commit_cutoff" --arg main_head "$main_head" '
+              select(.tags != [] and all(.tags[]; test("^broker-[0-9a-f]{40}$"))
+                and (.updated >= $cutoff or any(.tags[]; endswith("-" + $main_head)))) | .name' \
+              versions.jsonl | while IFS= read -r digest; do
+              docker buildx imagetools inspect --raw "ghcr.io/${OWNER}/${package}@${digest}" | jq -r '.manifests[]?.digest'
+            done | jq -R . | jq -s . > referenced.json
+            ids="$(jq -r --argjson commit_cutoff "$commit_cutoff" --argjson untagged_cutoff "$untagged_cutoff" \
+              --arg main_head "$main_head" --slurpfile referenced referenced.json '
+              select(
+                (.tags == [] and .updated < $untagged_cutoff)
+                or (.tags != [] and all(.tags[]; test("^(broker|runner)-[0-9a-f]{40}$") and (endswith("-" + $main_head) | not))
+                  and .updated < $commit_cutoff)
+                or (.tags != [] and all(.tags[]; test("^broker-input-[0-9a-f]{64}$")) and .updated < $untagged_cutoff
+                  and (.name as $name | $referenced[0] | any(.[]; . == $name) | not))
+              )
+              | .id' versions.jsonl)"
             count=0
             for id in $ids; do
               gh api --method DELETE "users/${OWNER}/packages/container/${package}/versions/${id}"

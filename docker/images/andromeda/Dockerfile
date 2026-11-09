@@ -82,7 +82,8 @@ EXPOSE 1056
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD ["andromeda", "health"]
 
-# The release build adds the labels that depend on the commit: source, revision, version, creation time and base image.
+# The CI build adds the source and base image labels. The image carries no commit, so the revision, version and creation
+# time go on the index that a commit's or a release's tag points at.
 LABEL org.opencontainers.image.title="Andromeda" \
       org.opencontainers.image.description="NGSI-LD context broker written in Rust. Implements the ETSI GS CIM 009 v1.9.1 API, from entities and subscriptions to temporal history and federation, and checks every request against the semantics of the standard. Multi-tenant on PostgreSQL." \
       org.opencontainers.image.url="https://andromeda.skvarc.com" \
