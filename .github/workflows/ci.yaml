@@ -239,10 +239,33 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      # The seal is verified against the branch a pull request merges into, or the commit a push builds on. verify
+      # --against reads the ledger there, so the ledger's blob is part of the key, and a tree that passed on main
+      # against one ledger isn't taken as passing against another, as a revert of a seal would be.
+      - name: Resolve the base
+        id: base
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          if [ -n "$BASE_REF" ]; then
+            revision="$(git rev-parse --verify "origin/${BASE_REF}^{commit}")"
+          else
+            revision="$(git rev-parse --verify --quiet 'HEAD^' || true)"
+          fi
+          ledger=""
+          if [ -n "$revision" ]; then
+            ledger="$(git rev-parse --verify --quiet "${revision}:migrations/seal-ledger.toml" || true)"
+          fi
+          {
+            echo "revision=${revision}"
+            echo "ledger=${ledger}"
+          } >> "$GITHUB_OUTPUT"
       - id: verdict
         uses: ./.github/actions/verdict-lookup
         with:
           check: sql
+          parts: base-ledger=${{ steps.base.outputs.ledger }}
           fresh: ${{ inputs.fresh }}
       - if: *unless-reused
         uses: ./.github/actions/rust-toolchain
@@ -284,19 +307,12 @@ jobs:
       - name: Migration seal
         if: *unless-reused-or-cancelled
         run: cargo run --package andromeda-sql --locked -- verify
-      # A sealed section must be unchanged from the branch a pull request merges into, or from the commit a push builds on.
+      # A sealed section must be unchanged from the base. A root commit has no base to compare with.
       - name: Migration seal against the base
-        if: ${{ !cancelled() && steps.verdict.outputs.reused != 'true' && github.event_name == 'pull_request' }}
+        if: ${{ !cancelled() && steps.verdict.outputs.reused != 'true' && steps.base.outputs.revision != '' }}
         env:
-          BASE_REF: ${{ github.base_ref }}
-        run: cargo run --package andromeda-sql --locked -- verify --against "origin/${BASE_REF}"
-      - name: Migration seal against the parent commit
-        if: ${{ !cancelled() && steps.verdict.outputs.reused != 'true' && github.event_name != 'pull_request' }}
-        run: |
-          set -euo pipefail
-          if git rev-parse --verify --quiet HEAD^ > /dev/null; then
-            cargo run --package andromeda-sql --locked -- verify --against HEAD^
-          fi
+          REVISION: ${{ steps.base.outputs.revision }}
+        run: cargo run --package andromeda-sql --locked -- verify --against "$REVISION"
       - name: andromeda-sql tests
         if: *unless-reused-or-cancelled
         run: cargo nextest run --package andromeda-sql --all-features --locked --no-fail-fast
