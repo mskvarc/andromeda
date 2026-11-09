@@ -249,7 +249,16 @@ jobs:
           set -euo pipefail
           {
             cat RELEASE_NOTES.md
-            printf '\n## Image\n\n```\ndocker pull %s:%s\n```\n\nManifest list digest: `%s`\n' "$IMAGE" "${VERSION#v}" "$DIGEST"
+            cat <<EOF
+
+          ## Image
+
+          \`\`\`
+          docker pull ${IMAGE}:${VERSION#v}
+          \`\`\`
+
+          Manifest list digest: \`${DIGEST}\`
+          EOF
           } > body.md
 
       - name: Publish release

@@ -290,8 +290,8 @@ jobs:
           curl -fsSL "https://github.com/darold/pgFormatter/archive/refs/tags/v${PGFORMATTER_VERSION}.tar.gz" | tar -xz -C "$tools"
           ln -s "${tools}/pgFormatter-${PGFORMATTER_VERSION}/pg_format" "${tools}/bin/pg_format"
           case "$(uname -m)" in
-            x86_64) squawk=squawk-linux-x64 ;;
-            aarch64) squawk=squawk-linux-arm64 ;;
+            x86_64) squawk='squawk-linux-x64' ;;
+            aarch64) squawk='squawk-linux-arm64' ;;
             *) echo "no Squawk build for $(uname -m)" >&2; exit 1 ;;
           esac
           curl -fsSL -o "${tools}/bin/squawk" "https://github.com/sbdchd/squawk/releases/download/v${SQUAWK_VERSION}/${squawk}"
@@ -367,7 +367,7 @@ jobs:
     name: pr-ok
     # Runs when a job it needs failed or was skipped, so a failure upstream still fails pr-ok; a cancelled run, which a
     # newer commit superseded, reports nothing.
-    if: &settled ${{ !cancelled() && !github.event.pull_request.draft }}
+    if: ${{ !cancelled() && !github.event.pull_request.draft }}
     needs: [fmt, taplo, machete, deny, shellcheck, clippy, unit, sql]
     runs-on: *runner
     timeout-minutes: 5
