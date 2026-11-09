@@ -19,7 +19,7 @@ use ngsi_ld::{
     },
     model::{Entity, EntityTypeName, Input, NgsiLdMediaType, OneOrMany, Scope},
     query::scope_query,
-    registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo, RegistrationMode},
+    registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo, RegistrationManagementInfo, RegistrationMode},
 };
 
 /// The Entities each domain holds.
@@ -33,6 +33,11 @@ const FIRST_PAGE: u32 = 250;
 
 /// The scoped queries sent at once, sixteen per domain.
 const CONCURRENT_QUERIES: usize = 64;
+
+/// The registrations' forwarding timeout in milliseconds, which takes precedence over the broker's 5 s default. On a
+/// host of two CPUs a domain needs more than 5 s for its share of the [`CONCURRENT_QUERIES`]; the bound stays below the
+/// hub's own 30 s request timeout, so a domain that misses it is still reported in the answer.
+const FORWARDING_TIMEOUT_MS: u32 = 20_000;
 
 /// The scope every Entity `domain` holds carries.
 fn domain_scope(domain: &Domain) -> String {
@@ -55,9 +60,10 @@ fn domain_buildings(namespace: &Namespace, building_type: &EntityTypeName, domai
 }
 
 /// Pins: Query Entities on broker A by type with `entityMap` true, limit 250 and count true, over inclusive
-/// registrations of brokers B to E holding 1,000 Entities each in a scope of their own, answers 201 with an
-/// `EntityMap`, at most 250 Entities and a count of 4,000; 64 Query Entities by type and `scopeQ` sent at once, each
-/// naming one domain's scope and its descendants, are each answered 200 with Entities of that scope only
+/// registrations of brokers B to E with a 20 s `management.timeout`, holding 1,000 Entities each in a scope of their
+/// own, answers 201 with an `EntityMap`, at most 250 Entities and a count of 4,000; 64 Query Entities by type and
+/// `scopeQ` sent at once, each naming one domain's scope and its descendants, are each answered 200 with Entities of
+/// that scope only
 /// Clause: 5.7.2.4, 5.5.14, 5.5.9, 4.19
 #[gtest]
 #[tokio::test]
@@ -74,6 +80,7 @@ async fn n_map_qen_8001_a_map_over_four_domains_counts_every_entity_and_scoped_q
                 .build()?])
             .mode(RegistrationMode::Inclusive)
             .operations([DistributedOperation::QueryEntity])
+            .management(RegistrationManagementInfo::builder().timeout(FORWARDING_TIMEOUT_MS).build()?)
             .build()?;
         hub.registrations().register(&registration).send().await?;
         // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
