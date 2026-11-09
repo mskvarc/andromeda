@@ -45,7 +45,7 @@ async fn n_ntf_pay_7604_sys_attrs_adds_created_at_and_modified_at() -> Result<()
     sink.wait_for_at_least(1, 1).await?;
     let notifications = sink.received(1).await?;
     let notification = notifications.first().or_fail()?.entities(Lossless::Normalized)?;
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(system_time::of_entity(item, SystemMember::CreatedAt).ok(), some(anything()));
     expect_that!(system_time::of_entity(item, SystemMember::ModifiedAt).ok(), some(anything()));
     Ok(())

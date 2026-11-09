@@ -52,7 +52,7 @@ async fn o_snp_cre_8102_a_snapshot_lives_one_hour_by_default_and_at_most_thirty_
         .send()
         .await?;
     expect_that!(again.output().created_at, some(anything()));
-    let created_at = ChronoDateTime::parse_from_rfc3339(&created.map(|instant| instant.to_string()).unwrap_or_default())?;
+    let created_at = ChronoDateTime::parse_from_rfc3339(&created.map_or_default(|instant| instant.to_string()))?;
     let expires_at = ChronoDateTime::parse_from_rfc3339(&again.output().expires_at.to_string())?;
     expect_that!(expires_at > created_at, eq(true));
     let long_lifetime = Snapshot::builder()

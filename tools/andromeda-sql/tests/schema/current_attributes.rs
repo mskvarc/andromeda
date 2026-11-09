@@ -148,8 +148,7 @@ fn every_value_index_is_partial_on_its_column() -> Result<(), PinError> {
         let column = index
             .name()
             .strip_prefix("idx_ca_")
-            .map(|column| column.strip_suffix("_trgm").unwrap_or(column))
-            .unwrap_or_default();
+            .map_or_default(|column| column.strip_suffix("_trgm").unwrap_or(column));
         assert!(VALUE_COLUMNS.contains(&column), "{} keys no value column", index.name());
         let definition = written(&schema, index.origin(), index.definition());
         assert!(definition.starts_with(&format!("on {TABLE} ")), "{definition}");

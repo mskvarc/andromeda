@@ -101,7 +101,7 @@ impl DeclaredIndex {
             })
             .collect();
         Ok(DeclaredIndex {
-            table: index.relation.as_ref().map(|relation| relation.relname.clone()).unwrap_or_default(),
+            table: index.relation.as_ref().map_or_default(|relation| relation.relname.clone()),
             name: index.idxname.clone(),
             unique: index.unique,
             method: Some(index.access_method.as_str())

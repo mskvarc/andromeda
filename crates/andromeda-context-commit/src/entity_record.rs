@@ -63,7 +63,7 @@ impl SearchProjection {
         Ok(SearchProjection {
             types: state.types().as_slice().to_vec(),
             attributes,
-            scopes: state.scope().map(|scopes| scopes.as_slice().to_vec()).unwrap_or_default(),
+            scopes: state.scope().map_or_default(|scopes| scopes.as_slice().to_vec()),
             location_expires_at: state.location_expiry(),
         })
     }

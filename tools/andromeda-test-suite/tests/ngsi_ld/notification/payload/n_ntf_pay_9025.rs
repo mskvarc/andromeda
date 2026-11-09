@@ -61,7 +61,7 @@ async fn n_ntf_pay_9025_an_ld_json_notification_carries_the_context_on_the_envel
     expect_that!(notifications, len(eq(1)));
     let notification = notifications.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification.context(), some(eq(&Context::Single(core_entry()?))));
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(item.context.as_ref(), some(eq(&Context::Single(core_entry()?))));
     broker.subscriptions().delete(&subscription_jsonld_context_id).send().await?;
     Ok(())

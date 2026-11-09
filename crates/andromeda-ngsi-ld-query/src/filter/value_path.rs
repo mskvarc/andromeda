@@ -179,8 +179,7 @@ mod tests {
             path.attr.as_str().to_owned(),
             path.sub_attrs.iter().map(|name| name.as_str().to_owned()).collect(),
             path.members()
-                .map(|members| members.addressed.iter().map(|name| name.as_str().to_owned()).collect())
-                .unwrap_or_default(),
+                .map_or_default(|members| members.addressed.iter().map(|name| name.as_str().to_owned()).collect()),
         )
     }
 

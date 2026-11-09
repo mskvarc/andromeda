@@ -49,8 +49,7 @@ impl<'a> AnsweredEvolution<'a> {
         let scopes = document
             .attributes()
             .get(expanded_properties::SCOPE.as_str())
-            .map(|scope| reified_paths(scope.instances().iter().filter(|instance| counts_in(instance, window))))
-            .unwrap_or_default();
+            .map_or_default(|scope| reified_paths(scope.instances().iter().filter(|instance| counts_in(instance, window))));
         AnsweredEvolution { document, scopes, window }
     }
 }

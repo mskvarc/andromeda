@@ -177,7 +177,7 @@ impl FederationService {
             mut dropped,
             linked_map,
         } = answer;
-        let source = registration_id.as_ref().map(ToString::to_string).unwrap_or_default();
+        let source = registration_id.as_ref().map_or_default(ToString::to_string);
         let mut states = Vec::with_capacity(entities.len());
         if !entities.is_empty() {
             match EntityExpansion::prepare(&self.engine, &naming).await {

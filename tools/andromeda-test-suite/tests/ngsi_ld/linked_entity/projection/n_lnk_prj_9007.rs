@@ -83,7 +83,7 @@ async fn n_lnk_prj_9007_both_join_modes_narrow_a_linked_entity_identity_by_the_n
         .await?;
     let entities = retrieved_2.body();
     expect_that!(entities.as_slice(), len(eq(2)));
-    let item = entities.as_slice().get(1).or_fail()?;
+    let item = entities.get(1).or_fail()?;
     expect_that!(item.entity_type, none());
     expect_that!(
         entities.as_slice(),
@@ -98,7 +98,7 @@ async fn n_lnk_prj_9007_both_join_modes_narrow_a_linked_entity_identity_by_the_n
         .send()
         .await?;
     let entities_2 = retrieved_3.body();
-    let item_2 = entities_2.as_slice().get(1).or_fail()?;
+    let item_2 = entities_2.get(1).or_fail()?;
     expect_that!(item_2.id, none());
     expect_that!(item_2.entity_type, none());
     expect_that!(entities_2.as_slice(), nth(1, has_attribute("name", any_attribute())));

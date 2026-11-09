@@ -65,7 +65,7 @@ async fn o_fed_ret_0009_the_warning_for_an_unresolved_linked_entity_names_it() -
         .join_level(1.try_into()?)
         .send()
         .await?;
-    let warnings = retrieved.warnings().valid().map(NgsiLdWarnings::as_slice).unwrap_or_default();
+    let warnings = retrieved.warnings().valid().map_or_default(NgsiLdWarnings::as_slice);
     expect_that!(
         warnings.iter().map(NgsiLdWarning::text).collect::<Vec<_>>(),
         contains(contains_substring(building_r_id.to_string()))

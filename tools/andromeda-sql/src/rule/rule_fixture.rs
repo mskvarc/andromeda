@@ -114,7 +114,7 @@ fn findings_in(rule: Rule, migrations: &[(&str, &str)], vocabulary: &FormatterVo
         .iter()
         .map(|found| {
             let file = match found.source() {
-                SourceKey::Migration(version) => schema.migration(version).map(|migration| migration.file().to_string()).unwrap_or_default(),
+                SourceKey::Migration(version) => schema.migration(version).map_or_default(|migration| migration.file().to_string()),
                 SourceKey::Vocabulary(file) => file.to_string(),
             };
             format!("{file}:{}", found.finding().range().start())

@@ -182,6 +182,16 @@ fn resolve_pg_format(root: &Path) -> Result<PgFormat, CommandError> {
 /// Print every finding where it is and turn the run into the exit status: any
 /// finding fails.
 fn report_lint(outcome: &LintOutcome) -> ExitCode {
+    print_lint(outcome);
+    match outcome.files() {
+        [] => ExitCode::SUCCESS,
+        [_, ..] => ExitCode::FAILURE,
+    }
+}
+
+/// Print every finding where it is, then the totals when there is any. The
+/// outcome lists only files with a finding, so no file means no finding.
+fn print_lint(outcome: &LintOutcome) {
     // A terminal follows the rule's documentation link; a log shows its address.
     let report = LintReport::new(GraphicalReportHandler::new_themed(GraphicalTheme::default()).with_links(io::stderr().is_terminal()));
     for linted in outcome.files() {
@@ -192,15 +202,13 @@ fn report_lint(outcome: &LintOutcome) -> ExitCode {
             }
         }
     }
-    match (outcome.count(LintSeverity::Error), outcome.count(LintSeverity::Warning)) {
-        (0, 0) => ExitCode::SUCCESS,
-        (errors, warnings) => {
-            eprintln!(
-                "andromeda-sql: {errors} error(s) and {warnings} warning(s) in {} file(s)",
-                outcome.files().len()
-            );
-            ExitCode::FAILURE
-        }
+    if !outcome.files().is_empty() {
+        eprintln!(
+            "andromeda-sql: {} error(s) and {} warning(s) in {} file(s)",
+            outcome.count(LintSeverity::Error),
+            outcome.count(LintSeverity::Warning),
+            outcome.files().len()
+        );
     }
 }
 
@@ -216,7 +224,7 @@ fn report_seal(outcome: &SealOutcome) -> ExitCode {
             ExitCode::SUCCESS
         }
         SealOutcome::Refused(SealRefusal::Broken(violations)) => {
-            report_verify(violations);
+            print_violations(violations);
             eprintln!("andromeda-sql: the seal is broken, so nothing is sealed");
             ExitCode::FAILURE
         }
@@ -236,7 +244,7 @@ fn report_seal(outcome: &SealOutcome) -> ExitCode {
             ExitCode::FAILURE
         }
         SealOutcome::Refused(SealRefusal::Lint(outcome)) => {
-            report_lint(outcome);
+            print_lint(outcome);
             eprintln!("andromeda-sql: the lint fails, so nothing is sealed");
             ExitCode::FAILURE
         }
@@ -246,14 +254,19 @@ fn report_seal(outcome: &SealOutcome) -> ExitCode {
 /// Print every violation of the seal and turn them into the exit status: any
 /// violation fails.
 fn report_verify(violations: &[SealViolation]) -> ExitCode {
+    print_violations(violations);
+    match violations {
+        [] => ExitCode::SUCCESS,
+        [_, ..] => ExitCode::FAILURE,
+    }
+}
+
+/// Print every violation of the seal, then their count when there is any.
+fn print_violations(violations: &[SealViolation]) {
     for violation in violations {
         eprintln!("{violation}");
     }
-    match violations.len() {
-        0 => ExitCode::SUCCESS,
-        broken => {
-            eprintln!("andromeda-sql: {broken} violation(s) of the seal");
-            ExitCode::FAILURE
-        }
+    if !violations.is_empty() {
+        eprintln!("andromeda-sql: {} violation(s) of the seal", violations.len());
     }
 }

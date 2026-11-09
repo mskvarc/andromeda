@@ -60,7 +60,7 @@ async fn o_ntf_pay_0017_listed_attributes_keep_the_entity_expiry() -> Result<()>
     expect_that!(notifications, len(eq(1)));
     let notification = notifications.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification.subscription_id(), eq(&subscription_id));
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(item.expires_at, some(eq("2099-01-01T00:00:00Z".parse::<DateTime>()?)));
     expect_that!(item.scope.as_ref(), none());
     sink.wait_for_at_least(2, 1).await?;
@@ -68,7 +68,7 @@ async fn o_ntf_pay_0017_listed_attributes_keep_the_entity_expiry() -> Result<()>
     expect_that!(notifications_2, len(eq(1)));
     let notification_2 = notifications_2.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification_2.subscription_id(), eq(&subscription_2_id));
-    let item_2 = notification_2.data().as_slice().first().or_fail()?;
+    let item_2 = notification_2.data().first().or_fail()?;
     expect_that!(item_2.expires_at, some(eq("2099-01-01T00:00:00Z".parse::<DateTime>()?)));
     expect_that!(item_2.scope.as_ref(), some(alone(&"/Paris/Tourism".parse::<Scope>()?)));
     Ok(())

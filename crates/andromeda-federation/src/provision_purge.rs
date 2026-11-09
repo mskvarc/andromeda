@@ -223,8 +223,7 @@ impl FederationService {
             let reported_ids = reported
                 .iter()
                 .find(|(registration, _)| *registration == result.registration_id)
-                .map(|(_, ids)| ids.clone())
-                .unwrap_or_default();
+                .map_or_default(|(_, ids)| ids.clone());
             results.push(ForwardedPurgeResult { result, reported_ids });
         }
         Ok(results)

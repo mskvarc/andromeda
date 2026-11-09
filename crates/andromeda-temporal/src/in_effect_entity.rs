@@ -129,7 +129,7 @@ impl<'a> InEffectEntity<'a> {
         }
         Some(InEffectEntity {
             attributes,
-            scopes: scope.map(|latest| reified_paths(latest.instances)).unwrap_or_default(),
+            scopes: scope.map_or_default(|latest| reified_paths(latest.instances)),
             types: parts
                 .iter()
                 .map(|part| part.entity().types())

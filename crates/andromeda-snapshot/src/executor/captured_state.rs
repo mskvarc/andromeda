@@ -86,8 +86,7 @@ mod tests {
         state
             .attributes()
             .get(attribute)
-            .map(|instances| instances.iter().map(|(dataset_id, _)| dataset_id.map(ToString::to_string)).collect())
-            .unwrap_or_default()
+            .map_or_default(|instances| instances.iter().map(|(dataset_id, _)| dataset_id.map(ToString::to_string)).collect())
     }
 
     fn dataset(id: &str) -> DatasetSelector {

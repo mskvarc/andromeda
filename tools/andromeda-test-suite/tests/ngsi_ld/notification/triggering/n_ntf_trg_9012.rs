@@ -59,7 +59,7 @@ async fn n_ntf_trg_9012_an_entity_deletion_notifies_once() -> Result<()> {
     expect_that!(notifications, len(eq(2)));
     let notification = notifications.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification.data().as_slice(), len(eq(1)));
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(system_time::of_entity(item, SystemMember::DeletedAt).ok(), some(anything()));
     expect_that!(notification.data().as_slice(), nth(0, all!(has_id(&np_delete_id), lacks_attribute("a"))));
     let notification_2 = notifications.get(1).or_fail()?.entities(Lossless::Normalized)?;

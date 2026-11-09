@@ -85,14 +85,10 @@ async fn n_ntf_pay_9007_show_changes_carries_each_deleted_instance_previous_valu
     expect_that!(notification.data().as_slice(), len(eq(1)));
     expect_that!(notification.data().as_slice(), nth(0, has_instances("label", 3)));
     expect_that!(
-        notification
-            .data()
-            .as_slice()
-            .first()
-            .and_then(|item| member_instances(item, "label", Member::DatasetId)),
+        notification.data().first().and_then(|item| member_instances(item, "label", Member::DatasetId)),
         some(eq(2))
     );
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(item, has_attribute("label", any_attribute().dataset_id(french_dataset.clone())));
     expect_that!(item, has_attribute("label", any_attribute().dataset_id(german_dataset.clone())));
     expect_that!(item, has_attribute("label", any_attribute().dataset_id(DatasetId::DefaultInstance)));

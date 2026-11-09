@@ -123,7 +123,7 @@ mod tests {
     /// The text `arguments` print instead of running, such as help or the
     /// version; empty when they parse into a command.
     fn printed(arguments: &[&str]) -> String {
-        Cli::try_parse_from(arguments).err().map(|error| error.to_string()).unwrap_or_default()
+        Cli::try_parse_from(arguments).err().map_or_default(|error| error.to_string())
     }
 
     /// The help text `arguments` print, split into words.

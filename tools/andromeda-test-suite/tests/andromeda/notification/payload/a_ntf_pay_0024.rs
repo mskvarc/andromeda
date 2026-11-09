@@ -67,7 +67,7 @@ async fn a_ntf_pay_0024_a_durable_notification_carries_the_modified_at_of_the_wr
     for received in &notifications {
         notified.push(received.entities(Lossless::Normalized)?);
     }
-    let items: Vec<&Entity<Output>> = notified.iter().filter_map(|notification| notification.data().as_slice().first()).collect();
+    let items: Vec<&Entity<Output>> = notified.iter().filter_map(|notification| notification.data().first()).collect();
     expect_that!(items, len(eq(3)));
     // Clause 5.8.6 fixes no delivery order, so each notification is paired with its update by the speed it carries.
     for (speed, modified_at) in &written {

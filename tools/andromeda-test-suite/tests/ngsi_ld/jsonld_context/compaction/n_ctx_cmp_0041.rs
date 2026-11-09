@@ -46,7 +46,7 @@ async fn n_ctx_cmp_0041_a_subscription_without_a_user_context_is_notified_under_
     expect_that!(notifications, len(eq(1)));
     let notification = notifications.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification.context(), some(eq(&Context::Single(core_entry()?))));
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(item.context.as_ref(), some(eq(&Context::Single(core_entry()?))));
     expect_that!(notification.data().as_slice(), nth(0, has_id(&device_notified_id)));
     Ok(())

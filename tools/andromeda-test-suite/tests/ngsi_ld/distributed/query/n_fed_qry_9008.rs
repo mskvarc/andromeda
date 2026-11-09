@@ -56,7 +56,7 @@ async fn n_fed_qry_9008_source_entities_a_write_would_refuse_are_dropped_with_a_
     expect_that!(page.items(), len(eq(1)));
     expect_that!(page.items(), nth(0, has_id(&valid_id)));
     // Clause 6.3.17 fixes the code of the warning and leaves its text and the number of warnings to the broker.
-    let warnings = page.warnings().valid().map(NgsiLdWarnings::as_slice).unwrap_or_default();
+    let warnings = page.warnings().valid().map_or_default(NgsiLdWarnings::as_slice);
     expect_that!(warnings, not(is_empty()));
     expect_that!(
         warnings.iter().map(NgsiLdWarning::code).collect::<Vec<_>>(),

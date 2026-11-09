@@ -40,7 +40,7 @@ impl DeclaredTrigger {
             .map_or(after_name, |token| token.range().start);
         Some(DeclaredTrigger {
             name: trigger.trigname.clone(),
-            table: trigger.relation.as_ref().map(|relation| relation.relname.clone()).unwrap_or_default(),
+            table: trigger.relation.as_ref().map_or_default(|relation| relation.relname.clone()),
             transition_tables: trigger
                 .transition_rels
                 .iter()

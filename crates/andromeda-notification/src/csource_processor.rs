@@ -126,7 +126,7 @@ impl CsourceNotificationProcessor {
         // subscription carries stays unused on this path.
         for stored in subscriptions {
             let compiled = compile_csource_subscription(&stored.subscription);
-            self.cache.insert(stored.subscription.id.clone(), Arc::new(compiled));
+            self.cache.insert(stored.subscription.id, Arc::new(compiled));
         }
         Ok(())
     }

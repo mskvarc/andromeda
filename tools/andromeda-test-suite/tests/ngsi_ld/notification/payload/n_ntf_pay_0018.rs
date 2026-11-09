@@ -61,7 +61,7 @@ async fn n_ntf_pay_0018_an_entity_deletion_with_a_flat_join_carries_only_the_del
     let notification = notifications.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification.subscription_id(), eq(&subscription_id));
     expect_that!(notification.data().as_slice(), len(eq(1)));
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(system_time::of_entity(item, SystemMember::DeletedAt).ok(), some(anything()));
     expect_that!(notification.data().as_slice(), nth(0, has_id(&building_id)));
     Ok(())

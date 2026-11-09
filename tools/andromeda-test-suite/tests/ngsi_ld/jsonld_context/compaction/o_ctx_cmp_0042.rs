@@ -87,7 +87,7 @@ async fn o_ctx_cmp_0042_a_jsonld_context_ending_with_the_core_context_is_named_a
         notification.context(),
         some(eq(&Context::Single(contexts.reference("jc/user/wrapper.jsonld")?)))
     );
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(item.context.as_ref(), some(eq(&Context::Single(contexts.reference("jc/user/wrapper.jsonld")?))));
     expect_that!(notification.data().as_slice(), nth(0, has_id(&device_notified_id)));
     Ok(())

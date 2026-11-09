@@ -107,7 +107,7 @@ mod tests {
 
     /// The identifiers a flat list was narrowed to, as wire text.
     fn flat_ids(id: Option<&Vec<Identifier>>) -> Vec<&str> {
-        id.map(|ids| ids.iter().map(Identifier::as_str).collect()).unwrap_or_default()
+        id.map_or_default(|ids| ids.iter().map(Identifier::as_str).collect())
     }
 
     /// The intersection keeps the order the incoming query wrote, because the

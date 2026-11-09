@@ -123,7 +123,7 @@ fn kept(answers: &[Answer]) -> Vec<Kept> {
                 })
                 .collect();
             let scopes = document.instances().filter(|(name, _)| **name == scope()).count();
-            (document.id().map(ToString::to_string).unwrap_or_default(), attributes, scopes)
+            (document.id().map_or_default(ToString::to_string), attributes, scopes)
         })
         .collect()
 }

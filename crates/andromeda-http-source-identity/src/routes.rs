@@ -89,7 +89,7 @@ mod tests {
     impl RecordingStore {
         /// Every identifier inserted so far.
         fn inserted(&self) -> Vec<JsonLdContextId> {
-            self.inserted.lock().map(|inserted| inserted.clone()).unwrap_or_default()
+            self.inserted.lock().map_or_default(|inserted| inserted.clone())
         }
     }
 
@@ -278,7 +278,7 @@ mod tests {
         let inserted = store.inserted();
         pretty_assertions::assert_eq!(inserted.len(), 1, "exactly one wrapper is hosted: {inserted:?}");
         let link = response.headers().get("link").and_then(|value| value.to_str().ok()).unwrap_or_default();
-        let wrapper = inserted.first().map(ToString::to_string).unwrap_or_default();
+        let wrapper = inserted.first().map_or_default(ToString::to_string);
         assert!(
             link.contains(&format!("http://broker.example/ngsi-ld/v1/jsonldContexts/{wrapper}>")),
             "the Link names the hosted wrapper, untenanted: {link}"

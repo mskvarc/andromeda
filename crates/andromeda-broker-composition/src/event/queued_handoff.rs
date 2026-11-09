@@ -198,7 +198,7 @@ mod tests {
 
     impl CapturedLog {
         fn text(&self) -> String {
-            self.0.lock().map(|bytes| String::from_utf8_lossy(&bytes).into_owned()).unwrap_or_default()
+            self.0.lock().map_or_default(|bytes| String::from_utf8_lossy(&bytes).into_owned())
         }
     }
 

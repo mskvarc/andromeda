@@ -82,8 +82,8 @@ async fn o_lnk_prj_0004_the_first_relationship_in_the_pick_list_to_reach_a_share
         .await?;
     let entities_2 = retrieved.body();
     expect_that!(entities_2.as_slice(), len(eq(2)));
-    expect_that!(entities_2.as_slice().get(1).map(projected_member_count), some(eq(1)));
-    let item_2 = entities_2.as_slice().get(1).or_fail()?;
+    expect_that!(entities_2.get(1).map(projected_member_count), some(eq(1)));
+    let item_2 = entities_2.get(1).or_fail()?;
     expect_that!(item_2.id, none());
     expect_that!(entities_2.as_slice(), nth(0, has_id(&building_a_id)));
     expect_that!(entities_2.as_slice(), nth(1, has_attribute("name", any_attribute().value("Depot"))));
@@ -98,8 +98,8 @@ async fn o_lnk_prj_0004_the_first_relationship_in_the_pick_list_to_reach_a_share
         .await?;
     let entities_3 = retrieved_2.body();
     expect_that!(entities_3.as_slice(), len(eq(2)));
-    expect_that!(entities_3.as_slice().get(1).map(projected_member_count), some(eq(1)));
-    let item_3 = entities_3.as_slice().get(1).or_fail()?;
+    expect_that!(entities_3.get(1).map(projected_member_count), some(eq(1)));
+    let item_3 = entities_3.get(1).or_fail()?;
     expect_that!(item_3.id, none());
     expect_that!(entities_3.as_slice(), nth(1, has_attribute("name", any_attribute().value("Depot"))));
     // the bare relA reaches b first, so b is appended whole and relB{name} does not narrow it
@@ -113,7 +113,7 @@ async fn o_lnk_prj_0004_the_first_relationship_in_the_pick_list_to_reach_a_share
         .await?;
     let entities_4 = retrieved_3.body();
     expect_that!(entities_4.as_slice(), len(eq(2)));
-    expect_that!(entities_4.as_slice().get(1).map(projected_member_count), some(eq(4)));
+    expect_that!(entities_4.get(1).map(projected_member_count), some(eq(4)));
     expect_that!(
         entities_4.as_slice(),
         nth(
@@ -155,7 +155,7 @@ async fn o_lnk_prj_0004_the_first_relationship_in_the_pick_list_to_reach_a_share
         .await?;
     let entities_5 = retrieved_4.body();
     expect_that!(entities_5.as_slice(), len(eq(2)));
-    expect_that!(entities_5.as_slice().get(1).map(projected_member_count), some(eq(1)));
+    expect_that!(entities_5.get(1).map(projected_member_count), some(eq(1)));
     expect_that!(entities_5.as_slice(), nth(1, has_attribute("name", any_attribute().value("Depot"))));
     Ok(())
 }

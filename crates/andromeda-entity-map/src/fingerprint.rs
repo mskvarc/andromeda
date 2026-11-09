@@ -177,7 +177,7 @@ fn selectors_value(selectors: &[EntitySelectorParams]) -> Option<String> {
     }
     let mut rendered: Vec<String> = selectors
         .iter()
-        .map(|selector| selector.type_.as_ref().map(ToString::to_string).unwrap_or_default())
+        .map(|selector| selector.type_.as_ref().map_or_default(ToString::to_string))
         .collect();
     rendered.sort_unstable();
     rendered.dedup();

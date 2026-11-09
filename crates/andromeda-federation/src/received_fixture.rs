@@ -23,8 +23,7 @@ pub(crate) fn version(id: &str, attributes: &[(&str, Value)]) -> ReceivedState {
     for (term, instances) in attributes {
         let written: Vec<Value> = instances
             .as_array()
-            .map(Vec::as_slice)
-            .unwrap_or_default()
+            .map_or_default(Vec::as_slice)
             .iter()
             .map(|instance| {
                 let mut node = Map::new();

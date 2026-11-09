@@ -164,8 +164,7 @@ mod tests {
         state
             .attributes()
             .get(term("speed").as_str())
-            .map(|held| held.iter().map(|(dataset, _)| dataset.map(ToString::to_string)).collect())
-            .unwrap_or_default()
+            .map_or_default(|held| held.iter().map(|(dataset, _)| dataset.map(ToString::to_string)).collect())
     }
 
     /// Clause 5.6.20.4 runs the Merge Entity of clause 5.6.17, and clause

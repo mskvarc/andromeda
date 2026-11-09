@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn an_array_member_is_deleted_by_the_null_alone_or_bare() {
         for deletion in [json!(["urn:ngsi-ld:null"]), json!("urn:ngsi-ld:null")] {
-            let deleted = read(&json!({"names": deletion.clone(), "numbers": deletion.clone()})).expect("the Null");
+            let deleted = read(&json!({"names": deletion, "numbers": deletion})).expect("the Null");
             assert!(deleted.names.is_ngsi_ld_null() && deleted.numbers.is_ngsi_ld_null(), "{deletion}");
             pretty_assertions::assert_eq!(
                 serde_json::to_value(&deleted).expect("writes"),

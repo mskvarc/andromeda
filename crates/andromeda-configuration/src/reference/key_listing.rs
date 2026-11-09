@@ -227,7 +227,7 @@ fn list_table(entries: &mut Vec<ReferenceEntry>, path: &KeyPath, example: &Table
             state,
             value: literal(default.unwrap_or(value)),
             description: described(schema.child(name)),
-            choices: schema.child(name).map(SchemaNode::choices).unwrap_or_default(),
+            choices: schema.child(name).map_or_default(SchemaNode::choices),
             choice_range: schema.child(name).map_or(ChoiceRange::Closed, SchemaNode::choice_range),
             limits: Vec::new(),
             conditions: Vec::new(),

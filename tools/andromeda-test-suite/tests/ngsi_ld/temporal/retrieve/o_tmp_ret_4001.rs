@@ -11,7 +11,7 @@ use ngsi_ld::{
 
 /// Pins: Retrieve Temporal Evolution of an Entity with pick and omit naming different members answers 200 with the
 /// temporal Entity reduced to the picked members minus the omitted ones; a member named in both is refused with
-/// BadRequestData
+/// `BadRequestData`
 /// Clause: 4.21, 5.7.3.5, 6.19.3.1
 /// Recorded: Table 6.19.3.1-1 defines pick and omit side by side and the clauses name no error for either combination.
 /// Applying both when they name different members, and refusing a member named in both as a self-contradictory

@@ -126,7 +126,7 @@ impl InEffectProbe<'_> {
 ///
 /// Returns [`NgsiLdReferenceError`] when `location` is not an attribute name.
 fn filter_attributes(client: &TemporalQueryParameters) -> Result<Vec<AttributeName>, NgsiLdReferenceError> {
-    let mut attributes: Vec<AttributeName> = client.q.as_ref().map(referenced_attributes).unwrap_or_default().into_iter().cloned().collect();
+    let mut attributes: Vec<AttributeName> = client.q.as_ref().map_or_default(referenced_attributes).into_iter().cloned().collect();
     if let Some(geo) = client.geo.0.as_ref() {
         let geoproperty = match &geo.geoproperty {
             Some(reference) => AttributeName::from(reference),

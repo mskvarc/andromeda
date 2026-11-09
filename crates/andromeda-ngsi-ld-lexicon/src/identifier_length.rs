@@ -61,7 +61,7 @@ mod tests {
         let past_limit = "a".repeat(IDENTIFIER_BYTE_LIMIT + 1);
         let refused = IdentifierTooLong::check(&past_limit);
         pretty_assertions::assert_eq!(refused, Err(IdentifierTooLong { length: 1025 }));
-        let message = refused.err().map(|error| error.to_string()).unwrap_or_default();
+        let message = refused.err().map_or_default(|error| error.to_string());
         assert!(message.contains("1025 bytes"), "{message}");
     }
 }

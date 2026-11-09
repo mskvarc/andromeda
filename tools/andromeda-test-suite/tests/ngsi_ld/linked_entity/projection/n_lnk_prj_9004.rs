@@ -72,9 +72,9 @@ async fn n_lnk_prj_9004_a_group_addresses_only_the_entity_its_relationship_reach
         .await?;
     let entities = retrieved.body();
     expect_that!(entities.as_slice(), len(eq(3)));
-    expect_that!(entities.as_slice().get(1).map(projected_member_count), some(eq(2)));
-    expect_that!(entities.as_slice().get(2).map(projected_member_count), some(eq(4)));
-    let item = entities.as_slice().get(2).or_fail()?;
+    expect_that!(entities.get(1).map(projected_member_count), some(eq(2)));
+    expect_that!(entities.get(2).map(projected_member_count), some(eq(4)));
+    let item = entities.get(2).or_fail()?;
     expect_that!(item.id, some(anything()));
     expect_that!(item.entity_type, some(anything()));
     expect_that!(
@@ -95,7 +95,7 @@ async fn n_lnk_prj_9004_a_group_addresses_only_the_entity_its_relationship_reach
         .await?;
     let entities_2 = retrieved_2.body();
     expect_that!(entities_2.as_slice(), len(eq(3)));
-    expect_that!(entities_2.as_slice().get(2).map(projected_member_count), some(eq(1)));
+    expect_that!(entities_2.get(2).map(projected_member_count), some(eq(1)));
     expect_that!(entities_2.as_slice(), nth(2, has_attribute("size", any_attribute())));
     Ok(())
 }

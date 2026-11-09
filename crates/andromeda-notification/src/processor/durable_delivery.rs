@@ -110,7 +110,7 @@ fn commit_filters(stored: &NotificationEvent) -> CommitFilters {
 fn queued_change_event(stored: &NotificationEvent) -> ChangeEvent {
     let snapshot = stored.entity_snapshot.as_ref().map(Arc::clone);
     // clone: the types are copied out before the snapshot moves into the event
-    let entity_types = snapshot.as_ref().map(|state| state.types().as_slice().to_vec()).unwrap_or_default();
+    let entity_types = snapshot.as_ref().map_or_default(|state| state.types().as_slice().to_vec());
     let (removed, current) = match stored.change.lifecycle {
         EntityLifecycle::Deleted => (snapshot, None),
         EntityLifecycle::Created | EntityLifecycle::Modified => (None, snapshot),

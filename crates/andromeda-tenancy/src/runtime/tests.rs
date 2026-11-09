@@ -128,7 +128,7 @@ impl FakeProbe {
 
     /// The standing of the tenant each probe was asked about, in order.
     fn asked(&self) -> Vec<TenantExistence> {
-        self.asked.lock().map(|asked| asked.clone()).unwrap_or_default()
+        self.asked.lock().map_or_default(|asked| asked.clone())
     }
 }
 
@@ -187,12 +187,12 @@ impl FakeSchedule {
 
     /// How many times `settle` was called.
     fn settle_count(&self) -> usize {
-        self.settled.lock().map(|settled| settled.len()).unwrap_or_default()
+        self.settled.lock().map_or_default(|settled| settled.len())
     }
 
     /// Every `record` call's tenant name and recorded wake instant.
     fn recorded(&self) -> Vec<(String, Option<SystemTime>)> {
-        self.recorded.lock().map(|recorded| recorded.clone()).unwrap_or_default()
+        self.recorded.lock().map_or_default(|recorded| recorded.clone())
     }
 }
 
@@ -206,19 +206,15 @@ impl TenantWakeSchedule for FakeSchedule {
     }
 
     async fn claim_due(&self, _now: SystemTime, _lease_until: SystemTime, limit: usize) -> Result<Vec<TenantName>, WakeScheduleError> {
-        let claimed: Vec<String> = self
-            .due
-            .lock()
-            .map(|mut due| {
-                let take = limit.min(due.len());
-                due.drain(..take).collect()
-            })
-            .unwrap_or_default();
+        let claimed: Vec<String> = self.due.lock().map_or_default(|mut due| {
+            let take = limit.min(due.len());
+            due.drain(..take).collect()
+        });
         Ok(claimed.into_iter().filter_map(|name| TenantName::try_from(name).ok()).collect())
     }
 
     async fn earliest_wake(&self) -> Result<Option<SystemTime>, WakeScheduleError> {
-        Ok(self.earliest.lock().map(|earliest| *earliest).unwrap_or_default())
+        Ok(self.earliest.lock().map_or_default(|earliest| *earliest))
     }
 
     async fn overdue(&self, _now: SystemTime) -> Result<Option<OverdueWakes>, WakeScheduleError> {
@@ -316,7 +312,7 @@ impl FakeRegistry {
 
     /// Every provisional name.
     fn provisional(&self) -> Vec<String> {
-        self.provisional.lock().map(|names| names.clone()).unwrap_or_default()
+        self.provisional.lock().map_or_default(|names| names.clone())
     }
 
     /// Whether a tenant is provisional.
@@ -357,12 +353,12 @@ impl FakeRegistry {
 
     /// The names offered for retirement so far.
     fn offered(&self) -> Vec<String> {
-        self.offered.lock().map(|names| names.clone()).unwrap_or_default()
+        self.offered.lock().map_or_default(|names| names.clone())
     }
 
     /// Every registered name.
     fn all(&self) -> Vec<String> {
-        self.registered.lock().map(|names| names.clone()).unwrap_or_default()
+        self.registered.lock().map_or_default(|names| names.clone())
     }
 
     /// Forget a tenant, as an operator dropping its row would.

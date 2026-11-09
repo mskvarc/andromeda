@@ -215,7 +215,7 @@ mod tests {
 
     /// The sources recorded for `entity_id`, in the order the map keeps them.
     fn sources_of<'m>(map: &'m EntityMap, entity_id: &str) -> Vec<&'m EntityMapSource> {
-        map.entity_map.get(&uri(entity_id)).map(|sources| sources.iter().collect()).unwrap_or_default()
+        map.entity_map.get(&uri(entity_id)).map_or_default(|sources| sources.iter().collect())
     }
 
     fn local_map() -> EntityMap {

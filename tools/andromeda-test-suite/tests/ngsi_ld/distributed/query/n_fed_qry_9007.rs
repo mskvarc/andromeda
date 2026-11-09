@@ -54,7 +54,7 @@ async fn n_fed_qry_9007_a_source_entity_off_the_axes_is_dropped_with_a_warning()
         .await?;
     expect_that!(page.items(), len(eq(1)));
     expect_that!(page.items(), nth(0, has_id(&valid_id)));
-    let warnings = page.warnings().valid().map(NgsiLdWarnings::as_slice).unwrap_or_default();
+    let warnings = page.warnings().valid().map_or_default(NgsiLdWarnings::as_slice);
     expect_that!(
         warnings.iter().map(NgsiLdWarning::code).collect::<Vec<_>>(),
         contains(eq(&WarningCode::RevalidationFailed))

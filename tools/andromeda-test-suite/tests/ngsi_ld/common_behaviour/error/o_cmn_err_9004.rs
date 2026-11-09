@@ -44,7 +44,7 @@ async fn o_cmn_err_9004_put_and_patch_on_the_entities_collection_get_a_405_probl
                     .with_header_containing(ALLOW, "DELETE"),
                 "{method} {path}"
             );
-            let allow = answer.answered_headers().map(|headers| header_values(headers, &ALLOW)).unwrap_or_default();
+            let allow = answer.answered_headers().map_or_default(|headers| header_values(headers, &ALLOW));
             expect_that!(
                 allow,
                 each(not(any![contains_substring("PUT"), contains_substring("PATCH")])),

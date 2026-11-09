@@ -54,7 +54,7 @@ async fn a_ntf_pay_0021_a_durable_entity_deletion_notification_carries_the_remov
     let notifications = sink.received(1).await?;
     expect_that!(notifications, len(eq(1)));
     let notification = notifications.first().or_fail()?.entities(Lossless::Normalized)?;
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(system_time::of_entity(item, SystemMember::DeletedAt).ok(), some(anything()));
     expect_that!(system_time::of_entity(item, SystemMember::CreatedAt).ok(), some(anything()));
     expect_that!(system_time::of_entity(item, SystemMember::ModifiedAt).ok(), some(anything()));

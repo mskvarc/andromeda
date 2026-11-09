@@ -6,12 +6,7 @@ use crate::{
     linked_entity_fixtures::{create_eiffel_vehicle_pisa, delete_eiffel_vehicle_pisa},
     unchecked_requests::refused_get,
 };
-use andromeda_test_suite::{
-    broker::{self},
-    namespace::Namespace,
-    problem::problem,
-    vocabulary::Vocabulary,
-};
+use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{

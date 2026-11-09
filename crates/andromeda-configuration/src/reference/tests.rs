@@ -209,7 +209,7 @@ fn named_keys(value: &serde_json::Value, keys: &mut BTreeSet<String>) {
 #[test]
 fn the_descriptor_holds_every_compound_rule_with_every_key_it_names() -> Result<(), ReferenceError> {
     let value = serde_json::to_value(configuration_descriptor()?)?;
-    let rules = value["rules"].as_array().map(Vec::as_slice).unwrap_or_default();
+    let rules = value["rules"].as_array().map_or_default(Vec::as_slice);
     assert_eq!(rules.len(), 16);
     for rule in rules {
         let listed: BTreeSet<String> = rule["keys"]

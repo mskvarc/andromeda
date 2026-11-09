@@ -95,16 +95,12 @@ impl FixtureEntity {
             Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => document,
         };
         let object = node.as_object().expect("an expanded entity object");
-        let types = object
-            .get("@type")
-            .and_then(Value::as_array)
-            .map(|types| {
-                types
-                    .iter()
-                    .map(|declared| declared.as_str().expect("a type IRI").parse().expect("a type name"))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let types = object.get("@type").and_then(Value::as_array).map_or_default(|types| {
+            types
+                .iter()
+                .map(|declared| declared.as_str().expect("a type IRI").parse().expect("a type name"))
+                .collect()
+        });
         let attributes = object
             .iter()
             .filter(|(key, _)| !key.starts_with('@'))

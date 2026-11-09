@@ -225,7 +225,7 @@ pub fn exists_in_positional_tree(tree: SimpleExpr, levels: &[Alias], parent: &dy
 /// Elements come in array order, which is the written order of siblings.
 #[must_use]
 pub fn first_in_positional_tree(tree: SimpleExpr, levels: &[Alias], parent: &dyn Iden, filter: Condition) -> SimpleExpr {
-    let last = levels.last().map(|level| quoted_name(level)).unwrap_or_default();
+    let last = levels.last().map_or_default(|level| quoted_name(level));
     let sql = format!("(SELECT {last} FROM {} WHERE $2 LIMIT 1)", positional_tree_source(levels, parent));
     Expr::cust_with_exprs(sql, [tree, filter.into()])
 }

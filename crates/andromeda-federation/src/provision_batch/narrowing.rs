@@ -128,8 +128,7 @@ mod tests {
         entity
             .body
             .as_ref()
-            .map(|body| body.attributes().keys().map(ToString::to_string).collect())
-            .unwrap_or_default()
+            .map_or_default(|body| body.attributes().keys().map(ToString::to_string).collect())
     }
 
     #[test]

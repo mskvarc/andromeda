@@ -130,7 +130,7 @@ async fn n_lnk_prj_9009_a_linked_entity_term_addresses_only_the_entity_its_relat
         .await?;
     let entities = retrieved_2.body();
     expect_that!(entities.as_slice(), len(eq(3)));
-    let item_2 = entities.as_slice().first().or_fail()?;
+    let item_2 = entities.first().or_fail()?;
     expect_that!(item_2.entity_type, none());
     expect_that!(entities.as_slice(), nth(1, all!(lacks_attribute("name"), has_type(&city_type))));
     expect_that!(

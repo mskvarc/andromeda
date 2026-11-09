@@ -119,7 +119,7 @@ impl SchemaObjects {
             self.read_alter_table(alter, context);
         } else if let NodeEnum::CompositeTypeStmt(composite) = node {
             let relation = composite.typevar.as_ref();
-            let name = relation.map(|relation| relation.relname.as_str()).unwrap_or_default();
+            let name = relation.map_or_default(|relation| relation.relname.as_str());
             let location = relation.map_or(-1, |relation| relation.location);
             self.created
                 .push(CreatedObject::new(ObjectKind::CompositeType, name, context.origin_at(location)));
@@ -215,7 +215,7 @@ impl SchemaObjects {
     /// and the replica identity it sets and the constraints it adds or
     /// validates.
     fn read_alter_table(&mut self, alter: &AlterTableStmt, context: &StatementContext<'_>) {
-        let table = alter.relation.as_ref().map(|relation| relation.relname.as_str()).unwrap_or_default();
+        let table = alter.relation.as_ref().map_or_default(|relation| relation.relname.as_str());
         for command in alter.cmds.iter().filter_map(|node| match &node.node {
             Some(NodeEnum::AlterTableCmd(command)) => Some(command),
             Some(_) | None => None,

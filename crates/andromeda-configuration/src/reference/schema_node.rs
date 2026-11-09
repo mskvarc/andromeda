@@ -150,7 +150,7 @@ impl SchemaNode {
         match self.types.writable().first().copied() {
             Some("integer") if self.is_positive_integer() => String::from("positive integer"),
             Some("string") if self.format.as_deref() == Some("uri") => String::from("URL"),
-            Some("array") => format!("list of {}", self.items.as_deref().map(SchemaNode::type_name).unwrap_or_default()),
+            Some("array") => format!("list of {}", self.items.as_deref().map_or_default(SchemaNode::type_name)),
             Some("object") => String::from("table"),
             Some(other) => other.to_owned(),
             None => String::new(),

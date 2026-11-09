@@ -33,7 +33,7 @@ pub(crate) enum ContentKind {
 /// Returns the bare 415 when the header is absent, is no media type, or names
 /// one clause 6.3.4 does not admit under `method`.
 pub(crate) fn admit_content_kind(headers: &HeaderMap, method: &Method) -> Result<ContentKind, ExtractorRejection> {
-    let raw = headers.typed_get::<headers::ContentType>().map(|value| value.to_string()).unwrap_or_default();
+    let raw = headers.typed_get::<headers::ContentType>().map_or_default(|value| value.to_string());
     classify_content_type(&raw, method).ok_or_else(|| {
         tracing::warn!("request refused: unsupported media type '{raw}'");
         ExtractorRejection::Empty(StatusCode::UNSUPPORTED_MEDIA_TYPE)
