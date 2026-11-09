@@ -1,7 +1,6 @@
 //! The `ComponentReportList` that `GET /ngsi-ld/v1/version` answers: an Andromeda extension no NGSI-LD model
 //! covers, read into a type so a test states members, not paths.
 
-use crate::reported_instant::ReportedInstant;
 use serde::Deserialize;
 use url::Url;
 
@@ -26,23 +25,39 @@ pub enum ComponentName {
     Timescaledb,
 }
 
-/// One component and what the broker knows of its build; the members only the broker's own entry carries are
-/// absent from the others.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+/// Whether the database server's connections cover every pool the broker may open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum CapacityVerdict {
+    /// The broker's pools fit.
+    Sufficient,
+    /// The broker's pools, all full at once, need more connections than it may open.
+    Exceeded,
+}
+
+/// `connections` on the database server's entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConnectionCapacity {
+    /// `serverMaxConnections`.
+    pub server_max_connections: u32,
+    /// `reservedForOthers`.
+    pub reserved_for_others: u32,
+    /// `brokerCeiling`.
+    pub broker_ceiling: u32,
+    /// `verdict`.
+    pub verdict: CapacityVerdict,
+}
+
+/// One component and what the broker reports of it. Every member any component carries is named here and any
+/// other member fails the read; the members only one component carries are absent from the others.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ComponentReport {
     /// `component`.
     pub component: ComponentName,
     /// `version`: free-form text such as `v18.6 (Debian 18.6-1.pgdg13+2)`.
     pub version: String,
-    /// `buildTime`.
-    pub build_time: Option<ReportedInstant>,
-    /// `branch`: the Git branch of the build, empty when it has none.
-    pub branch: Option<String>,
-    /// `commit`: the Git commit of the build, empty when it has none.
-    pub commit: Option<String>,
-    /// `gitClean`: whether the working tree was clean.
-    pub git_clean: Option<bool>,
     /// `rustVersion`.
     pub rust_version: Option<String>,
     /// `rustChannel`.
@@ -53,6 +68,10 @@ pub struct ComponentReport {
     pub build_operating_system: Option<String>,
     /// `buildTarget`.
     pub build_target: Option<String>,
+    /// `connections`, on the database server's entry.
+    pub connections: Option<ConnectionCapacity>,
+    /// `license`, on the time series extension's entry.
+    pub license: Option<String>,
 }
 
 /// The document the version endpoint answers.
@@ -77,10 +96,10 @@ impl ComponentReportList {
 
 #[cfg(test)]
 mod tests {
-    use crate::component_report::{ComponentName, ComponentReportList, ReportType};
+    use crate::component_report::{CapacityVerdict, ComponentName, ComponentReportList, ReportType};
     use googletest::prelude::*;
 
-    const LIST: &str = r#"{"id":"urn:ngsi-ld:ComponentReportList:1","type":"ComponentReportList","components":[{"component":"andromeda","version":"v0.1.0","buildTime":"2026-10-29T16:37:22.853856262+00:00","branch":"","commit":"","gitClean":true,"rustVersion":"rustc 1","rustChannel":"nightly","cargoVersion":"cargo 1","buildOperatingSystem":"linux","buildTarget":"x"},{"component":"postgresql","version":"v18.6","connections":{"verdict":"sufficient"}},{"component":"timescaledb","version":"v2.31.0","license":"TSL"}]}"#;
+    const LIST: &str = r#"{"id":"urn:ngsi-ld:ComponentReportList:1","type":"ComponentReportList","components":[{"component":"andromeda","version":"v0.1.0","rustVersion":"rustc 1","rustChannel":"nightly","cargoVersion":"cargo 1","buildOperatingSystem":"linux-aarch64","buildTarget":"x"},{"component":"postgresql","version":"v18.6","connections":{"serverMaxConnections":200,"reservedForOthers":3,"brokerCeiling":150,"verdict":"sufficient"}},{"component":"timescaledb","version":"v2.31.0","license":"TSL"}]}"#;
 
     #[gtest]
     fn a_report_list_reads_each_component_with_its_own_members() -> Result<()> {
@@ -88,16 +107,26 @@ mod tests {
         expect_that!(list.report_type, eq(ReportType::ComponentReportList));
         expect_that!(list.of(ComponentName::Andromeda).count(), eq(1));
         let build = list.of(ComponentName::Andromeda).next().or_fail()?;
-        expect_that!(build.git_clean, some(eq(true)));
-        expect_that!(build.build_time, some(anything()));
+        expect_that!(build.rust_channel.as_deref(), some(eq("nightly")));
+        expect_that!(build.connections, none());
         let storage = list.of(ComponentName::Postgresql).next().or_fail()?;
-        expect_that!(storage.build_time, none());
+        expect_that!(storage.rust_version, none());
+        expect_that!(
+            storage.connections.map(|connections| connections.verdict),
+            some(eq(CapacityVerdict::Sufficient))
+        );
         Ok(())
     }
 
     #[gtest]
     fn a_member_beside_the_documented_three_is_refused() {
         let text = LIST.replacen(r#""type":"ComponentReportList""#, r#""type":"ComponentReportList","@context":"x""#, 1);
+        expect_that!(serde_json::from_str::<ComponentReportList>(&text), err(anything()));
+    }
+
+    #[gtest]
+    fn a_component_member_the_model_does_not_name_is_refused() {
+        let text = LIST.replacen(r#""buildTarget":"x""#, r#""buildTarget":"x","commit":"0123456789""#, 1);
         expect_that!(serde_json::from_str::<ComponentReportList>(&text), err(anything()));
     }
 }

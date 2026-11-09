@@ -1,17 +1,9 @@
 //! The broker's command-line interface: global listener and configuration
 //! overrides and the subcommands that run instead of the broker.
 
-#![expect(
-    clippy::absolute_paths,
-    unreachable_pub,
-    reason = "shadow generates absolute standard-library paths, and its constants as `pub` inside this private module"
-)]
-
+use andromeda_broker_composition::build_metadata::{LONG_VERSION, VERSION};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use shadow_rs::shadow;
 use std::{net::IpAddr, path::PathBuf};
-
-shadow!(build);
 
 /// Andromeda NGSI-LD context broker.
 ///
@@ -20,7 +12,7 @@ shadow!(build);
 /// without starting the broker, and the `health` subcommand asks a running
 /// broker whether it is ready.
 #[derive(Parser)]
-#[command(version = build::CLAP_LONG_VERSION, about, long_about = None)]
+#[command(version = VERSION, long_version = LONG_VERSION, about, long_about = None)]
 #[command(disable_help_subcommand = true)]
 #[clap(styles = clap_themes::CLAP_V3)]
 pub(crate) struct Cli {
@@ -128,12 +120,34 @@ mod tests {
         }))
     }
 
+    /// The text `arguments` print instead of running, such as help or the
+    /// version; empty when they parse into a command.
+    fn printed(arguments: &[&str]) -> String {
+        Cli::try_parse_from(arguments).err().map(|error| error.to_string()).unwrap_or_default()
+    }
+
     /// The help text `arguments` print, split into words.
     fn help_words(arguments: &[&str]) -> Vec<String> {
-        let help = Cli::try_parse_from(arguments).err().map(|error| error.to_string()).unwrap_or_default();
-        help.split(|character: char| character.is_whitespace() || matches!(character, ',' | '[' | ']' | '<' | '>'))
+        printed(arguments)
+            .split(|character: char| character.is_whitespace() || matches!(character, ',' | '[' | ']' | '<' | '>'))
             .map(str::to_owned)
             .collect()
+    }
+
+    #[test]
+    fn short_version_prints_the_release_alone() {
+        assert_eq!(printed(&["andromeda", "-V"]), concat!("andromeda ", env!("CARGO_PKG_VERSION"), "\n"));
+    }
+
+    #[test]
+    fn long_version_prints_the_release_then_the_toolchain_and_the_target() {
+        let text = printed(&["andromeda", "--version"]);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 4, "{text}");
+        assert_eq!(lines.first(), Some(&concat!("andromeda ", env!("CARGO_PKG_VERSION"))));
+        assert!(lines.get(1).is_some_and(|line| line.starts_with("rustc ")), "{text}");
+        assert!(lines.get(2).is_some_and(|line| line.starts_with("cargo ")), "{text}");
+        assert!(lines.get(3).is_some_and(|line| line.starts_with("target ")), "{text}");
     }
 
     #[test]

@@ -55,7 +55,6 @@ RUN --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
     --mount=type=cache,id=andromeda-sccache,target=/var/cache/sccache,sharing=locked \
     with-sccache cargo chef cook --profile dist --locked --recipe-path recipe.json
 
-# .git for shadow-rs.
 COPY . .
 RUN --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=ACTIONS_RUNTIME_TOKEN,env=ACTIONS_RUNTIME_TOKEN \
