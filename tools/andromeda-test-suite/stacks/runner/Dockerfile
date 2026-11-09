@@ -5,7 +5,7 @@
 # .cargo/config.toml and rustfmt.toml apply as they do on a developer machine, and the registry volume keeps
 # dependencies between runs. CI builds the `suite` stage from a context holding the suite's inputs, which adds the
 # suite's test binaries as a nextest archive, so a run compiles nothing.
-FROM rust:1.99.1-trixie AS toolchain
+FROM rust:1.99.1-trixie@sha256:8a4e90c7946b74626488b1446f712c0fe0ed1a596cbd3d871684bc9c5433ae07 AS toolchain
 
 ARG TOOLCHAIN=nightly-2026-09-25
 ARG NEXTEST_VERSION=0.9.149
