@@ -10,11 +10,7 @@ use crate::{
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::FederationService;
-use andromeda_postgresql_context_store::{
-    csource_subscription::repo::CsourceSubscriptionRepository,
-    subscription::repo::SubscriptionRepository,
-    subscription_forwarding::repo::SubscriptionForwardingRepository,
-};
+use andromeda_postgresql_context_store::{subscription::repo::SubscriptionRepository, subscription_forwarding::repo::SubscriptionForwardingRepository};
 use andromeda_subscription::{
     csource::CsrSubscriptionVariant,
     endpoint_admission::SubscriptionEndpointValidator,
@@ -100,7 +96,7 @@ pub(super) fn compose_subscription_services(
 ) -> SubscriptionServices {
     let endpoint_validator: Arc<dyn SubscriptionEndpointValidator> = Arc::new(DeliverySubscriptionEndpointValidator);
     let csource = Arc::new(SubscriptionService::new(
-        Arc::new(CsourceSubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))),
+        Arc::new(storage.csource_subscription_repository()),
         storage.engine.clone(),
         CsrSubscriptionVariant::new(storage.engine.clone()),
         Some(Arc::new(BroadcastSubscriptionChangeSink::new(signals.csource_subscription.clone()))),

@@ -4,7 +4,7 @@ use crate::{columnstore_capability::ColumnstoreSupport, error::TemporalStoreErro
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_collation::provisioned_collations::ProvisionedCollations;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use andromeda_postgresql_pool::read_share::ReadShare;
+use andromeda_postgresql_pool::pool_share::PoolShare;
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use sqlx::postgres::PgPool;
 use std::{slice, sync::Arc};
@@ -16,7 +16,7 @@ pub struct TemporalRepository {
     /// makes, runs on.
     pub(crate) pool: PgPool,
     /// The connections of the pool a temporal query may hold.
-    pub(crate) reads: ReadShare,
+    pub(crate) reads: PoolShare,
     /// Shared `attribute_names` dictionary cache.
     pub(crate) attribute_names: Arc<dyn NameLookup<AttributeName>>,
     /// Shared `entity_type_names` dictionary cache.
@@ -43,7 +43,7 @@ impl TemporalRepository {
     /// dictionary caches; the provisioned-collation set starts empty.
     pub fn new(
         pool: &PgPool,
-        reads: ReadShare,
+        reads: PoolShare,
         attribute_names: Arc<dyn NameLookup<AttributeName>>,
         entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
         columnstore: ColumnstoreSupport,

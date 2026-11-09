@@ -24,7 +24,7 @@ use andromeda_postgresql_context_query::{
     entity_page::{GATED_STEP_COLUMN, GatedStep, TOTAL_COUNT_COLUMN},
     entity_total::EntityTotal,
 };
-use andromeda_postgresql_pool::read_share::PoolLane;
+use andromeda_postgresql_pool::pool_share::PoolLane;
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     projected_attribute_names::projected_attribute_names,

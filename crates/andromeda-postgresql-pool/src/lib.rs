@@ -4,9 +4,10 @@
 //! pools, and the one-connection migration and maintenance pools) is built
 //! from [`configure_pool_options`](crate::pool_options::configure_pool_options)
 //! so durability-neutral tuning (idle reclaim, no warm minimum, the acquire
-//! deadline) is decided once rather than per call site, and so is the share of
-//! a tenant pool read requests may hold beside its writes and how a read runs a
-//! statement as its planning asks. The crate also decides which driver errors
+//! deadline) is decided once rather than per call site, and so are the shares
+//! of a tenant pool that read requests and the writes queued on one lock may
+//! hold beside every other write, and how a read runs a statement as its
+//! planning asks. The crate also decides which driver errors
 //! are retryable store conditions (saturation, a rolled back transaction, an
 //! unreachable store) rather than faults, how a tenant database's URL is
 //! derived from a base URL, which base a pending-work probe of a tenant
@@ -29,8 +30,8 @@ pub mod pending_work_failure;
 pub mod persistence_classification;
 /// The broker's shared pool tuning.
 pub mod pool_options;
-/// The connections of a tenant pool read requests may hold.
-pub mod read_share;
+/// The connections of a tenant pool one class of requests may hold.
+pub mod pool_share;
 /// Whether a driver error is the pool or the pooler at capacity.
 pub mod saturation;
 /// How a failure met while changing a schema is classified.

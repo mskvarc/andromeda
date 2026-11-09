@@ -60,8 +60,13 @@ fn is_reaped_snapshot_branch(target: &ContextTarget, error: &sqlx::Error) -> boo
 /// Generates a `SubscriptionStore` implementation backed by the `subscriptions`
 /// table and its `subscription_delivery_state` row, its statements built
 /// through sea-query.
+///
+/// `writes` names the repository field a create or a replacement begins its
+/// transaction on. A kind whose writes advance the context source change clock
+/// begins them through the tenant's clock-writer share, every other kind on the
+/// pool.
 macro_rules! impl_subscription_store {
-    ($type:ty, kind: $kind:expr, has_dataset_id: $hdi:expr, create: $create:path, update: $update:path) => {
+    ($type:ty, kind: $kind:expr, has_dataset_id: $hdi:expr, writes: $writes:ident, create: $create:path, update: $update:path) => {
         #[async_trait::async_trait]
         impl SubscriptionStore for $type {
             async fn get(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<StoredSubscription>, SubscriptionError> {
@@ -220,7 +225,11 @@ macro_rules! impl_subscription_store {
                 fields: &SubscriptionFields<'_>,
                 status: SubscriptionStatus,
             ) -> Result<(), SubscriptionError> {
-                let mut transaction = self.pool.begin().await.map_err(|error| persistence_error::<SubscriptionError>(error))?;
+                let mut transaction = self
+                    .$writes
+                    .begin()
+                    .await
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 let interned = intern_attribute_lists(self.attribute_names.as_ref(), &mut transaction, fields).await?;
                 let created = $create(target, id, fields, interned, status)?
                     .to_query()
@@ -251,7 +260,11 @@ macro_rules! impl_subscription_store {
                 status: SubscriptionStatus,
                 restart: NotifyingRestart,
             ) -> Result<u64, SubscriptionError> {
-                let mut transaction = self.pool.begin().await.map_err(|error| persistence_error::<SubscriptionError>(error))?;
+                let mut transaction = self
+                    .$writes
+                    .begin()
+                    .await
+                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 let interned = intern_attribute_lists(self.attribute_names.as_ref(), &mut transaction, fields).await?;
                 let result = $update(target, id, fields, interned, status, restart)?
                     .to_query()
@@ -328,6 +341,7 @@ impl_subscription_store!(
     SubscriptionRepository,
     kind: StoredKind::Entity,
     has_dataset_id: DatasetIdPresence::Present,
+    writes: pool,
     create: entity_create,
     update: entity_update
 );
@@ -336,6 +350,7 @@ impl_subscription_store!(
     CsourceSubscriptionRepository,
     kind: StoredKind::Csource,
     has_dataset_id: DatasetIdPresence::Absent,
+    writes: clock_writers,
     create: csource_create,
     update: csource_update
 );

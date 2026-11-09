@@ -27,6 +27,9 @@ const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(10);
 /// The `backend_type` of a session a client opened.
 const CLIENT_BACKEND: &str = "client backend";
 
+/// The `wait_event_type` of a session waiting on a heavyweight lock, a row lock among them.
+const LOCK_WAIT: &str = "Lock";
+
 /// Which client backends a count covers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackendScope {
@@ -37,6 +40,8 @@ pub enum BackendScope {
     TenantDatabases,
     /// The client backends connected to one database.
     Database(DatabaseName),
+    /// The client backends connected to one database that wait on a heavyweight lock.
+    LockWaiters(DatabaseName),
 }
 
 /// Why the server's backends could not be read or closed.
@@ -119,5 +124,33 @@ fn count_statement(scope: &BackendScope, platform: &DatabaseName) -> SelectState
         BackendScope::WholeServer => statement,
         BackendScope::TenantDatabases => statement.and_where(Expr::col(PgStatActivity::Datname).ne(platform.as_str())).to_owned(),
         BackendScope::Database(database) => statement.and_where(Expr::col(PgStatActivity::Datname).eq(database.as_str())).to_owned(),
+        BackendScope::LockWaiters(database) => statement
+            .and_where(Expr::col(PgStatActivity::Datname).eq(database.as_str()))
+            .and_where(Expr::col(PgStatActivity::WaitEventType).eq(LOCK_WAIT))
+            .to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        database_name::DatabaseName,
+        server_backends::{BackendScope, count_statement},
+    };
+    use googletest::prelude::*;
+    use sea_query::PostgresQueryBuilder;
+
+    #[gtest]
+    fn the_lock_waiters_of_a_database_are_its_client_backends_waiting_on_a_lock() -> Result<()> {
+        let platform = DatabaseName::from("andromeda".to_owned());
+        let tenant = DatabaseName::from("andromeda_tenant_acme_0badc0de".to_owned());
+        let sql = count_statement(&BackendScope::LockWaiters(tenant), &platform).to_string(PostgresQueryBuilder);
+        verify_that!(
+            sql,
+            eq(concat!(
+                r#"SELECT COUNT(*) FROM "pg_stat_activity" WHERE "backend_type" = 'client backend' AND "pid" <> pg_backend_pid() "#,
+                r#"AND "datname" = 'andromeda_tenant_acme_0badc0de' AND "wait_event_type" = 'Lock'"#
+            ))
+        )
     }
 }

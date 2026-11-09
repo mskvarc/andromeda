@@ -48,7 +48,11 @@ fn swept_select(cutoff: DateTime<Utc>) -> SelectStatement {
 
 /// Delete every registration due at or before `cutoff`, returning the deleted rows and the revision the sweep drew; their information rows go in the same transaction.
 pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: DateTime<Utc>) -> Result<ExpiredDeletion, RegistrationError> {
-    let mut transaction = store.pool.begin().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
+    let mut transaction = store
+        .clock_writers
+        .begin()
+        .await
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     // The rows to return are read before either deletion, information rows
     // included; the two deletions then remove exactly the same set, agreeing
     // without depending on the foreign key's referential action. All three run
@@ -87,9 +91,7 @@ pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: Da
         .await
         .map_err(|error| persistence_error::<RegistrationError>(error))?;
 
-    let revision = advance(&mut *transaction)
-        .await
-        .map_err(|error| persistence_error::<RegistrationError>(error))?;
+    let revision = advance(&mut transaction).await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     transaction.commit().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     Ok(ExpiredDeletion {
         revision,
@@ -101,7 +103,11 @@ pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: Da
 /// in one transaction, returning the registration as written and the revision
 /// the write drew.
 pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, params: &CreateCsrParams) -> Result<WrittenRegistration, RegistrationError> {
-    let mut transaction = store.pool.begin().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
+    let mut transaction = store
+        .clock_writers
+        .begin()
+        .await
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     let information = prepare_information(&mut transaction, &params.information, store.attribute_names.as_ref())
         .await
         .map_err(|error| persistence_error::<RegistrationError>(error))?;
@@ -121,9 +127,7 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, p
         .await
         .map_err(|error| persistence_error::<RegistrationError>(error))?;
     let registration = written(&mut transaction, id, &information.key_names()).await?;
-    let revision = advance(&mut *transaction)
-        .await
-        .map_err(|error| persistence_error::<RegistrationError>(error))?;
+    let revision = advance(&mut transaction).await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     transaction.commit().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     Ok(WrittenRegistration { revision, registration })
 }
@@ -134,7 +138,11 @@ pub(super) async fn update(
     id: &Identifier,
     values: &ResolvedCsrUpdate,
 ) -> Result<RegistrationMutation<WrittenRegistration>, RegistrationError> {
-    let mut transaction = store.pool.begin().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
+    let mut transaction = store
+        .clock_writers
+        .begin()
+        .await
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     let information = prepare_information(&mut transaction, &values.information, store.attribute_names.as_ref())
         .await
         .map_err(|error| persistence_error::<RegistrationError>(error))?;
@@ -155,9 +163,7 @@ pub(super) async fn update(
         .await
         .map_err(|error| persistence_error::<RegistrationError>(error))?;
     let registration = written(&mut transaction, id, &information.key_names()).await?;
-    let revision = advance(&mut *transaction)
-        .await
-        .map_err(|error| persistence_error::<RegistrationError>(error))?;
+    let revision = advance(&mut transaction).await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     transaction.commit().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     Ok(RegistrationMutation::Applied(WrittenRegistration { revision, registration }))
 }
@@ -179,7 +185,11 @@ pub(super) async fn record_forwarding_outcome(
 
 /// Delete a registration and its information rows in one transaction.
 pub(super) async fn delete(store: &PostgresRegistrationStore, id: &Identifier) -> Result<RegistrationMutation<CsourceChangeRevision>, RegistrationError> {
-    let mut transaction = store.pool.begin().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
+    let mut transaction = store
+        .clock_writers
+        .begin()
+        .await
+        .map_err(|error| persistence_error::<RegistrationError>(error))?;
     // Removed before the registration row, so the deletion holds whatever
     // referential action the foreign key carries.
     let delete_information = Query::delete()
@@ -205,9 +215,7 @@ pub(super) async fn delete(store: &PostgresRegistrationStore, id: &Identifier) -
         transaction.rollback().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
         return Ok(RegistrationMutation::Missing);
     }
-    let revision = advance(&mut *transaction)
-        .await
-        .map_err(|error| persistence_error::<RegistrationError>(error))?;
+    let revision = advance(&mut transaction).await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     transaction.commit().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
     Ok(RegistrationMutation::Applied(revision))
 }

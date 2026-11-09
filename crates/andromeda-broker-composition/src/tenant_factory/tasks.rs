@@ -59,7 +59,7 @@ use andromeda_context_commit::{committer::ContextCommitter, subscription_key::Su
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use andromeda_notification::pending_change::{PendingChange, PendingCommits};
-use andromeda_postgresql_context_store::{csource_subscription::repo::CsourceSubscriptionRepository, subscription::repo::SubscriptionRepository};
+use andromeda_postgresql_context_store::subscription::repo::SubscriptionRepository;
 use andromeda_postgresql_temporal_store::{history_due::HistorySchedule, repo::TemporalRepository};
 use andromeda_snapshot::status_delivery_signal::StatusDeliverySignal;
 use andromeda_subscription::{
@@ -276,7 +276,7 @@ pub(super) fn supervise_tasks(
     register_entity_side_effects(&task_supervisor, config, storage, writes, &entity, side_effect_wake, Arc::clone(&pacer))?;
     let (handles, health_shutdown) = spawn_mqtt_health_probe(storage, transport);
     let entity_subscriptions = Arc::new(SubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
-    let csource_subscriptions = Arc::new(CsourceSubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
+    let csource_subscriptions = Arc::new(storage.csource_subscription_repository()) as Arc<dyn SubscriptionStore>;
     let notification_query = compose_notification_query(storage, &services.state.forwarding, config);
     let notification_processor = compose_notification_processor(
         storage,

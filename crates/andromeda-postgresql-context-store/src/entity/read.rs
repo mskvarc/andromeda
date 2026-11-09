@@ -32,7 +32,7 @@ use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_context_query::entity_head::select_head;
-use andromeda_postgresql_pool::read_share::PoolLane;
+use andromeda_postgresql_pool::pool_share::PoolLane;
 use andromeda_postgresql_query::entity_sides::holds_current_state;
 use andromeda_postgresql_schema::current::{CurrentAttributes, E, Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{pg_array::is_any_of, statement::Statement};

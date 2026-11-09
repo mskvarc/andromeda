@@ -85,10 +85,13 @@ pub struct DatabaseConfig {
     pub platform_max_connections: NonZeroU32,
     /// Percentage of each tenant pool that read requests (queries, retrievals,
     /// discovery and temporal reads) never hold, so writes keep connections
-    /// however many reads queue. Rounded down: a pool too small to spare a
-    /// whole connection keeps every one for reads. Below 100.
+    /// however many reads queue. The writes that advance the context source
+    /// change clock hold at most this part, and at least one connection, so
+    /// writes queued on that clock never hold the whole pool. Rounded down, so
+    /// a pool too small to spare a whole connection keeps every one for reads.
+    /// Below 100.
     #[schemars(
-        description = "The percentage of each tenant pool that read requests (queries, retrievals, discovery and temporal reads) never hold, so writes always find a connection however many reads queue. Rounded down to whole connections: a pool too small to spare one keeps every connection for reads."
+        description = "The percentage of each tenant pool that read requests (queries, retrievals, discovery and temporal reads) never hold, so writes always find a connection however many reads queue. Registration writes and context source subscription writes, which queue on the tenant's one change clock, hold at most this part of the pool and at least one connection, so a burst of them alone never takes the whole pool. Rounded down to whole connections, so a pool too small to spare one keeps every connection for reads."
     )]
     pub write_reserve_percent: WriteReserve,
     /// How long a request-path connection checkout waits for a free connection

@@ -7,12 +7,19 @@
 //! broker sharing the database. Each writer advances the clock as its last
 //! lock-taking statement: a writer holding the clock never waits on a lock
 //! another writer takes before advancing it, so the clock adds no deadlock.
+//!
+//! A writer waiting on the row lock holds a connection of the tenant pool, so
+//! every writer begins its transaction through the tenant's clock-writer share
+//! of the pool, which admits no more writers than the write reserve keeps
+//! connections. However many writers queue on the row, the rest of the pool
+//! stays free for every other request. The share orders nothing. The row lock
+//! still draws the revisions in commit order.
 
 use andromeda_ngsi_ld_model::csource_change_revision::CsourceChangeRevision;
+use andromeda_postgresql_pool::pool_share::SharedTransaction;
 use andromeda_postgresql_schema::context_source_change_clock::ContextSourceChangeClock;
 use andromeda_postgresql_seaquery::{literal::int_literal, statement::Statement};
 use sea_query::{CommonTableExpression, Expr, ExprTrait, Iden, Query, QueryStatementBuilder, SimpleExpr, UpdateStatement, WithClause};
-use sqlx::PgExecutor;
 
 /// The common table expression one statement advances the clock in.
 #[derive(Iden, Clone, Copy)]
@@ -31,14 +38,14 @@ fn advance_statement() -> UpdateStatement {
         .to_owned()
 }
 
-/// Advance the clock inside the transaction `executor` runs in, returning the
-/// revision drawn.
+/// Advance the clock inside `transaction`, begun through the tenant's
+/// clock-writer share, returning the revision drawn.
 ///
 /// # Errors
 ///
 /// Returns the driver error when the statement fails.
-pub(crate) async fn advance<'e>(executor: impl PgExecutor<'e>) -> Result<CsourceChangeRevision, sqlx::Error> {
-    let (revision,): (i64,) = advance_statement().to_query_as().fetch_one(executor).await?;
+pub(crate) async fn advance(transaction: &mut SharedTransaction) -> Result<CsourceChangeRevision, sqlx::Error> {
+    let (revision,): (i64,) = advance_statement().to_query_as().fetch_one(&mut **transaction).await?;
     Ok(CsourceChangeRevision::from(revision))
 }
 

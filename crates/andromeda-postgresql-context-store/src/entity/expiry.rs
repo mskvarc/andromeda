@@ -10,7 +10,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{entity_snapshot::EntitySnapshot, expiry::EntityExpiryBatchSize};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_pool::read_share::PoolLane;
+use andromeda_postgresql_pool::pool_share::PoolLane;
 use andromeda_postgresql_schema::current::{E, Entities};
 use andromeda_postgresql_seaquery::statement::Statement;
 use chrono::{DateTime, Utc};
