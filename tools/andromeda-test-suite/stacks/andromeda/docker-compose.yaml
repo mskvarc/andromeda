@@ -136,7 +136,7 @@ services:
   # Copies the initial identities of the brokers whose identity tests rewrite into volumes the runner writes too: the
   # repository is mounted read-only, and a broker reloads the files it watches.
   identity-seed:
-    image: busybox:1.37
+    image: busybox:1.38
     volumes:
       - ./tls:/stack-tls:ro
       - mutual-identity:/identities/mutual
