@@ -1,6 +1,6 @@
 # Release process
 
-A release is cut by pushing a tag, `vX.Y.Z` for a stable release or `vX.Y.Z-alpha.N`, `-beta.N` or `-rc.N` for a pre-release. The `release` workflow then publishes the signed broker image and a GitHub release with the configuration schema and descriptor attached. Before it builds anything, it refuses a tag whose commit has no passing `ci-ok` check, and a tag whose migrations break the seal. The arm64 image it publishes is the one `ci` built for the tagged commit and ran the suite trees against, so only the amd64 image is built for the release. `prune-ci-images` deletes that image 30 days after `ci` built it, so a commit older than that has to go through `ci` again before it can be tagged.
+A release is cut by pushing a tag, `vX.Y.Z` for a stable release or `vX.Y.Z-alpha.N`, `-beta.N` or `-rc.N` for a pre-release. The `release` workflow then publishes the signed broker image and a GitHub release with the configuration schema and descriptor attached. Before it builds anything, it refuses a tag whose commit has no passing `ci-ok` check, and a tag whose migrations break the seal. The arm64 image it publishes is the one `ci` built for the tagged commit and ran the suite trees against, so only the amd64 image is built for the release. `prune-ci-images` deletes that image 30 days after `ci` built it unless the commit is still the head of `main`, so any other commit older than that has to go through `ci` again before it can be tagged.
 
 ## Stable release
 

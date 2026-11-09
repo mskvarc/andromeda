@@ -2,8 +2,9 @@ name: prune-ci-images
 
 # ci pushes a broker and a runner image for every commit it checks, and every build that refreshes a layer cache leaves
 # the cache it replaced untagged. A commit's images stay for thirty days, long enough to release it; an untagged
-# manifest stays one day, so a push still in flight keeps the manifest it is about to tag. The published andromeda and
-# postgresql packages are never touched: their untagged versions are the platform manifests of a release.
+# manifest stays one day, so a push still in flight keeps the manifest it is about to tag. The images of the commit at
+# the head of main stay whatever their age, since the weekly suite run tests that commit on them. The published
+# andromeda and postgresql packages are never touched: their untagged versions are the platform manifests of a release.
 on:
   schedule:
     - cron: "37 5 * * *"
@@ -22,6 +23,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     permissions:
+      contents: read
       packages: write
     env:
       GH_TOKEN: ${{ github.token }}
@@ -33,6 +35,8 @@ jobs:
           set -euo pipefail
           commit_cutoff="$(date -u -d '30 days ago' +%s)"
           untagged_cutoff="$(date -u -d '1 day ago' +%s)"
+          main_head="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+          echo "keeping broker-${main_head} and runner-${main_head}, the images of the head of main"
           for package in andromeda-ci andromeda-buildcache postgresql-buildcache; do
             if ! ids="$(gh api --paginate "users/${OWNER}/packages/container/${package}/versions?per_page=100" --jq "
               .[]
@@ -40,7 +44,7 @@ jobs:
               | .metadata.container.tags as \$tags
               | select(
                   (\$tags == [] and \$updated < ${untagged_cutoff})
-                  or (\$tags != [] and all(\$tags[]; test(\"^(broker|runner)-[0-9a-f]{40}\$\")) and \$updated < ${commit_cutoff})
+                  or (\$tags != [] and all(\$tags[]; test(\"^(broker|runner)-[0-9a-f]{40}\$\") and (endswith(\"-${main_head}\") | not)) and \$updated < ${commit_cutoff})
                 )
               | .id" 2> list-error.txt)"; then
               if grep -q 'HTTP 404' list-error.txt; then
