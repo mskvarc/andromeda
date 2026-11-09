@@ -35,7 +35,7 @@ andromeda-subscription.workspace = true
 andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true
 async-trait = "0.1.92"
-batch-aint-one = "0.16.0"
+batch-aint-one = "0.17.0"
 chrono = "0.4.45"
 dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["display", "from"] }
@@ -54,4 +54,4 @@ andromeda-architecture-checks.workspace = true
 andromeda-http-headers.workspace = true
 pretty_assertions = "1.4.1"
 tokio = { version = "1.54.1", features = ["macros", "rt", "sync"] }
-uuid = "1.29.0"
+uuid = "1.29.2"

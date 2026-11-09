@@ -40,4 +40,4 @@ thiserror = "2.0.21"
 allocation-counter = "0.8.1"
 andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
-uuid = "1.29.0"
+uuid = "1.29.2"

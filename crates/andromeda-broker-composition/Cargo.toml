@@ -117,4 +117,4 @@ serial_test = "4.0.1"
 tempfile = "3.27.0"
 tokio = { version = "1.54.1", features = ["full", "test-util"] }
 url-macro = "0.2.5"
-uuid = "1.29.0"
+uuid = "1.29.2"

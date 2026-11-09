@@ -17,7 +17,7 @@ andromeda-ngsi-ld-vocabulary.workspace = true
 proc-macro2 = { version = "1.0.107", features = ["span-locations"] }
 quote = "1.0.47"
 strum = { version = "0.28.0", features = ["derive"] }
-syn = { version = "3.0.9", features = ["full", "visit"] }
+syn = { version = "3.0.10", features = ["full", "visit"] }
 thiserror = "2.0.21"
 toml_edit = "0.25.19"
 

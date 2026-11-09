@@ -45,7 +45,7 @@ serde_json = { version = "1.0.154", features = ["raw_value"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 tracing = "0.1.44"
-uuid = { version = "1.29.0", features = ["serde", "v4"] }
+uuid = { version = "1.29.2", features = ["serde", "v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
