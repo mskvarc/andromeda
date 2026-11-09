@@ -21,9 +21,10 @@ private-tenants = { max-threads = 4 }
 pgbouncer = { max-threads = 1 }
 
 # The large geometry test bounds the ratio of two decode times measured in one process; the CPU load of tests running
-# beside it skews that ratio, so it runs alone.
+# beside it skews that ratio, so it runs alone. It is named by its test rather than its binary, because nextest checks
+# every binary a filter names against the binaries it knows, and a run from the suite's archive knows only the suite's.
 [[profile.default.overrides]]
-filter = 'package(andromeda-http-extraction) & binary(=large_geometry_body)'
+filter = 'package(andromeda-http-extraction) & test(=a_million_position_polygon_body_decodes_without_a_tree)'
 threads-required = "num-test-threads"
 
 # Every test runs in a process of its own beside every other, against the stack its test target uses. A failure is

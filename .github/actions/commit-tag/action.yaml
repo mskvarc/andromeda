@@ -1,0 +1,25 @@
+name: Commit tag
+description: Tags an image for the commit as an index over it, with the commit as the index's revision annotation, so the tag shares every layer with the image.
+
+inputs:
+  image:
+    description: The image to tag, as a reference with its tag.
+    required: true
+  tag:
+    description: The reference the commit's index is pushed as, tag included.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Tag the image for the commit
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+        docker buildx imagetools create \
+          --annotation "index:org.opencontainers.image.revision=${GITHUB_SHA}" \
+          --tag "$TAG" \
+          "$IMAGE"
