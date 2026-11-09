@@ -70,7 +70,10 @@ runs:
         STATE_PREFIX: ${{ steps.key.outputs.state }}
       run: |
         set -euo pipefail
-        echo "CARGO_UNSTABLE_CHECKSUM_FRESHNESS=true" >> "$GITHUB_ENV"
+        {
+          echo "CARGO_UNSTABLE_CHECKSUM_FRESHNESS=true"
+          echo "CARGO_BUILD_FINGERPRINT=content"
+        } >> "$GITHUB_ENV"
         if [ -z "$MATCHED" ]; then
           exit 0
         fi
