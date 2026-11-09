@@ -2,7 +2,7 @@
 
 use crate::{building_payloads::building_simple_attributes, entity_operations::create_entity};
 use andromeda_test_suite::{
-    broker::{self},
+    broker,
     comparison::{ContextRule, matches_document},
     namespace::Namespace,
     problem::answered,

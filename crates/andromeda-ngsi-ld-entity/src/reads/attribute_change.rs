@@ -39,7 +39,7 @@ pub struct AttributeChange {
 /// `None` for a creation.
 #[must_use]
 pub fn classify_attribute_changes(previous: Option<&EntityState>, current: &EntityState) -> Vec<AttributeChange> {
-    let previous = previous.map(instances_by_key).unwrap_or_default();
+    let previous = previous.map_or_default(instances_by_key);
     let current = instances_by_key(current);
     let mut changes = Vec::with_capacity(previous.len().saturating_add(current.len()));
     for (key, previous_instance) in &previous {

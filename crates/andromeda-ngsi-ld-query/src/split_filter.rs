@@ -173,7 +173,7 @@ impl<'q> SplitFilter<'q> {
     /// whether a leaf reads it.
     #[must_use]
     pub fn read_attributes(&self) -> Vec<&'q AttributeName> {
-        let mut attributes = self.q.map(referenced_attributes).unwrap_or_default();
+        let mut attributes = self.q.map_or_default(referenced_attributes);
         if let Some(geo) = self.geo
             && !attributes.contains(&&geo.geoproperty)
         {

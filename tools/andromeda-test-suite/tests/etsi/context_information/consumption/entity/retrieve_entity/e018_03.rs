@@ -1,13 +1,7 @@
 //! An entity is not retrieved when its identifier, or an attribute asked for, is unknown to the system (clause 5.7.1).
 
 use crate::{building_payloads::building_simple_attributes, entity_operations::create_entity};
-use andromeda_test_suite::{
-    broker::{self},
-    namespace::Namespace,
-    problem::problem,
-    teardown::AnyAnswer,
-    vocabulary::Vocabulary,
-};
+use andromeda_test_suite::{broker, namespace::Namespace, problem::problem, teardown::AnyAnswer, vocabulary::Vocabulary};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::model::{ErrorType, NgsiLdMediaType};

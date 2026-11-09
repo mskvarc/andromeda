@@ -2,11 +2,7 @@
 //! `timerel` without the `timeAt` it needs, or `between` without its `endTimeAt` (clause 5.7.3).
 
 use crate::{unchecked_requests::refused_get, vehicle_fixtures::create_vehicle_speed_fuel_level};
-use andromeda_test_suite::{
-    broker::{self},
-    namespace::Namespace,
-    teardown::AnyAnswer,
-};
+use andromeda_test_suite::{broker, namespace::Namespace, teardown::AnyAnswer};
 use googletest::prelude::*;
 
 /// Pins: Check that one cannot retrieve the temporal evolution of an entity with an invalid request content

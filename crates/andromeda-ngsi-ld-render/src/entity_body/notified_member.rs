@@ -104,9 +104,8 @@ impl<'a> NotifiedMember<'a> {
         let previous = changes
             .previous
             .and_then(|previous| previous.attribute_member(name))
-            .map(PreviousInstances::of)
-            .unwrap_or_default();
-        let held_sources = held.map(sources).unwrap_or_default();
+            .map_or_default(PreviousInstances::of);
+        let held_sources = held.map_or_default(sources);
         let held_instances = held_sources.iter().map(|&source| NotifiedInstance {
             source,
             report: InstanceReport {

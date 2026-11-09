@@ -260,8 +260,7 @@ mod tests {
         };
         target
             .val
-            .map(|value| bounds_of(&value))
-            .unwrap_or_default()
+            .map_or_default(|value| bounds_of(&value))
             .into_iter()
             .map(|bound: ColumnBound| (bound.column().to_owned(), bound.bound()))
             .collect()

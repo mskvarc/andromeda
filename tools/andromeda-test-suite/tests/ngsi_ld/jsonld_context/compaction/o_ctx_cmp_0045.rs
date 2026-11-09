@@ -117,7 +117,7 @@ async fn o_ctx_cmp_0045_a_json_notification_links_the_jsonld_context_once() -> R
     expect_that!(notifications, len(eq(1)));
     let notification = notifications.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification.context(), none());
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(item.context.as_ref(), none());
     expect_that!(notification.data().as_slice(), nth(0, has_id(&device_notified_id)));
     sink.wait_for_at_least(2, 1).await?;
@@ -133,7 +133,7 @@ async fn o_ctx_cmp_0045_a_json_notification_links_the_jsonld_context_once() -> R
     expect_that!(notifications_2, len(eq(1)));
     let notification_2 = notifications_2.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification_2.context(), none());
-    let item_2 = notification_2.data().as_slice().first().or_fail()?;
+    let item_2 = notification_2.data().first().or_fail()?;
     expect_that!(item_2.context.as_ref(), none());
     expect_that!(notification_2.data().as_slice(), nth(0, has_id(&device_notified_id)));
     sink.wait_for_at_least(3, 1).await?;
@@ -149,7 +149,7 @@ async fn o_ctx_cmp_0045_a_json_notification_links_the_jsonld_context_once() -> R
     expect_that!(notifications_3, len(eq(1)));
     let notification_3 = notifications_3.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification_3.context(), none());
-    let item_3 = notification_3.data().as_slice().first().or_fail()?;
+    let item_3 = notification_3.data().first().or_fail()?;
     expect_that!(item_3.context.as_ref(), none());
     expect_that!(notification_3.data().as_slice(), nth(0, has_id(&device_notified_id)));
     sink.wait_for_at_least(4, 1).await?;
@@ -161,7 +161,7 @@ async fn o_ctx_cmp_0045_a_json_notification_links_the_jsonld_context_once() -> R
     expect_that!(notifications_4, len(eq(1)));
     let notification_4 = notifications_4.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification_4.context(), none());
-    let item_4 = notification_4.data().as_slice().first().or_fail()?;
+    let item_4 = notification_4.data().first().or_fail()?;
     expect_that!(item_4.context.as_ref(), none());
     expect_that!(notification_4.data().as_slice(), nth(0, has_id(&device_notified_id)));
     Ok(())

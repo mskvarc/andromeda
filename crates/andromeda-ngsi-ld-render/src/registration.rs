@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn an_empty_projection_leaves_every_member() {
         let registration = registration();
-        let pick = "".parse::<ProjectionList>().map(Vec::from).unwrap_or_default();
+        let pick = "".parse::<ProjectionList>().map_or_default(Vec::from);
         let rendered = document_under(RegistrationRenderer::new(&registration).with_pick(Some(&pick)));
         assert_eq!(rendered["endpoint"], "http://source:1026/");
         assert_eq!(rendered["information"], json!([{"entities": [{"type": "Vehicle"}]}]));

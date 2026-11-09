@@ -49,7 +49,7 @@ async fn n_ntf_pay_7603_a_deletion_is_notified_with_deleted_at() -> Result<()> {
     sink.wait_for_at_least(1, 1).await?;
     let notifications = sink.received(1).await?;
     let notification = notifications.first().or_fail()?.entities(Lossless::Normalized)?;
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(system_time::of_entity(item, SystemMember::DeletedAt).ok(), some(anything()));
     expect_that!(notification.data().as_slice(), nth(0, all!(has_id(&vehicle_id), lacks_attribute("speed"))));
     Ok(())

@@ -47,7 +47,7 @@ pub enum ReceivedElement<T> {
 
 /// Why one element of a received array is not read.
 #[derive(Debug, Error)]
-#[error("element {index}{} is refused: {reason}", .id.as_ref().map(|id| format!(" ({id})")).unwrap_or_default())]
+#[error("element {index}{} is refused: {reason}", .id.as_ref().map_or_default(|id| format!(" ({id})")))]
 pub struct ElementRefusal {
     /// Where the element stands in the array, from zero.
     pub index: usize,

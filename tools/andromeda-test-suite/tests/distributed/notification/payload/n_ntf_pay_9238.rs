@@ -66,7 +66,7 @@ async fn n_ntf_pay_9238_a_show_changes_subscription_places_a_copy_asking_for_pre
     expect_that!(relayed, len(eq(1)));
     let notification = relayed.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification.subscription_id(), eq(&namespace.subscription_id(1)?));
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(item, has_attribute("speed", property().value(50).previous_value(40)));
     expect_that!(item, has_attribute("owner", relationship().null_value().previous_object(person_id)));
     Ok(())

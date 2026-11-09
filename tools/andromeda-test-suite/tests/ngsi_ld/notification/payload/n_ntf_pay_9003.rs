@@ -85,14 +85,10 @@ async fn n_ntf_pay_9003_a_delete_all_notifies_every_deleted_instance_nullified_w
     expect_that!(notification.data().as_slice(), len(eq(1)));
     expect_that!(notification.data().as_slice(), nth(0, has_instances("label", 3)));
     expect_that!(
-        notification
-            .data()
-            .as_slice()
-            .first()
-            .and_then(|item| member_instances(item, "label", Member::DatasetId)),
+        notification.data().first().and_then(|item| member_instances(item, "label", Member::DatasetId)),
         some(eq(2))
     );
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(item, has_attribute("label", any_attribute().dataset_id(french_dataset.clone())));
     expect_that!(item, has_attribute("label", any_attribute().dataset_id(german_dataset)));
     expect_that!(item, has_attribute("label", any_attribute().dataset_id(DatasetId::DefaultInstance)));
@@ -100,11 +96,7 @@ async fn n_ntf_pay_9003_a_delete_all_notifies_every_deleted_instance_nullified_w
     expect_that!(item, every_instance("label", property()));
     expect_that!(notification.data().as_slice(), nth(0, has_instances("hosts", 2)));
     expect_that!(
-        notification
-            .data()
-            .as_slice()
-            .first()
-            .and_then(|item| member_instances(item, "hosts", Member::DatasetId)),
+        notification.data().first().and_then(|item| member_instances(item, "hosts", Member::DatasetId)),
         some(eq(1))
     );
     expect_that!(

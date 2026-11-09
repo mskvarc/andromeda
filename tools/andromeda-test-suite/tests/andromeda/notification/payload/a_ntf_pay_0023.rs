@@ -96,7 +96,7 @@ async fn a_ntf_pay_0023_a_durable_update_delivered_after_its_entity_was_deleted_
     expect_that!(&answer, answered(StatusCode::NOT_FOUND));
     let notifications = sink.wait_for_at_least_where(1, &renamed, 2).await?;
     let notification = notifications.first().or_fail()?.entities(Lossless::Normalized)?;
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(system_time::of_entity(item, SystemMember::CreatedAt).ok(), some(anything()));
     expect_that!(system_time::of_entity(item, SystemMember::ModifiedAt).ok(), some(anything()));
     expect_that!(

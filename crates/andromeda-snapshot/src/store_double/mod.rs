@@ -177,12 +177,12 @@ impl StoreDouble {
 
     /// The terminal statuses recorded so far, in order.
     pub(crate) fn take_recorded(&self) -> Vec<RecordedStatus> {
-        self.recorded.lock().map(|mut recorded| take(&mut *recorded)).unwrap_or_default()
+        self.recorded.lock().map_or_default(|mut recorded| take(&mut *recorded))
     }
 
     /// The clone copies made so far, in order.
     pub(crate) fn take_copies(&self) -> Vec<CloneCopy> {
-        self.copies.lock().map(|mut copies| take(&mut *copies)).unwrap_or_default()
+        self.copies.lock().map_or_default(|mut copies| take(&mut *copies))
     }
 
     /// The stored Snapshots.

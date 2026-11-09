@@ -202,7 +202,7 @@ impl TemporalService {
         };
         let mut rendered = Vec::with_capacity(pages.len());
         for page in pages {
-            let entity_types = entity_types_map.get(&page.entity_id).map(Vec::as_slice).unwrap_or_default();
+            let entity_types = entity_types_map.get(&page.entity_id).map_or_default(Vec::as_slice);
             // clone: the page is moved into the render, and a failure still names its entity.
             let entity_id = page.entity_id.clone();
             let outcome = render_aggregation_page(page, entity_types, rendering);
@@ -242,7 +242,7 @@ impl TemporalService {
         let cut = self.common_page_cut(compiled, &pages)?;
         let mut rendered = Vec::with_capacity(pages.len());
         for page in pages {
-            let entity_types = entity_types_map.get(&page.entity_id).map(Vec::as_slice).unwrap_or_default();
+            let entity_types = entity_types_map.get(&page.entity_id).map_or_default(Vec::as_slice);
             // clone: the page is moved into the render, and a failure still names its entity.
             let entity_id = page.entity_id.clone();
             let outcome = render_history_page(page, entity_types, compiled, cut);

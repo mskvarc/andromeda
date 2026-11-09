@@ -32,9 +32,7 @@ impl ResolvedJoin {
     /// first-encounter order. Clause 5.5.14 asks an `EntityMap` created
     /// alongside a joined query to include them.
     pub(crate) fn linked_ids(&self) -> Vec<Identifier> {
-        self.plan()
-            .map(|plan| plan.linked_ids().into_iter().cloned().collect()) // clone: the Entity Map outlives the plan
-            .unwrap_or_default()
+        self.plan().map_or_default(|plan| plan.linked_ids().into_iter().cloned().collect())
     }
 }
 

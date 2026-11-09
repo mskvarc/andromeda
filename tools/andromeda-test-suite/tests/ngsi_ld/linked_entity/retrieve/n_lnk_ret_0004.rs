@@ -83,10 +83,10 @@ async fn n_lnk_ret_0004_join_with_sys_attrs_stamps_the_linked_entities() -> Resu
         .await?;
     let entities_2 = retrieved_2.body();
     expect_that!(entities_2.as_slice(), len(eq(2)));
-    let item = entities_2.as_slice().first().or_fail()?;
+    let item = entities_2.first().or_fail()?;
     expect_that!(system_time::of_entity(item, SystemMember::CreatedAt).ok(), some(anything()));
     expect_that!(system_time::of_entity(item, SystemMember::ModifiedAt).ok(), some(anything()));
-    let item_2 = entities_2.as_slice().get(1).or_fail()?;
+    let item_2 = entities_2.get(1).or_fail()?;
     expect_that!(system_time::of_entity(item_2, SystemMember::CreatedAt).ok(), some(anything()));
     expect_that!(system_time::of_entity(item_2, SystemMember::ModifiedAt).ok(), some(anything()));
     expect_that!(entities_2.as_slice(), nth(0, has_id(&building_typed_id)));
@@ -119,9 +119,9 @@ async fn n_lnk_ret_0004_join_with_sys_attrs_stamps_the_linked_entities() -> Resu
         .await?;
     let entities_3 = retrieved_4.body();
     expect_that!(entities_3.as_slice(), len(eq(2)));
-    let item_3 = entities_3.as_slice().first().or_fail()?;
+    let item_3 = entities_3.first().or_fail()?;
     expect_that!(system_time::of_entity(item_3, SystemMember::CreatedAt).ok(), some(anything()));
-    let item_4 = entities_3.as_slice().get(1).or_fail()?;
+    let item_4 = entities_3.get(1).or_fail()?;
     expect_that!(system_time::of_entity(item_4, SystemMember::CreatedAt).ok(), some(anything()));
     expect_that!(entities_3.as_slice(), nth(0, has_id(&building_untyped_id)));
     expect_that!(entities_3.as_slice(), nth(1, has_id(&city_paris_id)));

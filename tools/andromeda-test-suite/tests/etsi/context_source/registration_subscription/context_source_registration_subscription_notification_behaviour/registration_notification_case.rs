@@ -118,7 +118,7 @@ const UNCOMPARED_DELIVERY: [&str; 4] = ["lastNotification", "lastSuccess", "last
 /// accepts `application/json` (its `uri` uncompared), the status `status` and one notification sent, and a non-empty
 /// value for each member of `instants`.
 pub(crate) fn expect_delivery_state(mut body: Value, status: &str, instants: [&str; 2]) {
-    let notification = body.get_mut("notification").map(Value::take).unwrap_or_default();
+    let notification = body.get_mut("notification").map_or_default(Value::take);
     for name in instants {
         expect_that!(notification.get(name).is_some_and(is_non_empty), eq(true), "{name} is non-empty");
     }

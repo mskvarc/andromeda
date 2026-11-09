@@ -67,7 +67,7 @@ impl FederationService {
             linked_map,
             partial_ranges,
         } = answer;
-        let source = registration_id.as_ref().map(ToString::to_string).unwrap_or_default();
+        let source = registration_id.as_ref().map_or_default(ToString::to_string);
         let spelled_in = if entities.iter().any(|contextual| contextual.context.is_none()) {
             match self.engine.expansion_context(&naming).await {
                 Ok(context) => Some(context),

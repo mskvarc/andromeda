@@ -54,7 +54,7 @@ impl FederationService {
             linked_map,
             partial_ranges,
         } = answer;
-        let source = registration_id.as_ref().map(ToString::to_string).unwrap_or_default();
+        let source = registration_id.as_ref().map_or_default(ToString::to_string);
         let mut gathered: IndexMap<Identifier, TemporalHistory> = IndexMap::with_capacity(entities.len());
         let mut client_names: Option<NameCompaction> = None;
         for ReadTemporalEntity { id, context: written_in, body } in entities {

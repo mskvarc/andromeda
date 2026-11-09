@@ -109,7 +109,7 @@ async fn n_lnk_ntf_5002_a_subscription_q_with_a_hop_in_the_grammar_form_notifies
     expect_that!(notifications, len(eq(1)));
     let notification = notifications.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification.data().as_slice(), len(eq(1)));
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(linked_entities(item, &["isParkedIn"]), nth(0, has_id(&building_commercial_id)));
     expect_that!(notification.data().as_slice(), nth(0, has_id(&car_id)));
     sink.wait_for_at_least("plain", 1).await?;

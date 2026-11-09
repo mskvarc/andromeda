@@ -144,8 +144,7 @@ pub(crate) fn values(entity: &EntityState, attribute: &str) -> Vec<i64> {
     entity
         .attributes()
         .get(attribute)
-        .map(|instances| instances.iter().filter_map(|(_, instance)| integer_of(instance)).collect())
-        .unwrap_or_default()
+        .map_or_default(|instances| instances.iter().filter_map(|(_, instance)| integer_of(instance)).collect())
 }
 
 /// The integer a Property instance holds.
@@ -174,15 +173,12 @@ pub(crate) const ACCURACY: &str = "https://example.org/accuracy";
 /// The `(datasetId, integer)` of every instance of `attribute` among
 /// `attributes`, in stored order.
 pub(crate) fn instance_rows(attributes: &Attributes, attribute: &str) -> Vec<(Option<String>, Option<i64>)> {
-    attributes
-        .get(attribute)
-        .map(|instances| {
-            instances
-                .iter()
-                .map(|(dataset_id, instance)| (dataset_id.map(ToString::to_string), integer_of(instance)))
-                .collect()
-        })
-        .unwrap_or_default()
+    attributes.get(attribute).map_or_default(|instances| {
+        instances
+            .iter()
+            .map(|(dataset_id, instance)| (dataset_id.map(ToString::to_string), integer_of(instance)))
+            .collect()
+    })
 }
 
 /// One expected row of [`instance_rows`].
@@ -195,6 +191,5 @@ pub(crate) fn dataset_ids(entity: &EntityState, attribute: &str) -> Vec<Option<S
     entity
         .attributes()
         .get(attribute)
-        .map(|instances| instances.iter().map(|(dataset_id, _)| dataset_id.map(ToString::to_string)).collect())
-        .unwrap_or_default()
+        .map_or_default(|instances| instances.iter().map(|(dataset_id, _)| dataset_id.map(ToString::to_string)).collect())
 }

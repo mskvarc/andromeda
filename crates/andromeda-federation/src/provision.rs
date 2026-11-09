@@ -92,7 +92,7 @@ impl FederationService {
             return Ok(Vec::new());
         }
         let resolver = TermResolver::new(&self.engine, request.context);
-        let requested = content.as_ref().map(ForwardedContent::written_attributes).unwrap_or_default();
+        let requested = content.as_ref().map_or_default(ForwardedContent::written_attributes);
         // Clauses 4.3.6.3 and 5.6.1.4 and following: a proxied registration
         // owns its attributes whether or not the write can be sent to it, so a
         // looped-back one, and one that does not support the operation, fail

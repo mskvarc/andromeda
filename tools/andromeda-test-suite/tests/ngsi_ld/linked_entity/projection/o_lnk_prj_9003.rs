@@ -73,7 +73,7 @@ async fn o_lnk_prj_9003_flat_projects_a_shared_target_by_its_first_encounter() -
         .await?;
     let entities = retrieved.body();
     expect_that!(entities.as_slice(), len(eq(2)));
-    expect_that!(entities.as_slice().get(1).map(projected_member_count), some(eq(1)));
+    expect_that!(entities.get(1).map(projected_member_count), some(eq(1)));
     expect_that!(entities.as_slice(), nth(1, has_attribute("name", any_attribute())));
     Ok(())
 }

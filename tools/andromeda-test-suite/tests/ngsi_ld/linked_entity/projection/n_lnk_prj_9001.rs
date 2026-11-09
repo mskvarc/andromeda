@@ -71,7 +71,6 @@ async fn n_lnk_prj_9001_a_plain_pick_reaches_the_flat_linked_entities() -> Resul
     let entities = retrieved.body();
     expect_that!(
         entities
-            .as_slice()
             .iter()
             .filter(|item| item.id.as_ref() == Some(&person_r9_id))
             .map(projected_member_count)

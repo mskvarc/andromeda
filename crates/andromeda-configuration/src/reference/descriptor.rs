@@ -184,7 +184,7 @@ fn key_descriptor(key: KeyEntry, schema: &SchemaNode, tables: &[TableEntry]) -> 
         .iter()
         .any(|table| matches!(table.shape, TableShape::Array) && key.path.starts_with(&table.path));
     KeyDescriptor {
-        type_name: type_name(node.map(SchemaNode::type_name).unwrap_or_default(), &key.limits),
+        type_name: type_name(node.map_or_default(SchemaNode::type_name), &key.limits),
         choices: key.choices,
         environment_variable: (!in_list).then(|| {
             let segments: Vec<String> = key.path.segments().map(str::to_uppercase).collect();
@@ -192,7 +192,7 @@ fn key_descriptor(key: KeyEntry, schema: &SchemaNode, tables: &[TableEntry]) -> 
         }),
         limits: key.limits.iter().copied().map(limit_descriptor).collect(),
         conditions: key.conditions,
-        apply: node.map(SchemaNode::apply).unwrap_or_default(),
+        apply: node.map_or_default(SchemaNode::apply),
         replica_consistent: node.is_some_and(SchemaNode::replica_consistent),
         sensitive: SENSITIVE_KEYS.contains(&path.as_str()),
         path,

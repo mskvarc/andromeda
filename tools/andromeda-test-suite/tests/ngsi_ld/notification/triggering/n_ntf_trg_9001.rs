@@ -79,13 +79,13 @@ async fn n_ntf_trg_9001_a_deletion_is_filtered_on_the_state_it_removed() -> Resu
     let notifications_2 = sink.received_where("retired", &selected).await?;
     expect_that!(notifications_2, len(eq(1)));
     let notification = notifications_2.first().or_fail()?.entities(Lossless::Normalized)?;
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(system_time::of_entity(item, SystemMember::DeletedAt).ok(), some(anything()));
     let selected_2 = [BodyPattern::Contains(format!("urn:ngsi-ld:Probe:{namespace}-sentinel-retired"))];
     let notifications_3 = sink.received_where("retired", &selected_2).await?;
     expect_that!(notifications_3, len(eq(1)));
     let notification_2 = notifications_3.first().or_fail()?.entities(Lossless::Normalized)?;
-    let item_2 = notification_2.data().as_slice().first().or_fail()?;
+    let item_2 = notification_2.data().first().or_fail()?;
     expect_that!(system_time::of_entity(item_2, SystemMember::DeletedAt).ok(), some(anything()));
     sink.wait_for_at_least("active", 1).await?;
     let notifications_4 = sink.received("active").await?;
@@ -94,7 +94,7 @@ async fn n_ntf_trg_9001_a_deletion_is_filtered_on_the_state_it_removed() -> Resu
     let notifications_5 = sink.received_where("active", &selected_3).await?;
     expect_that!(notifications_5, len(eq(1)));
     let notification_3 = notifications_5.first().or_fail()?.entities(Lossless::Normalized)?;
-    let item_3 = notification_3.data().as_slice().first().or_fail()?;
+    let item_3 = notification_3.data().first().or_fail()?;
     expect_that!(system_time::of_entity(item_3, SystemMember::DeletedAt).ok(), some(anything()));
     broker.subscriptions().delete(&subscription_retired_id).send().await?;
     broker.subscriptions().delete(&subscription_active_id).send().await?;

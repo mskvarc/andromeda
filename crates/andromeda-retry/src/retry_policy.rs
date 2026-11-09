@@ -87,7 +87,7 @@ mod tests {
 
     impl RecordedDelay {
         fn waits(&self) -> Vec<Duration> {
-            self.0.lock().map(|waits| waits.clone()).unwrap_or_default()
+            self.0.lock().map_or_default(|waits| waits.clone())
         }
     }
 

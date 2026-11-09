@@ -68,15 +68,7 @@ async fn n_lnk_prj_9005_attrs_reaches_the_flat_linked_entities() -> Result<()> {
         .send()
         .await?;
     let entities = retrieved.body();
-    expect_that!(
-        entities
-            .as_slice()
-            .iter()
-            .filter(|item| item.id == person_r14_id)
-            .map(member_count)
-            .sum::<usize>(),
-        eq(3)
-    );
+    expect_that!(entities.iter().filter(|item| item.id == person_r14_id).map(member_count).sum::<usize>(), eq(3));
     expect_that!(
         entities.as_slice(),
         contains(all!(has_id(&person_r14_id), has_attribute("name", any_attribute()), any_type()))

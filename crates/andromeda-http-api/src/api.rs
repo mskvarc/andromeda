@@ -690,10 +690,7 @@ mod tests {
     #[tokio::test]
     async fn a_configured_api_root_is_the_one_an_ngsi_ld_route_reads() -> Result<(), Box<dyn Error>> {
         let configured = Url::parse("https://proxy.example/broker/")?;
-        let probe = Router::new().route(
-            "/probe",
-            get(|api_root: ApiRoot| async move { api_root.url().map(Url::to_string).unwrap_or_default() }),
-        );
+        let probe = Router::new().route("/probe", get(|api_root: ApiRoot| async move { api_root.url().map_or_default(Url::to_string) }));
         let routed = Router::new().nest(
             "/ngsi-ld/v1",
             test_stack()?.apply_api(ngsi_request_layers(

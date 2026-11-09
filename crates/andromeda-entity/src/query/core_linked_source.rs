@@ -600,7 +600,7 @@ mod tests {
             "urn:ngsi-ld:T:6",
         ];
         let store = StubStore::new(chain.iter().enumerate().map(|(index, id)| {
-            let targets: Vec<&str> = chain.get(index + 1).map(|next| vec![*next]).unwrap_or_default();
+            let targets: Vec<&str> = chain.get(index + 1).map_or_default(|next| vec![*next]);
             (uri(id), stored(id, &targets))
         }));
         let roots = vec![root(chain[0], &[chain[1]])];

@@ -94,9 +94,8 @@ impl FederationService {
                 let status = response.status();
                 record_upstream_status(status.as_u16());
                 let warning = headers::HeaderMapExt::typed_get::<Warning>(response.headers());
-                let ngsild_warnings = headers::HeaderMapExt::typed_get::<NgsiLdWarningHeader>(response.headers())
-                    .map(NgsiLdWarningHeader::into_warnings)
-                    .unwrap_or_default();
+                let ngsild_warnings =
+                    headers::HeaderMapExt::typed_get::<NgsiLdWarningHeader>(response.headers()).map_or_default(NgsiLdWarningHeader::into_warnings);
                 let returned_version = headers::HeaderMapExt::typed_get::<PreferenceApplied>(response.headers()).and_then(|applied| applied.applied_version());
                 let entity_map = headers::HeaderMapExt::typed_get::<NgsiLdEntityMap>(response.headers()).map(NgsiLdEntityMap::into_inner);
                 let next_page = headers::HeaderMapExt::typed_get::<Link>(response.headers())

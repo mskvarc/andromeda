@@ -129,7 +129,7 @@ async fn n_ntf_pay_9036_a_periodic_notification_is_amended_too() -> Result<()> {
     );
     let notifications_2 = sink.received("periodic-amended").await?;
     let notification_2 = notifications_2.first().or_fail()?.entities(Lossless::Normalized)?;
-    let item = notification_2.data().as_slice().first().or_fail()?;
+    let item = notification_2.data().first().or_fail()?;
     // Table 4.3.6.8-3 types the `object` of a Relationship as String or String[], so every target is kept in list order.
     let rooms = OneOrMany::try_from(vec![namespace.urn("Room", "periodic")?, namespace.urn("Room", "periodic-second")?])?;
     expect_that!(item.scope.as_ref(), none());

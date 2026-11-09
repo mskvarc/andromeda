@@ -57,7 +57,7 @@ async fn n_ntf_pay_0008_a_periodic_notification_with_listed_attributes_and_sys_a
     expect_that!(notifications, len(eq(1)));
     let notification = notifications.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification.subscription_id(), eq(&subscription_id));
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(system_time::of_entity(item, SystemMember::CreatedAt).ok(), some(anything()));
     expect_that!(system_time::of_entity(item, SystemMember::ModifiedAt).ok(), some(anything()));
     expect_that!(

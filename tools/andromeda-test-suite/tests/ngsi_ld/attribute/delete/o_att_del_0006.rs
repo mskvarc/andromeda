@@ -53,7 +53,7 @@ async fn o_att_del_0006_a_delete_on_the_attributes_collection_is_405() -> Result
             .with_header_containing(ALLOW, "POST")
             .with_header_containing(ALLOW, "PATCH")
     );
-    let allowed = answer.answered_headers().map(|headers| header_values(headers, &ALLOW)).unwrap_or_default();
+    let allowed = answer.answered_headers().map_or_default(|headers| header_values(headers, &ALLOW));
     expect_that!(allowed.iter().any(|line| line.contains("DELETE")), eq(false));
     Ok(())
 }

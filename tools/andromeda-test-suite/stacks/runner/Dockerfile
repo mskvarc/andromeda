@@ -7,7 +7,7 @@
 # suite's test binaries as a nextest archive, so a run compiles nothing.
 FROM rust:1.99.1-trixie AS toolchain
 
-ARG TOOLCHAIN=nightly-2026-08-21
+ARG TOOLCHAIN=nightly-2026-09-25
 ARG NEXTEST_VERSION=0.9.149
 
 RUN rustup toolchain install "${TOOLCHAIN}" --profile minimal --component clippy --component rustfmt \

@@ -188,7 +188,7 @@ mod tests {
         let root = tree_with(&["tenant/002_types.sql"])?;
         let error = MigrationTree::read(root.path()).err();
         assert!(matches!(error, Some(MigrationTreeError::Name(_))), "{error:?}");
-        let message = error.map(|error| error.to_string()).unwrap_or_default();
+        let message = error.map_or_default(|error| error.to_string());
         assert!(
             message.ends_with("migrations/tenant/002_types.sql does not match NNNN_snake_case.sql: a migration version is exactly four decimal digits"),
             "{message}"

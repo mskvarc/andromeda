@@ -263,7 +263,7 @@ mod tests {
         let pre_release = "algorithm = \"sha-256\"\n\n[[release]]\nversion = \"v1.0.0-rc.1\"\n";
         let error = SealLedger::parse(pre_release).err();
         assert!(matches!(error, Some(SealLedgerError::Unparsed(_))), "{error:?}");
-        let message = error.map(|error| error.to_string()).unwrap_or_default();
+        let message = error.map_or_default(|error| error.to_string());
         assert!(
             message.contains("the tag names the pre-release rc.1, and only a stable release vX.Y.Z is sealed"),
             "{message}"

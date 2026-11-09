@@ -288,7 +288,7 @@ mod tests {
         }
 
         fn asked_for(&self) -> Vec<MapListing> {
-            self.asked.lock().map(|asked| asked.clone()).unwrap_or_default()
+            self.asked.lock().map_or_default(|asked| asked.clone())
         }
     }
 

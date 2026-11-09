@@ -277,7 +277,7 @@ mod tests {
         let directory = fake_squawk("2.69.1").map_err(SquawkError::Spawn)?;
         let lookup = ExecutableLookup::new(None, Some(directory.path().as_os_str().to_owned()), directory.path().to_path_buf());
         let resolved = Squawk::resolve(&lookup, SquawkConfiguration::at(repository_root())?);
-        let message = resolved.as_ref().err().map(ToString::to_string).unwrap_or_default();
+        let message = resolved.as_ref().err().map_or_default(ToString::to_string);
         assert!(matches!(resolved, Err(SquawkError::WrongVersion { .. })), "{resolved:?}");
         assert!(message.ends_with("is Squawk 2.69.1; the rules are pinned to Squawk 2.70.0"), "{message}");
         Ok(())

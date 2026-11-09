@@ -77,7 +77,7 @@ async fn o_lnk_prj_4001_the_pick_list_decides_a_shared_flat_target_whichever_rel
         .await?;
     let entities_2 = retrieved.body();
     expect_that!(entities_2.as_slice(), len(eq(2)));
-    expect_that!(entities_2.as_slice().get(1).map(projected_member_count), some(eq(1)));
+    expect_that!(entities_2.get(1).map(projected_member_count), some(eq(1)));
     expect_that!(entities_2.as_slice(), nth(0, has_id(&building_a_id)));
     expect_that!(entities_2.as_slice(), nth(1, has_attribute("name", any_attribute().value("Depot"))));
     // the bare relA comes first in the pick list: b is appended whole although relB, which the entity stores first, carries a group
@@ -115,7 +115,7 @@ async fn o_lnk_prj_4001_the_pick_list_decides_a_shared_flat_target_whichever_rel
         .await?;
     let entities_3 = retrieved_2.body();
     expect_that!(entities_3.as_slice(), len(eq(2)));
-    expect_that!(entities_3.as_slice().get(1).map(projected_member_count), some(eq(4)));
+    expect_that!(entities_3.get(1).map(projected_member_count), some(eq(4)));
     expect_that!(
         entities_3.as_slice(),
         nth(1, all!(has_id(&building_b_id), has_attribute("category", any_attribute().value("commercial"))))

@@ -25,8 +25,7 @@ impl ReceiverEndpoint {
             // An origin already spelled with the API base is not doubled.
             let existing: Vec<String> = advertised
                 .path_segments()
-                .map(|segments| segments.filter(|s| !s.is_empty()).map(str::to_string).collect())
-                .unwrap_or_default();
+                .map_or_default(|segments| segments.filter(|s| !s.is_empty()).map(str::to_string).collect());
             let has_base = existing.len() >= 2 && existing[existing.len() - 2..] == NOTIFICATIONS_PATH[..2];
             let start = if has_base { 2 } else { 0 };
             segments.extend(&NOTIFICATIONS_PATH[start..]);

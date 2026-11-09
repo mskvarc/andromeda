@@ -55,7 +55,7 @@ async fn o_lnk_prj_9011_a_target_two_relationships_share_takes_the_list_of_its_f
         .await?;
     let entities = retrieved.body();
     expect_that!(entities.as_slice(), len(eq(2)));
-    let item = entities.as_slice().get(1).or_fail()?;
+    let item = entities.get(1).or_fail()?;
     expect_that!(item.id, none());
     expect_that!(item.entity_type, none());
     expect_that!(entities.as_slice(), nth(1, has_attribute("name", any_attribute())));
@@ -68,7 +68,7 @@ async fn o_lnk_prj_9011_a_target_two_relationships_share_takes_the_list_of_its_f
         .send()
         .await?;
     let entities_2 = retrieved_2.body();
-    let item_2 = entities_2.as_slice().get(1).or_fail()?;
+    let item_2 = entities_2.get(1).or_fail()?;
     expect_that!(item_2.id, none());
     expect_that!(entities_2.as_slice(), nth(1, has_attribute("name", any_attribute())));
     Ok(())

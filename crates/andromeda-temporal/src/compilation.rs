@@ -70,8 +70,7 @@ impl TemporalService {
             .dataset_id
             .as_deref()
             // The compiled query owns its selectors independently of the reusable request parameters.
-            .map(ToOwned::to_owned)
-            .unwrap_or_default();
+            .map_or_default(ToOwned::to_owned);
 
         let json_keys = expand_json_keys(params.json_keys.as_deref(), &expander).await?;
         if let Some(q) = &params.q {

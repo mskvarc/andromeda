@@ -76,7 +76,7 @@ async fn o_ctx_cmp_0044_a_core_release_as_jsonld_context_is_named_as_written_in_
             "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.8.jsonld".to_owned()
         )?))))
     );
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(
         item.context.as_ref(),
         some(eq(&Context::Single(ContextEntry::Reference(IriRefBuf::new(
@@ -94,7 +94,7 @@ async fn o_ctx_cmp_0044_a_core_release_as_jsonld_context_is_named_as_written_in_
             "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld".to_owned()
         )?))))
     );
-    let item_2 = notification_2.data().as_slice().first().or_fail()?;
+    let item_2 = notification_2.data().first().or_fail()?;
     expect_that!(
         item_2.context.as_ref(),
         some(eq(&Context::Single(ContextEntry::Reference(IriRefBuf::new(
@@ -107,7 +107,7 @@ async fn o_ctx_cmp_0044_a_core_release_as_jsonld_context_is_named_as_written_in_
     expect_that!(notifications_3, len(eq(1)));
     let notification_3 = notifications_3.first().or_fail()?.entities(Lossless::Normalized)?;
     expect_that!(notification_3.context(), some(eq(&Context::Single(core_entry()?))));
-    let item_3 = notification_3.data().as_slice().first().or_fail()?;
+    let item_3 = notification_3.data().first().or_fail()?;
     expect_that!(item_3.context.as_ref(), some(eq(&Context::Single(core_entry()?))));
     expect_that!(notification_3.data().as_slice(), nth(0, has_id(&device_notified_id)));
     Ok(())

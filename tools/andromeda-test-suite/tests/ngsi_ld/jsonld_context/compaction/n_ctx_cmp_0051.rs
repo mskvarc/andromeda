@@ -93,7 +93,7 @@ async fn n_ctx_cmp_0051_an_mqtt_notification_names_the_context_under_the_same_ru
         some(eq(&core_entry()?))
     );
     expect_that!(body.context().map(Context::entries).and_then(|entries| entries.get(2)), none());
-    let item = body.data().as_slice().first().or_fail()?;
+    let item = body.data().first().or_fail()?;
     expect_that!(
         item.context.as_ref().map(Context::entries).and_then(|entries| entries.first()),
         some(eq(&contexts.reference("jc/user/terms.jsonld")?))

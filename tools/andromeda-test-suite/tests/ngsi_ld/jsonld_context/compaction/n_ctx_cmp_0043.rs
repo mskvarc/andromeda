@@ -72,7 +72,7 @@ async fn n_ctx_cmp_0043_a_jsonld_context_without_the_core_context_is_followed_by
         notification.context().map(Context::entries).and_then(|entries| entries.get(1)),
         some(eq(&core_entry()?))
     );
-    let item = notification.data().as_slice().first().or_fail()?;
+    let item = notification.data().first().or_fail()?;
     expect_that!(item.context.as_ref().is_some_and(|context| matches!(context, Context::Multiple(_))), eq(true));
     expect_that!(item.context.as_ref().map(Context::entries).and_then(|entries| entries.get(2)), none());
     expect_that!(

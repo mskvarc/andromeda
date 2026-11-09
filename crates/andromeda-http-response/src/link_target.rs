@@ -58,14 +58,11 @@ impl PointedRequest {
 /// removed from its query string and `set` appended in order; every other
 /// parameter keeps its place and value.
 pub(crate) fn rebuilt_target(request: &PointedRequest, replaced: &[&str], set: &[(&str, &str)]) -> String {
-    let kept = request
-        .query()
-        .map(|query| {
-            form_urlencoded::parse(query.as_bytes())
-                .filter(|(key, _)| !replaced.contains(&key.as_ref()))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let kept = request.query().map_or_default(|query| {
+        form_urlencoded::parse(query.as_bytes())
+            .filter(|(key, _)| !replaced.contains(&key.as_ref()))
+            .collect::<Vec<_>>()
+    });
     let query = form_urlencoded::Serializer::new(String::new())
         .extend_pairs(kept)
         .extend_pairs(set.iter().copied())

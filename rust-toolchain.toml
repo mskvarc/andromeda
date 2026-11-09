@@ -1,4 +1,4 @@
-# nightly-2026-08-22 breaks -Zhigher-ranked-assumptions.
+# A newer nightly is taken only while it still accepts -Zhigher-ranked-assumptions under the old trait solver.
 [toolchain]
-channel = "nightly-2026-08-21"
+channel = "nightly-2026-09-25"
 components = ["clippy", "rustfmt"]

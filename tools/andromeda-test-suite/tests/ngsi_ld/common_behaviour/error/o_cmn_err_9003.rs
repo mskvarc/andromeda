@@ -41,7 +41,7 @@ async fn o_cmn_err_9003_a_method_a_resource_does_not_serve_gets_a_405_problem_do
             .with_header_containing(ALLOW, "GET")
             .with_header_containing(ALLOW, "PATCH")
     );
-    let allow = answer.answered_headers().map(|headers| header_values(headers, &ALLOW)).unwrap_or_default();
+    let allow = answer.answered_headers().map_or_default(|headers| header_values(headers, &ALLOW));
     expect_that!(allow, each(not(contains_substring("POST"))));
     let details = answer.answered_problem();
     expect_that!(details.and_then(|details| details.title.as_deref()), some(eq("Method not allowed")));

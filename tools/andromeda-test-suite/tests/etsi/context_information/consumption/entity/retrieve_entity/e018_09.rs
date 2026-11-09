@@ -3,7 +3,7 @@
 
 use crate::{entity_operations::create_entity, geometry_payloads::polygon};
 use andromeda_test_suite::{
-    broker::{self},
+    broker,
     comparison::matches_document,
     namespace::Namespace,
     problem::answered,
