@@ -1,0 +1,70 @@
+name: Keyed broker image
+description: Gives the commit its broker image for one platform in andromeda-ci, building it only when no image of the commit's broker inputs exists for that platform yet. The job logs in to ghcr.io first.
+
+inputs:
+  platform:
+    description: "`linux/arm64` or `linux/amd64`."
+    required: true
+  fresh:
+    description: "`true` builds the image even when one of the same inputs exists."
+    required: false
+    default: "false"
+
+outputs:
+  key:
+    description: The key of the commit's broker inputs.
+    value: ${{ steps.inputs.outputs.key }}
+  image:
+    description: The image of those inputs for the platform, a single platform manifest, as a reference with its tag.
+    value: ${{ steps.names.outputs.image }}
+
+runs:
+  using: composite
+  steps:
+    - id: inputs
+      uses: ./.github/actions/image-inputs
+      with:
+        image: broker
+
+    # The arm64 image, which the suite trees run, is broker-input-<key> and broker-<sha>; the amd64 image carries its
+    # platform in both names. Each platform has a layer cache of its own.
+    - name: Name the images
+      id: names
+      shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
+        KEY: ${{ steps.inputs.outputs.key }}
+      run: |
+        set -euo pipefail
+        case "$PLATFORM" in
+          linux/arm64) name=broker ;;
+          linux/amd64) name=broker-amd64 ;;
+          *) echo "unsupported platform: ${PLATFORM}" >&2; exit 1 ;;
+        esac
+        {
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER}/andromeda-ci:${name}-input-${KEY}"
+          echo "commit=ghcr.io/${GITHUB_REPOSITORY_OWNER}/andromeda-ci:${name}-${GITHUB_SHA}"
+          echo "cache=ghcr.io/${GITHUB_REPOSITORY_OWNER}/andromeda-buildcache:${PLATFORM//\//-}"
+        } >> "$GITHUB_OUTPUT"
+
+    - id: existing
+      uses: ./.github/actions/image-lookup
+      with:
+        image: ${{ steps.names.outputs.image }}
+
+    - if: ${{ inputs.fresh == 'true' || steps.existing.outputs.found != 'true' }}
+      uses: ./.github/actions/free-disk-space
+    - if: ${{ inputs.fresh == 'true' || steps.existing.outputs.found != 'true' }}
+      uses: docker/setup-buildx-action@v4
+    - if: ${{ inputs.fresh == 'true' || steps.existing.outputs.found != 'true' }}
+      uses: ./.github/actions/broker-image
+      with:
+        platform: ${{ inputs.platform }}
+        context: ${{ steps.inputs.outputs.context }}
+        image: ${{ steps.names.outputs.image }}
+        cache: ${{ steps.names.outputs.cache }}
+
+    - uses: ./.github/actions/commit-tag
+      with:
+        image: ${{ steps.names.outputs.image }}
+        tag: ${{ steps.names.outputs.commit }}
