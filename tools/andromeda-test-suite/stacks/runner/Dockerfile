@@ -44,7 +44,9 @@ COPY --from=planner /andromeda/recipe.json recipe.json
 RUN cargo chef cook --tests --locked --package andromeda-test-suite --recipe-path recipe.json
 
 COPY . .
-RUN cargo nextest archive --locked --package andromeda-test-suite --archive-file /andromeda-test-suite.tar.zst
+# The target directory goes in the same layer, so the layer cache keeps the archive alone.
+RUN cargo nextest archive --locked --package andromeda-test-suite --archive-file /andromeda-test-suite.tar.zst \
+    && rm -rf target
 
 FROM toolchain AS suite
 
