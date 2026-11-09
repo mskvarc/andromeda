@@ -1,0 +1,46 @@
+name: Build cache save
+description: Saves the job's cargo registry and target directory under the commit's key and deletes the job's builds saved before it, so the job keeps one build in the Actions cache. Only a run on main saves, so a pull request restores what main saved and writes nothing.
+
+inputs:
+  key:
+    description: The key the build cache restore computed.
+    required: true
+  paths:
+    description: The paths the build cache restore named.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # The next restore sets the files that differ from this commit to now, so their build scripts run again.
+    - name: Record the commit
+      if: ${{ github.ref == 'refs/heads/main' }}
+      shell: bash
+      run: echo "$GITHUB_SHA" > target/.ci-source-commit
+
+    - name: Save the build
+      if: ${{ github.ref == 'refs/heads/main' }}
+      uses: actions/cache/save@v6
+      with:
+        key: ${{ inputs.key }}
+        path: ${{ inputs.paths }}
+
+    # A save that failed, or that found the key taken, leaves the earlier builds in place.
+    - name: Delete the job's earlier builds
+      if: ${{ github.ref == 'refs/heads/main' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        KEY: ${{ inputs.key }}
+      run: |
+        set -euo pipefail
+        builds="${RUNNER_TEMP}/job-builds.json"
+        gh cache list --ref refs/heads/main --key "cargo-${GITHUB_JOB}-" --limit 100 --json id,key > "$builds"
+        if ! jq -e --arg key "$KEY" 'any(.[]; .key == $key)' "$builds" > /dev/null; then
+          echo "::warning::this build was not saved, so the job's earlier builds stay"
+          exit 0
+        fi
+        jq -r --arg key "$KEY" '.[] | select(.key != $key) | .id' "$builds" | while IFS= read -r id; do
+          gh cache delete "$id"
+        done

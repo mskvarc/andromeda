@@ -148,11 +148,16 @@ jobs:
         with:
           key: ${{ steps.verdict.outputs.key }}
 
+  # clippy, unit and sql each keep their newest build of main in the Actions cache, workspace crates included, and
+  # restore it before building. The save deletes the job's earlier builds through the Actions API.
   clippy:
     name: clippy
     if: *ready
     runs-on: *runner
     timeout-minutes: 90
+    permissions: &build-cache-permissions
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@v7
       - id: verdict
@@ -162,18 +167,28 @@ jobs:
           fresh: ${{ inputs.fresh }}
       - if: *unless-reused
         uses: ./.github/actions/rust-toolchain
+      - id: cache
+        if: *unless-reused
+        uses: ./.github/actions/build-cache-restore
       - if: *unless-reused
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - if: *unless-reused
         uses: ./.github/actions/verdict-record
         with:
           key: ${{ steps.verdict.outputs.key }}
+      # A failed check leaves what it compiled valid, so only a cancelled job saves nothing.
+      - if: &save-build ${{ !cancelled() && steps.cache.outputs.key != '' }}
+        uses: ./.github/actions/build-cache-save
+        with:
+          key: ${{ steps.cache.outputs.key }}
+          paths: ${{ steps.cache.outputs.paths }}
 
   unit:
     name: unit
     if: *ready
     runs-on: *runner
     timeout-minutes: 90
+    permissions: *build-cache-permissions
     steps:
       - uses: actions/checkout@v7
       - id: verdict
@@ -183,6 +198,9 @@ jobs:
           fresh: ${{ inputs.fresh }}
       - if: *unless-reused
         uses: ./.github/actions/rust-toolchain
+      - id: cache
+        if: *unless-reused
+        uses: ./.github/actions/build-cache-restore
       - if: *unless-reused
         uses: taiki-e/install-action@v2
         with:
@@ -204,12 +222,18 @@ jobs:
         uses: ./.github/actions/verdict-record
         with:
           key: ${{ steps.verdict.outputs.key }}
+      - if: *save-build
+        uses: ./.github/actions/build-cache-save
+        with:
+          key: ${{ steps.cache.outputs.key }}
+          paths: ${{ steps.cache.outputs.paths }}
 
   sql:
     name: sql
     if: *ready
     runs-on: *runner
     timeout-minutes: 60
+    permissions: *build-cache-permissions
     steps:
       # The whole history, so the seal can be verified against the base.
       - uses: actions/checkout@v7
@@ -222,6 +246,9 @@ jobs:
           fresh: ${{ inputs.fresh }}
       - if: *unless-reused
         uses: ./.github/actions/rust-toolchain
+      - id: cache
+        if: *unless-reused
+        uses: ./.github/actions/build-cache-restore
       - if: *unless-reused
         uses: taiki-e/install-action@v2
         with:
@@ -277,6 +304,11 @@ jobs:
         uses: ./.github/actions/verdict-record
         with:
           key: ${{ steps.verdict.outputs.key }}
+      - if: *save-build
+        uses: ./.github/actions/build-cache-save
+        with:
+          key: ${{ steps.cache.outputs.key }}
+          paths: ${{ steps.cache.outputs.paths }}
 
   # The arm64 broker image every suite tree runs. It is built only when no image of the commit's broker inputs exists
   # yet, under broker-input-<key>, or when the run was started with fresh; broker-<sha> is an index over that image with
