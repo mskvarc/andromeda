@@ -6,7 +6,7 @@ inputs:
     description: The platform to build, such as linux/arm64.
     required: true
   context:
-    description: The build context, as the broker-inputs action assembles it.
+    description: The build context, as the image-inputs action assembles it for the broker.
     required: true
   image:
     description: The reference the image is pushed as, tag included.

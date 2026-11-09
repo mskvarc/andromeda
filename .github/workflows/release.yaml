@@ -83,7 +83,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: inputs
-        uses: ./.github/actions/broker-inputs
+        uses: ./.github/actions/image-inputs
+        with:
+          image: broker
       - uses: ./.github/actions/free-disk-space
       - uses: docker/setup-buildx-action@v4
 

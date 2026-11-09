@@ -1,0 +1,28 @@
+name: Image lookup
+description: Reports whether the registry holds an image under a reference. A lookup that fails for any other reason reports it missing, which costs a build but never a wrong image.
+
+inputs:
+  image:
+    description: The reference to look up, tag included.
+    required: true
+
+outputs:
+  found:
+    description: "`true` when the image exists, `false` otherwise."
+    value: ${{ steps.lookup.outputs.found }}
+
+runs:
+  using: composite
+  steps:
+    - name: Look up the image
+      id: lookup
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+      run: |
+        set -euo pipefail
+        if docker buildx imagetools inspect "$IMAGE" > /dev/null; then
+          echo "found=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "found=false" >> "$GITHUB_OUTPUT"
+        fi

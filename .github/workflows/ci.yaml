@@ -204,25 +204,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: inputs
-        uses: ./.github/actions/broker-inputs
+        uses: ./.github/actions/image-inputs
+        with:
+          image: broker
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # A failed lookup for any other reason than a missing image builds it again, which costs time but never a wrong
-      # image.
-      - name: Look for an image of the broker inputs
-        id: existing
-        env:
-          KEY_IMAGE: ${{ env.CI_IMAGE }}:broker-input-${{ steps.inputs.outputs.key }}
-        run: |
-          set -euo pipefail
-          if docker buildx imagetools inspect "$KEY_IMAGE" > /dev/null; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "found=false" >> "$GITHUB_OUTPUT"
-          fi
+      - id: existing
+        uses: ./.github/actions/image-lookup
+        with:
+          image: ${{ env.CI_IMAGE }}:broker-input-${{ steps.inputs.outputs.key }}
       - if: ${{ steps.existing.outputs.found != 'true' }}
         uses: ./.github/actions/free-disk-space
       - if: ${{ steps.existing.outputs.found != 'true' }}
@@ -234,22 +227,19 @@ jobs:
           context: ${{ steps.inputs.outputs.context }}
           image: ${{ env.CI_IMAGE }}:broker-input-${{ steps.inputs.outputs.key }}
           cache: ghcr.io/${{ github.repository_owner }}/andromeda-buildcache:linux-arm64
-      - name: Tag the image for the commit
-        env:
-          KEY_IMAGE: ${{ env.CI_IMAGE }}:broker-input-${{ steps.inputs.outputs.key }}
-        run: |
-          set -euo pipefail
-          docker buildx imagetools create \
-            --annotation "index:org.opencontainers.image.revision=${GITHUB_SHA}" \
-            --tag "${CI_IMAGE}:broker-${GITHUB_SHA}" \
-            "$KEY_IMAGE"
+      - uses: ./.github/actions/commit-tag
+        with:
+          image: ${{ env.CI_IMAGE }}:broker-input-${{ steps.inputs.outputs.key }}
+          tag: ${{ env.CI_IMAGE }}:broker-${{ github.sha }}
 
-  # The suite's runner image, built once per commit.
+  # The runner image every suite tree runs, with the suite compiled into it as a nextest archive, so the trees compile
+  # nothing. It is built only when no image of the commit's suite inputs exists yet, under runner-input-<key>;
+  # runner-<sha> is an index over that image with the commit as its revision.
   runner-image:
     name: runner-image
     if: *beyond-pull-request
     runs-on: *runner
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -257,21 +247,40 @@ jobs:
       CI_IMAGE: ghcr.io/${{ github.repository_owner }}/andromeda-ci
     steps:
       - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
+      - id: inputs
+        uses: ./.github/actions/image-inputs
+        with:
+          image: runner
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push the runner image
+      - id: existing
+        uses: ./.github/actions/image-lookup
+        with:
+          image: ${{ env.CI_IMAGE }}:runner-input-${{ steps.inputs.outputs.key }}
+      - if: ${{ steps.existing.outputs.found != 'true' }}
+        uses: ./.github/actions/free-disk-space
+      - if: ${{ steps.existing.outputs.found != 'true' }}
+        uses: docker/setup-buildx-action@v4
+      # The layer cache keeps the toolchain and the suite's compiled third-party dependencies between builds.
+      - if: ${{ steps.existing.outputs.found != 'true' }}
+        name: Build and push the runner image
         uses: docker/build-push-action@v7
         with:
-          context: tools/andromeda-test-suite/stacks/runner
+          context: ${{ steps.inputs.outputs.context }}
+          file: ${{ steps.inputs.outputs.context }}/tools/andromeda-test-suite/stacks/runner/Dockerfile
+          target: suite
           platforms: linux/arm64
           provenance: false
           cache-from: type=registry,ref=${{ env.CI_IMAGE }}:runner-buildcache
           cache-to: type=registry,ref=${{ env.CI_IMAGE }}:runner-buildcache,mode=max,image-manifest=true,oci-mediatypes=true
-          outputs: type=image,name=${{ env.CI_IMAGE }}:runner-${{ github.sha }},push=true
+          outputs: type=image,name=${{ env.CI_IMAGE }}:runner-input-${{ steps.inputs.outputs.key }},push=true
+      - uses: ./.github/actions/commit-tag
+        with:
+          image: ${{ env.CI_IMAGE }}:runner-input-${{ steps.inputs.outputs.key }}
+          tag: ${{ env.CI_IMAGE }}:runner-${{ github.sha }}
 
   # The database image is the published one, which the postgresql workflow rebuilds whenever its directory changes.
   suite:

@@ -3,7 +3,9 @@
 # (default target/suite-reports). The broker, database and runner images are rebuilt from the working tree, except each
 # one ANDROMEDA_IMAGE, ANDROMEDA_POSTGRES_IMAGE or ANDROMEDA_TEST_SUITE_RUNNER_IMAGE names, which is pulled instead. The stack is taken down
 # afterwards with its databases, keeping the shared test-suite-target and test-suite-cargo-registry volumes. Two runs on
-# one Docker host cannot overlap: every stack has a fixed project name and shares those volumes.
+# one Docker host cannot overlap: every stack has a fixed project name and shares those volumes. A runner image that
+# carries the suite's nextest archive, as the one CI builds does, runs the tree from it and compiles nothing; any other
+# compiles the tree from the working tree.
 set -euo pipefail
 
 if [ "$#" -ne 1 ]; then
@@ -13,15 +15,16 @@ fi
 
 tree="$1"
 case "$tree" in
-    ngsi_ld) stack=base; selection=(--test 'ngsi_ld_*') ;;
-    andromeda) stack=andromeda; selection=(--test 'andromeda_*') ;;
-    etsi) stack=base; selection=(--test etsi) ;;
-    annex_c) stack=base; selection=(--test annex_c) ;;
-    distributed) stack=multi; selection=(--test 'distributed_*') ;;
-    pgbouncer) stack=pgbouncer; selection=(--test 'pgbouncer_*') ;;
-    interoperability) stack=interoperability; selection=(--test interoperability) ;;
+    ngsi_ld) stack=base; binaries='ngsi_ld_*' ;;
+    andromeda) stack=andromeda; binaries='andromeda_*' ;;
+    etsi) stack=base; binaries=etsi ;;
+    annex_c) stack=base; binaries=annex_c ;;
+    distributed) stack=multi; binaries='distributed_*' ;;
+    pgbouncer) stack=pgbouncer; binaries='pgbouncer_*' ;;
+    interoperability) stack=interoperability; binaries=interoperability ;;
     *) echo "unknown tree: ${tree}" >&2; exit 2 ;;
 esac
+archive=/andromeda-test-suite.tar.zst
 
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
@@ -43,10 +46,17 @@ else
 fi
 "${compose[@]}" up --detach --wait
 
+nextest=(cargo nextest run --tool-config-file runner:/andromeda/tools/andromeda-test-suite/stacks/runner/nextest.toml --profile suite-verdict)
+if "${compose[@]}" run --rm --no-deps runner test -f "$archive"; then
+    nextest+=(--archive-file "$archive" --workspace-remap /andromeda -E "binary_id(#andromeda-test-suite::${binaries})")
+else
+    nextest+=(-p andromeda-test-suite --test "$binaries")
+fi
+
 status=0
 # The stack is up and healthy. Without --no-deps, run starts the services it depends on again, so a locally built image
 # is rebuilt and every container from it recreated under a new address, which a proxy that resolved the old one keeps.
-"${compose[@]}" run --rm --no-deps runner cargo nextest run --tool-config-file runner:/andromeda/tools/andromeda-test-suite/stacks/runner/nextest.toml --profile suite-verdict -p andromeda-test-suite "${selection[@]}" || status=$?
+"${compose[@]}" run --rm --no-deps runner "${nextest[@]}" || status=$?
 
 mkdir -p "$report_dir"
 copy_status=0

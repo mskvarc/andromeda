@@ -57,6 +57,7 @@ services:
     image: ${ANDROMEDA_TEST_SUITE_RUNNER_IMAGE:-andromeda-test-suite-runner:local}
     build:
       context: ../runner
+      target: toolchain
     profiles: ["runner"]
     working_dir: /andromeda/tools/andromeda-test-suite
     # A mount nested in the read-only checkout needs its mountpoint to exist there already, which a fresh clone's
