@@ -1,5 +1,5 @@
 name: Rust toolchain
-description: Frees disk space, installs the pinned toolchain and restores the job's dependency cache.
+description: Frees disk space and installs the pinned toolchain.
 
 runs:
   using: composite
@@ -8,8 +8,3 @@ runs:
     - name: Install pinned toolchain
       shell: bash
       run: rustup toolchain install --profile minimal
-    # Only main saves: a pull request restores what main saved and writes nothing, so the cache holds one entry per
-    # job rather than one per branch.
-    - uses: Swatinem/rust-cache@v2
-      with:
-        save-if: ${{ github.ref == 'refs/heads/main' }}

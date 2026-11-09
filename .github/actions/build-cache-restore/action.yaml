@@ -1,0 +1,90 @@
+name: Build cache restore
+description: Restores the job's cargo registry and target directory from the newest build of the same job, and makes cargo decide by file content which of the restored crates are fresh.
+
+outputs:
+  key:
+    description: The key this commit's build is saved under.
+    value: ${{ steps.key.outputs.key }}
+  paths:
+    description: The paths the build cache holds, one per line.
+    value: ${{ steps.key.outputs.paths }}
+
+runs:
+  using: composite
+  steps:
+    # The toolchain and cargo configuration make every artifact compiled before unusable when they change, so a key
+    # never falls back across them. The dependency state, the lockfile and the manifests, changes every workspace
+    # crate's artifact names, so a build of another state is restored only when this one has none.
+    - name: Compute the key
+      id: key
+      shell: bash
+      env:
+        TOOLCHAIN_HASH: ${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}
+        STATE_HASH: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/*/Cargo.toml', 'tools/*/Cargo.toml') }}
+      run: |
+        set -euo pipefail
+        toolchain="cargo-${GITHUB_JOB}-${TOOLCHAIN_HASH}-"
+        state="${toolchain}${STATE_HASH}-"
+        {
+          echo "toolchain=${toolchain}"
+          echo "state=${state}"
+          echo "key=${state}${GITHUB_SHA}"
+          echo "paths<<EOF"
+          printf '%s\n' ~/.cargo/registry/index/ ~/.cargo/registry/cache/ ~/.cargo/git/db/ target/
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Restore the build
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        key: ${{ steps.key.outputs.key }}
+        restore-keys: |
+          ${{ steps.key.outputs.state }}
+          ${{ steps.key.outputs.toolchain }}
+        path: ${{ steps.key.outputs.paths }}
+
+    # Cargo compares the content of every file rustc reads with what it compiled, so a fresh checkout's modification
+    # times don't make a restored crate stale, and a changed file is compiled again whatever its time. A build script's
+    # rerun-if-changed paths are still compared by modification time against the script's last run. Every tracked file
+    # and directory is therefore set to a time before any build, and those that differ from the commit the restored
+    # build was made from are set to now, so a build script reruns exactly when one of its inputs changed.
+    - name: Prepare the restored build
+      shell: bash
+      env:
+        MATCHED: ${{ steps.restore.outputs.cache-matched-key }}
+        STATE_PREFIX: ${{ steps.key.outputs.state }}
+      run: |
+        set -euo pipefail
+        echo "CARGO_UNSTABLE_CHECKSUM_FRESHNESS=true" >> "$GITHUB_ENV"
+        if [ -z "$MATCHED" ]; then
+          exit 0
+        fi
+        # A build of another dependency state holds workspace crates under names this state never uses again. Every
+        # file without an extension in deps/ is a workspace binary or test, since third-party crates compile to
+        # libraries there.
+        if [[ "$MATCHED" != "$STATE_PREFIX"* ]] && [ -d target/debug/deps ]; then
+          rm -rf target/debug/.fingerprint/andromeda* target/debug/build/andromeda*
+          find target/debug/deps -maxdepth 1 -type f \( -name '*andromeda*' -o ! -name '*.*' \) -delete
+        fi
+        recorded=target/.ci-source-commit
+        if [ ! -f "$recorded" ]; then
+          exit 0
+        fi
+        source="$(cat "$recorded")"
+        if ! git cat-file -e "${source}^{commit}" 2> /dev/null && ! git fetch --quiet --no-tags --depth=1 origin "$source"; then
+          echo "::warning::the commit the restored build was made from is gone, so every build script runs again"
+          exit 0
+        fi
+        git ls-files -z | xargs -0 touch -h -d '2000-01-01T00:00:00Z'
+        git ls-files -z | xargs -0 dirname -z | sort -zu | xargs -0 touch -d '2000-01-01T00:00:00Z'
+        git diff --name-only --no-renames -z "$source" HEAD | while IFS= read -r -d '' path; do
+          if [ -e "$path" ]; then
+            touch -h "$path"
+          fi
+          directory="$(dirname "$path")"
+          while [ ! -d "$directory" ]; do
+            directory="$(dirname "$directory")"
+          done
+          touch "$directory"
+        done
