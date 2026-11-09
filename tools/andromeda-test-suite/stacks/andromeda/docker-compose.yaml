@@ -298,7 +298,7 @@ services:
   # plaintext broker that believes the forwarded fields the proxy sets. It presents the leaf terminator.crt for the name
   # terminator, and its plaintext listener redirects to its TLS listener.
   terminator:
-    image: nginx:1.29-alpine
+    image: nginx:1.31-alpine
     restart: unless-stopped
     depends_on:
       broker-edge:
