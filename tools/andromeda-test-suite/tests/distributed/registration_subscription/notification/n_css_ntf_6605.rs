@@ -25,7 +25,6 @@ async fn n_css_ntf_6605_paused_and_expired_subscriptions_are_not_notified() -> R
     let subscription_2_id = namespace.subscription_id(2)?;
     let subscription_3_id = namespace.subscription_id(3)?;
     let registration_id = namespace.registration_id(1)?;
-    let plus_3: DateTime = (Utc::now() + TimeDelta::seconds(3)).format("%Y-%m-%dT%H:%M:%SZ").to_string().parse()?;
     let subscription = Subscription::registration_builder()
         .id(subscription_id.clone())
         .entities([vehicle_x_type.as_str()])
@@ -33,11 +32,14 @@ async fn n_css_ntf_6605_paused_and_expired_subscriptions_are_not_notified() -> R
         .activation(Activation::Paused)
         .build()?;
     broker.registration_subscriptions().create(&subscription).send().await?;
+    // Read after the first create, which a loaded broker can take seconds over, and truncated to the second, so the
+    // expiry is still four seconds or more ahead when the second create is sent.
+    let in_5_seconds: DateTime = (Utc::now() + TimeDelta::seconds(5)).format("%Y-%m-%dT%H:%M:%SZ").to_string().parse()?;
     let subscription_2 = Subscription::registration_builder()
         .id(subscription_2_id.clone())
         .entities([vehicle_x_type.as_str()])
         .notification(NotificationParams::builder(Endpoint::builder(sink.endpoint(2)?).accept(NgsiLdMediaType::Json).build()?).build()?)
-        .expires_at(plus_3)
+        .expires_at(in_5_seconds)
         .build()?;
     broker.registration_subscriptions().create(&subscription_2).send().await?;
     let subscription_3 = Subscription::registration_builder()

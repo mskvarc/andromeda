@@ -32,7 +32,6 @@ async fn a_tmp_cwh_0006_an_expired_entity_leaves_its_temporal_evolution_as_it_wa
     let broker_not_recorded = broker::client(BrokerRole::NotRecorded)?;
     let sensor_id = namespace.urn("Sensor", 1)?;
     let sensor_type = namespace.entity_type("Sensor")?;
-    let in_3_seconds: DateTime = (Utc::now() + TimeDelta::seconds(3)).format("%Y-%m-%dT%H:%M:%SZ").to_string().parse()?;
     let sensor_evolution = TemporalEntity::builder()
         .id(sensor_id.clone())
         .entity_type(sensor_type)
@@ -40,6 +39,8 @@ async fn a_tmp_cwh_0006_an_expired_entity_leaves_its_temporal_evolution_as_it_wa
         .property("v", Property::builder(2).observed_at("2026-07-01T00:01:00Z".parse()?))
         .build()?;
     broker_not_recorded.temporal().create_or_update(&sensor_evolution).send().await?.created()?;
+    // Read after the create, which a loaded broker can take seconds over, so the expiry is still ahead of the merge.
+    let in_3_seconds: DateTime = (Utc::now() + TimeDelta::seconds(3)).format("%Y-%m-%dT%H:%M:%SZ").to_string().parse()?;
     let fragment = EntityFragment::builder().expires_at(in_3_seconds).build()?;
     broker_not_recorded.entities().merge(&sensor_id, &fragment).send().await?.done()?;
     retried(async || {
