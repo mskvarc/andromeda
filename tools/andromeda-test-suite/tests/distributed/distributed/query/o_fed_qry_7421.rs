@@ -12,8 +12,8 @@ use http::StatusCode;
 use ngsi_ld::{http::headers::Accept, model::ErrorType, registration::RegistrationMode};
 
 /// Pins: Query Entities on broker-f, whose limits are 5 distinct entities and 15 source rows, over inclusive registrations at brokers B and C each holding Entities 1 to 5 and an auxiliary registration at broker D holding Entities 1 to 3, 9 and 10, 15 rows and 7 distinct identifiers, answers 403 `TooManyResults` whose detail names `federation.query.max_entities`
-/// Clause: 4.3.6.2, 4.12, 5.7.2.4
-/// Recorded: clause 4.12 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5 distinct entities and 15 source rows; an Entity only an auxiliary source answers is part of the merged result (clause 5.7.2.4), so it counts against the entity limit
+/// Clause: 4.3.6.2, 4.12, 5.5.6, 5.7.2.4
+/// Recorded: clause 5.5.6 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5 distinct entities and 15 source rows; an Entity only an auxiliary source answers is part of the merged result (clause 5.7.2.4), so it counts against the entity limit
 #[gtest]
 #[tokio::test]
 async fn o_fed_qry_7421_an_entity_only_an_auxiliary_source_answers_counts_as_an_entity() -> Result<()> {

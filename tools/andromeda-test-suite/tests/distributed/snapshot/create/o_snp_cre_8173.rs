@@ -21,8 +21,8 @@ use ngsi_ld::{
 /// the histories of Entities 1 to 3 of and peer broker B, under an inclusive `queryTemporal` registration, holds the
 /// histories of Entities 3 to 5 of, 5 merged with Entity 3 counted once, ends success, and Query Temporal Evolution
 /// of Entities under the Snapshot answers all 5
-/// Clause: 4.12, 5.7.4.4, 5.16.1.4
-/// Recorded: clause 4.12 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5
+/// Clause: 4.12, 5.5.6, 5.7.4.4, 5.16.1.4
+/// Recorded: clause 5.5.6 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5
 /// distinct entities and 15 source rows; clause 5.7.4.4 merges an entity a source and the broker both hold into one,
 /// so the merged collection reaches the limit without passing it
 #[gtest]

@@ -20,8 +20,8 @@ use ngsi_ld::{
 /// holds no history of and peer broker B, under an inclusive `queryTemporal` registration, holds the histories of 6
 /// Entities of, ends failure, and its temporal query's execution details are failure with a 403 `TooManyResults`
 /// problem whose detail names `federation.query.max_entities`
-/// Clause: 4.12, 5.7.4.4, 5.16.1.4, 5.2.42
-/// Recorded: clause 4.12 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5
+/// Clause: 4.12, 5.5.6, 5.7.4.4, 5.16.1.4, 5.2.42
+/// Recorded: clause 5.5.6 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5
 /// distinct entities and 15 source rows; clause 5.16.1.4 executes a Snapshot temporal query following clause 5.7.4.4,
 /// so the capture records the problem Query Temporal Evolution of Entities over the same source answers with
 #[gtest]

@@ -11,8 +11,8 @@ use googletest::prelude::*;
 use ngsi_ld::{http::headers::Accept, registration::RegistrationMode};
 
 /// Pins: Query Entities on broker-f, whose limits are 5 distinct entities and 15 source rows, over inclusive registrations at brokers B and C each holding Entities 1 to 5 and an auxiliary registration at broker D holding Entities 1 to 3, 13 rows and 5 distinct identifiers, answers 200 with Entities 1 to 5
-/// Clause: 4.12, 5.7.2.4
-/// Recorded: clause 4.12 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5 distinct entities and 15 source rows; an identifier an auxiliary source shares with another source is one entity of the merged result
+/// Clause: 4.12, 5.5.6, 5.7.2.4
+/// Recorded: clause 5.5.6 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5 distinct entities and 15 source rows; an identifier an auxiliary source shares with another source is one entity of the merged result
 #[gtest]
 #[tokio::test]
 async fn o_fed_qry_7424_an_entity_an_auxiliary_source_shares_with_another_source_counts_once() -> Result<()> {

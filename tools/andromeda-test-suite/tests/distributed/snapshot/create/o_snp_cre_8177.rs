@@ -44,8 +44,8 @@ fn history(namespace: &Namespace, number: u32, value: u32, observed_at: &str) ->
 /// ends partial, its temporal query's execution details are failure with a 403 `TooManyResults` problem whose detail
 /// names `federation.query.max_entities`, Query Temporal Evolution of Entities under the Snapshot answers no history,
 /// and Query Entities under it answers Entity 1 with `speed` 1
-/// Clause: 4.12, 5.7.4.4, 5.16.1.4, 5.2.42, 6.3.10
-/// Recorded: clause 4.12 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5
+/// Clause: 4.12, 5.5.6, 5.7.4.4, 5.16.1.4, 5.2.42, 6.3.10
+/// Recorded: clause 5.5.6 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5
 /// distinct entities and 15 source rows; clause 5.16.1.4 retrieves every page of a temporal query, the rest of a
 /// partial answer asked for as clause 6.3.10 says, and stores the Entity information it retrieved, which a query
 /// refused on the rest of its answer has none of; the entity query captured Entity 1 whatever the temporal query wrote

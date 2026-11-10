@@ -7,6 +7,14 @@
 //! writing it into the Snapshot. Clause 5.16.1.4 executes the query following
 //! clause 5.7.2.4 or 5.7.4.4, so a failure of a context source keeps the
 //! clause 6.3.17 type, and one of the capture itself is an `InternalError`.
+//!
+//! Two failures of context sources have no type of their own: a query whose
+//! every matching source failed with no local entity to answer, and a source
+//! answer the capture cannot read to the end. Clause 6.3.17 binds 502 only to
+//! the single source of an exclusive or redirect registration and gives a
+//! failed inclusive source a warning, which an execution result has no place
+//! for. Both are recorded as the `BadGateway` 502 Andromeda answers that
+//! single source's failure with.
 
 use crate::{error::SnapshotError, executor::instance_walk::WalkRefusal};
 use andromeda_context_commit::error::CommitError;
@@ -91,11 +99,12 @@ pub(super) enum ExecutionFailure<'error> {
 }
 
 impl ExecutionFailure<'_> {
-    /// The clause 5.5.2 category, or clause 6.3.17 binding, the failure is
-    /// recorded as.
+    /// The clause 5.5.2 category, or the 502 binding, the failure is recorded
+    /// as.
     ///
-    /// Every matching source failing is a gateway failure (clause 6.3.17), and
-    /// so is a source whose partial answer cannot be read on. A `lastN` whose
+    /// Every matching source failing, and a source whose partial answer cannot
+    /// be read on, are recorded as the `BadGateway` 502 Andromeda answers the
+    /// failure of a single registered source with (clause 6.3.17). A `lastN` whose
     /// remainder pages backwards cannot be captured whole, which clause 5.5.2
     /// names `TooManyResults`, and an aggregated representation is an
     /// operation a Snapshot does not support. The rest are failures of the
@@ -154,8 +163,9 @@ mod tests {
         WalkRefusal::Stalled { at: DateTime::UNIX_EPOCH }
     }
 
-    /// Clause 6.3.17: a query no local entity answers and whose every matching
-    /// Context Source failed is a 502 `BadGateway`.
+    /// A query no local entity answers and whose every matching Context
+    /// Source failed is recorded as the `BadGateway` 502 Andromeda answers a
+    /// failed single source with (clause 6.3.17).
     #[test]
     fn every_matching_source_failing_is_a_bad_gateway() {
         assert_eq!(
@@ -164,9 +174,10 @@ mod tests {
         );
     }
 
-    /// Clause 6.3.17: a Context Source whose partial temporal answer cannot be
-    /// read on failed the forwarded query, a 502 `BadGateway`; the broker's own
-    /// answer failing so is the capture's `InternalError`.
+    /// A Context Source whose partial temporal answer cannot be read on is
+    /// recorded as the `BadGateway` 502 Andromeda answers a failed single
+    /// source with (clause 6.3.17); the broker's own answer failing so is the
+    /// capture's `InternalError`.
     #[test]
     fn a_partial_answer_that_cannot_be_read_on_is_the_fault_of_whoever_gave_it() {
         for refusal in [stalled(), WalkRefusal::Unpositioned] {
