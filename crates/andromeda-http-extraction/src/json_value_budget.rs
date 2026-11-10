@@ -15,7 +15,7 @@
 //! `Connection: close`.
 
 use crate::{request_json_value_limit::RequestJsonValueLimit, request_payload::SPLIT_ADVICE};
-use andromeda_http_response::classified_report::ClassifiedReport;
+use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_number::json_value::value_census::{JsonValueLimit, ValueCensusError, count_values_within};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use thiserror::Error;

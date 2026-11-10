@@ -9,6 +9,7 @@
 //! refuse, and requires the refusal to name the request exactly as sent.
 
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_http_extraction::{
     api_root::ApiRoot,
     body_only_query::BodyOnlyQuery,
@@ -30,7 +31,7 @@ use andromeda_http_extraction::{
     tenant_state::{ExistingTenantState, TenantStateResolver},
     typed_path::TypedPath,
 };
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
@@ -77,7 +78,12 @@ impl TenantStateResolver<()> for RefusingTenants {
         _creation_policy: TenantCreationPolicy,
         instance: &'a Uri,
     ) -> BoxFuture<'a, Result<(), ProblemResponse>> {
-        Box::pin(async move { Err(ClassifiedReport::public(NgsiLdErrorType::NonexistentTenant, "the tenant does not exist").with_instance(instance.clone())) })
+        Box::pin(async move {
+            Err(ProblemResponse::classified(
+                ClassifiedReport::public(NgsiLdErrorType::NonexistentTenant, "the tenant does not exist"),
+                instance.clone(),
+            ))
+        })
     }
 }
 

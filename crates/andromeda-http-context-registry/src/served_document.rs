@@ -20,8 +20,8 @@
 //! could hand one tenant's answer to another.
 
 use andromeda_context_registry::served_context::ServedContext;
+use andromeda_failure_classification::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_http_headers::ngsild_tenant::NgsiLdTenant;
-use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::loader::cache_lifetime::CacheLifetime;
 use axum::{

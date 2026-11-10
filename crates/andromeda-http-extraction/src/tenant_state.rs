@@ -64,7 +64,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::{ExistingTenantState, TenantStateResolver};
-    use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+    use andromeda_failure_classification::classified_report::ClassifiedReport;
+    use andromeda_http_response::problem_response::ProblemResponse;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, tenant_ref::TenantRef};
     use axum::{
@@ -97,9 +98,12 @@ mod tests {
             _creation_policy: TenantCreationPolicy,
             instance: &'a Uri,
         ) -> BoxFuture<'a, Result<HandlerCapability, ProblemResponse>> {
-            Box::pin(
-                async move { Err(ClassifiedReport::public(NgsiLdErrorType::NonexistentTenant, "Tenant is not registered").with_instance(instance.clone())) },
-            )
+            Box::pin(async move {
+                Err(ProblemResponse::classified(
+                    ClassifiedReport::public(NgsiLdErrorType::NonexistentTenant, "Tenant is not registered"),
+                    instance.clone(),
+                ))
+            })
         }
     }
 

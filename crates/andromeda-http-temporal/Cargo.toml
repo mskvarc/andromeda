@@ -16,6 +16,7 @@ workspace = true
 andromeda-context-space.workspace = true
 andromeda-entity-map.workspace = true
 andromeda-extensions.workspace = true
+andromeda-failure-classification.workspace = true
 andromeda-federation.workspace = true
 andromeda-http-context-registry.workspace = true
 andromeda-http-extraction.workspace = true

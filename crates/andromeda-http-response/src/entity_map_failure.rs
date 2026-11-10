@@ -1,8 +1,8 @@
 //! Exhaustive HTTP classification of failures owned by the Entity Map policy,
 //! shared by every binding that answers one.
 
-use crate::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_entity_map::error::EntityMapError;
+use andromeda_failure_classification::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 
 /// Classify one Entity Map policy failure.

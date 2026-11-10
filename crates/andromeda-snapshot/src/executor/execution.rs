@@ -1,6 +1,7 @@
 //! The persistence a snapshot entity query writes its captured states through.
 //!
-//! A query's own failure is recorded in its execution result (clause 5.2.42).
+//! A query's own failure is recorded in its execution result (clause 5.2.42),
+//! a failed local read as the API reports the same failure.
 //! A transient store failure (a lost deadlock or serialization race, or a
 //! saturated pool) is not the query's: it is returned as an error instead, so
 //! the whole preparation restarts rather than freezing a result the load of the
@@ -26,6 +27,7 @@ use andromeda_context_commit::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::error::EntityError;
+use andromeda_failure_classification::entity_failure::classify_entity_error;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::ExecutionResultDetails;
@@ -58,7 +60,7 @@ impl SnapshotExecutor {
                 Ok(writes) => writes,
                 Err(error) => {
                     error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to read captured Snapshot results");
-                    return Ok(failure_detail(ExecutionFailure::ReadResults { cause: &error }.to_string()));
+                    return Ok(failure_detail(ExecutionFailure::ReadResults { cause: &error }.problem()));
                 }
             };
             let outcomes = match self.writes.commit(target, instant.next(), writes).await {
@@ -83,7 +85,7 @@ impl SnapshotExecutor {
             }
         }
         error!(snapshot_id = %snapshot_id, query_index = index, predated = pending.len(), "Captured Snapshot results stayed predated");
-        Ok(failure_detail(ExecutionFailure::PredatedResults { count: pending.len() }.to_string()))
+        Ok(failure_detail(ExecutionFailure::PredatedResults { count: pending.len() }.problem()))
     }
 }
 
@@ -135,7 +137,7 @@ fn predated_captures<'state>(
 pub(super) fn entity_query_failure(error: EntityError) -> Result<ExecutionResultDetails, SnapshotError> {
     match entity_recurrence(&error) {
         Recurrence::Transient => Err(SnapshotError::from(error)),
-        Recurrence::Persistent => Ok(failure_detail(error.to_string())),
+        Recurrence::Persistent => Ok(failure_detail(classify_entity_error(&error).into_problem())),
     }
 }
 
@@ -151,6 +153,65 @@ fn branch_commit_failure(error: CommitError) -> Result<ExecutionResultDetails, S
         | CommitError::Persistence { .. }
         | CommitError::Invariant { .. }
         | CommitError::ReplayLeaseLost { .. }
-        | CommitError::UnexpectedOutcomeCount { .. }) => Ok(failure_detail(ExecutionFailure::StoreResults { cause: &failure }.to_string())),
+        | CommitError::UnexpectedOutcomeCount { .. }) => Ok(failure_detail(ExecutionFailure::StoreResults { cause: &failure }.problem())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::executor::execution::{branch_commit_failure, entity_query_failure};
+    use andromeda_context_commit::error::CommitError;
+    use andromeda_entity::error::EntityError;
+    use andromeda_ngsi_ld_model::snapshot::ExecutionResultDetails;
+    use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
+    use andromeda_ngsi_ld_query::error::QueryError;
+    use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
+    use pretty_assertions::assert_eq;
+
+    /// The classification and detail a failed query records.
+    fn recorded(detail: &ExecutionResultDetails) -> Option<(ProblemClassification, &str)> {
+        detail.problem_details.as_ref().map(|problem| (problem.classification(), problem.detail()))
+    }
+
+    /// Clause 5.16.1.4 executes the query following clause 5.7.2.4: a local
+    /// read that fails for a reason of its own records the type Query Entities
+    /// answers it with, and an internal one its masked summary.
+    #[test]
+    fn a_failed_local_read_records_the_problem_query_entities_answers_with() {
+        let query = entity_query_failure(EntityError::Query(QueryError::QEmpty)).expect("the query's own failure");
+        assert_eq!(
+            recorded(&query).map(|(classification, _)| classification),
+            Some(ProblemClassification::Category(NgsiLdErrorType::BadRequestData))
+        );
+        let store = entity_query_failure(EntityError::Persistence(PersistenceFailure::StatementRejected)).expect("a fault no restart mends");
+        assert_eq!(
+            recorded(&store),
+            Some((
+                ProblemClassification::Category(NgsiLdErrorType::InternalError),
+                "the entity store could not complete the operation"
+            ))
+        );
+    }
+
+    /// A transient store failure is not the query's: the preparation restarts.
+    #[test]
+    fn a_transient_local_read_failure_restarts_the_preparation() {
+        for error in [EntityError::StoreSaturated, EntityError::StoreUnavailable, EntityError::TransactionContended] {
+            assert!(entity_query_failure(error).is_err());
+        }
+    }
+
+    /// Writing into the Snapshot is the capture's own step, so its fault is an
+    /// `InternalError`, and a transient one restarts the preparation.
+    #[test]
+    fn a_failed_branch_write_is_an_internal_error_unless_it_is_transient() {
+        let failed = branch_commit_failure(CommitError::Persistence(PersistenceFailure::StatementRejected)).expect("a fault no restart mends");
+        assert_eq!(
+            recorded(&failed).map(|(classification, _)| classification),
+            Some(ProblemClassification::Category(NgsiLdErrorType::InternalError))
+        );
+        for error in [CommitError::TransactionContended, CommitError::StoreSaturated, CommitError::StoreUnavailable] {
+            assert!(branch_commit_failure(error).is_err());
+        }
     }
 }

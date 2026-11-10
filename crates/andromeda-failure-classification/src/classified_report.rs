@@ -1,11 +1,11 @@
-//! Client-safe classification and disclosure before response construction.
+//! Client-safe classification and disclosure of a failure, before any
+//! transport reports it.
 
-use crate::{internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse};
+use crate::internal_failure_summary::InternalFailureSummary;
 use andromeda_ngsi_ld_problem_details::{
     error_type::NgsiLdErrorType,
     problem_detail::{ProblemClassification, ProblemDetail},
 };
-use axum::http::Uri;
 use std::{fmt::Display, time::Duration};
 
 /// The `Retry-After` delay attached to a shed-backpressure 503.
@@ -32,7 +32,7 @@ const STORE_UNAVAILABLE_RETRY_AFTER: Duration = Duration::from_secs(5);
 
 /// A classified, client-safe failure without request-boundary state.
 ///
-/// Route bindings construct public reports from deliberate detail or use [`ClassifiedReport::internal`] to log a typed source exactly once and replace its disclosure with a coarse, client-safe operation summary.
+/// Classifiers construct public reports from deliberate detail or use [`ClassifiedReport::internal`] to log a typed source exactly once and replace its disclosure with a coarse, client-safe operation summary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClassifiedReport {
     /// Typed category and binding-specific status.
@@ -99,11 +99,12 @@ impl ClassifiedReport {
 
     /// Mask an internal failure with a vetted operation summary after logging its typed source at the disclosure boundary.
     ///
-    /// The real cause is logged once here, inside the surrounding `http-request`
-    /// span whose `x-request-id` the client already holds, so an operator can
-    /// correlate the coarse summary back to the fully-detailed line. `summary` is
-    /// a compile-time literal (see [`InternalFailureSummary`]) and never carries
-    /// any part of the cause.
+    /// The real cause is logged once here, inside the span of the operation
+    /// that met it (an `http-request` span whose `x-request-id` the client
+    /// already holds, or the preparation of a Snapshot), so an operator can
+    /// correlate the coarse summary back to the fully-detailed line. `summary`
+    /// is a compile-time literal (see [`InternalFailureSummary`]) and never
+    /// carries any part of the cause.
     pub fn internal(source: &impl Display, summary: InternalFailureSummary) -> ClassifiedReport {
         tracing::error!(error = %source, "Internal error sanitized before sending to the client");
         ClassifiedReport {
@@ -144,13 +145,11 @@ impl ClassifiedReport {
         self.retry_after
     }
 
-    /// Attach the inbound request URI and create the local Axum response error.
-    pub fn with_instance(self, instance: Uri) -> ProblemResponse {
-        let response = ProblemResponse::new(ProblemDetail::from_classification(self.classification, self.detail).with_instance(instance));
-        match self.retry_after {
-            Some(retry_after) => response.with_retry_after(retry_after),
-            None => response,
-        }
+    /// The clause 5.5.3 problem detail the report discloses, with no request
+    /// instance attached.
+    #[must_use]
+    pub fn into_problem(self) -> ProblemDetail {
+        ProblemDetail::from_classification(self.classification, self.detail)
     }
 }
 
@@ -217,7 +216,7 @@ mod tests {
     #[test]
     fn store_saturation_is_a_503_with_retry_after() {
         use andromeda_ngsi_ld_problem_details::problem_detail::ProblemClassification;
-        use axum::http::StatusCode;
+        use http::StatusCode;
         use std::time::Duration;
 
         let report = ClassifiedReport::store_saturated("the datastore connection pool is saturated");
@@ -231,7 +230,7 @@ mod tests {
     #[test]
     fn store_unavailability_is_a_503_with_a_five_second_retry_after() {
         use andromeda_ngsi_ld_problem_details::problem_detail::ProblemClassification;
-        use axum::http::StatusCode;
+        use http::StatusCode;
         use std::time::Duration;
 
         let report = ClassifiedReport::store_unavailable("the datastore is temporarily unavailable; retry shortly");

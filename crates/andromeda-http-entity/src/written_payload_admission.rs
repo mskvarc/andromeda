@@ -70,8 +70,9 @@ use andromeda_entity::{
     error::EntityError,
     write_kind::{AttributeWriteKind, EntityWriteKind},
 };
+use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_http_extraction::{batch_body_refusal::BatchBodyRefusal, blocking_decode::DecodeTaskFailure};
-use andromeda_http_response::{classified_report::ClassifiedReport, request_refusal::RequestRefusal};
+use andromeda_http_response::request_refusal::RequestRefusal;
 use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_expansion::written_member::WrittenMember;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;

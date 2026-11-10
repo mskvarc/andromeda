@@ -10,6 +10,7 @@ use crate::{
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::{ExecutionResultStatus, Snapshot, SnapshotPriority, SnapshotStatus};
+use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemDetail};
 use chrono::{Duration as ChronoDuration, Utc};
 use futures::future::BoxFuture;
 use pretty_assertions::assert_eq;
@@ -103,11 +104,14 @@ async fn a_preparation_contended_on_every_attempt_records_failure_within_its_bud
     let temporal = recorded[0].temporal_queries_details.as_deref().expect("one result per temporal query");
     assert_eq!(entity.len(), 2);
     assert_eq!(temporal.len(), 1);
+    // A preparation no attempt completed failed during the operation
+    // execution, clause 5.5.2's `InternalError`.
     assert!(
         entity
             .iter()
             .chain(temporal)
-            .all(|detail| detail.result_status == ExecutionResultStatus::Failure && detail.problem_details.is_some()),
+            .all(|detail| detail.result_status == ExecutionResultStatus::Failure
+                && detail.problem_details.as_ref().map(ProblemDetail::error_type) == Some(NgsiLdErrorType::InternalError)),
         "every execution result reports the failure"
     );
     assert!(started.elapsed() < Duration::from_secs(1), "the budget waited {:?}", started.elapsed());

@@ -1,7 +1,11 @@
 //! Exhaustive classification shared by HTTP extractors.
 
 use crate::{api_root::ApiRootError, request_links::ContextLinkError};
-use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary, store_failure::classify_store_failure};
+use andromeda_failure_classification::{
+    classified_report::ClassifiedReport,
+    internal_failure_summary::InternalFailureSummary,
+    store_failure::classify_store_failure,
+};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_tenancy::{error::TenancyError, runtime_build_failure::RuntimeBuildFailure};
 

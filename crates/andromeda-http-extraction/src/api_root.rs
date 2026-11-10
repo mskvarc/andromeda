@@ -17,7 +17,7 @@ use crate::{
     forwarded_protocol::forwarded_protocol,
     listener_scheme::ListenerScheme,
 };
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, problem_response::ProblemResponse};
 use axum::{
     extract::FromRequestParts,
     http::{HeaderMap, request::Parts},
@@ -182,7 +182,10 @@ where
     type Rejection = ExtractorRejection;
 
     fn from_request_parts(parts: &mut Parts, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> {
-        ready(resolve_api_root(parts).map_err(|error| ExtractorRejection::Classified(classify_api_root_error(&error).with_instance(addressed_uri(parts)))))
+        ready(
+            resolve_api_root(parts)
+                .map_err(|error| ExtractorRejection::Classified(ProblemResponse::classified(classify_api_root_error(&error), addressed_uri(parts)))),
+        )
     }
 }
 

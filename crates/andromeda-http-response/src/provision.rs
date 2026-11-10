@@ -7,12 +7,8 @@
 //! operation failed. The current-entity and the temporal bindings answer the
 //! same way, so the decision lives here, between them.
 
-use crate::{
-    batch_projection::forwarded_write_error,
-    classified_report::ClassifiedReport,
-    forwarding_failure::classify_forwarding_error,
-    problem_response::ProblemResponse,
-};
+use crate::{batch_projection::forwarded_write_error, problem_response::ProblemResponse};
+use andromeda_failure_classification::{classified_report::ClassifiedReport, forwarding_failure::classify_forwarding_error};
 use andromeda_federation::{outcome::ForwardedWriteResult, single_source_failure::single_source_failure};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_problem_details::batch_operation::{BatchEntityError, BatchOperationResult};
@@ -70,7 +66,7 @@ pub fn provision_verdict(forwarded: &[ForwardedWriteResult], local: &LocalOutcom
                 return Ok(ProvisionVerdict::Succeeded);
             }
             if let Some(error) = single_source_failure(forwarded) {
-                return Err(classify_forwarding_error(&error).with_instance(instance.clone()));
+                return Err(ProblemResponse::classified(classify_forwarding_error(&error), instance.clone()));
             }
             Ok(ProvisionVerdict::PartlySucceeded)
         }
@@ -83,7 +79,7 @@ pub fn provision_verdict(forwarded: &[ForwardedWriteResult], local: &LocalOutcom
         }
         LocalOutcome::Processed(Err(report)) => {
             if !remote_succeeded {
-                return Err(report.clone().with_instance(instance.clone())); // clone: the report is owned by the outcome the caller still holds
+                return Err(ProblemResponse::classified(report.clone(), instance.clone())); // clone: the report is owned by the outcome the caller still holds
             }
             Ok(ProvisionVerdict::PartlySucceeded)
         }
@@ -152,10 +148,10 @@ pub fn multi_status_result(entity_id: &Identifier, local: &LocalOutcome, forward
 #[cfg(test)]
 mod tests {
     use crate::{
-        classified_report::ClassifiedReport,
         problem_response::ProblemResponse,
         provision::{LocalOutcome, multi_status_result, provision_response},
     };
+    use andromeda_failure_classification::classified_report::ClassifiedReport;
     use andromeda_federation::{
         answer_body::AnswerBody,
         outcome::{ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure},

@@ -1,12 +1,21 @@
 //! The distributed part of a query: the two clause 5.7.2.4 forwarding phases
 //! and what they bring back.
 
-use crate::{
-    entity::{ContextSpec, ForwardQueryRequest, ProblemResponse, SourceContribution, collect_warnings, contributions_of, query_admission::AdmittedQuery},
-    error::public_error,
+use crate::entity::{
+    ContextSpec,
+    ForwardQueryRequest,
+    ProblemResponse,
+    SourceContribution,
+    collect_warnings,
+    contributions_of,
+    query_admission::AdmittedQuery,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
+use andromeda_failure_classification::{
+    forwarding_failure::local_federation_failure,
+    result_limit_failure::{classify_instance_budget_refusal, classify_result_budget_refusal},
+};
 use andromeda_federation::{
     FederationService,
     forwarded_query::client_query::ClientQuery,
@@ -18,11 +27,10 @@ use andromeda_federation::{
     split_entities::SplitEntities,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_http_response::{declined_representation::single_source_declined, forwarding_failure::local_federation_failure};
+use andromeda_http_response::declined_representation::single_source_declined;
 use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::filter::expression::Expr;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use axum::http::{HeaderMap, Uri as HttpUri};
@@ -229,12 +237,12 @@ impl QueryForwarding<'_> {
     /// is only logged.
     fn failed(&self, error: QueryForwardingError) -> Result<(), ProblemResponse> {
         match error {
-            QueryForwardingError::TooManyResults(exceeded) => Err(public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), self.uri)),
-            QueryForwardingError::TooManyInstances(exceeded) => Err(public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), self.uri)),
+            QueryForwardingError::TooManyResults(exceeded) => Err(ProblemResponse::classified(classify_result_budget_refusal(&exceeded), self.uri.clone())),
+            QueryForwardingError::TooManyInstances(exceeded) => Err(ProblemResponse::classified(classify_instance_budget_refusal(&exceeded), self.uri.clone())),
             QueryForwardingError::Federation(error) => {
                 if let Some(report) = local_federation_failure(&error) {
                     // clone: the problem response owns the request URI it names
-                    return Err(report.with_instance(self.uri.clone()));
+                    return Err(ProblemResponse::classified(report, self.uri.clone()));
                 }
                 warn!(%error, "context source forwarding failed during the entity query");
                 Ok(())

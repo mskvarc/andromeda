@@ -21,7 +21,7 @@ use crate::{
     classification::classify_context_link_error,
 };
 use andromeda_http_headers::link::{error::LinkParseError, header::Link};
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use axum::{
     extract::Request,
@@ -208,7 +208,7 @@ pub async fn validate_request_links(request: Request, next: Next) -> Response {
     let (mut parts, body) = request.into_parts();
     match RequestLinks::of(&mut parts) {
         Ok(_) => next.run(Request::from_parts(parts, body)).await,
-        Err(error) => ExtractorRejection::Classified(classify_context_link_error(&error).with_instance(instance)).into_response(),
+        Err(error) => ExtractorRejection::Classified(ProblemResponse::classified(classify_context_link_error(&error), instance)).into_response(),
     }
 }
 

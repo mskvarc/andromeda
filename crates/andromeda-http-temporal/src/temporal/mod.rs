@@ -4,6 +4,7 @@ use crate::{
     error::TemporalResultExt as ResultInstanceExt,
     state::{TemporalTenantState as TenantState, TemporalTenantStateOrCreate as TenantStateOrCreate},
 };
+use andromeda_failure_classification::temporal_failure::classify_temporal_error;
 use andromeda_federation::{
     entity_result::{collect_proxied_attrs, collect_temporal_warnings},
     operation::{ForwardingOperation, ProvisionResource},
@@ -27,7 +28,6 @@ use andromeda_http_response::{
     problem_response::ProblemResponse,
     provision::{LocalOutcome, provision_response},
     single::NgsiLdResponse,
-    temporal_failure::classify_temporal_error,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, instance_identity::InstanceIdentity, time_rel::TimeRel};

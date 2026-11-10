@@ -30,6 +30,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-context-commit",
         "andromeda-context-space",
         "andromeda-entity",
+        "andromeda-failure-classification",
         "andromeda-federation",
         "andromeda-json-literal",
         "andromeda-jsonld",

@@ -92,7 +92,7 @@ impl TenantStateResolver<Arc<SubscriptionRouteServices>> for SubscriptionRouteSt
             self.resolver
                 .resolve(tenant, creation_policy)
                 .await
-                .map_err(|error| classify_tenancy_error(&error).with_instance(instance.clone()))
+                .map_err(|error| ProblemResponse::classified(classify_tenancy_error(&error), instance.clone()))
         })
     }
 }

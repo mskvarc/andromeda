@@ -1,6 +1,6 @@
 //! The `options` keywords a tenant read accepts.
 
-use andromeda_http_response::classified_report::ClassifiedReport;
+use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::comma_separated_list::{CommaSeparatedListError, ListedItem, listed_members};
 

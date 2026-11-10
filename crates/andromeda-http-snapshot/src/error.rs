@@ -1,15 +1,15 @@
 //! Exhaustive HTTP classification for snapshot failures.
 
-use andromeda_http_response::{
+use andromeda_failure_classification::{
     classified_report::ClassifiedReport,
     entity_failure::classify_entity_error,
     forwarding_failure::classify_federation_error,
     internal_failure_summary::InternalFailureSummary,
     jsonld_failure::classify_jsonld_error,
     parameter_failure::classify_parameter_error,
-    problem_response::ProblemResponse,
     temporal_failure::classify_temporal_error,
 };
+use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
 use andromeda_snapshot::{error::SnapshotError, service::purge::SnapshotPurgeFailure};
@@ -54,7 +54,7 @@ pub trait SnapshotResultExt<T> {
 
 impl<T> SnapshotResultExt<T> for Result<T, SnapshotError> {
     fn with_snapshot_instance(self, instance: &Uri) -> Result<T, ProblemResponse> {
-        self.map_err(|error| classify_snapshot_error(&error).with_instance(instance.clone()))
+        self.map_err(|error| ProblemResponse::classified(classify_snapshot_error(&error), instance.clone()))
     }
 }
 
@@ -62,7 +62,7 @@ impl<T> SnapshotResultExt<T> for Result<T, SnapshotError> {
 /// 5.5.7) is refused as every other operation's is.
 impl<T> SnapshotResultExt<T> for Result<T, JsonLdError> {
     fn with_snapshot_instance(self, instance: &Uri) -> Result<T, ProblemResponse> {
-        self.map_err(|error| classify_jsonld_error(&error).with_instance(instance.clone()))
+        self.map_err(|error| ProblemResponse::classified(classify_jsonld_error(&error), instance.clone()))
     }
 }
 
@@ -74,7 +74,7 @@ pub(crate) fn project_purge_failure(failure: SnapshotPurgeFailure) -> BatchEntit
 
 /// A 500 answer at `instance` that logs `source` and discloses only `summary`.
 pub(crate) fn internal_problem(source: &impl Display, summary: InternalFailureSummary, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::internal(source, summary).with_instance(instance.clone())
+    ProblemResponse::classified(ClassifiedReport::internal(source, summary), instance.clone())
 }
 
 #[cfg(test)]

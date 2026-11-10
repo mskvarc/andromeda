@@ -4,6 +4,7 @@ use crate::{
     error::{RegistrationCountError, RegistrationResultExt, internal_problem},
     state::{RegistrationTenantState, RegistrationTenantStateOrCreate},
 };
+use andromeda_failure_classification::internal_failure_summary::InternalFailureSummary;
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
@@ -23,7 +24,6 @@ use andromeda_http_extraction::{
 use andromeda_http_headers::via::Via;
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
-    internal_failure_summary::InternalFailureSummary,
     pagination::{PageOutcome, append_page_links},
     problem_response::ProblemResponse,
     rendered_response::RenderedResponse,

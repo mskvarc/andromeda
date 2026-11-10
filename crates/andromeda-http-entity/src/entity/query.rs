@@ -31,7 +31,6 @@ use crate::{
         request_entity_map::{LocalEntitySource, record_map_use},
         with_linked_resolution_warnings,
     },
-    error::public_error,
     join::JoinRequest,
     read_rendering::{EntityRepresentation, matched_entities, settle_representation},
     state::EntityRouteServices,
@@ -39,6 +38,7 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::{EntityQueryService, entity_versions::VersionRead};
 use andromeda_entity_map::recording::PageMatches;
+use andromeda_failure_classification::result_limit_failure::classify_result_budget_refusal;
 use andromeda_federation::split_entities::SplitEntities;
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{api_root::ApiRoot, context_target, pagination_policy::RequestPagination, response_context_request::ResponseContextRequest};
@@ -48,7 +48,6 @@ use andromeda_linked_retrieval::{narrowing::list::ListInForce, plan::JoinPlan, t
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity_selection::ConsideredEntities};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::{geometry_media_type::require_geojson_for_geometry_property, query::entity::parameters::EntityQueryParameters};
@@ -328,7 +327,7 @@ fn merge_contributions(
     match forwarded {
         Some(results) => results
             .merge_onto(local_entities, list)
-            .map_err(|exceeded| public_error(NgsiLdErrorType::TooManyResults, exceeded.to_string(), instance)),
+            .map_err(|exceeded| ProblemResponse::classified(classify_result_budget_refusal(&exceeded), instance.clone())),
         None => Ok(MergedEntities::local(local_entities)),
     }
 }

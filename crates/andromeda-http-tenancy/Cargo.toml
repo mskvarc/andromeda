@@ -13,6 +13,7 @@ description = "Focused HTTP binding and HTTP concern policy for NGSI-LD tenancy"
 workspace = true
 
 [dependencies]
+andromeda-failure-classification.workspace = true
 andromeda-http-extraction.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-http-response.workspace = true

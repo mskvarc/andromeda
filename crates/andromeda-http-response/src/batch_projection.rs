@@ -1,7 +1,8 @@
 //! Projection of policy batch outcomes and forwarded write outcomes into
 //! clause 5.2.16 wire values.
 
-use crate::{classified_report::ClassifiedReport, forwarded_write_failure::ForwardedWriteFailure};
+use crate::forwarded_write_failure::ForwardedWriteFailure;
+use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_federation::{outcome::ForwardedWriteOutcome, remote_answer::RemoteAnswer};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, uri::Uri};
 use andromeda_ngsi_ld_problem_details::{
@@ -107,10 +108,9 @@ const fn classification_for_remote_status(status: u16) -> ProblemClassification 
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        batch_projection::{batch_operation_result, forwarded_write_error},
-        classified_report::ClassifiedReport,
-    };
+    use crate::batch_projection::{batch_entity_error, batch_operation_result, forwarded_write_error};
+    use andromeda_entity::error::EntityError;
+    use andromeda_failure_classification::{classified_report::ClassifiedReport, entity_failure::classify_entity_error};
     use andromeda_federation::{
         answer_body::AnswerBody,
         federation_invariant::FederationInvariant,
@@ -131,6 +131,19 @@ mod tests {
 
     fn entity(raw: &str) -> Uri {
         raw.parse().expect("valid URI")
+    }
+
+    #[test]
+    fn single_and_batch_paths_use_the_identical_classifier() {
+        let identifier = uri("urn:ngsi-ld:Entity:1");
+        let source = EntityError::already_exists(&identifier);
+        let single = classify_entity_error(&source);
+        let batch = batch_entity_error(identifier.into(), &source, classify_entity_error);
+        pretty_assertions::assert_eq!(
+            batch.error.error_type,
+            BatchErrorKind::Known(ProblemClassification::Category(single.error_type()))
+        );
+        pretty_assertions::assert_eq!(batch.error.detail, single.detail());
     }
 
     #[test]

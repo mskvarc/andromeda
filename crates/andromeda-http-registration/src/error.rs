@@ -1,14 +1,14 @@
 //! Exhaustive HTTP classification for context-source registration failures.
 
-use andromeda_http_context_registry::response_rendering::{ResponseContextError, classify_response_context_error};
-use andromeda_http_response::{
+use andromeda_failure_classification::{
     classified_report::ClassifiedReport,
     internal_failure_summary::InternalFailureSummary,
     jsonld_failure::classify_jsonld_error,
     parameter_failure::classify_parameter_error,
-    problem_response::ProblemResponse,
     query_failure::classify_query_error,
 };
+use andromeda_http_context_registry::response_rendering::{ResponseContextError, classify_response_context_error};
+use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_render::error::RenderError;
@@ -98,13 +98,13 @@ where
     E: RegistrationHttpClassify,
 {
     fn with_registration_instance(self, instance: &Uri) -> Result<T, ProblemResponse> {
-        self.map_err(|error| error.classify_for_registration_http().with_instance(instance.clone()))
+        self.map_err(|error| ProblemResponse::classified(error.classify_for_registration_http(), instance.clone()))
     }
 }
 
 /// Sanitize a binding invariant and attach the request URI.
 pub(crate) fn internal_problem(error: impl Display, summary: InternalFailureSummary, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::internal(&error, summary).with_instance(instance.clone())
+    ProblemResponse::classified(ClassifiedReport::internal(&error, summary), instance.clone())
 }
 
 #[cfg(test)]

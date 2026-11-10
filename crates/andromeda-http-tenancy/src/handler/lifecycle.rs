@@ -5,8 +5,9 @@ use crate::{
     handler::{nonexistent_tenant, parse_tenant_name},
     state::TenancyRouteState,
 };
+use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_http_extraction::json_payload::JsonPayload;
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_tenancy::status::TenantStatus;
 use axum::{
@@ -48,20 +49,22 @@ pub async fn patch(
 ) -> Result<Response, ProblemResponse> {
     let name = parse_tenant_name(tenant_name, &uri)?;
     let Some(is_active) = body.is_active else {
-        return Err(ClassifiedReport::public(
-            NgsiLdErrorType::BadRequestData,
-            // Clause 5.2.12-1 makes `isActive` the sole writable member; the
-            // citation stays here rather than in the client-facing detail.
-            "a tenant update must set the writable 'isActive' member",
-        )
-        .with_instance(uri.clone()));
+        return Err(ProblemResponse::classified(
+            ClassifiedReport::public(
+                NgsiLdErrorType::BadRequestData,
+                // Clause 5.2.12-1 makes `isActive` the sole writable member; the
+                // citation stays here rather than in the client-facing detail.
+                "a tenant update must set the writable 'isActive' member",
+            ),
+            uri.clone(),
+        ));
     };
     let status = if is_active { TenantStatus::Active } else { TenantStatus::Suspended };
     match state
         .administration()
         .set_admin_status(&name, status)
         .await
-        .map_err(|error| classify(&TenancyHttpError::from(error)).with_instance(uri.clone()))?
+        .map_err(|error| ProblemResponse::classified(classify(&TenancyHttpError::from(error)), uri.clone()))?
     {
         Some(_view) => Ok(StatusCode::NO_CONTENT.into_response()),
         None => Err(nonexistent_tenant(&name, &uri)),

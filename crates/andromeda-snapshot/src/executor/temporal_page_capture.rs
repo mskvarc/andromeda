@@ -10,9 +10,10 @@ use crate::{
     error::SnapshotError,
     executor::{
         SnapshotExecutor,
+        execution_failure::ExecutionFailure,
         instance_walk::{InstanceWalk, WalkProgress},
         status::{failure_detail, success_detail},
-        temporal_capture::{TemporalCapture, walk_refusal},
+        temporal_capture::{TemporalCapture, capture_refused},
         temporal_failure::{TemporalStep, temporal_failure},
     },
 };
@@ -92,7 +93,7 @@ impl SnapshotExecutor {
             match walk.advance(range.as_ref()) {
                 Ok(WalkProgress::Complete) => return Ok(None),
                 Ok(WalkProgress::Resumed) => {}
-                Err(refusal) => return Ok(Some(walk_refusal(capture, refusal))),
+                Err(refusal) => return Ok(Some(capture_refused(capture, &ExecutionFailure::LocalWalkRefused(refusal)))),
             }
         }
     }
@@ -156,7 +157,7 @@ fn instance_documents(histories: Vec<TemporalHistory>, capture: &TemporalCapture
             TemporalHistory::Instances(_) => {
                 warn!(snapshot_id = %capture.snapshot_id, query_index = capture.index, "Temporal snapshot result carries no entity identifier");
             }
-            TemporalHistory::Aggregates(_) => return Err(failure_detail("A Snapshot cannot capture an aggregated temporal representation")),
+            TemporalHistory::Aggregates(_) => return Err(failure_detail(ExecutionFailure::AggregatedRepresentation.problem())),
         }
     }
     Ok(documents)

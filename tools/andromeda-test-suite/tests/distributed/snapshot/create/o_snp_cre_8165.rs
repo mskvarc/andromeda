@@ -5,20 +5,19 @@ use andromeda_test_suite::{
     broker,
     cleanup::Cleanup,
     config::{BrokerRole, PeerRole},
-    eventually::retried,
     namespace::Namespace,
+    snapshot_capture::await_query_problem,
 };
 use googletest::prelude::*;
 use ngsi_ld::{
-    http::headers::Accept,
-    model::NgsiLdMediaType,
+    model::ErrorType,
     registration::RegistrationMode,
-    snapshot::{ExecutionStatus, QueryDocument, Snapshot, SnapshotId, SnapshotStatus},
+    snapshot::{QueryDocument, Snapshot, SnapshotId},
 };
 
 /// Pins: A Snapshot on broker-f, whose limit is 5 distinct entities, over a type broker-f holds Entities 1 to 3 of
 /// and peer broker B, under an inclusive registration, holds Entities 4 to 6 of, 3 Entities each and 6 merged, ends
-/// failure, and its query's execution details are failure with a problem whose detail names
+/// failure, and its query's execution details are failure with a 403 `TooManyResults` problem whose detail names
 /// `federation.query.max_entities`
 /// Clause: 4.12, 5.7.2.4, 5.16.1.4, 5.2.42
 /// Recorded: clause 4.12 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5
@@ -41,31 +40,10 @@ async fn o_snp_cre_8165_a_capture_whose_local_and_peer_entities_together_pass_th
         .query(QueryDocument::builder().entities([vehicle_type.as_str()]).build()?)
         .build()?;
     bounded.snapshots().create(&snapshot).send().await?;
-    retried(async || {
-        let settled = bounded
-            .with_accept(Accept::new(NgsiLdMediaType::Json))
-            .snapshots()
-            .retrieve(&snapshot_id)
-            .send()
-            .await?;
-        verify_that!(settled.status(), eq("failure".parse::<SnapshotStatus>()?))?;
-        verify_that!(settled.output().queries_details, len(eq(1)))?;
-        verify_that!(
-            settled.output().queries_details.first().map(|details| details.result_status),
-            some(eq(ExecutionStatus::Failure))
-        )?;
-        verify_that!(
-            settled
-                .output()
-                .queries_details
-                .first()
-                .and_then(|details| details.problem_details.as_ref())
-                .and_then(|problem| problem.detail.as_deref()),
-            some(contains_substring("federation.query.max_entities"))
-        )?;
-        Ok(())
-    })
-    .await?;
+    let problem = await_query_problem(&bounded, &snapshot_id).await?;
+    expect_that!(problem.error_type, some(eq(&ErrorType::TooManyResults)));
+    expect_that!(problem.status, some(eq(403)));
+    expect_that!(problem.detail, some(contains_substring("federation.query.max_entities")));
     bounded.snapshots().delete(&snapshot_id).send().await?;
     bounded.registrations().delete(&registration_id).send().await?;
     Ok(())

@@ -12,6 +12,10 @@ use crate::temporal::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::reuse::EntityMapUse;
+use andromeda_failure_classification::{
+    forwarding_failure::local_federation_failure,
+    result_limit_failure::{classify_instance_budget_refusal, classify_result_budget_refusal},
+};
 use andromeda_federation::{
     FederationService,
     expanded_registration_filters::ExpandedRegistrationFilters,
@@ -24,12 +28,7 @@ use andromeda_federation::{
     source_reach::SourceReach,
     split_entities::SplitEntities,
 };
-use andromeda_http_response::{
-    classified_report::ClassifiedReport,
-    declined_representation::single_source_declined,
-    forwarding_failure::local_federation_failure,
-};
-use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+use andromeda_http_response::declined_representation::single_source_declined;
 use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
 use axum::http::{HeaderMap, Uri};
 use tracing::warn;
@@ -156,7 +155,7 @@ impl ForwardedHistory {
 /// The clause 4.12 `TooManyResults` refusal of a query whose sources, or whose
 /// merged collection, exceed what one request gathers.
 pub(crate) fn too_many_results(exceeded: ResultBudgetExceeded, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::public(NgsiLdErrorType::TooManyResults, exceeded.to_string()).with_instance(instance.clone())
+    ProblemResponse::classified(classify_result_budget_refusal(&exceeded), instance.clone())
 }
 
 /// Ask every matching context source for its part of the history, unless the
@@ -257,12 +256,12 @@ pub(crate) fn forwarding_outcome(
         Err(QueryForwardingError::TooManyResults(exceeded)) => Err(too_many_results(exceeded, instance)),
         // clone: the problem response owns the request URI it names
         Err(QueryForwardingError::TooManyInstances(exceeded)) => {
-            Err(ClassifiedReport::public(NgsiLdErrorType::TooManyResults, exceeded.to_string()).with_instance(instance.clone()))
+            Err(ProblemResponse::classified(classify_instance_budget_refusal(&exceeded), instance.clone()))
         }
         Err(QueryForwardingError::Federation(error)) => {
             if let Some(report) = local_federation_failure(&error) {
                 // clone: the problem response owns the request URI it names
-                return Err(report.with_instance(instance.clone()));
+                return Err(ProblemResponse::classified(report, instance.clone()));
             }
             warn!(%error, "context source forwarding failed during the temporal read");
             Ok(ForwardReadOutcome::empty())

@@ -1,7 +1,7 @@
 //! Focused failures produced while rendering source identity.
 
+use andromeda_failure_classification::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_http_context_registry::response_rendering::{ResponseContextError, classify_response_context_error};
-use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_ngsi_ld_render::error::RenderError;
 
 /// Failures local to the source-identity HTTP binding.

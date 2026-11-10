@@ -35,18 +35,18 @@ pub async fn get(
     Path(tenant_name): Path<String>,
     ValidatedQuery(params): ValidatedQuery<TenantIntrospectionParams>,
 ) -> Result<Response, ProblemResponse> {
-    let options = TenantOptions::parse(params.options.as_deref()).map_err(|error| error.classify().with_instance(uri.clone()))?;
+    let options = TenantOptions::parse(params.options.as_deref()).map_err(|error| ProblemResponse::classified(error.classify(), uri.clone()))?;
     let name = parse_tenant_name(tenant_name, &uri)?;
     let view = state
         .administration()
         .tenant(&name)
         .await
-        .map_err(|error| classify(&TenancyHttpError::from(error)).with_instance(uri.clone()))?;
+        .map_err(|error| ProblemResponse::classified(classify(&TenancyHttpError::from(error)), uri.clone()))?;
     match view {
         Some(view) => {
             let tenant = build_tenant(&view, options, state.usage())
                 .await
-                .map_err(|error| classify(&error).with_instance(uri.clone()))?;
+                .map_err(|error| ProblemResponse::classified(classify(&error), uri.clone()))?;
             Ok(Json(tenant).into_response())
         }
         None => Err(nonexistent_tenant(&name, &uri)),

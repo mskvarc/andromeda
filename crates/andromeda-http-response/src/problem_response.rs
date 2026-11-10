@@ -1,9 +1,11 @@
 //! Axum construction of a classified NGSI-LD problem response.
 
+use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader};
 use andromeda_ngsi_ld_problem_details::problem_detail::ProblemDetail;
 use axum::{
     Json,
+    http::Uri,
     response::{IntoResponse, Response},
 };
 use headers::{HeaderMapExt, RetryAfter};
@@ -30,6 +32,18 @@ impl ProblemResponse {
             problem,
             warnings: Vec::new(),
             retry_after: None,
+        }
+    }
+
+    /// Answer the request at `instance` with `report`: its problem detail
+    /// naming the request, and the `Retry-After` of a retryable one.
+    #[must_use]
+    pub fn classified(report: ClassifiedReport, instance: Uri) -> ProblemResponse {
+        let retry_after = report.retry_after();
+        let response = ProblemResponse::new(report.into_problem().with_instance(instance));
+        match retry_after {
+            Some(retry_after) => response.with_retry_after(retry_after),
+            None => response,
         }
     }
 
@@ -75,8 +89,9 @@ impl IntoResponse for ProblemResponse {
 }
 #[cfg(test)]
 mod tests {
-    use crate::{classified_report::ClassifiedReport, entity_failure::classify_entity_error, problem_response::ProblemResponse};
+    use crate::problem_response::ProblemResponse;
     use andromeda_entity::error::EntityError;
+    use andromeda_failure_classification::{classified_report::ClassifiedReport, entity_failure::classify_entity_error};
     use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use axum::{
@@ -103,7 +118,10 @@ mod tests {
 
     #[tokio::test]
     async fn response_attaches_instance_and_uses_application_json() -> Result<(), serde_json::Error> {
-        let response = ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, "Entity missing").with_instance(Uri::from_static("/ngsi-ld/v1/entities/x"));
+        let response = ProblemResponse::classified(
+            ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, "Entity missing"),
+            Uri::from_static("/ngsi-ld/v1/entities/x"),
+        );
         let (response, value) = body(response).await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_FOUND);
         pretty_assertions::assert_eq!(
@@ -117,9 +135,11 @@ mod tests {
 
     #[tokio::test]
     async fn recoverable_response_carries_retry_after_delay() -> Result<(), serde_json::Error> {
-        let response = ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, "Snapshot promotion is still pending")
-            .with_retry_after(Duration::from_secs(1))
-            .with_instance(Uri::from_static("/ngsi-ld/v1/entities"));
+        let response = ProblemResponse::classified(
+            ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, "Snapshot promotion is still pending")
+                .with_retry_after(Duration::from_secs(1)),
+            Uri::from_static("/ngsi-ld/v1/entities"),
+        );
         let (response, value) = body(response).await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         pretty_assertions::assert_eq!(response.headers().get("retry-after").and_then(|value| value.to_str().ok()), Some("1"));
@@ -131,12 +151,14 @@ mod tests {
     /// sources it could not reach, so the warnings ride on the problem response.
     #[tokio::test]
     async fn a_problem_response_carries_its_distributed_warnings_as_headers() -> Result<(), serde_json::Error> {
-        let response = ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, "Entity missing")
-            .with_instance(Uri::from_static("/ngsi-ld/v1/entities/x"))
-            .with_warnings(vec![NgsiLdWarning::new(
-                WarnCode::MiscellaneousWarning,
-                "registration loop detected".to_string(),
-            )]);
+        let response = ProblemResponse::classified(
+            ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, "Entity missing"),
+            Uri::from_static("/ngsi-ld/v1/entities/x"),
+        )
+        .with_warnings(vec![NgsiLdWarning::new(
+            WarnCode::MiscellaneousWarning,
+            "registration loop detected".to_string(),
+        )]);
         let (response, _) = body(response).await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_FOUND);
         pretty_assertions::assert_eq!(
@@ -175,7 +197,10 @@ mod tests {
                 "https://uri.etsi.org/ngsi-ld/errors/ServiceUnavailable",
             ),
         ] {
-            let response = ClassifiedReport::public_binding(classification, "forwarding failed").with_instance(Uri::from_static("/ngsi-ld/v1/entities/x"));
+            let response = ProblemResponse::classified(
+                ClassifiedReport::public_binding(classification, "forwarding failed"),
+                Uri::from_static("/ngsi-ld/v1/entities/x"),
+            );
             let (response, value) = body(response).await?;
             pretty_assertions::assert_eq!(response.status(), expected_status);
             pretty_assertions::assert_eq!(value["status"], expected_status.as_u16());
@@ -186,7 +211,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_request_refused_for_pool_saturation_is_a_retryable_503() -> Result<(), serde_json::Error> {
-        let response = classify_entity_error(&EntityError::StoreSaturated).with_instance(Uri::from_static("/ngsi-ld/v1/entities"));
+        let response = ProblemResponse::classified(classify_entity_error(&EntityError::StoreSaturated), Uri::from_static("/ngsi-ld/v1/entities"));
         let (response, value) = body(response).await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         pretty_assertions::assert_eq!(response.headers().get("retry-after").and_then(|value| value.to_str().ok()), Some("1"));

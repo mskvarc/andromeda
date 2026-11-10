@@ -22,7 +22,7 @@ use axum::{
 pub async fn get(State(state): State<ComponentReportState>, OriginalUri(uri): OriginalUri) -> Result<Response, ProblemResponse> {
     let id = ComponentReportListId::mint()
         .map(Identifier::from)
-        .map_err(|error| classify(&ComponentReportError::from(error)).with_instance(uri))?;
+        .map_err(|error| ProblemResponse::classified(classify(&ComponentReportError::from(error)), uri))?;
     Ok(Json(ComponentReportResponse {
         id,
         type_: ComponentReportListType,

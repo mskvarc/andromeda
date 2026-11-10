@@ -3,6 +3,7 @@
 
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::contribution::SourceContribution;
+use andromeda_failure_classification::forwarding_failure::local_federation_failure;
 use andromeda_federation::{
     FederationService,
     entity_result::{collect_warnings, contributions_of, merge_retrieve_results},
@@ -14,11 +15,7 @@ use andromeda_federation::{
     source_reach::SourceReach,
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_http_response::{
-    declined_representation::single_source_declined,
-    forwarding_failure::local_federation_failure,
-    problem_response::ProblemResponse,
-};
+use andromeda_http_response::{declined_representation::single_source_declined, problem_response::ProblemResponse};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -139,7 +136,7 @@ impl RetrieveForwarding<'_> {
     fn failed(&self, error: &FederationError) -> Result<(), ProblemResponse> {
         if let Some(report) = local_federation_failure(error) {
             // clone: the problem response owns the request URI it names
-            return Err(report.with_instance(self.uri.clone()));
+            return Err(ProblemResponse::classified(report, self.uri.clone()));
         }
         warn!(%error, "context source forwarding failed during the entity retrieval");
         Ok(())

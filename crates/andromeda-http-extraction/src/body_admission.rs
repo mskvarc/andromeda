@@ -22,7 +22,7 @@ use crate::{
     request_links::{PayloadCarrier, RequestLinks},
     request_payload::buffer_payload,
 };
-use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, problem_response::ProblemResponse, request_refusal::RequestRefusal};
 use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext, user_context_admission::SubmittedContext};
 use andromeda_ngsi_ld_number::json_value::text_admission::admit_json_text;
 use andromeda_ngsi_ld_representation::embedded_context_admission::find_embedded_context;
@@ -115,7 +115,7 @@ impl ReadBody {
         let blocking_decode = self.blocking_decode.clone();
         decode_payload(blocking_decode.as_ref(), self.bytes.len(), move || self.admit().and_then(finish))
             .await
-            .map_err(|failure| ExtractorRejection::Classified(failure.report().with_instance(uri.clone())))?
+            .map_err(|failure| ExtractorRejection::Classified(ProblemResponse::classified(failure.report(), uri.clone())))?
     }
 
     /// Count the payload's values against the request limit, check its
@@ -133,7 +133,8 @@ impl ReadBody {
         } = self;
         // Counted before anything is built, so a payload of too many values
         // costs its bytes and nothing more.
-        refuse_values_past_budget(&bytes, value_limit).map_err(|refusal| ExtractorRejection::Classified(refusal.report().with_instance(uri.clone())))?;
+        refuse_values_past_budget(&bytes, value_limit)
+            .map_err(|refusal| ExtractorRejection::Classified(ProblemResponse::classified(refusal.report(), uri.clone())))?;
         admit_json_text(&bytes).map_err(|refusal| BodyAdmissionRefusal::from(refusal).into_rejection(uri.clone()))?;
         let envelope = BodyEnvelope::read(&bytes).map_err(|error| NotJsonDocument(error).into_rejection(uri.clone()))?;
 
@@ -196,7 +197,7 @@ async fn read_body<S: Send + Sync>(req: Request, state: &S) -> Result<ReadBody, 
     let (mut parts, body) = req.into_parts();
     let link_context = RequestLinks::of(&mut parts)
         .and_then(|links| links.context_for(carrier))
-        .map_err(|error| ExtractorRejection::Classified(classify_context_link_error(&error).with_instance(uri.clone())))?;
+        .map_err(|error| ExtractorRejection::Classified(ProblemResponse::classified(classify_context_link_error(&error), uri.clone())))?;
     let value_limit = parts.extensions.get::<RequestJsonValueLimit>().copied();
     let decode_bounds = parts.extensions.get::<RequestDecodeBounds>().copied();
     let blocking_decode = parts.extensions.get::<BlockingDecodePolicy>().cloned();

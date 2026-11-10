@@ -1,7 +1,8 @@
 //! HTTP classification of receiver failures.
 
 use crate::state::ReceiverResolutionError;
-use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary, problem_response::ProblemResponse};
+use andromeda_failure_classification::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
+use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_subscription_forwarding::{error::SubscriptionForwardingError, inbound::InboundError};
 use axum::http::Uri;
@@ -16,7 +17,7 @@ pub(crate) fn classify_resolution(error: &ReceiverResolutionError, instance: &Ur
             ClassifiedReport::internal(error, InternalFailureSummary::new("failed to resolve the notification tenant"))
         }
     };
-    report.with_instance(instance.clone())
+    ProblemResponse::classified(report, instance.clone())
 }
 
 /// Classify a handling failure.
@@ -34,7 +35,7 @@ pub(crate) fn classify_forwarding(error: &SubscriptionForwardingError, instance:
         | SubscriptionForwardingError::Persistence(_)
         | SubscriptionForwardingError::Internal(_) => ClassifiedReport::internal(error, InternalFailureSummary::new("internal notification-forwarding error")),
     };
-    report.with_instance(instance.clone())
+    ProblemResponse::classified(report, instance.clone())
 }
 
 /// A request body that is neither of the two notification documents the receiver accepts.
@@ -44,7 +45,10 @@ struct NotANotification(#[source] InboundError);
 
 /// Classify a body that is not a notification as `BadRequestData`.
 pub(crate) fn classify_not_a_notification(error: InboundError, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::public(NgsiLdErrorType::BadRequestData, NotANotification(error).to_string()).with_instance(instance.clone())
+    ProblemResponse::classified(
+        ClassifiedReport::public(NgsiLdErrorType::BadRequestData, NotANotification(error).to_string()),
+        instance.clone(),
+    )
 }
 
 #[cfg(test)]

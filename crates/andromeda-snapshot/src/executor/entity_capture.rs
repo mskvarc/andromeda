@@ -19,6 +19,10 @@
 //! collection past it (clause 4.12), so each local page is checked against it
 //! before it is written. A capture no source answered an entity for pages its
 //! local entities unbounded, as Query Entities pages them.
+//!
+//! A query that fails as Query Entities would records the problem Query
+//! Entities answers with, and a failure only the capture meets is recorded as
+//! the capture's own.
 
 use crate::{
     error::SnapshotError,
@@ -37,6 +41,12 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     port::{retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
     query::EntityQueryService,
+};
+use andromeda_failure_classification::{
+    forwarding_failure::classify_federation_error,
+    parameter_failure::classify_parameter_error,
+    query_failure::classify_query_error,
+    result_limit_failure::{classify_instance_budget_refusal, classify_result_budget_refusal},
 };
 use andromeda_federation::{
     entity_result::collect_warnings,
@@ -105,15 +115,15 @@ impl SnapshotExecutor {
     ) -> Result<ExecutionResultDetails, SnapshotError> {
         let params = match entity_parameters(query) {
             Ok(params) => params,
-            Err(error) => return Ok(failure_detail(error.to_string())),
+            Err(error) => return Ok(failure_detail(classify_parameter_error(&error).into_problem())),
         };
         if let Err(error) = params.validate(EntityQueryOperation::Query) {
-            return Ok(failure_detail(ExecutionFailure::QueryValidation { cause: &error }.to_string()));
+            return Ok(failure_detail(classify_parameter_error(&error).into_problem()));
         }
 
         let filters = match self.entity_registration_filters(&params, context).await {
             Ok(filters) => filters,
-            Err(error) => return Ok(failure_detail(error.to_string())),
+            Err(error) => return Ok(failure_detail(classify_query_error(&error).into_problem())),
         };
         let budget = ResultBudget::new(self.sources.forwarding.result_limits());
         let (mut pending, forwarding_failure) = match self.walk_sources(&params, context, &filters, &budget).await {
@@ -122,8 +132,8 @@ impl SnapshotExecutor {
                 warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot CSR forwarding failed");
                 (PendingSources { answers: Vec::new() }, Some(error))
             }
-            WalkedSources::TooManyResults(exceeded) => return Ok(failure_detail(exceeded.to_string())),
-            WalkedSources::TooManyInstances(exceeded) => return Ok(failure_detail(exceeded.to_string())),
+            WalkedSources::TooManyResults(exceeded) => return Ok(failure_detail(classify_result_budget_refusal(&exceeded).into_problem())),
+            WalkedSources::TooManyInstances(exceeded) => return Ok(failure_detail(classify_instance_budget_refusal(&exceeded).into_problem())),
         };
         for warning in pending.answers.iter().flat_map(|answer| answer.warnings.iter()) {
             warn!(snapshot_id = %snapshot_id, query_index = index, warning = %warning, "Snapshot entity query retained a distributed warning");
@@ -154,12 +164,10 @@ impl SnapshotExecutor {
             let last_captured = states.last().map(|state| state.id().clone());
             if matches!(window.start, PageStart::Cursor(None)) && local_page_len == 0 {
                 if let Some(error) = &forwarding_failure {
-                    return Ok(failure_detail(ExecutionFailure::DistributedExecution { cause: error }.to_string()));
+                    return Ok(failure_detail(classify_federation_error(error).into_problem()));
                 }
                 if every_source_failed {
-                    return Ok(failure_detail(
-                        "No valid entity result was available because every matching distributed source failed",
-                    ));
+                    return Ok(failure_detail(ExecutionFailure::EverySourceFailed.problem()));
                 }
             }
             let captured_at = Utc::now();
@@ -170,11 +178,11 @@ impl SnapshotExecutor {
             if let Some(budget) = merge_budget
                 && let Err(exceeded) = pending.admit_merged(ledger.captured.len().saturating_add(local_page_len), budget)
             {
-                return Ok(failure_detail(exceeded.to_string()));
+                return Ok(failure_detail(classify_result_budget_refusal(&exceeded).into_problem()));
             }
             let states = match merge_claimed(&capture, states, claimed, captured_at) {
                 Ok(states) => states,
-                Err(error) => return Ok(failure_detail(error.to_string())),
+                Err(error) => return Ok(failure_detail(ExecutionFailure::UncapturableSourceEntity { cause: &error }.problem())),
             };
             if let Some(failure) = self.capture_page(target, snapshot_id, index, states, &mut ledger).await? {
                 return Ok(failure);
@@ -192,7 +200,7 @@ impl SnapshotExecutor {
             let page = remaining.by_ref().take(self.capture_page_size as usize).collect();
             let states = match capture.states(page, Utc::now()) {
                 Ok(states) => states,
-                Err(error) => return Ok(failure_detail(error.to_string())),
+                Err(error) => return Ok(failure_detail(ExecutionFailure::UncapturableSourceEntity { cause: &error }.problem())),
             };
             if let Some(failure) = self.capture_page(target, snapshot_id, index, states, &mut ledger).await? {
                 return Ok(failure);
@@ -235,7 +243,7 @@ impl SnapshotExecutor {
         };
         Ok(match captured_states(rows) {
             Ok(states) => LocalPage::States(states),
-            Err(id) => LocalPage::Ended(failure_detail(ExecutionFailure::UnreadableEntity { id: &id }.to_string())),
+            Err(id) => LocalPage::Ended(failure_detail(ExecutionFailure::UnreadableEntity { id: &id }.problem())),
         })
     }
 

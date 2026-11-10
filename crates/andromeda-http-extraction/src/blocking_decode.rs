@@ -8,7 +8,7 @@
 //! blocking pool, and a smaller one inline, where a thread hand-off would cost
 //! more than the decode.
 
-use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
+use andromeda_failure_classification::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use std::{num::NonZeroUsize, sync::Arc};
 use thiserror::Error;
 use tokio::{

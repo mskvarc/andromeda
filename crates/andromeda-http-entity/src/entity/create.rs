@@ -148,12 +148,13 @@ fn located(locator: &ResourceLocator, response: Response, id: &Identifier) -> Re
 #[cfg(test)]
 mod tests {
     use crate::entity::create::distributed_create_response;
+    use andromeda_failure_classification::classified_report::ClassifiedReport;
     use andromeda_federation::{
         answer_body::AnswerBody,
         outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
     };
     use andromeda_http_extraction::resource_location::ResourceLocator;
-    use andromeda_http_response::{classified_report::ClassifiedReport, provision::LocalOutcome};
+    use andromeda_http_response::provision::LocalOutcome;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
