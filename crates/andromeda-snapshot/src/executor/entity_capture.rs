@@ -13,6 +13,12 @@
 //! into the Snapshot's branch as stored. Only an entity a source also answered
 //! for, or one only a source holds, goes through the compact merge
 //! ([`crate::executor::forwarded_capture`]).
+//!
+//! The entity limit the sources were walked under holds for the whole capture
+//! once a source answered an entity: Query Entities then refuses a merged
+//! collection past it (clause 4.12), so each local page is checked against it
+//! before it is written. A capture no source answered an entity for pages its
+//! local entities unbounded, as Query Entities pages them.
 
 use crate::{
     error::SnapshotError,
@@ -22,6 +28,7 @@ use crate::{
         execution::entity_query_failure,
         execution_failure::ExecutionFailure,
         forwarded_capture::ForwardedCapture,
+        pending_sources::PendingSources,
         status::{failure_detail, success_detail},
         translation::entity_parameters,
     },
@@ -44,7 +51,6 @@ use andromeda_federation::{
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{query::body::Query, snapshot::ExecutionResultDetails};
 use andromeda_ngsi_ld_query::{
@@ -70,41 +76,6 @@ enum WalkedSources {
     /// The sources answered with more attribute instances than one query
     /// gathers.
     TooManyInstances(InstanceBudgetExceeded),
-}
-
-/// What every matching Context Source answered, not yet captured.
-struct PendingSources {
-    /// The answers, each still holding the entities no local page has claimed.
-    answers: Vec<ForwardedEntities>,
-}
-
-impl PendingSources {
-    /// Take out of every answer the entities one local page holds, keeping
-    /// each answer's registration and mode so the merge treats them as the
-    /// answer they came from (clause 4.3.6.2).
-    fn claim<'i>(&mut self, local: impl IntoIterator<Item = &'i Identifier>) -> Vec<ForwardedEntities> {
-        let held: HashSet<&Identifier> = local.into_iter().collect();
-        self.answers
-            .iter_mut()
-            .filter_map(|answer| {
-                let (claimed, kept): (Vec<ReceivedState>, Vec<ReceivedState>) =
-                    answer.entities.drain(..).partition(|received| held.contains(received.state.id()));
-                answer.entities = kept;
-                (!claimed.is_empty()).then(|| ForwardedEntities {
-                    registration_id: answer.registration_id.clone(), // clone: the answer keeps its registration for the entities it still holds
-                    mode: answer.mode,
-                    entities: claimed,
-                    warnings: Vec::new(),
-                    linked_map: None,
-                })
-            })
-            .collect()
-    }
-
-    /// Whether any answer still holds an entity.
-    fn holds_entities(&self) -> bool {
-        self.answers.iter().any(|answer| !answer.entities.is_empty())
-    }
 }
 
 /// The identifiers a capture has written, for the query and across the
@@ -144,7 +115,8 @@ impl SnapshotExecutor {
             Ok(filters) => filters,
             Err(error) => return Ok(failure_detail(error.to_string())),
         };
-        let (mut pending, forwarding_failure) = match self.walk_sources(&params, context, &filters).await {
+        let budget = ResultBudget::new(self.sources.forwarding.result_limits());
+        let (mut pending, forwarding_failure) = match self.walk_sources(&params, context, &filters, &budget).await {
             WalkedSources::Answered(pending) => (pending, None),
             WalkedSources::Unreachable(error) => {
                 warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot CSR forwarding failed");
@@ -157,6 +129,7 @@ impl SnapshotExecutor {
             warn!(snapshot_id = %snapshot_id, query_index = index, warning = %warning, "Snapshot entity query retained a distributed warning");
         }
         let every_source_failed = !collect_warnings(&pending.answers).is_empty() && !pending.holds_entities();
+        let merge_budget = pending.holds_entities().then_some(&budget);
 
         let capture = ForwardedCapture::new(self.attribute_nesting);
         let mut ledger = CaptureLedger {
@@ -194,6 +167,11 @@ impl SnapshotExecutor {
                 narrow_captured(state, captured_at, params.dataset_id.as_deref());
             }
             let claimed = pending.claim(states.iter().map(EntityState::id));
+            if let Some(budget) = merge_budget
+                && let Err(exceeded) = pending.admit_merged(ledger.captured.len().saturating_add(local_page_len), budget)
+            {
+                return Ok(failure_detail(exceeded.to_string()));
+            }
             let states = match merge_claimed(&capture, states, claimed, captured_at) {
                 Ok(states) => states,
                 Err(error) => return Ok(failure_detail(error.to_string())),
@@ -274,9 +252,14 @@ impl SnapshotExecutor {
     }
 
     /// Walk every matching Context Source to the end of its answer (clause
-    /// 5.16.1.4).
-    async fn walk_sources(&self, params: &EntityQueryParameters, context: &ContextSpec, filters: &ExpandedRegistrationFilters) -> WalkedSources {
-        let budget = ResultBudget::new(self.sources.forwarding.result_limits());
+    /// 5.16.1.4), charging what they send to `budget`.
+    async fn walk_sources(
+        &self,
+        params: &EntityQueryParameters,
+        context: &ContextSpec,
+        filters: &ExpandedRegistrationFilters,
+        budget: &ResultBudget,
+    ) -> WalkedSources {
         let forwarding = &self.sources.forwarding;
         let request = ForwardQueryRequest {
             client_query: ClientQuery::EntityQuery(params),
@@ -289,7 +272,7 @@ impl SnapshotExecutor {
             csf_expr: filters.csf(),
             geo: filters.geo(),
             entity_map: EntityMapInUse::None,
-            budget: &budget,
+            budget,
         };
         let forwarded = match forwarding.match_query(&self.sources.live_target, &request).await {
             Ok(matched) => forwarding.forward_query(&self.sources.live_target, request, matched.into_registrations()).await,
@@ -372,71 +355,4 @@ fn merge_claimed(
     let mut merged = capture.merged(answered, claimed, captured_at)?;
     merged.extend(unanswered);
     Ok(merged)
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::executor::entity_capture::PendingSources;
-    use andromeda_federation::outcome::ForwardedEntities;
-    use andromeda_ngsi_ld_entity::entity_state::EntityState;
-    use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
-    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_model::{entity_system_times::EntitySystemTimes, registration::forwarding_mode::ForwardingMode};
-    use serde_json::json;
-
-    fn entity(id: &str) -> ReceivedState {
-        let stored = json!([{"@id": id, "@type": ["https://uri.etsi.org/ngsi-ld/default-context/Vehicle"]}]);
-        ReceivedState {
-            state: EntityState::from_slice(stored.to_string().as_bytes()).expect("a stored state"),
-            system_times: EntitySystemTimes::default(),
-            linked: Vec::new(),
-        }
-    }
-
-    fn identifier(id: &str) -> Identifier {
-        id.parse().expect("a valid identifier")
-    }
-
-    fn answer(ids: &[&str]) -> ForwardedEntities {
-        ForwardedEntities {
-            registration_id: Some("urn:ngsi-ld:ContextSourceRegistration:1".parse().expect("a valid URI")),
-            mode: ForwardingMode::Inclusive,
-            entities: ids.iter().map(|id| entity(id)).collect(),
-            warnings: Vec::new(),
-            linked_map: None,
-        }
-    }
-
-    fn ids(answers: &[ForwardedEntities]) -> Vec<&str> {
-        answers
-            .iter()
-            .flat_map(|answer| answer.entities.iter().map(|received| received.state.id().as_str()))
-            .collect()
-    }
-
-    /// A local page claims exactly the source entities it holds; the others
-    /// stay pending for a later page or for the capture after the last one.
-    #[test]
-    fn a_local_page_claims_only_the_source_entities_it_holds() {
-        let mut pending = PendingSources {
-            answers: vec![answer(&["urn:a", "urn:b", "urn:c"]), answer(&["urn:c", "urn:d"])],
-        };
-        let local = [identifier("urn:c"), identifier("urn:x")];
-        let claimed = pending.claim(&local);
-        pretty_assertions::assert_eq!(ids(&claimed), vec!["urn:c", "urn:c"]);
-        pretty_assertions::assert_eq!(ids(&pending.answers), vec!["urn:a", "urn:b", "urn:d"]);
-        assert!(pending.holds_entities());
-    }
-
-    /// Once every source entity is claimed nothing is pending.
-    #[test]
-    fn nothing_is_pending_once_every_source_entity_is_claimed() {
-        let mut pending = PendingSources {
-            answers: vec![answer(&["urn:a"])],
-        };
-        let local = [identifier("urn:a")];
-        let claimed = pending.claim(&local);
-        pretty_assertions::assert_eq!(ids(&claimed), vec!["urn:a"]);
-        assert!(!pending.holds_entities());
-    }
 }
