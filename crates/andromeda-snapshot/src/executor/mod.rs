@@ -16,6 +16,8 @@ mod forwarded_capture;
 /// Reading the instances of a captured temporal answer to the end of its window.
 mod instance_walk;
 mod lease_renewal;
+/// What the Context Sources answered an entity query, until the capture takes it.
+mod pending_sources;
 /// Reading what the Context Sources answer a captured temporal query to the end of its window.
 mod source_instance_walk;
 mod status;
