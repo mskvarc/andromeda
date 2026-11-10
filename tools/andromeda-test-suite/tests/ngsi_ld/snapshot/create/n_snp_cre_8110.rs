@@ -1,4 +1,4 @@
-//! A snapshot whose queries all succeed with a result is success.
+//! A snapshot one query of which yields no result is partial.
 
 use andromeda_test_suite::{broker, eventually::retried, namespace::Namespace, outcome::Done};
 use googletest::prelude::*;
@@ -8,12 +8,12 @@ use ngsi_ld::{
     snapshot::{ExecutionStatus, QueryDocument, Snapshot, SnapshotId, SnapshotStatus},
 };
 
-/// Pins: A Snapshot of two successfully executed queries, one with a result and one without, ends with
-/// `snapshotStatus` success and the details success and empty
+/// Pins: A Snapshot of two successfully executed queries, one over a type the broker holds an Entity of and one over a
+/// type it holds none of, ends with `snapshotStatus` partial and the details success and empty
 /// Clause: 5.16.1.4, 5.2.42
 #[gtest]
 #[tokio::test]
-async fn n_snp_cre_8110_a_snapshot_whose_queries_all_succeed_with_a_result_is_success() -> Result<()> {
+async fn n_snp_cre_8110_a_snapshot_one_query_of_which_yields_no_result_is_partial() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let vehicle_id = namespace.urn("Vehicle", 1)?;
@@ -39,7 +39,7 @@ async fn n_snp_cre_8110_a_snapshot_whose_queries_all_succeed_with_a_result_is_su
             .retrieve(&snapshot_id)
             .send()
             .await?;
-        verify_that!(snapshot_2.status(), eq("success".parse::<SnapshotStatus>()?))?;
+        verify_that!(snapshot_2.status(), eq("partial".parse::<SnapshotStatus>()?))?;
         verify_that!(
             snapshot_2.output().queries_details.first().map(|details| details.result_status),
             some(eq(ExecutionStatus::Success))
