@@ -20,6 +20,8 @@ mod lease_renewal;
 mod pending_sources;
 /// Reading what the Context Sources answer a captured temporal query to the end of its window.
 mod source_instance_walk;
+/// Every page the Context Sources answer a captured temporal query over one window, read before it is stored.
+mod source_pass;
 mod status;
 /// Capturing the whole answer of one snapshot temporal query.
 mod temporal_capture;

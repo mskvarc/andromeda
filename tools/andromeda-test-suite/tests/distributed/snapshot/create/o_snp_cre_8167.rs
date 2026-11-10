@@ -6,13 +6,13 @@ use andromeda_test_suite::{
     cleanup::Cleanup,
     config::{BrokerRole, PeerRole},
     namespace::Namespace,
-    snapshot_capture::await_query_problem,
+    snapshot_capture::{QueryList, await_query_problem},
 };
 use googletest::prelude::*;
 use ngsi_ld::{
     model::ErrorType,
     registration::RegistrationMode,
-    snapshot::{QueryDocument, Snapshot, SnapshotId},
+    snapshot::{QueryDocument, SettledStatus, Snapshot, SnapshotId},
 };
 
 /// Pins: A Snapshot on broker-f, whose limit is 5 distinct entities, over a type broker-f holds no Entity of and peer
@@ -42,7 +42,7 @@ async fn o_snp_cre_8167_a_capture_whose_peers_answer_more_distinct_entities_than
         .query(QueryDocument::builder().entities([vehicle_type.as_str()]).build()?)
         .build()?;
     bounded.snapshots().create(&snapshot).send().await?;
-    let problem = await_query_problem(&bounded, &snapshot_id).await?;
+    let problem = await_query_problem(&bounded, &snapshot_id, SettledStatus::Failure, QueryList::Entity).await?;
     expect_that!(problem.error_type, some(eq(&ErrorType::TooManyResults)));
     expect_that!(problem.status, some(eq(403)));
     expect_that!(problem.detail, some(contains_substring("federation.query.max_entities")));

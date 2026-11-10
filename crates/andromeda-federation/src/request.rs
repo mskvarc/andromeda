@@ -40,8 +40,14 @@ pub enum SourcePaging<'a> {
     /// client's page is cut from the whole merge.
     Walk(&'a ResultBudget),
     /// One explicit page from every source, for a consumer that pages through
-    /// the sources itself.
-    Page(SourcePage),
+    /// the sources itself and charges every page of one request to the same
+    /// budget (clause 4.12).
+    Page {
+        /// The page every source is asked for.
+        page: SourcePage,
+        /// The budget of the request the page belongs to.
+        budget: &'a ResultBudget,
+    },
     /// Every page each source links with `next`, each asked for the
     /// normalized instances of its history and read to the end of the window
     /// past every clause 6.3.10 partial answer, under the request's entity and
@@ -81,14 +87,14 @@ impl SourcePaging<'_> {
     pub const fn explicit_page(&self) -> Option<SourcePage> {
         match self {
             SourcePaging::Walk(_) | SourcePaging::WalkHistory(_) => None,
-            SourcePaging::Page(page) => Some(*page),
+            SourcePaging::Page { page, .. } => Some(*page),
         }
     }
 
     /// The representation each source is asked to answer in.
     pub(crate) const fn temporal_answer(&self) -> TemporalAnswer {
         match self {
-            SourcePaging::Walk(_) | SourcePaging::Page(_) => TemporalAnswer::AsRequested,
+            SourcePaging::Walk(_) | SourcePaging::Page { .. } => TemporalAnswer::AsRequested,
             SourcePaging::WalkHistory(_) => TemporalAnswer::Instances,
         }
     }

@@ -1,13 +1,26 @@
 //! Capturing the whole answer of one snapshot temporal query (clause
 //! 5.16.1.4).
 //!
-//! The local entities are walked by keyset over their identifiers, so entities
+//! The context sources are asked first: every offset page of the window the
+//! query asked for is read whole, charged to one budget as Query Temporal
+//! Evolution of Entities charges the sources of one request (clause 4.12). The
+//! local entities are walked by keyset over their identifiers, so entities
 //! written while the capture runs neither shift a later page nor appear twice
-//! (clause 5.5.9.1); the context sources are paged by the offset their own
-//! brokers understand. The instances of each page of local entities are then
+//! (clause 5.5.9.1), and each local page is stored beside the source page read
+//! in the same position. The instances of each page of local entities are then
 //! read to the end of the window, page after page (clause 6.3.10). What the
 //! sources cut short is read in further passes over every source page, each
 //! over the window resumed past the previous pass.
+//!
+//! Once a source answered an entity, Query Temporal Evolution of Entities
+//! refuses a merged collection past the entity limit (clause 4.12), counting
+//! an entity once however many sources and pages answer it. The capture then
+//! reads the identifier of every local entity before it stores anything, and
+//! refuses the query when they and the sources' entities together pass the
+//! limit; a later pass holding a source entity is held to it with every entity
+//! already captured. A capture no source answered an entity for pages its
+//! local entities unbounded, as Query Temporal Evolution of Entities pages
+//! them.
 
 use crate::{
     error::SnapshotError,
@@ -15,20 +28,19 @@ use crate::{
         SnapshotExecutor,
         execution_failure::ExecutionFailure,
         source_instance_walk::SourceInstanceWalk,
+        source_pass::SourcePass,
         status::{failure_detail, success_detail},
         temporal_failure::{TemporalStep, temporal_failure},
         translation::temporal_parameters,
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_failure_classification::{parameter_failure::classify_parameter_error, query_failure::classify_query_error};
-use andromeda_federation::{
-    expanded_registration_filters::ExpandedRegistrationFilters,
-    operation::ForwardingOperation,
-    outcome::ForwardedTemporalEntities,
-    request::{CsrModeFilter, EntityMapInUse, ForwardTemporalQueryRequest, SourcePage, SourcePaging, TriggeringRequest},
-    source_reach::SourceReach,
+use andromeda_failure_classification::{
+    parameter_failure::classify_parameter_error,
+    query_failure::classify_query_error,
+    result_limit_failure::classify_result_budget_refusal,
 };
+use andromeda_federation::expanded_registration_filters::ExpandedRegistrationFilters;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{query::body::Query, snapshot::ExecutionResultDetails};
@@ -40,7 +52,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_temporal::{error::TemporalError, query_reading::QueryReading, requested_identifiers::RequestedIdentifiers};
-use std::collections::HashSet;
+use std::{collections::HashSet, vec::IntoIter};
 use tracing::warn;
 
 /// One snapshot temporal query, as every page of its capture reads it.
@@ -60,6 +72,35 @@ pub(super) struct TemporalCapture<'q> {
     /// The query's context source filter and geoquery, which select the
     /// registrations it reaches.
     pub(super) filters: &'q ExpandedRegistrationFilters,
+}
+
+/// Where the local entities of a capture's pages come from.
+enum LocalEntities {
+    /// Read page by page by keyset, the next page starting where the window
+    /// says.
+    Keyset(PageWindow),
+    /// Every one, read while the merged collection was admitted.
+    Admitted(IntoIter<Identifier>),
+}
+
+impl LocalEntities {
+    /// Whether another local page may follow `page`, the one just taken.
+    fn continues_after(&self, page: &[Identifier], page_size: u32) -> bool {
+        match self {
+            LocalEntities::Keyset(_) => page.len() >= page_size as usize,
+            LocalEntities::Admitted(rest) => !rest.as_slice().is_empty(),
+        }
+    }
+}
+
+/// What reading every local entity of a capture whose sources answered an
+/// entity came to.
+enum LocalAdmission {
+    /// Every local entity, the merged collection within the entity limit.
+    Admitted(Vec<Identifier>),
+    /// The query's failure: the merged collection passed the entity limit, or
+    /// a local page could not be read.
+    Ended(ExecutionResultDetails),
 }
 
 impl SnapshotExecutor {
@@ -100,44 +141,39 @@ impl SnapshotExecutor {
             context,
             filters: &filters,
         };
-        let mut window = PageWindow {
-            limit: self.capture_page_size,
-            start: PageStart::Cursor(None),
-        };
-        let mut source_offset = 0_u32;
         let mut sources = SourceInstanceWalk::new(interval, params.timeproperty_or_default(), params.last_n);
+        let mut first_pass = match self.gather_source_pass(&capture, capture.params, &mut sources).await {
+            Ok(pass) => pass,
+            Err(failure) => return Ok(failure),
+        };
+        let mut local = if first_pass.holds_entities() {
+            match self.admitted_local_entities(&capture, &first_pass).await? {
+                LocalAdmission::Admitted(identifiers) => LocalEntities::Admitted(identifiers.into_iter()),
+                LocalAdmission::Ended(failure) => return Ok(failure),
+            }
+        } else {
+            LocalEntities::Keyset(PageWindow {
+                limit: self.capture_page_size,
+                start: PageStart::Cursor(None),
+            })
+        };
         let mut captured = HashSet::new();
         loop {
-            let entity_ids = match self.local_entity_page(&capture, &window).await {
+            let entity_ids = match self.next_local_page(&capture, &mut local).await {
                 Ok(entity_ids) => entity_ids,
                 Err(error) => {
                     warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot temporal query failed");
                     return temporal_failure(error, TemporalStep::Query);
                 }
             };
-            let local_page_full = entity_ids.len() >= self.capture_page_size as usize;
-            // clone: the cursor of the next page outlives the identifiers the page reads
-            let last_local = entity_ids.last().cloned();
-            let mut forwarded = self.forwarded_page(&capture, capture.params, source_offset).await;
-            let remote_page_full = sources_page_on(&forwarded, self.capture_page_size);
-            if let Err(refusal) = sources.trim(&mut forwarded) {
-                return Ok(capture_refused(&capture, &ExecutionFailure::SourceWalkRefused(refusal)));
-            }
+            let local_on = local.continues_after(&entity_ids, self.capture_page_size);
+            let forwarded = first_pass.next_page().unwrap_or_default();
             if let Some(failure) = self.capture_temporal_page(&capture, entity_ids, forwarded, &mut captured).await? {
                 return Ok(failure);
             }
-            if !local_page_full && !remote_page_full {
+            if !local_on && !first_pass.holds_pages() {
                 break;
             }
-            // A local walk that ran dry stays where it ended while the sources
-            // still page on.
-            if let Some(last) = last_local {
-                window = PageWindow::after(self.capture_page_size, last);
-            }
-            source_offset = match source_offset.checked_add(self.capture_page_size) {
-                Some(offset) => offset,
-                None => return Ok(capture_refused(&capture, &ExecutionFailure::OffsetOverflow)),
-            };
         }
         if let Some(failure) = self.capture_resumed_source_passes(&capture, sources, &mut captured).await? {
             return Ok(failure);
@@ -157,8 +193,66 @@ impl SnapshotExecutor {
         ExpandedRegistrationFilters::expand(temporal.engine(), context, params.csf.as_ref(), params.geo.0.as_ref(), temporal.geo_admission()).await
     }
 
+    /// Every local entity of the query, read before anything is stored once
+    /// `pass` holds a source entity, and counted with the pass's entities
+    /// against the entity limit, each entity once.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transient failure a local page read met.
+    async fn admitted_local_entities(&self, capture: &TemporalCapture<'_>, pass: &SourcePass) -> Result<LocalAdmission, SnapshotError> {
+        let mut unclaimed = pass.identifiers();
+        let mut admitted = Vec::new();
+        let mut window = PageWindow {
+            limit: self.capture_page_size,
+            start: PageStart::Cursor(None),
+        };
+        loop {
+            let page = match self.local_entity_page(capture, &window).await {
+                Ok(page) => page,
+                Err(error) => {
+                    warn!(snapshot_id = %capture.snapshot_id, query_index = capture.index, error = %error, "Snapshot temporal query failed");
+                    return temporal_failure(error, TemporalStep::Query).map(LocalAdmission::Ended);
+                }
+            };
+            let page_full = page.len() >= self.capture_page_size as usize;
+            for identifier in &page {
+                unclaimed.remove(identifier);
+            }
+            admitted.extend(page);
+            if let Err(exceeded) = pass.admit_collection(admitted.len().saturating_add(unclaimed.len())) {
+                return Ok(LocalAdmission::Ended(failure_detail(classify_result_budget_refusal(&exceeded).into_problem())));
+            }
+            match admitted.last() {
+                // clone: the cursor of the next page outlives the identifiers admitted so far
+                Some(last) if page_full => window = PageWindow::after(self.capture_page_size, last.clone()),
+                Some(_) | None => return Ok(LocalAdmission::Admitted(admitted)),
+            }
+        }
+    }
+
+    /// The identifiers of the next page of local entities.
+    async fn next_local_page(&self, capture: &TemporalCapture<'_>, local: &mut LocalEntities) -> Result<Vec<Identifier>, TemporalError> {
+        match local {
+            LocalEntities::Keyset(window) => {
+                let page = self.local_entity_page(capture, window).await?;
+                // A local walk that ran dry stays where it ended while the
+                // sources still page on.
+                if let Some(last) = page.last() {
+                    // clone: the cursor of the next page outlives the identifiers the page reads
+                    *window = PageWindow::after(self.capture_page_size, last.clone());
+                }
+                Ok(page)
+            }
+            LocalEntities::Admitted(rest) => Ok(rest.by_ref().take(self.capture_page_size as usize).collect()),
+        }
+    }
+
     /// Walk every source page again over the window resumed past the least
     /// cut of the previous pass, until a pass holds no partial answer.
+    ///
+    /// Each pass is read whole before it is stored, and a pass holding a source
+    /// entity is held to the entity limit with every entity already captured.
     ///
     /// Returns the query's failure, or `None` once the sources answered the
     /// whole window.
@@ -178,23 +272,20 @@ impl SnapshotExecutor {
             // clone: each pass asks the sources the query as asked, over a resumed window
             let params = resumed.get_or_insert_with(|| capture.params.clone());
             params.set_interval(interval);
-            let mut offset = 0_u32;
-            loop {
-                let mut forwarded = self.forwarded_page(capture, params, offset).await;
-                let page_on = sources_page_on(&forwarded, self.capture_page_size);
-                if let Err(refusal) = sources.trim(&mut forwarded) {
-                    return Ok(Some(capture_refused(capture, &ExecutionFailure::SourceWalkRefused(refusal))));
+            let mut pass = match self.gather_source_pass(capture, params, &mut sources).await {
+                Ok(pass) => pass,
+                Err(failure) => return Ok(Some(failure)),
+            };
+            if pass.holds_entities() {
+                let joining = pass.identifiers().into_iter().filter(|identifier| !captured.contains(*identifier)).count();
+                if let Err(exceeded) = pass.admit_collection(captured.len().saturating_add(joining)) {
+                    return Ok(Some(failure_detail(classify_result_budget_refusal(&exceeded).into_problem())));
                 }
-                if let Some(failure) = self.capture_temporal_page(capture, Vec::new(), forwarded, captured).await? {
+            }
+            while let Some(page) = pass.next_page() {
+                if let Some(failure) = self.capture_temporal_page(capture, Vec::new(), page, captured).await? {
                     return Ok(Some(failure));
                 }
-                if !page_on {
-                    break;
-                }
-                offset = match offset.checked_add(self.capture_page_size) {
-                    Some(offset) => offset,
-                    None => return Ok(Some(capture_refused(capture, &ExecutionFailure::OffsetOverflow))),
-                };
             }
         }
     }
@@ -221,51 +312,6 @@ impl SnapshotExecutor {
             )
             .await
     }
-
-    /// One offset page of what the registered context sources answer to
-    /// `params`; a forwarding that failed leaves the capture with the local
-    /// answer.
-    async fn forwarded_page(&self, capture: &TemporalCapture<'_>, params: &TemporalQueryParameters, offset: u32) -> Vec<ForwardedTemporalEntities> {
-        let forwarded = self
-            .sources
-            .forwarding
-            .forward_temporal_query(
-                &self.sources.live_target,
-                ForwardTemporalQueryRequest {
-                    client_query: params,
-                    split: self.sources.forwarding.split_entities(params.split_entities),
-                    context: capture.context,
-                    operation: ForwardingOperation::QueryTemporalEntity,
-                    triggering: TriggeringRequest::default(),
-                    csf_expr: capture.filters.csf(),
-                    geo: capture.filters.geo(),
-                    mode_filter: CsrModeFilter::All,
-                    reach: SourceReach::Every,
-                    entity_map: EntityMapInUse::None,
-                    paging: SourcePaging::Page(SourcePage {
-                        limit: self.capture_page_size,
-                        offset,
-                    }),
-                },
-            )
-            .await;
-        match forwarded {
-            Ok(forwarded) => forwarded.results,
-            Err(error) => {
-                warn!(snapshot_id = %capture.snapshot_id, query_index = capture.index, error = %error, "Snapshot temporal CSR forwarding failed");
-                Vec::new()
-            }
-        }
-    }
-}
-
-/// Whether the sources may hold another offset page: one answered a full page,
-/// or a partial one, which may leave out entities of a full page whose every
-/// instance lies past its cut.
-fn sources_page_on(forwarded: &[ForwardedTemporalEntities], page_size: u32) -> bool {
-    forwarded
-        .iter()
-        .any(|source| source.entities.len() >= page_size as usize || !source.partial_ranges.is_empty())
 }
 
 /// The query's failure when the capture cannot read the rest of its answer:

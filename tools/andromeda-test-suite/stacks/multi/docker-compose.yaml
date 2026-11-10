@@ -123,8 +123,9 @@ services:
       ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__LEVEL: "language-ranges"
 
   # Runs the same language-ranges level, so a read reaching it from broker-e negotiates range filtering on both. It
-  # gathers at most 5 distinct entities and 15 source rows for one forwarded query, so a test can reach either bound
-  # with a handful of entities; the tests of the bounds forward to brokers B to E, so it cannot be one of them.
+  # gathers at most 5 distinct entities, 15 source rows and 3 attribute instances for one forwarded query, so a test can
+  # reach each bound with a handful of entities or instances; the tests of the bounds forward to brokers B to E, so it
+  # cannot be one of them.
   broker-f:
     <<: *configured
     extends:
@@ -143,6 +144,7 @@ services:
       ANDROMEDA__EXTENSIONS__Q_TARGET_LANGUAGES__LEVEL: "language-ranges"
       ANDROMEDA__FEDERATION__QUERY__MAX_ENTITIES: "5"
       ANDROMEDA__FEDERATION__QUERY__MAX_SOURCE_ROWS: "15"
+      ANDROMEDA__FEDERATION__QUERY__MAX_INSTANCES: "3"
 
   runner:
     extends:

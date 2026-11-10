@@ -15,3 +15,8 @@ mod o_snp_cre_8166;
 mod o_snp_cre_8167;
 mod o_snp_cre_8168;
 mod o_snp_cre_8169;
+mod o_snp_cre_8170;
+mod o_snp_cre_8171;
+mod o_snp_cre_8172;
+mod o_snp_cre_8173;
+mod o_snp_cre_8174;
