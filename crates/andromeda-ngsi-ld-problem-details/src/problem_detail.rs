@@ -1,6 +1,6 @@
 //! Framework-independent single-error problem details from clause 5.5.3.
 
-use crate::{error_type::NgsiLdErrorType, problem_document_error::ProblemDocumentError};
+use crate::{error_type::NgsiLdErrorType, problem_document_error::ProblemDocumentError, status_member::StatusMember};
 use http::{StatusCode, Uri};
 use iri_rs::{Iri, IriRefBuf, iri};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser::SerializeStruct};
@@ -123,13 +123,15 @@ impl ProblemClassification {
 
 /// The single-error wire value required by ETSI GS CIM 009 v1.9.1 clause 5.5.3.
 ///
-/// Its classification fixes `type`, `title`, and `status`; callers supply only client-safe detail and an optional request instance.
+/// Its classification fixes `type`, `title`, and `status`; callers supply only client-safe detail and an optional request instance, and may leave `status` out of a problem that accompanies no error response.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProblemDetail {
     /// Typed source of the category and HTTP status.
     classification: ProblemClassification,
     /// Client-visible human-readable explanation.
     detail: String,
+    /// Whether the document carries the `status` its classification binds.
+    status_member: StatusMember,
     /// Optional request target supplied by the inbound HTTP boundary.
     ///
     /// Boxed because a `Uri` is 88 bytes against the 32 the rest of the detail
@@ -145,6 +147,7 @@ impl ProblemDetail {
         ProblemDetail {
             classification: ProblemClassification::Category(error_type),
             detail: detail.into(),
+            status_member: StatusMember::Stated,
             instance: None,
         }
     }
@@ -154,8 +157,17 @@ impl ProblemDetail {
         ProblemDetail {
             classification,
             detail: detail.into(),
+            status_member: StatusMember::Stated,
             instance: None,
         }
+    }
+
+    /// The same problem without the `status` member, for a problem that
+    /// accompanies a result which is not an error response.
+    #[must_use]
+    pub const fn without_status(mut self) -> ProblemDetail {
+        self.status_member = StatusMember::Omitted;
+        self
     }
 
     /// Attach the exact inbound request URI as the RFC 7807 `instance` member.
@@ -183,6 +195,12 @@ impl ProblemDetail {
         self.classification.status_code()
     }
 
+    /// Whether the document carries the `status` member.
+    #[must_use]
+    pub const fn status_member(&self) -> StatusMember {
+        self.status_member
+    }
+
     /// The client-visible detail.
     #[must_use]
     pub fn detail(&self) -> &str {
@@ -198,15 +216,22 @@ impl ProblemDetail {
 
 impl Serialize for ProblemDetail {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let field_count = match self.instance {
-            Some(_) => 5,
-            None => 4,
+        let status_fields = match self.status_member {
+            StatusMember::Stated => 1,
+            StatusMember::Omitted => 0,
+        };
+        let instance_fields = match self.instance {
+            Some(_) => 1,
+            None => 0,
         };
         let classification = self.classification;
-        let mut state = serializer.serialize_struct("ProblemDetail", field_count)?;
+        let mut state = serializer.serialize_struct("ProblemDetail", 3 + status_fields + instance_fields)?;
         state.serialize_field("type", &classification.type_iri())?;
         state.serialize_field("title", classification.title())?;
-        state.serialize_field("status", &self.status_code().as_u16())?;
+        match self.status_member {
+            StatusMember::Stated => state.serialize_field("status", &self.status_code().as_u16())?,
+            StatusMember::Omitted => state.skip_field("status")?,
+        }
         state.serialize_field("detail", &self.detail)?;
         if let Some(instance) = &self.instance {
             state.serialize_field("instance", instance.path_and_query().map_or(instance.path(), |value| value.as_str()))?;
@@ -316,9 +341,14 @@ impl<'de> Deserialize<'de> for ProblemDetail {
             .instance
             .map(|instance| instance.as_str().parse::<Uri>().map(Box::new).map_err(de::Error::custom))
             .transpose()?;
+        let status_member = match wire.status {
+            Some(_) => StatusMember::Stated,
+            None => StatusMember::Omitted,
+        };
         Ok(ProblemDetail {
             classification,
             detail: wire.detail,
+            status_member,
             instance,
         })
     }
@@ -329,6 +359,7 @@ mod tests {
     use crate::{
         error_type::NgsiLdErrorType,
         problem_detail::{ProblemClassification, ProblemDetail},
+        status_member::StatusMember,
     };
     use http::{StatusCode, Uri};
     use serde_json::json;
@@ -472,6 +503,37 @@ mod tests {
             if value["type"] == NgsiLdErrorType::InternalError.type_iri().as_str() {
                 pretty_assertions::assert_eq!(value["status"], 500, "{classification:?}");
             }
+        }
+        Ok(())
+    }
+
+    /// Clause 5.5.3 requires `type`, `title` and `detail` only, so a problem
+    /// accompanying no error response leaves `status` out.
+    #[test]
+    fn a_problem_without_status_serializes_without_the_member() -> Result<(), serde_json::Error> {
+        let problem = ProblemDetail::from_classification(ProblemClassification::BadGateway, "a source failed").without_status();
+        pretty_assertions::assert_eq!(
+            serde_json::to_value(&problem)?,
+            json!({
+                "type": "https://uri.etsi.org/ngsi-ld/errors/BadGateway",
+                "title": "Bad gateway",
+                "detail": "a source failed"
+            })
+        );
+        pretty_assertions::assert_eq!(problem.status_member(), StatusMember::Omitted);
+        pretty_assertions::assert_eq!(problem.status_code(), StatusCode::BAD_GATEWAY);
+        Ok(())
+    }
+
+    #[test]
+    fn whether_status_is_stated_round_trips() -> Result<(), serde_json::Error> {
+        for problem in [
+            ProblemDetail::from_classification(ProblemClassification::BadGateway, "a source failed"),
+            ProblemDetail::from_classification(ProblemClassification::BadGateway, "a source failed").without_status(),
+            ProblemDetail::new(NgsiLdErrorType::InternalError, "unexpected").without_status(),
+        ] {
+            let parsed = serde_json::from_str::<ProblemDetail>(&serde_json::to_string(&problem)?)?;
+            pretty_assertions::assert_eq!(parsed, problem);
         }
         Ok(())
     }

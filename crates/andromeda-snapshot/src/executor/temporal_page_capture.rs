@@ -20,7 +20,7 @@ use crate::{
 use andromeda_federation::{outcome::ForwardedTemporalEntities, temporal_result::merge_temporal_query_results};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
-    snapshot::ExecutionResultDetails,
+    snapshot::{ExecutionResultDetails, ExecutionResultStatus},
     temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory},
 };
 use andromeda_ngsi_ld_query::{
@@ -87,7 +87,7 @@ impl SnapshotExecutor {
             // clone: the query counts the entities after the page is stored
             captured.extend(documents.iter().filter_map(TemporalDocument::id).cloned());
             let detail = self.persist_temporal_results(capture, documents).await?;
-            if detail.problem_details.is_some() {
+            if detail.result_status == ExecutionResultStatus::Failure {
                 return Ok(Some(detail));
             }
             match walk.advance(range.as_ref()) {

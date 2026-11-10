@@ -1,29 +1,31 @@
-//! A capture whose every matching source failed records a bad gateway.
+//! A capture whose every matching source failed is empty and names the sources.
 
 use andromeda_test_suite::{
     broker,
     cleanup::Cleanup,
     config::SuiteConfig,
     namespace::Namespace,
-    snapshot_capture::{SnapshotQuery, await_query_problem},
+    snapshot_capture::{SnapshotQuery, await_query_result},
 };
 use googletest::prelude::*;
 use ngsi_ld::{
     registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo, RegistrationMode},
-    snapshot::{QueryDocument, SettledStatus, Snapshot, SnapshotId},
+    snapshot::{ExecutionStatus, QueryDocument, SettledStatus, Snapshot, SnapshotId},
 };
 
-/// Pins: A Snapshot over a type the broker holds no Entity of and an inclusive `queryEntity` registration names an
-/// origin nothing listens at for, ends failure, and its query's execution details are failure with a 502 problem of
-/// type `https://uri.etsi.org/ngsi-ld/errors/BadGateway`
-/// Clause: 5.16.1.4, 5.7.2.4, 5.2.42, 6.3.17
-/// Recorded: clause 6.3.17 answers the failure of the single source of an exclusive or redirect registration with 502,
-/// 504 or 508 and names no type for them, and gives a failed inclusive source only a warning, which an execution result
-/// has no place for; Andromeda types those statuses under the ETSI errors namespace, `BadGateway` for 502, and records a
-/// capture with no local Entity and no source that answered as that `BadGateway`, since it has no result to record
+/// Pins: A Snapshot over a type the broker holds no Entity of and an inclusive `queryEntity` registration naming an
+/// origin nothing listens at ends empty, and its query's execution details are empty with a problem of type
+/// `https://uri.etsi.org/ngsi-ld/errors/BadGateway` and no `status` whose detail names the registration and the
+/// warning code 199
+/// Clause: 5.16.1.4, 5.7.2.4, 5.2.42, 6.3.17, 5.5.3
+/// Recorded: clause 5.16.1.4 executes the query as Query Entities does, which answers without a failed inclusive
+/// source and reports it in an `NGSILD-Warning` (clause 6.3.17), so the query does not fail; an execution result has no
+/// member for warnings, and Andromeda records them in `problemDetails` as a problem of the `BadGateway` type it answers
+/// the failure of a single source with, leaving out `status` since no error response was given (clause 5.5.3 requires
+/// only `type`, `title` and `detail`)
 #[gtest]
 #[tokio::test]
-async fn o_snp_cre_8169_a_capture_whose_every_matching_source_failed_records_a_bad_gateway() -> Result<()> {
+async fn o_snp_cre_8169_a_capture_whose_every_matching_source_failed_is_empty_and_names_the_sources() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let config = SuiteConfig::get()?;
@@ -45,12 +47,18 @@ async fn o_snp_cre_8169_a_capture_whose_every_matching_source_failed_records_a_b
         .query(QueryDocument::builder().entities([vehicle_type.as_str()]).build()?)
         .build()?;
     broker.snapshots().create(&snapshot).send().await?;
-    let problem = await_query_problem(&broker, &snapshot_id, SettledStatus::Failure, SnapshotQuery::Entity(0)).await?;
+    let detail = await_query_result(&broker, &snapshot_id, SettledStatus::Empty, SnapshotQuery::Entity(0)).await?;
+    expect_that!(detail.result_status, eq(ExecutionStatus::Empty));
+    let problem = detail.problem_details.or_fail()?;
     expect_that!(
         problem.error_type.as_ref().map(ToString::to_string),
         some(eq("https://uri.etsi.org/ngsi-ld/errors/BadGateway"))
     );
-    expect_that!(problem.status, some(eq(502)));
+    expect_that!(problem.status, none());
+    expect_that!(
+        problem.detail,
+        some(all!(contains_substring(registration_id.to_string()), contains_substring("199 - ")))
+    );
     broker.snapshots().delete(&snapshot_id).send().await?;
     broker.registrations().delete(&registration_id).send().await?;
     Ok(())

@@ -4,17 +4,16 @@
 //! A query a Snapshot runs fails, for the most part, as the same query fails
 //! through the API: those failures are classified as the API classifies them.
 //! What is left is the capture's own: reading the query's whole result, and
-//! writing it into the Snapshot. Clause 5.16.1.4 executes the query following
-//! clause 5.7.2.4 or 5.7.4.4, so a failure of a context source keeps the
-//! clause 6.3.17 type, and one of the capture itself is an `InternalError`.
+//! writing it into the Snapshot. A failure of the capture itself is an
+//! `InternalError`.
 //!
-//! Two failures of context sources have no type of their own: a query whose
-//! every matching source failed with no local entity to answer, and a source
-//! answer the capture cannot read to the end. Clause 6.3.17 binds 502 only to
-//! the single source of an exclusive or redirect registration and gives a
-//! failed inclusive source a warning, which an execution result has no place
-//! for. Both are recorded as the `BadGateway` 502 Andromeda answers that
-//! single source's failure with.
+//! A Context Source that fails does not fail the query, since the API answers
+//! without it and reports it in a warning. A source answer the capture cannot
+//! read to the end fails the query, since clause 5.16.1.4 retrieves every page
+//! and the rest of that answer cannot be retrieved. Clause 6.3.17 names no
+//! type for it, and binds 502 only to the failure of the single source of an
+//! exclusive or redirect registration, so it is recorded as the `BadGateway`
+//! 502 Andromeda answers that single source's failure with.
 
 use crate::{error::SnapshotError, executor::instance_walk::WalkRefusal};
 use andromeda_context_commit::error::CommitError;
@@ -40,9 +39,6 @@ pub(super) enum ExecutionFailure<'error> {
         /// The failure that ended the preparation.
         cause: &'error SnapshotError,
     },
-    /// No local entity matched, and every matching Context Source failed.
-    #[error("no valid entity result was available because every matching distributed source failed")]
-    EverySourceFailed,
     /// A matching local entity is stored in a form this broker no longer reads,
     /// so a capture without it would not be the result of the query.
     #[error("the stored entity {id} matched the query but does not read back")]
@@ -102,18 +98,15 @@ impl ExecutionFailure<'_> {
     /// The clause 5.5.2 category, or the 502 binding, the failure is recorded
     /// as.
     ///
-    /// Every matching source failing, and a source whose partial answer cannot
-    /// be read on, are recorded as the `BadGateway` 502 Andromeda answers the
-    /// failure of a single registered source with (clause 6.3.17). A `lastN` whose
-    /// remainder pages backwards cannot be captured whole, which clause 5.5.2
-    /// names `TooManyResults`, and an aggregated representation is an
-    /// operation a Snapshot does not support. The rest are failures of the
-    /// capture itself.
+    /// A source whose partial answer cannot be read on is recorded as the
+    /// `BadGateway` 502 Andromeda answers the failure of a single registered
+    /// source with (clause 6.3.17). A `lastN` whose remainder pages backwards
+    /// cannot be captured whole, which clause 5.5.2 names `TooManyResults`, and
+    /// an aggregated representation is an operation a Snapshot does not
+    /// support. The rest are failures of the capture itself.
     pub(super) const fn classification(&self) -> ProblemClassification {
         match self {
-            ExecutionFailure::EverySourceFailed | ExecutionFailure::SourceWalkRefused(WalkRefusal::Stalled { .. } | WalkRefusal::Unpositioned) => {
-                ProblemClassification::BadGateway
-            }
+            ExecutionFailure::SourceWalkRefused(WalkRefusal::Stalled { .. } | WalkRefusal::Unpositioned) => ProblemClassification::BadGateway,
             ExecutionFailure::LocalWalkRefused(WalkRefusal::Backward) | ExecutionFailure::SourceWalkRefused(WalkRefusal::Backward) => {
                 ProblemClassification::Category(NgsiLdErrorType::TooManyResults)
             }
@@ -161,17 +154,6 @@ mod tests {
 
     fn stalled() -> WalkRefusal {
         WalkRefusal::Stalled { at: DateTime::UNIX_EPOCH }
-    }
-
-    /// A query no local entity answers and whose every matching Context
-    /// Source failed is recorded as the `BadGateway` 502 Andromeda answers a
-    /// failed single source with (clause 6.3.17).
-    #[test]
-    fn every_matching_source_failing_is_a_bad_gateway() {
-        assert_eq!(
-            recorded(&ExecutionFailure::EverySourceFailed),
-            ("https://uri.etsi.org/ngsi-ld/errors/BadGateway".to_owned(), 502)
-        );
     }
 
     /// A Context Source whose partial temporal answer cannot be read on is
@@ -254,7 +236,7 @@ mod tests {
     /// The problem's detail is the failure's own text.
     #[test]
     fn the_problem_detail_is_the_failure_text() {
-        let failure = ExecutionFailure::EverySourceFailed;
+        let failure = ExecutionFailure::OffsetOverflow;
         assert_eq!(failure.problem().detail(), failure.to_string());
     }
 }
