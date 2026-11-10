@@ -7,7 +7,7 @@ use andromeda_test_suite::{
     config::{BrokerRole, PeerRole},
     namespace::Namespace,
     outcome::Done,
-    snapshot_capture::{QueryList, await_query_problem},
+    snapshot_capture::{SnapshotQuery, await_query_problem},
 };
 use googletest::prelude::*;
 use ngsi_ld::{
@@ -58,7 +58,7 @@ async fn o_snp_cre_8172_a_temporal_capture_refused_for_its_local_and_peer_entiti
         )
         .build()?;
     bounded.snapshots().create(&snapshot).send().await?;
-    let problem = await_query_problem(&bounded, &snapshot_id, SettledStatus::Partial, QueryList::Temporal).await?;
+    let problem = await_query_problem(&bounded, &snapshot_id, SettledStatus::Partial, SnapshotQuery::Temporal(0)).await?;
     expect_that!(problem.error_type, some(eq(&ErrorType::TooManyResults)));
     expect_that!(problem.status, some(eq(403)));
     expect_that!(problem.detail, some(contains_substring("federation.query.max_entities")));

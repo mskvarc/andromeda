@@ -5,7 +5,7 @@ use andromeda_test_suite::{
     cleanup::Cleanup,
     config::SuiteConfig,
     namespace::Namespace,
-    snapshot_capture::{QueryList, await_query_problem},
+    snapshot_capture::{SnapshotQuery, await_query_problem},
 };
 use googletest::prelude::*;
 use ngsi_ld::{
@@ -44,7 +44,7 @@ async fn o_snp_cre_8169_a_capture_whose_every_matching_source_failed_records_a_b
         .query(QueryDocument::builder().entities([vehicle_type.as_str()]).build()?)
         .build()?;
     broker.snapshots().create(&snapshot).send().await?;
-    let problem = await_query_problem(&broker, &snapshot_id, SettledStatus::Failure, QueryList::Entity).await?;
+    let problem = await_query_problem(&broker, &snapshot_id, SettledStatus::Failure, SnapshotQuery::Entity(0)).await?;
     expect_that!(
         problem.error_type.as_ref().map(ToString::to_string),
         some(eq("https://uri.etsi.org/ngsi-ld/errors/BadGateway"))

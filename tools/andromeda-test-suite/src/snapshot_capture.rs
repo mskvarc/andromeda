@@ -9,21 +9,22 @@ use ngsi_ld::{
     snapshot::{ExecutionResultDetails, ExecutionStatus, SettledStatus, SnapshotId, SnapshotOutputMembers, SnapshotStatus},
 };
 
-/// The list of queries of a Snapshot an execution result belongs to (clause 5.16.1.4).
+/// A query of a Snapshot, by the list it is in and its index there; its execution result has the same index in the
+/// details of that list (clause 5.16.1.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QueryList {
-    /// `snapshotQueries`, whose results are `snapshotQueriesDetails`.
-    Entity,
-    /// `snapshotTemporalQueries`, whose results are `snapshotTemporalQueriesDetails`.
-    Temporal,
+pub enum SnapshotQuery {
+    /// The entry of `snapshotQueries`, whose results are `snapshotQueriesDetails`, at the index.
+    Entity(usize),
+    /// The entry of `snapshotTemporalQueries`, whose results are `snapshotTemporalQueriesDetails`, at the index.
+    Temporal(usize),
 }
 
-impl QueryList {
-    /// The execution results of the queries of this list.
-    fn details(self, output: &SnapshotOutputMembers) -> &[ExecutionResultDetails] {
+impl SnapshotQuery {
+    /// The execution result of this query, `None` when the list holds none at its index.
+    fn detail(self, output: &SnapshotOutputMembers) -> Option<&ExecutionResultDetails> {
         match self {
-            QueryList::Entity => &output.queries_details,
-            QueryList::Temporal => &output.temporal_queries_details,
+            SnapshotQuery::Entity(index) => output.queries_details.get(index),
+            SnapshotQuery::Temporal(index) => output.temporal_queries_details.get(index),
         }
     }
 }
@@ -42,22 +43,20 @@ pub async fn await_status(broker: &BrokerClient, id: &SnapshotId, status: Snapsh
     .await
 }
 
-/// Waits until the Snapshot `id` reports `settled`, with one query in `list`, and answers the problem the execution
-/// result of that query reports (clause 5.2.42).
+/// Waits until the Snapshot `id` reports `settled`, and answers the problem the execution result of `query` reports
+/// (clause 5.2.42).
 ///
 /// # Errors
 ///
-/// Returns the failure of the last read when the Snapshot never settles so, or settles without the one query of `list`
-/// failing with a problem.
-pub async fn await_query_problem(broker: &BrokerClient, id: &SnapshotId, settled: SettledStatus, list: QueryList) -> Result<ProblemDetails> {
+/// Returns the failure of the last read when the Snapshot never settles so, or settles without `query` failing with a
+/// problem.
+pub async fn await_query_problem(broker: &BrokerClient, id: &SnapshotId, settled: SettledStatus, query: SnapshotQuery) -> Result<ProblemDetails> {
     retried(async || {
         let snapshot = broker.with_accept(Accept::new(NgsiLdMediaType::Json)).snapshots().retrieve(id).send().await?;
         verify_that!(snapshot.status(), eq(SnapshotStatus::Settled(settled)))?;
-        let details = list.details(snapshot.output());
-        verify_that!(details, len(eq(1)))?;
-        let details = details.first().or_fail()?;
-        verify_that!(details.result_status, eq(ExecutionStatus::Failure))?;
-        details.problem_details.clone().or_fail()
+        let detail = query.detail(snapshot.output()).or_fail()?;
+        verify_that!(detail.result_status, eq(ExecutionStatus::Failure))?;
+        detail.problem_details.clone().or_fail()
     })
     .await
 }

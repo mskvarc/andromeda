@@ -21,12 +21,17 @@
 //! already captured. A capture no source answered an entity for pages its
 //! local entities unbounded, as Query Temporal Evolution of Entities pages
 //! them.
+//!
+//! A failure met after a page was stored leaves that page in the staging
+//! branch: the query's capture says it wrote, and the Snapshot is captured
+//! again without the query.
 
 use crate::{
     error::SnapshotError,
     executor::{
         SnapshotExecutor,
         execution_failure::ExecutionFailure,
+        query_capture::{QueryCapture, Staging},
         source_instance_walk::SourceInstanceWalk,
         source_pass::SourcePass,
         status::{failure_detail, success_detail},
@@ -111,14 +116,37 @@ impl SnapshotExecutor {
     ///
     /// Returns a transient failure a local page read or a history write met,
     /// on which the preparation restarts; the query's own failures are
-    /// recorded in the returned details.
-    pub(crate) async fn run_temporal_query(
+    /// recorded in the returned capture.
+    pub(super) async fn run_temporal_query(
         &self,
         target: &ContextTarget,
         snapshot_id: &Identifier,
         query: Query,
         index: usize,
         context: &ContextSpec,
+    ) -> Result<QueryCapture, SnapshotError> {
+        let mut captured = HashSet::new();
+        let detail = self.capture_temporal_result(target, snapshot_id, query, index, context, &mut captured).await?;
+        // Every entity of `captured` was handed to the staging branch with the
+        // page it came in.
+        let staging = if captured.is_empty() { Staging::Untouched } else { Staging::Written };
+        Ok(QueryCapture::of(detail, staging))
+    }
+
+    /// Capture the whole result of one snapshot temporal query, every entity
+    /// a page of it stores added to `captured`.
+    ///
+    /// # Errors
+    ///
+    /// As [`SnapshotExecutor::run_temporal_query`].
+    async fn capture_temporal_result(
+        &self,
+        target: &ContextTarget,
+        snapshot_id: &Identifier,
+        query: Query,
+        index: usize,
+        context: &ContextSpec,
+        captured: &mut HashSet<Identifier>,
     ) -> Result<ExecutionResultDetails, SnapshotError> {
         let params = match temporal_parameters(query) {
             Ok(params) => params,
@@ -157,7 +185,6 @@ impl SnapshotExecutor {
                 start: PageStart::Cursor(None),
             })
         };
-        let mut captured = HashSet::new();
         loop {
             let entity_ids = match self.next_local_page(&capture, &mut local).await {
                 Ok(entity_ids) => entity_ids,
@@ -168,14 +195,14 @@ impl SnapshotExecutor {
             };
             let local_on = local.continues_after(&entity_ids, self.capture_page_size);
             let forwarded = first_pass.next_page().unwrap_or_default();
-            if let Some(failure) = self.capture_temporal_page(&capture, entity_ids, forwarded, &mut captured).await? {
+            if let Some(failure) = self.capture_temporal_page(&capture, entity_ids, forwarded, captured).await? {
                 return Ok(failure);
             }
             if !local_on && !first_pass.holds_pages() {
                 break;
             }
         }
-        if let Some(failure) = self.capture_resumed_source_passes(&capture, sources, &mut captured).await? {
+        if let Some(failure) = self.capture_resumed_source_passes(&capture, sources, captured).await? {
             return Ok(failure);
         }
         Ok(success_detail(captured.len()))

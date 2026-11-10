@@ -153,8 +153,7 @@ impl PreparationClaim<'_> {
 
     /// Restart the claim from an empty staging branch before another attempt.
     async fn restart(&self) -> Result<(), PreparationFailure> {
-        let deadline = lease_deadline(self.lease).map_err(PreparationFailure::Restart)?;
-        match self.store.restart_preparation(self.id, self.worker, deadline).await {
+        match restart_staging(self.store, self.id, self.worker, self.lease).await {
             Ok(true) => Ok(()),
             Ok(false) => Err(PreparationFailure::ClaimLost),
             Err(error) => Err(PreparationFailure::Restart(error)),
@@ -173,6 +172,19 @@ impl PreparationClaim<'_> {
             .await?;
         Ok(if recorded == 0 { PreparationEnd::ClaimLost } else { PreparationEnd::Failed })
     }
+}
+
+/// Empty the staging branch of the preparation `id` still claimed by `worker`,
+/// leasing it for `lease` from now; false when the claim was lost or the
+/// Snapshot is no longer preparing.
+///
+/// # Errors
+///
+/// Returns [`SnapshotError::Internal`] when `lease` cannot be turned into a
+/// deadline, and the store's own failure when the restart does not complete.
+pub(super) async fn restart_staging(store: &dyn SnapshotStore, id: &Identifier, worker: LeaseHolder, lease: Duration) -> Result<bool, SnapshotError> {
+    let deadline = lease_deadline(lease)?;
+    store.restart_preparation(id, worker, deadline).await
 }
 
 /// One failed execution result per query, or none when there are no queries.

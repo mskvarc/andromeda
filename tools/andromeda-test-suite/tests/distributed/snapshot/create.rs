@@ -21,3 +21,5 @@ mod o_snp_cre_8172;
 mod o_snp_cre_8173;
 mod o_snp_cre_8174;
 mod o_snp_cre_8175;
+mod o_snp_cre_8176;
+mod o_snp_cre_8177;
