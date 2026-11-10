@@ -351,7 +351,7 @@ impl SnapshotService {
     ///
     /// The Snapshot `created` is committed before the check runs, so a check
     /// that fails is logged rather than answered: the create or clone itself
-    /// succeeded, and the next create, clone or preparation checks again.
+    /// succeeded, and the next create or clone checks again.
     async fn enforce_quotas(&self, created: &Identifier) {
         match self.repo.enforce_quotas(self.config.tenant_count_quota, self.config.tenant_byte_quota).await {
             Ok(evicted) => {

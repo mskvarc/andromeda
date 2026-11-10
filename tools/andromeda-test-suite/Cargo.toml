@@ -13,6 +13,7 @@ description = "Black-box tests of the Andromeda NGSI-LD context broker, written 
 workspace = true
 
 [dependencies]
+andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
 bytes = "1.12.1"
 cefact-units = "1.0.0"

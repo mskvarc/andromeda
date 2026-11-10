@@ -54,7 +54,7 @@ impl MaintenanceSeed {
     /// Returns [`MaintenanceSeedError::Config`] when the stack names no such server.
     pub fn of(role: BrokerRole) -> Result<MaintenanceSeed, MaintenanceSeedError> {
         let config = SuiteConfig::get().map_err(Clone::clone)?;
-        let server = config.pooling()?.server(role)?;
+        let server = config.servers().server(role)?;
         let pool = PgPoolOptions::new()
             .max_connections(1)
             .acquire_timeout(ACQUIRE_TIMEOUT)

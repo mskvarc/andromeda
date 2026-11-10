@@ -226,7 +226,14 @@ fn claimed_preparation_select(id: &Identifier, claimed_by: LeaseHolder) -> Selec
 }
 
 /// Select, and row-lock for a lifecycle transition, the preparing preparation
-/// row of one Snapshot claimed by `claimed_by`.
+/// row of one Snapshot claimed by `claimed_by`, together with its control
+/// record.
+///
+/// The lock names no table, so it covers the control record too. A deletion or
+/// a quota eviction takes that record `FOR UPDATE` before it drops the branch
+/// schemas, so it waits for a publication to commit: a drop running beside the
+/// publication would look for the staging schema by the name the rename takes
+/// away, and leave the published schema it becomes without a control record.
 fn claimed_preparation_statement(id: &Identifier, claimed_by: LeaseHolder) -> SelectStatement {
     claimed_preparation_select(id, claimed_by).lock(LockType::Update).to_owned()
 }
@@ -415,6 +422,18 @@ mod tests {
         );
         assert!(sql.contains("\"snapshot_preparation\".\"status\" = 1"), "{sql}");
         assert!(sql.ends_with("FOR UPDATE"), "{sql}");
+    }
+
+    /// A reap waits on the control record, so the lock a publication holds
+    /// covers it as well as the preparation row.
+    #[test]
+    fn the_lifecycle_lock_covers_the_control_record_a_reap_waits_on() {
+        let worker = LeaseHolder::from(Uuid::from_u128(1));
+        let id = "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri");
+        let sql = claimed_preparation_statement(&id, worker).to_string(PostgresQueryBuilder);
+        assert!(sql.contains("FROM \"snapshots\" JOIN \"snapshot_preparation\""), "{sql}");
+        assert!(sql.ends_with(" FOR UPDATE"), "{sql}");
+        assert!(!sql.contains("FOR UPDATE OF"), "the lock is not narrowed to one table: {sql}");
     }
 
     #[test]

@@ -2352,6 +2352,7 @@ dependencies = [
 name = "andromeda-test-suite"
 version = "1.0.0"
 dependencies = [
+ "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
  "bytes",
  "cefact-units",
