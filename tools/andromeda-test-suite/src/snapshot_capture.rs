@@ -43,6 +43,21 @@ pub async fn await_status(broker: &BrokerClient, id: &SnapshotId, status: Snapsh
     .await
 }
 
+/// Waits until the Snapshot `id` reports `settled`, and answers the execution result of `query` (clause 5.2.42).
+///
+/// # Errors
+///
+/// Returns the failure of the last read when the Snapshot never settles so, or settles without an execution result for
+/// `query`.
+pub async fn await_query_result(broker: &BrokerClient, id: &SnapshotId, settled: SettledStatus, query: SnapshotQuery) -> Result<ExecutionResultDetails> {
+    retried(async || {
+        let snapshot = broker.with_accept(Accept::new(NgsiLdMediaType::Json)).snapshots().retrieve(id).send().await?;
+        verify_that!(snapshot.status(), eq(SnapshotStatus::Settled(settled)))?;
+        query.detail(snapshot.output()).cloned().or_fail()
+    })
+    .await
+}
+
 /// Waits until the Snapshot `id` reports `settled`, and answers the problem the execution result of `query` reports
 /// (clause 5.2.42).
 ///
@@ -51,12 +66,7 @@ pub async fn await_status(broker: &BrokerClient, id: &SnapshotId, status: Snapsh
 /// Returns the failure of the last read when the Snapshot never settles so, or settles without `query` failing with a
 /// problem.
 pub async fn await_query_problem(broker: &BrokerClient, id: &SnapshotId, settled: SettledStatus, query: SnapshotQuery) -> Result<ProblemDetails> {
-    retried(async || {
-        let snapshot = broker.with_accept(Accept::new(NgsiLdMediaType::Json)).snapshots().retrieve(id).send().await?;
-        verify_that!(snapshot.status(), eq(SnapshotStatus::Settled(settled)))?;
-        let detail = query.detail(snapshot.output()).or_fail()?;
-        verify_that!(detail.result_status, eq(ExecutionStatus::Failure))?;
-        detail.problem_details.clone().or_fail()
-    })
-    .await
+    let detail = await_query_result(broker, id, settled, query).await?;
+    verify_that!(detail.result_status, eq(ExecutionStatus::Failure))?;
+    detail.problem_details.or_fail()
 }

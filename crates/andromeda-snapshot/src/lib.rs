@@ -32,6 +32,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-entity",
         "andromeda-failure-classification",
         "andromeda-federation",
+        "andromeda-http-headers",
         "andromeda-json-literal",
         "andromeda-jsonld",
         "andromeda-ngsi-ld-compaction",

@@ -18,6 +18,7 @@ pub mod batch_operation;
 pub mod error_type;
 pub mod problem_detail;
 mod problem_document_error;
+pub mod status_member;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

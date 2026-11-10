@@ -18,6 +18,7 @@ andromeda-context-space.workspace = true
 andromeda-entity.workspace = true
 andromeda-failure-classification.workspace = true
 andromeda-federation.workspace = true
+andromeda-http-headers.workspace = true
 andromeda-json-literal.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-entity.workspace = true
@@ -34,6 +35,7 @@ andromeda-retry = { workspace = true, features = ["tokio"] }
 andromeda-temporal.workspace = true
 chrono = "0.4.45"
 futures = "0.3.34"
+indexmap = "2.14.2"
 serde_json = "1.0.154"
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["rt", "time"] }
@@ -42,7 +44,6 @@ url = "2.5.8"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
-indexmap = "2.14.2"
 pretty_assertions = "1.4.1"
 strum = { version = "0.28.0", features = ["derive"] }
 tokio = { version = "1.54.1", features = ["macros", "rt", "sync", "test-util", "time"] }

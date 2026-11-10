@@ -12,7 +12,8 @@
 //!
 //! A forwarding that fails is read as Query Temporal Evolution of Entities
 //! reads it: one this broker's own store failed fails the query, and any other
-//! leaves the capture with the local answer.
+//! leaves the capture with the local answer. A source that fails leaves the
+//! pass with what the others answered, and the warning that names it.
 
 use crate::executor::{
     SnapshotExecutor,
@@ -33,6 +34,7 @@ use andromeda_federation::{
     result_budget::{ResultBudget, ResultBudgetExceeded},
     source_reach::SourceReach,
 };
+use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::ExecutionResultDetails;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
@@ -79,6 +81,12 @@ impl SourcePass {
     /// Whether a page of the pass is still to be taken.
     pub(super) fn holds_pages(&self) -> bool {
         !self.pages.is_empty()
+    }
+
+    /// The clause 6.3.17 warnings every source answered with on the pages
+    /// still held.
+    pub(super) fn warnings(&self) -> impl Iterator<Item = &NgsiLdWarning> {
+        self.answers().flat_map(|answer| answer.warnings.iter())
     }
 
     /// Every source's answer on every page still held.
@@ -191,6 +199,7 @@ mod tests {
         outcome::ForwardedTemporalEntities,
         result_budget::{ResultBudget, ResultBudgetExceeded, ResultLimits},
     };
+    use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
     use andromeda_ngsi_ld_entity::document::EntityDocument;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{
@@ -291,6 +300,18 @@ mod tests {
         pretty_assertions::assert_eq!(second[0].entities[0].id(), Some(&identifier(2)));
         assert!(!pass.holds_pages());
         assert!(pass.next_page().is_none());
+    }
+
+    #[test]
+    fn a_pass_holds_the_warnings_of_every_answer_on_every_page() {
+        let failed = |registration: u32| NgsiLdWarning::new(WarnCode::MiscellaneousWarning, format!("registration {registration} did not respond"));
+        let warned = |registration: u32| ForwardedTemporalEntities {
+            warnings: vec![failed(registration)],
+            ..answer(&[])
+        };
+        let pass = pass(vec![vec![answer(&[1]), warned(1)], vec![warned(2)]], 10);
+
+        pretty_assertions::assert_eq!(pass.warnings().cloned().collect::<Vec<_>>(), vec![failed(1), failed(2)]);
     }
 
     #[test]

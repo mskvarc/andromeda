@@ -1,5 +1,6 @@
 //! Snapshot execution result aggregation and status selection.
 
+use crate::executor::source_shortfall::SourceShortfall;
 use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, ExecutionResultStatus, SnapshotStatus};
 use andromeda_ngsi_ld_problem_details::problem_detail::ProblemDetail;
 
@@ -81,6 +82,16 @@ pub(crate) const fn success_detail(count: usize) -> ExecutionResultDetails {
     }
 }
 
+/// The detail of a query whose whole answer was captured: `success` when it
+/// captured `count > 0` entities, `empty` otherwise, with the problem naming
+/// the Context Sources `shortfall` holds failed for it (clause 5.2.42).
+pub(super) fn answered_detail(count: usize, shortfall: &SourceShortfall) -> ExecutionResultDetails {
+    ExecutionResultDetails {
+        problem_details: shortfall.problem(),
+        ..success_detail(count)
+    }
+}
+
 /// The detail of a failed query, reporting `problem` with the type the
 /// failure was classified as (clause 5.2.42).
 pub(crate) const fn failure_detail(problem: ProblemDetail) -> ExecutionResultDetails {
@@ -92,7 +103,11 @@ pub(crate) const fn failure_detail(problem: ProblemDetail) -> ExecutionResultDet
 
 #[cfg(test)]
 mod tests {
-    use crate::executor::status::{ExecutionAggregate, failure_detail, success_detail};
+    use crate::executor::{
+        source_shortfall::SourceShortfall,
+        status::{ExecutionAggregate, answered_detail, failure_detail, success_detail},
+    };
+    use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
     use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, ExecutionResultStatus, SnapshotStatus};
     use andromeda_ngsi_ld_problem_details::{
         error_type::NgsiLdErrorType,
@@ -144,7 +159,10 @@ mod tests {
     /// as, whatever its type.
     #[test]
     fn a_failure_reports_the_problem_it_was_classified_as() {
-        let detail = failure_detail(ProblemDetail::from_classification(ProblemClassification::BadGateway, "every source failed"));
+        let detail = failure_detail(ProblemDetail::from_classification(
+            ProblemClassification::BadGateway,
+            "a source answer cannot be read on",
+        ));
         pretty_assertions::assert_eq!(detail.result_status, ExecutionResultStatus::Failure);
         pretty_assertions::assert_eq!(
             detail.problem_details.map(|problem| problem.classification()),
@@ -155,5 +173,40 @@ mod tests {
     #[test]
     fn no_executions_are_failure() {
         pretty_assertions::assert_eq!(ExecutionAggregate::default().final_status(), SnapshotStatus::Failure);
+    }
+
+    #[test]
+    fn a_query_every_source_answered_records_its_status_without_a_problem() {
+        let shortfall = SourceShortfall::default();
+        for (count, status) in [(0, ExecutionResultStatus::Empty), (2, ExecutionResultStatus::Success)] {
+            let detail = answered_detail(count, &shortfall);
+            pretty_assertions::assert_eq!(detail.result_status, status);
+            assert!(detail.problem_details.is_none());
+        }
+    }
+
+    /// Clause 5.2.42: the answer reports no error when a source failed, so the
+    /// status follows what was captured and the problem says which sources
+    /// are missing.
+    #[test]
+    fn a_query_a_source_failed_for_records_its_status_with_the_problem() {
+        let mut shortfall = SourceShortfall::default();
+        shortfall.record(&[NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "a source did not respond")]);
+        for (count, status) in [(0, ExecutionResultStatus::Empty), (2, ExecutionResultStatus::Success)] {
+            let detail = answered_detail(count, &shortfall);
+            pretty_assertions::assert_eq!(detail.result_status, status);
+            pretty_assertions::assert_eq!(detail.problem_details, shortfall.problem());
+        }
+    }
+
+    /// A problem beside an empty result does not make the query a failure, so
+    /// the Snapshot is empty.
+    #[test]
+    fn an_empty_result_a_source_failed_for_is_empty() {
+        let mut shortfall = SourceShortfall::default();
+        shortfall.record(&[NgsiLdWarning::new(WarnCode::MiscellaneousWarning, "a source did not respond")]);
+        let mut aggregate = ExecutionAggregate::default();
+        aggregate.push_entity(answered_detail(0, &shortfall));
+        pretty_assertions::assert_eq!(aggregate.final_status(), SnapshotStatus::Empty);
     }
 }

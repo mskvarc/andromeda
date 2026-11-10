@@ -22,7 +22,9 @@
 //!
 //! A query that fails as Query Entities would records the problem Query
 //! Entities answers with, and a failure only the capture meets is recorded as
-//! the capture's own.
+//! the capture's own. A Context Source that fails does not fail the query, as
+//! it does not fail Query Entities: the capture holds what the broker and the
+//! other sources answered, and its execution result names the source.
 //!
 //! A failure met after a page was written leaves that page in the staging
 //! branch: the query's capture says it wrote, and the Snapshot is captured
@@ -38,7 +40,8 @@ use crate::{
         forwarded_capture::ForwardedCapture,
         pending_sources::PendingSources,
         query_capture::{QueryCapture, Staging},
-        status::{failure_detail, success_detail},
+        source_shortfall::SourceShortfall,
+        status::{answered_detail, failure_detail},
         translation::entity_parameters,
     },
 };
@@ -54,7 +57,6 @@ use andromeda_failure_classification::{
     result_limit_failure::{classify_instance_budget_refusal, classify_result_budget_refusal},
 };
 use andromeda_federation::{
-    entity_result::collect_warnings,
     error::FederationError,
     expanded_registration_filters::ExpandedRegistrationFilters,
     forwarded_query::client_query::ClientQuery,
@@ -67,7 +69,10 @@ use andromeda_federation::{
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_model::{query::body::Query, snapshot::ExecutionResultDetails};
+use andromeda_ngsi_ld_model::{
+    query::body::Query,
+    snapshot::{ExecutionResultDetails, ExecutionResultStatus},
+};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     error::QueryError,
@@ -166,10 +171,10 @@ impl SnapshotExecutor {
             WalkedSources::TooManyResults(exceeded) => return Ok(failure_detail(classify_result_budget_refusal(&exceeded).into_problem())),
             WalkedSources::TooManyInstances(exceeded) => return Ok(failure_detail(classify_instance_budget_refusal(&exceeded).into_problem())),
         };
-        for warning in pending.answers.iter().flat_map(|answer| answer.warnings.iter()) {
+        let mut shortfall = SourceShortfall::default();
+        shortfall.record(pending.answers.iter().flat_map(|answer| answer.warnings.iter()).inspect(|warning| {
             warn!(snapshot_id = %snapshot_id, query_index = index, warning = %warning, "Snapshot entity query retained a distributed warning");
-        }
-        let every_source_failed = !collect_warnings(&pending.answers).is_empty() && !pending.holds_entities();
+        }));
         let merge_budget = pending.holds_entities().then_some(&budget);
 
         let capture = ForwardedCapture::new(self.attribute_nesting);
@@ -189,13 +194,11 @@ impl SnapshotExecutor {
             // clone: the next page starts after the last identifier of this one,
             // while the states themselves move into the capture below.
             let last_captured = states.last().map(|state| state.id().clone());
-            if matches!(window.start, PageStart::Cursor(None)) && local_page_len == 0 {
-                if let Some(error) = &forwarding_failure {
-                    return Ok(failure_detail(classify_federation_error(error).into_problem()));
-                }
-                if every_source_failed {
-                    return Ok(failure_detail(ExecutionFailure::EverySourceFailed.problem()));
-                }
+            if matches!(window.start, PageStart::Cursor(None))
+                && local_page_len == 0
+                && let Some(error) = &forwarding_failure
+            {
+                return Ok(failure_detail(classify_federation_error(error).into_problem()));
             }
             let captured_at = Utc::now();
             for state in &mut states {
@@ -233,7 +236,7 @@ impl SnapshotExecutor {
                 return Ok(failure);
             }
         }
-        Ok(success_detail(ledger.captured.len()))
+        Ok(answered_detail(ledger.captured.len(), &shortfall))
     }
 
     /// One local page of the states `params` selects within `window`, or the
@@ -339,7 +342,7 @@ impl SnapshotExecutor {
             ledger.staging = Staging::Written;
         }
         let detail = self.persist_current_results(target, snapshot_id, index, fresh).await?;
-        if detail.problem_details.is_some() {
+        if detail.result_status == ExecutionResultStatus::Failure {
             return Ok(Some(detail));
         }
         for identifier in identifiers {

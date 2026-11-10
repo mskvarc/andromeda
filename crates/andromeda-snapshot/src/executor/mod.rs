@@ -24,6 +24,8 @@ mod query_capture;
 mod source_instance_walk;
 /// Every page the Context Sources answer a captured temporal query over one window, read before it is stored.
 mod source_pass;
+/// The failed Context Sources a Snapshot query's answer was given without.
+mod source_shortfall;
 /// Capturing every query into the staging branch, starting over without one that failed after staging.
 mod staged_capture;
 mod status;

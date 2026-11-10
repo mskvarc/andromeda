@@ -22,6 +22,11 @@
 //! local entities unbounded, as Query Temporal Evolution of Entities pages
 //! them.
 //!
+//! A Context Source that fails does not fail the query, as it does not fail
+//! Query Temporal Evolution of Entities: the capture holds what the broker and
+//! the other sources answered, and its execution result names every source
+//! that failed in any pass.
+//!
 //! A failure met after a page was stored leaves that page in the staging
 //! branch: the query's capture says it wrote, and the Snapshot is captured
 //! again without the query.
@@ -34,7 +39,8 @@ use crate::{
         query_capture::{QueryCapture, Staging},
         source_instance_walk::SourceInstanceWalk,
         source_pass::SourcePass,
-        status::{failure_detail, success_detail},
+        source_shortfall::SourceShortfall,
+        status::{answered_detail, failure_detail},
         temporal_failure::{TemporalStep, temporal_failure},
         translation::temporal_parameters,
     },
@@ -174,6 +180,8 @@ impl SnapshotExecutor {
             Ok(pass) => pass,
             Err(failure) => return Ok(failure),
         };
+        let mut shortfall = SourceShortfall::default();
+        shortfall.record(first_pass.warnings());
         let mut local = if first_pass.holds_entities() {
             match self.admitted_local_entities(&capture, &first_pass).await? {
                 LocalAdmission::Admitted(identifiers) => LocalEntities::Admitted(identifiers.into_iter()),
@@ -202,10 +210,10 @@ impl SnapshotExecutor {
                 break;
             }
         }
-        if let Some(failure) = self.capture_resumed_source_passes(&capture, sources, captured).await? {
+        if let Some(failure) = self.capture_resumed_source_passes(&capture, sources, &mut shortfall, captured).await? {
             return Ok(failure);
         }
-        Ok(success_detail(captured.len()))
+        Ok(answered_detail(captured.len(), &shortfall))
     }
 
     /// The query's context source filter and geoquery expanded under `context`,
@@ -280,6 +288,7 @@ impl SnapshotExecutor {
     ///
     /// Each pass is read whole before it is stored, and a pass holding a source
     /// entity is held to the entity limit with every entity already captured.
+    /// The sources that fail in a pass are recorded in `shortfall`.
     ///
     /// Returns the query's failure, or `None` once the sources answered the
     /// whole window.
@@ -287,6 +296,7 @@ impl SnapshotExecutor {
         &self,
         capture: &TemporalCapture<'_>,
         mut sources: SourceInstanceWalk,
+        shortfall: &mut SourceShortfall,
         captured: &mut HashSet<Identifier>,
     ) -> Result<Option<ExecutionResultDetails>, SnapshotError> {
         let mut resumed: Option<TemporalQueryParameters> = None;
@@ -303,6 +313,7 @@ impl SnapshotExecutor {
                 Ok(pass) => pass,
                 Err(failure) => return Ok(Some(failure)),
             };
+            shortfall.record(pass.warnings());
             if pass.holds_entities() {
                 let joining = pass.identifiers().into_iter().filter(|identifier| !captured.contains(*identifier)).count();
                 if let Err(exceeded) = pass.admit_collection(captured.len().saturating_add(joining)) {
