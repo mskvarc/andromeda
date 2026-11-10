@@ -9,10 +9,10 @@
 use crate::{
     budget::Budget,
     config_error::{ConfigError, ConfigKey},
-    front_route::local_host_towards,
     host_name::HostName,
     mqtt_settings::MqttSettings,
     pooling_settings::PoolingSettings,
+    server_settings::ServerSettings,
 };
 use figment2::{Figment, providers::Env};
 use serde::Deserialize;
@@ -183,8 +183,11 @@ pub struct SuiteConfig {
     capped_mqtt_host: Option<HostName>,
     /// The service that signals a broker's process, on the pgbouncer stack.
     signaller: Option<Url>,
-    /// The servers and poolers behind the brokers, on the pgbouncer stack.
+    /// The poolers behind the brokers and the size of the scale tests, on the pgbouncer stack.
     pooling: Option<PoolingSettings>,
+    /// The PostgreSQL server each broker a test reaches the database of owns.
+    #[serde(default)]
+    servers: ServerSettings,
     /// The Prometheus exposition each broker that serves one serves on its management listener, by role.
     #[serde(default)]
     metrics: BTreeMap<BrokerRole, Url>,
@@ -214,9 +217,6 @@ pub struct SuiteConfig {
 
 /// The configuration, read once per test process.
 static CONFIG: OnceLock<Result<SuiteConfig, ConfigError>> = OnceLock::new();
-
-/// The callback host found from the route to the front broker, once per test process.
-static DISCOVERED_CALLBACK_HOST: OnceLock<Result<Host<String>, ConfigError>> = OnceLock::new();
 
 impl SuiteConfig {
     /// The configuration of the stack, read from the environment on first use.
@@ -308,13 +308,19 @@ impl SuiteConfig {
         self.signaller.as_ref().ok_or(ConfigError::Missing(ConfigKey::Signaller))
     }
 
-    /// The servers and poolers behind the brokers.
+    /// The poolers behind the brokers and the size of the scale tests.
     ///
     /// # Errors
     ///
     /// Returns [`ConfigError::Missing`] on a stack that names none.
     pub fn pooling(&self) -> Result<&PoolingSettings, ConfigError> {
         self.pooling.as_ref().ok_or(ConfigError::Missing(ConfigKey::Pooling))
+    }
+
+    /// The PostgreSQL server each broker a test reaches the database of owns.
+    #[must_use]
+    pub const fn servers(&self) -> &ServerSettings {
+        &self.servers
     }
 
     /// The Prometheus exposition of the broker of `role`.
@@ -373,22 +379,10 @@ impl SuiteConfig {
         self.stack_dir.as_deref().ok_or(ConfigError::Missing(ConfigKey::StackDir))
     }
 
-    /// The host the brokers reach the test process by.
-    ///
-    /// A configured value wins. Otherwise it is the local address of the route to the front broker, which is the
-    /// address of this container on the stack network: each runner container has its own, so two runs against one
-    /// stack never receive each other's callbacks.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError`] when no front broker is configured or no route to it exists.
-    pub fn callback_host(&self) -> Result<Host<String>, ConfigError> {
-        match &self.callback_host {
-            Some(host) => Ok(host.host().clone()),
-            None => DISCOVERED_CALLBACK_HOST
-                .get_or_init(|| self.broker(BrokerRole::Front).and_then(local_host_towards))
-                .clone(),
-        }
+    /// The host the brokers reach the test process by, when the stack sets it.
+    #[must_use]
+    pub fn configured_callback_host(&self) -> Option<&Host<String>> {
+        self.callback_host.as_ref().map(HostName::host)
     }
 }
 
@@ -398,6 +392,8 @@ mod tests {
         budget::Budget,
         config::{BrokerRole, PeerRole, SuiteConfig},
         config_error::{ConfigError, ConfigKey},
+        database_name::DatabaseName,
+        front_route::callback_host,
     };
     use figment2::{Figment, providers::Serialized, value::Value};
     use googletest::prelude::*;
@@ -478,29 +474,44 @@ mod tests {
         let mut pairs = REQUIRED.to_vec();
         pairs.push(("CALLBACK_HOST", "runner"));
         let config = SuiteConfig::read(&figment(&pairs))?;
-        verify_that!(config.callback_host()?, eq(&Host::Domain("runner".to_owned())))
+        verify_that!(callback_host(&config)?, eq(&Host::Domain("runner".to_owned())))
     }
 
     #[gtest]
     fn the_pooling_settings_are_read_as_one_section_by_role() -> Result<()> {
         let mut pairs = REQUIRED.to_vec();
         pairs.extend([
-            ("POOLING__SERVERS__DORMANT", "postgres://andromeda:andromeda@postgres-dormant:5432/andromeda"),
             ("POOLING__POOLERS__DORMANT", "postgres://andromeda:andromeda@pgbouncer-dormant:6432/pgbouncer"),
             ("POOLING__SCALE_TENANTS", "100"),
             ("POOLING__LOAD_SECONDS", "60"),
         ]);
         let config = SuiteConfig::read(&figment(&pairs))?;
         let pooling = config.pooling()?;
-        expect_that!(
-            pooling.server(BrokerRole::Dormant).map(Url::as_str),
-            ok(eq(&"postgres://andromeda:andromeda@postgres-dormant:5432/andromeda"))
-        );
         expect_that!(pooling.pooler(BrokerRole::Dormant).map(Url::path), ok(eq(&"/pgbouncer")));
         expect_that!(pooling.scale_tenants(), eq(100));
         expect_that!(pooling.load_duration(), eq(Duration::from_secs(60)));
         let error = pooling.pooler(BrokerRole::Direct).err().or_fail()?;
         verify_that!(error.to_string(), eq("the stack sets no ANDROMEDA_TEST_SUITE__POOLING__POOLERS__DIRECT"))
+    }
+
+    #[gtest]
+    fn a_server_is_read_by_role_and_names_a_tenant_database_and_a_missing_one_names_its_key() -> Result<()> {
+        let mut pairs = REQUIRED.to_vec();
+        pairs.push(("SERVERS__DURABLE", "postgres://andromeda:andromeda@postgres-durable:5432/andromeda"));
+        let config = SuiteConfig::read(&figment(&pairs))?;
+        expect_that!(
+            config.servers().server(BrokerRole::Durable).map(Url::as_str),
+            ok(eq(&"postgres://andromeda:andromeda@postgres-durable:5432/andromeda"))
+        );
+        expect_that!(
+            config
+                .servers()
+                .database(BrokerRole::Durable, &DatabaseName::from("andromeda_tenant_acme_0badc0de".to_owned()))
+                .map(String::from),
+            ok(eq("postgres://andromeda:andromeda@postgres-durable:5432/andromeda_tenant_acme_0badc0de"))
+        );
+        let error = config.servers().server(BrokerRole::Dormant).err().or_fail()?;
+        verify_that!(error.to_string(), eq("the stack sets no ANDROMEDA_TEST_SUITE__SERVERS__DORMANT"))
     }
 
     #[gtest]

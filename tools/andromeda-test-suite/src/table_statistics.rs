@@ -78,8 +78,7 @@ impl TableStatistics {
     /// Returns [`TableStatisticsError::Config`] when the stack names no such server.
     pub fn of(role: BrokerRole, database: &DatabaseName) -> Result<TableStatistics, TableStatisticsError> {
         let config = SuiteConfig::get().map_err(Clone::clone)?;
-        let mut server = config.pooling()?.server(role)?.clone();
-        server.set_path(database.as_str());
+        let server = config.servers().database(role, database)?;
         let pool = PgPoolOptions::new()
             .max_connections(1)
             .acquire_timeout(ACQUIRE_TIMEOUT)

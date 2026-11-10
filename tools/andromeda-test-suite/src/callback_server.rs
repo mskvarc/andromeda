@@ -5,7 +5,7 @@
 //! unanswered, as a server that has not started yet does, until [`CallbackServer::start_serving`], which keeps the
 //! port and records nothing of what came before.
 
-use crate::{config::SuiteConfig, config_error::ConfigError};
+use crate::{config::SuiteConfig, config_error::ConfigError, front_route::callback_host};
 use std::{
     io,
     net::{Ipv4Addr, SocketAddr, TcpListener},
@@ -160,7 +160,7 @@ fn listen() -> Result<(TcpListener, Url), CallbackError> {
     let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))).map_err(CallbackError::Listen)?;
     let port = listener.local_addr().map_err(CallbackError::Listen)?.port();
     let config = SuiteConfig::get().map_err(|error| CallbackError::Config(error.clone()))?;
-    let text = match config.callback_host()? {
+    let text = match callback_host(config)? {
         Host::Ipv6(address) => format!("http://[{address}]:{port}/"),
         host @ (Host::Domain(_) | Host::Ipv4(_)) => format!("http://{host}:{port}/"),
     };

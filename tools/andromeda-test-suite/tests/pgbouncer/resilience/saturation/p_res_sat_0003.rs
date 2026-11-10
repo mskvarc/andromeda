@@ -2,7 +2,7 @@
 
 use andromeda_test_suite::{
     broker::{self, BrokerClient},
-    change_clock_hold::ChangeClockHold,
+    change_clock_lock::change_clock_lock,
     cleanup::Cleanup,
     config::BrokerRole,
     context_source::ContextSource,
@@ -11,6 +11,7 @@ use andromeda_test_suite::{
     eventually::{Poll, eventually},
     load_outcome::LoadOutcome,
     namespace::Namespace,
+    row_hold::RowHold,
     server_backends::{BackendScope, ServerBackends},
     tenant_management::database_of,
     tenant_set::TenantSet,
@@ -74,7 +75,7 @@ async fn p_res_sat_0003_an_entity_create_is_answered_while_registration_creates_
         .entity_type(namespace.entity_type("Device")?)
         .build()?;
     let tenant = member.with_responses();
-    let hold = ChangeClockHold::seize(BrokerRole::Resilience, &database, HELD_FOR).await?;
+    let hold = RowHold::seize(BrokerRole::Resilience, &database, change_clock_lock(), HELD_FOR).await?;
     let creates = join_all(
         queued
             .iter()
