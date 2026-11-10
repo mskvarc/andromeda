@@ -108,6 +108,8 @@ pub mod outcome;
 /// A registration naming this broker is never contacted.
 #[cfg(test)]
 mod own_alias_forwarding_tests;
+/// How a Context Source said a page of its temporal answer was cut short.
+pub mod partial_page;
 /// Which registrations take part in a read.
 pub mod participating_read;
 /// The two forwarding phases of a query read the registrations once.

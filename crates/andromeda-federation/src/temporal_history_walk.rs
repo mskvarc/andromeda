@@ -14,6 +14,7 @@
 use crate::{
     FederationService,
     incomplete_answer::{IncompleteReason, incomplete_answer},
+    partial_page::{PartialPage, least_range_end},
     query_forwarding_error::QueryForwardingError,
     read_fan_out::{ForwardedGetConditions, ForwardedRead, SourceAnswer},
     received_temporal_answer::ReceivedTemporalAnswer,
@@ -21,7 +22,6 @@ use crate::{
     result_budget::ResultBudget,
     temporal_answer_reading::ReadTemporalEntity,
 };
-use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
 use andromeda_ngsi_ld_lexicon::{
     time::{date_time::NgsiLdDateTime, rendering::instant_text},
     time_rel::TimeRel,
@@ -83,7 +83,7 @@ impl FederationService {
         };
         budget.instances.charge(gathered.instance_count())?;
         let mut resumed_at: Option<DateTime<Utc>> = None;
-        while let Some(stopped_at) = least_range_end(&gathered.partial_ranges) {
+        while let Some(stopped_at) = least_range_end(&gathered.partial_pages) {
             let resumed = first_url
                 .as_ref()
                 .filter(|_| resumed_at.is_none_or(|previous| stopped_at > previous))
@@ -94,7 +94,9 @@ impl FederationService {
                 gathered.warnings.push(incomplete_answer(&registration.id, IncompleteReason::HistoryCutShort));
                 break;
             };
-            gathered.partial_ranges.clear();
+            // A page that named no range cannot be resumed, so the answer stays
+            // incomplete past it whatever the resumed walk answers.
+            gathered.partial_pages.retain(PartialPage::is_unranged);
             // The resumed walk gathers entities the first one already counted,
             // so it is bounded on its own rather than charged to the request's
             // budget a second time.
@@ -113,17 +115,11 @@ impl FederationService {
             gathered.entities.extend(page.entities);
             gathered.warnings.extend(page.warnings);
             gathered.dropped.absorb(page.dropped);
-            gathered.partial_ranges = page.partial_ranges;
+            gathered.partial_pages.extend(page.partial_pages);
             resumed_at = Some(stopped_at);
         }
         Ok(answer)
     }
-}
-
-/// The earliest instant any partial answer stopped at: every instance up to it
-/// has been answered on every page.
-pub(crate) fn least_range_end(ranges: &[NgsiLdContentRange]) -> Option<DateTime<Utc>> {
-    ranges.iter().map(NgsiLdContentRange::end).min()
 }
 
 /// `first` with its window resumed at `stopped_at` (clause 6.3.10), or `None`

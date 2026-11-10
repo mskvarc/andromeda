@@ -19,9 +19,13 @@
 //! whole on the pass that reaches it. The Scope of an entity has no position
 //! on the requested axis and travels whole on every page (clause 4.18), so it
 //! is kept once.
+//!
+//! A partial answer whose `Content-Range` is missing or cannot be read names
+//! no instant the rest of its window can be asked from, so no pass can read
+//! it to the end, and the walk refuses it on whichever page or pass it comes.
 
 use crate::executor::instance_walk::{WalkRefusal, is_scope};
-use andromeda_federation::outcome::ForwardedTemporalEntities;
+use andromeda_federation::{outcome::ForwardedTemporalEntities, partial_page::PartialPage};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time_prop::TimeProp};
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
 use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
@@ -80,10 +84,14 @@ impl SourceInstanceWalk {
     ///
     /// # Errors
     ///
-    /// Returns [`WalkRefusal::Backward`] for a partial answer to a query with
-    /// `lastN`.
+    /// Returns [`WalkRefusal::Unpositioned`] for an answer a page of which was
+    /// cut short at no readable range, and [`WalkRefusal::Backward`] for a
+    /// partial answer to a query with `lastN`.
     pub(crate) fn trim(&mut self, answers: &mut [ForwardedTemporalEntities]) -> Result<(), WalkRefusal> {
         answers.iter_mut().try_for_each(|answer| {
+            if answer.partial_pages.iter().any(PartialPage::is_unranged) {
+                return Err(WalkRefusal::Unpositioned);
+            }
             let cut = answer.least_range_end();
             self.trim_answer(answer.registration_id.as_ref(), &mut answer.entities, cut)
         })

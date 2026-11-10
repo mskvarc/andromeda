@@ -24,7 +24,7 @@
 //! is whole, so every stop of an aggregated merge is inclusive.
 
 use crate::temporal::TemporalQueryParameters;
-use andromeda_federation::{incomplete_answer::history_cut_short, outcome::ForwardedTemporalEntities};
+use andromeda_federation::{incomplete_answer::history_cut_short, outcome::ForwardedTemporalEntities, partial_page::PartialPage};
 use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
@@ -158,7 +158,7 @@ impl HistoryCompleteness {
             side: StopSide::Inclusive,
         });
         let source_stops = sources.iter().flat_map(|source| {
-            source.partial_ranges.iter().map(|range| Stop {
+            source.partial_pages.iter().filter_map(PartialPage::range).map(|range| Stop {
                 at: range.end(),
                 side: StopSide::Exclusive,
             })
@@ -169,7 +169,14 @@ impl HistoryCompleteness {
         let cut_short = match stop.side {
             StopSide::Exclusive => sources
                 .iter()
-                .filter(|source| source.partial_ranges.iter().map(NgsiLdContentRange::end).any(|end| end == stop.at))
+                .filter(|source| {
+                    source
+                        .partial_pages
+                        .iter()
+                        .filter_map(PartialPage::range)
+                        .map(NgsiLdContentRange::end)
+                        .any(|end| end == stop.at)
+                })
                 .filter_map(|source| source.registration_id.clone()) // clone: the bound outlives the answers it was read from
                 .collect(),
             StopSide::Inclusive => Vec::new(),

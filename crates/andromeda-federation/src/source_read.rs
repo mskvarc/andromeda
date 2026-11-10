@@ -10,6 +10,7 @@ use crate::{
     forwarded_payload::OutgoingBody,
     forwarding_context::{BodyPresence, ForwardingDecision},
     outcome::{ForwardGetOutcome, ForwardedResponse, TransportFailure},
+    partial_page::PartialPage,
     registration_payload::forwarding_decision,
     request::TriggeringRequest,
     source_continuation::SourceContinuation,
@@ -218,7 +219,7 @@ fn interpret_read_response(registration: &ContextSourceRegistration, answered: &
     // Clause 6.3.10: a 206 says where the answer was cut short. One that does
     // not say it cannot be combined with the rest of the result, so the
     // client is told the source's part may be incomplete.
-    if sent.status == reqwest::StatusCode::PARTIAL_CONTENT && sent.partial_range.is_none() {
+    if sent.partial_page.as_ref().is_some_and(PartialPage::is_unranged) {
         warnings.push(SourceReadWarning::UnreadableContentRange { registration: registration_id }.into_warning());
     }
 
@@ -230,6 +231,6 @@ fn interpret_read_response(registration: &ContextSourceRegistration, answered: &
         warnings,
         entity_map: sent.entity_map,
         continuation: SourceContinuation::of(sent.next_page.as_ref(), answered, registration.access.endpoint.url()),
-        partial_range: sent.partial_range,
+        partial_page: sent.partial_page,
     })
 }

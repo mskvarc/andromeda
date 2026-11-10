@@ -4,11 +4,12 @@ use crate::{
     FederationService,
     dropped_entities::DroppedEntities,
     outcome::{ForwardGetOutcome, ForwardedResponse},
+    partial_page::PartialPage,
     source_answer_failure::SourceAnswerFailure,
     source_walk::{ReadPage, WalkedAnswer},
     temporal_answer_reading::ReadTemporalEntity,
 };
-use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
+use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
@@ -36,10 +37,12 @@ pub(crate) struct ReceivedTemporalAnswer<E> {
     pub(crate) dropped: DroppedEntities,
     /// The `EntityMap` the source used for the request (clause 5.5.14).
     pub(crate) linked_map: Option<Identifier>,
-    /// The `Content-Range` of every page of the answer that the source cut
-    /// short (clause 6.3.10): the instances past each range are still to come
-    /// from the source, so the merged history is complete only up to them.
-    pub(crate) partial_ranges: Vec<NgsiLdContentRange>,
+    /// Every page of the answer that the source cut short (clause 6.3.10):
+    /// the instances past each page's range are still to come from the
+    /// source, so the merged history is complete only up to them, and a page
+    /// that named no range says the history is incomplete and nowhere it
+    /// resumes.
+    pub(crate) partial_pages: Vec<PartialPage>,
 }
 
 impl ReceivedTemporalAnswer<ReadTemporalEntity> {
@@ -82,7 +85,7 @@ impl WalkedAnswer for ReceivedTemporalAnswer<ContextualEntity> {
     fn absorb(&mut self, page: ReceivedTemporalAnswer<ContextualEntity>) {
         self.warnings.extend(page.warnings);
         self.dropped.absorb(page.dropped);
-        self.partial_ranges.extend(page.partial_ranges);
+        self.partial_pages.extend(page.partial_pages);
     }
 }
 
@@ -97,7 +100,7 @@ impl FederationService {
         registration: &ContextSourceRegistration,
         outcome: ForwardGetOutcome,
     ) -> ReadPage<ReceivedTemporalAnswer<ContextualEntity>> {
-        let answered = |naming, entities, warnings, dropped, linked_map, partial_range: Option<NgsiLdContentRange>| {
+        let answered = |naming, entities, warnings, dropped, linked_map, partial_page: Option<PartialPage>| {
             Some(ReceivedTemporalAnswer {
                 registration_id: Some(registration.id.clone()),
                 mode: registration.access.mode.unwrap_or_default(),
@@ -106,7 +109,7 @@ impl FederationService {
                 warnings,
                 dropped,
                 linked_map,
-                partial_ranges: partial_range.into_iter().collect(),
+                partial_pages: partial_page.into_iter().collect(),
             })
         };
         match outcome {
@@ -115,7 +118,7 @@ impl FederationService {
                 naming,
                 mut warnings,
                 entity_map,
-                partial_range,
+                partial_page,
                 ..
             }) => match ReceivedEntities::from_slice(&body) {
                 Ok(ReceivedEntities(elements)) => {
@@ -132,7 +135,7 @@ impl FederationService {
                         }
                     }
                     ReadPage {
-                        answer: answered(naming, entities, warnings, dropped, entity_map, partial_range),
+                        answer: answered(naming, entities, warnings, dropped, entity_map, partial_page),
                         sent,
                     }
                 }

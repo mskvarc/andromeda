@@ -158,7 +158,7 @@ mod tests {
             entities: Vec::new(),
             warnings,
             linked_map: None,
-            partial_ranges: Vec::new(),
+            partial_pages: Vec::new(),
         }
     }
 

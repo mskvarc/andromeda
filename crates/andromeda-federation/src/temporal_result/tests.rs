@@ -42,7 +42,7 @@ fn forwarded(mode: ForwardingMode, entities: Vec<TemporalHistory>) -> ForwardedT
         entities,
         warnings: Vec::new(),
         linked_map: None,
-        partial_ranges: Vec::new(),
+        partial_pages: Vec::new(),
     }
 }
 

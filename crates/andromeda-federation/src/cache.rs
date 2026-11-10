@@ -153,7 +153,7 @@ mod tests {
             warnings: Vec::new(),
             entity_map: None,
             continuation: SourceContinuation::Complete,
-            partial_range: None,
+            partial_page: None,
         }
     }
 

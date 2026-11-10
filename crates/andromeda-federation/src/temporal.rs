@@ -66,7 +66,7 @@ fn own_loop_outcome() -> ForwardReadOutcome<ForwardedTemporalEntities> {
             entities: Vec::new(),
             warnings: vec![own_loop_warning()],
             linked_map: None,
-            partial_ranges: Vec::new(),
+            partial_pages: Vec::new(),
         }],
         sources: MatchedSources::default(),
     }

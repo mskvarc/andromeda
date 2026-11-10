@@ -2,7 +2,7 @@ use crate::{
     temporal::complete_history::{HistoryBound, HistoryCompleteness, Stop, StopSide},
     test_history::held_history,
 };
-use andromeda_federation::outcome::ForwardedTemporalEntities;
+use andromeda_federation::{outcome::ForwardedTemporalEntities, partial_page::PartialPage};
 use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::WarnCode};
 use andromeda_ngsi_ld_lexicon::{
     aggr_method::AggrMethod,
@@ -56,7 +56,7 @@ async fn source(partial: &[NgsiLdContentRange]) -> ForwardedTemporalEntities {
         entities: vec![held_history(json!({"id": "urn:ngsi-ld:Vehicle:remote", "type": "Vehicle"})).await],
         warnings: Vec::new(),
         linked_map: None,
-        partial_ranges: partial.to_vec(),
+        partial_pages: partial.iter().cloned().map(PartialPage::Ranged).collect(),
     }
 }
 
@@ -114,6 +114,18 @@ async fn when_every_contributor_answered_in_full_the_history_is_complete() {
     let completeness = HistoryCompleteness::of(&params(None), None, &sources).expect("a readable window");
     assert!(matches!(completeness, HistoryCompleteness::Complete));
     assert!(completeness.range(&[], TimeProp::Observed).is_none());
+}
+
+/// A source page cut short at no readable range names no stop: the history
+/// is bounded only by what the other contributors say, and the source's 111
+/// warning says its part may be incomplete.
+#[tokio::test]
+async fn a_source_page_cut_short_at_no_range_names_no_stop() {
+    let mut unranged = source(&[]).await;
+    unranged.partial_pages = vec![PartialPage::Unranged];
+    let sources = [unranged];
+    let completeness = HistoryCompleteness::of(&params(None), None, &sources).expect("a readable window");
+    assert!(matches!(completeness, HistoryCompleteness::Complete));
 }
 
 /// Forwards, the history is complete up to the earliest stop: the local

@@ -375,6 +375,7 @@ mod tests {
         mock_source::{answer_in_turn, endpoint, received},
         operation::ForwardingOperation,
         outcome::{ForwardReadOutcome, ForwardedEntities, ForwardedTemporalEntities},
+        partial_page::PartialPage,
         query_forwarding_error::QueryForwardingError,
         request::{
             CsrModeFilter,
@@ -1014,7 +1015,7 @@ mod tests {
 
         pretty_assertions::assert_eq!(temporal_gathered(&outcome), numbered(0..3));
         pretty_assertions::assert_eq!(received(&source).await.len(), 2);
-        assert!(outcome.results.iter().all(|answer| answer.partial_ranges.is_empty()));
+        assert!(outcome.results.iter().all(|answer| answer.partial_pages.is_empty()));
     }
 
     /// Clause 6.3.10: every page the source cut short with a 206 says where,
@@ -1042,14 +1043,15 @@ mod tests {
         let ranges: Vec<String> = outcome
             .results
             .iter()
-            .flat_map(|answer| answer.partial_ranges.iter().map(ToString::to_string))
+            .flat_map(|answer| answer.partial_pages.iter().filter_map(PartialPage::range).map(ToString::to_string))
             .collect();
         pretty_assertions::assert_eq!(ranges, vec![first_range.to_owned(), second_range.to_owned()]);
         pretty_assertions::assert_eq!(temporal_gathered(&outcome), numbered(0..2));
     }
 
     /// A 206 that does not say where it stopped cannot be combined with the
-    /// rest of the history, so the client is warned its part may be incomplete.
+    /// rest of the history, so the client is warned its part may be
+    /// incomplete, and the answer keeps the page as cut short at no range.
     #[tokio::test]
     async fn a_partial_temporal_page_without_a_content_range_is_reported() {
         let source = source().await;
@@ -1058,6 +1060,32 @@ mod tests {
 
         let outcome = temporal_walk(&service, 100).await.expect("the walk completes");
 
+        assert_unreadable_range_reported(&outcome);
+        pretty_assertions::assert_eq!(temporal_gathered(&outcome), numbered(0..1));
+    }
+
+    /// A 206 whose `Content-Range` cannot be read says no more than one
+    /// without it.
+    #[tokio::test]
+    async fn a_partial_temporal_page_with_an_unreadable_content_range_is_reported() {
+        let source = source().await;
+        answer_in_turn(
+            &source,
+            "GET",
+            TEMPORAL_PATH,
+            [temporal_page(0, 1, StatusCode::PARTIAL_CONTENT, None, Some("DateTime yesterday-today/*"))],
+        )
+        .await;
+        let service = service(registration(&source, &["queryTemporal"]));
+
+        let outcome = temporal_walk(&service, 100).await.expect("the walk completes");
+
+        assert_unreadable_range_reported(&outcome);
+    }
+
+    /// The answer carries the 111 warning of a 206 without a readable range,
+    /// and keeps that page alone as cut short at no range.
+    fn assert_unreadable_range_reported(outcome: &ForwardReadOutcome<ForwardedTemporalEntities>) {
         let warnings: Vec<&NgsiLdWarning> = outcome.results.iter().flat_map(|answer| answer.warnings.iter()).collect();
         assert!(
             warnings
@@ -1065,6 +1093,8 @@ mod tests {
                 .any(|warning| warning.code() == WarnCode::RevalidationFailed && warning.text().as_str().contains("without a readable Content-Range")),
             "{warnings:?}"
         );
+        let pages: Vec<&PartialPage> = outcome.results.iter().flat_map(|answer| answer.partial_pages.iter()).collect();
+        pretty_assertions::assert_eq!(pages, vec![&PartialPage::Unranged]);
     }
 
     /// Clause 4.12: a temporal walk gathering more entities than the budget is
@@ -1380,7 +1410,7 @@ mod tests {
         let outcome = history_walk(&service, 100).await.expect("the walk completes");
 
         pretty_assertions::assert_eq!(speed_values(&outcome), vec![1, 2, 3, 4]);
-        assert!(outcome.results.iter().all(|answer| answer.partial_ranges.is_empty()));
+        assert!(outcome.results.iter().all(|answer| answer.partial_pages.is_empty()));
         let requests = received(&source).await;
         let queries: Vec<&str> = requests.iter().filter_map(|request| request.url.query()).collect();
         pretty_assertions::assert_eq!(queries.len(), 2, "{queries:?}");
@@ -1417,9 +1447,40 @@ mod tests {
             .collect();
         assert!(warnings.iter().any(|warning| warning.contains("cannot be resumed past")), "{warnings:?}");
         assert!(
-            outcome.results.iter().all(|answer| answer.partial_ranges.len() == 1),
+            outcome.results.iter().all(|answer| answer.partial_pages.len() == 1),
             "the history is complete only up to the stop it could not be resumed past"
         );
+    }
+
+    /// A page that named no range cannot be resumed, so the answer still says
+    /// it was cut short once the walk resumed the source past its ranged page.
+    #[tokio::test]
+    async fn a_page_without_a_range_stays_cut_short_once_the_ranged_page_is_resumed() {
+        let source = source().await;
+        let next = "/ngsi-ld/v1/temporal/entities?type=Vehicle&offset=1";
+        answer_in_turn(
+            &source,
+            "GET",
+            TEMPORAL_PATH,
+            [
+                temporal_page(1, 1, StatusCode::PARTIAL_CONTENT, Some(next), None),
+                history_page(
+                    &[(2, "2020-01-02T00:00:00Z")],
+                    StatusCode::PARTIAL_CONTENT,
+                    Some("DateTime 2019-01-01T00:00:00Z-2020-01-02T00:00:00Z/*"),
+                ),
+                history_page(&[(2, "2020-01-02T00:00:00Z"), (3, "2020-01-03T00:00:00Z")], StatusCode::OK, None),
+            ],
+        )
+        .await;
+        let service = service(registration(&source, &["queryTemporal"]));
+
+        let outcome = history_walk(&service, 100).await.expect("the walk completes");
+
+        pretty_assertions::assert_eq!(received(&source).await.len(), 3);
+        pretty_assertions::assert_eq!(speed_values(&outcome), vec![2, 3]);
+        let pages: Vec<&PartialPage> = outcome.results.iter().flat_map(|answer| answer.partial_pages.iter()).collect();
+        pretty_assertions::assert_eq!(pages, vec![&PartialPage::Unranged]);
     }
 
     /// Clause 4.12: once the sources' history holds more instances than the

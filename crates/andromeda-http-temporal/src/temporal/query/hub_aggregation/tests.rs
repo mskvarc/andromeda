@@ -45,7 +45,7 @@ fn answered(entities: Vec<TemporalHistory>) -> ForwardedTemporalEntities {
         entities,
         warnings: Vec::new(),
         linked_map: None,
-        partial_ranges: Vec::new(),
+        partial_pages: Vec::new(),
     }
 }
 

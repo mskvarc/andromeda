@@ -1,4 +1,5 @@
 use crate::executor::{instance_walk::WalkRefusal, source_instance_walk::SourceInstanceWalk};
+use andromeda_federation::{outcome::ForwardedTemporalEntities, partial_page::PartialPage};
 use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -9,6 +10,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_model::{
     entity_system_times::EntitySystemTimes,
+    registration::forwarding_mode::ForwardingMode,
     temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory},
 };
 use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
@@ -82,6 +84,19 @@ fn answer(registration: &str, entities: Vec<TemporalHistory>, cut: Option<u32>) 
         registration: registration.parse().expect("a valid URI"),
         entities,
         cut: cut.map(at),
+    }
+}
+
+/// What `registration` answered with `entities`, on pages cut short as
+/// `partial_pages` says.
+fn forwarded(registration: &str, entities: Vec<TemporalHistory>, partial_pages: Vec<PartialPage>) -> ForwardedTemporalEntities {
+    ForwardedTemporalEntities {
+        registration_id: Some(registration.parse().expect("a valid URI")),
+        mode: ForwardingMode::Inclusive,
+        entities,
+        warnings: Vec::new(),
+        linked_map: None,
+        partial_pages,
     }
 }
 
@@ -262,4 +277,31 @@ fn a_partial_source_answer_to_a_last_n_query_is_refused() {
     assert_eq!(trim(&mut walk, &mut complete), Ok(()));
     let mut partial = vec![answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[1])])], Some(1))];
     assert_eq!(trim(&mut walk, &mut partial), Err(WalkRefusal::Backward));
+}
+
+/// Clauses 5.16.1.4 and 6.3.10: a source page cut short at no readable range
+/// names no instant the rest can be asked from, so the capture cannot retrieve
+/// every page, beside a source that answered in full.
+#[test]
+fn a_source_answer_cut_short_at_no_range_is_refused() {
+    let mut walk = walk();
+    let mut answers = [
+        forwarded(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[1])])], Vec::new()),
+        forwarded(SOURCE_B, vec![entity(VEHICLE_2, &[(speed(), &[1])])], vec![PartialPage::Unranged]),
+    ];
+    assert_eq!(walk.trim(&mut answers), Err(WalkRefusal::Unpositioned));
+}
+
+/// A source page cut short at no readable range on a pass resumed past a
+/// ranged cut is refused as on the first pass.
+#[test]
+fn a_source_answer_cut_short_at_no_range_on_a_resumed_pass_is_refused() {
+    let mut walk = walk();
+    let mut first = vec![answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[1, 2])])], Some(2))];
+    trim(&mut walk, &mut first).expect("a forward answer");
+    assert_eq!(walk.next_pass(), Ok(Some(TimeInterval::After(at(2)))));
+    let mut whole = [forwarded(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[2, 3])])], Vec::new())];
+    assert_eq!(walk.trim(&mut whole), Ok(()));
+    let mut resumed = [forwarded(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[3, 4])])], vec![PartialPage::Unranged])];
+    assert_eq!(walk.trim(&mut resumed), Err(WalkRefusal::Unpositioned));
 }
