@@ -100,16 +100,12 @@ impl ExecutionFailure<'_> {
     ///
     /// A source whose partial answer cannot be read on is recorded as the
     /// `BadGateway` 502 Andromeda answers the failure of a single registered
-    /// source with (clause 6.3.17). A `lastN` whose remainder pages backwards
-    /// cannot be captured whole, which clause 5.5.2 names `TooManyResults`, and
-    /// an aggregated representation is an operation a Snapshot does not
-    /// support. The rest are failures of the capture itself.
+    /// source with (clause 6.3.17), and an aggregated representation is an
+    /// operation a Snapshot does not support. The rest are failures of the
+    /// capture itself.
     pub(super) const fn classification(&self) -> ProblemClassification {
         match self {
             ExecutionFailure::SourceWalkRefused(WalkRefusal::Stalled { .. } | WalkRefusal::Unpositioned) => ProblemClassification::BadGateway,
-            ExecutionFailure::LocalWalkRefused(WalkRefusal::Backward) | ExecutionFailure::SourceWalkRefused(WalkRefusal::Backward) => {
-                ProblemClassification::Category(NgsiLdErrorType::TooManyResults)
-            }
             ExecutionFailure::AggregatedRepresentation => ProblemClassification::Category(NgsiLdErrorType::OperationNotSupported),
             ExecutionFailure::Preparation { .. }
             | ExecutionFailure::UnreadableEntity { .. }
@@ -172,23 +168,6 @@ mod tests {
                 recorded(&ExecutionFailure::LocalWalkRefused(refusal)),
                 (NgsiLdErrorType::InternalError.type_iri().as_str().to_owned(), 500),
                 "{refusal}"
-            );
-        }
-    }
-
-    /// Clause 5.5.2: a `lastN` whose remainder pages backwards, from the
-    /// broker or from a Context Source, cannot be captured whole, a 403
-    /// `TooManyResults`.
-    #[test]
-    fn a_last_n_paging_backwards_is_too_many_results() {
-        for failure in [
-            ExecutionFailure::LocalWalkRefused(WalkRefusal::Backward),
-            ExecutionFailure::SourceWalkRefused(WalkRefusal::Backward),
-        ] {
-            assert_eq!(
-                recorded(&failure),
-                (NgsiLdErrorType::TooManyResults.type_iri().as_str().to_owned(), 403),
-                "{failure}"
             );
         }
     }

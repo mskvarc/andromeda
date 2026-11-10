@@ -10,6 +10,7 @@ use andromeda_ngsi_ld_lexicon::{
     time::date_time::NgsiLdDateTime,
     time_prop::TimeProp,
 };
+use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use std::num::NonZeroU32;
@@ -250,4 +251,54 @@ fn the_fewest_stream_instances_is_the_admitted_count_of_the_sparsest_stream() {
         document.fewest_stream_instances(TimeProp::Observed, |instant| instant <= at("2020-01-01T02:00:00Z")),
         Some(2)
     );
+}
+
+/// Each stream keeps the most recent instances its room admits, oldest first:
+/// two of the default instance, one of dataset one and none of dataset two.
+#[test]
+fn keeping_the_latest_keeps_the_most_recent_instances_each_stream_has_room_for() {
+    let one = "urn:ngsi-ld:Dataset:one".parse::<Identifier>().expect("an identifier");
+    let mut history = document(vec![
+        instance("2020-01-03T00:00:00Z", None),
+        instance("2020-01-01T00:00:00Z", None),
+        instance("2020-01-02T00:00:00Z", None),
+        in_dataset("2020-01-04T00:00:00Z", "urn:ngsi-ld:Dataset:one"),
+        in_dataset("2020-01-05T00:00:00Z", "urn:ngsi-ld:Dataset:one"),
+        in_dataset("2020-01-06T00:00:00Z", "urn:ngsi-ld:Dataset:two"),
+        undated("urn:ngsi-ld:i:u1"),
+    ]);
+    history.keep_latest(TimeProp::Observed, |_, dataset| match dataset {
+        None => 2,
+        Some(dataset) if *dataset == one => 1,
+        Some(_) => 0,
+    });
+    pretty_assertions::assert_eq!(
+        observed(&history),
+        vec![at("2020-01-02T00:00:00Z"), at("2020-01-03T00:00:00Z"), at("2020-01-05T00:00:00Z")]
+    );
+    pretty_assertions::assert_eq!(history.instance_count(), 3);
+}
+
+/// Clause 4.18: a Scope is valid over a span rather than at an instant, so
+/// keeping the latest instances keeps its history whole.
+#[test]
+fn keeping_the_latest_keeps_the_scope_whole() {
+    let scope = expanded_properties::SCOPE.as_str().parse::<AttributeName>().expect("a valid attribute name");
+    let entity = EntityDocument::new(
+        Some("urn:ngsi-ld:Vehicle:1".parse().expect("an identifier")),
+        vec!["https://example.com/Vehicle".parse().expect("a type")],
+        None,
+        None,
+        IndexMap::from([
+            (speed(), AttributeMember::Instances(vec![instance("2020-01-01T00:00:00Z", None)])),
+            (
+                scope.clone(),
+                AttributeMember::Instances(vec![undated("urn:ngsi-ld:i:s1"), undated("urn:ngsi-ld:i:s2")]),
+            ),
+        ]),
+    );
+    let mut history = TemporalDocument::new(entity, EntitySystemTimes::default(), IndexMap::new());
+    history.keep_latest(TimeProp::Observed, |_, _| 0);
+    pretty_assertions::assert_eq!(history.instances().filter(|(name, _)| **name == scope).count(), 2);
+    pretty_assertions::assert_eq!(history.instance_count(), 2);
 }

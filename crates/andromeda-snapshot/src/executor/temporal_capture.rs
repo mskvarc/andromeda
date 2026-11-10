@@ -283,8 +283,9 @@ impl SnapshotExecutor {
         }
     }
 
-    /// Walk every source page again over the window resumed past the least
-    /// cut of the previous pass, until a pass holds no partial answer.
+    /// Walk every source page again over the rest of the window past the cut
+    /// of the previous pass reached least far, until a pass holds no partial
+    /// answer.
     ///
     /// Each pass is read whole before it is stored, and a pass holding a source
     /// entity is held to the entity limit with every entity already captured.

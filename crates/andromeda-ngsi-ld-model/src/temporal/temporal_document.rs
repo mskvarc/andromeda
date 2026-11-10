@@ -199,6 +199,46 @@ impl TemporalDocument {
         });
     }
 
+    /// Keep, of every attribute stream (an attribute and the `datasetId` of its
+    /// instances), only the most recent instances on `timeproperty` that
+    /// `room` admits for the stream, in ascending order of it. An instance
+    /// with no instant there is left out, as [`TemporalDocument::keep_last`]
+    /// leaves it out. Scope history is valid over a span rather than at an
+    /// instant (clause 4.18), so it is kept whole.
+    pub fn keep_latest(&mut self, timeproperty: TimeProp, room: impl Fn(&AttributeName, Option<&Identifier>) -> usize) {
+        self.reshape_instances(|name, instances| {
+            if name.as_str() == expanded_properties::SCOPE.as_str() {
+                return;
+            }
+            instances.retain(|instance| instance.instant_on(timeproperty).is_some());
+            instances.sort_by_key(|instance| Reverse(instance.instant_on(timeproperty)));
+            let kept: Vec<bool> = {
+                let mut taken: Vec<(Option<&Identifier>, usize, usize)> = Vec::new();
+                instances
+                    .iter()
+                    .map(|instance| {
+                        let dataset = instance.dataset_id();
+                        match taken.iter_mut().find(|(held, _, _)| *held == dataset) {
+                            Some((_, room, count)) if *count < *room => {
+                                *count += 1;
+                                true
+                            }
+                            Some(_) => false,
+                            None => {
+                                let room = room(name, dataset);
+                                taken.push((dataset, room, usize::from(room > 0)));
+                                room > 0
+                            }
+                        }
+                    })
+                    .collect()
+            };
+            let mut kept = kept.into_iter();
+            instances.retain(|_| kept.next().unwrap_or(false));
+            instances.sort_by_key(|instance| instance.instant_on(timeproperty));
+        });
+    }
+
     /// Put `other`'s history of the same entity beside this one, by the
     /// attribute each instance belongs to, as `mode` says; an attribute only
     /// `other` holds joins whole, and the instances of an attribute that

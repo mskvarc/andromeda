@@ -5,6 +5,12 @@
 //! sources answered for the page, and the rest of the local instances are then
 //! read to the end of the window, page after page (clause 6.3.10), each stored
 //! in the Snapshot's branch as it is read.
+//!
+//! Under `lastN` the broker's instances and each source's are held to it
+//! apart, so the Snapshot holds every instance the merged answer keeps: Query
+//! Temporal Evolution of Entities keeps, of the merged history, the most
+//! recent `lastN` instances of each attribute (clause 5.7.4.4), and those are
+//! among the most recent `lastN` of whoever held them.
 
 use crate::{
     error::SnapshotError,
@@ -56,11 +62,11 @@ impl SnapshotExecutor {
         // clone: the page's instances are read by a narrowed copy of the query while its identifier pages read the query as asked
         let mut narrowed = capture.params.clone();
         narrowed.select_only(entity_ids);
-        let mut walk = InstanceWalk::new(capture.interval, timeproperty);
+        let mut walk = InstanceWalk::new(capture.interval, timeproperty, capture.params.last_n);
         let mut forwarded = Some(forwarded);
         loop {
             narrowed.set_interval(walk.interval());
-            let (local, range) = if reads_local {
+            let (mut local, range) = if reads_local {
                 match self.local_instances(&narrowed, capture).await {
                     Ok(page) => page,
                     Err(error) => {
@@ -71,6 +77,9 @@ impl SnapshotExecutor {
             } else {
                 (Vec::new(), None)
             };
+            // The walk counts the broker's own instances alone: each source's
+            // answer was held to the query's `lastN` by the source walk.
+            walk.trim(&mut local);
             let histories = match forwarded.take() {
                 Some(forwarded) => merge_temporal_query_results(
                     local,
@@ -79,11 +88,10 @@ impl SnapshotExecutor {
                 ),
                 None => local,
             };
-            let mut documents = match instance_documents(histories, capture) {
+            let documents = match instance_documents(histories, capture) {
                 Ok(documents) => documents,
                 Err(failure) => return Ok(Some(failure)),
             };
-            walk.trim(&mut documents);
             // clone: the query counts the entities after the page is stored
             captured.extend(documents.iter().filter_map(TemporalDocument::id).cloned());
             let detail = self.persist_temporal_results(capture, documents).await?;

@@ -141,6 +141,24 @@ impl TimeInterval {
         }
     }
 
+    /// What remains of the interval before `instant`, which is where the rest
+    /// of a backward page cut at `instant` is read (clause 6.3.10), or `None`
+    /// when no instant of the interval lies before it.
+    ///
+    /// `instant` itself leaves the interval: a backward page holds every
+    /// instance at the instant it is cut at, and a closing instant is
+    /// exclusive (clause 4.11). An opening instant stays where it was, so what
+    /// remains of an `after` interval is the `between` interval from it to
+    /// `instant`.
+    #[must_use]
+    pub fn preceding(self, instant: DateTime<Utc>) -> Option<TimeInterval> {
+        match self {
+            TimeInterval::Unbounded | TimeInterval::Before(_) => Some(TimeInterval::Before(instant)),
+            TimeInterval::After(from) | TimeInterval::Between { from, .. } if from < instant => Some(TimeInterval::Between { from, to: instant }),
+            TimeInterval::After(_) | TimeInterval::Between { .. } => None,
+        }
+    }
+
     /// The `timerel`, `timeAt` and `endTimeAt` a request spells the interval
     /// with, the three [`from_parts`](TimeInterval::from_parts) builds it from.
     #[must_use]
@@ -329,6 +347,31 @@ mod tests {
             TimeInterval::Between { from: start, to: end }.resumed_at(cut),
             TimeInterval::Between { from: cut, to: end }
         );
+    }
+
+    #[test]
+    fn a_preceding_interval_closes_at_the_cut_and_keeps_its_opening_instant() {
+        let start = instant("2024-01-01T00:00:00Z");
+        let cut = instant("2024-01-02T00:00:00Z");
+        let end = instant("2024-02-01T00:00:00Z");
+        assert_eq!(TimeInterval::After(start).preceding(cut), Some(TimeInterval::Between { from: start, to: cut }));
+        assert_eq!(TimeInterval::Unbounded.preceding(cut), Some(TimeInterval::Before(cut)));
+        assert_eq!(TimeInterval::Before(end).preceding(cut), Some(TimeInterval::Before(cut)));
+        assert_eq!(
+            TimeInterval::Between { from: start, to: end }.preceding(cut),
+            Some(TimeInterval::Between { from: start, to: cut })
+        );
+    }
+
+    /// Clause 4.11 makes the opening instant inclusive and the closing one
+    /// exclusive, so an interval opening at the cut holds nothing before it.
+    #[test]
+    fn nothing_precedes_a_cut_at_or_before_the_opening_instant() {
+        let start = instant("2024-01-02T00:00:00Z");
+        let end = instant("2024-02-01T00:00:00Z");
+        assert_eq!(TimeInterval::After(start).preceding(start), None);
+        assert_eq!(TimeInterval::Between { from: start, to: end }.preceding(start), None);
+        assert_eq!(TimeInterval::After(start).preceding(instant("2024-01-01T00:00:00Z")), None);
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //! direction clause 6.3.10 pages through the rest.
 
 use crate::temporal::period_budget::PeriodBudget;
+use chrono::{DateTime, Utc};
 use std::num::NonZeroU32;
 
 /// The direction a partial temporal response is paged in (clause 6.3.10).
@@ -23,6 +24,31 @@ pub enum PageDirection {
         /// rather than the number of instances the page holds.
         requested: NonZeroU32,
     },
+}
+
+impl PageDirection {
+    /// Whether a page cut at `edge` holds an instance at `instant`: at or
+    /// before the edge forwards, at or after it backwards. The instances at
+    /// the edge itself are held, since a page never splits the instances one
+    /// stream holds at the instant it is cut at.
+    #[must_use]
+    pub fn holds(self, edge: DateTime<Utc>, instant: DateTime<Utc>) -> bool {
+        match self {
+            PageDirection::Forward => instant <= edge,
+            PageDirection::Backward { .. } => instant >= edge,
+        }
+    }
+
+    /// Of the edges two pages were cut at, the one reached least far in this
+    /// direction: the earlier forwards, the later backwards. Both pages hold
+    /// every instance on its held side.
+    #[must_use]
+    pub fn nearer(self, left: DateTime<Utc>, right: DateTime<Utc>) -> DateTime<Utc> {
+        match self {
+            PageDirection::Forward => left.min(right),
+            PageDirection::Backward { .. } => left.max(right),
+        }
+    }
 }
 
 /// Which instances of every attribute stream a temporal read keeps.
@@ -118,6 +144,7 @@ mod tests {
         instance_page::{InstancePage, PageDirection},
         period_budget::PeriodBudget,
     };
+    use chrono::{DateTime, TimeZone, Utc};
     use std::num::{NonZeroU32, NonZeroU64};
 
     /// `n` as a client `lastN`.
@@ -149,6 +176,31 @@ mod tests {
             .direction(),
             Some(PageDirection::Backward { requested: count(5000) })
         );
+    }
+
+    fn hour(hour: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2020, 1, 1, hour, 0, 0).single().expect("a valid instant")
+    }
+
+    fn backward() -> PageDirection {
+        PageDirection::Backward { requested: count(5000) }
+    }
+
+    /// Clause 6.3.10: a forward page holds what lies at or before its edge, a
+    /// backward one what lies at or after it, the edge itself on both.
+    #[test]
+    fn a_page_holds_the_side_of_its_edge_it_was_read_from() {
+        let edge = hour(5);
+        let held = |direction: PageDirection| [hour(4), hour(5), hour(6)].map(|instant| direction.holds(edge, instant));
+        pretty_assertions::assert_eq!(held(PageDirection::Forward), [true, true, false]);
+        pretty_assertions::assert_eq!(held(backward()), [false, true, true]);
+    }
+
+    /// Forwards the earlier edge is reached least far, backwards the later.
+    #[test]
+    fn the_nearer_edge_is_the_one_reached_least_far() {
+        pretty_assertions::assert_eq!(PageDirection::Forward.nearer(hour(7), hour(5)), hour(5));
+        pretty_assertions::assert_eq!(backward().nearer(hour(5), hour(7)), hour(7));
     }
 
     /// One thousand periods of at most a million instances.
