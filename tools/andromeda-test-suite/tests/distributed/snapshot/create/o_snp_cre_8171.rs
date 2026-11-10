@@ -6,7 +6,7 @@ use andromeda_test_suite::{
     cleanup::Cleanup,
     config::{BrokerRole, PeerRole},
     namespace::Namespace,
-    snapshot_capture::{QueryList, await_query_problem},
+    snapshot_capture::{SnapshotQuery, await_query_problem},
 };
 use googletest::prelude::*;
 use ngsi_ld::{
@@ -56,7 +56,7 @@ async fn o_snp_cre_8171_a_temporal_capture_whose_peers_send_more_than_the_source
         )
         .build()?;
     bounded.snapshots().create(&snapshot).send().await?;
-    let problem = await_query_problem(&bounded, &snapshot_id, SettledStatus::Failure, QueryList::Temporal).await?;
+    let problem = await_query_problem(&bounded, &snapshot_id, SettledStatus::Failure, SnapshotQuery::Temporal(0)).await?;
     expect_that!(problem.error_type, some(eq(&ErrorType::TooManyResults)));
     expect_that!(problem.status, some(eq(403)));
     expect_that!(problem.detail, some(contains_substring("federation.query.max_source_rows")));

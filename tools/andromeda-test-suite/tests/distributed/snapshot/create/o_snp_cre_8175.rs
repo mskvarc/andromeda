@@ -5,7 +5,7 @@ use andromeda_test_suite::{
     cleanup::Cleanup,
     context_source::ContextSource,
     namespace::Namespace,
-    snapshot_capture::{QueryList, await_query_problem},
+    snapshot_capture::{SnapshotQuery, await_query_problem},
 };
 use googletest::prelude::*;
 use http::{Method, StatusCode};
@@ -65,7 +65,7 @@ async fn o_snp_cre_8175_a_temporal_capture_a_source_answers_partially_at_no_rang
         )
         .build()?;
     broker.snapshots().create(&snapshot).send().await?;
-    let problem = await_query_problem(&broker, &snapshot_id, SettledStatus::Failure, QueryList::Temporal).await?;
+    let problem = await_query_problem(&broker, &snapshot_id, SettledStatus::Failure, SnapshotQuery::Temporal(0)).await?;
     expect_that!(
         problem.error_type.as_ref().map(ToString::to_string),
         some(eq("https://uri.etsi.org/ngsi-ld/errors/BadGateway"))

@@ -18,10 +18,14 @@ mod instance_walk;
 mod lease_renewal;
 /// What the Context Sources answered an entity query, until the capture takes it.
 mod pending_sources;
+/// How one Snapshot query's capture ended, beside what it left in the staging branch.
+mod query_capture;
 /// Reading what the Context Sources answer a captured temporal query to the end of its window.
 mod source_instance_walk;
 /// Every page the Context Sources answer a captured temporal query over one window, read before it is stored.
 mod source_pass;
+/// Capturing every query into the staging branch, starting over without one that failed after staging.
+mod staged_capture;
 mod status;
 /// Capturing the whole answer of one snapshot temporal query.
 mod temporal_capture;
@@ -52,7 +56,7 @@ use andromeda_ngsi_ld_model::snapshot::Snapshot;
 use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit;
 use chrono::Utc;
 use futures::future::BoxFuture;
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tracing::{debug, info, warn};
 
 /// Executes a snapshot's typed queries and persists their frozen results.
@@ -69,6 +73,9 @@ pub struct SnapshotExecutor {
     /// The deepest nesting an attribute a Context Source answered may have to
     /// be captured.
     attribute_nesting: AttributeNestingLimit,
+    /// How long the claim is leased for each time the capture starts over
+    /// from an empty staging branch.
+    lease: Duration,
 }
 
 impl SnapshotExecutor {
@@ -79,6 +86,7 @@ impl SnapshotExecutor {
         writes: Arc<dyn ContextCommitter>,
         capture_page_size: usize,
         attribute_nesting: AttributeNestingLimit,
+        lease: Duration,
     ) -> SnapshotExecutor {
         SnapshotExecutor {
             sources,
@@ -86,6 +94,7 @@ impl SnapshotExecutor {
             writes,
             capture_page_size: u32::try_from(capture_page_size).unwrap_or(u32::MAX),
             attribute_nesting,
+            lease,
         }
     }
 
@@ -94,10 +103,12 @@ impl SnapshotExecutor {
     /// # Errors
     ///
     /// Returns [`SnapshotError::Internal`] when the snapshot owns no durable
-    /// staging context branch, [`SnapshotError::Validation`] when the aggregated
-    /// execution status is not a permitted transition out of `preparing`, a
-    /// transient store failure a query or a staging write met, and the store's
-    /// own failure when promoting the capture does not complete.
+    /// staging context branch or the claim was lost while the capture started
+    /// over, [`SnapshotError::Validation`] when the aggregated execution status
+    /// is not a permitted transition out of `preparing`, a transient store
+    /// failure a query or a staging write met, and the store's own failure
+    /// when emptying the staging branch or promoting the capture does not
+    /// complete.
     pub async fn execute(&self, snapshot: &Snapshot, query_context: &JsonLiteral, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {
         info!(snapshot_id = %snapshot.id, "Starting snapshot query execution");
         let target = self
@@ -108,22 +119,8 @@ impl SnapshotExecutor {
             .ok_or_else(|| SnapshotInvariant::NoStagingTarget {
                 snapshot: snapshot.id.clone(), // clone: the error owns the Snapshot it names.
             })?;
-        let mut aggregate = status::ExecutionAggregate::default();
         let context = persisted_query_context(query_context);
-
-        let mut materialized_entities = HashSet::new();
-        for (index, query) in snapshot.snapshot_queries.iter().flatten().enumerate() {
-            let detail = self
-                // clone: a restarted preparation translates every stored query again.
-                .run_entity_query(&target, &snapshot.id, query.clone(), index, &context, &mut materialized_entities)
-                .await?;
-            aggregate.push_entity(detail);
-        }
-        for (index, query) in snapshot.snapshot_temporal_queries.iter().flatten().enumerate() {
-            // clone: a restarted preparation translates every stored query again.
-            let detail = self.run_temporal_query(&target, &snapshot.id, query.clone(), index, &context).await?;
-            aggregate.push_temporal(detail);
-        }
+        let aggregate = self.capture_queries(snapshot, &target, &context, claimed_by).await?;
 
         let final_status = aggregate.final_status();
         debug!(snapshot_id = %snapshot.id, status = %final_status, "Snapshot query execution completed");
@@ -218,7 +215,14 @@ impl SnapshotPreparation {
         config: SnapshotPreparationConfig,
     ) -> SnapshotPreparation {
         SnapshotPreparation {
-            executor: SnapshotExecutor::new(sources, Arc::clone(&store), writes, config.capture_page_size, config.attribute_nesting),
+            executor: SnapshotExecutor::new(
+                sources,
+                Arc::clone(&store),
+                writes,
+                config.capture_page_size,
+                config.attribute_nesting,
+                config.lease_duration,
+            ),
             store,
             max_per_pass: config.max_per_pass.max(1),
             worker_id: LeaseHolder::mint(),

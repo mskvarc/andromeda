@@ -26,7 +26,7 @@ Every broker in every stack runs over a PostgreSQL server of its own. Replicas a
 
 `stacks/base` is one broker plus three Mosquitto brokers (anonymous, password and large-message), whose configurations live in `stacks/mosquitto`.
 
-`stacks/multi` has six broker identities, `broker-a` to `broker-f`. A test registers brokers with one another, so each identity a topology names is a broker of its own, and a setting goes on an identity whose tests it doesn't affect. `broker-e` runs temporal Linked Entity retrieval and the language-ranges level of `q_target_languages`. `broker-f` runs the same level with forwarding bounds of 5 distinct entities, 15 source rows and 3 attribute instances.
+`stacks/multi` has six broker identities, `broker-a` to `broker-f`. A test registers brokers with one another, so each identity a topology names is a broker of its own, and a setting goes on an identity whose tests it doesn't affect. `broker-e` runs temporal Linked Entity retrieval and the language-ranges level of `q_target_languages`. `broker-f` runs the same level with forwarding bounds of 5 distinct entities, 15 source rows and 3 attribute instances, and captures Snapshots two entities per page.
 
 ### The andromeda stack
 

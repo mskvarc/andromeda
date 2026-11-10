@@ -23,6 +23,10 @@
 //! A query that fails as Query Entities would records the problem Query
 //! Entities answers with, and a failure only the capture meets is recorded as
 //! the capture's own.
+//!
+//! A failure met after a page was written leaves that page in the staging
+//! branch: the query's capture says it wrote, and the Snapshot is captured
+//! again without the query.
 
 use crate::{
     error::SnapshotError,
@@ -33,6 +37,7 @@ use crate::{
         execution_failure::ExecutionFailure,
         forwarded_capture::ForwardedCapture,
         pending_sources::PendingSources,
+        query_capture::{QueryCapture, Staging},
         status::{failure_detail, success_detail},
         translation::entity_parameters,
     },
@@ -95,6 +100,8 @@ struct CaptureLedger<'a> {
     captured: HashSet<Identifier>,
     /// Every entity any query of the Snapshot has materialized so far.
     materialized: &'a mut HashSet<Identifier>,
+    /// Whether this query wrote into the staging branch.
+    staging: Staging,
 }
 
 impl SnapshotExecutor {
@@ -103,8 +110,8 @@ impl SnapshotExecutor {
     /// # Errors
     ///
     /// Returns a transient store failure a local query page or a staging write
-    /// met; the query's own failures are recorded in the returned details.
-    pub(crate) async fn run_entity_query(
+    /// met; the query's own failures are recorded in the returned capture.
+    pub(super) async fn run_entity_query(
         &self,
         target: &ContextTarget,
         snapshot_id: &Identifier,
@@ -112,6 +119,30 @@ impl SnapshotExecutor {
         index: usize,
         context: &ContextSpec,
         materialized_entities: &mut HashSet<Identifier>,
+    ) -> Result<QueryCapture, SnapshotError> {
+        let mut ledger = CaptureLedger {
+            captured: HashSet::new(),
+            materialized: materialized_entities,
+            staging: Staging::Untouched,
+        };
+        let detail = self.capture_entity_result(target, snapshot_id, query, index, context, &mut ledger).await?;
+        Ok(QueryCapture::of(detail, ledger.staging))
+    }
+
+    /// Capture the whole result of one snapshot entity query, recording what
+    /// it wrote in `ledger`.
+    ///
+    /// # Errors
+    ///
+    /// As [`SnapshotExecutor::run_entity_query`].
+    async fn capture_entity_result(
+        &self,
+        target: &ContextTarget,
+        snapshot_id: &Identifier,
+        query: Query,
+        index: usize,
+        context: &ContextSpec,
+        ledger: &mut CaptureLedger<'_>,
     ) -> Result<ExecutionResultDetails, SnapshotError> {
         let params = match entity_parameters(query) {
             Ok(params) => params,
@@ -142,10 +173,6 @@ impl SnapshotExecutor {
         let merge_budget = pending.holds_entities().then_some(&budget);
 
         let capture = ForwardedCapture::new(self.attribute_nesting);
-        let mut ledger = CaptureLedger {
-            captured: HashSet::new(),
-            materialized: materialized_entities,
-        };
         // The local entities are walked by keyset over their identifier rather
         // than by offset: entities written or deleted while the capture runs
         // then neither shift a later page nor appear twice (clause 5.5.9.1).
@@ -184,7 +211,7 @@ impl SnapshotExecutor {
                 Ok(states) => states,
                 Err(error) => return Ok(failure_detail(ExecutionFailure::UncapturableSourceEntity { cause: &error }.problem())),
             };
-            if let Some(failure) = self.capture_page(target, snapshot_id, index, states, &mut ledger).await? {
+            if let Some(failure) = self.capture_page(target, snapshot_id, index, states, ledger).await? {
                 return Ok(failure);
             }
             match last_captured {
@@ -202,7 +229,7 @@ impl SnapshotExecutor {
                 Ok(states) => states,
                 Err(error) => return Ok(failure_detail(ExecutionFailure::UncapturableSourceEntity { cause: &error }.problem())),
             };
-            if let Some(failure) = self.capture_page(target, snapshot_id, index, states, &mut ledger).await? {
+            if let Some(failure) = self.capture_page(target, snapshot_id, index, states, ledger).await? {
                 return Ok(failure);
             }
         }
@@ -308,6 +335,9 @@ impl SnapshotExecutor {
         // clone: the ledger keeps every captured identifier once the states move into the branch write
         let identifiers = states.iter().map(|state| state.id().clone()).collect::<Vec<_>>();
         let fresh = states.into_iter().filter(|state| !ledger.materialized.contains(state.id())).collect::<Vec<_>>();
+        if !fresh.is_empty() {
+            ledger.staging = Staging::Written;
+        }
         let detail = self.persist_current_results(target, snapshot_id, index, fresh).await?;
         if detail.problem_details.is_some() {
             return Ok(Some(detail));
