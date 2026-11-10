@@ -8,7 +8,7 @@
 //! so a profile never turns a 200 into a 203.
 
 use crate::{addressed_uri::addressed_uri, classification::classify_context_link_error, request_links::RequestLinks};
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use std::future::{Future, ready};
@@ -33,8 +33,8 @@ impl PayloadProfile {
 /// the context extractor (clause 5.5.4): both read the same kept result, so
 /// the refusal is one and the same whichever extractor meets it first.
 fn announced_profile(parts: &mut Parts) -> Result<PayloadProfile, ExtractorRejection> {
-    let links =
-        RequestLinks::of(parts).map_err(|error| ExtractorRejection::Classified(classify_context_link_error(&error).with_instance(addressed_uri(parts))))?;
+    let links = RequestLinks::of(parts)
+        .map_err(|error| ExtractorRejection::Classified(ProblemResponse::classified(classify_context_link_error(&error), addressed_uri(parts))))?;
     let profile = links.profile().map(SpecVersion::nearest_supported);
     if let Some(version) = profile {
         tracing::debug!(%version, "request payload announced an NGSI-LD version profile");

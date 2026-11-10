@@ -15,6 +15,7 @@ use andromeda_entity::{
     batch::UpsertPolicy,
     side_effect::{AsyncPreference, SideEffectPlacement},
 };
+use andromeda_failure_classification::entity_failure::classify_entity_error;
 use andromeda_federation::{provision_batch::BatchProvisionOperation, request::TriggeringRequest};
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{
@@ -30,7 +31,6 @@ use andromeda_http_headers::{preference::RespondMode, preference_applied::Prefer
 use andromeda_http_response::{
     batch::NgsiLdBatchResponse,
     batch_projection::batch_operation_result,
-    entity_failure::classify_entity_error,
     problem_response::ProblemResponse,
     render::start_rendering_partial_success,
     rendered_response::RenderedResponse,

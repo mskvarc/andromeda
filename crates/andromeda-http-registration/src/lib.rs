@@ -8,6 +8,7 @@ pub mod state;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-failure-classification",
         "andromeda-http-context-registry",
         "andromeda-http-extraction",
         "andromeda-http-headers",

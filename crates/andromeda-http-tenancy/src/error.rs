@@ -1,7 +1,7 @@
 //! Focused failures produced by tenant management over HTTP.
 
+use andromeda_failure_classification::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_http_extraction::classification::classify_tenancy_error;
-use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_ngsi_ld_lexicon::{
     identifier::{Identifier, IdentifierParseError},
     tenant::InvalidTenantName,

@@ -7,6 +7,7 @@ pub mod stack;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-configuration",
+        "andromeda-failure-classification",
         "andromeda-http-extraction",
         "andromeda-http-headers",
         "andromeda-http-response",

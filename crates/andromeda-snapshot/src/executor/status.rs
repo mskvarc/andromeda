@@ -1,7 +1,7 @@
 //! Snapshot execution result aggregation and status selection.
 
 use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, ExecutionResultStatus, SnapshotStatus};
-use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemDetail};
+use andromeda_ngsi_ld_problem_details::problem_detail::ProblemDetail;
 
 /// The execution result details of every query of one Snapshot, from which
 /// its final status is decided (ETSI GS CIM 009 v1.9.1 clause 5.16.1.4).
@@ -81,19 +81,27 @@ pub(crate) const fn success_detail(count: usize) -> ExecutionResultDetails {
     }
 }
 
-/// The detail of a failed query, carrying `message` as the detail of an
-/// `InternalError` problem.
-pub(crate) fn failure_detail(message: impl Into<String>) -> ExecutionResultDetails {
+/// The detail of a failed query, reporting `problem` with the type the
+/// failure was classified as (clause 5.2.42).
+pub(crate) const fn failure_detail(problem: ProblemDetail) -> ExecutionResultDetails {
     ExecutionResultDetails {
         result_status: ExecutionResultStatus::Failure,
-        problem_details: Some(ProblemDetail::new(NgsiLdErrorType::InternalError, message)),
+        problem_details: Some(problem),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::executor::status::{ExecutionAggregate, failure_detail, success_detail};
-    use andromeda_ngsi_ld_model::snapshot::SnapshotStatus;
+    use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, ExecutionResultStatus, SnapshotStatus};
+    use andromeda_ngsi_ld_problem_details::{
+        error_type::NgsiLdErrorType,
+        problem_detail::{ProblemClassification, ProblemDetail},
+    };
+
+    fn failed(detail: &str) -> ExecutionResultDetails {
+        failure_detail(ProblemDetail::new(NgsiLdErrorType::InternalError, detail))
+    }
 
     #[test]
     fn no_results_produce_empty_status() {
@@ -113,7 +121,7 @@ mod tests {
     fn an_empty_result_with_a_failure_stays_empty() {
         let mut aggregate = ExecutionAggregate::default();
         aggregate.push_entity(success_detail(0));
-        aggregate.push_temporal(failure_detail("unavailable source"));
+        aggregate.push_temporal(failed("unavailable source"));
         pretty_assertions::assert_eq!(aggregate.final_status(), SnapshotStatus::Empty);
     }
 
@@ -121,15 +129,27 @@ mod tests {
     fn usable_data_with_a_failure_is_partial() {
         let mut aggregate = ExecutionAggregate::default();
         aggregate.push_entity(success_detail(2));
-        aggregate.push_temporal(failure_detail("unavailable source"));
+        aggregate.push_temporal(failed("unavailable source"));
         pretty_assertions::assert_eq!(aggregate.final_status(), SnapshotStatus::Partial);
     }
 
     #[test]
     fn failures_without_a_success_are_failure() {
         let mut aggregate = ExecutionAggregate::default();
-        aggregate.push_entity(failure_detail("invalid query"));
+        aggregate.push_entity(failed("invalid query"));
         pretty_assertions::assert_eq!(aggregate.final_status(), SnapshotStatus::Failure);
+    }
+
+    /// Clause 5.2.42: a failed query reports the problem it was classified
+    /// as, whatever its type.
+    #[test]
+    fn a_failure_reports_the_problem_it_was_classified_as() {
+        let detail = failure_detail(ProblemDetail::from_classification(ProblemClassification::BadGateway, "every source failed"));
+        pretty_assertions::assert_eq!(detail.result_status, ExecutionResultStatus::Failure);
+        pretty_assertions::assert_eq!(
+            detail.problem_details.map(|problem| problem.classification()),
+            Some(ProblemClassification::BadGateway)
+        );
     }
 
     #[test]

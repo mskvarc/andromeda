@@ -2,20 +2,19 @@
 
 use andromeda_entity::error::EntityError;
 use andromeda_entity_map::error::EntityMapError;
-use andromeda_federation::error::FederationError;
-use andromeda_http_context_registry::response_rendering::{ResponseContextError, classify_response_context_error};
-use andromeda_http_response::{
+use andromeda_failure_classification::{
     classified_report::ClassifiedReport,
     entity_failure::classify_entity_error,
-    entity_map_failure::classify_entity_map_error,
     forwarding_failure::classify_federation_error,
     internal_failure_summary::InternalFailureSummary,
     jsonld_failure::classify_jsonld_error,
     parameter_failure::classify_parameter_error,
-    problem_response::ProblemResponse,
     query_failure::classify_query_error,
     temporal_failure::classify_temporal_error,
 };
+use andromeda_federation::error::FederationError;
+use andromeda_http_context_registry::response_rendering::{ResponseContextError, classify_response_context_error};
+use andromeda_http_response::{entity_map_failure::classify_entity_map_error, problem_response::ProblemResponse};
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_render::error::RenderError;
@@ -100,7 +99,7 @@ where
     E: EntityMapHttpClassify,
 {
     fn with_entity_map_instance(self, instance: &Uri) -> Result<T, ProblemResponse> {
-        self.map_err(|error| error.classify_for_entity_map_http().with_instance(instance.clone()))
+        self.map_err(|error| ProblemResponse::classified(error.classify_for_entity_map_http(), instance.clone()))
     }
 }
 

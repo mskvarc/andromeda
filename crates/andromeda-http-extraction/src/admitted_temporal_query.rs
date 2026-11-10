@@ -12,12 +12,12 @@
 //! the [`TemporalQueryAdmission`] type the binding names.
 
 use crate::{addressed_uri::addressed_uri, jsonld::JsonLd, query::ValidatedQuery, submitted_body::SubmittedBody};
-use andromeda_http_response::{
+use andromeda_failure_classification::{
     classified_report::ClassifiedReport,
-    extraction_rejection::ExtractorRejection,
     internal_failure_summary::InternalFailureSummary,
     parameter_failure::classify_parameter_error,
 };
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, problem_response::ProblemResponse};
 use andromeda_jsonld::user_context_admission::SubmittedContext;
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_request::{
@@ -90,7 +90,7 @@ where
         let uri = addressed_uri(parts);
         installed_admission::<A>(parts)?
             .admit(&params, TemporalQueryBinding::QueryString)
-            .map_err(|report| ExtractorRejection::Classified(report.with_instance(uri)))?;
+            .map_err(|report| ExtractorRejection::Classified(ProblemResponse::classified(report, uri)))?;
         Ok(AdmittedTemporalQuery {
             params,
             admission: PhantomData,
@@ -150,13 +150,14 @@ where
         let JsonLd { body, context } = JsonLd::<Query>::from_request(Request::from_parts(parts, body), state).await?;
         let params = body.and_then(move |query, uri| {
             // clone: each refusal takes its own copy of the request URI
-            let mut params = TemporalQueryParameters::try_from(query).map_err(|error| classify_parameter_error(&error).with_instance(uri.clone()))?;
+            let mut params =
+                TemporalQueryParameters::try_from(query).map_err(|error| ProblemResponse::classified(classify_parameter_error(&error), uri.clone()))?;
             url_params.apply_to(&mut params);
             // The body's `aggrParams.aggrGroupBy` is folded into `params` by
             // now, so the admission sees the whole query.
             admission
                 .admit(&params, TemporalQueryBinding::Body)
-                .map_err(|report| report.with_instance(uri.clone()))?;
+                .map_err(|report| ProblemResponse::classified(report, uri.clone()))?;
             Ok(params)
         });
         Ok(AdmittedTemporalPostQuery {
@@ -180,14 +181,15 @@ fn installed_admission<A: TemporalQueryAdmission>(parts: &Parts) -> Result<A, Ex
         .cloned() // clone: the admission outlives the parts the body extractor consumes
         .ok_or_else(|| {
             let report = ClassifiedReport::internal(&AdmissionNotInstalled, InternalFailureSummary::new("failed to admit the temporal query"));
-            ExtractorRejection::Classified(report.with_instance(addressed_uri(parts)))
+            ExtractorRejection::Classified(ProblemResponse::classified(report, addressed_uri(parts)))
         })
 }
 
 #[cfg(test)]
 mod tests {
     use crate::admitted_temporal_query::{AdmittedTemporalPostQuery, AdmittedTemporalQuery, TemporalQueryAdmission, TemporalQueryBinding};
-    use andromeda_http_response::{classified_report::ClassifiedReport, extraction_rejection::ExtractorRejection};
+    use andromeda_failure_classification::classified_report::ClassifiedReport;
+    use andromeda_http_response::extraction_rejection::ExtractorRejection;
     use andromeda_jsonld::user_context_admission::AdmittedContext;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemDetail};
     use andromeda_ngsi_ld_request::{

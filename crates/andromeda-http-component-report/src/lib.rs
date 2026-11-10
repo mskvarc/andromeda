@@ -10,6 +10,7 @@ pub mod state;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-component-report",
+        "andromeda-failure-classification",
         "andromeda-http-response",
         "andromeda-ngsi-ld-lexicon",
     ],

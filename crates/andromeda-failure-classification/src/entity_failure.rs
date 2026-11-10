@@ -1,5 +1,5 @@
-//! Exhaustive HTTP classification of failures owned by entity policy, shared
-//! by every binding that answers one.
+//! Exhaustive classification of failures owned by entity policy, shared by
+//! everything that reports one.
 
 use crate::{
     classified_report::ClassifiedReport,
@@ -11,7 +11,7 @@ use crate::{
 use andromeda_entity::error::EntityError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 
-/// Classify one entity-policy failure for both single and batch HTTP reporting.
+/// Classify one entity-policy failure, for single and batch reporting alike.
 #[must_use]
 pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
     match error {
@@ -54,7 +54,7 @@ pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
 
 #[cfg(test)]
 mod tests {
-    use crate::{batch_projection::batch_entity_error, entity_failure::classify_entity_error};
+    use crate::entity_failure::classify_entity_error;
     use andromeda_entity::{
         entity_invariant::EntityInvariant,
         entity_operation_unsupported::EntityOperationUnsupported,
@@ -69,11 +69,11 @@ mod tests {
         ngsi_ld_urn::{AttributeListId, EntityTypeListId},
     };
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-    use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
+    use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use andromeda_ngsi_ld_query::error::QueryError;
     use andromeda_ngsi_ld_representation::payload_budget::{GeometryOwner, PayloadBudgetExceeded};
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
-    use axum::http::StatusCode;
+    use http::StatusCode;
     use std::{num::NonZeroUsize, time::Duration};
 
     fn entity_id() -> Identifier {
@@ -185,19 +185,6 @@ mod tests {
             pretty_assertions::assert_eq!(classification.status_code(), StatusCode::SERVICE_UNAVAILABLE, "{source}");
             pretty_assertions::assert_eq!(report.retry_after(), Some(retry_after), "{source}");
         }
-    }
-
-    #[test]
-    fn single_and_batch_paths_use_the_identical_classifier() {
-        let identifier = entity_id();
-        let source = EntityError::already_exists(&identifier);
-        let single = classify_entity_error(&source);
-        let batch = batch_entity_error(identifier.into(), &source, classify_entity_error);
-        pretty_assertions::assert_eq!(
-            batch.error.error_type,
-            BatchErrorKind::Known(ProblemClassification::Category(single.error_type()))
-        );
-        pretty_assertions::assert_eq!(batch.error.detail, single.detail());
     }
 
     /// One million, the default of both entity budgets.

@@ -63,15 +63,15 @@ pub async fn get(
         .contexts()
         .resolve()
         .await
-        .map_err(|error| classify_tenancy_error(&error).with_instance(uri.clone()))?;
+        .map_err(|error| ProblemResponse::classified(classify_tenancy_error(&error), uri.clone()))?;
     let ready = ResponseContextSource::new(&default_tenant.engine, &context, &default_tenant.context_hosting, &api_root)
         .start_rendering_normalized(accept.media_type(), PreferHeader::default().rendering_preferences())
         .await
         .map_err(SourceIdentityError::from)
-        .map_err(|error| classify(&error).with_instance(uri.clone()))?
+        .map_err(|error| ProblemResponse::classified(classify(&error), uri.clone()))?
         .with_body(&identity);
     let rendered = RenderedResponse::resource(ready)
         .map_err(SourceIdentityError::from)
-        .map_err(|error| classify(&error).with_instance(uri))?;
+        .map_err(|error| ProblemResponse::classified(classify(&error), uri))?;
     Ok(NgsiLdResponse::ok(rendered).into_response())
 }

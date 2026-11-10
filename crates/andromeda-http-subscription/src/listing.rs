@@ -7,11 +7,11 @@
 //! are therefore decided here, once.
 
 use crate::error::{SubscriptionResultExt, internal_problem};
+use andromeda_failure_classification::internal_failure_summary::InternalFailureSummary;
 use andromeda_http_extraction::pagination_policy::RequestPagination;
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
-    internal_failure_summary::InternalFailureSummary,
     link_target::PointedRequest,
     pagination::{PageOutcome, append_page_links},
     problem_response::ProblemResponse,

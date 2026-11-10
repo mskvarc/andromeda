@@ -17,6 +17,7 @@ pub mod tenant_context_hosting;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-context-registry",
+        "andromeda-failure-classification",
         "andromeda-http-extraction",
         "andromeda-http-headers",
         "andromeda-http-response",

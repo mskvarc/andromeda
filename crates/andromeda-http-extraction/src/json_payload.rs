@@ -15,7 +15,7 @@ use crate::{
     request_json_value_limit::RequestJsonValueLimit,
     request_payload::buffer_payload,
 };
-use andromeda_http_response::{extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, problem_response::ProblemResponse, request_refusal::RequestRefusal};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::extract::{FromRequest, Request};
 use serde::de::DeserializeOwned;
@@ -41,7 +41,8 @@ where
         admit_content_kind(request.headers(), request.method())?;
         let value_limit = request.extensions().get::<RequestJsonValueLimit>().copied();
         let body = buffer_payload(request, state, declared, instance.clone()).await?;
-        refuse_values_past_budget(&body, value_limit).map_err(|refusal| ExtractorRejection::Classified(refusal.report().with_instance(instance.clone())))?;
+        refuse_values_past_budget(&body, value_limit)
+            .map_err(|refusal| ExtractorRejection::Classified(ProblemResponse::classified(refusal.report(), instance.clone())))?;
         serde_json::from_slice(&body)
             .map(JsonPayload)
             .map_err(|error| JsonPayloadRefusal::of(error).into_rejection(instance))

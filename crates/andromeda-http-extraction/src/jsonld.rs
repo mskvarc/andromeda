@@ -14,7 +14,8 @@ use crate::{
     submitted_body::SubmittedBody,
     undecodable_body::UndecodableBody,
 };
-use andromeda_http_response::{classified_report::ClassifiedReport, extraction_rejection::ExtractorRejection, problem_response::ProblemResponse};
+use andromeda_failure_classification::classified_report::ClassifiedReport;
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, problem_response::ProblemResponse};
 use andromeda_jsonld::user_context_admission::SubmittedContext;
 use andromeda_ngsi_ld_model::request_body::RequestBody;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
@@ -88,7 +89,7 @@ fn read_request_body<T: RequestBody>(
 ) -> Result<T, ProblemResponse> {
     read_within::<T>(decode_bounds, text, reading).map_err(|source| {
         let refusal = UndecodableBody::of_text::<T>(text, reading, source);
-        ClassifiedReport::public(NgsiLdErrorType::BadRequestData, refusal.to_string()).with_instance(uri.clone())
+        ProblemResponse::classified(ClassifiedReport::public(NgsiLdErrorType::BadRequestData, refusal.to_string()), uri.clone())
     })
 }
 

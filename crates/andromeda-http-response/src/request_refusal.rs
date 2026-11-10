@@ -5,7 +5,8 @@
 //! A refusal type states that split once, in [`RequestRefusal::error_type`], and
 //! the response, the status and the detail follow from it.
 
-use crate::{classified_report::ClassifiedReport, extraction_rejection::ExtractorRejection, problem_response::ProblemResponse};
+use crate::{extraction_rejection::ExtractorRejection, problem_response::ProblemResponse};
+use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::http::Uri;
 use std::error::Error;
@@ -21,7 +22,7 @@ pub trait RequestRefusal: Error + Sized {
     /// The problem response answering the request at `instance`.
     #[must_use]
     fn into_problem(self, instance: Uri) -> ProblemResponse {
-        ClassifiedReport::public(self.error_type(), self.to_string()).with_instance(instance)
+        ProblemResponse::classified(ClassifiedReport::public(self.error_type(), self.to_string()), instance)
     }
 
     /// The extraction rejection answering the request at `instance`.

@@ -426,6 +426,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-failure-classification"
+version = "1.0.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-context-commit",
+ "andromeda-entity",
+ "andromeda-federation",
+ "andromeda-http-headers",
+ "andromeda-jsonld",
+ "andromeda-ngsi-ld-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-number",
+ "andromeda-ngsi-ld-problem-details",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-representation",
+ "andromeda-ngsi-ld-request",
+ "andromeda-persistence-failure",
+ "andromeda-registration",
+ "andromeda-temporal",
+ "derive_more",
+ "http",
+ "iri-rs",
+ "pretty_assertions",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "andromeda-federation"
 version = "1.0.0"
 dependencies = [
@@ -540,6 +568,7 @@ version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-component-report",
+ "andromeda-failure-classification",
  "andromeda-http-response",
  "andromeda-ngsi-ld-lexicon",
  "axum",
@@ -556,6 +585,7 @@ version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-registry",
+ "andromeda-failure-classification",
  "andromeda-http-extraction",
  "andromeda-http-headers",
  "andromeda-http-response",
@@ -597,6 +627,7 @@ dependencies = [
  "andromeda-entity",
  "andromeda-entity-map",
  "andromeda-extensions",
+ "andromeda-failure-classification",
  "andromeda-federation",
  "andromeda-http-context-registry",
  "andromeda-http-extraction",
@@ -641,6 +672,7 @@ dependencies = [
  "andromeda-entity",
  "andromeda-entity-map",
  "andromeda-extensions",
+ "andromeda-failure-classification",
  "andromeda-federation",
  "andromeda-http-context-registry",
  "andromeda-http-extraction",
@@ -677,6 +709,7 @@ dependencies = [
  "allocation-counter",
  "andromeda-architecture-checks",
  "andromeda-context-space",
+ "andromeda-failure-classification",
  "andromeda-http-headers",
  "andromeda-http-response",
  "andromeda-json-literal",
@@ -740,6 +773,7 @@ name = "andromeda-http-health"
 version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-failure-classification",
  "andromeda-health",
  "andromeda-http-response",
  "andromeda-ngsi-ld-lexicon",
@@ -757,6 +791,7 @@ name = "andromeda-http-notification-receiver"
 version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-failure-classification",
  "andromeda-http-extraction",
  "andromeda-http-headers",
  "andromeda-http-response",
@@ -780,6 +815,7 @@ name = "andromeda-http-registration"
 version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-failure-classification",
  "andromeda-http-context-registry",
  "andromeda-http-extraction",
  "andromeda-http-headers",
@@ -807,17 +843,15 @@ name = "andromeda-http-response"
 version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
- "andromeda-context-commit",
  "andromeda-entity",
  "andromeda-entity-map",
+ "andromeda-failure-classification",
  "andromeda-federation",
  "andromeda-http-headers",
  "andromeda-json-literal",
  "andromeda-jsonld",
- "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
- "andromeda-ngsi-ld-number",
  "andromeda-ngsi-ld-problem-details",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-render",
@@ -825,11 +859,8 @@ dependencies = [
  "andromeda-ngsi-ld-request",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-persistence-failure",
- "andromeda-registration",
- "andromeda-temporal",
  "axum",
  "chrono",
- "derive_more",
  "headers",
  "http-body",
  "iri-rs",
@@ -840,7 +871,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tower",
- "tracing",
  "url",
 ]
 
@@ -873,6 +903,7 @@ name = "andromeda-http-snapshot"
 version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-failure-classification",
  "andromeda-http-extraction",
  "andromeda-http-response",
  "andromeda-jsonld",
@@ -897,6 +928,7 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-registry",
  "andromeda-extensions",
+ "andromeda-failure-classification",
  "andromeda-http-context-registry",
  "andromeda-http-extraction",
  "andromeda-http-response",
@@ -926,6 +958,7 @@ version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-configuration",
+ "andromeda-failure-classification",
  "andromeda-http-extraction",
  "andromeda-http-headers",
  "andromeda-http-response",
@@ -958,6 +991,7 @@ version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-space",
+ "andromeda-failure-classification",
  "andromeda-http-context-registry",
  "andromeda-http-extraction",
  "andromeda-http-headers",
@@ -1004,6 +1038,7 @@ dependencies = [
  "andromeda-context-space",
  "andromeda-entity-map",
  "andromeda-extensions",
+ "andromeda-failure-classification",
  "andromeda-federation",
  "andromeda-http-context-registry",
  "andromeda-http-extraction",
@@ -1039,6 +1074,7 @@ name = "andromeda-http-tenancy"
 version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-failure-classification",
  "andromeda-http-extraction",
  "andromeda-http-headers",
  "andromeda-http-response",
@@ -2051,6 +2087,7 @@ dependencies = [
  "andromeda-context-commit",
  "andromeda-context-space",
  "andromeda-entity",
+ "andromeda-failure-classification",
  "andromeda-federation",
  "andromeda-json-literal",
  "andromeda-jsonld",

@@ -13,7 +13,7 @@ use crate::{
     error::SnapshotError,
     executor::{
         SnapshotExecutor,
-        instance_walk::WalkRefusal,
+        execution_failure::ExecutionFailure,
         source_instance_walk::SourceInstanceWalk,
         status::{failure_detail, success_detail},
         temporal_failure::{TemporalStep, temporal_failure},
@@ -21,6 +21,7 @@ use crate::{
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_failure_classification::{parameter_failure::classify_parameter_error, query_failure::classify_query_error};
 use andromeda_federation::{
     expanded_registration_filters::ExpandedRegistrationFilters,
     operation::ForwardingOperation,
@@ -80,15 +81,15 @@ impl SnapshotExecutor {
     ) -> Result<ExecutionResultDetails, SnapshotError> {
         let params = match temporal_parameters(query) {
             Ok(params) => params,
-            Err(error) => return Ok(failure_detail(error.to_string())),
+            Err(error) => return Ok(failure_detail(classify_parameter_error(&error).into_problem())),
         };
         let interval = match TimeInterval::from_parts(params.timerel, params.time_at, params.end_time_at) {
             Ok(interval) => interval,
-            Err(error) => return Ok(failure_detail(error.to_string())),
+            Err(error) => return Ok(failure_detail(classify_query_error(&error).into_problem())),
         };
         let filters = match self.temporal_registration_filters(&params, context).await {
             Ok(filters) => filters,
-            Err(error) => return Ok(failure_detail(error.to_string())),
+            Err(error) => return Ok(failure_detail(classify_query_error(&error).into_problem())),
         };
         let capture = TemporalCapture {
             target,
@@ -120,7 +121,7 @@ impl SnapshotExecutor {
             let mut forwarded = self.forwarded_page(&capture, capture.params, source_offset).await;
             let remote_page_full = sources_page_on(&forwarded, self.capture_page_size);
             if let Err(refusal) = sources.trim(&mut forwarded) {
-                return Ok(walk_refusal(&capture, refusal));
+                return Ok(capture_refused(&capture, &ExecutionFailure::SourceWalkRefused(refusal)));
             }
             if let Some(failure) = self.capture_temporal_page(&capture, entity_ids, forwarded, &mut captured).await? {
                 return Ok(failure);
@@ -135,7 +136,7 @@ impl SnapshotExecutor {
             }
             source_offset = match source_offset.checked_add(self.capture_page_size) {
                 Some(offset) => offset,
-                None => return Ok(offset_overflow()),
+                None => return Ok(capture_refused(&capture, &ExecutionFailure::OffsetOverflow)),
             };
         }
         if let Some(failure) = self.capture_resumed_source_passes(&capture, sources, &mut captured).await? {
@@ -172,7 +173,7 @@ impl SnapshotExecutor {
             let interval = match sources.next_pass() {
                 Ok(Some(interval)) => interval,
                 Ok(None) => return Ok(None),
-                Err(refusal) => return Ok(Some(walk_refusal(capture, refusal))),
+                Err(refusal) => return Ok(Some(capture_refused(capture, &ExecutionFailure::SourceWalkRefused(refusal)))),
             };
             // clone: each pass asks the sources the query as asked, over a resumed window
             let params = resumed.get_or_insert_with(|| capture.params.clone());
@@ -182,7 +183,7 @@ impl SnapshotExecutor {
                 let mut forwarded = self.forwarded_page(capture, params, offset).await;
                 let page_on = sources_page_on(&forwarded, self.capture_page_size);
                 if let Err(refusal) = sources.trim(&mut forwarded) {
-                    return Ok(Some(walk_refusal(capture, refusal)));
+                    return Ok(Some(capture_refused(capture, &ExecutionFailure::SourceWalkRefused(refusal))));
                 }
                 if let Some(failure) = self.capture_temporal_page(capture, Vec::new(), forwarded, captured).await? {
                     return Ok(Some(failure));
@@ -192,7 +193,7 @@ impl SnapshotExecutor {
                 }
                 offset = match offset.checked_add(self.capture_page_size) {
                     Some(offset) => offset,
-                    None => return Ok(Some(offset_overflow())),
+                    None => return Ok(Some(capture_refused(capture, &ExecutionFailure::OffsetOverflow))),
                 };
             }
         }
@@ -267,14 +268,10 @@ fn sources_page_on(forwarded: &[ForwardedTemporalEntities], page_size: u32) -> b
         .any(|source| source.entities.len() >= page_size as usize || !source.partial_ranges.is_empty())
 }
 
-/// The query's failure when the rest of a partial answer cannot be read.
-pub(super) fn walk_refusal(capture: &TemporalCapture<'_>, refusal: WalkRefusal) -> ExecutionResultDetails {
-    warn!(snapshot_id = %capture.snapshot_id, query_index = capture.index, %refusal, "Snapshot temporal capture cannot read the rest of a partial answer");
-    failure_detail(refusal.to_string())
-}
-
-/// The query's failure when its pages run past the offsets a source can be
-/// asked for.
-fn offset_overflow() -> ExecutionResultDetails {
-    failure_detail("Snapshot temporal pagination offset overflowed")
+/// The query's failure when the capture cannot read the rest of its answer:
+/// a partial answer it cannot read on, or pages past the offsets a source can
+/// be asked for.
+pub(super) fn capture_refused(capture: &TemporalCapture<'_>, failure: &ExecutionFailure<'_>) -> ExecutionResultDetails {
+    warn!(snapshot_id = %capture.snapshot_id, query_index = capture.index, %failure, "Snapshot temporal capture cannot read the rest of its answer");
+    failure_detail(failure.problem())
 }

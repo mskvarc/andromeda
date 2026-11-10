@@ -263,6 +263,6 @@ async fn record_retrieve_map(
         .await
         .map_err(|failure| match failure {
             RecordingFailure::LocalEntities(problem) => problem,
-            RecordingFailure::Store(error) => error.classify_for_temporal_http().with_instance(instance.clone()), // clone: the problem response owns the request URI it names
+            RecordingFailure::Store(error) => ProblemResponse::classified(error.classify_for_temporal_http(), instance.clone()), // clone: the problem response owns the request URI it names
         })
 }

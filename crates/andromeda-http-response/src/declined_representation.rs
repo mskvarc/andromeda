@@ -11,7 +11,8 @@
 //! is what the fan-out decides; the rest of the decision is what this module
 //! renders.
 
-use crate::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+use crate::problem_response::ProblemResponse;
+use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_problem_details::problem_detail::ProblemClassification;
 use axum::http::Uri;
 use thiserror::Error;
@@ -30,7 +31,10 @@ struct DeclinedRepresentation {
 /// `instance` is the request URI the resulting `ProblemDetails` names.
 #[must_use]
 pub fn single_source_declined(status: u16, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::public_binding(ProblemClassification::NotImplemented, DeclinedRepresentation { status }.to_string()).with_instance(instance.clone()) // clone: the problem detail owns the instance it names
+    ProblemResponse::classified(
+        ClassifiedReport::public_binding(ProblemClassification::NotImplemented, DeclinedRepresentation { status }.to_string()),
+        instance.clone(),
+    ) // clone: the problem detail owns the instance it names
 }
 
 #[cfg(test)]

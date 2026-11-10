@@ -13,6 +13,7 @@ description = "HTTP binding for snapshot lifecycle and purge operations"
 workspace = true
 
 [dependencies]
+andromeda-failure-classification.workspace = true
 andromeda-http-extraction.workspace = true
 andromeda-http-response.workspace = true
 andromeda-jsonld.workspace = true

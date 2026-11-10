@@ -16,6 +16,7 @@ use crate::{
 use andromeda_context_commit::{lease_holder::LeaseHolder, write_retry::WRITE_BACKOFF};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::{ExecutionResultDetails, SnapshotStatus};
+use andromeda_ngsi_ld_problem_details::problem_detail::ProblemDetail;
 use andromeda_retry::{
     retry_policy::{RetryAttempt, RetryPolicy},
     tokio_retry_delay::TokioRetryDelay,
@@ -163,9 +164,9 @@ impl PreparationClaim<'_> {
     /// Move the Snapshot to `failure`, reporting `error` for every query.
     async fn record_failure(&self, error: &SnapshotError) -> Result<PreparationEnd, SnapshotError> {
         warn!(snapshot_id = %self.id, %error, "Snapshot preparation failed; recording its failure status");
-        let detail = ExecutionFailure::Preparation { cause: error }.to_string();
-        let entity = failure_details(self.queries.entity, &detail);
-        let temporal = failure_details(self.queries.temporal, &detail);
+        let problem = ExecutionFailure::Preparation { cause: error }.problem();
+        let entity = failure_details(self.queries.entity, &problem);
+        let temporal = failure_details(self.queries.temporal, &problem);
         let recorded = self
             .store
             .update_status(self.id, self.worker, SnapshotStatus::Failure, entity.as_deref(), temporal.as_deref())
@@ -175,8 +176,8 @@ impl PreparationClaim<'_> {
 }
 
 /// One failed execution result per query, or none when there are no queries.
-fn failure_details(count: usize, detail: &str) -> Option<Vec<ExecutionResultDetails>> {
-    (count > 0).then(|| repeat_with(|| failure_detail(detail)).take(count).collect())
+fn failure_details(count: usize, problem: &ProblemDetail) -> Option<Vec<ExecutionResultDetails>> {
+    (count > 0).then(|| repeat_with(|| failure_detail(problem.clone())).take(count).collect())
 }
 
 #[cfg(test)]

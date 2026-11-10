@@ -49,7 +49,8 @@
 //! value object, neither of which the temporal exception covers) are held by
 //! the temporal write, which reads the expanded payload.
 
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+use andromeda_failure_classification::classified_report::ClassifiedReport;
+use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::written_temporal_entity::WrittenTemporalEntity;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
@@ -100,7 +101,7 @@ pub(crate) fn admit_written_instance(entity: &Identifier, payload: &WrittenTempo
 
 /// The clause 5.5.4 answer to a representation this broker refuses.
 fn bad_request_data<E: Display>(error: &E, instance: &HttpUri) -> ProblemResponse {
-    ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()).with_instance(instance.clone())
+    ProblemResponse::classified(ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()), instance.clone())
     // clone: the problem details own the instance the borrowed request names
 }
 

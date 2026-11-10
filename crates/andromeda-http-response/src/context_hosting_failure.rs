@@ -7,7 +7,11 @@
 //! fails; how it fails depends on why, and every route binding classifies it
 //! the same way.
 
-use crate::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary, store_failure::classify_store_failure};
+use andromeda_failure_classification::{
+    classified_report::ClassifiedReport,
+    internal_failure_summary::InternalFailureSummary,
+    store_failure::classify_store_failure,
+};
 use andromeda_jsonld::compound_context_host::ContextHostingError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 

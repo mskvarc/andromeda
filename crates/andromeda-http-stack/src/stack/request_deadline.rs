@@ -13,8 +13,9 @@
 //! response to unread content; HTTP/2 and HTTP/3 end only the stream.
 
 use crate::stack::body_arrival::{BodyArrival, HeldUpBy};
+use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_http_extraction::addressed_uri::addressed_request_uri;
-use andromeda_http_response::classified_report::ClassifiedReport;
+use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
     extract::{Request, State},
@@ -56,12 +57,16 @@ pub(super) async fn answer_within_deadline(State(deadline): State<RequestDeadlin
     match timeout(deadline.0, next.run(request)).await {
         Ok(response) => response,
         Err(_elapsed) => match arrival.held_up_by() {
-            HeldUpBy::Broker => ClassifiedReport::public(NgsiLdErrorType::InternalError, DeadlinePassed(deadline.0).to_string())
-                .with_instance(instance)
-                .into_response(),
-            HeldUpBy::Client => ClassifiedReport::public(NgsiLdErrorType::RequestTimeout, BodyLate(deadline.0).to_string())
-                .with_instance(instance)
-                .into_response(),
+            HeldUpBy::Broker => ProblemResponse::classified(
+                ClassifiedReport::public(NgsiLdErrorType::InternalError, DeadlinePassed(deadline.0).to_string()),
+                instance,
+            )
+            .into_response(),
+            HeldUpBy::Client => ProblemResponse::classified(
+                ClassifiedReport::public(NgsiLdErrorType::RequestTimeout, BodyLate(deadline.0).to_string()),
+                instance,
+            )
+            .into_response(),
         },
     }
 }

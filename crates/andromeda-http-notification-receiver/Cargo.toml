@@ -13,6 +13,7 @@ description = "HTTP binding of the endpoint a context source notifies this broke
 workspace = true
 
 [dependencies]
+andromeda-failure-classification.workspace = true
 andromeda-http-extraction.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-http-response.workspace = true

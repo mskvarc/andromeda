@@ -11,12 +11,8 @@
 //! it through the configured `apiRoot`, which every pointer rebuilds.
 
 use crate::{addressed_uri::addressed_uri, api_root::ConfiguredApiRoot, context::ContextUrl};
-use andromeda_http_response::{
-    classified_report::ClassifiedReport,
-    extraction_rejection::ExtractorRejection,
-    internal_failure_summary::InternalFailureSummary,
-    link_target::PointedRequest,
-};
+use andromeda_failure_classification::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, link_target::PointedRequest, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_query::PageQuery, policy::PaginationPolicy};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use iri_rs::IriBuf;
@@ -47,7 +43,7 @@ struct PaginationPolicyNotInstalled;
 fn installed_policy(parts: &Parts) -> Result<PaginationPolicy, ExtractorRejection> {
     parts.extensions.get::<PaginationPolicy>().copied().ok_or_else(|| {
         let report = ClassifiedReport::internal(&PaginationPolicyNotInstalled, InternalFailureSummary::new("failed to page the collection"));
-        ExtractorRejection::Classified(report.with_instance(addressed_uri(parts)))
+        ExtractorRejection::Classified(ProblemResponse::classified(report, addressed_uri(parts)))
     })
 }
 

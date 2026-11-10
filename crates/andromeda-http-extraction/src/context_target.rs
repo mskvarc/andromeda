@@ -2,13 +2,12 @@
 
 use crate::{addressed_uri::addressed_uri, snapshot::SnapshotHeader, tenant::TenantHeader, tenant_state::TenantStateResolver};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_http_response::{
+use andromeda_failure_classification::{
     classified_report::ClassifiedReport,
     internal_failure_summary::InternalFailureSummary,
-    problem_response::ProblemResponse,
     store_failure::classify_store_failure,
-    tenant_state_rejection::TenantStateRejection,
 };
+use andromeda_http_response::{problem_response::ProblemResponse, tenant_state_rejection::TenantStateRejection};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
 use andromeda_persistence_failure::{persistence_failure::PersistenceFailure, retryability::RetryCause};
@@ -66,19 +65,20 @@ impl ContextTargetResolutionError {
     fn into_problem(self, instance: Uri) -> ProblemResponse {
         match self {
             ContextTargetResolutionError::NotFound { .. } => {
-                ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, self.to_string()).with_instance(instance)
+                ProblemResponse::classified(ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, self.to_string()), instance)
             }
-            ContextTargetResolutionError::PreparationTimeout { .. } => {
-                ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, self.to_string())
-                    .with_retry_after(Duration::from_secs(1))
-                    .with_instance(instance)
-            }
+            ContextTargetResolutionError::PreparationTimeout { .. } => ProblemResponse::classified(
+                ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, self.to_string()).with_retry_after(Duration::from_secs(1)),
+                instance,
+            ),
             ContextTargetResolutionError::Quarantined { .. } => {
-                ClassifiedReport::public(NgsiLdErrorType::InternalError, self.to_string()).with_instance(instance)
+                ProblemResponse::classified(ClassifiedReport::public(NgsiLdErrorType::InternalError, self.to_string()), instance)
             }
-            ContextTargetResolutionError::Saturated => ClassifiedReport::store_saturated(self.to_string()).with_instance(instance),
-            ContextTargetResolutionError::Persistence(failure) => classify_store_failure(failure, &self, TARGET_RESOLUTION).with_instance(instance),
-            ContextTargetResolutionError::Internal => ClassifiedReport::internal(&self, TARGET_RESOLUTION).with_instance(instance),
+            ContextTargetResolutionError::Saturated => ProblemResponse::classified(ClassifiedReport::store_saturated(self.to_string()), instance),
+            ContextTargetResolutionError::Persistence(failure) => {
+                ProblemResponse::classified(classify_store_failure(failure, &self, TARGET_RESOLUTION), instance)
+            }
+            ContextTargetResolutionError::Internal => ProblemResponse::classified(ClassifiedReport::internal(&self, TARGET_RESOLUTION), instance),
         }
     }
 }

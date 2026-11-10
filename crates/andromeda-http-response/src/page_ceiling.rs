@@ -9,7 +9,7 @@
 //! instead of answered with a smaller page, since clause 5.5.9.1 makes the page
 //! size the client's requested maximum.
 
-use crate::classified_report::ClassifiedReport;
+use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use thiserror::Error;
 

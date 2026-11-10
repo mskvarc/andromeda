@@ -1,7 +1,8 @@
 //! The problem document a request whose method a resource does not serve is
 //! answered with, and the registration that answers it.
 
-use crate::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+use crate::problem_response::ProblemResponse;
+use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{Router, extract::OriginalUri, http::Method};
 use thiserror::Error;
@@ -26,7 +27,10 @@ pub fn registered_on(router: Router) -> Router {
 /// `OriginalUri` the outermost router recorded, not from the routed URI whose
 /// mount prefix the nesting stripped.
 async fn problem_document(method: Method, OriginalUri(uri): OriginalUri) -> ProblemResponse {
-    ClassifiedReport::public(NgsiLdErrorType::MethodNotAllowed, UnservedMethod(method).to_string()).with_instance(uri)
+    ProblemResponse::classified(
+        ClassifiedReport::public(NgsiLdErrorType::MethodNotAllowed, UnservedMethod(method).to_string()),
+        uri,
+    )
 }
 
 #[cfg(test)]

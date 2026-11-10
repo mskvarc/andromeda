@@ -11,7 +11,7 @@ use crate::{
     classification::classify_context_link_error,
     request_links::{PayloadCarrier, RequestLinks},
 };
-use andromeda_http_response::extraction_rejection::ExtractorRejection;
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, problem_response::ProblemResponse};
 use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use std::future::{Future, ready};
@@ -35,7 +35,7 @@ impl ContextUrl {
 fn context_from_link_headers(parts: &mut Parts) -> Result<ContextSpec, ExtractorRejection> {
     let link = RequestLinks::of(parts)
         .and_then(|links| links.context_for(PayloadCarrier::LinkHeader))
-        .map_err(|error| ExtractorRejection::Classified(classify_context_link_error(&error).with_instance(addressed_uri(parts))))?;
+        .map_err(|error| ExtractorRejection::Classified(ProblemResponse::classified(classify_context_link_error(&error), addressed_uri(parts))))?;
     Ok(ContextSpec::from_request(link.map_or(RequestContext::Default, RequestContext::Link)))
 }
 

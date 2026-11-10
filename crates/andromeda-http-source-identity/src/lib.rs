@@ -12,6 +12,7 @@ pub mod state;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-extensions",
+        "andromeda-failure-classification",
         "andromeda-http-context-registry",
         "andromeda-http-extraction",
         "andromeda-http-response",

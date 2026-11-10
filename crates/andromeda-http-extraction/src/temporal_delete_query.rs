@@ -9,7 +9,8 @@
 //! turns on a pre-count the service runs, so it is not decided here.
 
 use crate::{addressed_uri::addressed_uri, query_decoding::decode_query};
-use andromeda_http_response::{extraction_rejection::ExtractorRejection, parameter_failure::classify_parameter_error, request_refusal::RequestRefusal};
+use andromeda_failure_classification::parameter_failure::classify_parameter_error;
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, problem_response::ProblemResponse, request_refusal::RequestRefusal};
 use andromeda_ngsi_ld_request::query::temporal::delete_parameters::TemporalDeleteParameters;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use std::future::{Future, ready};
@@ -25,7 +26,7 @@ fn resolve_temporal_delete_query(parts: &Parts) -> Result<TemporalDeleteQuery, E
 
     params.validate().map_err(|error| {
         let report = classify_parameter_error(&error);
-        ExtractorRejection::Classified(report.with_instance(uri.clone()))
+        ExtractorRejection::Classified(ProblemResponse::classified(report, uri.clone()))
     })?;
 
     Ok(TemporalDeleteQuery(params))

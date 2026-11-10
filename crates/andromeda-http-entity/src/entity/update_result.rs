@@ -175,11 +175,12 @@ fn push_updated<'a>(result: &mut UpdateResult, written: impl Iterator<Item = &'a
 #[cfg(test)]
 mod tests {
     use crate::entity::update_result::{LocalAttributeWrite, NotUpdatedReason, attribute_write_response, update_result};
+    use andromeda_failure_classification::classified_report::ClassifiedReport;
     use andromeda_federation::{
         answer_body::AnswerBody,
         outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
     };
-    use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse, provision::LocalOutcome};
+    use andromeda_http_response::{problem_response::ProblemResponse, provision::LocalOutcome};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::{
         registration::forwarding_mode::ForwardingMode,

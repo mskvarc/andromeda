@@ -18,7 +18,8 @@
 //! header it received as a [`ReceivedContentLength`] before it does.
 
 use crate::addressed_uri::addressed_uri;
-use andromeda_http_response::{classified_report::ClassifiedReport, extraction_rejection::ExtractorRejection};
+use andromeda_failure_classification::classified_report::ClassifiedReport;
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
     extract::FromRequestParts,
@@ -93,9 +94,10 @@ impl ContentLengthPreconditionError {
     pub fn into_rejection(self, instance: Uri) -> ExtractorRejection {
         match self {
             ContentLengthPreconditionError::Absent => ExtractorRejection::Empty(StatusCode::LENGTH_REQUIRED),
-            ContentLengthPreconditionError::Malformed | ContentLengthPreconditionError::Empty => {
-                ExtractorRejection::Classified(ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, self.to_string()).with_instance(instance))
-            }
+            ContentLengthPreconditionError::Malformed | ContentLengthPreconditionError::Empty => ExtractorRejection::Classified(ProblemResponse::classified(
+                ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, self.to_string()),
+                instance,
+            )),
         }
     }
 }

@@ -8,6 +8,7 @@ use crate::{
     state::ContextRegistryTenantState,
 };
 use andromeda_context_registry::{detail_level::ContextDetailLevel, removal::ContextRemoval};
+use andromeda_failure_classification::{classified_report::ClassifiedReport, parameter_failure::classify_parameter_error};
 use andromeda_http_extraction::{
     api_root::ApiRoot,
     body_preconditions::BodyPreconditions,
@@ -21,9 +22,7 @@ use andromeda_http_extraction::{
 };
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_http_response::{
-    classified_report::ClassifiedReport,
     pagination::{PageOutcome, append_page_links},
-    parameter_failure::classify_parameter_error,
     problem_response::ProblemResponse,
     request_refusal::RequestRefusal,
 };
@@ -81,7 +80,10 @@ pub(crate) async fn create(
     // request naming no authority gives nothing to build on (IETF RFC 9112
     // section 3.2 makes such an HTTP/1.1 request malformed).
     let urls = state.hosting.urls(&api_root).ok_or_else(|| {
-        ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, "the request names no authority to serve the @context under").with_instance(uri.clone())
+        ProblemResponse::classified(
+            ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, "the request names no authority to serve the @context under"),
+            uri.clone(),
+        )
     })?;
     let identifier = state.hosting.contexts().create(&payload, &urls).await.with_context_registry_instance(&uri)?;
     Ok(locator.locate(StatusCode::CREATED.into_response(), ResourceCollection::JsonldContexts, &identifier))
@@ -120,7 +122,7 @@ pub(crate) async fn query(
                 query: &query,
             },
         )
-        .map_err(|error| classify_parameter_error(&error).with_instance(uri.clone()))?;
+        .map_err(|error| ProblemResponse::classified(classify_parameter_error(&error), uri.clone()))?;
     let page = state
         .hosting
         .contexts()
@@ -173,7 +175,7 @@ pub(crate) async fn get(
         .await
         .with_context_registry_instance(&uri)?;
     let if_none_match = request_headers.typed_get::<IfNoneMatch>();
-    served_response(served, if_none_match.as_ref()).map_err(|report| report.with_instance(uri))
+    served_response(served, if_none_match.as_ref()).map_err(|report| ProblemResponse::classified(report, uri))
 }
 
 /// Delete a stored `@context`, or reload a cached one from its source when

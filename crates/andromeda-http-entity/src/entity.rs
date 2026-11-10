@@ -6,6 +6,7 @@ use crate::{
 };
 use andromeda_entity::{error::EntityError, merge_options::MergeOptions, query::retrieval::RetrievalNarrowing};
 use andromeda_entity_map::contribution::SourceContribution;
+use andromeda_failure_classification::{entity_failure::classify_entity_error, forwarding_failure::classify_forwarding_error};
 use andromeda_federation::{
     entity_result::{collect_proxied_attrs, collect_warnings, contributions_of},
     operation::{ForwardingOperation, ProvisionResource},
@@ -29,8 +30,6 @@ use andromeda_http_extraction::{
 use andromeda_http_response::{
     batch_projection::{batch_operation_result, forwarded_write_error},
     collection::NgsiLdCollectionResponse,
-    entity_failure::classify_entity_error,
-    forwarding_failure::classify_forwarding_error,
     linked_resolution_warning::with_linked_resolution_warnings,
     problem_response::ProblemResponse,
     provision::{LocalOutcome, multi_status, provision_response},

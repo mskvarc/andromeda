@@ -29,7 +29,8 @@ use crate::{
     request_body_limit::RequestBodyLimit,
     request_json_value_limit::RequestJsonValueLimit,
 };
-use andromeda_http_response::{classified_report::ClassifiedReport, extraction_rejection::ExtractorRejection, request_refusal::RequestRefusal};
+use andromeda_failure_classification::classified_report::ClassifiedReport;
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, problem_response::ProblemResponse, request_refusal::RequestRefusal};
 use andromeda_ngsi_ld_number::json_value::text_admission::{JsonTextRefusal, admit_json_text};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
@@ -70,7 +71,8 @@ where
         let body = buffer_payload(request, state, declared, instance.clone()).await?;
         // Counted before the operation builds a tree, so a payload of too
         // many values costs its bytes and nothing more.
-        refuse_values_past_budget(&body, value_limit).map_err(|refusal| ExtractorRejection::Classified(refusal.report().with_instance(instance.clone())))?;
+        refuse_values_past_budget(&body, value_limit)
+            .map_err(|refusal| ExtractorRejection::Classified(ProblemResponse::classified(refusal.report(), instance.clone())))?;
         // A text that is no JSON is left to the operation's parse, which words
         // that refusal itself.
         match admit_json_text(&body) {
@@ -129,7 +131,7 @@ fn payload_too_large(limit: Option<RequestBodyLimit>, instance: Uri) -> Extracto
         Some(limit) => PayloadTooLarge::Limited { bytes: limit.bytes() },
         None => PayloadTooLarge::Unpublished,
     };
-    let refusal = ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, detail.to_string()).with_instance(instance);
+    let refusal = ProblemResponse::classified(ClassifiedReport::public(NgsiLdErrorType::RequestEntityTooLarge, detail.to_string()), instance);
     ExtractorRejection::Classified(refusal)
 }
 

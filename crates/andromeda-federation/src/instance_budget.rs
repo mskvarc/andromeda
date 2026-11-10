@@ -28,7 +28,9 @@ pub struct InstanceBudget {
 /// A forwarded temporal query gathered more attribute instances than its
 /// budget allows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-#[error("the query matches more than the {maximum} attribute instances this broker gathers from its context sources for one request")]
+#[error(
+    "the query matches more than the {maximum} attribute instances this broker gathers from its context sources for one request (federation.query.max_instances)"
+)]
 pub struct InstanceBudgetExceeded {
     /// The budget that was exceeded.
     pub maximum: NonZeroU32,

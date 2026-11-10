@@ -7,11 +7,11 @@ use crate::{
     state::TenancyRouteState,
     tenant_response::{build_tenant, tenant_page_start},
 };
+use andromeda_failure_classification::parameter_failure::classify_parameter_error;
 use andromeda_http_extraction::{pagination_policy::RequestPagination, query::ValidatedQuery};
 use andromeda_http_headers::{media_type::ResponseMediaType, ngsild_results_count::NgsiLdResultsCount};
 use andromeda_http_response::{
     pagination::{PageOutcome, append_page_links},
-    parameter_failure::classify_parameter_error,
     problem_response::ProblemResponse,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -56,7 +56,7 @@ pub async fn query(
     }: RequestPagination,
     ValidatedQuery(params): ValidatedQuery<TenantListParams>,
 ) -> Result<Response, ProblemResponse> {
-    let options = TenantOptions::parse(params.options.as_deref()).map_err(|error| error.classify().with_instance(uri.clone()))?;
+    let options = TenantOptions::parse(params.options.as_deref()).map_err(|error| ProblemResponse::classified(error.classify(), uri.clone()))?;
     // The collection always reports its total, so `limit=0` asks for that
     // total alone (Table 6.3.10-1).
     let window = pagination
@@ -71,14 +71,14 @@ pub async fn query(
                 query: &query,
             },
         )
-        .map_err(|error| classify_parameter_error(&error).with_instance(uri.clone()))?;
-    let start = tenant_page_start(&window.start).map_err(|report| report.with_instance(uri.clone()))?;
+        .map_err(|error| ProblemResponse::classified(classify_parameter_error(&error), uri.clone()))?;
+    let start = tenant_page_start(&window.start).map_err(|report| ProblemResponse::classified(report, uri.clone()))?;
 
     let listing = state
         .administration()
         .list_tenants(&start, window.with_lookahead().limit)
         .await
-        .map_err(|error| classify(&TenancyHttpError::from(error)).with_instance(uri.clone()))?;
+        .map_err(|error| ProblemResponse::classified(classify(&TenancyHttpError::from(error)), uri.clone()))?;
     let (views, reach) = window.settle(listing.views);
 
     let mut tenants: Vec<Tenant> = Vec::with_capacity(views.len());
@@ -86,7 +86,7 @@ pub async fn query(
         tenants.push(
             build_tenant(view, options, state.usage())
                 .await
-                .map_err(|error| classify(&error).with_instance(uri.clone()))?,
+                .map_err(|error| ProblemResponse::classified(classify(&error), uri.clone()))?,
         );
     }
 
@@ -115,8 +115,10 @@ pub async fn query(
 fn collection_boundary(views: &[TenantView], uri: &RequestUri) -> Result<Option<(Identifier, Identifier)>, ProblemResponse> {
     match (views.first(), views.last()) {
         (Some(first), Some(last)) => {
-            let first_id = tenant_id(&first.record.tenant_name).map_err(|error| classify(&TenancyHttpError::from(error)).with_instance(uri.clone()))?;
-            let last_id = tenant_id(&last.record.tenant_name).map_err(|error| classify(&TenancyHttpError::from(error)).with_instance(uri.clone()))?;
+            let first_id =
+                tenant_id(&first.record.tenant_name).map_err(|error| ProblemResponse::classified(classify(&TenancyHttpError::from(error)), uri.clone()))?;
+            let last_id =
+                tenant_id(&last.record.tenant_name).map_err(|error| ProblemResponse::classified(classify(&TenancyHttpError::from(error)), uri.clone()))?;
             Ok(Some((first_id, last_id)))
         }
         _ => Ok(None),

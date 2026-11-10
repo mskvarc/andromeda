@@ -7,7 +7,8 @@
 //! the GET binding reads from its query string.
 
 use crate::{jsonld::JsonLd, query::ValidatedQuery, submitted_body::SubmittedBody};
-use andromeda_http_response::{extraction_rejection::ExtractorRejection, parameter_failure::classify_parameter_error};
+use andromeda_failure_classification::parameter_failure::classify_parameter_error;
+use andromeda_http_response::{extraction_rejection::ExtractorRejection, problem_response::ProblemResponse};
 use andromeda_jsonld::user_context_admission::SubmittedContext;
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_request::{entity_operations::PostQueryParams, query::entity::parameters::EntityQueryParameters};
@@ -35,7 +36,8 @@ where
         let ValidatedQuery(url_params) = ValidatedQuery::<PostQueryParams>::from_request_parts(&mut parts, state).await?;
         let JsonLd { body, context } = JsonLd::<Query>::from_request(Request::from_parts(parts, body), state).await?;
         let query = body.and_then(move |body, uri| {
-            let mut query = EntityQueryParameters::try_from(body).map_err(|error| classify_parameter_error(&error).with_instance(uri.clone()))?;
+            let mut query =
+                EntityQueryParameters::try_from(body).map_err(|error| ProblemResponse::classified(classify_parameter_error(&error), uri.clone()))?;
             url_params.apply_to(&mut query);
             Ok(query)
         });

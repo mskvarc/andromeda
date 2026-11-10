@@ -116,7 +116,7 @@ where
         };
         let link_context = match RequestLinks::of(&mut parts).and_then(|links| links.context_for(carrier)) {
             Ok(link_context) => ContextSpec::from_request(link_context.map_or(RequestContext::Default, RequestContext::Link)),
-            Err(error) => return Err(classify_context_link_error(&error).with_instance(uri).into_response()),
+            Err(error) => return Err(ProblemResponse::classified(classify_context_link_error(&error), uri).into_response()),
         };
         // Move headers out before reassembling the request for body extraction:
         // the payload reader looks only at the declared length it is handed and
@@ -257,7 +257,7 @@ pub async fn parse_batch_entities(batch: &BatchBody, uri: &HttpUri) -> Result<Pa
         decode_batch(&body, content_kind, link_context, value_limit, decode_bounds).map_err(|refusal| refusal.into_problem(instance))
     })
     .await
-    .map_err(|failure| failure.report().with_instance(uri.clone()))?
+    .map_err(|failure| ProblemResponse::classified(failure.report(), uri.clone()))?
 }
 
 /// Decode a batch body read under `content_kind` into its entities, each with

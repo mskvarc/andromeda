@@ -1,6 +1,6 @@
 //! Focused failures produced by the health binding.
 
-use andromeda_http_response::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
+use andromeda_failure_classification::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::HealthCheckIdParseError;
 
 /// Failures local to health-response construction.

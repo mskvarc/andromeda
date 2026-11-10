@@ -4,6 +4,7 @@ use crate::{
     error::{SnapshotResultExt, internal_problem, project_purge_failure},
     state::SnapshotTenantState,
 };
+use andromeda_failure_classification::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     jsonld::JsonLd,
@@ -15,8 +16,6 @@ use andromeda_http_extraction::{
     typed_path::TypedPath,
 };
 use andromeda_http_response::{
-    classified_report::ClassifiedReport,
-    internal_failure_summary::InternalFailureSummary,
     problem_response::ProblemResponse,
     render::{RenderingPreferences, start_rendering_core},
     rendered_response::RenderedResponse,
@@ -132,7 +131,10 @@ pub(crate) async fn purge(
     let outcome = state.snapshots.purge_by_query(&filter).await.with_snapshot_instance(&uri)?;
 
     match outcome {
-        PurgeOutcome::NoMatch => Err(ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, "no snapshots matched the purge query").with_instance(uri)),
+        PurgeOutcome::NoMatch => Err(ProblemResponse::classified(
+            ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, "no snapshots matched the purge query"),
+            uri,
+        )),
         PurgeOutcome::FullSuccess => Ok(StatusCode::NO_CONTENT.into_response()),
         PurgeOutcome::AllFailed { failures } => {
             let body = BatchOperationResult {

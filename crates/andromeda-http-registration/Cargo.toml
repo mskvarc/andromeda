@@ -13,6 +13,7 @@ description = "HTTP binding for NGSI-LD context-source registration lifecycle op
 workspace = true
 
 [dependencies]
+andromeda-failure-classification.workspace = true
 andromeda-http-context-registry.workspace = true
 andromeda-http-extraction.workspace = true
 andromeda-http-headers.workspace = true

@@ -42,7 +42,7 @@ pub async fn live() -> impl IntoResponse {
 pub async fn check(State(state): State<HealthRouteState>, OriginalUri(uri): OriginalUri) -> Result<impl IntoResponse, ProblemResponse> {
     let id = HealthCheckId::mint()
         .map(Identifier::from)
-        .map_err(|error| classify(&HealthHttpError::from(error)).with_instance(uri))?;
+        .map_err(|error| ProblemResponse::classified(classify(&HealthHttpError::from(error)), uri))?;
     let health_check = state.health().check_all().await;
     let status = match health_check.status {
         HealthStatus::Up | HealthStatus::Degraded => StatusCode::OK,

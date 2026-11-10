@@ -15,7 +15,8 @@
 //! spellings alone, once the context was found to embed nothing.
 
 use crate::blocking_decode::{BlockingDecodePolicy, decode_payload};
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+use andromeda_failure_classification::classified_report::ClassifiedReport;
+use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::user_context_admission::{AdmittedContext, SubmittedContext};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::attribute::{member_reading::MemberReading, written_attribute::WrittenAttribute};
@@ -79,7 +80,10 @@ impl<T: Send + 'static> SubmittedBody<T> {
     /// refusal the body's payload rules gave it.
     pub async fn context_free(self, context: SubmittedContext) -> Result<T, ProblemResponse> {
         if let Err(embedded) = context.unused() {
-            return Err(ClassifiedReport::public(NgsiLdErrorType::BadRequestData, embedded.to_string()).with_instance(self.uri));
+            return Err(ProblemResponse::classified(
+                ClassifiedReport::public(NgsiLdErrorType::BadRequestData, embedded.to_string()),
+                self.uri,
+            ));
         }
         self.decoded(ContextTerms::keyword_spellings()).await
     }
@@ -109,7 +113,7 @@ impl<T: Send + 'static> SubmittedBody<T> {
         let instance = uri.clone(); // clone: the closure moves the URI, so the failure path keeps its own copy
         decode_payload(blocking_decode.as_ref(), text.len(), move || read(&text, terms.borrow().reading(), &uri))
             .await
-            .map_err(|failure| failure.report().with_instance(instance))?
+            .map_err(|failure| ProblemResponse::classified(failure.report(), instance))?
     }
 }
 
@@ -128,14 +132,15 @@ impl SubmittedBody<WrittenAttribute> {
         let written = self.admitted(context).await?;
         written
             .read(attribute, context.terms().reading())
-            .map_err(|refused| ClassifiedReport::public(NgsiLdErrorType::BadRequestData, refused.to_string()).with_instance(instance))
+            .map_err(|refused| ProblemResponse::classified(ClassifiedReport::public(NgsiLdErrorType::BadRequestData, refused.to_string()), instance))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::submitted_body::SubmittedBody;
-    use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+    use andromeda_failure_classification::classified_report::ClassifiedReport;
+    use andromeda_http_response::problem_response::ProblemResponse;
     use andromeda_jsonld::{
         context_spec::ContextSpec,
         user_context_admission::{AdmittedContext, SubmittedContext},
@@ -169,7 +174,10 @@ mod tests {
 
     fn refused() -> SubmittedBody<u8> {
         SubmittedBody::new(Bytes::from_static(b"x"), uri(), None, |_text, _reading, uri| {
-            Err(ClassifiedReport::public(NgsiLdErrorType::BadRequestData, "undecodable").with_instance(uri.clone()))
+            Err(ProblemResponse::classified(
+                ClassifiedReport::public(NgsiLdErrorType::BadRequestData, "undecodable"),
+                uri.clone(),
+            ))
         })
     }
 

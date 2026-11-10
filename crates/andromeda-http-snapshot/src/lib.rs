@@ -9,6 +9,7 @@ pub mod state;
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-entity",
+        "andromeda-failure-classification",
         "andromeda-federation",
         "andromeda-http-extraction",
         "andromeda-http-response",

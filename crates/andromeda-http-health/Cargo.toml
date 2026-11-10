@@ -13,6 +13,7 @@ description = "Focused HTTP binding for broker health aggregation"
 workspace = true
 
 [dependencies]
+andromeda-failure-classification.workspace = true
 andromeda-health.workspace = true
 andromeda-http-response.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true

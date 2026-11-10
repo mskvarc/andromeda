@@ -26,9 +26,9 @@ use crate::entity::{
 };
 use andromeda_entity::side_effect::SideEffectPlacement;
 use andromeda_extensions::enabled::EnabledExtensions;
+use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::{context::ContextUrl, context_target, query::ValidatedQuery};
-use andromeda_http_response::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::{entity_selection::ConsideredEntities, page_window::PageWindow, projection::purge::DatasetPurgeScope};
 use andromeda_ngsi_ld_request::query::entity::{
@@ -62,7 +62,7 @@ fn purge_dataset_scope(
             NgsiLdErrorType::InvalidRequest,
             "datasetId and deleteAll on Purge Entities require the purge_dataset_scope extension".to_string(),
         );
-        return Err(report.with_instance(uri.clone()));
+        return Err(ProblemResponse::classified(report, uri.clone()));
     }
     Ok(scope)
 }
@@ -212,7 +212,7 @@ pub(crate) async fn delete_by_query(
         && let [single] = forwarded.as_slice()
         && let Some(error) = single_source_failure(slice::from_ref(&single.result))
     {
-        return Err(classify_forwarding_error(&error).with_instance(uri));
+        return Err(ProblemResponse::classified(classify_forwarding_error(&error), uri));
     }
     merge_forwarded_purges(&mut result, &forwarded);
     Ok(entity_map.attach_to(multi_status(result)))

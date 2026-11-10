@@ -18,6 +18,7 @@ pub mod tenant_response;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-failure-classification",
         "andromeda-http-extraction",
         "andromeda-http-headers",
         "andromeda-http-response",

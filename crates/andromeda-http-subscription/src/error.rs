@@ -1,15 +1,14 @@
 //! Exhaustive HTTP classification for subscription failures.
 
-use andromeda_http_context_registry::response_rendering::{ResponseContextError, classify_response_context_error};
-use andromeda_http_response::{
+use andromeda_failure_classification::{
     classified_report::ClassifiedReport,
-    context_hosting_failure::classify_context_hosting_error,
     internal_failure_summary::InternalFailureSummary,
     jsonld_failure::classify_jsonld_error,
     parameter_failure::classify_parameter_error,
-    problem_response::ProblemResponse,
     query_failure::classify_query_error,
 };
+use andromeda_http_context_registry::response_rendering::{ResponseContextError, classify_response_context_error};
+use andromeda_http_response::{context_hosting_failure::classify_context_hosting_error, problem_response::ProblemResponse};
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_render::error::RenderError;
@@ -90,18 +89,19 @@ where
     E: SubscriptionHttpClassify,
 {
     fn with_subscription_instance(self, instance: &Uri) -> Result<T, ProblemResponse> {
-        self.map_err(|error| error.classify_for_subscription_http().with_instance(instance.clone()))
+        self.map_err(|error| ProblemResponse::classified(error.classify_for_subscription_http(), instance.clone()))
     }
 }
 
 /// Sanitize a failure that no client input can provoke, attaching `instance`.
 pub(crate) fn internal_problem(error: &impl Display, summary: InternalFailureSummary, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::internal(error, summary).with_instance(instance.clone())
+    ProblemResponse::classified(ClassifiedReport::internal(error, summary), instance.clone())
 }
 
 #[cfg(test)]
 mod tests {
     use crate::error::SubscriptionHttpClassify;
+    use andromeda_http_response::problem_response::ProblemResponse;
     use andromeda_jsonld::compound_context_host::ContextHostingError;
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryOverLimit, GeometryPositionLimit};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -158,10 +158,7 @@ mod tests {
     fn a_saturated_context_host_is_service_unavailable_with_retry_after() {
         let error = SubscriptionError::ContextHosting(ContextHostingError::Persistence(PersistenceFailure::Saturated));
 
-        let response = error
-            .classify_for_subscription_http()
-            .with_instance(Uri::from_static("/ngsi-ld/v1/subscriptions"))
-            .into_response();
+        let response = ProblemResponse::classified(error.classify_for_subscription_http(), Uri::from_static("/ngsi-ld/v1/subscriptions")).into_response();
 
         pretty_assertions::assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert!(response.headers().contains_key(RETRY_AFTER));

@@ -1,5 +1,5 @@
-//! Exhaustive HTTP classification of failures owned by temporal policy,
-//! shared by every binding that answers one.
+//! Exhaustive classification of failures owned by temporal policy, shared by
+//! everything that reports one.
 
 use crate::{
     classified_report::ClassifiedReport,
@@ -66,7 +66,7 @@ mod tests {
         temporal_validation_reason::TemporalValidationReason,
         unsettled_history::UnsettledHistory,
     };
-    use axum::http::StatusCode;
+    use http::StatusCode;
     use std::{num::NonZeroUsize, time::Duration};
 
     #[test]

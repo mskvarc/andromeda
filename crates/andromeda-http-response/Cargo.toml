@@ -13,8 +13,8 @@ description = "Centralized framework response construction for Andromeda HTTP bi
 workspace = true
 
 [dependencies]
-andromeda-entity.workspace = true
 andromeda-entity-map.workspace = true
+andromeda-failure-classification.workspace = true
 andromeda-federation.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-jsonld.workspace = true
@@ -25,12 +25,8 @@ andromeda-ngsi-ld-render.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-request.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
-andromeda-persistence-failure.workspace = true
-andromeda-registration.workspace = true
-andromeda-temporal.workspace = true
 axum = "0.8.9"
 chrono = "0.4.45"
-derive_more = { version = "2.1.1", features = ["display"] }
 headers = "0.4.2"
 http-body = "1.1.0"
 iri-rs = "4.1.0"
@@ -38,16 +34,14 @@ mediatype = "0.23.0"
 serde = "1.0.229"
 serde_json = "1.0.154"
 thiserror = "2.0.21"
-tracing = "0.1.44"
 url = "2.5.8"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
-andromeda-context-commit.workspace = true
+andromeda-entity.workspace = true
 andromeda-json-literal.workspace = true
-andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-model.workspace = true
-andromeda-ngsi-ld-number.workspace = true
+andromeda-persistence-failure.workspace = true
 pretty_assertions = "1.4.1"
 tokio = { version = "1.54.1", features = ["macros", "rt"] }
 tower = { version = "0.5.3", features = ["util"] }

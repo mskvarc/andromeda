@@ -110,6 +110,7 @@ andromeda-delivery = { path = "crates/andromeda-delivery" }
 andromeda-entity = { path = "crates/andromeda-entity" }
 andromeda-entity-map = { path = "crates/andromeda-entity-map" }
 andromeda-extensions = { path = "crates/andromeda-extensions" }
+andromeda-failure-classification = { path = "crates/andromeda-failure-classification" }
 andromeda-federation = { path = "crates/andromeda-federation" }
 andromeda-health = { path = "crates/andromeda-health" }
 andromeda-http-api = { path = "crates/andromeda-http-api" }

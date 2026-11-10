@@ -19,8 +19,8 @@
 //! a retrieving one there with `BadRequestData` (clause 5.7.4.4).
 
 use andromeda_extensions::enabled::EnabledExtensions;
+use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_http_extraction::admitted_temporal_query::{TemporalQueryAdmission, TemporalQueryBinding};
-use andromeda_http_response::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 

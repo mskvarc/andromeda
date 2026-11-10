@@ -4,7 +4,7 @@ use crate::{
     error::{CursorNotATenant, TenancyHttpError},
     options::TenantOptions,
 };
-use andromeda_http_response::classified_report::ClassifiedReport;
+use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, tenant::TenantName};
 use andromeda_ngsi_ld_model::tenant::{Tenant, TenantState, TenantUsage, tenant_id, tenant_name_from_id};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;

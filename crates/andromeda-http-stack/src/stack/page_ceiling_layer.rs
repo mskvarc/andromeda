@@ -6,7 +6,10 @@
 //! error carries no size and is never refused by it.
 
 use andromeda_http_extraction::addressed_uri::addressed_request_uri;
-use andromeda_http_response::page_ceiling::{PageByteCeiling, RenderedPageSize};
+use andromeda_http_response::{
+    page_ceiling::{PageByteCeiling, RenderedPageSize},
+    problem_response::ProblemResponse,
+};
 use axum::{
     extract::{Request, State},
     middleware::Next,
@@ -19,7 +22,7 @@ pub(super) async fn refuse_oversized_page(State(ceiling): State<PageByteCeiling>
     let instance = addressed_request_uri(&request);
     let response = next.run(request).await;
     match response.extensions().get::<RenderedPageSize>().copied().map(|size| ceiling.admit(size)) {
-        Some(Err(refused)) => refused.report().with_instance(instance).into_response(),
+        Some(Err(refused)) => ProblemResponse::classified(refused.report(), instance).into_response(),
         Some(Ok(())) | None => response,
     }
 }
