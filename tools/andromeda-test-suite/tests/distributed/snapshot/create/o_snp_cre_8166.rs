@@ -20,8 +20,8 @@ use ngsi_ld::{
 /// Pins: A Snapshot on broker-f, whose limit is 5 distinct entities, over a type broker-f holds Entities 1 to 3 of
 /// and peer broker B, under an inclusive registration, holds Entities 3 to 5 of, 6 Entities answered and 5 merged,
 /// ends success, and Query Entities under it answers Entities 1 to 5
-/// Clause: 4.12, 5.7.2.4, 5.16.1.4
-/// Recorded: clause 4.12 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5
+/// Clause: 4.12, 5.5.6, 5.7.2.4, 5.16.1.4
+/// Recorded: clause 5.5.6 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5
 /// distinct entities and 15 source rows; Entity 3 is one Entity of the merged collection whoever answers it (clause
 /// 5.7.2.4), so the capture reaches the limit without passing it
 #[gtest]

@@ -24,8 +24,9 @@ use wiremock::ResponseTemplate;
 /// Clause: 5.16.1.4, 5.7.4.4, 6.3.10, 5.2.42, 6.3.17
 /// Recorded: clause 6.3.10 cuts a temporal answer short with a 206 whose `Content-Range` names where the next request
 /// resumes, and clause 5.16.1.4 retrieves every page; a 206 with no `Content-Range` names no such instant, so the rest
-/// of the source's history cannot be retrieved; clause 6.3.17 answers a registered source the broker cannot use with
-/// 502 and names no type for it, and Andromeda types it `BadGateway` under the ETSI errors namespace
+/// of the source's history cannot be retrieved; clause 6.3.17 binds 502 only to the single source of an exclusive or
+/// redirect registration and names no type for it, and Andromeda records a source answer it cannot read to the end as
+/// that 502, typed `BadGateway` under the ETSI errors namespace
 #[gtest]
 #[tokio::test]
 async fn o_snp_cre_8175_a_temporal_capture_a_source_answers_partially_at_no_range_records_a_bad_gateway() -> Result<()> {

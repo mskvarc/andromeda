@@ -24,10 +24,10 @@ use ngsi_ld::{
 /// query's execution details are failure with a 403 `TooManyResults` problem whose detail names
 /// `federation.query.max_entities`, and Query Entities under the Snapshot answers the first query's Entity and none of
 /// the 7
-/// Clause: 4.12, 5.7.2.4, 5.16.1.4, 5.2.42
-/// Recorded: clause 4.12 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5
+/// Clause: 4.12, 5.5.6, 5.7.2.4, 5.16.1.4, 5.2.42
+/// Recorded: clause 5.5.6 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5
 /// distinct entities and 15 source rows; clause 5.16.1.4 executes a Snapshot query following clause 5.7.2.4 and stores
-/// the Entity information it retrieved, and a query refused as Query Entities over the same merged collection is
+/// the Entity information it retrieved, and a query refused, as Query Entities over the same merged collection is,
 /// retrieves none, however many of its pages the capture read before the merged collection passed the limit
 #[gtest]
 #[tokio::test]

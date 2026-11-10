@@ -17,9 +17,10 @@ use ngsi_ld::{
 /// origin nothing listens at for, ends failure, and its query's execution details are failure with a 502 problem of
 /// type `https://uri.etsi.org/ngsi-ld/errors/BadGateway`
 /// Clause: 5.16.1.4, 5.7.2.4, 5.2.42, 6.3.17
-/// Recorded: clause 6.3.17 answers a failed registered source with 502, 504 or 508 and names no type for them;
-/// Andromeda types them under the ETSI errors namespace, `BadGateway` for 502; a capture with no local Entity and no
-/// source that answered has no result to record, so it reports the sources' failure
+/// Recorded: clause 6.3.17 answers the failure of the single source of an exclusive or redirect registration with 502,
+/// 504 or 508 and names no type for them, and gives a failed inclusive source only a warning, which an execution result
+/// has no place for; Andromeda types those statuses under the ETSI errors namespace, `BadGateway` for 502, and records a
+/// capture with no local Entity and no source that answered as that `BadGateway`, since it has no result to record
 #[gtest]
 #[tokio::test]
 async fn o_snp_cre_8169_a_capture_whose_every_matching_source_failed_records_a_bad_gateway() -> Result<()> {

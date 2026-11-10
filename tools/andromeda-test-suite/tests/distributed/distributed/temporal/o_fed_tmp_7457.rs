@@ -20,8 +20,8 @@ use wiremock::ResponseTemplate;
 /// Pins: Query Temporal Evolution of Entities on broker-f, whose limit is 3 attribute instances, as `aggregatedValues`
 /// with `splitEntities` split and a `q` filter, over a source answering one Entity with 4 `speed` instances, answers 403
 /// `TooManyResults` whose detail names `federation.query.max_instances`
-/// Clause: 4.12, 5.7.4.4
-/// Recorded: clause 4.12 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 3
+/// Clause: 4.12, 5.5.6, 5.7.4.4
+/// Recorded: clause 5.5.6 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 3
 /// attribute instances from the sources whose history it reads to the end, as the aggregates of an entity whose
 /// filters are decided over its merged parts need (clause 5.7.4.4)
 #[gtest]

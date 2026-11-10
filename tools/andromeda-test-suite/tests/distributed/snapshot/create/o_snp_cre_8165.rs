@@ -19,8 +19,8 @@ use ngsi_ld::{
 /// and peer broker B, under an inclusive registration, holds Entities 4 to 6 of, 3 Entities each and 6 merged, ends
 /// failure, and its query's execution details are failure with a 403 `TooManyResults` problem whose detail names
 /// `federation.query.max_entities`
-/// Clause: 4.12, 5.7.2.4, 5.16.1.4, 5.2.42
-/// Recorded: clause 4.12 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5
+/// Clause: 4.12, 5.5.6, 5.7.2.4, 5.16.1.4, 5.2.42
+/// Recorded: clause 5.5.6 leaves the threshold of `TooManyResults` to the implementation; broker-f gathers at most 5
 /// distinct entities and 15 source rows; clause 5.16.1.4 executes a Snapshot query following clause 5.7.2.4, so the
 /// capture is refused as Query Entities over the same merged collection is
 #[gtest]
