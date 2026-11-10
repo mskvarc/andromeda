@@ -10,7 +10,8 @@ use ngsi_ld::{
 };
 
 /// Pins: A Snapshot of three queries (one by id with a result, one over a type without Entities, one by type with a
-/// result) reports three `snapshotQueriesDetails` in the order of its queries: success, empty, success
+/// result) reports three `snapshotQueriesDetails` in the order of its queries: success, empty, success, and ends
+/// partial
 /// Clause: 5.16.1.4, 5.2.42, Table 5.2.41-2
 #[gtest]
 #[tokio::test]
@@ -45,7 +46,7 @@ async fn n_snp_cre_8109_execution_details_follow_the_order_of_the_queries() -> R
             .retrieve(&snapshot_id)
             .send()
             .await?;
-        verify_that!(snapshot_2.status(), eq("success".parse::<SnapshotStatus>()?))?;
+        verify_that!(snapshot_2.status(), eq("partial".parse::<SnapshotStatus>()?))?;
         verify_that!(snapshot_2.output().queries_details, len(eq(3)))?;
         verify_that!(
             snapshot_2.output().queries_details.first().map(|details| details.result_status),

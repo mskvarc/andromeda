@@ -12,40 +12,40 @@ pub(crate) struct ExecutionAggregate {
     query_details: Vec<ExecutionResultDetails>,
     /// One detail per temporal query, in query order.
     temporal_query_details: Vec<ExecutionResultDetails>,
-    /// Some query succeeded, with or without results.
-    any_success: bool,
-    /// Some query succeeded and captured at least one entity.
-    any_success_with_results: bool,
-    /// Some query failed.
-    any_failure: bool,
 }
 
 impl ExecutionAggregate {
     /// Record the outcome of the next entity query.
     pub(crate) fn push_entity(&mut self, detail: ExecutionResultDetails) {
-        self.update_flags(&detail);
         self.query_details.push(detail);
     }
 
     /// Record the outcome of the next temporal query.
     pub(crate) fn push_temporal(&mut self, detail: ExecutionResultDetails) {
-        self.update_flags(&detail);
         self.temporal_query_details.push(detail);
     }
 
-    /// `success` when one query captured data and none failed, `partial` when
-    /// one captured data and another failed, `empty` when queries succeeded
-    /// without data, `failure` when none succeeded or none ran.
-    pub(crate) const fn final_status(&self) -> SnapshotStatus {
-        if self.any_success_with_results && !self.any_failure {
+    /// The rules of clause 5.16.1.4, taken in order over entity and temporal
+    /// queries alike: `success` when every query yielded a result, `partial`
+    /// when some query yielded one, `empty` when some query succeeded without
+    /// one, and `failure` otherwise, which includes a Snapshot no query of
+    /// which ran.
+    pub(crate) fn final_status(&self) -> SnapshotStatus {
+        let some = |status: ExecutionResultStatus| self.statuses().any(|ran| ran == status);
+        if some(ExecutionResultStatus::Success) && self.statuses().all(|ran| ran == ExecutionResultStatus::Success) {
             SnapshotStatus::Success
-        } else if self.any_success_with_results && self.any_failure {
+        } else if some(ExecutionResultStatus::Success) {
             SnapshotStatus::Partial
-        } else if self.any_success {
+        } else if some(ExecutionResultStatus::Empty) {
             SnapshotStatus::Empty
         } else {
             SnapshotStatus::Failure
         }
+    }
+
+    /// The result status of every query, entity queries first.
+    fn statuses(&self) -> impl Iterator<Item = ExecutionResultStatus> {
+        self.query_details.iter().chain(&self.temporal_query_details).map(|detail| detail.result_status)
     }
 
     /// The entity and temporal query details, each `None` when no query of
@@ -54,18 +54,6 @@ impl ExecutionAggregate {
         let query_details = (!self.query_details.is_empty()).then_some(self.query_details.as_slice());
         let temporal_query_details = (!self.temporal_query_details.is_empty()).then_some(self.temporal_query_details.as_slice());
         (query_details, temporal_query_details)
-    }
-
-    /// Fold one detail's status into the success and failure flags.
-    const fn update_flags(&mut self, detail: &ExecutionResultDetails) {
-        match detail.result_status {
-            ExecutionResultStatus::Success => {
-                self.any_success = true;
-                self.any_success_with_results = true;
-            }
-            ExecutionResultStatus::Failure => self.any_failure = true,
-            ExecutionResultStatus::Empty => self.any_success = true,
-        }
     }
 }
 
@@ -118,41 +106,49 @@ mod tests {
         failure_detail(ProblemDetail::new(NgsiLdErrorType::InternalError, detail))
     }
 
-    #[test]
-    fn no_results_produce_empty_status() {
-        let mut aggregate = ExecutionAggregate::default();
-        aggregate.push_entity(success_detail(0));
-        pretty_assertions::assert_eq!(aggregate.final_status(), SnapshotStatus::Empty);
+    /// The detail of a query that ended in `status`.
+    fn ended(status: ExecutionResultStatus) -> ExecutionResultDetails {
+        match status {
+            ExecutionResultStatus::Success => success_detail(1),
+            ExecutionResultStatus::Empty => success_detail(0),
+            ExecutionResultStatus::Failure => failed("unavailable source"),
+        }
     }
 
+    /// Clause 5.16.1.4 takes its rules in order, so a query without a result
+    /// beside one with a result makes the Snapshot partial whether or not a
+    /// third failed. Every status is recorded by an entity query and by a
+    /// temporal query in turn, as the rules count both alike.
     #[test]
-    fn a_non_empty_result_produces_success_status() {
-        let mut aggregate = ExecutionAggregate::default();
-        aggregate.push_entity(success_detail(1));
-        pretty_assertions::assert_eq!(aggregate.final_status(), SnapshotStatus::Success);
-    }
-
-    #[test]
-    fn an_empty_result_with_a_failure_stays_empty() {
-        let mut aggregate = ExecutionAggregate::default();
-        aggregate.push_entity(success_detail(0));
-        aggregate.push_temporal(failed("unavailable source"));
-        pretty_assertions::assert_eq!(aggregate.final_status(), SnapshotStatus::Empty);
-    }
-
-    #[test]
-    fn usable_data_with_a_failure_is_partial() {
-        let mut aggregate = ExecutionAggregate::default();
-        aggregate.push_entity(success_detail(2));
-        aggregate.push_temporal(failed("unavailable source"));
-        pretty_assertions::assert_eq!(aggregate.final_status(), SnapshotStatus::Partial);
-    }
-
-    #[test]
-    fn failures_without_a_success_are_failure() {
-        let mut aggregate = ExecutionAggregate::default();
-        aggregate.push_entity(failed("invalid query"));
-        pretty_assertions::assert_eq!(aggregate.final_status(), SnapshotStatus::Failure);
+    fn the_status_follows_the_rules_in_order_over_every_combination_of_query_results() {
+        let cases: [(&[ExecutionResultStatus], SnapshotStatus); 10] = [
+            (&[ExecutionResultStatus::Success], SnapshotStatus::Success),
+            (&[ExecutionResultStatus::Success, ExecutionResultStatus::Success], SnapshotStatus::Success),
+            (&[ExecutionResultStatus::Empty], SnapshotStatus::Empty),
+            (&[ExecutionResultStatus::Empty, ExecutionResultStatus::Empty], SnapshotStatus::Empty),
+            (&[ExecutionResultStatus::Failure], SnapshotStatus::Failure),
+            (&[ExecutionResultStatus::Failure, ExecutionResultStatus::Failure], SnapshotStatus::Failure),
+            (&[ExecutionResultStatus::Success, ExecutionResultStatus::Empty], SnapshotStatus::Partial),
+            (&[ExecutionResultStatus::Success, ExecutionResultStatus::Failure], SnapshotStatus::Partial),
+            (&[ExecutionResultStatus::Empty, ExecutionResultStatus::Failure], SnapshotStatus::Empty),
+            (
+                &[ExecutionResultStatus::Success, ExecutionResultStatus::Empty, ExecutionResultStatus::Failure],
+                SnapshotStatus::Partial,
+            ),
+        ];
+        for (statuses, expected) in cases {
+            for temporal in 0..1_u32 << statuses.len() {
+                let mut aggregate = ExecutionAggregate::default();
+                for (position, status) in statuses.iter().enumerate() {
+                    if temporal & (1 << position) == 0 {
+                        aggregate.push_entity(ended(*status));
+                    } else {
+                        aggregate.push_temporal(ended(*status));
+                    }
+                }
+                pretty_assertions::assert_eq!(aggregate.final_status(), expected, "{statuses:?}, temporal queries at {temporal:#b}");
+            }
+        }
     }
 
     /// Clause 5.2.42: a failed query reports the problem it was classified
