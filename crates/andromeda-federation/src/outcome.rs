@@ -3,7 +3,7 @@
 use crate::{
     answer_body::AnswerBody,
     error::FederationError,
-    partial_page::{PartialPage, least_range_end},
+    partial_page::{PartialPage, nearest_range_end},
     remote_effect::RemoteEffect,
     source_continuation::SourceContinuation,
     source_read_warning::SourceReadWarning,
@@ -14,6 +14,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{registration::forwarding_mode::ForwardingMode, temporal::temporal_history::TemporalHistory};
+use andromeda_ngsi_ld_query::temporal::instance_page::PageDirection;
 use andromeda_outbound_http::endpoint_refusal::EndpointRefusal;
 use chrono::{DateTime, Utc};
 use std::{sync::Arc, time::Duration};
@@ -231,12 +232,13 @@ impl ForwardedTemporalEntities {
             linked_map: self.linked_map.clone(),
         })
     }
-    /// The earliest instant a page of the answer was cut at (clause 6.3.10),
-    /// up to which every instance of what the answer renders is held; `None`
-    /// when no page named a range it was cut at.
+    /// The instant a page of the answer was cut at that is reached least far
+    /// in `direction` (clause 6.3.10), on whose held side every instance of
+    /// what the answer renders is held; `None` when no page named a range it
+    /// was cut at.
     #[must_use]
-    pub fn least_range_end(&self) -> Option<DateTime<Utc>> {
-        least_range_end(&self.partial_pages)
+    pub fn nearest_range_end(&self, direction: PageDirection) -> Option<DateTime<Utc>> {
+        nearest_range_end(&self.partial_pages, direction)
     }
 }
 

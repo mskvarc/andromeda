@@ -1,5 +1,6 @@
 use crate::executor::{instance_walk::WalkRefusal, source_instance_walk::SourceInstanceWalk};
 use andromeda_federation::{outcome::ForwardedTemporalEntities, partial_page::PartialPage};
+use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
 use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -87,6 +88,11 @@ fn answer(registration: &str, entities: Vec<TemporalHistory>, cut: Option<u32>) 
     }
 }
 
+/// A page cut short at the `Content-Range` `text`.
+fn ranged(text: &str) -> PartialPage {
+    PartialPage::Ranged(text.parse::<NgsiLdContentRange>().expect("a valid content range"))
+}
+
 /// What `registration` answered with `entities`, on pages cut short as
 /// `partial_pages` says.
 fn forwarded(registration: &str, entities: Vec<TemporalHistory>, partial_pages: Vec<PartialPage>) -> ForwardedTemporalEntities {
@@ -102,10 +108,10 @@ fn forwarded(registration: &str, entities: Vec<TemporalHistory>, partial_pages: 
 
 /// Trim every answer of one page, as the capture trims what the sources
 /// answered.
-fn trim(walk: &mut SourceInstanceWalk, answers: &mut [Answer]) -> Result<(), WalkRefusal> {
-    answers
-        .iter_mut()
-        .try_for_each(|answer| walk.trim_answer(Some(&answer.registration), &mut answer.entities, answer.cut))
+fn trim(walk: &mut SourceInstanceWalk, answers: &mut [Answer]) {
+    for answer in answers {
+        walk.trim_answer(Some(&answer.registration), &mut answer.entities, answer.cut);
+    }
 }
 
 /// One kept entity: its identifier, the days of every attribute but the
@@ -161,7 +167,7 @@ fn a_source_answer_cut_twice_is_read_to_the_end_in_resumed_passes() {
     let mut stored = Vec::new();
     for (days, cut, next) in passes {
         let mut answers = vec![answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &days)])], cut)];
-        trim(&mut walk, &mut answers).expect("a forward answer");
+        trim(&mut walk, &mut answers);
         stored.extend(kept(&answers));
         assert_eq!(walk.next_pass(), Ok(next));
     }
@@ -182,14 +188,14 @@ fn a_source_answer_cut_twice_is_read_to_the_end_in_resumed_passes() {
 fn an_entity_a_partial_answer_left_out_is_kept_whole_on_the_resumed_pass() {
     let mut walk = walk();
     let mut first = vec![answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[1])])], Some(1))];
-    trim(&mut walk, &mut first).expect("a forward answer");
+    trim(&mut walk, &mut first);
     assert_eq!(walk.next_pass(), Ok(Some(TimeInterval::After(at(1)))));
     let mut resumed = vec![answer(
         SOURCE_A,
         vec![entity(VEHICLE_1, &[(speed(), &[1, 2])]), entity(VEHICLE_2, &[(speed(), &[3])])],
         None,
     )];
-    trim(&mut walk, &mut resumed).expect("a forward answer");
+    trim(&mut walk, &mut resumed);
     let speed = speed().to_string();
     assert_eq!(
         kept(&resumed),
@@ -200,7 +206,7 @@ fn an_entity_a_partial_answer_left_out_is_kept_whole_on_the_resumed_pass() {
     );
 }
 
-/// The resumed pass opens at the least cut of every source, and what each
+/// The resumed pass opens at the earliest cut of every source, and what each
 /// registration kept of one entity is its own: the source cut later keeps
 /// only what lies past its own cut.
 #[test]
@@ -210,13 +216,13 @@ fn a_resumed_pass_opens_at_the_least_cut_and_keeps_what_each_source_already_answ
         answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[1, 2, 3])])], Some(3)),
         answer(SOURCE_B, vec![entity(VEHICLE_1, &[(brand(), &[1])])], Some(1)),
     ];
-    trim(&mut walk, &mut first).expect("forward answers");
+    trim(&mut walk, &mut first);
     assert_eq!(walk.next_pass(), Ok(Some(TimeInterval::After(at(1)))));
     let mut resumed = vec![
         answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[1, 2, 3, 4])])], None),
         answer(SOURCE_B, vec![entity(VEHICLE_1, &[(brand(), &[1, 2])])], None),
     ];
-    trim(&mut walk, &mut resumed).expect("forward answers");
+    trim(&mut walk, &mut resumed);
     assert_eq!(
         kept(&resumed),
         vec![
@@ -236,13 +242,13 @@ fn an_entity_a_complete_answer_held_is_not_kept_again_on_a_resumed_pass() {
         answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[1, 2])])], None),
         answer(SOURCE_B, vec![entity(VEHICLE_2, &[(speed(), &[1])])], Some(1)),
     ];
-    trim(&mut walk, &mut first).expect("forward answers");
+    trim(&mut walk, &mut first);
     assert_eq!(walk.next_pass(), Ok(Some(TimeInterval::After(at(1)))));
     let mut resumed = vec![
         answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[1, 2])])], None),
         answer(SOURCE_B, vec![entity(VEHICLE_2, &[(speed(), &[1, 2])])], None),
     ];
-    trim(&mut walk, &mut resumed).expect("forward answers");
+    trim(&mut walk, &mut resumed);
     assert_eq!(kept(&resumed), vec![(VEHICLE_2.to_owned(), vec![(speed().to_string(), vec![2])], 0)]);
 }
 
@@ -251,7 +257,7 @@ fn an_entity_a_complete_answer_held_is_not_kept_again_on_a_resumed_pass() {
 fn a_between_window_resumes_up_to_its_closing_instant() {
     let mut walk = SourceInstanceWalk::new(TimeInterval::Between { from: at(1), to: at(20) }, TimeProp::Observed, None);
     let mut answers = vec![answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[1, 5])])], Some(5))];
-    trim(&mut walk, &mut answers).expect("a forward answer");
+    trim(&mut walk, &mut answers);
     assert_eq!(walk.next_pass(), Ok(Some(TimeInterval::Between { from: at(5), to: at(20) })));
 }
 
@@ -260,23 +266,103 @@ fn a_between_window_resumes_up_to_its_closing_instant() {
 fn a_pass_cut_no_later_than_the_previous_one_stalls_the_walk() {
     let mut walk = walk();
     let mut first = vec![answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[2])])], Some(2))];
-    trim(&mut walk, &mut first).expect("a forward answer");
+    trim(&mut walk, &mut first);
     assert_eq!(walk.next_pass(), Ok(Some(TimeInterval::After(at(2)))));
     let mut resumed = vec![answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[2])])], Some(2))];
-    trim(&mut walk, &mut resumed).expect("a forward answer");
+    trim(&mut walk, &mut resumed);
     assert_eq!(walk.next_pass(), Err(WalkRefusal::Stalled { at: at(2) }));
 }
 
-/// Clause 6.3.10 pages a partial answer to a `lastN` query backwards, which
-/// the capture refuses rather than keep its most recent page alone.
+fn backward(last_n: u32) -> SourceInstanceWalk {
+    SourceInstanceWalk::new(TimeInterval::After(at(1)), TimeProp::Observed, NonZeroU32::new(last_n))
+}
+
+/// Clauses 5.16.1.4 and 6.3.10: a source answer to a `lastN` above its
+/// maximum, cut backwards twice, is read in passes each over the window ending
+/// at the previous cut, and the stream keeps only the instances it lacks to
+/// reach `lastN`.
 #[test]
-fn a_partial_source_answer_to_a_last_n_query_is_refused() {
-    let last_n = NonZeroU32::new(5000).expect("a positive lastN");
-    let mut walk = SourceInstanceWalk::new(TimeInterval::After(at(1)), TimeProp::Observed, Some(last_n));
-    let mut complete = vec![answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[1])])], None)];
-    assert_eq!(trim(&mut walk, &mut complete), Ok(()));
-    let mut partial = vec![answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[1])])], Some(1))];
-    assert_eq!(trim(&mut walk, &mut partial), Err(WalkRefusal::Backward));
+fn a_backward_source_answer_is_read_in_passes_ending_at_its_cut() {
+    let mut walk = backward(3);
+    let passes = [
+        (vec![8, 9], Some(8), Some(TimeInterval::Between { from: at(1), to: at(8) })),
+        (vec![5, 6, 7], Some(5), Some(TimeInterval::Between { from: at(1), to: at(5) })),
+        (vec![3, 4], None, None),
+    ];
+    let mut stored = Vec::new();
+    for (days, cut, next) in passes {
+        let mut answers = vec![answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &days)])], cut)];
+        trim(&mut walk, &mut answers);
+        stored.push(kept(&answers));
+        assert_eq!(walk.next_pass(), Ok(next));
+    }
+    let speed = speed().to_string();
+    assert_eq!(
+        stored,
+        vec![
+            vec![(VEHICLE_1.to_owned(), vec![(speed.clone(), vec![8, 9])], 1)],
+            vec![(VEHICLE_1.to_owned(), vec![(speed, vec![7])], 0)],
+            vec![],
+        ]
+    );
+}
+
+/// A backward pass resumes before the latest cut of the previous one, and
+/// each registration keeps only what lies before its own cut, up to what its
+/// streams lack of `lastN`.
+#[test]
+fn a_backward_pass_ends_at_the_latest_cut_and_keeps_what_each_source_lacks() {
+    let mut walk = backward(5);
+    let mut first = vec![
+        answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[6, 7, 8])])], Some(6)),
+        answer(SOURCE_B, vec![entity(VEHICLE_1, &[(brand(), &[3, 4, 5])])], Some(3)),
+    ];
+    trim(&mut walk, &mut first);
+    assert_eq!(walk.next_pass(), Ok(Some(TimeInterval::Between { from: at(1), to: at(6) })));
+    let mut resumed = vec![
+        answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[3, 4, 5])])], None),
+        answer(SOURCE_B, vec![entity(VEHICLE_1, &[(brand(), &[1, 2, 3, 4, 5])])], None),
+    ];
+    trim(&mut walk, &mut resumed);
+    assert_eq!(
+        kept(&resumed),
+        vec![
+            (VEHICLE_1.to_owned(), vec![(speed().to_string(), vec![4, 5])], 0),
+            (VEHICLE_1.to_owned(), vec![(brand().to_string(), vec![1, 2])], 0),
+        ]
+    );
+    assert_eq!(walk.next_pass(), Ok(None));
+}
+
+/// Clause 6.3.10 ends a backward range at the least recent instant of its
+/// page, so of an answer cut on two pages the walk resumes before the later
+/// end, which both pages reached.
+#[test]
+fn a_backward_answer_cut_on_two_pages_resumes_before_the_later_range_end() {
+    let mut walk = backward(5);
+    let mut answers = [forwarded(
+        SOURCE_A,
+        vec![entity(VEHICLE_1, &[(speed(), &[6, 7])]), entity(VEHICLE_2, &[(speed(), &[4, 5])])],
+        vec![
+            ranged("DateTime 2024-01-07T00:00:00Z-2024-01-06T00:00:00Z/5"),
+            ranged("DateTime 2024-01-05T00:00:00Z-2024-01-04T00:00:00Z/5"),
+        ],
+    )];
+    assert_eq!(walk.trim(&mut answers), Ok(()));
+    assert_eq!(walk.next_pass(), Ok(Some(TimeInterval::Between { from: at(1), to: at(6) })));
+}
+
+/// A backward pass cut no earlier than the instant it resumed at cannot be
+/// read past, as a stalled forward pass cannot.
+#[test]
+fn a_backward_pass_cut_no_earlier_than_the_previous_one_stalls_the_walk() {
+    let mut walk = backward(5);
+    let mut first = vec![answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[5, 6])])], Some(5))];
+    trim(&mut walk, &mut first);
+    assert_eq!(walk.next_pass(), Ok(Some(TimeInterval::Between { from: at(1), to: at(5) })));
+    let mut resumed = vec![answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[5])])], Some(5))];
+    trim(&mut walk, &mut resumed);
+    assert_eq!(walk.next_pass(), Err(WalkRefusal::Stalled { at: at(5) }));
 }
 
 /// Clauses 5.16.1.4 and 6.3.10: a source page cut short at no readable range
@@ -298,7 +384,7 @@ fn a_source_answer_cut_short_at_no_range_is_refused() {
 fn a_source_answer_cut_short_at_no_range_on_a_resumed_pass_is_refused() {
     let mut walk = walk();
     let mut first = vec![answer(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[1, 2])])], Some(2))];
-    trim(&mut walk, &mut first).expect("a forward answer");
+    trim(&mut walk, &mut first);
     assert_eq!(walk.next_pass(), Ok(Some(TimeInterval::After(at(2)))));
     let mut whole = [forwarded(SOURCE_A, vec![entity(VEHICLE_1, &[(speed(), &[2, 3])])], Vec::new())];
     assert_eq!(walk.trim(&mut whole), Ok(()));

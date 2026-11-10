@@ -39,20 +39,11 @@ impl PageCut {
     /// every instance the response leaves out beyond its `range-end`.
     #[must_use]
     pub fn common(cuts: impl IntoIterator<Item = PageCut>) -> Option<PageCut> {
-        cuts.into_iter().reduce(|left, right| match left.direction {
-            PageDirection::Forward => {
-                if right.boundary < left.boundary {
-                    right
-                } else {
-                    left
-                }
-            }
-            PageDirection::Backward { .. } => {
-                if right.boundary > left.boundary {
-                    right
-                } else {
-                    left
-                }
+        cuts.into_iter().reduce(|left, right| {
+            if left.direction.nearer(left.boundary, right.boundary) == left.boundary {
+                left
+            } else {
+                right
             }
         })
     }
@@ -77,14 +68,14 @@ impl PageCut {
                 stream.last = Some(stream.last.map_or(instant, |last| last.max(instant)));
             }
         }
-        let edges = streams.into_values().filter(StreamPage::was_cut).filter_map(|stream| match direction {
-            PageDirection::Forward => stream.last,
-            PageDirection::Backward { .. } => stream.first,
-        });
-        let boundary = match direction {
-            PageDirection::Forward => edges.min(),
-            PageDirection::Backward { .. } => edges.max(),
-        }?;
+        let boundary = streams
+            .into_values()
+            .filter(StreamPage::was_cut)
+            .filter_map(|stream| match direction {
+                PageDirection::Forward => stream.last,
+                PageDirection::Backward { .. } => stream.first,
+            })
+            .reduce(|left, right| direction.nearer(left, right))?;
         Some(PageCut { direction, boundary })
     }
 
@@ -97,10 +88,7 @@ impl PageCut {
         if is_scope_attribute(&row.attribute_name) {
             return true;
         }
-        row.time_axis(timeproperty).is_some_and(|instant| match self.direction {
-            PageDirection::Forward => instant <= self.boundary,
-            PageDirection::Backward { .. } => instant >= self.boundary,
-        })
+        row.time_axis(timeproperty).is_some_and(|instant| self.direction.holds(self.boundary, instant))
     }
 
     /// The fewest instances this cut keeps of any attribute stream `rows`

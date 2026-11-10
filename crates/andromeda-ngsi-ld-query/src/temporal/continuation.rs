@@ -93,14 +93,8 @@ impl TemporalContinuation {
             PageDirection::Backward { requested } => {
                 let remaining = u64::from(requested.get()).checked_sub(fewest_served?)?;
                 let last_n = NonZeroU32::new(u32::try_from(remaining).ok()?)?;
-                let closing = edge.instant();
-                let interval = match interval {
-                    TimeInterval::Unbounded | TimeInterval::Before(_) => TimeInterval::Before(closing),
-                    TimeInterval::After(from) | TimeInterval::Between { from, .. } if from < closing => TimeInterval::Between { from, to: closing },
-                    TimeInterval::After(_) | TimeInterval::Between { .. } => return None,
-                };
                 Some(TemporalContinuation {
-                    interval,
+                    interval: interval.preceding(edge.instant())?,
                     last_n: Some(last_n),
                 })
             }

@@ -14,7 +14,7 @@
 use crate::{
     FederationService,
     incomplete_answer::{IncompleteReason, incomplete_answer},
-    partial_page::{PartialPage, least_range_end},
+    partial_page::{PartialPage, nearest_range_end},
     query_forwarding_error::QueryForwardingError,
     read_fan_out::{ForwardedGetConditions, ForwardedRead, SourceAnswer},
     received_temporal_answer::ReceivedTemporalAnswer,
@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_lexicon::{
     time_rel::TimeRel,
 };
 use andromeda_ngsi_ld_model::{received::ContextualEntity, registration::ContextSourceRegistration};
-use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
+use andromeda_ngsi_ld_query::temporal::{instance_page::PageDirection, window::TimeInterval};
 use chrono::{DateTime, Utc};
 use futures::{StreamExt, stream};
 use url::Url;
@@ -83,7 +83,7 @@ impl FederationService {
         };
         budget.instances.charge(gathered.instance_count())?;
         let mut resumed_at: Option<DateTime<Utc>> = None;
-        while let Some(stopped_at) = least_range_end(&gathered.partial_pages) {
+        while let Some(stopped_at) = nearest_range_end(&gathered.partial_pages, PageDirection::Forward) {
             let resumed = first_url
                 .as_ref()
                 .filter(|_| resumed_at.is_none_or(|previous| stopped_at > previous))
