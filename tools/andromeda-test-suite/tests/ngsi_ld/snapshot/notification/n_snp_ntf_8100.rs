@@ -2,7 +2,6 @@
 
 use andromeda_test_suite::{
     broker,
-    config::SuiteConfig,
     eventually::retried,
     header_condition::HeaderCondition,
     namespace::Namespace,
@@ -14,34 +13,22 @@ use http::HeaderName;
 use ngsi_ld::{
     http::headers::Accept,
     model::{Entity, EntityTypeName, KeyValuePair, NgsiLdMediaType},
-    registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo},
     snapshot::{QueryDocument, Snapshot, SnapshotId, SnapshotPriority, SnapshotStatus},
 };
 
 /// Pins: A Snapshot with an endpoint and `receiverInfo` sends one `SnapshotNotification` once it ends success,
-/// empty, partial or failure, carrying the `receiverInfo` as a header, its `snapshotId`, `snapshotStatus`,
-/// `snapshotPriority` and `expiresAt`, and a `notifiedAt`
+/// empty, partial (a query with a result beside one without) or failure (no query to execute), carrying the
+/// `receiverInfo` as a header, its `snapshotId`, `snapshotStatus`, `snapshotPriority` and `expiresAt`, and a
+/// `notifiedAt`
 /// Clause: 5.16.6, 5.3.4, 5.16.1.4
 #[gtest]
 #[tokio::test]
 async fn n_snp_ntf_8100_a_snapshot_with_an_endpoint_is_notified_of_its_terminal_status() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
-    let config = SuiteConfig::get()?;
     let sink = NotificationSink::start().await?;
-    let registration_id = namespace.registration_id(1)?;
     let res_type = namespace.entity_type("Res")?;
     let absent_type = namespace.entity_type("Absent")?;
-    let fail_type = namespace.entity_type("Fail")?;
-    let registration = CSourceRegistration::builder(config.unreachable_origin().as_str())
-        .id(registration_id.clone())
-        .information([RegistrationInfo::builder()
-            .entities([EntityInfo::new(fail_type.clone()).with_id_pattern(namespace.id_pattern("Fail")?)])
-            .property_names([namespace.attribute("speed")?.to_string()])
-            .build()?])
-        .operations([DistributedOperation::QueryEntity])
-        .build()?;
-    broker.registrations().register(&registration).send().await?;
     let res = Entity::builder()
         .id(namespace.urn("Res", 1)?)
         .entity_type(res_type.clone())
@@ -52,8 +39,8 @@ async fn n_snp_ntf_8100_a_snapshot_with_an_endpoint_is_notified_of_its_terminal_
     let cases = [
         ("success", vec![selection(&res_type)?], "success"),
         ("empty", vec![selection(&absent_type)?], "empty"),
-        ("partial", vec![selection(&res_type)?, selection(&fail_type)?], "partial"),
-        ("failure", vec![selection(&fail_type)?], "failure"),
+        ("partial", vec![selection(&res_type)?, selection(&absent_type)?], "partial"),
+        ("failure", vec![], "failure"),
     ];
     let mut ids = Vec::new();
     for (label, queries, status) in cases {
@@ -93,6 +80,5 @@ async fn n_snp_ntf_8100_a_snapshot_with_an_endpoint_is_notified_of_its_terminal_
     for snapshot_id in &ids {
         broker.snapshots().delete(snapshot_id).send().await?;
     }
-    broker.registrations().delete(&registration_id).send().await?;
     Ok(())
 }

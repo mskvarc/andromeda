@@ -1,4 +1,4 @@
-//! A snapshot without a result beside a failed query is empty.
+//! A snapshot without a result beside a query whose only source cannot be reached is empty.
 
 use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, eventually::retried, namespace::Namespace};
 use googletest::prelude::*;
@@ -10,11 +10,13 @@ use ngsi_ld::{
 };
 
 /// Pins: A Snapshot of a successfully executed query without a result and a query whose only source cannot be
-/// reached ends with `snapshotStatus` empty and the details empty and failure
-/// Clause: 5.16.1.4, 5.2.42
+/// reached ends with `snapshotStatus` empty and the details empty and empty
+/// Clause: 5.16.1.4, 5.2.42, 6.3.17
+/// Recorded: clause 5.16.1.4 executes the query as Query Entities does, which answers without a source it cannot reach
+/// and reports the source in an `NGSILD-Warning` (clause 6.3.17), so the query has not failed
 #[gtest]
 #[tokio::test]
-async fn n_snp_cre_8114_a_snapshot_without_a_result_beside_a_failed_query_is_empty() -> Result<()> {
+async fn n_snp_cre_8114_a_snapshot_without_a_result_beside_a_query_whose_only_source_cannot_be_reached_is_empty() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let config = SuiteConfig::get()?;
@@ -54,7 +56,7 @@ async fn n_snp_cre_8114_a_snapshot_without_a_result_beside_a_failed_query_is_emp
         )?;
         verify_that!(
             snapshot_2.output().queries_details.get(1).map(|details| details.result_status),
-            some(eq(ExecutionStatus::Failure))
+            some(eq(ExecutionStatus::Empty))
         )?;
         Ok(())
     })

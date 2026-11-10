@@ -1,4 +1,4 @@
-//! Execution details carry a problem only for a failed query.
+//! Execution details carry a problem only for the query whose only source cannot be reached.
 
 use andromeda_test_suite::{broker, cleanup::Cleanup, config::SuiteConfig, eventually::retried, namespace::Namespace, outcome::Done};
 use googletest::prelude::*;
@@ -9,12 +9,17 @@ use ngsi_ld::{
     snapshot::{ExecutionStatus, QueryDocument, Snapshot, SnapshotId, SnapshotStatus},
 };
 
-/// Pins: The `snapshotQueriesDetails` of a Snapshot with a successful, an empty and a failed query are success,
-/// empty and failure, and only the failure carries `problemDetails`, with its type
-/// Clause: 5.16.1.4, 5.2.42
+/// Pins: The `snapshotQueriesDetails` of a Snapshot with a successful query, an empty query and a query whose only
+/// source cannot be reached are success, empty and empty, and only the third carries `problemDetails`: a problem of
+/// type `https://uri.etsi.org/ngsi-ld/errors/BadGateway` and no `status`
+/// Clause: 5.16.1.4, 5.2.42, 6.3.17, 5.5.3
+/// Recorded: clause 5.16.1.4 executes the query as Query Entities does, which answers without a source it cannot reach
+/// and reports the source in an `NGSILD-Warning` (clause 6.3.17), so the query has not failed; an execution result has
+/// no member for warnings, and Andromeda records them in `problemDetails` as a problem of the `BadGateway` type it
+/// answers the failure of a single source with, leaving out `status` since no error response was given (clause 5.5.3)
 #[gtest]
 #[tokio::test]
-async fn n_snp_cre_8121_execution_details_carry_a_problem_only_for_a_failed_query() -> Result<()> {
+async fn n_snp_cre_8121_execution_details_carry_a_problem_only_for_the_query_whose_only_source_cannot_be_reached() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let config = SuiteConfig::get()?;
@@ -73,17 +78,14 @@ async fn n_snp_cre_8121_execution_details_carry_a_problem_only_for_a_failed_quer
         verify_that!(snapshot_2.output().queries_details.get(1).map(|details| &details.problem_details), some(none()))?;
         verify_that!(
             snapshot_2.output().queries_details.get(2).map(|details| details.result_status),
-            some(eq(ExecutionStatus::Failure))
+            some(eq(ExecutionStatus::Empty))
         )?;
+        let problem = snapshot_2.output().queries_details.get(2).and_then(|details| details.problem_details.as_ref());
         verify_that!(
-            snapshot_2
-                .output()
-                .queries_details
-                .get(2)
-                .and_then(|details| details.problem_details.as_ref())
-                .and_then(|problem| problem.error_type.as_ref()),
-            some(anything())
+            problem.and_then(|problem| problem.error_type.as_ref()).map(ToString::to_string),
+            some(eq("https://uri.etsi.org/ngsi-ld/errors/BadGateway"))
         )?;
+        verify_that!(problem.and_then(|problem| problem.status), none())?;
         Ok(())
     })
     .await?;
