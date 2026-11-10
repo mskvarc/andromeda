@@ -181,7 +181,7 @@ impl SnapshotExecutor {
 fn sources_page_on(forwarded: &[ForwardedTemporalEntities], page_size: u32) -> bool {
     forwarded
         .iter()
-        .any(|source| source.entities.len() >= page_size as usize || !source.partial_ranges.is_empty())
+        .any(|source| source.entities.len() >= page_size as usize || !source.partial_pages.is_empty())
 }
 
 #[cfg(test)]
@@ -219,7 +219,7 @@ mod tests {
             entities: numbers.iter().copied().map(vehicle).collect(),
             warnings: Vec::new(),
             linked_map: None,
-            partial_ranges: Vec::new(),
+            partial_pages: Vec::new(),
         }
     }
 

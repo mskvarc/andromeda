@@ -3,13 +3,13 @@
 use crate::{
     answer_body::AnswerBody,
     error::FederationError,
+    partial_page::{PartialPage, least_range_end},
     remote_effect::RemoteEffect,
     source_continuation::SourceContinuation,
     source_read_warning::SourceReadWarning,
-    temporal_history_walk::least_range_end,
 };
 use andromeda_entity_map::contribution::SourceContribution;
-use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning};
+use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
@@ -110,9 +110,10 @@ pub(crate) struct ForwardedResponse {
     /// Where the answer continues, from the source's `Link rel="next"`
     /// (clauses 5.5.9.1 and 6.3.10).
     pub(crate) continuation: SourceContinuation,
-    /// The temporal `Content-Range` of a 206 answer (clause 6.3.10): how far
-    /// into each entity's history the answer reaches.
-    pub(crate) partial_range: Option<NgsiLdContentRange>,
+    /// How the source cut a 206 answer short (clause 6.3.10): how far into
+    /// each entity's history the answer reaches, when its `Content-Range`
+    /// says. `None` for an answer that was not cut short.
+    pub(crate) partial_page: Option<PartialPage>,
 }
 
 /// Outcome of a GET request to a context source.
@@ -211,10 +212,12 @@ pub struct ForwardedTemporalEntities {
     /// The `EntityMap` the source used for the request, when it returned one
     /// (clause 5.5.14 `linkedMaps`).
     pub linked_map: Option<Identifier>,
-    /// The `Content-Range` of every page of the answer that the source cut
-    /// short (clause 6.3.10): the instances past each range are still to come
-    /// from the source, so the merged history is complete only up to them.
-    pub partial_ranges: Vec<NgsiLdContentRange>,
+    /// Every page of the answer that the source cut short (clause 6.3.10):
+    /// the instances past each page's range are still to come from the
+    /// source, so the merged history is complete only up to them, and a page
+    /// that named no range says the history is incomplete and nowhere it
+    /// resumes.
+    pub partial_pages: Vec<PartialPage>,
 }
 
 impl ForwardedTemporalEntities {
@@ -230,10 +233,10 @@ impl ForwardedTemporalEntities {
     }
     /// The earliest instant a page of the answer was cut at (clause 6.3.10),
     /// up to which every instance of what the answer renders is held; `None`
-    /// when the answer is complete.
+    /// when no page named a range it was cut at.
     #[must_use]
     pub fn least_range_end(&self) -> Option<DateTime<Utc>> {
-        least_range_end(&self.partial_ranges)
+        least_range_end(&self.partial_pages)
     }
 }
 
@@ -401,7 +404,7 @@ mod tests {
             warnings: Vec::new(),
             entity_map: None,
             continuation: SourceContinuation::Complete,
-            partial_range: None,
+            partial_page: None,
         });
         pretty_assertions::assert_eq!(success.error_status(), None);
         pretty_assertions::assert_eq!(ForwardGetOutcome::NotFound(Vec::new()).error_status(), None);

@@ -248,7 +248,7 @@ mod tests {
             ],
             warnings: Vec::new(),
             linked_map: None,
-            partial_ranges: Vec::new(),
+            partial_pages: Vec::new(),
         }];
         let retrieved: Identifier = "urn:ngsi-ld:Vehicle:1".parse().expect("a valid identifier");
         let taken: Vec<String> = instance_documents(sources, &retrieved)

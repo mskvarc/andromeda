@@ -7,6 +7,7 @@ use crate::{
     cooldown::{AnswerKind, FailureScope},
     guarded_send::GuardedSendError,
     outcome::TransportFailure,
+    partial_page::PartialPage,
 };
 use andromeda_http_headers::{
     link::{header::Link, relation_type::RelationType},
@@ -44,9 +45,10 @@ pub(crate) struct SentResponse {
     /// source wrote it: the reference to the page following this one, still to
     /// be resolved against the URL it answered.
     pub(crate) next_page: Option<IriRefBuf>,
-    /// The temporal `Content-Range` of a 206 answer (clause 6.3.10), which says
-    /// how far into each entity's history the source's answer reaches.
-    pub(crate) partial_range: Option<NgsiLdContentRange>,
+    /// How the source cut a 206 answer short (clause 6.3.10): the temporal
+    /// `Content-Range` saying how far into each entity's history the answer
+    /// reaches, or none it could be read from. `None` for any other status.
+    pub(crate) partial_page: Option<PartialPage>,
     /// The raw body.
     pub(crate) body: Vec<u8>,
 }
@@ -100,9 +102,8 @@ impl FederationService {
                 let entity_map = headers::HeaderMapExt::typed_get::<NgsiLdEntityMap>(response.headers()).map(NgsiLdEntityMap::into_inner);
                 let next_page = headers::HeaderMapExt::typed_get::<Link>(response.headers())
                     .and_then(|link| link.find_by_rel(RelationType::Next).next().map(|value| value.link().clone())); // clone: the answer outlives the header map it was read from
-                let partial_range = (status == reqwest::StatusCode::PARTIAL_CONTENT)
-                    .then(|| headers::HeaderMapExt::typed_get::<NgsiLdContentRange>(response.headers()))
-                    .flatten();
+                let partial_page = (status == reqwest::StatusCode::PARTIAL_CONTENT)
+                    .then(|| headers::HeaderMapExt::typed_get::<NgsiLdContentRange>(response.headers()).map_or(PartialPage::Unranged, PartialPage::Ranged));
                 match response.bytes().await {
                     Ok(body) => Ok(SentResponse {
                         status,
@@ -111,7 +112,7 @@ impl FederationService {
                         returned_version,
                         entity_map,
                         next_page,
-                        partial_range,
+                        partial_page,
                         body: body.to_vec(),
                     }),
                     Err(error) => Err(classify_transport_failure(error, timeout)),
@@ -178,7 +179,7 @@ mod tests {
             returned_version: None,
             entity_map: None,
             next_page: None,
-            partial_range: None,
+            partial_page: None,
             body: Vec::new(),
         }
     }

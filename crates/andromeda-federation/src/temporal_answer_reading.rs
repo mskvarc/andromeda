@@ -65,7 +65,7 @@ impl FederationService {
             mut warnings,
             mut dropped,
             linked_map,
-            partial_ranges,
+            partial_pages,
         } = answer;
         let source = registration_id.as_ref().map_or_default(ToString::to_string);
         let spelled_in = if entities.iter().any(|contextual| contextual.context.is_none()) {
@@ -108,7 +108,7 @@ impl FederationService {
             warnings,
             dropped,
             linked_map,
-            partial_ranges,
+            partial_pages,
         }
     }
 

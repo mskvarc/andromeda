@@ -52,7 +52,7 @@ impl FederationService {
             mut warnings,
             mut dropped,
             linked_map,
-            partial_ranges,
+            partial_pages,
         } = answer;
         let source = registration_id.as_ref().map_or_default(ToString::to_string);
         let mut gathered: IndexMap<Identifier, TemporalHistory> = IndexMap::with_capacity(entities.len());
@@ -102,7 +102,7 @@ impl FederationService {
             entities: gathered.into_values().collect(),
             warnings,
             linked_map,
-            partial_ranges,
+            partial_pages,
         }
     }
 

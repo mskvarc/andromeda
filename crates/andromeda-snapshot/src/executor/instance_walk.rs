@@ -79,7 +79,9 @@ pub(crate) enum WalkRefusal {
         /// The instant the page could not be read past.
         at: DateTime<Utc>,
     },
-    /// The page was partial but named no instant to resume from.
+    /// The page was partial but named no instant to resume from: a range of
+    /// the broker's own history holding no instant, or a Context Source's 206
+    /// without a readable `Content-Range`.
     #[error("a partial temporal answer named no instant to resume from")]
     Unpositioned,
 }

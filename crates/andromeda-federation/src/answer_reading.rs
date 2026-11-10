@@ -299,7 +299,7 @@ mod tests {
             warnings: Vec::new(),
             entity_map: None,
             continuation: SourceContinuation::Complete,
-            partial_range: None,
+            partial_page: None,
         });
         let page = received_answer(&registration, outcome, AnswerDocument::Entities);
         let service = offline_service(Vec::new());
