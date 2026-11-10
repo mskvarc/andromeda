@@ -383,6 +383,7 @@ mod tests {
             ForwardTemporalQueryRequest,
             HistoryBudget,
             QueryDelivery,
+            SourcePage,
             SourcePaging,
             TriggeringRequest,
         },
@@ -1191,6 +1192,84 @@ mod tests {
         let outcome = temporal_walk_under(&service, limits(3, 9)).await.expect("the walk fits its limits");
 
         pretty_assertions::assert_eq!(temporal_gathered(&outcome).len(), 9);
+    }
+
+    /// Forward a temporal `type=Vehicle` query asking every source for its
+    /// page of three entities starting at `offset`, charged to `budget`.
+    async fn temporal_page_at(
+        service: &FederationService,
+        offset: u32,
+        budget: &ResultBudget,
+    ) -> Result<ForwardReadOutcome<ForwardedTemporalEntities>, QueryForwardingError> {
+        let query: TemporalQueryParameters =
+            serde_urlencoded::from_str("type=Vehicle&timerel=after&timeAt=2019-01-01T00:00:00Z").expect("a valid temporal query");
+        let context = ContextSpec::none();
+        service
+            .forward_temporal_query(
+                &ContextTarget::Live,
+                ForwardTemporalQueryRequest {
+                    client_query: &query,
+                    split: SplitEntities::Complete,
+                    context: &context,
+                    operation: ForwardingOperation::QueryTemporalEntity,
+                    triggering: TriggeringRequest::default(),
+                    csf_expr: None,
+                    geo: None,
+                    mode_filter: CsrModeFilter::All,
+                    reach: SourceReach::Every,
+                    entity_map: EntityMapInUse::None,
+                    paging: SourcePaging::Page {
+                        page: SourcePage { limit: 3, offset },
+                        budget,
+                    },
+                },
+            )
+            .await
+    }
+
+    /// Clause 4.12: every explicit page of one request is charged to that
+    /// request's budget, so the page that takes its distinct entities past the
+    /// limit is refused, however few the page itself carries.
+    #[tokio::test]
+    async fn explicit_pages_of_one_request_share_its_entity_limit() {
+        let source = source().await;
+        answer_in_turn(
+            &source,
+            "GET",
+            TEMPORAL_PATH,
+            [temporal_page(0, 3, StatusCode::OK, None, None), temporal_page(3, 3, StatusCode::OK, None, None)],
+        )
+        .await;
+        let service = service(registration(&source, &["queryTemporal"]));
+        let budget = ResultBudget::new(limits(5, u32::MAX));
+
+        let first = temporal_page_at(&service, 0, &budget).await.expect("three entities fit a limit of five");
+        let refused = refusal(temporal_page_at(&service, 3, &budget).await);
+
+        pretty_assertions::assert_eq!(temporal_gathered(&first), numbered(0..3));
+        pretty_assertions::assert_eq!(refused, ResultBudgetExceeded::DistinctEntities { maximum: positive(5) });
+        let requests = received(&source).await;
+        let offsets: Vec<bool> = requests
+            .iter()
+            .map(|request| request.url.query().is_some_and(|query| query.contains("offset=3")))
+            .collect();
+        pretty_assertions::assert_eq!(offsets, vec![false, true]);
+    }
+
+    /// The elements every source sends on an explicit page, duplicates
+    /// included, are charged against the row ceiling: three sources answering
+    /// the same three entities send nine rows.
+    #[tokio::test]
+    async fn an_explicit_page_whose_sources_send_past_the_row_ceiling_is_refused_naming_source_rows() {
+        let (_sources, service) = three_overlapping_sources(TEMPORAL_PATH, "queryTemporal", || temporal_page(0, 3, StatusCode::OK, None, None)).await;
+
+        let fits = temporal_page_at(&service, 0, &ResultBudget::new(limits(3, 9)))
+            .await
+            .expect("nine rows fit a ceiling of nine");
+        let refused = refusal(temporal_page_at(&service, 0, &ResultBudget::new(limits(3, 8))).await);
+
+        pretty_assertions::assert_eq!(temporal_gathered(&fits).len(), 9);
+        pretty_assertions::assert_eq!(refused, ResultBudgetExceeded::SourceRows { maximum: positive(8) });
     }
 
     /// Clause 6.23 carries the query in the body, so the POST binding walks by

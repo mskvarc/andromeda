@@ -12,12 +12,13 @@ use crate::{
     operation::ForwardingOperation,
     outcome::{ForwardReadOutcome, ForwardedTemporalEntities, MatchedSources},
     query_forwarding_error::QueryForwardingError,
-    read_fan_out::{ForwardedGetConditions, ForwardedRead, expand_registration_targets, read_outcome},
+    read_fan_out::{ForwardedGetConditions, ForwardedRead, SourceAnswer, expand_registration_targets, read_outcome},
     received_temporal_answer::ReceivedTemporalAnswer,
     registration_narrowing::{Narrowing, get_reads},
     registration_selection::{RegistrationSelection, RegistrationServing},
     request::{ForwardRetrieveRequest, ForwardTemporalQueryRequest, HistoryBudget, SourcePaging, TemporalAnswer},
-    result_budget::ResultBudget,
+    result_budget::{ResultBudget, ResultBudgetExceeded},
+    source_walk::{ReadPage, WalkedAnswer},
     split_entities::SplitEntities,
     term_resolver::TermResolver,
 };
@@ -27,6 +28,33 @@ use andromeda_ngsi_ld_model::{
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
 };
 use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
+
+/// The pages every source answered, each charged to `budget` as a walk charges
+/// its pages: every element the source sent as a row, and the entities it
+/// named as entities (clause 4.12).
+///
+/// # Errors
+///
+/// Returns [`ResultBudgetExceeded`] once everything charged to `budget`, by
+/// these pages and every earlier one of the request, exceeds it.
+fn charged_pages(
+    received: Vec<SourceAnswer<(ReceivedTemporalAnswer<ContextualEntity>, usize)>>,
+    budget: &ResultBudget,
+) -> Result<Vec<SourceAnswer<ReceivedTemporalAnswer<ContextualEntity>>>, ResultBudgetExceeded> {
+    received
+        .into_iter()
+        .map(|SourceAnswer { mode, error_status, entry }| {
+            let entry = match entry {
+                Some((answer, sent)) => {
+                    budget.charge_page(sent, answer.entities.iter().map(ReceivedTemporalAnswer::identifier))?;
+                    Some(answer)
+                }
+                None => None,
+            };
+            Ok(SourceAnswer { mode, error_status, entry })
+        })
+        .collect()
+}
 
 /// The outcome of a temporal read whose request already looped back onto this
 /// broker: no registration is selected, only the warning is reported.
@@ -49,7 +77,7 @@ impl FederationService {
     /// 5.7.4.4), each sent the part of the client's query it is registered for,
     /// and read as much of each source's answer as `paging` asks for: every
     /// page it links with `next` (clauses 4.3.6.7 and 5.5.9.1), or one
-    /// explicit page.
+    /// explicit page. Either is charged to the request's budget.
     ///
     /// # Errors
     ///
@@ -59,9 +87,9 @@ impl FederationService {
     /// cannot be read, and [`FederationError::Conflict`] when the selected
     /// registrations are mutually exclusive, each as
     /// [`QueryForwardingError::Federation`], and
-    /// [`QueryForwardingError::TooManyResults`] when a walk's answers exceed
-    /// the request's budget (clause 4.12). A source that fails to answer does
-    /// not fail the call: its failure travels as a warning.
+    /// [`QueryForwardingError::TooManyResults`] when the answers, walked or
+    /// paged, exceed the request's budget (clause 4.12). A source that fails
+    /// to answer does not fail the call: its failure travels as a warning.
     pub async fn forward_temporal_query(
         &self,
         target: &ContextTarget,
@@ -141,15 +169,18 @@ impl FederationService {
                 self.read_temporal_answers(walked).await
             }
             SourcePaging::WalkHistory(budget) => self.fan_out_history_walk(targets, conditions, budget).await?,
-            SourcePaging::Page(_) => {
+            SourcePaging::Page { budget, .. } => {
                 let received = self
                     .fan_out_read(
                         targets,
-                        |registration, outcome| FederationService::received_temporal_answer(registration, outcome).answer,
+                        |registration, outcome| {
+                            let ReadPage { answer, sent } = FederationService::received_temporal_answer(registration, outcome);
+                            answer.map(|answer| (answer, sent))
+                        },
                         conditions,
                     )
                     .await;
-                self.read_temporal_answers(received).await
+                self.read_temporal_answers(charged_pages(received, budget)?).await
             }
         };
         Ok(self
