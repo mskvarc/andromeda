@@ -2,7 +2,13 @@
 
 use crate::{
     mqtt_packet_limit::MqttPacketLimit,
-    schema::notifications::delivery::{MAX_CONCURRENT_DELIVERIES_CEILING, MAX_DELIVERY_ATTEMPTS_CEILING, MAX_DELIVERY_LEASE, MAX_ERROR_LENGTH_CEILING},
+    schema::notifications::delivery::{
+        MAX_CONCURRENT_DELIVERIES_CEILING,
+        MAX_DELIVERY_ATTEMPTS_CEILING,
+        MAX_DELIVERY_LEASE,
+        MAX_DELIVERY_RETRY_INTERVAL,
+        MAX_ERROR_LENGTH_CEILING,
+    },
     validate::{
         bound::{Quantity, Relation},
         config_key::{ConfigKey, QueueKey, QueueName},
@@ -55,6 +61,11 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
                 relation: Relation::AtMost,
                 limit: Limit::Fixed(Quantity::Duration(MAX_DELIVERY_LEASE)),
             },
+            Rule::Ordered {
+                key: ConfigKey::Queue(QueueName::NotificationDelivery, QueueKey::MaxRetryInterval),
+                relation: Relation::AtMost,
+                limit: Limit::Fixed(Quantity::Duration(MAX_DELIVERY_RETRY_INTERVAL)),
+            },
             at_most(
                 ConfigKey::NotificationsDeliveryMaxAttempts,
                 Quantity::Count(u64::from(MAX_DELIVERY_ATTEMPTS_CEILING)),
@@ -101,6 +112,8 @@ mod tests {
 
     const LEASE: ConfigKey = ConfigKey::Queue(QueueName::NotificationDelivery, QueueKey::LeaseTimeout);
 
+    const RETRY_CEILING: ConfigKey = ConfigKey::Queue(QueueName::NotificationDelivery, QueueKey::MaxRetryInterval);
+
     /// The refusal of `key` holding `value` past `ceiling`.
     fn past(key: ConfigKey, value: Quantity, ceiling: Quantity) -> ConfigurationViolation {
         ConfigurationViolation::OutOfRange {
@@ -116,6 +129,7 @@ mod tests {
         let attempts = ConfigKey::NotificationsDeliveryMaxAttempts;
         let mut config = BrokerConfig::local();
         config.notifications.delivery.queue.lease_timeout = HumanDuration::from_secs(86_401);
+        config.notifications.delivery.queue.max_retry_interval = HumanDuration::from_secs(86_401);
         config.notifications.delivery.max_attempts = NonZeroU32::MAX;
         config.notifications.delivery.max_concurrent = NonZeroU32::MIN.saturating_add(1_024);
         config.notifications.delivery.max_error_length = NonZeroU32::MIN.saturating_add(2_048);
@@ -127,12 +141,18 @@ mod tests {
                     Quantity::Duration(Duration::from_secs(86_401)),
                     Quantity::Duration(Duration::from_hours(24))
                 ),
+                past(
+                    RETRY_CEILING,
+                    Quantity::Duration(Duration::from_secs(86_401)),
+                    Quantity::Duration(Duration::from_hours(24))
+                ),
                 past(attempts, Quantity::Count(u64::from(u32::MAX)), Quantity::Count(2_147_483_647)),
                 past(ConfigKey::NotificationsDeliveryMaxConcurrent, Quantity::Count(1_025), Quantity::Count(1_024)),
                 past(ConfigKey::NotificationsDeliveryMaxErrorLength, Quantity::Count(2_049), Quantity::Count(2_048)),
             ]
         );
         config.notifications.delivery.queue.lease_timeout = HumanDuration::from_secs(86_400);
+        config.notifications.delivery.queue.max_retry_interval = HumanDuration::from_secs(86_400);
         config.notifications.delivery.max_attempts = NonZeroU32::MIN.saturating_add(2_147_483_646);
         config.notifications.delivery.max_concurrent = NonZeroU32::MIN.saturating_add(1_023);
         config.notifications.delivery.max_error_length = NonZeroU32::MIN.saturating_add(2_047);

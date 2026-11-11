@@ -125,6 +125,9 @@ pub enum PostgresType {
     /// `timestamptz[]`.
     #[iden = "timestamptz[]"]
     TimestamptzArray,
+    /// `float8[]`, the array type durations measured in seconds bind as.
+    #[iden = "float8[]"]
+    Float8Array,
     /// `uuid[]`.
     #[iden = "uuid[]"]
     UuidArray,
@@ -178,6 +181,7 @@ mod tests {
         assert_eq!(PostgresType::ByteaArray.to_string(), "bytea[]");
         assert_eq!(PostgresType::JsonbArray.to_string(), "jsonb[]");
         assert_eq!(PostgresType::TimestamptzArray.to_string(), "timestamptz[]");
+        assert_eq!(PostgresType::Float8Array.to_string(), "float8[]");
     }
 
     #[test]

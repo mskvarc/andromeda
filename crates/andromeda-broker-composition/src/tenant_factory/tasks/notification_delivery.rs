@@ -119,10 +119,9 @@ fn register_delivery_drain(
         async move {
             pacer
                 .run_drain_pass(execution.cause(), async move {
-                    let now = DateTime::<Utc>::from(execution.cutoff());
                     // A completed pass found the queue out of due deliveries or
                     // was cancelled, so no continuation follows it.
-                    let outcome = drain.execute(now, execution.cancellation()).await.map_err(classify_notification_failure)?;
+                    let outcome = drain.execute(execution.cancellation()).await.map_err(classify_notification_failure)?;
                     tracing::debug!(
                         claimed = outcome.claimed,
                         lease_lost = outcome.lease_lost,

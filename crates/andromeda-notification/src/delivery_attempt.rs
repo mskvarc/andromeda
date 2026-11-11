@@ -2,11 +2,13 @@
 //!
 //! The verdict is the delivery policy's: the attempt ceiling, the retry
 //! wait and the bound on a stored diagnostic are applied here, so the queue
-//! records a verdict as given and never needs to know any of them.
+//! records a verdict as given and never needs to know any of them. The wait
+//! is handed over as a step the queue adds to its own clock, never as an
+//! instant read from the broker's.
 
 use crate::{
     delivery_attempt_ceiling::DeliveryAttemptCeiling,
-    delivery_backoff::retry_due_at,
+    delivery_backoff::DeliveryBackoff,
     delivery_claim::UnreadableDelivery,
     delivery_entry::DeliveryEntry,
     delivery_error_bound::DeliveryErrorBound,
@@ -17,9 +19,6 @@ use crate::{
     notification_invariant::NotificationInvariant,
 };
 use andromeda_configuration::schema::notifications::delivery::DeliveryConfig;
-use andromeda_context_commit::lease_pass_clock::LeasePassClock;
-use andromeda_retry::schedule::BackoffSchedule;
-use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use tracing::{debug, error};
 
@@ -32,7 +31,7 @@ pub(crate) struct DeliveryAttempt {
     /// The attempt after which a retryable failure exhausts the delivery.
     attempt_ceiling: DeliveryAttemptCeiling,
     /// The wait before a failed delivery is due again.
-    retry_schedule: BackoffSchedule,
+    retry_schedule: DeliveryBackoff,
 }
 
 impl DeliveryAttempt {
@@ -62,25 +61,19 @@ impl DeliveryAttempt {
     /// the failed delivery, which the store does with the acknowledgement, and
     /// an exhausted probe hands the hold to a delivery due one first retry step
     /// later, as a delivery failing for the first time would be.
-    pub(crate) async fn verdict(&self, entry: &DeliveryEntry, clock: &LeasePassClock) -> Result<DeliveryVerdict, NotificationError> {
+    pub(crate) async fn verdict(&self, entry: &DeliveryEntry) -> Result<DeliveryVerdict, NotificationError> {
         trace_entry(entry);
         match self.transport.deliver(entry).await {
             DeliveryDisposition::Delivered | DeliveryDisposition::Obsolete => Ok(DeliveryVerdict::Delivered),
             DeliveryDisposition::RetryableFailure { detail } if !self.attempt_ceiling.is_final_attempt(entry.attempt_count) => Ok(DeliveryVerdict::Failed {
-                next_attempt_at: retry_due_at(&self.retry_schedule, entry.attempt_count, clock.now()).map_err(NotificationInvariant::AttemptCount)?,
+                retry_after: self.retry_schedule.step(entry.attempt_count).map_err(NotificationInvariant::AttemptCount)?,
                 detail: self.error_bound.truncate(&detail).into_owned(),
             }),
             DeliveryDisposition::RetryableFailure { detail } | DeliveryDisposition::TerminalFailure { detail } => Ok(DeliveryVerdict::Exhausted {
                 detail: self.error_bound.truncate(&detail).into_owned(),
-                next_probe_at: self.next_probe_at(clock)?,
+                probe_after: self.retry_schedule.first_step(),
             }),
         }
-    }
-
-    /// The instant the next probe of a held Subscription is due when the
-    /// delivery being exhausted was its probe: one first retry step from now.
-    fn next_probe_at(&self, clock: &LeasePassClock) -> Result<DateTime<Utc>, NotificationError> {
-        Ok(retry_due_at(&self.retry_schedule, 0, clock.now()).map_err(NotificationInvariant::AttemptCount)?)
     }
 
     /// The verdict on a claimed delivery whose stored row could not be read
@@ -90,16 +83,16 @@ impl DeliveryAttempt {
     /// is settled as exhausted with the reason it could not be read as its
     /// recorded failure, exactly like a delivery whose transport reported a
     /// terminal failure.
-    pub(crate) fn unreadable_verdict(&self, unreadable: &UnreadableDelivery, clock: &LeasePassClock) -> Result<DeliveryVerdict, NotificationError> {
+    pub(crate) fn unreadable_verdict(&self, unreadable: &UnreadableDelivery) -> DeliveryVerdict {
         error!(
             delivery_key = %unreadable.key,
             error = %unreadable.diagnostic,
             event = "notification_delivery_unreadable"
         );
-        Ok(DeliveryVerdict::Exhausted {
+        DeliveryVerdict::Exhausted {
             detail: self.error_bound.truncate(&unreadable.diagnostic).into_owned(),
-            next_probe_at: self.next_probe_at(clock)?,
-        })
+            probe_after: self.retry_schedule.first_step(),
+        }
     }
 }
 
