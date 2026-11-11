@@ -63,3 +63,13 @@ If you change a configuration key, regenerate the configuration template, JSON S
 ```sh
 ANDROMEDA_REGENERATE=1 cargo test -p andromeda-configuration
 ```
+
+## Grammar changes
+
+The grammar derive of `andromeda-ngsi-ld-lexicon` reads one file per type, so each grammar under its `grammar/` directory is also checked in under `grammar/.generated/`, followed by the shared Unicode rules of `_unicode.abnf`. The crate's tests fail when a composed copy no longer matches. If you change a grammar or the shared rules, rewrite the composed copies and commit them.
+
+```sh
+ANDROMEDA_REGENERATE=1 cargo test -p andromeda-ngsi-ld-lexicon
+```
+
+A new grammar needs its composed copy before a type can derive from it, because the crate doesn't compile while a derive names a file that doesn't exist. Add the grammar, run the command above, and then point the derive at the composed copy.
