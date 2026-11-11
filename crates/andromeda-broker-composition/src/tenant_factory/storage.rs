@@ -32,6 +32,7 @@ use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_http_context_registry::hosted_context_reference::TenantHostedContexts;
 use andromeda_jsonld::{configured_engine::build_engine, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_posted_query::store::PostedQueryStore;
 use andromeda_postgresql_context_store::{
     context_space::resolve_live_target,
     csource_registration::{pattern_forms_refresh::refresh_stale_pattern_forms, registration_store::PostgresRegistrationStore},
@@ -40,6 +41,7 @@ use andromeda_postgresql_context_store::{
     entity::repo::EntityRepository,
     entity_map::repo::EntityMapRepository,
     jsonld_context::repo::JsonLdContextRepository,
+    posted_query::repo::PostedQueryRepository,
     snapshot::{
         branch_upgrade::{SnapshotBranchState, snapshot_branch_state},
         repo::SnapshotRepository,
@@ -92,6 +94,9 @@ pub(super) struct TenantStorage {
     pub(super) registry_type_source: Arc<dyn RegistryTypeSource>,
     /// Entity Map store, shared by request handling and the expiry sweep.
     pub(super) entity_map_store: Arc<dyn EntityMapStore>,
+    /// The paged queries sent by POST the tenant holds for their page links,
+    /// shared by request handling and the expiry sweep.
+    pub(super) posted_query_store: Arc<dyn PostedQueryStore>,
     /// Snapshot control records and their lifecycle state.
     pub(super) snapshot_store: Arc<dyn SnapshotStore>,
     /// Entity Subscriptions the change notifier matches committed changes against.
@@ -221,6 +226,40 @@ fn tenant_engine(config: &TenantFactoryConfig, context_repo: &Arc<JsonLdContextR
     Ok(build_engine(&config.jsonld, Arc::clone(context_repo), recognizer)?)
 }
 
+/// The tenant's attribute and entity type name dictionary caches, warmed as
+/// the configuration asks.
+///
+/// One cache per dictionary per tenant, shared by every path that resolves an
+/// attribute or type IRI: the temporal catalogue, the entity repository's read
+/// path and the entity rows and projection the commit writes.
+async fn name_dictionaries(pool: &PgPool, config: &TenantFactoryConfig) -> (Arc<dyn NameLookup<AttributeName>>, Arc<dyn NameLookup<EntityTypeName>>) {
+    let attribute_names = Arc::new(NameCache::<AttributeName>::new(pool, &config.database.name_cache));
+    let entity_type_names = Arc::new(NameCache::<EntityTypeName>::new(pool, &config.database.name_cache));
+    // Read the schema stamp once and hand it to both dictionaries as their
+    // baseline, so a later out-of-band drop and recreate of this tenant is
+    // detected as a change from a known baseline rather than adopted silently,
+    // and the two caches share one catalogue read instead of each issuing its own.
+    match read_established_epoch(pool).await {
+        Ok(epoch) => {
+            attribute_names.adopt_epoch(epoch);
+            entity_type_names.adopt_epoch(epoch);
+        }
+        Err(error) => tracing::warn!(%error, event = "name_dictionary_epoch_unestablished"),
+    }
+    if matches!(config.database.name_cache.loading, NameLoading::Eager) {
+        if let Err(error) = attribute_names.preload().await {
+            tracing::warn!(%error, event = "attribute_names_preload_failed");
+        }
+        if let Err(error) = entity_type_names.preload().await {
+            tracing::warn!(%error, event = "entity_type_names_preload_failed");
+        }
+    }
+    (
+        attribute_names as Arc<dyn NameLookup<AttributeName>>,
+        entity_type_names as Arc<dyn NameLookup<EntityTypeName>>,
+    )
+}
+
 /// Open, migrate, validate, and warm every storage component for a tenant.
 ///
 /// The database is migrated over `migration_url`, which reaches PostgreSQL
@@ -268,33 +307,7 @@ pub(super) async fn initialize_storage(
     // pass runs unconditionally as a supervised scheduled task registered from
     // this port, whether or not a hit counter was attached.
     let cached_context_invalidation = Arc::clone(&context_repo) as Arc<dyn CachedContextInvalidation>;
-
-    let attribute_names = Arc::new(NameCache::<AttributeName>::new(&pool, &config.database.name_cache));
-    let entity_type_names = Arc::new(NameCache::<EntityTypeName>::new(&pool, &config.database.name_cache));
-    // Read the schema stamp once and hand it to both dictionaries as their
-    // baseline, so a later out-of-band drop and recreate of this tenant is
-    // detected as a change from a known baseline rather than adopted silently,
-    // and the two caches share one catalogue read instead of each issuing its own.
-    match read_established_epoch(&pool).await {
-        Ok(epoch) => {
-            attribute_names.adopt_epoch(epoch);
-            entity_type_names.adopt_epoch(epoch);
-        }
-        Err(error) => tracing::warn!(%error, event = "name_dictionary_epoch_unestablished"),
-    }
-    if matches!(config.database.name_cache.loading, NameLoading::Eager) {
-        if let Err(error) = attribute_names.preload().await {
-            tracing::warn!(%error, event = "attribute_names_preload_failed");
-        }
-        if let Err(error) = entity_type_names.preload().await {
-            tracing::warn!(%error, event = "entity_type_names_preload_failed");
-        }
-    }
-    // One cache per dictionary per tenant, shared by every path that resolves
-    // an attribute or type IRI: the temporal catalogue, the entity repository's
-    // read path and the entity rows and projection the commit writes.
-    let attribute_names = Arc::clone(&attribute_names) as Arc<dyn NameLookup<AttributeName>>;
-    let entity_type_names = Arc::clone(&entity_type_names) as Arc<dyn NameLookup<EntityTypeName>>;
+    let (attribute_names, entity_type_names) = name_dictionaries(&pool, config).await;
     // Probe the edition once: the TSL build converts aged chunks to the hypercore
     // columnstore, the Apache-2.0 core runs the hypertables uncompressed. The
     // reconciler below enables the columnstore only where this finds one, so an
@@ -334,6 +347,7 @@ pub(super) async fn initialize_storage(
     let registry_type_source = Arc::clone(&registration_repository) as Arc<dyn RegistryTypeSource>;
     let registration_store = registration_repository as Arc<dyn RegistrationStore>;
     let entity_map_store = Arc::new(EntityMapRepository::new(&pool)) as Arc<dyn EntityMapStore>;
+    let posted_query_store = Arc::new(PostedQueryRepository::new(&pool)) as Arc<dyn PostedQueryStore>;
     let snapshot_store = Arc::new(SnapshotRepository::new(&pool)) as Arc<dyn SnapshotStore>;
     let stored_filter_matching = EnabledExtensions::from(&config.extensions).language_targeting().matching();
     let subscription_cache = Arc::new(SubscriptionCache::new(tenant.clone(), stored_filter_matching));
@@ -358,6 +372,7 @@ pub(super) async fn initialize_storage(
         registration_store,
         registry_type_source,
         entity_map_store,
+        posted_query_store,
         snapshot_store,
         subscription_cache,
         spatial,

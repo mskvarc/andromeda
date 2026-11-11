@@ -13,6 +13,7 @@ use crate::{
         management::ManagementConfig,
         notifications::NotificationsConfig,
         observability::ObservabilityConfig,
+        posted_query::PostedQueryConfig,
         request_limits::RequestLimitsConfig,
         server::ServerConfig,
         snapshot::SnapshotConfig,
@@ -99,6 +100,11 @@ pub struct BrokerConfig {
     #[schemars(description = "Snapshot lifetimes, quotas and preparation.")]
     pub snapshot: SnapshotConfig,
 
+    /// How long a paged query sent by POST is held for its page links, and
+    /// how many one tenant keeps.
+    #[schemars(description = "How long a paged query sent by POST is kept for the page links of its result, and how many one tenant keeps.")]
+    pub posted_query: PostedQueryConfig,
+
     /// Andromeda's features beyond the NGSI-LD specification.
     #[schemars(description = "Andromeda's features beyond the NGSI-LD specification.")]
     pub extensions: ExtensionsConfig,
@@ -128,6 +134,7 @@ impl BrokerConfig {
             notifications,
             federation,
             snapshot,
+            posted_query,
             extensions,
             observability,
         } = BuiltInDefaults::default();
@@ -146,6 +153,7 @@ impl BrokerConfig {
             notifications,
             federation,
             snapshot,
+            posted_query,
             extensions,
             observability,
         }

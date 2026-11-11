@@ -20,6 +20,7 @@ use axum::{
 };
 use iri_rs::IriRefBuf;
 use mediatype::MediaTypeBuf;
+use thiserror::Error;
 use url::{Url, form_urlencoded};
 
 /// The request a response's pointers rebuild, as a client reaches it through
@@ -52,7 +53,46 @@ impl PointedRequest {
     fn path(&self) -> String {
         format!("{}{}", api_root_path(self.api_root.as_ref()), self.addressed.path())
     }
+
+    /// The request a pointer of a query sent by POST is followed as: the GET
+    /// binding of the same query below the same API root, with the URL
+    /// parameters the POST carried.
+    ///
+    /// Clauses 6.23.3.1 and 6.24.3.1 answer the POST binding on
+    /// `entityOperations/query` beside the `entities` resource whose GET
+    /// binding answers the same query (clauses 6.4.3.2 and 6.18.3.2).
+    ///
+    /// # Errors
+    ///
+    /// [`NotAPostedQuery`] for a request addressed to any other path, which no
+    /// POST query binding is routed on.
+    pub fn into_query_binding(self) -> Result<PointedRequest, NotAPostedQuery> {
+        let PointedRequest { api_root, addressed } = self;
+        let root = addressed.path().strip_suffix(POSTED_QUERY_PATH).ok_or(NotAPostedQuery)?;
+        let target = match addressed.query() {
+            Some(query) => format!("{root}{QUERY_PATH}?{query}"),
+            None => format!("{root}{QUERY_PATH}"),
+        };
+        Ok(PointedRequest {
+            api_root,
+            addressed: Uri::try_from(target).map_err(|_| NotAPostedQuery)?,
+        })
+    }
 }
+
+/// The path a query sent by POST is answered on, below the API root of its
+/// operation family.
+const POSTED_QUERY_PATH: &str = "/entityOperations/query";
+
+/// The path the GET binding of the same query is answered on, below the same
+/// API root.
+const QUERY_PATH: &str = "/entities";
+
+/// A request whose pointers were to be followed as a GET query, addressed to
+/// no POST query binding.
+#[derive(Debug, Error, PartialEq, Eq)]
+#[error("the request was not addressed to a query binding answered by POST")]
+pub struct NotAPostedQuery;
 
 /// The target `request` rebuilt with every parameter named in `replaced`
 /// removed from its query string and `set` appended in order; every other
@@ -95,7 +135,8 @@ pub(crate) fn append_typed_links(response: &mut Response, links: Vec<(RelationTy
 
 #[cfg(test)]
 mod tests {
-    use crate::link_target::{PointedRequest, rebuilt_target};
+    use crate::link_target::{NotAPostedQuery, PointedRequest, rebuilt_target};
+    use pretty_assertions::assert_eq;
     use url::{Url, form_urlencoded};
 
     fn request(api_root: Option<&str>, raw: &str) -> PointedRequest {
@@ -146,6 +187,34 @@ mod tests {
             rebuilt_target(&pointed, &["limit"], &[("limit", "3")]),
             "/context-broker/ngsi-ld/v1/entities?type=V&limit=3"
         );
+    }
+
+    /// The entity and the temporal POST query bindings are each followed on
+    /// the `entities` resource below their own API root, keeping the URL
+    /// parameters and the configured `apiRoot` the POST was reached through.
+    #[test]
+    fn a_posted_query_is_followed_on_the_get_binding_below_the_same_api_root() {
+        for (posted, followed) in [
+            ("/ngsi-ld/v1/entityOperations/query?limit=2", "/context-broker/ngsi-ld/v1/entities?limit=3"),
+            (
+                "/ngsi-ld/v1/temporal/entityOperations/query?limit=2",
+                "/context-broker/ngsi-ld/v1/temporal/entities?limit=3",
+            ),
+        ] {
+            let pointed = request(Some("https://proxy.example/context-broker"), posted)
+                .into_query_binding()
+                .expect("a POST query binding");
+            pretty_assertions::assert_eq!(rebuilt_target(&pointed, &["limit"], &[("limit", "3")]), followed);
+        }
+        let bare = request(None, "/ngsi-ld/v1/entityOperations/query")
+            .into_query_binding()
+            .expect("a POST query binding");
+        pretty_assertions::assert_eq!(rebuilt_target(&bare, &[], &[]), "/ngsi-ld/v1/entities");
+    }
+
+    #[test]
+    fn a_request_to_any_other_path_is_no_posted_query() {
+        assert_eq!(request(None, "/ngsi-ld/v1/entities?type=V").into_query_binding(), Err(NotAPostedQuery));
     }
 
     #[test]

@@ -75,6 +75,11 @@ pub mod verify_command;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: ["andromeda-postgresql-context-store"],
-    allow_workspace_dev_dependencies: ["andromeda-ngsi-ld-lexicon", "andromeda-postgresql-codes", "andromeda-postgresql-schema"],
+    allow_workspace_dev_dependencies: [
+        "andromeda-ngsi-ld-lexicon",
+        "andromeda-ngsi-ld-request",
+        "andromeda-postgresql-codes",
+        "andromeda-postgresql-schema",
+    ],
     allow_production_dependencies: all,
 }

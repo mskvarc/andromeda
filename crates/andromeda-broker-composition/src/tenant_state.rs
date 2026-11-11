@@ -6,6 +6,7 @@ use andromeda_entity::{EntityService, discovery::EntityDiscoveryService, query::
 use andromeda_entity_map::service::EntityMapService;
 use andromeda_federation::FederationService;
 use andromeda_http_context_registry::tenant_context_hosting::TenantContextHosting;
+use andromeda_posted_query::service::PostedQueryService;
 use andromeda_registration::RegistrationService;
 use andromeda_snapshot::service::SnapshotService;
 use andromeda_subscription::{csource::CsrSubscriptionVariant, entity::EntitySubscriptionVariant, lifecycle::SubscriptionService};
@@ -40,6 +41,9 @@ pub(crate) struct AndromedaState {
     pub forwarding: Arc<FederationService>,
     /// The Entity Maps a distributed query records and later pages read back.
     pub entity_maps: Arc<EntityMapService>,
+    /// The paged queries sent by POST the tenant holds for the page links of
+    /// their result.
+    pub posted_queries: Arc<PostedQueryService>,
     /// The distributed side of subscriptions; absent when no advertised URL
     /// makes this broker reachable for the notifications it would receive.
     pub subscription_forwarding: Option<Arc<SubscriptionForwardingService>>,

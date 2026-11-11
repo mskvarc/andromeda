@@ -25,6 +25,7 @@ use andromeda_postgresql_schema::{
     entity_map::EntityMaps,
     jsonld::JsonldContexts,
     notification::NotificationDeliveries,
+    posted_query::PostedQueries,
     queue::{PendingSideEffects, TemporalAppendIntents},
     snapshot::{SnapshotNotificationOutbox, SnapshotPreparation, Snapshots, branch_is_current},
     subscription_forwarding::ForwardedSubscriptionClaims,
@@ -95,6 +96,7 @@ pub(crate) fn least_due_select(current: BranchSchemaVersion) -> SelectStatement 
         earliest_min(Snapshots::Table, Snapshots::ExpiresAt),
         orphan_branch_due(),
         earliest_min(EntityMaps::Table, EntityMaps::ExpiresAt),
+        earliest_min(PostedQueries::Table, PostedQueries::ExpiresAt),
         cached_context_expiry_min(),
         // A copy placement cut off before its source answered is placed again
         // once its claim's lease ends.
@@ -364,10 +366,11 @@ mod tests {
     }
 
     #[test]
-    fn the_probe_reads_snapshot_and_entity_map_expiry() {
+    fn the_probe_reads_snapshot_entity_map_and_posted_query_expiry() {
         let sql = least_sql();
         assert!(sql.contains("FROM \"snapshots\""), "{sql}");
         assert!(sql.contains("FROM \"entity_maps\""), "{sql}");
+        assert!(sql.contains("FROM \"posted_queries\""), "{sql}");
     }
 
     #[test]

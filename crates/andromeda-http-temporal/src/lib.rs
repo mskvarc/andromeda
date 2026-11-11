@@ -38,6 +38,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-render",
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-request",
+        "andromeda-posted-query",
         "andromeda-temporal",
         "andromeda-tenancy",
     ],

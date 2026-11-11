@@ -80,7 +80,7 @@ pub(crate) async fn admit_request(
     context: &AdmittedContext,
     protocol: NgsiLdProtocolHeaders,
     query: &mut EntityQueryParameters,
-    binding: QueryBinding,
+    binding: &QueryBinding,
     instance: &HttpUri,
 ) -> Result<AdmittedQuery, ProblemResponse> {
     if !target.permits_federation() {

@@ -839,9 +839,9 @@ admission_timeout = "20s"
 [expiry]
 
 # How often the expiry sweeps run, over entities and their attributes,
-# subscriptions, context source registrations, Snapshots and Entity Maps. An
-# expired resource may stay in storage for up to one interval, but the API never
-# serves it.
+# subscriptions, context source registrations, Snapshots, Entity Maps and the
+# queries sent by POST that are kept for their page links. An expired resource
+# may stay in storage for up to one interval, but the API never serves it.
 #
 # Must be above zero.
 sweep_interval = "30s"
@@ -1672,6 +1672,29 @@ recovery_interval = "30s"
 #
 # Must be above zero, and below `request_limits.timeout`.
 scoped_operation_timeout = "20s"
+
+# How long a paged query sent by POST is kept for the page links of its result,
+# and how many one tenant keeps.
+[posted_query]
+
+# How long a query sent by POST is kept after the last POST that sent it.
+# Following a page link does not extend it.
+#
+# Must be above zero.
+lifetime = "1h"
+
+# How many queries sent by POST, and how much storage, one tenant keeps.
+[posted_query.quota]
+
+# The most queries sent by POST one tenant keeps, or `"unlimited"` to keep any
+# number.
+max_per_tenant = 10000
+
+# The most storage one tenant's kept queries take, or `"unlimited"` to let them
+# take any amount. The largest query a client may send fits within it.
+#
+# Must be at least `request_limits.max_body`.
+max_storage_per_tenant = "256 MiB"
 
 # Andromeda's features beyond the NGSI-LD specification.
 [extensions]

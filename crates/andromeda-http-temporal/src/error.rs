@@ -13,11 +13,17 @@ use andromeda_failure_classification::{
 use andromeda_federation::error::FederationError;
 use andromeda_http_context_registry::response_rendering::{ResponseContextError, classify_response_context_error};
 use andromeda_http_extraction::classification::classify_tenancy_error;
-use andromeda_http_response::{entity_map_failure::classify_entity_map_error, problem_response::ProblemResponse};
+use andromeda_http_response::{
+    entity_map_failure::classify_entity_map_error,
+    link_target::NotAPostedQuery,
+    posted_query_failure::classify_posted_query_error,
+    problem_response::ProblemResponse,
+};
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
+use andromeda_posted_query::error::PostedQueryError;
 use andromeda_temporal::error::TemporalError;
 use andromeda_tenancy::error::TenancyError;
 use axum::http::Uri;
@@ -54,6 +60,20 @@ impl TemporalHttpClassify for FederationError {
 impl TemporalHttpClassify for ParameterError {
     fn classify_for_temporal_http(&self) -> ClassifiedReport {
         classify_parameter_error(self)
+    }
+}
+
+impl TemporalHttpClassify for PostedQueryError {
+    fn classify_for_temporal_http(&self) -> ClassifiedReport {
+        classify_posted_query_error(self)
+    }
+}
+
+// A POST query handler is reached only on its own route, so a request whose
+// path names no POST query binding is a wiring fault of the broker.
+impl TemporalHttpClassify for NotAPostedQuery {
+    fn classify_for_temporal_http(&self) -> ClassifiedReport {
+        ClassifiedReport::internal(self, InternalFailureSummary::new("failed to page the posted query"))
     }
 }
 

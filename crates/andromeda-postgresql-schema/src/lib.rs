@@ -24,6 +24,7 @@ pub mod jsonld;
 pub mod maintenance;
 pub mod name_dictionary;
 pub mod notification;
+pub mod posted_query;
 pub mod queue;
 pub mod snapshot;
 pub mod string_value_column;

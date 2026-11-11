@@ -40,6 +40,7 @@ impl EntityStateResolver for BrokerEntityStateResolver {
                     .entity_discovery(Arc::clone(&state.entity_discovery))
                     .forwarding(Arc::clone(&state.forwarding))
                     .entity_maps(Arc::clone(&state.entity_maps))
+                    .posted_queries(Arc::clone(&state.posted_queries))
                     .live_target(state.live_target.clone())
                     .snapshot_targets(snapshot_targets)
                     .context_hosting(state.context_hosting.clone())

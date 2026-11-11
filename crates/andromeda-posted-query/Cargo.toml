@@ -1,0 +1,31 @@
+[package]
+name = "andromeda-posted-query"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+description = "Paged queries sent by POST that the broker holds for the page links of their result, and their replaceable storage port"
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-configuration.workspace = true
+andromeda-jsonld.workspace = true
+andromeda-ngsi-ld-model.workspace = true
+andromeda-ngsi-ld-request.workspace = true
+andromeda-persistence-failure.workspace = true
+chrono = "0.4.45"
+serde_json = "1.0.154"
+strum = { version = "0.28.0", features = ["derive"] }
+thiserror = "2.0.21"
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true
+andromeda-json-literal.workspace = true
+iri-rs = { version = "4.1.0", features = ["serde", "static"] }
+pretty_assertions = "1.4.1"
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread"] }

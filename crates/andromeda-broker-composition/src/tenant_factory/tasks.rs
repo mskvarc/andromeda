@@ -6,6 +6,7 @@ mod csource_notification;
 mod discovery_census;
 mod entity_notification;
 mod expiry;
+mod expiry_sweep;
 mod maintenance;
 mod notification_delivery;
 mod notification_schedule;

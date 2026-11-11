@@ -17,23 +17,17 @@
 
 use crate::temporal::query::forwarding::ForwardedHistory;
 use andromeda_http_extraction::pagination_policy::RequestPagination;
-use andromeda_http_headers::media_type::ResponseMediaType;
-use andromeda_http_response::{
-    link_target::PointedRequest,
-    pagination::{PageOutcome, append_page_links},
-};
+use andromeda_http_response::{page_link_targets::PageLinkTargets, page_pointing::PagePointing, pagination::PageOutcome};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_reach::PageReach, page_window::PageWindow};
 use andromeda_ngsi_ld_request::{
     error::ParameterError,
     pagination::{
-        page_context::PageContext,
         page_pointers::PagePointers,
         page_request::{CollectionOrder, PageRequest},
     },
     query::{QUERY_PAGE_SIZE, temporal::TemporalQueryParameters},
 };
-use axum::response::Response;
 use std::borrow::Cow;
 
 /// The window of matching entities a temporal query answers with.
@@ -43,14 +37,8 @@ pub(crate) struct QueriedPage {
     window: PageWindow,
     /// Whether the total is reported (clause 6.3.13 `count`).
     count: CountPolicy,
-    /// Whether the binding the query arrived on can carry a pointer to the
-    /// neighbouring pages at all.
-    pointers: PagePointers,
-    /// The `@context` the query is paged under, which every pointer carries
-    /// (clause 5.5.9.1).
-    context: PageContext,
-    /// The request every pointer rebuilds.
-    pointed: PointedRequest,
+    /// The walk the page's pointers belong to and the request they rebuild.
+    pointing: PagePointing,
 }
 
 /// What the local temporal store reads for one query.
@@ -65,17 +53,10 @@ pub(crate) struct LocalRead<'page> {
 }
 
 impl QueriedPage {
-    /// The element page `window` selects, counted as `count` says, on a binding
-    /// whose pointers `pointers` describes, paged under `context`, whose
-    /// pointers rebuild `pointed`.
-    pub(crate) const fn of(window: PageWindow, count: CountPolicy, pointers: PagePointers, context: PageContext, pointed: PointedRequest) -> QueriedPage {
-        QueriedPage {
-            window,
-            count,
-            pointers,
-            context,
-            pointed,
-        }
+    /// The element page `window` selects, counted as `count` says, pointing at
+    /// its neighbours as `pointing` says.
+    pub(crate) const fn of(window: PageWindow, count: CountPolicy, pointing: PagePointing) -> QueriedPage {
+        QueriedPage { window, count, pointing }
     }
 
     /// The element page `params` asks for under `pagination`, on a binding
@@ -99,7 +80,11 @@ impl QueriedPage {
             query: &pagination.query,
         };
         let window = pagination.policy.window(&params.page, request)?;
-        Ok(QueriedPage::of(window, params.count, pointers, pagination.context, pagination.pointed))
+        Ok(QueriedPage::of(
+            window,
+            params.count,
+            PagePointing::new(pointers, pagination.context, pagination.query, pagination.pointed),
+        ))
     }
 
     /// Whether the client asked for the total (clause 6.3.13).
@@ -129,7 +114,7 @@ impl QueriedPage {
         }
     }
 
-    /// Add the clause 6.3.10 pagination links over this element page.
+    /// The clause 6.3.10 pagination links over this element page.
     ///
     /// In offset mode a query that asked for a count knows its total and drives
     /// `next` from it, plus the Andromeda `first`/`last` pair; one that did not
@@ -141,33 +126,9 @@ impl QueriedPage {
     /// flat join append the entities the matches link to, and those accompany
     /// the result set rather than belonging to it, so they must not decide
     /// whether a following page exists.
-    ///
-    /// A binding that carried its query in the request body emits no link:
-    /// clause 6.3.10 asks for a target "that could be dereferenced by an
-    /// NGSI-LD Client to retrieve the next page", and the clause 5.2.23 body of
-    /// clause 6.24.3.1 is not in any URI-reference that could be.
-    pub(crate) fn append_links(
-        &self,
-        response: &mut Response,
-        media_type: ResponseMediaType,
-        total: Option<usize>,
-        reach: PageReach,
-        boundary: Option<(Identifier, Identifier)>,
-    ) {
-        match self.pointers {
-            PagePointers::NotDereferenceable => {}
-            PagePointers::OverRequestUri => {
-                let total = total.map(|count| i64::try_from(count).unwrap_or(i64::MAX));
-                append_page_links(
-                    response,
-                    &self.pointed,
-                    &self.context,
-                    &self.window,
-                    PageOutcome { total, reach, boundary },
-                    media_type,
-                );
-            }
-        }
+    pub(crate) fn links(&self, total: Option<usize>, reach: PageReach, boundary: Option<(Identifier, Identifier)>) -> PageLinkTargets {
+        let total = total.map(|count| i64::try_from(count).unwrap_or(i64::MAX));
+        self.pointing.targets(&self.window, PageOutcome { total, reach, boundary })
     }
 }
 
@@ -175,7 +136,7 @@ impl QueriedPage {
 mod tests {
     use crate::temporal::query::page::QueriedPage;
     use andromeda_http_headers::media_type::ResponseMediaType;
-    use andromeda_http_response::link_target::PointedRequest;
+    use andromeda_http_response::{link_target::PointedRequest, page_pointing::PagePointing};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
@@ -183,7 +144,7 @@ mod tests {
         page_reach::PageReach,
         page_window::{PageStart, PageWindow},
     };
-    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_pointers::PagePointers};
+    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_pointers::PagePointers, page_query::PageQuery};
     use axum::{
         http::{StatusCode, Uri},
         response::{IntoResponse, Response},
@@ -200,15 +161,32 @@ mod tests {
             .join(", ")
     }
 
-    /// An offset element page of `limit` matches starting at `offset`.
-    fn offset_page(limit: u32, offset: u32, pointers: PagePointers) -> QueriedPage {
-        QueriedPage::of(
-            PageWindow::offset(limit, offset),
-            CountPolicy::Omit,
+    /// The pointing of a page built over `pointers`, rebuilding the request
+    /// `pointed`.
+    fn pointing(pointers: PagePointers, pointed: Uri) -> PagePointing {
+        PagePointing::new(
             pointers,
             PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
-            PointedRequest::new(None, instance()),
+            PageQuery::of(Some("type=Vehicle")),
+            PointedRequest::new(None, pointed),
         )
+    }
+
+    /// Append the links of `page` to `response`.
+    fn append_links(
+        page: &QueriedPage,
+        response: &mut Response,
+        media_type: ResponseMediaType,
+        total: Option<usize>,
+        reach: PageReach,
+        boundary: Option<(Identifier, Identifier)>,
+    ) {
+        page.links(total, reach, boundary).append_to(response, media_type);
+    }
+
+    /// An offset element page of `limit` matches starting at `offset`.
+    fn offset_page(limit: u32, offset: u32, pointers: PagePointers) -> QueriedPage {
+        QueriedPage::of(PageWindow::offset(limit, offset), CountPolicy::Omit, pointing(pointers, instance()))
     }
 
     /// A cursor element page of 2 matches starting at `cursor`.
@@ -219,9 +197,7 @@ mod tests {
                 start: PageStart::Cursor(cursor),
             },
             CountPolicy::Omit,
-            PagePointers::OverRequestUri,
-            PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
-            PointedRequest::new(None, instance()),
+            pointing(PagePointers::OverRequestUri, instance()),
         )
     }
 
@@ -240,7 +216,7 @@ mod tests {
         let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, ResponseMediaType::JsonLd, None, PageReach::Continues, None);
+        append_links(&page, &mut response, ResponseMediaType::JsonLd, None, PageReach::Continues, None);
 
         let link = links(&response);
         assert!(link.contains("rel=\"next\""), "{link}");
@@ -254,7 +230,7 @@ mod tests {
         let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, ResponseMediaType::JsonLd, None, PageReach::Exhausted, None);
+        append_links(&page, &mut response, ResponseMediaType::JsonLd, None, PageReach::Exhausted, None);
 
         pretty_assertions::assert_eq!(links(&response), String::new());
     }
@@ -266,7 +242,7 @@ mod tests {
         let page = offset_page(2, 4, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, ResponseMediaType::JsonLd, None, PageReach::Exhausted, None);
+        append_links(&page, &mut response, ResponseMediaType::JsonLd, None, PageReach::Exhausted, None);
 
         let link = links(&response);
         assert!(link.contains("rel=\"prev\""), "{link}");
@@ -280,7 +256,7 @@ mod tests {
         let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, ResponseMediaType::JsonLd, Some(7), PageReach::Continues, None);
+        append_links(&page, &mut response, ResponseMediaType::JsonLd, Some(7), PageReach::Continues, None);
 
         let link = links(&response);
         assert!(link.contains("rel=\"next\""), "{link}");
@@ -295,7 +271,7 @@ mod tests {
         let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, ResponseMediaType::JsonLd, Some(2), PageReach::Continues, None);
+        append_links(&page, &mut response, ResponseMediaType::JsonLd, Some(2), PageReach::Continues, None);
 
         pretty_assertions::assert_eq!(links(&response), String::new());
     }
@@ -308,7 +284,7 @@ mod tests {
         let page = offset_page(2, 2, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, ResponseMediaType::JsonLd, Some(7), PageReach::Continues, None);
+        append_links(&page, &mut response, ResponseMediaType::JsonLd, Some(7), PageReach::Continues, None);
 
         let link = links(&response);
         assert!(link.contains("rel=\"first\""), "{link}");
@@ -318,19 +294,25 @@ mod tests {
     }
 
     /// Clause 6.3.10 asks for a Link Target "that could be dereferenced by an
-    /// NGSI-LD Client to retrieve the next page of NGSI-LD Elements", and
-    /// clause 5.5.9.1 that the pointers "contain all the parameters needed [...]
-    /// without further interactions with the API". The clause 5.2.23 body of
-    /// the clause 6.24.3.1 POST binding is in no URI-reference, so that binding
-    /// points at nothing rather than at a resource a GET cannot read.
+    /// NGSI-LD Client to retrieve the next page of NGSI-LD Elements". The
+    /// clause 5.2.23 body of the clause 6.24.3.1 POST binding is in no
+    /// URI-reference, so its pointers name the query the broker holds by its
+    /// key, on the GET binding of the same query.
     #[test]
-    fn a_body_carried_query_offers_no_pointer_at_all() {
-        let page = offset_page(2, 4, PagePointers::NotDereferenceable);
+    fn a_body_carried_query_points_by_the_key_of_the_held_query() {
+        let followed: Uri = "/ngsi-ld/v1/temporal/entities?limit=2".parse().expect("a valid request URI");
+        let page = QueriedPage::of(PageWindow::offset(2, 4), CountPolicy::Omit, pointing(PagePointers::OverPostedQuery, followed));
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, ResponseMediaType::JsonLd, Some(99), PageReach::Continues, None);
+        append_links(&page, &mut response, ResponseMediaType::JsonLd, Some(99), PageReach::Continues, None);
 
-        pretty_assertions::assert_eq!(links(&response), String::new());
+        let link = links(&response);
+        let key = PageQuery::of(Some("type=Vehicle")).encode();
+        assert!(
+            link.contains(&format!("/ngsi-ld/v1/temporal/entities?limit=2&offset=6&postedQuery={key}")),
+            "{link}"
+        );
+        assert!(!link.contains("pageContext"), "{link}");
     }
 
     /// Clause 6.3.10: the links carry the negotiated media type, so the client
@@ -340,7 +322,7 @@ mod tests {
         let page = offset_page(2, 0, PagePointers::OverRequestUri);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, ResponseMediaType::Json, None, PageReach::Continues, None);
+        append_links(&page, &mut response, ResponseMediaType::Json, None, PageReach::Continues, None);
 
         let link = links(&response);
         assert!(link.contains("type=\"application/json\""), "{link}");
@@ -359,7 +341,7 @@ mod tests {
         let mut response = StatusCode::OK.into_response();
 
         let boundary = Some((element_id("urn:ngsi-ld:E:001"), element_id("urn:ngsi-ld:E:002")));
-        page.append_links(&mut response, ResponseMediaType::JsonLd, None, PageReach::Continues, boundary);
+        append_links(&page, &mut response, ResponseMediaType::JsonLd, None, PageReach::Continues, boundary);
 
         let link = links(&response);
         assert!(!link.contains("rel=\"first\""), "{link}");
@@ -379,7 +361,7 @@ mod tests {
         let mut response = StatusCode::OK.into_response();
 
         let boundary = Some((element_id("urn:ngsi-ld:E:003"), element_id("urn:ngsi-ld:E:004")));
-        page.append_links(&mut response, ResponseMediaType::JsonLd, None, PageReach::Continues, boundary);
+        append_links(&page, &mut response, ResponseMediaType::JsonLd, None, PageReach::Continues, boundary);
 
         let link = links(&response);
         assert!(link.contains("rel=\"prev\""), "{link}");
@@ -395,7 +377,7 @@ mod tests {
         let page = cursor_page(None);
         let mut response = StatusCode::OK.into_response();
 
-        page.append_links(&mut response, ResponseMediaType::JsonLd, None, PageReach::Exhausted, None);
+        append_links(&page, &mut response, ResponseMediaType::JsonLd, None, PageReach::Exhausted, None);
 
         pretty_assertions::assert_eq!(links(&response), String::new());
     }

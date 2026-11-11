@@ -10,7 +10,6 @@
 use crate::{
     entity::{
         AcceptFormat,
-        EntityQuery,
         EntityResultExt,
         EntityTenantState,
         GeometrySelection,
@@ -21,6 +20,7 @@ use crate::{
         ResolvedJoin,
         Response,
         StatusCode,
+        followed_query::{FollowedQuery, followed_query},
         query_admission::admit_request,
         query_binding::QueryBinding,
         query_forwarding::{ForwardedQueryResults, MergedEntities, QueryForwarding},
@@ -41,8 +41,14 @@ use andromeda_entity_map::recording::PageMatches;
 use andromeda_failure_classification::result_limit_failure::classify_result_budget_refusal;
 use andromeda_federation::split_entities::SplitEntities;
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
-use andromeda_http_extraction::{api_root::ApiRoot, context_target, pagination_policy::RequestPagination, response_context_request::ResponseContextRequest};
-use andromeda_http_response::unreadable_entity_warning::with_unreadable_entity_warnings;
+use andromeda_http_extraction::{
+    api_root::ApiRoot,
+    context_target,
+    entity_query_source::EntityQuerySource,
+    pagination_policy::RequestPagination,
+    response_context_request::ResponseContextRequest,
+};
+use andromeda_http_response::{page_pointing::PagePointing, unreadable_entity_warning::with_unreadable_entity_warnings};
 use andromeda_jsonld::user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context};
 use andromeda_linked_retrieval::{narrowing::list::ListInForce, plan::JoinPlan, typed::TypedEntities};
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
@@ -89,15 +95,18 @@ pub(crate) struct EntityQueryRequest {
     pub(crate) context: AdmittedContext,
     /// The query itself, in the raw form the binding decoded it to.
     pub(crate) query: EntityQueryParameters,
-    /// Which binding decoded it, which decides how the query is forwarded and
-    /// whether the response can point at its neighbouring pages.
+    /// Which binding decoded it, which decides how the query is forwarded, what
+    /// the response's pointers to its neighbouring pages are built over, and
+    /// whether the broker holds the query for them.
     pub(crate) binding: QueryBinding,
     /// How the broker pages its collections (clause 5.5.9), and the
     /// `@context` the query is paged under.
     pub(crate) pagination: RequestPagination,
 }
 
-/// Query Entities through its query-string binding (clause 6.4.3.2).
+/// Query Entities through its query-string binding (clause 6.4.3.2), the
+/// query written in the URL or held by the broker for a followed pointer of a
+/// query sent by POST.
 pub(crate) async fn query(
     context_target::ExistingTargetedTenantState { services, target, snapshot: _ }: EntityTenantState,
     accept: AcceptFormat,
@@ -105,13 +114,23 @@ pub(crate) async fn query(
     ResponseContextRequest { context, api_root }: ResponseContextRequest,
     protocol: NgsiLdProtocolHeaders,
     pagination: RequestPagination,
-    EntityQuery(query): EntityQuery,
+    source: EntityQuerySource,
 ) -> Result<Response, ProblemResponse> {
-    // Clause 5.5.7 addresses the request's `@context` on every operation that
-    // expands one, so a query admits it before anything is read under it.
-    let context = admit_user_context(services.entity_query.engine(), SubmittedContext::from(context))
-        .await
-        .with_entity_instance(&uri)?;
+    let (context, query, binding, pagination) = match source {
+        EntityQuerySource::Query(query) => {
+            // Clause 5.5.7 addresses the request's `@context` on every
+            // operation that expands one, so a query admits it before anything
+            // is read under it.
+            let context = admit_user_context(services.entity_query.engine(), SubmittedContext::from(context))
+                .await
+                .with_entity_instance(&uri)?;
+            (context, *query, QueryBinding::QueryString, pagination)
+        }
+        EntityQuerySource::Posted(reference) => {
+            let FollowedQuery { context, query, pagination } = followed_query(&services, reference, &context, pagination, &uri).await?;
+            (context, query, QueryBinding::PostedReference, pagination)
+        }
+    };
     run(EntityQueryRequest::builder()
         .services(services)
         .target(target)
@@ -122,7 +141,7 @@ pub(crate) async fn query(
         .headers(headers)
         .context(context)
         .query(query)
-        .binding(QueryBinding::QueryString)
+        .binding(binding)
         .pagination(pagination)
         .build())
     .await
@@ -154,7 +173,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
     } = request;
     Box::pin(async move {
         let service = &state.entity_query;
-        let admitted = admit_request(&state, &target, &context, protocol, &mut query, binding, &uri).await?;
+        let admitted = admit_request(&state, &target, &context, protocol, &mut query, &binding, &uri).await?;
         let opts = &admitted.opts;
         // Clauses 5.7.2.4 and 6.3.4: refused before the store is read.
         require_geojson_for_geometry_property(query.geometry_property.as_ref(), accept.media_type()).with_entity_instance(&uri)?;
@@ -190,14 +209,8 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         // Clause 5.7.2.4: with `splitEntities`, `q`, the geoquery and `scopeQ`
         // are decided on the merged entities rather than by any one source.
         let deferred = split_entities.then(|| query.defer_split_filters());
-        let page = QueryPage::of(
-            window,
-            query.count,
-            forwarded.as_ref(),
-            binding.page_pointers(),
-            pagination.context,
-            pagination.pointed,
-        );
+        let pointing = PagePointing::new(binding.page_pointers(), pagination.context, pagination.query, pagination.pointed);
+        let page = QueryPage::of(window, query.count, forwarded.as_ref(), pointing);
 
         // Clause 4.21: the request's `pick`/`omit` (or `attrs`) govern the
         // merged entities, which hold every member their sources returned, and,
@@ -254,6 +267,8 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
             .with_entity_instance(&uri)?
             .with_geometry_selection(geometry_selection(&query));
         let rendered = answer.render(rendering, admitted.language_filter.as_ref(), &uri)?;
+        let links = page.links(total_count, reach, cursor_boundary(&entities));
+        binding.hold_for(&links, &state.posted_queries).await.with_entity_instance(&uri)?;
         Ok(query_response(
             rendered,
             QueryCollectionMetadata {
@@ -261,10 +276,8 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
                 warnings,
                 total_count,
                 entity_map_uri,
-                reach,
-                boundary: cursor_boundary(&entities),
             },
-            &page,
+            links,
             accept.media_type(),
         ))
     })

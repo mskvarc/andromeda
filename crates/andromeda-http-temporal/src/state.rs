@@ -10,6 +10,7 @@ use andromeda_http_extraction::{
     tenant_state::TenantStateResolver,
 };
 use andromeda_http_response::problem_response::ProblemResponse;
+use andromeda_posted_query::service::PostedQueryService;
 use andromeda_temporal::service::TemporalService;
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::lease::RuntimeLease, tenant_ref::TenantRef};
 use axum::http::Uri;
@@ -29,6 +30,9 @@ pub struct TemporalRouteServices {
     pub forwarding: Arc<FederationService>,
     /// Entity-map policy used for temporal query scoping and result-map creation.
     pub entity_maps: Arc<EntityMapService>,
+    /// The paged queries sent by POST the tenant holds for the page links of
+    /// their result.
+    pub posted_queries: Arc<PostedQueryService>,
     /// Tenant's ordinary live context branch.
     pub live_target: ContextTarget,
     /// Snapshot URI to durable branch resolution.

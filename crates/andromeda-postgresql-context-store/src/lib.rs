@@ -61,6 +61,9 @@ pub mod optional_extension;
 pub mod pending_side_effects;
 /// Reading a tenant's database for the earliest instant it has work due.
 pub mod pending_work;
+/// Persistence of the paged queries sent by POST the broker holds for their
+/// page links.
+pub mod posted_query;
 /// The optional extensions brought to the shipped version by dropping and
 /// creating them again.
 pub mod recreated_extension;
@@ -117,9 +120,11 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-query",
+        "andromeda-ngsi-ld-request",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-notification",
         "andromeda-persistence-failure",
+        "andromeda-posted-query",
         "andromeda-postgresql-attribute-instance",
         "andromeda-postgresql-branch",
         "andromeda-postgresql-codes",

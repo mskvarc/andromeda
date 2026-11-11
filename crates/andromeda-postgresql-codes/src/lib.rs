@@ -66,6 +66,8 @@ pub mod maintenance_repack_phase;
 pub mod maintenance_target;
 /// The persisted trigger conditions a subscription listens for.
 pub mod notification_trigger;
+/// The persisted API of one stored posted query.
+pub mod posted_query_kind;
 /// The persisted refined value shape of one attribute-history instance.
 pub mod recorded_shape;
 /// The one pattern every migration-owned compact code domain is declared with.

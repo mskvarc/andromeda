@@ -51,7 +51,7 @@ pub(crate) fn membership_window(
                 size: ENTITY_MAP_PAGE_SIZE,
                 order: CollectionOrder::of(ordering),
                 count: CountPolicy::Emit,
-                pointers: PagePointers::NotDereferenceable,
+                pointers: PagePointers::Absent,
                 context: &pagination.context,
                 query: &pagination.query,
             },

@@ -62,6 +62,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-notification",
         "andromeda-outbound-http",
         "andromeda-persistence-failure",
+        "andromeda-posted-query",
         "andromeda-postgresql-atomic-write",
         "andromeda-postgresql-context-query",
         "andromeda-postgresql-context-store",

@@ -12,6 +12,7 @@ use crate::schema::{
     management::ManagementConfig,
     notifications::NotificationsConfig,
     observability::ObservabilityConfig,
+    posted_query::PostedQueryConfig,
     request_limits::RequestLimitsConfig,
     server::ServerConfig,
     snapshot::SnapshotConfig,
@@ -54,6 +55,8 @@ pub(crate) struct BuiltInDefaults {
     pub(crate) federation: FederationConfig,
     /// Snapshots.
     pub(crate) snapshot: SnapshotConfig,
+    /// Queries sent by POST, held for their page links.
+    pub(crate) posted_query: PostedQueryConfig,
     /// Features beyond the specification.
     pub(crate) extensions: ExtensionsConfig,
     /// Logging and metrics.

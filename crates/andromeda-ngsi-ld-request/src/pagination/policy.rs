@@ -61,9 +61,9 @@ impl PaginationPolicy {
     ///   `@context` is not the request's (clause 5.5.9.1), by offset or by
     ///   cursor alike.
     /// - [`ParameterError::CursorUnavailable`] for a `cursor` under
-    ///   [`PaginationPolicy::OffsetOnly`] or on a binding whose pointers cannot
-    ///   be dereferenced: a parameter the operation does not offer
-    ///   (`InvalidRequest`, clause 6.3.20).
+    ///   [`PaginationPolicy::OffsetOnly`] or on a response that hands out no
+    ///   pointer: a parameter the operation does not offer (`InvalidRequest`,
+    ///   clause 6.3.20).
     /// - [`ParameterError::CursorWithOffset`] for `cursor` and `offset`
     ///   together (clause 5.5.9).
     /// - [`ParameterError::CursorWithOrdering`] for a `cursor` over a clause
@@ -102,14 +102,15 @@ impl PaginationPolicy {
 
     /// Where a request naming neither `offset` nor `cursor` starts.
     ///
-    /// A collection in a requested order, or one whose pointers cannot be
-    /// followed, can only be paged by offset; any other follows the policy's
-    /// default.
+    /// A collection in a requested order, or a response that hands out no
+    /// pointer, can only be paged by offset; any other follows the policy's
+    /// default, whether its pointers rebuild the request URI or name a posted
+    /// query.
     const fn fresh_start(self, request: PageRequest<'_>) -> PageStart {
         match (request.pointers, request.order) {
-            (PagePointers::NotDereferenceable, CollectionOrder::Identifier | CollectionOrder::Requested)
-            | (PagePointers::OverRequestUri, CollectionOrder::Requested) => PageStart::Offset(0),
-            (PagePointers::OverRequestUri, CollectionOrder::Identifier) => match self {
+            (PagePointers::Absent, CollectionOrder::Identifier | CollectionOrder::Requested)
+            | (PagePointers::OverRequestUri | PagePointers::OverPostedQuery, CollectionOrder::Requested) => PageStart::Offset(0),
+            (PagePointers::OverRequestUri | PagePointers::OverPostedQuery, CollectionOrder::Identifier) => match self {
                 PaginationPolicy::CursorDefault => PageStart::Cursor(None),
                 PaginationPolicy::OffsetDefault | PaginationPolicy::OffsetOnly => PageStart::Offset(0),
             },
@@ -120,11 +121,11 @@ impl PaginationPolicy {
 /// Refuse a `cursor` the collection cannot be walked by.
 const fn refuse_unwalkable_cursor(policy: PaginationPolicy, page: &PageParameters, request: PageRequest<'_>) -> Result<(), ParameterError> {
     match (policy, request.pointers) {
-        (PaginationPolicy::OffsetOnly, PagePointers::OverRequestUri | PagePointers::NotDereferenceable)
-        | (PaginationPolicy::CursorDefault | PaginationPolicy::OffsetDefault, PagePointers::NotDereferenceable) => {
+        (PaginationPolicy::OffsetOnly, PagePointers::OverRequestUri | PagePointers::OverPostedQuery | PagePointers::Absent)
+        | (PaginationPolicy::CursorDefault | PaginationPolicy::OffsetDefault, PagePointers::Absent) => {
             return Err(ParameterError::CursorUnavailable);
         }
-        (PaginationPolicy::CursorDefault | PaginationPolicy::OffsetDefault, PagePointers::OverRequestUri) => {}
+        (PaginationPolicy::CursorDefault | PaginationPolicy::OffsetDefault, PagePointers::OverRequestUri | PagePointers::OverPostedQuery) => {}
     }
     if page.offset.is_some() {
         return Err(ParameterError::CursorWithOffset);
@@ -336,15 +337,39 @@ mod tests {
     }
 
     #[test]
-    fn a_body_binding_pages_by_offset() {
+    fn a_response_without_pointers_pages_by_offset() {
         let request = PageRequest {
-            pointers: PagePointers::NotDereferenceable,
+            pointers: PagePointers::Absent,
             ..identifier()
         };
         let start = window(PaginationPolicy::CursorDefault, &page(None, None, None), request)
             .ok()
             .map(|window| window.start);
         assert_eq!(start, Some(PageStart::Offset(0)));
+    }
+
+    /// A posted query's pointers are dereferenceable like a query string's,
+    /// so its walk starts as the policy's default and continues by cursor.
+    #[test]
+    fn a_posted_query_walks_as_a_query_string_does() {
+        let request = PageRequest {
+            pointers: PagePointers::OverPostedQuery,
+            ..identifier()
+        };
+        let start = window(PaginationPolicy::CursorDefault, &page(None, None, None), request)
+            .ok()
+            .map(|window| window.start);
+        assert_eq!(start, Some(PageStart::Cursor(None)));
+        let start = window(
+            PaginationPolicy::OffsetDefault,
+            &page(None, None, Some(CursorRequest::Continue(after("urn:e:1")))),
+            request,
+        )
+        .ok()
+        .map(|window| window.start);
+        assert_eq!(start, Some(PageStart::Cursor(Some(after("urn:e:1")))));
+        let error = window(PaginationPolicy::OffsetOnly, &page(None, None, Some(CursorRequest::Start)), request).expect_err("refused");
+        assert!(matches!(error, ParameterError::CursorUnavailable), "{error}");
     }
 
     #[test]
@@ -354,9 +379,9 @@ mod tests {
     }
 
     #[test]
-    fn a_cursor_on_a_body_binding_is_unavailable() {
+    fn a_cursor_on_a_response_without_pointers_is_unavailable() {
         let request = PageRequest {
-            pointers: PagePointers::NotDereferenceable,
+            pointers: PagePointers::Absent,
             ..identifier()
         };
         let error = window(

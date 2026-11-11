@@ -4,7 +4,11 @@ use crate::{
     broker_config::BrokerConfig,
     human_byte_size::HumanByteSize,
     human_duration::HumanDuration,
-    schema::{durable_queue::DurableQueue, management::ManagementMode, temporal::storage::DEFAULT_CHUNK_INTERVAL},
+    schema::{
+        durable_queue::DurableQueue,
+        management::{ManagementConfig, ManagementMode},
+        temporal::storage::DEFAULT_CHUNK_INTERVAL,
+    },
     validate::{
         bound::Quantity,
         config_key::{ConfigKey, QueueKey, QueueName},
@@ -27,10 +31,7 @@ impl ConfigKey {
             ConfigKey::ServerRequestHeadTimeout => Some(span(config.server.request_head_timeout)),
             ConfigKey::ServerIdleTimeout => Some(span(config.server.idle_timeout)),
             ConfigKey::TlsHandshakeTimeout => Some(span(config.tls.handshake_timeout)),
-            ConfigKey::ManagementPort => match config.management.mode {
-                ManagementMode::SeparatePort => Some(count(config.management.port)),
-                ManagementMode::SharedPort | ManagementMode::Disabled => None,
-            },
+            ConfigKey::ManagementPort => management_port(&config.management),
             ConfigKey::ServerTransport
             | ConfigKey::ServerHttp3Mode
             | ConfigKey::ManagementMode
@@ -118,7 +119,18 @@ impl ConfigKey {
             ConfigKey::SnapshotPreparationLeaseTimeout => Some(span(config.snapshot.preparation.lease_timeout)),
             ConfigKey::SnapshotPreparationRecoveryInterval => Some(span(config.snapshot.preparation.recovery_interval)),
             ConfigKey::SnapshotPreparationScopedOperationTimeout => Some(span(config.snapshot.preparation.scoped_operation_timeout)),
+            ConfigKey::PostedQueryLifetime => Some(span(config.posted_query.lifetime)),
+            ConfigKey::PostedQueryMaxStoragePerTenant => config.posted_query.quota.max_storage_per_tenant.limit().map(size),
         }
+    }
+}
+
+/// The port the management plane binds, read only while it binds a port of
+/// its own.
+fn management_port(management: &ManagementConfig) -> Option<Quantity> {
+    match management.mode {
+        ManagementMode::SeparatePort => Some(count(management.port)),
+        ManagementMode::SharedPort | ManagementMode::Disabled => None,
     }
 }
 

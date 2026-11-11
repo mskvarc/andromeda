@@ -153,6 +153,7 @@ andromeda-ngsi-ld-vocabulary = { path = "crates/andromeda-ngsi-ld-vocabulary" }
 andromeda-notification = { path = "crates/andromeda-notification" }
 andromeda-outbound-http = { path = "crates/andromeda-outbound-http" }
 andromeda-persistence-failure = { path = "crates/andromeda-persistence-failure" }
+andromeda-posted-query = { path = "crates/andromeda-posted-query" }
 andromeda-postgresql-atomic-write = { path = "crates/andromeda-postgresql-atomic-write" }
 andromeda-postgresql-attribute-instance = { path = "crates/andromeda-postgresql-attribute-instance" }
 andromeda-postgresql-branch = { path = "crates/andromeda-postgresql-branch" }
