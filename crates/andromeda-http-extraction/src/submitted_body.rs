@@ -88,19 +88,6 @@ impl<T: Send + 'static> SubmittedBody<T> {
         self.decoded(ContextTerms::keyword_spellings()).await
     }
 
-    /// The body `map` makes of the decoded one, refused as `map` refuses it.
-    pub(crate) fn and_then<U: Send + 'static>(self, map: impl FnOnce(T, &Uri) -> Result<U, ProblemResponse> + Send + 'static) -> SubmittedBody<U> {
-        let SubmittedBody {
-            text,
-            uri,
-            blocking_decode,
-            read,
-        } = self;
-        SubmittedBody::new(text, uri, blocking_decode, move |text, reading, uri| {
-            read(text, reading, uri).and_then(|value| map(value, uri))
-        })
-    }
-
     /// Decode the body through `terms`, on the blocking pool when it is
     /// large.
     async fn decoded(self, terms: impl Borrow<ContextTerms> + Send + 'static) -> Result<T, ProblemResponse> {
@@ -225,14 +212,5 @@ mod tests {
         assert!(detail.contains("@context is embedded at /speed"), "{detail}");
         pretty_assertions::assert_eq!(refusal(refused().context_free(plain()).await).1, "undecodable");
         pretty_assertions::assert_eq!(decodable().context_free(plain()).await.ok(), Some(7));
-    }
-
-    #[tokio::test]
-    async fn a_mapped_body_keeps_the_first_refusal() {
-        let context = AdmittedContext::core_only();
-        let mapped = decodable().and_then(|value, _uri| Ok(u16::from(value) * 2));
-        pretty_assertions::assert_eq!(mapped.admitted(&context).await.ok(), Some(14));
-        let mapped = refused().and_then(|value, _uri| Ok(u16::from(value)));
-        pretty_assertions::assert_eq!(refusal(mapped.admitted(&context).await).1, "undecodable");
     }
 }

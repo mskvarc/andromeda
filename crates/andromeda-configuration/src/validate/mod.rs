@@ -30,6 +30,7 @@ mod key_holding;
 mod key_reading;
 mod management;
 mod notifications;
+mod posted_query;
 mod request_limits;
 pub mod rule;
 #[cfg(test)]
@@ -99,6 +100,7 @@ pub fn declared_rules() -> impl Iterator<Item = Rule> {
         .chain(notifications::rules())
         .chain(federation::rules())
         .chain(snapshot::rules())
+        .chain(posted_query::rules())
         .chain(cross_section::rules())
 }
 

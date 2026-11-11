@@ -213,9 +213,10 @@ services:
 
   # Durable notification delivery: every notification is queued in the tenant database and sent by the delivery
   # worker, a process-wide mode under which the live-delivery tests of the front broker would assert another path. A
-  # tenant holds at most three Snapshots, and an operation scoped to a Snapshot still preparing waits two seconds for
-  # it; the quota is counted per tenant, so every Snapshot test on this broker works in a tenant of its own. Tenant
-  # management names each tenant's database, which a quota test holds a Snapshot's rows in.
+  # tenant holds at most three Snapshots and two posted queries, and an operation scoped to a Snapshot still preparing
+  # waits two seconds for it; both quotas are counted per tenant, so every Snapshot or posted-query quota test on this
+  # broker works in a tenant of its own. Tenant management names each tenant's database, which a quota test holds a
+  # Snapshot's rows in.
   broker-durable:
     extends:
       <<: *template
@@ -232,6 +233,7 @@ services:
       ANDROMEDA__NOTIFICATIONS__DELIVERY__MODE: "durable"
       ANDROMEDA__SNAPSHOT__QUOTA__MAX_PER_TENANT: "3"
       ANDROMEDA__SNAPSHOT__PREPARATION__SCOPED_OPERATION_TIMEOUT: "2s"
+      ANDROMEDA__POSTED_QUERY__QUOTA__MAX_PER_TENANT: "2"
       ANDROMEDA__EXTENSIONS__TENANT_MANAGEMENT__MODE: "enabled"
 
   postgres-single-tenant:

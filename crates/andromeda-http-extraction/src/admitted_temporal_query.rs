@@ -120,19 +120,22 @@ impl BodyBindingParameters for EmptyParams {
 }
 
 /// The clause 5.2.23 body and URL parameters `U` of a POST temporal binding
-/// (clauses 6.24.3.1 and 6.35.3.2), folded into one parameter set admitted by
-/// the route's `A`, with the one context the body extractor resolved (clause
-/// 6.3.5).
+/// (clauses 6.24.3.1 and 6.35.3.2), with the route's admission `A` and the one
+/// context the body extractor resolved (clause 6.3.5).
+///
+/// The body is handed over as the clause 5.2.23 Query it is, because a paged
+/// result is held by the broker as that Query, so its page pointers can name
+/// it; [`admitted_body_parameters`] turns it into the operation's parameters.
 pub struct AdmittedTemporalPostQuery<A, U = TemporalPostQueryParams> {
-    /// The query the body and the URL parameters describe, read once the
-    /// context is admitted.
-    pub params: SubmittedBody<TemporalQueryParameters>,
+    /// The clause 5.2.23 body, read once the context is admitted.
+    pub body: SubmittedBody<Query>,
+    /// The URL parameters the body has no member for.
+    pub url: U,
+    /// The admission the route installed.
+    pub admission: A,
     /// The context the query is read against: the body's own `@context` for
     /// `application/ld+json`, the `Link` context for `application/json`.
     pub context: SubmittedContext,
-    /// The admission the parameters passed and the URL parameters the binding
-    /// defines.
-    admission: PhantomData<fn() -> (A, U)>,
 }
 
 impl<S, A, U> FromRequest<S> for AdmittedTemporalPostQuery<A, U>
@@ -145,27 +148,31 @@ where
 
     async fn from_request(request: Request, state: &S) -> Result<AdmittedTemporalPostQuery<A, U>, ExtractorRejection> {
         let (mut parts, body) = request.into_parts();
-        let ValidatedQuery(url_params) = ValidatedQuery::<U>::from_request_parts(&mut parts, state).await?;
+        let ValidatedQuery(url) = ValidatedQuery::<U>::from_request_parts(&mut parts, state).await?;
         let admission = installed_admission::<A>(&parts)?;
         let JsonLd { body, context } = JsonLd::<Query>::from_request(Request::from_parts(parts, body), state).await?;
-        let params = body.and_then(move |query, uri| {
-            // clone: each refusal takes its own copy of the request URI
-            let mut params =
-                TemporalQueryParameters::try_from(query).map_err(|error| ProblemResponse::classified(classify_parameter_error(&error), uri.clone()))?;
-            url_params.apply_to(&mut params);
-            // The body's `aggrParams.aggrGroupBy` is folded into `params` by
-            // now, so the admission sees the whole query.
-            admission
-                .admit(&params, TemporalQueryBinding::Body)
-                .map_err(|report| ProblemResponse::classified(report, uri.clone()))?;
-            Ok(params)
-        });
-        Ok(AdmittedTemporalPostQuery {
-            params,
-            context,
-            admission: PhantomData,
-        })
+        Ok(AdmittedTemporalPostQuery { body, url, admission, context })
     }
+}
+
+/// The temporal query the clause 5.2.23 body `query` and the URL parameters
+/// `url` of its binding describe, admitted by `admission` as a body's.
+///
+/// # Errors
+///
+/// The report of a body that is no temporal query, and of a query the
+/// admission refuses.
+pub fn admitted_body_parameters<A, U>(query: Query, url: U, admission: &A) -> Result<TemporalQueryParameters, ClassifiedReport>
+where
+    A: TemporalQueryAdmission,
+    U: BodyBindingParameters,
+{
+    let mut params = TemporalQueryParameters::try_from(query).map_err(|error| classify_parameter_error(&error))?;
+    url.apply_to(&mut params);
+    // The body's `aggrParams.aggrGroupBy` is folded into `params` by now, so
+    // the admission sees the whole query.
+    admission.admit(&params, TemporalQueryBinding::Body)?;
+    Ok(params)
 }
 
 /// The admission `A` the route installed.
@@ -174,7 +181,7 @@ where
 ///
 /// Returns an internal error when the route installed none, which is a wiring
 /// fault of the broker.
-fn installed_admission<A: TemporalQueryAdmission>(parts: &Parts) -> Result<A, ExtractorRejection> {
+pub(crate) fn installed_admission<A: TemporalQueryAdmission>(parts: &Parts) -> Result<A, ExtractorRejection> {
     parts
         .extensions
         .get::<A>()
@@ -187,7 +194,13 @@ fn installed_admission<A: TemporalQueryAdmission>(parts: &Parts) -> Result<A, Ex
 
 #[cfg(test)]
 mod tests {
-    use crate::admitted_temporal_query::{AdmittedTemporalPostQuery, AdmittedTemporalQuery, TemporalQueryAdmission, TemporalQueryBinding};
+    use crate::admitted_temporal_query::{
+        AdmittedTemporalPostQuery,
+        AdmittedTemporalQuery,
+        TemporalQueryAdmission,
+        TemporalQueryBinding,
+        admitted_body_parameters,
+    };
     use andromeda_failure_classification::classified_report::ClassifiedReport;
     use andromeda_http_response::extraction_rejection::ExtractorRejection;
     use andromeda_jsonld::user_context_admission::AdmittedContext;
@@ -295,12 +308,14 @@ mod tests {
             .await
             .map_err(|_| "the body decodes")
             .expect("decodes");
-        assert!(admitted.params.admitted(&context).await.is_ok());
+        let query = admitted.body.admitted(&context).await.expect("a query");
+        assert!(admitted_body_parameters(query, admitted.url, &admitted.admission).is_ok());
         let filtered = AdmittedTemporalPostQuery::<StandInGate, EmptyParams>::from_request(post("/ngsi-ld/v1/temporal/entityMaps", FILTERED), &())
             .await
             .map_err(|_| "the body decodes")
             .expect("decodes");
-        let refused = filtered.params.admitted(&context).await.expect_err("the admission refuses it");
-        pretty_assertions::assert_eq!(refused.problem().error_type(), NgsiLdErrorType::InvalidRequest);
+        let query = filtered.body.admitted(&context).await.expect("a query");
+        let refused = admitted_body_parameters(query, filtered.url, &filtered.admission).expect_err("the admission refuses it");
+        pretty_assertions::assert_eq!(refused.error_type(), NgsiLdErrorType::InvalidRequest);
     }
 }

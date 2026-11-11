@@ -32,6 +32,7 @@ use andromeda_configuration::{
         jsonld::JsonLdConfig,
         link_field_layout::LinkFieldLayout,
         notifications::NotificationsConfig,
+        posted_query::PostedQueryConfig,
         request_limits::RequestLimitsConfig,
         snapshot::SnapshotConfig,
         temporal::TemporalConfig,
@@ -120,6 +121,8 @@ struct TenantFactoryConfig {
     notifications: NotificationsConfig,
     /// How a tenant's Snapshots are kept and prepared.
     snapshot: SnapshotConfig,
+    /// How long a tenant holds a paged query sent by POST, and how many.
+    posted_query: PostedQueryConfig,
     /// How a tenant's Temporal Evolutions are read, recorded and stored.
     temporal: TemporalConfig,
     /// How tenants are provisioned and kept resident.
@@ -150,6 +153,7 @@ impl TenantFactoryConfig {
             jsonld: config.jsonld.clone(),
             notifications: config.notifications.clone(),
             snapshot: config.snapshot,
+            posted_query: config.posted_query,
             temporal: config.temporal,
             tenancy: config.tenancy.clone(),
             extensions: config.extensions,

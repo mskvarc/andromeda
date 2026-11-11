@@ -14,7 +14,7 @@ use andromeda_federation::{entity_map::EntityMapQuery, request::TriggeringReques
 use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
-    admitted_temporal_query::{AdmittedTemporalPostQuery, AdmittedTemporalQuery},
+    admitted_temporal_query::{AdmittedTemporalPostQuery, AdmittedTemporalQuery, admitted_body_parameters},
     api_root::ApiRoot,
     body_only_query::BodyOnlyQuery,
     entity_query::EntityQuery,
@@ -359,12 +359,13 @@ pub(crate) async fn create_temporal_from_query_post(
     api_root: ApiRoot,
     prefer: PreferHeader,
     pagination: RequestPagination,
-    AdmittedTemporalPostQuery { params, context, .. }: AdmittedTemporalPostQuery<TemporalExtensionGate, EmptyParams>,
+    AdmittedTemporalPostQuery { body, url, admission, context }: AdmittedTemporalPostQuery<TemporalExtensionGate, EmptyParams>,
 ) -> Result<Response, ProblemResponse> {
     // Clause 6.3.5: the query is read against the one context the body
     // extractor resolved, admitted first (clause 5.5.7).
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_map_instance(&uri)?;
-    let params = params.admitted(&context).await?;
+    let body = body.admitted(&context).await?;
+    let params = admitted_body_parameters(body, url, &admission).map_err(|report| ProblemResponse::classified(report, uri.clone()))?;
     validate_temporal_entity_map_query(&params, state.temporal.linked_retrieval(), &uri)?;
     let window = membership_window(&pagination, &params.page, &params.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(params.split_entities).is_split());

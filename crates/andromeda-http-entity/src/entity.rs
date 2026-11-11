@@ -19,7 +19,6 @@ use andromeda_http_context_registry::response_rendering::ResponseContextSource;
 use andromeda_http_extraction::{
     accept::AcceptFormat,
     context::ContextUrl,
-    entity_query::EntityQuery,
     jsonld::JsonLd,
     protocol::NgsiLdProtocolHeaders,
     query::ValidatedQuery,
@@ -81,6 +80,8 @@ pub(crate) mod delete;
 pub(crate) mod delete_attribute;
 /// Delete-by-query handling.
 pub(crate) mod delete_by_query;
+/// A followed pointer of a query sent by POST, resolved to the held query.
+pub(crate) mod followed_query;
 /// Entity merge handling.
 pub(crate) mod merge;
 /// Partial attribute update handling.

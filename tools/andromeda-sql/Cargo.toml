@@ -35,6 +35,7 @@ which = "8.0.6"
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-request.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-schema.workspace = true
 pretty_assertions = "1.4.1"

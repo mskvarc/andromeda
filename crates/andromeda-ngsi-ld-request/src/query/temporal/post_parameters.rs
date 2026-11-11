@@ -12,7 +12,7 @@
 
 use crate::{
     options::TemporalRepresentationOptions,
-    pagination::parameters::OffsetPageParameters,
+    pagination::parameters::PostedPageParameters,
     query::temporal::TemporalQueryParameters,
     query_parameter::{QueryParameter, QueryParameterSet},
     query_parameter_set,
@@ -30,10 +30,11 @@ use serde::Deserialize;
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TemporalPostQueryParams {
-    /// The page asked for (clause 6.3.10 `limit` and `offset`). The binding
-    /// carries no dereferenceable pointer, so it declares no `cursor`.
+    /// The page asked for (clause 6.3.10 `limit`, `offset` and `cursor`). A
+    /// paged result points at its neighbours by the posted query the broker
+    /// holds, so the walk continues on the GET binding.
     #[serde(flatten)]
-    pub page: OffsetPageParameters,
+    pub page: PostedPageParameters,
     /// Whether the response reports the total number of matches
     /// (clause 6.3.13 `count`).
     #[serde(default)]
@@ -48,7 +49,7 @@ pub struct TemporalPostQueryParams {
     pub local: Option<bool>,
 }
 
-query_parameter_set!(TemporalPostQueryParams { Count, Format, Options, Local } + OffsetPageParameters);
+query_parameter_set!(TemporalPostQueryParams { Count, Format, Options, Local } + PostedPageParameters);
 
 impl TemporalPostQueryParams {
     /// Put the URL's half of the query onto the parameters the clause 5.2.23

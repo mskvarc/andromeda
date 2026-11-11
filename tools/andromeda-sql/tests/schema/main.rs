@@ -12,6 +12,7 @@ mod evolution_horizon_index;
 mod geometry_reach_statistics;
 mod jsonld_contexts_index;
 mod notification_events_index;
+mod posted_queries;
 mod registration_information;
 mod replica_identity;
 mod repository;

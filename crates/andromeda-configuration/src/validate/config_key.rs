@@ -318,6 +318,12 @@ pub enum ConfigKey {
     /// `snapshot.preparation.scoped_operation_timeout`.
     #[display("snapshot.preparation.scoped_operation_timeout")]
     SnapshotPreparationScopedOperationTimeout,
+    /// `posted_query.lifetime`.
+    #[display("posted_query.lifetime")]
+    PostedQueryLifetime,
+    /// `posted_query.quota.max_storage_per_tenant`.
+    #[display("posted_query.quota.max_storage_per_tenant")]
+    PostedQueryMaxStoragePerTenant,
     /// `observability.metrics.prometheus.mode`.
     #[display("observability.metrics.prometheus.mode")]
     ObservabilityMetricsPrometheusMode,

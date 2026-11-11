@@ -55,27 +55,31 @@ impl PageParameters {
 }
 
 /// The pagination parameters of a binding that carries its query in the
-/// request body (clauses 6.23.3.1 and 6.24.3.1).
+/// request body (clauses 6.23.3.1 and 6.24.3.1), and of a followed pointer
+/// naming a query such a binding posted.
 ///
-/// Such a binding has no dereferenceable pointer to carry a cursor in, so it
-/// declares none: a `cursor` there is a parameter the operation does not
-/// define, an `InvalidRequest` (clause 6.3.20).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct OffsetPageParameters {
+/// The broker holds a paged posted query and every pointer names it by its
+/// key, which stands for the `@context` and the query the walk is held to, so
+/// such a pointer carries neither `pageContext` nor `pageQuery`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PostedPageParameters {
     /// The page size asked for (clause 6.3.10 `limit`).
     pub limit: Option<u32>,
     /// How many elements to skip before the page (clause 5.5.9.2 `offset`).
     pub offset: Option<u32>,
+    /// The opaque pointer a followed `Link` carried, or the empty value that
+    /// starts a cursor walk (clause 5.5.9.1).
+    pub cursor: Option<CursorRequest>,
 }
 
-query_parameter_set!(OffsetPageParameters { Limit, Offset });
+query_parameter_set!(PostedPageParameters { Limit, Offset, Cursor });
 
-impl From<OffsetPageParameters> for PageParameters {
-    fn from(page: OffsetPageParameters) -> PageParameters {
+impl From<PostedPageParameters> for PageParameters {
+    fn from(page: PostedPageParameters) -> PageParameters {
         PageParameters {
             limit: page.limit,
             offset: page.offset,
-            cursor: None,
+            cursor: page.cursor,
             context: None,
             query: None,
         }
@@ -129,13 +133,15 @@ struct PageParametersWire {
     query: Option<String>,
 }
 
-/// The wire form of [`OffsetPageParameters`].
+/// The wire form of [`PostedPageParameters`].
 #[derive(Deserialize)]
-struct OffsetPageParametersWire {
+struct PostedPageParametersWire {
     /// The raw `limit`.
     limit: Option<String>,
     /// The raw `offset`.
     offset: Option<String>,
+    /// The raw `cursor`.
+    cursor: Option<String>,
 }
 
 // Hand-written because the parameters are read inside a parameter set that
@@ -150,12 +156,7 @@ impl<'de> Deserialize<'de> for PageParameters {
         Ok(PageParameters {
             limit: page_number(wire.limit.as_deref(), PageParameter::Limit).map_err(DeserializeError::custom)?,
             offset: page_number(wire.offset.as_deref(), PageParameter::Offset).map_err(DeserializeError::custom)?,
-            cursor: wire
-                .cursor
-                .as_deref()
-                .map(CursorRequest::try_from)
-                .transpose()
-                .map_err(|error| DeserializeError::custom(PageParameterError::from(error)))?,
+            cursor: page_cursor(wire.cursor.as_deref()).map_err(DeserializeError::custom)?,
             context: wire
                 .context
                 .as_deref()
@@ -173,15 +174,16 @@ impl<'de> Deserialize<'de> for PageParameters {
 }
 
 // Hand-written for the same reason as `PageParameters`.
-impl<'de> Deserialize<'de> for OffsetPageParameters {
-    fn deserialize<D>(deserializer: D) -> Result<OffsetPageParameters, D::Error>
+impl<'de> Deserialize<'de> for PostedPageParameters {
+    fn deserialize<D>(deserializer: D) -> Result<PostedPageParameters, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let wire = OffsetPageParametersWire::deserialize(deserializer)?;
-        Ok(OffsetPageParameters {
+        let wire = PostedPageParametersWire::deserialize(deserializer)?;
+        Ok(PostedPageParameters {
             limit: page_number(wire.limit.as_deref(), PageParameter::Limit).map_err(DeserializeError::custom)?,
             offset: page_number(wire.offset.as_deref(), PageParameter::Offset).map_err(DeserializeError::custom)?,
+            cursor: page_cursor(wire.cursor.as_deref()).map_err(DeserializeError::custom)?,
         })
     }
 }
@@ -193,12 +195,17 @@ fn page_number(raw: Option<&str>, parameter: PageParameter) -> Result<Option<u32
         .transpose()
 }
 
+/// Read the `cursor` parameter from the text the request spells it with.
+fn page_cursor(raw: Option<&str>) -> Result<Option<CursorRequest>, PageParameterError> {
+    raw.map(CursorRequest::try_from).transpose().map_err(PageParameterError::from)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::pagination::{
         cursor_request::CursorRequest,
         page_query::PageQuery,
-        parameters::{OffsetPageParameters, PageParameters},
+        parameters::{PageParameters, PostedPageParameters},
     };
     use andromeda_ngsi_ld_query::cursor::PageCursor;
     use pretty_assertions::assert_eq;
@@ -215,9 +222,9 @@ mod tests {
     /// The body-binding counterpart of [`Carrier`].
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
-    struct OffsetCarrier {
+    struct PostedCarrier {
         #[serde(flatten)]
-        page: OffsetPageParameters,
+        page: PostedPageParameters,
     }
 
     fn parsed(query: &str) -> PageParameters {
@@ -281,23 +288,27 @@ mod tests {
         assert!(message.contains("cursor"), "{message}");
     }
 
-    /// A body binding declares no `cursor`, so one is an undefined parameter.
+    /// A posted query's key stands for its `@context` and its query, so a
+    /// body binding declares neither `pageContext` nor `pageQuery`.
     #[test]
-    fn the_post_binding_refuses_a_cursor() {
-        let message = serde_urlencoded::from_str::<OffsetCarrier>("cursor=x").expect_err("rejected").to_string();
-        assert!(message.contains("unknown field"), "{message}");
+    fn the_post_binding_declares_no_context_or_query_digest() {
+        for parameter in ["pageContext=x", "pageQuery=x"] {
+            let message = serde_urlencoded::from_str::<PostedCarrier>(parameter).expect_err("rejected").to_string();
+            assert!(message.contains("unknown field"), "{message}");
+        }
     }
 
-    /// The body binding reads its numbers as the query-string binding does.
+    /// The body binding reads its numbers and its cursor as the query-string
+    /// binding does.
     #[test]
-    fn the_post_binding_reads_limit_and_offset() {
-        let page = serde_urlencoded::from_str::<OffsetCarrier>("limit=3&offset=6").expect("parses").page;
+    fn the_post_binding_reads_limit_offset_and_cursor() {
+        let page = serde_urlencoded::from_str::<PostedCarrier>("limit=3&offset=6&cursor=").expect("parses").page;
         assert_eq!(
             PageParameters::from(page),
             PageParameters {
                 limit: Some(3),
                 offset: Some(6),
-                cursor: None,
+                cursor: Some(CursorRequest::Start),
                 context: None,
                 query: None,
             }

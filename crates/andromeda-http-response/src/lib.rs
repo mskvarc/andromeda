@@ -19,7 +19,11 @@ pub mod linked_resolution_warning;
 pub mod method_not_allowed;
 pub mod not_acceptable;
 pub mod page_ceiling;
+pub mod page_link_targets;
+pub mod page_pointing;
+pub mod page_walk;
 pub mod pagination;
+pub mod posted_query_failure;
 pub mod problem_response;
 pub mod provision;
 pub mod render;
@@ -47,6 +51,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-request",
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-posted-query",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-entity",

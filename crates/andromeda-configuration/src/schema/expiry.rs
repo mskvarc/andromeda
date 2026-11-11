@@ -11,8 +11,9 @@ use std::num::NonZeroU32;
 ///
 /// One cadence drives the sweep of every resource with an `expiresAt`:
 /// entities and their attributes (clause 5.2.4), subscriptions (clause
-/// 5.8.1.4), context source registrations (clause 5.9.2.4), Snapshots and
-/// Entity Maps. A resource may outlive its `expiresAt` in storage by up to one
+/// 5.8.1.4), context source registrations (clause 5.9.2.4), Snapshots, Entity
+/// Maps and the queries sent by POST that the broker holds for their page
+/// links. A resource may outlive its `expiresAt` in storage by up to one
 /// cadence; the read paths hide what has expired in the meantime, so the API
 /// never serves it.
 #[derive(Deserialize, Serialize, JsonSchema, Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,7 +22,7 @@ use std::num::NonZeroU32;
 pub struct ExpiryConfig {
     /// How often the sweeps run, in human-readable form (`"30s"`).
     #[schemars(
-        description = "How often the expiry sweeps run, over entities and their attributes, subscriptions, context source registrations, Snapshots and Entity Maps. An expired resource may stay in storage for up to one interval, but the API never serves it."
+        description = "How often the expiry sweeps run, over entities and their attributes, subscriptions, context source registrations, Snapshots, Entity Maps and the queries sent by POST that are kept for their page links. An expired resource may stay in storage for up to one interval, but the API never serves it."
     )]
     pub sweep_interval: HumanDuration,
     /// The expired entities, or entities with expired attributes, one pass of

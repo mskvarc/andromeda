@@ -480,7 +480,7 @@
         },
         "sweep_interval": {
           "title": "duration",
-          "description": "How often the expiry sweeps run, over entities and their attributes, subscriptions, context source registrations, Snapshots and Entity Maps. An expired resource may stay in storage for up to one interval, but the API never serves it.",
+          "description": "How often the expiry sweeps run, over entities and their attributes, subscriptions, context source registrations, Snapshots, Entity Maps and the queries sent by POST that are kept for their page links. An expired resource may stay in storage for up to one interval, but the API never serves it.",
           "type": "string"
         }
       },
@@ -2294,6 +2294,70 @@
                 }
               },
               "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "posted_query": {
+      "description": "How long a paged query sent by POST is kept for the page links of its result, and how many one tenant keeps.",
+      "type": "object",
+      "properties": {
+        "lifetime": {
+          "title": "duration",
+          "description": "How long a query sent by POST is kept after the last POST that sent it. Following a page link does not extend it.",
+          "type": "string"
+        },
+        "quota": {
+          "description": "How many queries sent by POST, and how much storage, one tenant keeps.",
+          "type": "object",
+          "properties": {
+            "max_per_tenant": {
+              "description": "The most queries sent by POST one tenant keeps, or `\"unlimited\"` to keep any number.",
+              "anyOf": [
+                {
+                  "description": "No limit.",
+                  "oneOf": [
+                    {
+                      "description": "No limit.",
+                      "type": "string",
+                      "const": "unlimited"
+                    }
+                  ]
+                },
+                {
+                  "description": "The limit.",
+                  "type": "integer",
+                  "format": "uint",
+                  "minimum": 1
+                }
+              ]
+            },
+            "max_storage_per_tenant": {
+              "description": "The most storage one tenant's kept queries take, or `\"unlimited\"` to let them take any amount. The largest query a client may send fits within it.",
+              "anyOf": [
+                {
+                  "description": "No limit.",
+                  "oneOf": [
+                    {
+                      "description": "No limit.",
+                      "type": "string",
+                      "const": "unlimited"
+                    }
+                  ]
+                },
+                {
+                  "title": "size",
+                  "description": "The limit.",
+                  "type": [
+                    "string",
+                    "integer"
+                  ],
+                  "minimum": 0
+                }
+              ]
             }
           },
           "additionalProperties": false

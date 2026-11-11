@@ -1,5 +1,5 @@
-//! Entity, subscription, registration, Snapshot and Entity Map `expiresAt`
-//! sweeps, and the clause 5.13.1 cached-context invalidation pass.
+//! Entity, subscription, registration, Snapshot, Entity Map and posted-query
+//! expiry sweeps, and the clause 5.13.1 cached-context invalidation pass.
 
 use crate::{
     cached_context_invalidation::{CACHED_CONTEXT_INVALIDATION_INTERVAL, invalidate_once},
@@ -11,6 +11,7 @@ use crate::{
         error::TenantAssemblyError,
         storage::TenantStorage,
         tasks::{
+            expiry_sweep::register_expiry_sweep,
             maintenance::{classify_entity_expiry_failure, classify_registration_expiry_failure, classify_subscription_expiry_failure},
             snapshot::register_snapshot_expiry,
         },
@@ -25,6 +26,7 @@ use andromeda_entity::{
     port::expiry::EntityExpirySource,
 };
 use andromeda_entity_map::{error::EntityMapError, expiry::EntityMapExpiry, store::EntityMapStore};
+use andromeda_posted_query::{error::PostedQueryError, expiry::PostedQueryExpiry, store::PostedQueryStore};
 use andromeda_registration::{RegistrationChangeSink, expiry::RegistrationExpiry, removal_hook::RegistrationRemovalHook, store::RegistrationStore};
 use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_subscription::{expiry::SubscriptionExpiry, lifecycle::SubscriptionService, variant::SubscriptionVariant};
@@ -98,6 +100,7 @@ pub(super) fn register_expiry_workers(
     )?;
     register_snapshot_expiry(supervisor, shared_pacer(), Arc::clone(&storage.snapshot_store), interval)?;
     register_entity_map_expiry(supervisor, shared_pacer(), Arc::clone(&storage.entity_map_store), interval)?;
+    register_posted_query_expiry(supervisor, shared_pacer(), Arc::clone(&storage.posted_query_store), interval)?;
     register_cached_context_invalidation(supervisor, shared_pacer(), Arc::clone(&storage.cached_context_invalidation))
 }
 
@@ -285,33 +288,27 @@ fn register_entity_map_expiry(
     store: Arc<dyn EntityMapStore>,
     cadence: Duration,
 ) -> Result<(), TenantAssemblyError> {
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
-    let name = TaskName::try_from("entity-map-expiry").map_err(AssemblyInvariant::from)?;
-    let registration = TaskRegistration::new(
-        name,
-        TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(cadence)),
-        ShutdownPolicy::new(cadence),
-    );
     let expiry = Arc::new(EntityMapExpiry::new(store));
-    let task = ScheduledTask::new(registration, schedule, move |execution| {
+    register_expiry_sweep(supervisor, pacer, "entity-map-expiry", cadence, move |cutoff| {
         let expiry = Arc::clone(&expiry);
-        let pacer = Arc::clone(&pacer);
-        async move {
-            pacer
-                .run(async move {
-                    let cutoff = DateTime::<Utc>::from(execution.cutoff());
-                    let expired = expiry.execute(cutoff).await.map_err(classify_entity_map_failure)?;
-                    tracing::info!(expired, "entity map expiry completed");
-                    Ok(())
-                })
-                .await
-        }
-    });
-    supervisor
-        .register_scheduled(task)
-        .map(drop)
-        .map_err(|error| AssemblyInvariant::from(error).into())
+        async move { expiry.execute(cutoff).await.map_err(classify_entity_map_failure) }
+    })
+}
+
+/// Register the sweep that removes the posted queries past their expiry; a
+/// page link naming one is refused from then on, and the read paths already
+/// pass over it in the meantime.
+fn register_posted_query_expiry(
+    supervisor: &TaskSupervisor,
+    pacer: Arc<BackgroundPacer>,
+    store: Arc<dyn PostedQueryStore>,
+    cadence: Duration,
+) -> Result<(), TenantAssemblyError> {
+    let expiry = Arc::new(PostedQueryExpiry::new(store));
+    register_expiry_sweep(supervisor, pacer, "posted-query-expiry", cadence, move |cutoff| {
+        let expiry = Arc::clone(&expiry);
+        async move { expiry.execute(cutoff).await.map_err(classify_posted_query_failure) }
+    })
 }
 
 /// Classify an Entity Map expiry failure: store faults are transient, an
@@ -321,6 +318,18 @@ const fn classify_entity_map_failure(error: EntityMapError) -> TaskFailure<Entit
         EntityMapError::Persistence(_) | EntityMapError::StoreSaturated | EntityMapError::StoreUnavailable => FailureClass::Transient,
         EntityMapError::Invariant(_) => FailureClass::InvariantViolation,
         EntityMapError::NotFound { .. } | EntityMapError::RequestChanged { .. } => FailureClass::Permanent,
+    };
+    TaskFailure::new(class, error)
+}
+
+/// Classify a posted-query expiry failure: store faults are transient, a value
+/// the broker cannot represent is an invariant breach, and request-level
+/// errors are permanent.
+const fn classify_posted_query_failure(error: PostedQueryError) -> TaskFailure<PostedQueryError> {
+    let class = match &error {
+        PostedQueryError::Persistence(_) | PostedQueryError::StoreSaturated | PostedQueryError::StoreUnavailable => FailureClass::Transient,
+        PostedQueryError::LifetimeOutOfRange | PostedQueryError::Unencodable(_) => FailureClass::InvariantViolation,
+        PostedQueryError::NotFound { .. } | PostedQueryError::ContextChanged => FailureClass::Permanent,
     };
     TaskFailure::new(class, error)
 }

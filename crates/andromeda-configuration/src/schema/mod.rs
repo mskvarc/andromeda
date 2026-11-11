@@ -20,6 +20,7 @@ pub mod listener_transport;
 pub mod management;
 pub mod notifications;
 pub mod observability;
+pub mod posted_query;
 pub mod private_addresses;
 pub mod request_limits;
 pub mod server;

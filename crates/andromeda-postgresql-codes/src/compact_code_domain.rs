@@ -48,6 +48,8 @@ pub enum CompactCodeDomain {
     MaintenanceTargetCode,
     /// [`NotificationTriggerCode`](crate::notification_trigger::NotificationTriggerCode).
     NotificationTriggerCode,
+    /// [`PostedQueryKindCode`](crate::posted_query_kind::PostedQueryKindCode).
+    PostedQueryKindCode,
     /// [`RecordedShape`](crate::recorded_shape::RecordedShape).
     RecordedShape,
     /// [`ScopeValueKind`](crate::scope_value_kind::ScopeValueKind).

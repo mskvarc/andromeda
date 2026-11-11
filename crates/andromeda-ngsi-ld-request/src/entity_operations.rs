@@ -3,13 +3,14 @@
 use crate::{
     error::ParameterError,
     options::{EntityRepresentationOptions, OverwritePolicy, UpsertMode},
-    pagination::parameters::OffsetPageParameters,
+    pagination::parameters::PostedPageParameters,
     query::entity::parameters::EntityQueryParameters,
     query_parameter::{QueryParameter, QueryParameterSet},
     query_parameter_set,
     representation_parameter::{WrittenValue, supported_option},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_query::count_policy::CountPolicy;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use serde::Deserialize;
@@ -76,10 +77,11 @@ impl UpdateParams {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PostQueryParams {
-    /// The page asked for (clause 6.3.10 `limit` and `offset`). The binding
-    /// carries no dereferenceable pointer, so it declares no `cursor`.
+    /// The page asked for (clause 6.3.10 `limit`, `offset` and `cursor`). A
+    /// paged result points at its neighbours by the posted query the broker
+    /// holds, so the walk continues on the GET binding.
     #[serde(flatten)]
-    pub page: OffsetPageParameters,
+    pub page: PostedPageParameters,
     /// Whether the response reports the total number of matches
     /// (clause 6.3.13 `count`).
     #[serde(default)]
@@ -102,21 +104,29 @@ query_parameter_set!(
         Format,
         GeometryProperty,
         Local
-    } + OffsetPageParameters
+    } + PostedPageParameters
 );
 
 impl PostQueryParams {
-    /// Set the URL parameters on the query the clause 5.2.23 body produced.
+    /// The query the clause 5.2.23 body `query` and these URL parameters
+    /// describe together.
     ///
-    /// Table 5.2.23-1 defines a member for none of them, so the body
-    /// conversion leaves each absent and nothing of the body is overwritten.
-    pub fn apply_to(self, query: &mut EntityQueryParameters) {
-        query.page = self.page.into();
-        query.count = self.count;
-        query.options = self.options;
-        query.format = self.format;
-        query.geometry_property = self.geometry_property;
-        query.local = self.local;
+    /// Table 5.2.23-1 defines a member for none of the URL parameters, so the
+    /// body conversion leaves each absent and nothing of the body is
+    /// overwritten.
+    ///
+    /// # Errors
+    ///
+    /// The refusal of a body that is no entity query.
+    pub fn parameters_of(self, query: Query) -> Result<EntityQueryParameters, ParameterError> {
+        let mut parameters = EntityQueryParameters::try_from(query)?;
+        parameters.page = self.page.into();
+        parameters.count = self.count;
+        parameters.options = self.options;
+        parameters.format = self.format;
+        parameters.geometry_property = self.geometry_property;
+        parameters.local = self.local;
+        Ok(parameters)
     }
 }
 
@@ -125,25 +135,22 @@ mod tests {
     use crate::{
         entity_operations::{PostQueryParams, UpdateParams, UpsertParams},
         pagination::parameters::PageParameters,
-        query::entity::parameters::EntityQueryParameters,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::query::body::Query;
     use andromeda_ngsi_ld_query::count_policy::CountPolicy;
     use serde_json::json;
 
-    fn body_query() -> EntityQueryParameters {
-        let body: Query = serde_json::from_value(json!({"type": "Query", "entities": [{"type": "Vehicle"}]})).expect("a valid query body");
-        EntityQueryParameters::try_from(body).expect("a convertible body")
+    fn body_query() -> Query {
+        serde_json::from_value(json!({"type": "Query", "entities": [{"type": "Vehicle"}]})).expect("a valid query body")
     }
 
     /// Clause 6.3.10: the POST binding reads its page off the URL, the only
-    /// place it can name one, and never a cursor.
+    /// place it can name one.
     #[test]
     fn apply_url_parameters_moves_the_page() {
-        let mut query = body_query();
         let url: PostQueryParams = serde_urlencoded::from_str("limit=3&offset=6&count=true").expect("valid URL parameters");
-        url.apply_to(&mut query);
+        let query = url.parameters_of(body_query()).expect("an entity query");
         pretty_assertions::assert_eq!(
             query.page,
             PageParameters {
@@ -161,10 +168,9 @@ mod tests {
     /// `local` to the POST binding, and the body has no member for them.
     #[test]
     fn the_granted_url_parameters_reach_the_query() {
-        let mut query = body_query();
         let url: PostQueryParams =
             serde_urlencoded::from_str("format=keyValues&options=sysAttrs&geometryProperty=position&local=true").expect("valid URL parameters");
-        url.apply_to(&mut query);
+        let query = url.parameters_of(body_query()).expect("an entity query");
         assert!(query.format.is_some() && query.options.is_some());
         pretty_assertions::assert_eq!(query.geometry_property.as_ref().map(AttributeName::as_str), Some("position"));
         pretty_assertions::assert_eq!(query.local, Some(true));
@@ -184,7 +190,6 @@ mod tests {
             "q=speed>1",
             "type=Vehicle",
             "attrs=speed",
-            "cursor=abc",
         ] {
             let message = serde_urlencoded::from_str::<PostQueryParams>(parameter).expect_err(parameter).to_string();
             assert!(message.contains("unknown field"), "{parameter}: {message}");

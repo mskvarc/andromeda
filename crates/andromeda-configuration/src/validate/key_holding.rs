@@ -159,7 +159,9 @@ impl ConfigKey {
             | ConfigKey::SnapshotMaxStoragePerTenant
             | ConfigKey::SnapshotPreparationLeaseTimeout
             | ConfigKey::SnapshotPreparationRecoveryInterval
-            | ConfigKey::SnapshotPreparationScopedOperationTimeout => None,
+            | ConfigKey::SnapshotPreparationScopedOperationTimeout
+            | ConfigKey::PostedQueryLifetime
+            | ConfigKey::PostedQueryMaxStoragePerTenant => None,
         }
     }
 }

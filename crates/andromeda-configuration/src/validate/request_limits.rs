@@ -203,10 +203,10 @@ mod tests {
         assert_eq!(compound_refusals(&config, AddressWidth::new(32)), []);
     }
 
-    /// No notification body limit or MQTT packet limit is above the largest
-    /// byte size, so those rules refuse it.
+    /// No notification body limit, MQTT packet limit or posted-query storage
+    /// quota reaches the largest byte size, so those rules refuse it.
     #[test]
-    fn the_largest_body_ceiling_is_refused_by_the_notification_limits() {
+    fn the_largest_body_ceiling_is_refused_by_every_limit_held_against_it() {
         let mut config = BrokerConfig::local();
         config.request_limits.max_body = HumanByteSize::b(u64::MAX);
         assert_eq!(
@@ -222,6 +222,12 @@ mod tests {
                     key: ConfigKey::NotificationsDeliveryMaxMqttPacket,
                     value: Quantity::Bytes(134_217_728),
                     relation: Relation::Above,
+                    bound: Bound::setting(ConfigKey::RequestLimitsMaxBody, Quantity::Bytes(u64::MAX)),
+                },
+                ConfigurationViolation::OutOfRange {
+                    key: ConfigKey::PostedQueryMaxStoragePerTenant,
+                    value: Quantity::Bytes(268_435_456),
+                    relation: Relation::AtLeast,
                     bound: Bound::setting(ConfigKey::RequestLimitsMaxBody, Quantity::Bytes(u64::MAX)),
                 },
             ])

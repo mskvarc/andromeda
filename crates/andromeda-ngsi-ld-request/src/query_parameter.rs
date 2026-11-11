@@ -61,6 +61,8 @@ pub enum QueryParameter {
     PageContext,
     /// The digest of the query a followed cursor walk belongs to (`pageQuery`).
     PageQuery,
+    /// The key of the posted query a followed page pointer names (`postedQuery`).
+    PostedQuery,
     /// Whether the answer reports a total (`count`).
     Count,
     /// Representation options (`options`).

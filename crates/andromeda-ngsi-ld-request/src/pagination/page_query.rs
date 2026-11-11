@@ -10,6 +10,9 @@
 //! `EntityMap` of the same query are left out, so a client may follow a pointer
 //! with another `limit` or representation, or ask partway through for the
 //! result to be mapped.
+//!
+//! A query a request carries in its body has no query string to digest, so it
+//! is digested from the parts that hold it, under the same construction.
 
 use crate::query_parameter::QueryParameter;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -24,6 +27,10 @@ pub const PAGE_QUERY_PARAMETER: &str = "pageQuery";
 /// How many leading bytes of the SHA-256 digest the token keeps: enough that
 /// two different queries never meet by accident, short enough for a URL.
 const DIGEST_BYTES: usize = 16;
+
+/// How many bytes the token spelling a digest takes: unpadded base64url
+/// spends one character on every six bits.
+pub const PAGE_QUERY_TOKEN_BYTES: usize = (DIGEST_BYTES * 8).div_ceil(6);
 
 /// The digest of the parameters that decide which elements a walk passes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,12 +67,22 @@ impl PageQuery {
             .collect();
         pairs.sort_unstable();
         let pairs = pairs;
+        PageQuery::of_parts(pairs.iter().flat_map(|(name, value)| [name.as_bytes(), value.as_bytes()]))
+    }
+
+    /// The digest of the sequence `parts`.
+    ///
+    /// Each part is prefixed with its length, so no byte can move across the
+    /// boundary between two parts and two different sequences are never hashed
+    /// from the same bytes. A query string digests as its name and value pairs,
+    /// an even number of parts, so a sequence of an odd number of parts is never
+    /// hashed from the bytes of any query string.
+    #[must_use]
+    pub fn of_parts<'part>(parts: impl IntoIterator<Item = &'part [u8]>) -> PageQuery {
         let mut hasher = Sha256::new();
-        for (name, value) in &pairs {
-            for part in [name.as_bytes(), value.as_bytes()] {
-                hasher.update(u64::try_from(part.len()).unwrap_or(u64::MAX).to_be_bytes());
-                hasher.update(part);
-            }
+        for part in parts {
+            hasher.update(u64::try_from(part.len()).unwrap_or(u64::MAX).to_be_bytes());
+            hasher.update(part);
         }
         let digest = hasher.finalize();
         let mut kept = [0; DIGEST_BYTES];
@@ -83,9 +100,12 @@ impl PageQuery {
 /// What `parameter` decides about a paged walk.
 const fn role(parameter: QueryParameter) -> ParameterRole {
     match parameter {
-        QueryParameter::Limit | QueryParameter::Offset | QueryParameter::Cursor | QueryParameter::PageContext | QueryParameter::PageQuery => {
-            ParameterRole::Paging
-        }
+        QueryParameter::Limit
+        | QueryParameter::Offset
+        | QueryParameter::Cursor
+        | QueryParameter::PageContext
+        | QueryParameter::PageQuery
+        | QueryParameter::PostedQuery => ParameterRole::Paging,
         QueryParameter::Count
         | QueryParameter::Options
         | QueryParameter::Format
@@ -155,7 +175,7 @@ impl TryFrom<&str> for PageQuery {
 
 #[cfg(test)]
 mod tests {
-    use crate::pagination::page_query::{PageQuery, PageQueryError};
+    use crate::pagination::page_query::{PAGE_QUERY_TOKEN_BYTES, PageQuery, PageQueryError};
     use pretty_assertions::{assert_eq, assert_ne};
 
     fn of(query: &str) -> PageQuery {
@@ -225,5 +245,26 @@ mod tests {
     #[test]
     fn a_request_without_a_query_digests_like_one_with_only_paging() {
         assert_eq!(PageQuery::of(None), of("limit=5&offset=0"));
+    }
+
+    #[test]
+    fn every_token_takes_the_bytes_the_spelling_states() {
+        for query in [None, Some("type=Vehicle"), Some("q=speed%3E10&type=Vehicle")] {
+            assert_eq!(PageQuery::of(query).encode().len(), PAGE_QUERY_TOKEN_BYTES);
+        }
+        assert_eq!(PAGE_QUERY_TOKEN_BYTES, 22);
+    }
+
+    #[test]
+    fn a_query_string_digests_as_the_sequence_of_its_sorted_pairs() {
+        let parts: [&[u8]; 4] = [b"q", b"speed>10", b"type", b"Vehicle"];
+        assert_eq!(of("type=Vehicle&q=speed%3E10"), PageQuery::of_parts(parts));
+    }
+
+    #[test]
+    fn a_part_boundary_cannot_be_shifted() {
+        let shifted: [&[u8]; 2] = [b"ab", b"c"];
+        let original: [&[u8]; 2] = [b"a", b"bc"];
+        assert_ne!(PageQuery::of_parts(shifted), PageQuery::of_parts(original));
     }
 }

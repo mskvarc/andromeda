@@ -47,6 +47,8 @@ use axum::http::Uri;
 
 /// Admitting a decoded query before it runs.
 mod admission;
+/// A followed pointer of a POST query, resolved to the held query.
+pub(crate) mod followed_query;
 /// Asking the registered context sources for their part of the history.
 pub(crate) mod forwarding;
 /// Aggregating here the entities a distributed aggregated query meets in more than one part.
@@ -92,6 +94,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         context,
         mut params,
         page,
+        posted,
     } = request;
     let service = &state.temporal;
     let admitted = admit_request(&state, &target, &context, protocol, &mut params, &uri).await?;
@@ -183,6 +186,16 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     let entity_map_uri = record_query_map(&state.entity_maps, &read, admitted.map_use, merged.contributions, linked_ids, &uri).await?;
 
     let status = response_status(range.as_ref(), map_created);
+    // Reach is read from the matching entities alone: a flat clause 4.5.23
+    // join appends linked entities that accompany the result set rather than
+    // belonging to it.
+    let links = page.links(total_count, reach, page_boundary);
+    // A posted query is held only when its page points at another page.
+    if let Some(posted) = posted.as_deref()
+        && !links.is_empty()
+    {
+        state.posted_queries.hold(posted).await.with_instance(&uri)?;
+    }
     // Table 6.18.3.2-2 carries the 203 row and clause 6.3.6 the
     // `Preference-Applied` echo, so the preference the request expressed is
     // what renders; clause 6.3.12's representation is what decides how clause
@@ -205,9 +218,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
             total_count,
             range,
             entity_map_uri,
-            page,
-            reach,
-            boundary: page_boundary,
+            links,
         },
         &uri,
     )

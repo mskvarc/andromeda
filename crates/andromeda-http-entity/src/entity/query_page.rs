@@ -11,23 +11,17 @@
 
 use crate::entity::query_forwarding::ForwardedQueryResults;
 use andromeda_http_extraction::pagination_policy::RequestPagination;
-use andromeda_http_headers::media_type::ResponseMediaType;
-use andromeda_http_response::{
-    link_target::PointedRequest,
-    pagination::{PageOutcome, append_page_links},
-};
+use andromeda_http_response::{page_link_targets::PageLinkTargets, page_pointing::PagePointing, pagination::PageOutcome};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_reach::PageReach, page_window::PageWindow};
 use andromeda_ngsi_ld_request::{
     error::ParameterError,
     pagination::{
-        page_context::PageContext,
         page_pointers::PagePointers,
         page_request::{CollectionOrder, PageRequest},
     },
     query::{QUERY_PAGE_SIZE, entity::parameters::EntityQueryParameters},
 };
-use axum::response::Response;
 
 /// Which collection the requested window is cut from (clause 5.5.9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,14 +59,8 @@ pub(crate) struct QueryPage {
     count: CountPolicy,
     /// Which collection the window is cut from.
     cut_at: PageCut,
-    /// Whether the binding the query arrived on can carry a pointer to the
-    /// neighbouring pages at all.
-    pointers: PagePointers,
-    /// The `@context` the query is paged under, which every pointer carries
-    /// (clause 5.5.9.1).
-    context: PageContext,
-    /// The request every pointer rebuilds.
-    pointed: PointedRequest,
+    /// The walk the page's pointers belong to and the request they rebuild.
+    pointing: PagePointing,
 }
 
 /// The window `query` asks for under `pagination`, on a binding whose pointers
@@ -97,8 +85,8 @@ pub(crate) fn requested_window(pagination: &RequestPagination, query: &EntityQue
 }
 
 impl QueryPage {
-    /// The page `window` selects, counted as `count` says and paged under
-    /// `context`.
+    /// The page `window` selects, counted as `count` says, pointing at its
+    /// neighbours as `pointing` says.
     ///
     /// Clause 5.5.9: once sources contribute entities the page is cut from the
     /// merged collection rather than from the local rows, in the same `id`
@@ -106,14 +94,7 @@ impl QueryPage {
     /// as well as the local one. Clause 4.23.1's "sort ordering is never
     /// applied to distributed operations" concerns the clause 4.23 ordering a
     /// client requests with `orderBy`, which pages by offset.
-    pub(crate) fn of(
-        window: PageWindow,
-        count: CountPolicy,
-        forwarded: Option<&ForwardedQueryResults>,
-        pointers: PagePointers,
-        context: PageContext,
-        pointed: PointedRequest,
-    ) -> QueryPage {
+    pub(crate) fn of(window: PageWindow, count: CountPolicy, forwarded: Option<&ForwardedQueryResults>, pointing: PagePointing) -> QueryPage {
         let cut_at = match forwarded.filter(|results| results.holds_remote_entities()) {
             Some(results) => PageCut::AfterMerge {
                 local_rows: results.local_row_limit(),
@@ -124,9 +105,7 @@ impl QueryPage {
             window,
             count,
             cut_at,
-            pointers,
-            context,
-            pointed,
+            pointing,
         }
     }
 
@@ -190,42 +169,21 @@ impl QueryPage {
         }
     }
 
-    /// Add the clause 6.3.10 pagination links over this page.
+    /// The clause 6.3.10 pagination links over this page.
     ///
-    /// `boundary` is the first and last identifier of the page as displayed,
-    /// from which the neighbouring cursors of a cursor page are computed, and
-    /// `reach` whether the collection continues past it.
-    ///
-    /// A binding that carried its query in the request body emits no link:
-    /// clause 6.3.10 asks for a target "that could be dereferenced by an
-    /// NGSI-LD Client to retrieve the next page", and the clause 5.2.23 body of
-    /// clause 6.23.3.1 is not in any URI-reference that could be.
-    pub(crate) fn append_links(
-        &self,
-        response: &mut Response,
-        media_type: ResponseMediaType,
-        total: Option<i64>,
-        reach: PageReach,
-        boundary: Option<(Identifier, Identifier)>,
-    ) {
-        match self.pointers {
-            PagePointers::NotDereferenceable => {}
-            PagePointers::OverRequestUri => append_page_links(
-                response,
-                &self.pointed,
-                &self.context,
-                &self.window,
-                PageOutcome { total, reach, boundary },
-                media_type,
-            ),
-        }
+    /// `total` is the clause 6.3.13 total when it was counted, `reach` whether
+    /// the collection continues past the page, and `boundary` the first and
+    /// last identifier of the page as displayed, from which the neighbouring
+    /// cursors of a cursor page are computed.
+    pub(crate) fn links(&self, total: Option<i64>, reach: PageReach, boundary: Option<(Identifier, Identifier)>) -> PageLinkTargets {
+        self.pointing.targets(&self.window, PageOutcome { total, reach, boundary })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::entity::query_page::{LocalReach, PageCut, QueryPage};
-    use andromeda_http_response::link_target::PointedRequest;
+    use andromeda_http_response::{link_target::PointedRequest, page_pointing::PagePointing};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity::Entity;
     use andromeda_ngsi_ld_query::{
@@ -234,9 +192,18 @@ mod tests {
         page_reach::PageReach,
         page_window::{PageStart, PageWindow},
     };
-    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_pointers::PagePointers};
+    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_pointers::PagePointers, page_query::PageQuery};
     use axum::http::Uri;
     use serde_json::json;
+
+    fn query_string_pointing() -> PagePointing {
+        PagePointing::new(
+            PagePointers::OverRequestUri,
+            PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
+            PageQuery::of(None),
+            PointedRequest::new(None, Uri::from_static("/ngsi-ld/v1/entities")),
+        )
+    }
 
     fn entity(id: &str) -> Entity {
         serde_json::from_value(json!({"id": id, "type": "Vehicle"})).expect("a valid entity")
@@ -251,9 +218,7 @@ mod tests {
             window: PageWindow { limit, start },
             count,
             cut_at: PageCut::AfterMerge { local_rows: 101 },
-            pointers: PagePointers::OverRequestUri,
-            context: PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
-            pointed: PointedRequest::new(None, Uri::from_static("/ngsi-ld/v1/entities")),
+            pointing: query_string_pointing(),
         }
     }
 
@@ -364,14 +329,7 @@ mod tests {
     /// past it, counted as asked.
     #[test]
     fn a_local_page_reads_the_requested_window_with_its_lookahead() {
-        let page = QueryPage::of(
-            PageWindow::after(5, uri("urn:b")),
-            CountPolicy::Emit,
-            None,
-            PagePointers::OverRequestUri,
-            PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
-            PointedRequest::new(None, Uri::from_static("/ngsi-ld/v1/entities")),
-        );
+        let page = QueryPage::of(PageWindow::after(5, uri("urn:b")), CountPolicy::Emit, None, query_string_pointing());
         pretty_assertions::assert_eq!(page.local_read(), (PageWindow::after(6, uri("urn:b")), CountPolicy::Emit));
     }
 

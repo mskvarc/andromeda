@@ -37,6 +37,7 @@ use andromeda_federation::{FederationService, local_source::LocalSource};
 use andromeda_http_context_registry::tenant_context_hosting::TenantContextHosting;
 use andromeda_linked_retrieval::admission::TemporalJoin;
 use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
+use andromeda_posted_query::{retention::PostedQueryRetention, service::PostedQueryService};
 use andromeda_postgresql_context_store::jsonld_context::repo::JsonLdContextRepository;
 use andromeda_registration::{RegistrationService, entity_probe::RegisteredEntityProbe, removal_hook::RegistrationRemovalHook};
 use andromeda_retry::tokio_retry_delay::TokioRetryDelay;
@@ -150,6 +151,10 @@ pub(super) fn construct_services(
         csr_subscriptions: subscriptions.csource,
         forwarding,
         entity_maps: Arc::new(EntityMapService::new(Arc::clone(&storage.entity_map_store))),
+        posted_queries: Arc::new(PostedQueryService::new(
+            Arc::clone(&storage.posted_query_store),
+            PostedQueryRetention::from(&config.posted_query),
+        )),
         subscription_forwarding: subscriptions.forwarding,
         snapshots,
     };

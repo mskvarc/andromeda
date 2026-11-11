@@ -32,7 +32,9 @@ const REPLAY_LEASE_MARGIN: Duration = Duration::from_secs(5);
 /// only if it gives up before the request does. An HTTP
 /// notification carries in full the entities a change wrote, so its body limit
 /// exceeds the largest body a request may send, and so does the MQTT packet a
-/// notification is published in. A side-effect or history
+/// notification is published in. The storage a tenant's posted queries may
+/// take holds at least the largest body a request may send, so a query a
+/// client may post fits on its own. A side-effect or history
 /// lease outlasts the wait for its transaction's connection. A provisional
 /// tenant outlives the longest creating request, or a request still running
 /// could find its database gone. A tenant pool behind a transaction-pooling
@@ -84,6 +86,11 @@ pub(crate) fn rules() -> impl Iterator<Item = Rule> {
         Rule::Ordered {
             key: ConfigKey::NotificationsDeliveryMaxMqttPacket,
             relation: Relation::Above,
+            limit: Limit::Key(ConfigKey::RequestLimitsMaxBody),
+        },
+        Rule::Ordered {
+            key: ConfigKey::PostedQueryMaxStoragePerTenant,
+            relation: Relation::AtLeast,
             limit: Limit::Key(ConfigKey::RequestLimitsMaxBody),
         },
         Rule::Ordered {

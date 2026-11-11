@@ -15,3 +15,8 @@ mod a_tmp_qry_9072;
 mod a_tmp_qry_9073;
 mod a_tmp_qry_9074;
 mod a_tmp_qry_9084;
+mod a_tmp_qry_9095;
+mod a_tmp_qry_9096;
+mod a_tmp_qry_9097;
+mod a_tmp_qry_9098;
+mod a_tmp_qry_9099;

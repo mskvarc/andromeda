@@ -148,6 +148,7 @@ dependencies = [
  "andromeda-notification",
  "andromeda-outbound-http",
  "andromeda-persistence-failure",
+ "andromeda-posted-query",
  "andromeda-postgresql-atomic-write",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-maintenance",
@@ -646,6 +647,7 @@ dependencies = [
  "andromeda-ngsi-ld-render",
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-request",
+ "andromeda-posted-query",
  "andromeda-tenancy",
  "axum",
  "chrono",
@@ -859,6 +861,7 @@ dependencies = [
  "andromeda-ngsi-ld-request",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-persistence-failure",
+ "andromeda-posted-query",
  "axum",
  "chrono",
  "headers",
@@ -1054,6 +1057,7 @@ dependencies = [
  "andromeda-ngsi-ld-render",
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-request",
+ "andromeda-posted-query",
  "andromeda-temporal",
  "andromeda-tenancy",
  "axum",
@@ -1609,6 +1613,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-posted-query"
+version = "1.0.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-configuration",
+ "andromeda-json-literal",
+ "andromeda-jsonld",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-request",
+ "andromeda-persistence-failure",
+ "chrono",
+ "iri-rs",
+ "pretty_assertions",
+ "serde_json",
+ "strum",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "andromeda-postgresql-atomic-write"
 version = "1.0.0"
 dependencies = [
@@ -1755,8 +1779,10 @@ dependencies = [
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-number",
  "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-request",
  "andromeda-notification",
  "andromeda-persistence-failure",
+ "andromeda-posted-query",
  "andromeda-postgresql-attribute-instance",
  "andromeda-postgresql-branch",
  "andromeda-postgresql-codes",
@@ -2138,6 +2164,7 @@ version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-request",
  "andromeda-postgresql-codes",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-schema",

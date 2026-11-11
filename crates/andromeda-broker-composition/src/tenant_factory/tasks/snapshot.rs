@@ -3,7 +3,12 @@
 
 use crate::{
     event::snapshot_notification_sink::{DeliverySnapshotNotificationSink, SnapshotStatusDeliveryDrain},
-    tenant_factory::{assembly_invariant::AssemblyInvariant, background_pacer::BackgroundPacer, error::TenantAssemblyError},
+    tenant_factory::{
+        assembly_invariant::AssemblyInvariant,
+        background_pacer::BackgroundPacer,
+        error::TenantAssemblyError,
+        tasks::expiry_sweep::register_expiry_sweep,
+    },
 };
 use andromeda_configuration::schema::notifications::delivery::DeliveryConfig;
 use andromeda_delivery::dispatch::TransportDispatcher;
@@ -111,33 +116,11 @@ pub(super) fn register_snapshot_expiry(
     store: Arc<dyn SnapshotStore>,
     cadence: Duration,
 ) -> Result<(), TenantAssemblyError> {
-    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(AssemblyInvariant::from)?;
-    let name = TaskName::try_from("snapshot-expiry").map_err(AssemblyInvariant::from)?;
-    let registration = TaskRegistration::new(
-        name,
-        TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(cadence)),
-        ShutdownPolicy::new(cadence),
-    );
     let expiry = Arc::new(SnapshotExpiry::new(store));
-    let task = ScheduledTask::new(registration, schedule, move |execution| {
+    register_expiry_sweep(supervisor, pacer, "snapshot-expiry", cadence, move |cutoff| {
         let expiry = Arc::clone(&expiry);
-        let pacer = Arc::clone(&pacer);
-        async move {
-            pacer
-                .run(async move {
-                    let cutoff = DateTime::<Utc>::from(execution.cutoff());
-                    let expired = expiry.execute(cutoff).await.map_err(classify_snapshot_failure)?;
-                    tracing::info!(expired, "snapshot expiry completed");
-                    Ok(())
-                })
-                .await
-        }
-    });
-    supervisor
-        .register_scheduled(task)
-        .map(drop)
-        .map_err(|error| AssemblyInvariant::from(error).into())
+        async move { expiry.execute(cutoff).await.map_err(classify_snapshot_failure) }
+    })
 }
 
 /// Register the sweep that prepares pending Snapshots every `cadence`,
