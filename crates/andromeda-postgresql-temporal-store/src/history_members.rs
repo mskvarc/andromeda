@@ -12,20 +12,17 @@
 //! element's are NULL.
 
 use crate::{error::TemporalStoreError, stored_history_error::StoredHistoryError};
-use andromeda_ngsi_ld_entity::proof_seals::ProofSeals;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReference, time::date_time::NgsiLdDateTime};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, reference::NgsiLdReference, time::date_time::NgsiLdDateTime};
 use andromeda_ngsi_ld_model::temporal::observation_metadata::{MetadataMembers, ObservationMetadata};
 use andromeda_postgresql_attribute_instance::{
     assemble::{AssemblyError, sub_attributes},
     flatten::{FlattenError, push_elements},
     name_keys::{HeldKeys, KeyNames, MentionedNames, NameKeys},
-    stored_json::StoredJson,
     sub_attribute::SubAttributeElement,
 };
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use cefact_units::UnitCode;
 use chrono::{DateTime, Utc};
-use serde_json::value::to_raw_value;
 use thiserror::Error;
 
 /// The members a history row stores beside its value, every name held as its
@@ -41,9 +38,6 @@ pub struct HistoryMembers {
     pub unit_code: Option<UnitCode>,
     /// `expiresAt` (clause 4.22).
     pub expires_at: Option<DateTime<Utc>>,
-    /// The `entityIdSealed` and `entityTypeSealed` members, as their codec
-    /// writes them.
-    pub proof_seals: Option<StoredJson>,
     /// The sub-attributes as elements in pre-order, their system times NULL.
     pub sub_attributes: Vec<SubAttributeElement>,
 }
@@ -58,9 +52,6 @@ pub enum HistoryMembersError {
     /// A `valueType` or `objectType` IRI has no dictionary key.
     #[error("the type '{0}' has no dictionary key")]
     UnresolvedType(NgsiLdReference),
-    /// The seals did not write as JSON, which the model never produces.
-    #[error("the seals do not encode: {0}")]
-    Seals(#[source] serde_json::Error),
 }
 
 /// Add every name the stored members of `metadata` hold as a key to
@@ -101,11 +92,6 @@ impl HistoryMembers {
             object_type_keys: members.object_types.iter().map(type_key).collect::<Result<_, _>>()?,
             unit_code: members.unit_code,
             expires_at: members.expires_at.map(NgsiLdDateTime::get),
-            proof_seals: if members.proof_seals.is_empty() {
-                None
-            } else {
-                Some(StoredJson::new(to_raw_value(&members.proof_seals).map_err(HistoryMembersError::Seals)?))
-            },
             sub_attributes,
         })
     }
@@ -116,21 +102,19 @@ impl HistoryMembers {
         held.collect_elements(&self.sub_attributes);
     }
 
-    /// The metadata of an observation of `attribute`, every key read back
-    /// through `names`; `None` when the row stores none.
+    /// The metadata of an observation, every key read back through `names`;
+    /// `None` when the row stores none.
     ///
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::StoredHistory`] when a key has no name in
-    /// `names`, the elements break an invariant of the stored layout, or the
-    /// seals do not read back.
-    pub fn metadata(self, attribute: &AttributeName, names: &KeyNames) -> Result<Option<ObservationMetadata>, TemporalStoreError> {
+    /// `names`, or the elements break an invariant of the stored layout.
+    pub fn metadata(self, names: &KeyNames) -> Result<Option<ObservationMetadata>, TemporalStoreError> {
         let HistoryMembers {
             value_type_key,
             object_type_keys,
             unit_code,
             expires_at,
-            proof_seals,
             sub_attributes: elements,
         } = self;
         let type_name = |key: EntityTypeNameKey| names.type_name(key).cloned().ok_or(AssemblyError::UnknownType(key));
@@ -140,18 +124,12 @@ impl HistoryMembers {
             .map(type_name)
             .collect::<Result<Vec<_>, _>>()
             .map_err(stored_members)?;
-        let proof_seals = proof_seals
-            .map(|seals| ProofSeals::from_stored(attribute, seals.get()))
-            .transpose()
-            .map_err(|refusal| StoredHistoryError::ProofSeals(Box::new(refusal)))?
-            .unwrap_or_default();
         let expires_at = expires_at.map(NgsiLdDateTime::normalise).transpose().map_err(StoredHistoryError::ExpiresAt)?;
         Ok(ObservationMetadata::new(MetadataMembers {
             expires_at,
             unit_code,
             value_type,
             object_types,
-            proof_seals,
             sub_attributes: sub_attributes(elements, names).map_err(stored_members)?,
         }))
     }
@@ -171,6 +149,7 @@ mod tests {
     use andromeda_postgresql_attribute_instance::{
         name_keys::{KeyNames, MentionedNames, NameKeys},
         name_resolution::distinct,
+        stored_value::StoredValue,
     };
     use andromeda_postgresql_query::{
         attribute_name_key::AttributeNameKey,
@@ -239,14 +218,13 @@ mod tests {
 
     /// The metadata of an instance of `attribute`, of `family`, carrying
     /// `members` beside its value.
-    fn metadata(attribute: &str, family: &str, members: &Value) -> (AttributeName, ObservationMetadata) {
+    fn metadata(attribute: &str, family: &str, members: &Value) -> ObservationMetadata {
         let attribute: AttributeName = attribute.parse().expect("an attribute name");
         let instance = with(json!({"@type": [ngsi(family)]}), members);
         let document = InstanceDocument::from_slice(&attribute, &serde_json::to_vec(&instance).expect("JSON")).expect("expanded members");
-        let metadata = ObservationMetadata::admit(document.into_parts())
+        ObservationMetadata::admit(document.into_parts())
             .expect("the members are committed")
-            .expect("the members are metadata");
-        (attribute, metadata)
+            .expect("the members are metadata")
     }
 
     /// Keys for every name `metadata` mentions, numbered from 1 in sorted
@@ -265,13 +243,12 @@ mod tests {
         (NameKeys::new(ResolvedNames::from_pairs(attributes), ResolvedNames::from_pairs(types)), names)
     }
 
-    /// The members `metadata` of `attribute` stores, and the metadata they read
-    /// back as.
-    fn round_trip(attribute: &AttributeName, metadata: &ObservationMetadata) -> (HistoryMembers, Option<ObservationMetadata>) {
+    /// The members `metadata` stores, and the metadata they read back as.
+    fn round_trip(metadata: &ObservationMetadata) -> (HistoryMembers, Option<ObservationMetadata>) {
         let (keys, names) = dictionary(metadata);
         let members = HistoryMembers::keyed(metadata, &keys).expect("every name has a key");
         let stored = HistoryMembers::keyed(metadata, &keys).expect("every name has a key");
-        let read = stored.metadata(attribute, &names).expect("the members assemble");
+        let read = stored.metadata(&names).expect("the members assemble");
         (members, read)
     }
 
@@ -288,23 +265,42 @@ mod tests {
                 ngsi("hasValueType"): [{"@id": ex("Speed")}],
                 ngsi("unitCode"): [{"@value": "KMH"}],
                 ngsi("expiresAt"): date_time("2030-01-01T00:00:00Z"),
-                ngsi("entityIdSealed"): [{"@value": "urn:ngsi-ld:Vehicle:1"}],
-                ngsi("entityTypeSealed"): [{"@value": "Vehicle"}]
+                ngsi("ngsildproof"): [{
+                    "@type": [ngsi("Property")],
+                    ngsi("hasValue"): [{
+                        "@type": ["https://w3id.org/security#DataIntegrityProof"],
+                        "http://purl.org/dc/terms/created": [{"@type": "http://www.w3.org/2001/XMLSchema#dateTime", "@value": "2025-01-27T21:02:24.50Z"}],
+                        "https://w3id.org/security#verificationMethod": [{"@id": "https://example.edu/issuers/565049#key"}],
+                        "https://w3id.org/security#cryptosuite": [{"@type": "https://w3id.org/security#cryptosuiteString", "@value": "eddsa-rdfc-2022"}],
+                        "https://w3id.org/security#proofPurpose": [{"@id": "https://w3id.org/security#assertionMethod"}],
+                        "https://w3id.org/security#proofValue": [{"@type": "https://w3id.org/security#multibase", "@value": "z3XrH3"}],
+                        "https://w3id.org/security#nonce": [{"@value": "n"}]
+                    }],
+                    ngsi("entityIdSealed"): [{"@value": "urn:ngsi-ld:Vehicle:1"}],
+                    ngsi("entityTypeSealed"): [{"@id": ex("Vehicle")}]
+                }]
             }),
             &nested_every_family(),
         );
-        let (speed, written) = metadata(&ex("speed"), "Property", &members);
-        let (stored, read) = round_trip(&speed, &written);
-        assert!(stored.value_type_key.is_some() && stored.unit_code.is_some() && stored.proof_seals.is_some() && stored.expires_at.is_some());
-        pretty_assertions::assert_eq!(stored.sub_attributes.len(), 16, "eight families, each with its method");
+        let written = metadata(&ex("speed"), "Property", &members);
+        let (stored, read) = round_trip(&written);
+        assert!(stored.value_type_key.is_some() && stored.unit_code.is_some() && stored.expires_at.is_some());
+        pretty_assertions::assert_eq!(stored.sub_attributes.len(), 17, "eight families, each with its method, and a seal");
+        assert!(
+            stored
+                .sub_attributes
+                .iter()
+                .any(|element| matches!(element.members.value, StoredValue::Proof(_))),
+            "the seal is stored typed"
+        );
         pretty_assertions::assert_eq!(rendered(read.as_ref()), rendered(Some(&written)));
 
         let owner = json!({
             ngsi("hasObject"): [{"@id": "urn:ngsi-ld:Person:1"}],
             ngsi("hasObjectType"): [{"@id": ex("A")}, {"@id": ex("B")}]
         });
-        let (owner_name, written) = metadata(&ex("owner"), "Relationship", &owner);
-        let (stored, read) = round_trip(&owner_name, &written);
+        let written = metadata(&ex("owner"), "Relationship", &owner);
+        let (stored, read) = round_trip(&written);
         pretty_assertions::assert_eq!(stored.object_type_keys.len(), 2);
         pretty_assertions::assert_eq!(rendered(read.as_ref()), rendered(Some(&written)));
     }
@@ -326,8 +322,8 @@ mod tests {
                 }]
             }]
         });
-        let (speed, written) = metadata(&ex("speed"), "Property", &stamped);
-        let (stored, _) = round_trip(&speed, &written);
+        let written = metadata(&ex("speed"), "Property", &stamped);
+        let (stored, _) = round_trip(&written);
         pretty_assertions::assert_eq!(stored.sub_attributes.len(), 2);
         assert!(
             stored
@@ -341,16 +337,15 @@ mod tests {
 
     #[test]
     fn an_observation_without_metadata_stores_no_element() {
-        let speed: AttributeName = ex("speed").parse().expect("an attribute name");
         let stored = HistoryMembers::unit_alone(None);
         pretty_assertions::assert_eq!(stored, HistoryMembers::default());
-        assert!(stored.metadata(&speed, &KeyNames::default()).expect("nothing to assemble").is_none());
+        assert!(stored.metadata(&KeyNames::default()).expect("nothing to assemble").is_none());
     }
 
     /// A row whose other members are never keyed keeps the unit alone.
     #[test]
     fn the_unit_alone_is_the_unit_and_nothing_else() {
-        let (_, written) = metadata(
+        let written = metadata(
             &ex("speed"),
             "Property",
             &json!({ngsi("hasValue"): [{"@value": 1}], ngsi("unitCode"): [{"@value": "KMH"}], ngsi("hasValueType"): [{"@id": ex("Speed")}]}),

@@ -20,6 +20,7 @@ use andromeda_postgresql_schema::{
 use andromeda_postgresql_seaquery::{
     literal::{false_literal, int_literal},
     operator::null_if,
+    structured_value::sub_attribute_value_object,
 };
 use sea_query::{Alias, Expr as SeaExpr, ExprTrait, IntoIden, SimpleExpr};
 
@@ -88,6 +89,15 @@ impl ElementLevel {
     pub fn field(self, field: SubAttribute) -> SimpleExpr {
         SeaExpr::col((self.alias(), field.into_iden()))
     }
+
+    /// The structured value of the element at this level as a filter compares
+    /// it: its `value_object`, or for a data-integrity seal the expanded proof
+    /// its own fields hold (clause 4.5.2.2), read through
+    /// `sub_attribute_value_object`.
+    #[must_use]
+    pub fn structured_value(self) -> SimpleExpr {
+        sub_attribute_value_object(SubAttribute::STRUCTURED_VALUE_FIELDS.map(|field| self.field(field)))
+    }
 }
 
 impl InstanceRow {
@@ -97,7 +107,16 @@ impl InstanceRow {
         match self {
             InstanceRow::Current => projection_column(column.in_current()),
             InstanceRow::History => HistoryAliases::top_level().instance_column(column.in_history()),
-            InstanceRow::Element(level) => level.field(column.in_element()),
+            InstanceRow::Element(level) => match column {
+                ValueColumn::Object => level.structured_value(),
+                ValueColumn::Number
+                | ValueColumn::Boolean
+                | ValueColumn::String
+                | ValueColumn::LongText
+                | ValueColumn::DateTime
+                | ValueColumn::Uri
+                | ValueColumn::LongUri => level.field(column.in_element()),
+            },
         }
     }
 

@@ -49,6 +49,12 @@ pub enum AttributeNodeFault {
     /// 4.5.2.2).
     #[error("carries the member {0}, which is admitted only on the ngsildproof Property")]
     ProofSealOutsideNgsildproof(ProofSealMember),
+    /// The `ngsildproof` node carried a `value` that is not one JSON object:
+    /// clause 4.5.2.2 has it "an object containing the W3C Data integrity
+    /// proof structure". JSON-LD expansion reads an array of one object as the
+    /// object itself, so only the written node tells the two apart.
+    #[error("carries a value that is not one JSON object, which the value of an ngsildproof is")]
+    ProofValueNotAnObject,
     /// The node carried the value member of another attribute family, which
     /// the "Prohibited" list of the family's own clause forbids (clauses
     /// 4.5.2.2 to 4.5.24.3).

@@ -11,6 +11,9 @@
 //!   already. A string declared as none of them is never touched.
 //! - A `ListRelationship` target is held in the clause 4.5.22.2 normalized
 //!   spelling, `{"object": uri}`, whichever spelling the request used.
+//! - An `ngsildproof` is held as written: a verifier reads its proof as signed
+//!   data, so no literal in it is respelled (ETSI TS 104 179 V1.1.1 clause
+//!   5.1.2).
 
 use crate::{
     attributes::Attributes,
@@ -96,7 +99,8 @@ fn value_needs_canonical(value: &FamilyValue) -> bool {
             values.iter().any(|value| expanded_needs_canonical(value, value_type.as_ref()))
         }
         FamilyValue::ListRelationship { objects, .. } => objects.iter().any(|object| !matches!(object, ListObject::Wrapped(_))),
-        FamilyValue::GeoProperty { .. }
+        FamilyValue::Proof(_)
+        | FamilyValue::GeoProperty { .. }
         | FamilyValue::Relationship { .. }
         | FamilyValue::LanguageProperty { .. }
         | FamilyValue::VocabProperty { .. }
@@ -120,7 +124,8 @@ fn canonicalize_value(value: &mut FamilyValue) {
                 }
             }
         }
-        FamilyValue::GeoProperty { .. }
+        FamilyValue::Proof(_)
+        | FamilyValue::GeoProperty { .. }
         | FamilyValue::Relationship { .. }
         | FamilyValue::LanguageProperty { .. }
         | FamilyValue::VocabProperty { .. }

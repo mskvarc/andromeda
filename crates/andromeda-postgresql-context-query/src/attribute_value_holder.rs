@@ -32,6 +32,7 @@ use andromeda_postgresql_seaquery::{
     jsonb::{jsonb_build_object, jsonb_path_query_first, jsonb_typeof},
     literal::{false_literal, int_literal, text_literal},
     pg_type::PostgresType,
+    structured_value::sub_attribute_value_object,
     unnest::composite_field,
 };
 use sea_query::{Alias, CaseStatement, Expr as SeaExpr, ExprTrait, Func, SimpleExpr};
@@ -68,10 +69,20 @@ impl Holder {
         }
     }
 
+    /// The holder's structured value: a row's `value_object`, an element's
+    /// read through `sub_attribute_value_object`, which reads the expanded
+    /// proof of a data-integrity seal out of its own fields (clause 4.5.2.2).
+    fn structured_value(&self) -> SimpleExpr {
+        match self {
+            Holder::Row(alias) => SeaExpr::col((alias.clone(), CurrentAttributes::ValueObject)),
+            Holder::Element(value) => sub_attribute_value_object(SubAttribute::STRUCTURED_VALUE_FIELDS.map(|field| composite_field(value.clone(), &field))),
+        }
+    }
+
     /// The holder's own value: the typed field that is set, a scalar a JSON
     /// literal holds, a structured value, and a geometry as an Object.
     fn own_value(&self) -> OrderedValue {
-        let object = self.field(CurrentAttributes::ValueObject, SubAttribute::ValueObject);
+        let object = self.structured_value();
         let strings = match self {
             Holder::Row(_) => vec![
                 self.field(CurrentAttributes::ValueString, SubAttribute::ValueString),
@@ -169,7 +180,7 @@ impl Holder {
     /// target language no member name spells (`name[en-GB]`) has the last
     /// reading alone.
     fn member_of_value(&self, members: Option<&MemberPath>, language: Option<LanguageSelector<'_>>) -> OrderedValue {
-        let object = self.field(CurrentAttributes::ValueObject, SubAttribute::ValueObject);
+        let object = self.structured_value();
         let json_property = is_json_property(self.field(CurrentAttributes::AttributeKind, SubAttribute::AttributeKind));
         let mut readings = Vec::new();
         let declared = match members {

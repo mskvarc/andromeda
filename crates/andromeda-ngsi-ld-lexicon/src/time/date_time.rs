@@ -20,7 +20,7 @@
 //! rather than clamped.
 
 use crate::time::{
-    lexical::{self, LexicalError},
+    lexical::{self, DateComponents, LexicalError, TimeComponents},
     rendering::instant_text,
     resolution::to_microsecond,
 };
@@ -67,6 +67,18 @@ impl NgsiLdDateTime {
         self.0
     }
 
+    /// The instant the components of a written `DateTime` name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NgsiLdDateTimeError::OutOfRange`] when the components name no
+    /// calendar instant, or one the broker cannot store.
+    pub(crate) fn from_components(date: DateComponents, time: TimeComponents) -> Result<NgsiLdDateTime, NgsiLdDateTimeError> {
+        let day = NaiveDate::from_ymd_opt(date.year, date.month, date.day).ok_or(NgsiLdDateTimeError::OutOfRange)?;
+        let clock = NaiveTime::from_hms_micro_opt(time.hour, time.minute, time.second, time.microsecond).ok_or(NgsiLdDateTimeError::OutOfRange)?;
+        NgsiLdDateTime::normalise(day.and_time(clock).and_utc())
+    }
+
     /// Bring an instant the broker produced itself to microsecond resolution.
     ///
     /// Not reachable from text: [`FromStr`] refuses a seventh fractional digit
@@ -95,9 +107,7 @@ impl FromStr for NgsiLdDateTime {
 
     fn from_str(text: &str) -> Result<NgsiLdDateTime, NgsiLdDateTimeError> {
         let (date, time) = lexical::date_time(text)?;
-        let day = NaiveDate::from_ymd_opt(date.year, date.month, date.day).ok_or(NgsiLdDateTimeError::OutOfRange)?;
-        let clock = NaiveTime::from_hms_micro_opt(time.hour, time.minute, time.second, time.microsecond).ok_or(NgsiLdDateTimeError::OutOfRange)?;
-        NgsiLdDateTime::normalise(day.and_time(clock).and_utc())
+        NgsiLdDateTime::from_components(date, time)
     }
 }
 

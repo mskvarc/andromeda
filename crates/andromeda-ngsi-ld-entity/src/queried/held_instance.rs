@@ -68,6 +68,7 @@ impl<'a> QueriedInstance<'a> for HeldInstance<'a> {
         let entries = match self.instance.value() {
             FamilyValue::LanguageProperty { entries, .. } => entries.entries(),
             FamilyValue::Property { .. }
+            | FamilyValue::Proof(_)
             | FamilyValue::GeoProperty { .. }
             | FamilyValue::Relationship { .. }
             | FamilyValue::VocabProperty { .. }

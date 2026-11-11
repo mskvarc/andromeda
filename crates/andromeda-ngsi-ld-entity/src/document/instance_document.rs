@@ -12,7 +12,7 @@ use crate::{
         written_value::{ValueSlot, WrittenValue},
     },
     list_object::ListObject,
-    proof_seals::ProofSeals,
+    proof::written_seals::WrittenSeals,
 };
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::{
@@ -70,8 +70,8 @@ pub struct InstanceDocument {
     #[builder(default = None)]
     instance_id: Option<Identifier>,
     /// The data-integrity seals of clause 4.5.2.2.
-    #[builder(default = ProofSeals::default())]
-    proof_seals: ProofSeals,
+    #[builder(default = WrittenSeals::default())]
+    proof_seals: WrittenSeals,
     /// The written sub-attributes.
     #[builder(default = IndexMap::new())]
     sub_attributes: IndexMap<AttributeName, AttributeMember>,
@@ -107,7 +107,7 @@ pub struct InstanceDocumentParts {
     /// `instanceId`.
     pub instance_id: Option<Identifier>,
     /// The data-integrity seals.
-    pub proof_seals: ProofSeals,
+    pub proof_seals: WrittenSeals,
     /// The written sub-attributes.
     pub sub_attributes: IndexMap<AttributeName, AttributeMember>,
 }
@@ -200,7 +200,7 @@ impl InstanceDocument {
 
     /// The data-integrity seals.
     #[must_use]
-    pub const fn proof_seals(&self) -> &ProofSeals {
+    pub const fn proof_seals(&self) -> &WrittenSeals {
         &self.proof_seals
     }
 

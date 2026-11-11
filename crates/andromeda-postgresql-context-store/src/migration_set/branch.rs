@@ -9,7 +9,9 @@
 //! a tenant-only migration's), calls no TimescaleDB function (the live
 //! history tables are hypertables, a Snapshot's are plain tables), and runs in
 //! a transaction, since the branch migrator runs inside the Snapshot's creation
-//! transaction, where a `-- no-transaction` migration could not.
+//! transaction, where a `-- no-transaction` migration could not. It may set a
+//! `TimescaleDB` setting for its own transaction: a setting only bounds what
+//! `TimescaleDB` does on a hypertable, and is inert beside a plain table.
 
 use andromeda_postgresql_schema::branch_schema_version::{BranchSchemaVersion, BranchVersionError};
 use sqlx::migrate::{Migration, Migrator};
@@ -188,10 +190,14 @@ mod tests {
         }
     }
 
+    /// How a branch migration sets a `TimescaleDB` setting for its own
+    /// transaction, which names `TimescaleDB` without calling it.
+    const TRANSACTION_SETTING: &str = "set_config('timescaledb.";
+
     #[test]
     fn no_branch_migration_calls_timescaledb() {
         for migration in branch_migrations() {
-            let sql = migration.sql.as_str();
+            let sql = migration.sql.as_str().replace(TRANSACTION_SETTING, "");
             for forbidden in ["create_hypertable", "timescaledb", "convert_to_columnstore"] {
                 assert!(
                     !sql.contains(forbidden),

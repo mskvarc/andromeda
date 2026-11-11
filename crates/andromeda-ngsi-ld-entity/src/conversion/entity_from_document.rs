@@ -3,14 +3,17 @@
 //!
 //! The written document must name its entity and at least one type (clause
 //! 4.5.1), carry no NGSI-LD Null (clause 5.2.1: a Null outside a partial
-//! update or merge fragment is `BadRequestData`), and hold every attribute in a
-//! shape a stored instance can take.
+//! update or merge fragment is `BadRequestData`), carry no `ngsildproof` on
+//! the entity itself (clause 4.5.2.2 makes the seal a member of an
+//! attribute), and hold every attribute in a shape a stored instance can
+//! take.
 
 use crate::{
     attributes::Attributes,
     document::{EntityDocument, slot::Slot},
     entity_state::EntityState,
     entity_types::EntityTypes,
+    proof::attribute_proof::names_a_seal,
     refusal::EntityRefusal,
 };
 
@@ -31,6 +34,9 @@ impl TryFrom<EntityDocument> for EntityState {
             Some(Slot::Set(expires_at)) => Some(expires_at),
             Some(Slot::Remove) => return Err(EntityRefusal::NullInState { attribute: None }),
         };
+        if parts.attributes.keys().any(names_a_seal) {
+            return Err(EntityRefusal::ProofOnEntity);
+        }
         let attributes = Attributes::try_from_members(parts.attributes)?;
         Ok(EntityState::from_parts(id, types, scope, expires_at, attributes))
     }

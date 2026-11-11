@@ -164,7 +164,8 @@ impl AttributeHistoryValue {
             | StoredValue::Time { .. }
             | StoredValue::Geometry { .. }
             | StoredValue::Object(_)
-            | StoredValue::Uri(_) => None,
+            | StoredValue::Uri(_)
+            | StoredValue::Proof(_) => None,
         }
     }
 
@@ -183,7 +184,8 @@ impl AttributeHistoryValue {
             | StoredValue::DateTime { .. }
             | StoredValue::Geometry { .. }
             | StoredValue::Object(_)
-            | StoredValue::Uri(_) => None,
+            | StoredValue::Uri(_)
+            | StoredValue::Proof(_) => None,
         }
     }
 
@@ -200,7 +202,8 @@ impl AttributeHistoryValue {
             | StoredValue::Time { .. }
             | StoredValue::Geometry { .. }
             | StoredValue::Object(_)
-            | StoredValue::Uri(_) => None,
+            | StoredValue::Uri(_)
+            | StoredValue::Proof(_) => None,
         }
     }
 
@@ -218,7 +221,8 @@ impl AttributeHistoryValue {
             | StoredValue::Date { .. }
             | StoredValue::Time { .. }
             | StoredValue::Object(_)
-            | StoredValue::Uri(_) => None,
+            | StoredValue::Uri(_)
+            | StoredValue::Proof(_) => None,
         }
     }
 
@@ -236,7 +240,8 @@ impl AttributeHistoryValue {
             | StoredValue::Date { .. }
             | StoredValue::Time { .. }
             | StoredValue::Object(_)
-            | StoredValue::Uri(_) => None,
+            | StoredValue::Uri(_)
+            | StoredValue::Proof(_) => None,
         }
     }
 
@@ -254,7 +259,8 @@ impl AttributeHistoryValue {
             | StoredValue::Date { .. }
             | StoredValue::Time { .. }
             | StoredValue::Geometry { .. }
-            | StoredValue::Uri(_) => None,
+            | StoredValue::Uri(_)
+            | StoredValue::Proof(_) => None,
         }
     }
 
@@ -272,7 +278,8 @@ impl AttributeHistoryValue {
             | StoredValue::Time { .. }
             | StoredValue::Geometry { .. }
             | StoredValue::Object(_)
-            | StoredValue::Uri(_) => None,
+            | StoredValue::Uri(_)
+            | StoredValue::Proof(_) => None,
         }
     }
 
@@ -290,7 +297,8 @@ impl AttributeHistoryValue {
             | StoredValue::Date { .. }
             | StoredValue::Time { .. }
             | StoredValue::Geometry { .. }
-            | StoredValue::Object(_) => None,
+            | StoredValue::Object(_)
+            | StoredValue::Proof(_) => None,
         }
     }
 }

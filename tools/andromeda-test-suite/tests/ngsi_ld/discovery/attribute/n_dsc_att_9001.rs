@@ -17,13 +17,11 @@ use ngsi_ld::{
 /// Pins: Retrieve Available Attributes under an @context declaring a plain term and an @type @id term answers an
 /// `AttributeList` naming both short, location short, and an undeclared attribute by its full IRI
 /// Clause: 5.7.8, 5.2.27, Table 5.2.28-1
-/// Tenant: private (the unfiltered attribute list reads every entity of the tenant, and another file's attribute
-/// named `ngsildproof`, which the model refuses, breaks the read)
 #[gtest]
 #[tokio::test]
 async fn n_dsc_att_9001_the_attribute_list_names_every_declared_term_short() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker = broker::private_tenant(&broker::front()?, &namespace).await?;
+    let broker = broker::front()?;
     let contexts = RemoteContexts::start().await?;
     let vehicle_id = namespace.urn("Vehicle", 1)?;
     let off_street_parking_downtown1_id = namespace.urn("OffStreetParking", "Downtown1")?;

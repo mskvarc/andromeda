@@ -436,6 +436,44 @@ fn a_refusal_names_where_it_stands() {
     assert_eq!(refused(&member).path.to_string(), "/1/accuracy");
 }
 
+/// Clause 4.5.2.2: the value of an `ngsildproof` "shall be an object". JSON-LD
+/// expansion reads an array of one object as the object itself, so the written
+/// value is held to it, in the normalized and the concise spelling alike.
+#[test]
+fn the_value_of_ngsildproof_is_one_json_object() {
+    let seals = json!({"entityIdSealed": "urn:ngsi-ld:Store:2", "entityTypeSealed": "Store"});
+    let with_value = |value: Value, family: Option<&str>| {
+        let mut proof = seals.clone();
+        if let Some(members) = proof.as_object_mut() {
+            members.insert("value".to_owned(), value);
+            if let Some(family) = family {
+                members.insert("type".to_owned(), json!(family));
+            }
+        }
+        proof
+    };
+    for family in [Some("Property"), None] {
+        for value in [json!("a proof"), json!(7), json!(true), json!([{"proofValue": "z"}]), json!(null)] {
+            let member = with_value(value, family);
+            let Err(NodeReadError::Refused(refusal)) = read("ngsildproof", &member) else {
+                panic!("a value that is no object is refused: {member}");
+            };
+            assert!(
+                matches!(refusal.refusal, NodeRefusal::Shape(AttributeNodeFault::ProofValueNotAnObject)),
+                "{member}: {refusal}"
+            );
+        }
+        assert!(
+            read("ngsildproof", &with_value(json!({}), family)).is_ok(),
+            "an object passes the written reading"
+        );
+    }
+    assert!(
+        read("speed", &json!({"type": "Property", "value": [{"a": 1}]})).is_ok(),
+        "only ngsildproof is held to it"
+    );
+}
+
 /// Clause 4.5.2.2: the seals of the `ngsildproof` Property are its own
 /// non-reified members; anywhere else they "shall never be present" and are
 /// refused where they stand, not read as sub-attributes of that name.

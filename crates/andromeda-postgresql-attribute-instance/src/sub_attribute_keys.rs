@@ -159,6 +159,7 @@ fn push_value_keys(
             }
         }
         StoredValue::Geometry { .. }
+        | StoredValue::Proof(_)
         | StoredValue::DeclaredNumber {
             number: DeclaredNumber::NonFinite(_),
             ..
@@ -211,7 +212,6 @@ mod tests {
                 unit_code: None,
                 observed_at: None,
                 expires_at: None,
-                proof_seals: None,
             },
             created_at: None,
             modified_at: None,

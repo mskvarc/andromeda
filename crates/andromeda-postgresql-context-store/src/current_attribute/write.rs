@@ -342,7 +342,7 @@ mod tests {
             sql.contains(r#"ON CONFLICT ("entity_key", "attribute_name_key", "dataset_key") DO UPDATE SET"#),
             "{sql}"
         );
-        for column in ["ordinal", "value_kind", "modified_at", "sub_attributes", "sub_eq_keys", "proof_seals"] {
+        for column in ["ordinal", "value_kind", "modified_at", "sub_attributes", "sub_eq_keys"] {
             assert!(sql.contains(&format!(r#""{column}" = "excluded"."{column}""#)), "{column}: {sql}");
         }
         for kept in ["entity_key", "attribute_name_key", "dataset_key", "created_at"] {

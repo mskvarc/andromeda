@@ -50,6 +50,7 @@ impl<'a> FamilyValues<'a, Stored> {
     pub fn of_state(value: &'a FamilyValue) -> FamilyValues<'a, Stored> {
         match value {
             FamilyValue::Property { values, value_type, .. } => FamilyValues::Expanded(values.iter(), value_type.as_ref()),
+            FamilyValue::Proof(proof) => FamilyValues::Expanded(proof.values().iter(), proof.value_type()),
             FamilyValue::GeoProperty { geometry, .. } => FamilyValues::Single(Some(geometry_item(geometry))),
             FamilyValue::Relationship { objects, .. } => FamilyValues::Objects(objects.iter()),
             FamilyValue::LanguageProperty { entries, .. } => FamilyValues::Entries(entries.entries().iter()),

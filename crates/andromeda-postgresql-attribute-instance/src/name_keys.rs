@@ -9,7 +9,7 @@
 //! [`MentionedNames`] collects before it flattens; a read looks up the names of
 //! the keys [`HeldKeys`] collects before it assembles.
 
-use crate::{flatten::scalar_literal, stored_members::InstanceMembers, sub_attribute::SubAttributeElement};
+use crate::{flatten::scalar_literal, stored_members::InstanceMembers, stored_value::StoredValue, sub_attribute::SubAttributeElement};
 use andromeda_ngsi_ld_entity::{attributes::Attributes, family_value::FamilyValue};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReference};
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
@@ -69,8 +69,9 @@ impl NameKeys {
 
 /// The names flattening an Entity's attributes needs a key for, at every
 /// depth: every attribute name, and every datatype the row or element holds
-/// as a key, `valueType` and `objectType`. A datatype inside a value held
-/// whole in `value_object` stays in that value and needs none.
+/// as a key, `valueType`, `objectType` and a seal's `entityTypeSealed`. A
+/// datatype inside a value held whole in `value_object` stays in that value
+/// and needs none.
 #[derive(Debug, Default)]
 pub struct MentionedNames {
     /// The attribute names, unsorted and possibly repeated.
@@ -94,6 +95,9 @@ impl MentionedNames {
                 }
                 self.types
                     .extend(family.value_type().into_iter().chain(family.object_types()).map(EntityTypeName::from));
+                if let Some(proof) = family.proof() {
+                    self.types.extend(proof.seals().entity_types().as_slice().iter().cloned());
+                }
                 self.collect(instance.sub_attributes());
             }
         }
@@ -101,8 +105,8 @@ impl MentionedNames {
 }
 
 /// The keys an Entity's rows hold at every depth: every attribute name key,
-/// and every datatype, `valueType` and `objectType` key. Assembly needs the
-/// name of each.
+/// and every datatype, `valueType`, `objectType` and sealed entity type key.
+/// Assembly needs the name of each.
 #[derive(Debug, Default)]
 pub struct HeldKeys {
     /// `attribute_names` keys, unsorted and possibly repeated.
@@ -147,6 +151,9 @@ impl HeldKeys {
                 .chain(members.value_type_key)
                 .chain(members.object_type_keys.iter().copied()),
         );
+        if let StoredValue::Proof(proof) = &members.value {
+            self.types.extend(proof.entity_type_keys.iter().copied());
+        }
     }
 }
 

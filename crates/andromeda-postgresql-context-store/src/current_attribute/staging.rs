@@ -39,7 +39,7 @@ pub(crate) struct Instances;
 /// Every `current_attributes` column a row is written with, the Entity's key
 /// aside, in bind order. The staging carries the same columns, after the
 /// Entity's identifier.
-pub(crate) const ROW_COLUMNS: [CurrentAttributes; 28] = [
+pub(crate) const ROW_COLUMNS: [CurrentAttributes; 27] = [
     CurrentAttributes::AttributeNameKey,
     CurrentAttributes::DatasetKey,
     CurrentAttributes::Ordinal,
@@ -65,7 +65,6 @@ pub(crate) const ROW_COLUMNS: [CurrentAttributes; 28] = [
     CurrentAttributes::CreatedAt,
     CurrentAttributes::ModifiedAt,
     CurrentAttributes::ExpiresAt,
-    CurrentAttributes::ProofSeals,
     CurrentAttributes::SubAttributes,
     CurrentAttributes::SubEqKeys,
 ];
@@ -97,7 +96,7 @@ const fn staged_type(column: CurrentAttributes) -> PostgresType {
         | CurrentAttributes::ModifiedAt
         | CurrentAttributes::ExpiresAt => PostgresType::TimestamptzArray,
         CurrentAttributes::ValueGeometry | CurrentAttributes::ValueGeometryReach => PostgresType::ByteaArray,
-        CurrentAttributes::ValueGeometryMembers | CurrentAttributes::ValueObject | CurrentAttributes::ProofSeals => PostgresType::JsonbArray,
+        CurrentAttributes::ValueGeometryMembers | CurrentAttributes::ValueObject => PostgresType::JsonbArray,
         CurrentAttributes::SubAttributes => PostgresType::SubAttributeTreeArray,
         CurrentAttributes::Table
         | CurrentAttributes::EntityKey
@@ -153,7 +152,6 @@ fn projected(column: CurrentAttributes) -> SimpleExpr {
         | CurrentAttributes::ValueUri
         | CurrentAttributes::ValueLongText
         | CurrentAttributes::ValueLongUri
-        | CurrentAttributes::ProofSeals
         | CurrentAttributes::SubAttributes => staged,
     }
 }
@@ -196,12 +194,12 @@ mod tests {
     #[test]
     fn the_staging_names_one_column_per_array() {
         let mut with_clause = WithClause::new();
-        let arrays = (0..29).map(|index| Expr::val(vec![index])).collect();
+        let arrays = (0..28).map(|index| Expr::val(vec![index])).collect();
         with_clause.cte(instances_cte(arrays));
         let sql = text_of(&UnnestAliased::new(with_clause.query(Query::select().take())).with_columns(super::Staged, &staged_columns()));
-        pretty_assertions::assert_eq!(staged_columns().len(), 29);
+        pretty_assertions::assert_eq!(staged_columns().len(), 28);
         assert!(sql.contains("UNNEST($1::text[], $2::integer[]"), "{sql}");
-        assert!(sql.contains("$28::sub_attribute_tree[], $29::text[]) AS r(id, attribute_name_key,"), "{sql}");
+        assert!(sql.contains("$27::sub_attribute_tree[], $28::text[]) AS r(id, attribute_name_key,"), "{sql}");
         assert!(sql.contains(r#""r"."sub_eq_keys"::bigint[] AS "sub_eq_keys""#), "{sql}");
         assert!(sql.contains(r#", ST_GeomFromEWKB("r"."value_geometry") AS "value_geometry""#), "{sql}");
         assert!(

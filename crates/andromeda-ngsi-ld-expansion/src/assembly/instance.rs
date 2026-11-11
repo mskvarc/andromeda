@@ -20,9 +20,13 @@ use crate::{
 use andromeda_native_stack::on_sufficient_stack;
 use andromeda_ngsi_ld_entity::{
     document::{attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot, value_carrier::ValueCarrier, written_value::ValueSlot},
+    entity_types::EntityTypes,
     expanded_value::ExpandedValue,
     member_shape::MemberShape,
-    proof_seals::ProofSeals,
+    proof::{
+        proof_seals::{sealed_entity_id, sealed_entity_types},
+        written_seals::WrittenSeals,
+    },
     refusal::EntityRefusal,
 };
 use andromeda_ngsi_ld_lexicon::{
@@ -69,7 +73,7 @@ fn read_instance(attribute: &AttributeName, node: ExpandedNode) -> Result<Instan
         .modified_at(parts.modified_at)
         .deleted_at(parts.deleted_at)
         .instance_id(parts.instance_id)
-        .proof_seals(ProofSeals::new(parts.entity_id_sealed, parts.entity_type_sealed))
+        .proof_seals(WrittenSeals::new(parts.entity_id_sealed, parts.entity_types_sealed))
         .sub_attributes(parts.sub_attributes)
         .build())
 }
@@ -119,9 +123,9 @@ struct InstanceParts {
     /// `instanceId`.
     instance_id: Option<Identifier>,
     /// `entityIdSealed`.
-    entity_id_sealed: Option<Vec<ExpandedValue>>,
+    entity_id_sealed: Option<Identifier>,
     /// `entityTypeSealed`.
-    entity_type_sealed: Option<Vec<ExpandedValue>>,
+    entity_types_sealed: Option<EntityTypes>,
     /// The sub-attributes.
     sub_attributes: IndexMap<AttributeName, AttributeMember>,
 }
@@ -161,9 +165,11 @@ impl InstanceParts {
         } else if iri == properties::DELETED_AT.as_str() {
             self.deleted_at = Some(date_time(&items, attribute, MemberShape::DeletedAt)?);
         } else if iri == properties::ENTITY_ID_SEALED.as_str() {
-            self.entity_id_sealed = Some(expanded_values(attribute, items)?);
+            let values: Vec<ExpandedValue> = expanded_values(attribute, items)?;
+            self.entity_id_sealed = Some(sealed_entity_id(&values).map_err(|fault| EntityRefusal::proof(attribute, fault))?);
         } else if iri == properties::ENTITY_TYPE_SEALED.as_str() {
-            self.entity_type_sealed = Some(expanded_values(attribute, items)?);
+            let values: Vec<ExpandedValue> = expanded_values(attribute, items)?;
+            self.entity_types_sealed = Some(sealed_entity_types(&values).map_err(|fault| EntityRefusal::proof(attribute, fault))?);
         } else {
             let member = name.parse::<AttributeName>().map_err(EntityRefusal::ExpandedAttributeName)?;
             if is_output_only(iri) {

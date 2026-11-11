@@ -78,7 +78,7 @@ fn a_state_round_trips_through_its_record() {
     let (keys, names) = dictionary(&written);
     let record = record_of(&written, &keys).expect("a committed state has a record");
     pretty_assertions::assert_eq!(record.scope_paths, vec!["/Madrid/Centro".to_owned(), "/x".to_owned()]);
-    pretty_assertions::assert_eq!(record.instances.len(), 11, "nine attributes, one of them twice, and temperature twice");
+    pretty_assertions::assert_eq!(record.instances.len(), 10, "eight attributes, and temperature twice");
     pretty_assertions::assert_eq!(state_of(record, &names).expect("the record reads back"), written);
 }
 
@@ -134,7 +134,6 @@ fn row_of(value: StoredValue) -> CurrentAttributeRow {
             unit_code: None,
             observed_at: None,
             expires_at: None,
-            proof_seals: None,
         },
         created_at: instant,
         modified_at: instant,
@@ -161,7 +160,6 @@ fn full_row() -> CurrentAttributeRow {
     row.members.unit_code = Some(UnitCode::Kgm);
     row.members.observed_at = Some(instant);
     row.members.expires_at = Some(instant);
-    row.members.proof_seals = Some(json(json!({"https://uri.etsi.org/ngsi-ld/entityIdSealed": [{"@value": "x"}]})));
     row.sub_attributes = vec![SubAttributeElement {
         parent: 0,
         members: row_of(StoredValue::String {
@@ -197,7 +195,6 @@ fn an_instance_record_is_a_current_row_field_for_field() {
             && record.value_language.is_none()
             && record.value_type_key.is_none()
             && record.object_type_keys.is_none()
-            && record.proof_seals.is_none()
             && record.unit_code_id.is_none()
             && record.observed_at.is_none()
             && record.expires_at.is_none()

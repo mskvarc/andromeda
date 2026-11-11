@@ -160,8 +160,6 @@ pub(crate) struct InstanceReplacement<'a> {
     pub(crate) attribute_kind: i16,
     /// The `entity_type_names` keys of `objectType`, empty when it has none.
     pub(crate) object_type_keys: Vec<i32>,
-    /// The JSON text of the instance's seals, if it has any.
-    pub(crate) proof_seals: Option<&'a str>,
     /// The replacement's `expiresAt`, if any.
     pub(crate) expires_at: Option<DateTime<Utc>>,
     /// The expression standing for the replacement's `value_number`, NULL
@@ -212,7 +210,6 @@ pub(crate) fn update_instance_statement(
             (AttributeHistory::AttributeKind, Expr::val(replacement.attribute_kind)),
             (AttributeHistory::ValueGeometryMembers, jsonb_text(value.geometry_members().map(RawValue::get))),
             (AttributeHistory::ObjectTypeKeys, Expr::val(object_type_keys)),
-            (AttributeHistory::ProofSeals, jsonb_text(replacement.proof_seals)),
             (AttributeHistory::ExpiresAt, Expr::val(replacement.expires_at)),
             (AttributeHistory::SubAttributes, sub_attributes),
             (AttributeHistory::ModifiedAt, now()),
@@ -351,7 +348,6 @@ mod tests {
             unit_code: None,
             attribute_kind: 1,
             object_type_keys: Vec::new(),
-            proof_seals: None,
             expires_at: None,
             number: Expr::val(Option::<i32>::None),
         };
@@ -490,7 +486,6 @@ mod tests {
                 "value_type_key",
                 "unit_code_id",
                 "object_type_keys",
-                "proof_seals",
                 "expires_at",
                 "sub_attributes",
             ] {

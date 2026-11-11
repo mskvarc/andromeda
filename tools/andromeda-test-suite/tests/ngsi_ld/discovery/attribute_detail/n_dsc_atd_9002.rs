@@ -20,13 +20,11 @@ use ngsi_ld::{
 /// with details=true the Relationship record names itself and its type by their full IRIs while location keeps its
 /// full URI as id
 /// Clause: C.7, 5.7.5, 5.7.8, Table 5.2.28-1
-/// Tenant: private (the unfiltered attribute list reads every entity of the tenant, and another file's attribute
-/// named `ngsildproof`, which the model refuses, breaks the read)
 #[gtest]
 #[tokio::test]
 async fn n_dsc_atd_9002_under_a_context_without_the_terms_every_user_name_is_fully_qualified() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker = broker::private_tenant(&broker::front()?, &namespace).await?;
+    let broker = broker::front()?;
     let contexts = RemoteContexts::start().await?;
     let vehicle_id = namespace.urn("Vehicle", 1)?;
     let off_street_parking_downtown1_id = namespace.urn("OffStreetParking", "Downtown1")?;

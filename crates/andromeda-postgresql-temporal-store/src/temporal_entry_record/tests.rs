@@ -322,7 +322,6 @@ fn the_entry_fields_follow_the_history_columns() {
         TemporalEntry::ValueObject,
         TemporalEntry::ValueUri,
         TemporalEntry::ObjectTypeKeys,
-        TemporalEntry::ProofSeals,
         TemporalEntry::SubAttributes,
         TemporalEntry::ScopePath,
         TemporalEntry::VerbatimScopePath,
@@ -351,7 +350,6 @@ fn the_entry_fields_follow_the_history_columns() {
         AttributeHistory::ValueObject,
         AttributeHistory::ValueUri,
         AttributeHistory::ObjectTypeKeys,
-        AttributeHistory::ProofSeals,
         AttributeHistory::SubAttributes,
     ]
     .map(|column| column.to_string());

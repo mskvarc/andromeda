@@ -10,6 +10,7 @@ use crate::{
     attribute_instances::RepeatedInstance,
     expanded_value_name::ExpandedValueNameError,
     member_shape::MemberShape,
+    proof::proof_fault::ProofFault,
     refusal_wording::{attribute_prefix, compact_term, forbidden_member_subject},
     scope_refusal::ScopeRefusal,
     syntax_category::SyntaxCategory,
@@ -287,6 +288,20 @@ pub enum EntityRefusal {
         /// The reserved name, by its expanded IRI.
         attribute: AttributeName,
     },
+    /// An `ngsildproof` is no seal clause 4.5.2.2 and ETSI TS 104 179 V1.1.1
+    /// clauses 5.1.2 and 5.2.3 define.
+    #[error("attribute '{attribute}' is no Data Integrity seal: {fault}")]
+    Proof {
+        /// The `ngsildproof`, by its expanded IRI.
+        attribute: AttributeName,
+        /// What the seal lacks or holds.
+        fault: ProofFault,
+    },
+    /// An `ngsildproof` stands on the entity. Clause 4.5.2.2 and its siblings
+    /// make the seal a member of an attribute, the signature of the attribute
+    /// carrying it, and an entity carries no attribute it could sign.
+    #[error("an ngsildproof seals the attribute it is a sub-attribute of, so it cannot stand on the entity")]
+    ProofOnEntity,
     /// An attribute name the request's context reads as a compact IRI breaks
     /// the clause 4.6.2 grammar after its colon.
     #[error("'{attribute}' is not an attribute name: the part after the prefix must start with a letter and hold only letters, digits and '_'")]
@@ -333,6 +348,16 @@ impl EntityRefusal {
         match repeated {
             RepeatedInstance::Default => EntityRefusal::MultipleDefaultInstances { attribute },
             RepeatedInstance::Dataset(dataset_id) => EntityRefusal::RepeatedInstance { attribute, dataset_id },
+        }
+    }
+
+    /// The refusal of the `ngsildproof` `attribute` that is no seal for
+    /// `fault`.
+    #[must_use]
+    pub fn proof(attribute: &AttributeName, fault: ProofFault) -> EntityRefusal {
+        EntityRefusal::Proof {
+            attribute: attribute.clone(), // clone: the refusal outlives the borrowed attribute name.
+            fault,
         }
     }
 

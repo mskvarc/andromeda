@@ -78,6 +78,7 @@ fn instance(dataset_id: bool, instance: &Instance) -> usize {
 fn family_value(value: &FamilyValue) -> usize {
     match value {
         FamilyValue::Property { values, .. } => expanded_values(values),
+        FamilyValue::Proof(proof) => expanded_values(proof.values()),
         FamilyValue::ListProperty { items, .. } => expanded_values(items).saturating_add(1),
         FamilyValue::GeoProperty { .. } => 1,
         FamilyValue::Relationship { objects, .. } => objects.as_slice().len(),

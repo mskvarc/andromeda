@@ -14,7 +14,7 @@ use crate::{
     value_mode::ValueMode,
 };
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, time::date_time::NgsiLdDateTime, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::{
     expanded::{classes, properties},
     ngsi_ld_null::NULL_URI,
@@ -31,12 +31,12 @@ impl Serialize for UrisOut<'_> {
     }
 }
 
-/// `@id` references to names.
-pub(crate) struct NamesOut<'a>(pub(crate) &'a [NgsiLdReference]);
+/// `@id` references to names: references, or entity type names.
+pub(crate) struct NamesOut<'a, N>(pub(crate) &'a [N]);
 
-impl Serialize for NamesOut<'_> {
+impl<N: AsRef<str>> Serialize for NamesOut<'_, N> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(self.0.iter().map(|name| IdOut(name.as_str())))
+        serializer.collect_seq(self.0.iter().map(|name| IdOut(name.as_ref())))
     }
 }
 

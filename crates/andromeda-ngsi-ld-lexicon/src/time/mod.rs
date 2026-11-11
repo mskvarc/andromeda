@@ -14,6 +14,8 @@
 //! * [`date_time`], [`date`] and [`time_of_day`] build the value types on it;
 //! * [`value`] names the three forms and holds a parsed value;
 //! * [`rendering`] spells a held value back;
+//! * [`spelled_date_time`] holds a `DateTime` a signature covers with the
+//!   width it was written at, the one value served as written;
 //! * [`resolution`] brings a broker-produced value to the microsecond;
 //! * [`instant_serde`] carries the rules into serde models;
 //! * [`system_instant`] is an instant the broker stamps from its clock.
@@ -24,6 +26,7 @@ pub mod instant_serde;
 pub mod lexical;
 pub mod rendering;
 pub mod resolution;
+pub mod spelled_date_time;
 pub mod system_instant;
 pub mod time_of_day;
 pub mod value;

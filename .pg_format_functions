@@ -7,5 +7,10 @@ GREATEST
 num_nonnulls
 pg_current_xact_id
 refuse_dictionary_change
+seal_attribute_name_key
 ST_SRID
 ST_Zmflag
+typed_seal_entry
+typed_seal_event
+typed_seal_state
+typed_seal_tree

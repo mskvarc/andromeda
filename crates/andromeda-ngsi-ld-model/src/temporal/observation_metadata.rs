@@ -4,7 +4,9 @@
 //! `observedAt` and its clause 4.8 times in columns of their own. What remains
 //! is the instance's metadata: its sub-attributes (clause 4.5.2) and the
 //! companion members of its family (`unitCode`, `valueType`, `objectType`),
-//! together with `expiresAt` (clause 4.22) and the data-integrity seals. A
+//! together with `expiresAt` (clause 4.22). It holds no data-integrity seal:
+//! clause 4.5.2.2 puts the seals on an `ngsildproof`, which is a sub-attribute
+//! and never the observed instance itself. A
 //! `deletedAt` is no metadata: the broker generates it (Table 5.2.5-2), and a
 //! history row recording a deletion holds it in a column of its own.
 //!
@@ -20,10 +22,10 @@ use andromeda_ngsi_ld_entity::{
         instance_document::{InstanceDocument, InstanceDocumentParts},
         slot::Slot,
     },
-    proof_seals::ProofSeals,
     refusal::EntityRefusal,
 };
 use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, time::date_time::NgsiLdDateTime};
+use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use cefact_units::UnitCode;
 
 /// The metadata of one observed instance: never empty, and never holding the
@@ -45,8 +47,6 @@ pub struct MetadataMembers {
     pub value_type: Option<NgsiLdReference>,
     /// `objectType` (clause 4.5.3), in written order; empty when absent.
     pub object_types: Vec<NgsiLdReference>,
-    /// The `entityIdSealed` and `entityTypeSealed` members (clause 4.5.2.2).
-    pub proof_seals: ProofSeals,
     /// The sub-attributes, committed and in the spelling storage keeps, with
     /// no system time on any of them.
     pub sub_attributes: Attributes,
@@ -56,12 +56,7 @@ impl MetadataMembers {
     /// Whether no member is present.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.expires_at.is_none()
-            && self.unit_code.is_none()
-            && self.value_type.is_none()
-            && self.object_types.is_empty()
-            && self.proof_seals.is_empty()
-            && self.sub_attributes.is_empty()
+        self.expires_at.is_none() && self.unit_code.is_none() && self.value_type.is_none() && self.object_types.is_empty() && self.sub_attributes.is_empty()
     }
 }
 
@@ -86,9 +81,10 @@ impl ObservationMetadata {
     ///
     /// Returns [`EntityRefusal::NullInState`] when a companion member holds
     /// the NGSI-LD Null (clause 5.5.4 excepts the temporal evolution from the
-    /// Null in a value position alone, a deleted instance of clause 4.5.7), and
-    /// the model's refusal when a sub-attribute is no instance the committed
-    /// model holds, the NGSI-LD Null in one included.
+    /// Null in a value position alone, a deleted instance of clause 4.5.7),
+    /// [`EntityRefusal::MemberForbidden`] for a seal, and the model's refusal
+    /// when a sub-attribute is no instance the committed model holds, the
+    /// NGSI-LD Null in one included.
     pub fn admit(parts: InstanceDocumentParts) -> Result<Option<ObservationMetadata>, EntityRefusal> {
         let InstanceDocumentParts {
             expires_at,
@@ -99,6 +95,9 @@ impl ObservationMetadata {
             mut sub_attributes,
             ..
         } = parts;
+        if !proof_seals.is_empty() {
+            return Err(EntityRefusal::member_forbidden(None, None, properties::ENTITY_ID_SEALED));
+        }
         let sub_attributes = if sub_attributes.is_empty() {
             Attributes::new()
         } else {
@@ -112,7 +111,6 @@ impl ObservationMetadata {
             unit_code: set(unit_code)?,
             value_type: set(value_type)?,
             object_types: set(object_types)?.unwrap_or_default(),
-            proof_seals,
             sub_attributes,
         }))
     }
@@ -143,7 +141,6 @@ impl From<ObservationMetadata> for InstanceDocument {
             unit_code,
             value_type,
             object_types,
-            proof_seals,
             sub_attributes,
         } = metadata.into_members();
         InstanceDocument::builder()
@@ -151,7 +148,6 @@ impl From<ObservationMetadata> for InstanceDocument {
             .unit_code(unit_code.map(Slot::Set))
             .value_type(value_type.map(Slot::Set))
             .object_types((!object_types.is_empty()).then_some(Slot::Set(object_types)))
-            .proof_seals(proof_seals)
             .sub_attributes(sub_attributes.written_members())
             .build()
     }

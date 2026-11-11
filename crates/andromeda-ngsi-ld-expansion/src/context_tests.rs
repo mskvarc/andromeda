@@ -21,6 +21,7 @@ use andromeda_ngsi_ld_entity::{
     literal::LiteralValue,
     value_mode::{Fragment, FragmentMember},
 };
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     attribute::{instance::AttributeValue, member_reading::MemberReading, merge_member::MergeMember},
     entity::EntityPatch,
@@ -185,11 +186,15 @@ async fn the_proof_term_expands_under_its_scoped_context() {
         &engine(),
         json!({
             "id": "urn:ngsi-ld:Store:1", "type": "Store",
-            "ngsildproof": {
+            "address": {
                 "type": "Property",
-                "value": {"type": "DataIntegrityProof", "cryptosuite": "eddsa-jcs-2022"},
-                "entityIdSealed": "urn:ngsi-ld:Store:1",
-                "entityTypeSealed": "Store"
+                "value": "Tiger Street 4",
+                "ngsildproof": {
+                    "type": "Property",
+                    "value": {"type": "DataIntegrityProof", "cryptosuite": "eddsa-jcs-2022"},
+                    "entityIdSealed": "urn:ngsi-ld:Store:1",
+                    "entityTypeSealed": "Store"
+                }
             }
         }),
         Normalization::Entity,
@@ -199,9 +204,17 @@ async fn the_proof_term_expands_under_its_scoped_context() {
     pretty_assertions::assert_eq!(both.typed.expect("no refusal"), TypedExpansion::Declined(Decline::TypeScopedContext));
     let document = both.processor.expect("the processor expands a proof");
 
-    let proof = instance(&document, "https://uri.etsi.org/ngsi-ld/ngsildproof");
-    assert!(proof.proof_seals().entity_id().is_some());
-    assert!(proof.proof_seals().entity_type().is_some());
+    let address = instance(&document, "https://uri.etsi.org/ngsi-ld/default-context/address");
+    let proof = &address
+        .sub_attributes()
+        .get("https://uri.etsi.org/ngsi-ld/ngsildproof")
+        .expect("the seal is a sub-attribute")
+        .instances()[0];
+    pretty_assertions::assert_eq!(proof.proof_seals().entity_id().map(Identifier::as_str), Some("urn:ngsi-ld:Store:1"));
+    pretty_assertions::assert_eq!(
+        proof.proof_seals().entity_types().map(|types| types.as_slice()[0].as_str()),
+        Some("https://uri.etsi.org/ngsi-ld/default-context/Store")
+    );
     let value = node(proof);
     assert!(value.types().iter().any(|name| name.as_str() == "https://w3id.org/security#DataIntegrityProof"));
     pretty_assertions::assert_eq!(member(value, "https://w3id.org/security#cryptosuite").len(), 1);

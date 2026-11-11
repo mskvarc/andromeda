@@ -20,17 +20,19 @@ use crate::{
     name_keys::NameKeys,
     stored_json::StoredJson,
     stored_members::InstanceMembers,
+    stored_proof::StoredProof,
     stored_value::{LiteralAnnotation, StoredValue},
     sub_attribute::SubAttributeElement,
 };
 use andromeda_ngsi_ld_entity::{
     attributes::Attributes,
-    expanded_value::ExpandedValue,
+    expanded_value::{ExpandedValue, ValueNode},
     family_value::FamilyValue,
     geo_value::GeoValue,
     instance::Instance,
     list_object::ListObject,
     literal::{Literal, LiteralValue},
+    proof::attribute_proof::AttributeProof,
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -72,8 +74,8 @@ pub enum FlattenError {
     /// an instance more sub-attribute instances than an element position does.
     #[error("an instance of '{0}' holds more instances than storage numbers")]
     TooManyInstances(AttributeName),
-    /// A structured value, geometry members or seals could not be written as
-    /// JSON, which the model never produces.
+    /// A structured value, geometry members or a proof's further members
+    /// could not be written as JSON, which the model never produces.
     #[error("a stored JSON piece could not be written: {0}")]
     Json(#[from] serde_json::Error),
 }
@@ -123,11 +125,6 @@ pub fn members(name: &AttributeName, dataset_id: Option<&Identifier>, instance: 
         unit_code: family.unit_code(),
         observed_at: instance.observed_at().map(NgsiLdDateTime::get),
         expires_at: instance.expires_at().map(NgsiLdDateTime::get),
-        proof_seals: if instance.proof_seals().is_empty() {
-            None
-        } else {
-            Some(stored_json(instance.proof_seals())?)
-        },
     })
 }
 
@@ -138,6 +135,7 @@ fn stored_value(name: &AttributeName, family: &FamilyValue, keys: &NameKeys) -> 
             Some(literal) => literal_value(name, literal, value_type.as_ref(), keys),
             None => object(&StructuredValue::Values(values.iter().map(ExpandedValue::to_fragment).collect())),
         },
+        FamilyValue::Proof(proof) => sealed(proof, keys),
         FamilyValue::GeoProperty { geometry, .. } => Ok(match geometry {
             GeoValue::Geometry(geometry) => StoredValue::Geometry {
                 form: geometry.form().clone(),
@@ -175,6 +173,42 @@ fn stored_value(name: &AttributeName, family: &FamilyValue, keys: &NameKeys) -> 
             .collect::<Result<Vec<_>, _>>()
             .and_then(|targets| object(&StructuredValue::ObjectList(targets))),
     }
+}
+
+/// The stored value of a data-integrity seal: its seals and the members of its
+/// proof in fields of their own, the proof's `@id` and further members as the
+/// structured value codec writes a node of them.
+fn sealed(proof: &AttributeProof, keys: &NameKeys) -> Result<StoredValue, FlattenError> {
+    let seals = proof.seals();
+    let integrity = proof.proof();
+    let entity_type_keys = seals
+        .entity_types()
+        .as_slice()
+        .iter()
+        .map(|entity_type| {
+            keys.entity_type(entity_type)
+                .ok_or_else(|| FlattenError::UnresolvedType(NgsiLdReference::from(entity_type)))
+        })
+        .collect::<Result<_, _>>()?;
+    let members = if integrity.id().is_none() && integrity.further().is_empty() {
+        None
+    } else {
+        // clone: the stored node is built beside the proof, which stays held.
+        let node = ValueNode::new(integrity.id().cloned(), Vec::new(), integrity.further().clone());
+        Some(StoredJson::new(
+            StructuredValue::Values(vec![ExpandedValue::Node(Box::new(node)).to_fragment()]).to_stored_json()?,
+        ))
+    };
+    Ok(StoredValue::Proof(Box::new(StoredProof {
+        entity_id: seals.entity_id().clone(), // clone: the stored seal owns its copy of the held one.
+        entity_type_keys,
+        created: integrity.created(),
+        verification_method: integrity.verification_method().clone(), // clone: the stored seal owns its copy of the held one.
+        cryptosuite: integrity.cryptosuite().clone(),                 // clone: the stored seal owns its copy of the held one.
+        proof_purpose: integrity.proof_purpose().clone(),             // clone: the stored seal owns its copy of the held one.
+        proof_value: integrity.proof_value().clone(),                 // clone: the stored seal owns its copy of the held one.
+        members,
+    })))
 }
 
 /// The literal a Property's values hold as one scalar: a single literal with

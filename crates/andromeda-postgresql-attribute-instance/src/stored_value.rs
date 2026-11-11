@@ -6,7 +6,7 @@
 //! moves to an overflow column under the same value kind. An element has no
 //! B-tree, so it has no overflow field.
 
-use crate::stored_json::StoredJson;
+use crate::{stored_json::StoredJson, stored_proof::StoredProof};
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::{
     time::{date::NgsiLdDate, time_of_day::NgsiLdTime},
@@ -111,6 +111,9 @@ pub enum StoredValue {
     Object(StoredJson),
     /// A single Relationship object.
     Uri(Uri),
+    /// The seals and proof of a data-integrity seal (clause 4.5.2.2), which
+    /// only a `sub_attribute` element holds.
+    Proof(Box<StoredProof>),
 }
 
 impl StoredValue {
@@ -129,6 +132,7 @@ impl StoredValue {
             StoredValue::Geometry { .. } => ValueKind::Geometry,
             StoredValue::Object(_) => ValueKind::Object,
             StoredValue::Uri(_) => ValueKind::Uri,
+            StoredValue::Proof(_) => ValueKind::DataIntegrityProof,
         }
     }
 
@@ -147,7 +151,7 @@ impl StoredValue {
                 LiteralAnnotation::Datatype(key) => Some(*key),
                 LiteralAnnotation::Plain | LiteralAnnotation::Language(_) => None,
             },
-            StoredValue::Geometry { .. } | StoredValue::Object(_) | StoredValue::Uri(_) => None,
+            StoredValue::Geometry { .. } | StoredValue::Object(_) | StoredValue::Uri(_) | StoredValue::Proof(_) => None,
         }
     }
 
@@ -169,7 +173,8 @@ impl StoredValue {
             | StoredValue::Time { .. }
             | StoredValue::Geometry { .. }
             | StoredValue::Object(_)
-            | StoredValue::Uri(_) => None,
+            | StoredValue::Uri(_)
+            | StoredValue::Proof(_) => None,
         }
     }
 }

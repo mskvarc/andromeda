@@ -100,8 +100,6 @@ pub struct TemporalEntryRecord {
     pub value_uri: Option<String>,
     /// `object_type_keys`, NULL when the list is empty.
     pub object_type_keys: Option<Vec<i32>>,
-    /// `proof_seals`.
-    pub proof_seals: Option<Json<Box<RawValue>>>,
     /// `sub_attributes`, NULL when the instance has none.
     pub sub_attributes: Option<Vec<SubAttributeRecord>>,
     /// `scope_path`, the `ltree` label path of a Scope entry.
@@ -323,7 +321,6 @@ impl TemporalEntryRecord {
             value_object: None,
             value_uri: None,
             object_type_keys: None,
-            proof_seals: None,
             sub_attributes: None,
             scope_path: None,
             verbatim_scope_path: None,

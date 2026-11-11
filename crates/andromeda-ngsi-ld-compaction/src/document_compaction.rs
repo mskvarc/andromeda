@@ -96,7 +96,7 @@ impl Walk<'_> {
             };
             self.compact_property(&mut result, &reserved().object_type, &items)?;
         }
-        self.compact_seals(&mut result, instance.proof_seals())?;
+        self.compact_seals(&mut result, instance.proof_seals().entity_id(), instance.proof_seals().entity_types())?;
         self.compact_members(&mut result, instance.sub_attributes())?;
         Ok(Compacted::Object(result))
     }

@@ -101,6 +101,10 @@ pub enum StoredHistoryError {
         #[source]
         source: UnknownCompactCode,
     },
+    /// A history row holds a data-integrity seal, which is stored only as a
+    /// sub-attribute element (clause 4.5.2.2).
+    #[error("a stored {0} row holds a data-integrity seal, which is stored only as a sub-attribute")]
+    Seal(HistoryTable),
     /// The stored attribute IRI is not an NGSI-LD name.
     #[error("a stored attribute name is not an NGSI-LD name: {0}")]
     AttributeName(#[source] NgsiLdReferenceError),
@@ -181,9 +185,8 @@ pub enum StoredHistoryError {
     ValueNumber(#[source] JsonNumberError),
     /// A structured value is not the stored JSON of a value of its family.
     ///
-    /// Boxed, as are [`StoredHistoryError::Members`] and
-    /// [`StoredHistoryError::ProofSeals`]: the refusal is the widest member,
-    /// and inlining it would enlarge every temporal store `Result`.
+    /// Boxed, as is [`StoredHistoryError::Members`]: the error is the widest
+    /// member, and inlining it would enlarge every temporal store `Result`.
     #[error("a stored attribute_history value_object is not a value of its family: {0}")]
     ValueObject(#[source] Box<StoredValueError>),
     /// The stored `valueType`, `objectType` or sub-attribute elements do not
@@ -191,9 +194,6 @@ pub enum StoredHistoryError {
     /// stored layout.
     #[error("the stored members of an attribute_history row do not assemble: {0}")]
     Members(#[source] Box<AssemblyError>),
-    /// A stored `proof_seals` document is not the seal members of an instance.
-    #[error("a stored attribute_history proof_seals is not the seals of an instance: {0}")]
-    ProofSeals(#[source] Box<EntityRefusal>),
     /// A stored sub-attribute element breaks its invariants.
     #[error("a stored attribute_history sub-attribute element is unreadable: {0}")]
     SubAttribute(#[source] Box<StoredInstanceError>),

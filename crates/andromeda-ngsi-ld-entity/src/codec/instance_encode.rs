@@ -23,9 +23,9 @@ use crate::{
         geometry_encode::GeoValueOut,
         value_encode::{ListOut, ValuesOut},
     },
+    entity_types::EntityTypes,
     family_value::FamilyValue,
     instance::Instance,
-    proof_seals::ProofSeals,
     value_mode::Stored,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -78,19 +78,20 @@ impl Serialize for InstanceOut<'_> {
         if let Some(dataset_id) = self.dataset_id {
             write_reference(&mut map, properties::DATASET_ID.as_str(), dataset_id.as_str())?;
         }
-        write_seals(&mut map, instance.proof_seals())?;
         write_attributes(&mut map, instance.sub_attributes())?;
         map.end()
     }
 }
 
-/// Write the data-integrity seals of clause 4.5.2.2.
-pub(crate) fn write_seals<M: SerializeMap>(map: &mut M, seals: &ProofSeals) -> Result<(), M::Error> {
-    if let Some(values) = seals.entity_id() {
-        map.serialize_entry(properties::ENTITY_ID_SEALED.as_str(), &ValuesOut::<Stored>(values))?;
+/// Write the data-integrity seals of clause 4.5.2.2: `entityIdSealed` as a
+/// plain string, `entityTypeSealed` as one node reference per type, as the
+/// core `@context` expands them.
+pub(crate) fn write_seals<M: SerializeMap>(map: &mut M, entity_id: Option<&Identifier>, entity_types: Option<&EntityTypes>) -> Result<(), M::Error> {
+    if let Some(entity_id) = entity_id {
+        write_text(map, properties::ENTITY_ID_SEALED.as_str(), entity_id.as_str())?;
     }
-    if let Some(values) = seals.entity_type() {
-        map.serialize_entry(properties::ENTITY_TYPE_SEALED.as_str(), &ValuesOut::<Stored>(values))?;
+    if let Some(entity_types) = entity_types {
+        map.serialize_entry(properties::ENTITY_TYPE_SEALED.as_str(), &NamesOut(entity_types.as_slice()))?;
     }
     Ok(())
 }
@@ -100,6 +101,10 @@ fn write_family_value<M: SerializeMap>(map: &mut M, value: &FamilyValue) -> Resu
     let key = value.family().value_key_str();
     match value {
         FamilyValue::Property { values, .. } => map.serialize_entry(key, &ValuesOut::<Stored>(values.as_slice()))?,
+        FamilyValue::Proof(proof) => {
+            map.serialize_entry(key, &ValuesOut::<Stored>(proof.values()))?;
+            write_seals(map, Some(proof.seals().entity_id()), Some(proof.seals().entity_types()))?;
+        }
         FamilyValue::GeoProperty { geometry, .. } => map.serialize_entry(key, &One(GeoValueOut(geometry)))?,
         FamilyValue::Relationship { objects, .. } => map.serialize_entry(key, &UrisOut(objects.as_slice()))?,
         FamilyValue::LanguageProperty { entries, .. } => map.serialize_entry(key, &LanguageEntriesOut(entries))?,

@@ -40,7 +40,7 @@ impl Recorded {
 
 /// The `attribute_history` value columns, each beside the entry field it is
 /// recorded from and how, in the table's column order.
-const ATTRIBUTE_FIELDS: [(AttributeHistory, TemporalEntry, Recorded); 26] = [
+const ATTRIBUTE_FIELDS: [(AttributeHistory, TemporalEntry, Recorded); 25] = [
     (AttributeHistory::AttributeKind, TemporalEntry::AttributeKind, Recorded::AsHeld),
     (AttributeHistory::ValueKind, TemporalEntry::ValueKind, Recorded::AsHeld),
     (AttributeHistory::ObservedAt, TemporalEntry::ObservedAt, Recorded::AsHeld),
@@ -69,7 +69,6 @@ const ATTRIBUTE_FIELDS: [(AttributeHistory, TemporalEntry, Recorded); 26] = [
     (AttributeHistory::ValueObject, TemporalEntry::ValueObject, Recorded::AsHeld),
     (AttributeHistory::ValueUri, TemporalEntry::ValueUri, Recorded::AsHeld),
     (AttributeHistory::ObjectTypeKeys, TemporalEntry::ObjectTypeKeys, Recorded::AsHeld),
-    (AttributeHistory::ProofSeals, TemporalEntry::ProofSeals, Recorded::AsHeld),
     (AttributeHistory::SubAttributes, TemporalEntry::SubAttributes, Recorded::AsHeld),
 ];
 
@@ -88,7 +87,7 @@ const SCOPE_FIELDS: [(ScopeHistory, TemporalEntry, Recorded); 7] = [
 /// The `attribute_history` value columns, in the table's column order, beside
 /// the identity (`recorded_at`, `write_id`, `write_ordinal`) and the stream.
 #[must_use]
-pub fn attribute_value_columns() -> [AttributeHistory; 26] {
+pub fn attribute_value_columns() -> [AttributeHistory; 25] {
     ATTRIBUTE_FIELDS.map(|(column, ..)| column)
 }
 
@@ -105,7 +104,7 @@ pub fn scope_value_columns() -> [ScopeHistory; 7] {
 /// The geometry is recorded as written, and `value_geometry_valid` derives
 /// its repaired form from the same field: the one value the entry does not
 /// hold as it is recorded.
-pub fn attribute_entry_values(field: impl Fn(TemporalEntry) -> SimpleExpr) -> [(AttributeHistory, SimpleExpr); 26] {
+pub fn attribute_entry_values(field: impl Fn(TemporalEntry) -> SimpleExpr) -> [(AttributeHistory, SimpleExpr); 25] {
     ATTRIBUTE_FIELDS.map(|(column, entry, recorded)| (column, recorded.of(field(entry))))
 }
 
@@ -154,7 +153,7 @@ mod tests {
             "{values:?}"
         );
         assert!(values.contains(&r#"sub_attributes <- SELECT "e"."sub_attributes""#.to_owned()), "{values:?}");
-        pretty_assertions::assert_eq!(values.len(), 26);
+        pretty_assertions::assert_eq!(values.len(), 25);
     }
 
     #[test]

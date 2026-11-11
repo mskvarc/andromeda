@@ -9,23 +9,24 @@
 use crate::{
     stored_json::StoredJson,
     stored_number::StoredNumber,
-    stored_value::{LiteralAnnotation, StoredValue},
+    stored_proof::ProofFields,
+    stored_value::StoredValue,
+    stored_value_fields::ValueFields,
     sub_attribute::EwkbGeometry,
 };
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     identifier::{Identifier, IdentifierParseError},
     time::{date::NgsiLdDateError, time_of_day::NgsiLdTimeError},
     uri::UriParseError,
 };
-use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError, declared_number::DeclaredNumber};
+use andromeda_ngsi_ld_number::JsonNumberError;
 use andromeda_postgresql_codes::{
     attribute_kind::AttributeKind,
     registry::UnknownCompactCode,
     stored_unit_code::{UnknownStoredUnitCode, stored_unit_code, unit_code_from_stored},
     value_kind::ValueKind,
 };
-use andromeda_postgresql_encoding::ewkb::{Ewkb, EwkbError};
+use andromeda_postgresql_encoding::ewkb::EwkbError;
 use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
 use cefact_units::UnitCode;
 use chrono::{DateTime, Utc};
@@ -55,8 +56,6 @@ pub struct InstanceMembers {
     pub observed_at: Option<DateTime<Utc>>,
     /// `expiresAt` (clause 4.22).
     pub expires_at: Option<DateTime<Utc>>,
-    /// The clause 4.5.2.2 seals, in their stored JSON.
-    pub proof_seals: Option<StoredJson>,
 }
 
 /// The member columns of one stored instance, as an element's fields hold
@@ -98,8 +97,6 @@ pub struct MemberColumns {
     pub value_type_key: Option<i32>,
     /// `object_type_keys`.
     pub object_type_keys: Option<Vec<i32>>,
-    /// `proof_seals`.
-    pub proof_seals: Option<Json<Box<RawValue>>>,
     /// `unit_code_id`.
     pub unit_code_id: Option<i16>,
     /// `observed_at`.
@@ -149,16 +146,45 @@ pub enum StoredInstanceError {
     /// A `Time` value kind holds text that is not a clause 4.6.3 `Time`.
     #[error("the instance's stored time is not an NGSI-LD Time: {0}")]
     Time(#[from] NgsiLdTimeError),
+    /// The seal fields of an element disagree with its value kind: a seal
+    /// missing a field or holding no value of its member, or a seal field
+    /// beside a value of another kind.
+    #[error("the instance's data-integrity seal fields disagree with its value kind")]
+    SealFields,
+}
+
+/// A stored instance whose members a row cannot hold.
+#[derive(Debug, Error)]
+pub enum RowColumnsError {
+    /// The geometry has no EWKB encoding.
+    #[error(transparent)]
+    Geometry(#[from] EwkbError),
+    /// The instance is a data-integrity seal, which only a `sub_attribute`
+    /// element holds (clause 4.5.2.2).
+    #[error("a data-integrity seal is stored only as a sub-attribute")]
+    Seal,
 }
 
 impl InstanceMembers {
-    /// The members `columns` hold, of the instance `dataset_id` names.
+    /// The members a row's `columns` hold, of the instance `dataset_id`
+    /// names. A row holds no data-integrity seal.
     ///
     /// # Errors
     ///
     /// Returns [`StoredInstanceError`] when the columns break an invariant of
     /// a stored instance.
     pub fn read(dataset_id: Option<Identifier>, columns: MemberColumns) -> Result<InstanceMembers, StoredInstanceError> {
+        InstanceMembers::read_element(dataset_id, columns, ProofFields::default())
+    }
+
+    /// The members an element's `columns` and seal fields `proof` hold, of
+    /// the instance `dataset_id` names.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoredInstanceError`] when the fields break an invariant of a
+    /// stored instance.
+    pub fn read_element(dataset_id: Option<Identifier>, columns: MemberColumns, proof: ProofFields) -> Result<InstanceMembers, StoredInstanceError> {
         let MemberColumns {
             attribute_name_key,
             attribute_kind,
@@ -175,7 +201,6 @@ impl InstanceMembers {
             value_language,
             value_type_key,
             object_type_keys,
-            proof_seals,
             unit_code_id,
             observed_at,
             expires_at,
@@ -198,23 +223,63 @@ impl InstanceMembers {
             attribute_name_key: AttributeNameKey::from(attribute_name_key),
             dataset_id,
             attribute_kind: AttributeKind::try_from(attribute_kind)?,
-            value: fields.into_value(ValueKind::try_from(value_kind)?, annotation)?,
+            value: match ValueKind::try_from(value_kind)? {
+                ValueKind::DataIntegrityProof => {
+                    if !fields.is_empty() || annotation.0.is_some() || annotation.1.is_some() {
+                        return Err(StoredInstanceError::ValueFields {
+                            kind: ValueKind::DataIntegrityProof,
+                        });
+                    }
+                    StoredValue::Proof(Box::new(proof.read()?))
+                }
+                kind @ (ValueKind::Tombstone
+                | ValueKind::Number
+                | ValueKind::String
+                | ValueKind::Boolean
+                | ValueKind::Geometry
+                | ValueKind::Object
+                | ValueKind::DateTime
+                | ValueKind::Uri
+                | ValueKind::Date
+                | ValueKind::Time
+                | ValueKind::DeclaredNumber
+                | ValueKind::DeclaredBoolean) => {
+                    if !proof.is_empty() {
+                        return Err(StoredInstanceError::SealFields);
+                    }
+                    fields.into_value(kind, annotation)?
+                }
+            },
             value_type_key: value_type_key.map(EntityTypeNameKey::from),
             object_type_keys: object_type_keys.unwrap_or_default().into_iter().map(EntityTypeNameKey::from).collect(),
             unit_code: unit_code_id.map(unit_code_from_stored).transpose()?,
             observed_at,
             expires_at,
-            proof_seals: proof_seals.map(StoredJson::from),
         })
     }
 
-    /// The `datasetId` of the instance and the fields its other members
-    /// occupy, the value in the one field its kind names.
+    /// The `datasetId` of the instance and the columns its other members
+    /// occupy in a row, the value in the one column its kind names.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RowColumnsError::Geometry`] when the geometry has no EWKB
+    /// encoding, and [`RowColumnsError::Seal`] for a data-integrity seal.
+    pub fn into_columns(self) -> Result<(Option<Identifier>, MemberColumns), RowColumnsError> {
+        match self.into_element_columns()? {
+            (dataset_id, columns, proof) if proof.is_empty() => Ok((dataset_id, columns)),
+            (_, _, _) => Err(RowColumnsError::Seal),
+        }
+    }
+
+    /// The `datasetId` of the instance, the fields its other members occupy
+    /// in an element, the value in the one field its kind names, and the seal
+    /// fields, all NULL but for a data-integrity seal.
     ///
     /// # Errors
     ///
     /// Returns [`EwkbError`] when the geometry has no EWKB encoding.
-    pub fn into_columns(self) -> Result<(Option<Identifier>, MemberColumns), EwkbError> {
+    pub fn into_element_columns(self) -> Result<(Option<Identifier>, MemberColumns, ProofFields), EwkbError> {
         let mut columns = MemberColumns {
             attribute_name_key: self.attribute_name_key.get(),
             attribute_kind: AttributeKind::code(self.attribute_kind),
@@ -231,7 +296,6 @@ impl InstanceMembers {
             value_language: self.value.language().map(|language| language.as_str().to_owned()),
             value_type_key: self.value_type_key.map(EntityTypeNameKey::get),
             object_type_keys: (!self.object_type_keys.is_empty()).then(|| self.object_type_keys.iter().map(|key| key.get()).collect()),
-            proof_seals: self.proof_seals.map(StoredJson::into_json),
             unit_code_id: self.unit_code.map(stored_unit_code),
             observed_at: self.observed_at,
             expires_at: self.expires_at,
@@ -250,100 +314,8 @@ impl InstanceMembers {
             }
             StoredValue::Object(object) => columns.value_object = Some(object.into_json()),
             StoredValue::Uri(uri) => columns.value_uri = Some(String::from(uri)),
+            StoredValue::Proof(proof) => return Ok((self.dataset_id, columns, ProofFields::from(*proof))),
         }
-        Ok((self.dataset_id, columns))
-    }
-}
-
-/// The value fields of one instance.
-struct ValueFields {
-    /// `value_number`.
-    number: Option<StoredNumber>,
-    /// `value_string`.
-    string: Option<String>,
-    /// `value_boolean`.
-    boolean: Option<bool>,
-    /// `value_date_time`.
-    date_time: Option<DateTime<Utc>>,
-    /// `value_geometry`.
-    geometry: Option<EwkbGeometry>,
-    /// `value_geometry_members`, which only a geometry carries.
-    geometry_members: Option<Json<Box<RawValue>>>,
-    /// `value_object`.
-    object: Option<Json<Box<RawValue>>>,
-    /// `value_uri`.
-    uri: Option<String>,
-}
-
-impl ValueFields {
-    /// The one value the fields hold under `kind`, with the datatype and
-    /// language the record carries beside it.
-    fn into_value(self, kind: ValueKind, (datatype, language): (Option<EntityTypeNameKey>, Option<LangTagBuf>)) -> Result<StoredValue, StoredInstanceError> {
-        let populated = usize::from(self.number.is_some())
-            + usize::from(self.string.is_some())
-            + usize::from(self.boolean.is_some())
-            + usize::from(self.date_time.is_some())
-            + usize::from(self.geometry.is_some())
-            + usize::from(self.object.is_some())
-            + usize::from(self.uri.is_some());
-        let misplaced = StoredInstanceError::ValueFields { kind };
-        if populated != 1 || (self.geometry_members.is_some() && self.geometry.is_none()) {
-            return Err(misplaced);
-        }
-        let annotated = datatype.is_some() || language.is_some();
-        if language.is_some() && !matches!(kind, ValueKind::String) {
-            return Err(StoredInstanceError::Annotation);
-        }
-        let value = match kind {
-            ValueKind::Number => StoredValue::Number {
-                number: JsonNumber::try_from(self.number.ok_or(misplaced)?)?,
-                datatype,
-            },
-            ValueKind::String => StoredValue::String {
-                text: self.string.ok_or(misplaced)?,
-                annotation: match (datatype, language) {
-                    (None, None) => LiteralAnnotation::Plain,
-                    (Some(datatype), None) => LiteralAnnotation::Datatype(datatype),
-                    (None, Some(language)) => LiteralAnnotation::Language(language),
-                    (Some(_), Some(_)) => return Err(StoredInstanceError::Annotation),
-                },
-            },
-            ValueKind::Boolean => StoredValue::Boolean {
-                flag: self.boolean.ok_or(misplaced)?,
-                datatype,
-            },
-            ValueKind::DeclaredNumber => StoredValue::DeclaredNumber {
-                number: DeclaredNumber::try_from(self.number.ok_or(misplaced)?)?,
-                datatype,
-            },
-            ValueKind::DeclaredBoolean => StoredValue::DeclaredBoolean {
-                flag: self.boolean.ok_or(misplaced)?,
-                datatype,
-            },
-            ValueKind::DateTime => StoredValue::DateTime {
-                instant: self.date_time.ok_or(misplaced)?,
-                datatype,
-            },
-            ValueKind::Date => StoredValue::Date {
-                date: self.string.ok_or(misplaced)?.parse()?,
-                datatype,
-            },
-            ValueKind::Time => StoredValue::Time {
-                time: self.string.ok_or(misplaced)?.parse()?,
-                datatype,
-            },
-            ValueKind::Geometry | ValueKind::Object | ValueKind::Uri if annotated => return Err(StoredInstanceError::Annotation),
-            ValueKind::Geometry => {
-                let ewkb = Ewkb::try_from(self.geometry.ok_or(misplaced)?.0.as_slice())?;
-                StoredValue::Geometry {
-                    form: Geometry::try_from(&ewkb)?.into_parts().0,
-                    members: self.geometry_members.map(StoredJson::from),
-                }
-            }
-            ValueKind::Object => StoredValue::Object(StoredJson::from(self.object.ok_or(misplaced)?)),
-            ValueKind::Uri => StoredValue::Uri(self.uri.ok_or(misplaced)?.parse()?),
-            ValueKind::Tombstone => return Err(misplaced),
-        };
-        Ok(value)
+        Ok((self.dataset_id, columns, ProofFields::default()))
     }
 }

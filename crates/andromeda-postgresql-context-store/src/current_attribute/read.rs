@@ -99,7 +99,6 @@ pub fn select_row_columns(select: &mut SelectStatement) {
         CurrentAttributes::ValueLanguage,
         CurrentAttributes::ValueTypeKey,
         CurrentAttributes::ObjectTypeKeys,
-        CurrentAttributes::ProofSeals,
         CurrentAttributes::UnitCodeId,
         CurrentAttributes::ObservedAt,
         CurrentAttributes::ExpiresAt,
