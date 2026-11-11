@@ -105,7 +105,7 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 filter = '''
 package(andromeda-test-suite) & binary(~ngsi_ld_) & (
     test(/(^|::)(n_csr_cre_0018|n_csr_cre_9005|n_csr_qry_0011|n_csr_qry_0014|n_csr_qry_0015|n_csr_qry_9001|n_css_qry_0003|n_css_qry_0006)_/)
-  | test(/(^|::)(n_css_qry_0011|n_css_qry_9001|n_css_qry_9003|n_ctx_add_0002|n_ctx_add_0003|n_ctx_add_0004|n_ctx_add_0005|n_ctx_add_0006)_/)
+  | test(/(^|::)(n_css_qry_0011|n_css_qry_9001|n_css_qry_9003|n_css_qry_9004|n_ctx_add_0002|n_ctx_add_0003|n_ctx_add_0004|n_ctx_add_0005|n_ctx_add_0006)_/)
   | test(/(^|::)(n_ctx_cmp_0018|n_ctx_cmp_0020|n_ctx_cmp_0029|n_ctx_cmp_0039|n_ctx_lst_0002|n_ctx_lst_0003|n_ctx_lst_0006|n_ctx_lst_0007)_/)
   | test(/(^|::)(n_ctx_lst_0009|n_ctx_lst_3001|n_ctx_lst_3002|n_ctx_lst_3003|n_ctx_srv_0008|n_ctx_srv_0019|n_ctx_srv_0020|n_dsc_atd_0001)_/)
   | test(/(^|::)(n_dsc_atd_9001|n_dsc_atd_9002|n_dsc_att_0001|n_dsc_att_0002|n_dsc_att_0003|n_dsc_att_9001|n_dsc_tyi_0010|n_dsc_typ_0001)_/)
@@ -119,7 +119,7 @@ package(andromeda-test-suite) & binary(~ngsi_ld_) & (
   | test(/(^|::)(n_qry_ent_0014|n_qry_ent_0018|n_qry_ent_3021|n_qry_ent_3050|n_qry_ent_3051|n_qry_ent_3052|n_qry_ent_9003|n_qry_ent_9005)_/)
   | test(/(^|::)(n_qry_pag_9008|n_qry_qlg_0002|n_qry_qlg_0003|n_qry_typ_9004|n_snp_cln_9169|n_snp_cre_8126|n_snp_del_8101|n_snp_qry_8110)_/)
   | test(/(^|::)(n_snp_qry_8121|n_snp_qry_8124|n_snp_sta_8104|n_sub_qry_0001|n_sub_qry_0004|n_sub_qry_0012|n_sub_qry_0013|n_sub_qry_0015)_/)
-  | test(/(^|::)(n_sub_qry_0017|n_sub_qry_0018|n_ten_hdr_0001|n_ten_hdr_0003|n_ten_iso_0003|n_tmp_qry_3080|n_tmp_qry_3081|n_tmp_qry_9006)_/)
+  | test(/(^|::)(n_sub_qry_0017|n_sub_qry_0018|n_sub_qry_9003|n_ten_hdr_0001|n_ten_hdr_0003|n_ten_iso_0003|n_tmp_qry_3080|n_tmp_qry_3081|n_tmp_qry_9006)_/)
   | test(/(^|::)(n_tmp_qry_9007|o_css_qry_0004|o_css_qry_0005|o_css_qry_0007|o_css_qry_0008|o_css_qry_9002|o_ctx_add_0007)_/)
   | test(/(^|::)(o_ctx_add_0008|o_ctx_add_0009|o_ctx_add_0011|o_ctx_add_0012|o_ctx_add_0013|o_ctx_cmp_0003|o_ctx_cmp_0004|o_ctx_cmp_0005)_/)
   | test(/(^|::)(o_ctx_cmp_0006|o_ctx_cmp_0008|o_ctx_cmp_0009|o_ctx_cmp_0010|o_ctx_cmp_0011|o_ctx_cmp_0014|o_ctx_cmp_0015|o_ctx_cmp_0016)_/)
@@ -144,7 +144,7 @@ filter = '''
 package(andromeda-test-suite) & binary(~andromeda_) & (
     test(/(^|::)(a_css_qry_0009|a_css_qry_0010|a_ctx_exp_0040|a_ctx_exp_0041|a_ctx_srv_0015|a_ent_del_9001|a_inf_ret_9002|a_lim_idn_9012|a_lim_pgp_9008)_/)
   | test(/(^|::)(a_mgt_tnt_0001|a_mgt_tnt_0002|a_mgt_tnt_0003|a_mgt_tnt_0004|a_mgt_tnt_0006|a_mgt_tnt_0007|a_mgt_tnt_0010|a_ntf_trg_9015)_/)
-  | test(/(^|::)(a_qry_typ_9003|a_snp_cln_9170|a_snp_cln_9171|a_snp_lim_8140|a_snp_qry_8140|a_snp_qry_8143|a_sub_qry_0007)_/)
+  | test(/(^|::)(a_qry_typ_9003|a_snp_cln_9170|a_snp_cln_9171|a_snp_lim_8140|a_snp_lim_8141|a_snp_lim_8142|a_snp_lim_8143|a_snp_qry_8140|a_snp_qry_8143|a_sub_qry_0007)_/)
   | test(/(^|::)(a_ntf_dlv_9007|a_ntf_dlv_9009|a_ntf_trg_9017|a_obs_wbk_9001|a_obs_wbk_9002|a_sub_qry_0008|a_sub_qry_9084|a_tmp_cwh_0029)_/)
   | test(/(^|::)(a_obs_wbk_9003)_/)
 )'''
