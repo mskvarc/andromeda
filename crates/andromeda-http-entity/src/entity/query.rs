@@ -48,7 +48,7 @@ use andromeda_linked_retrieval::{narrowing::list::ListInForce, plan::JoinPlan, t
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity_selection::ConsideredEntities};
+use andromeda_ngsi_ld_query::entity_selection::ConsideredEntities;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::{geometry_media_type::require_geojson_for_geometry_property, query::entity::parameters::EntityQueryParameters};
 use axum::http::{HeaderMap, Uri as HttpUri};
@@ -159,8 +159,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         // Clauses 5.7.2.4 and 6.3.4: refused before the store is read.
         require_geojson_for_geometry_property(query.geometry_property.as_ref(), accept.media_type()).with_entity_instance(&uri)?;
 
-        let count = if opts.count { CountPolicy::Emit } else { CountPolicy::Omit };
-        let window = requested_window(&pagination, &query, count, binding.page_pointers()).with_entity_instance(&uri)?;
+        let window = requested_window(&pagination, &query, binding.page_pointers()).with_entity_instance(&uri)?;
 
         let is_local = !target.permits_federation() || query.is_local();
         let split = state.forwarding.split_entities(query.split_entities);
@@ -193,7 +192,7 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         let deferred = split_entities.then(|| query.defer_split_filters());
         let page = QueryPage::of(
             window,
-            count,
+            query.count,
             forwarded.as_ref(),
             binding.page_pointers(),
             pagination.context,

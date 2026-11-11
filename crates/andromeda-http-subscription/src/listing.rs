@@ -1,5 +1,5 @@
 //! The paged collection both subscription families answer a listing with
-//! (clauses 5.8.4 and 5.11.4).
+//! (clauses 5.8.4 and 5.11.5).
 //!
 //! `GET /subscriptions` and `GET /csourceSubscriptions` read the same
 //! parameters and answer with the same collection shape; only the service that
@@ -20,7 +20,7 @@ use andromeda_http_response::{
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_reach::PageReach, page_window::PageWindow};
 use andromeda_ngsi_ld_request::{
-    options::ListOptions,
+    options::SysAttrsOptions,
     pagination::{
         page_context::PageContext,
         page_pointers::PagePointers,
@@ -38,8 +38,10 @@ use axum::{
 pub(crate) struct ListingRequest {
     /// The page the pagination policy decided.
     pub(crate) window: PageWindow,
-    /// The `count` and `sysAttrs` options (clauses 6.3.11 and 6.3.13).
-    pub(crate) options: ListOptions,
+    /// The `sysAttrs` selection (clause 6.3.11).
+    pub(crate) options: SysAttrsOptions,
+    /// Whether the response reports the total (clause 6.3.13 `count`).
+    count: CountPolicy,
     /// The `@context` the listing is paged under (clause 5.5.9.1).
     context: PageContext,
     /// The request every pointer rebuilds.
@@ -55,8 +57,8 @@ impl ListingRequest {
     ///
     /// # Errors
     ///
-    /// Returns the `InvalidRequest` of an `options` value clauses 6.3.11 and
-    /// 6.3.13 do not define, and whatever the pagination policy refuses.
+    /// Returns the `InvalidRequest` of an `options` value clause 6.3.11 does
+    /// not define, and whatever the pagination policy refuses.
     pub(crate) fn of(pagination: RequestPagination, params: &ListParams, instance: &Uri) -> Result<ListingRequest, ProblemResponse> {
         let RequestPagination {
             policy,
@@ -64,14 +66,14 @@ impl ListingRequest {
             query,
             pointed,
         } = pagination;
-        let options = params.list_options().with_subscription_instance(instance)?;
+        let options = params.parse_options().with_subscription_instance(instance)?;
         let window = policy
             .window(
                 &params.page,
                 PageRequest {
                     size: SUBSCRIPTION_PAGE_SIZE,
                     order: CollectionOrder::Identifier,
-                    count: options.count,
+                    count: params.count,
                     pointers: PagePointers::OverRequestUri,
                     context: &context,
                     query: &query,
@@ -81,6 +83,7 @@ impl ListingRequest {
         Ok(ListingRequest {
             window,
             options,
+            count: params.count,
             context,
             pointed,
         })
@@ -103,7 +106,7 @@ impl ListingRequest {
         media_type: ResponseMediaType,
     ) -> Result<Response, ProblemResponse> {
         let mut response = NgsiLdCollectionResponse::ok(rendered);
-        match self.options.count {
+        match self.count {
             CountPolicy::Emit => {
                 // The store counts rows, so the total is never negative; a
                 // conversion that fails here is an internal inconsistency.

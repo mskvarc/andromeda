@@ -26,7 +26,6 @@ impl EntityQueryParameters {
         Ok(EntityQueryParametersOptions {
             render_mode: resolve_representation(self.format.as_ref(), self.options.as_ref())?,
             sys_attrs: options.sys_attrs,
-            count: self.count.unwrap_or(false),
         })
     }
 

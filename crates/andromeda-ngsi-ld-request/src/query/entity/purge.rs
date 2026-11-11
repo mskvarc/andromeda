@@ -35,6 +35,7 @@ use crate::{
 use andromeda_linked_retrieval::admission::{LinkedOperation, LinkedRequest, admit_request};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
     dataset::DatasetSelector,
     filter::expression::Expr,
     ordering::parameters::OrderingParameters,
@@ -189,7 +190,7 @@ impl PurgeEntitiesParameters {
             q: self.q,
             geo: self.geo,
             page: PageParameters::default(),
-            count: None,
+            count: CountPolicy::Omit,
             options: None,
             local: self.local,
             pick: None,

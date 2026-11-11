@@ -8,6 +8,8 @@ mod n_sub_qry_0015;
 mod n_sub_qry_0017;
 mod n_sub_qry_0018;
 mod n_sub_qry_9001;
+mod n_sub_qry_9003;
+mod n_sub_qry_9004;
 mod o_sub_qry_0002;
 mod o_sub_qry_0003;
 mod o_sub_qry_0005;
