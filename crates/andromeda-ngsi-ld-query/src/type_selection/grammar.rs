@@ -9,6 +9,7 @@ use iri_rs::IriBuf;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{self, Write},
+    slice,
     str::FromStr,
 };
 
@@ -61,6 +62,21 @@ impl TypeExprRaw {
             // The wildcard selects every type and a boolean group selects a
             // combination of them, so neither names one.
             TypeExprRaw::Wildcard | TypeExprRaw::And(_) | TypeExprRaw::Or(_) => None,
+        }
+    }
+
+    /// The operands of the expression's top-level disjunction (clause 4.17 `|`
+    /// or `,`), in the order written, or the expression itself when it is no
+    /// disjunction.
+    ///
+    /// Clause 4.17 nests no disjunction inside another group, so each
+    /// alternative of a parsed expression is one type, a parenthesised
+    /// conjunction, or the wildcard standing alone.
+    #[must_use]
+    pub const fn alternatives(&self) -> &[TypeExprRaw] {
+        match self {
+            TypeExprRaw::Or(children) => children.as_slice(),
+            TypeExprRaw::Wildcard | TypeExprRaw::Type(_) | TypeExprRaw::And(_) => slice::from_ref(self),
         }
     }
 
@@ -317,6 +333,24 @@ mod tests {
         let expr = "Vehicle,(Home;Asset)".parse::<TypeExprRaw>().expect("valid");
         pretty_assertions::assert_eq!(expr.named_types(), vec![name("Vehicle"), name("Home"), name("Asset")]);
         pretty_assertions::assert_eq!(TypeExprRaw::Wildcard.named_types(), Vec::<EntityTypeName>::new());
+    }
+
+    #[test]
+    fn the_alternatives_are_the_operands_of_the_top_level_disjunction() {
+        let rendered = |raw: &str| -> Vec<String> {
+            raw.parse::<TypeExprRaw>()
+                .expect("valid type expression")
+                .alternatives()
+                .iter()
+                .map(ToString::to_string)
+                .collect()
+        };
+        pretty_assertions::assert_eq!(rendered("Vehicle"), ["Vehicle"]);
+        pretty_assertions::assert_eq!(rendered("Building|Tower"), ["Building", "Tower"]);
+        pretty_assertions::assert_eq!(rendered("Tower,Building"), ["Tower", "Building"]);
+        pretty_assertions::assert_eq!(rendered("(Home;Vehicle)|Motorhome"), ["(Home;Vehicle)", "Motorhome"]);
+        pretty_assertions::assert_eq!(rendered("(Home;Vehicle)"), ["(Home;Vehicle)"]);
+        pretty_assertions::assert_eq!(rendered("*"), ["*"]);
     }
 
     #[test]

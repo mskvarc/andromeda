@@ -115,7 +115,7 @@ package(andromeda-test-suite) & binary(~ngsi_ld_) & (
   | test(/(^|::)(n_fed_wrt_0010|n_fed_wrt_0015|n_fed_wrt_0018|n_fed_wrt_0020|n_fed_wrt_0022|n_fed_wrt_5001|n_fed_wrt_5002|n_fed_wrt_5003)_/)
   | test(/(^|::)(n_fed_wrt_5004|n_fed_wrt_5005|n_fed_wrt_5006|n_fed_wrt_5203|n_fed_wrt_5204|n_fed_wrt_9001|n_fed_wrt_9011|n_fed_wrt_9016)_/)
   | test(/(^|::)(n_inf_ret_9001|n_inf_ret_9003|n_inf_ret_9004|n_map_qen_3080|n_map_qen_9001|n_map_qen_9002|n_map_qen_9003|n_map_qen_9006)_/)
-  | test(/(^|::)(n_map_qen_9007|n_ntf_dlv_0004|n_ntf_dlv_9001|n_ntf_trg_0019|n_ntf_trg_9029|n_ntf_trg_9030|n_qry_ent_0003|n_qry_ent_0013)_/)
+  | test(/(^|::)(n_map_qen_9007|n_map_qen_9013|n_ntf_dlv_0004|n_ntf_dlv_9001|n_ntf_trg_0019|n_ntf_trg_9029|n_ntf_trg_9030|n_qry_ent_0003|n_qry_ent_0013)_/)
   | test(/(^|::)(n_qry_ent_0014|n_qry_ent_0018|n_qry_ent_3021|n_qry_ent_3050|n_qry_ent_3051|n_qry_ent_3052|n_qry_ent_9003|n_qry_ent_9005)_/)
   | test(/(^|::)(n_qry_pag_9008|n_qry_qlg_0002|n_qry_qlg_0003|n_qry_typ_9004|n_snp_cln_9169|n_snp_cre_8126|n_snp_del_8101|n_snp_qry_8110)_/)
   | test(/(^|::)(n_snp_qry_8121|n_snp_qry_8124|n_snp_sta_8104|n_sub_qry_0001|n_sub_qry_0004|n_sub_qry_0012|n_sub_qry_0013|n_sub_qry_0015)_/)
