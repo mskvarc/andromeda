@@ -90,20 +90,16 @@ impl QueriedPage {
     /// Returns whatever the pagination policy refuses (clauses 5.5.9 and
     /// 6.3.10).
     pub(crate) fn requested(pagination: RequestPagination, params: &TemporalQueryParameters, pointers: PagePointers) -> Result<QueriedPage, ParameterError> {
-        let count = match params.count {
-            Some(true) => CountPolicy::Emit,
-            Some(false) | None => CountPolicy::Omit,
-        };
         let request = PageRequest {
             size: QUERY_PAGE_SIZE,
             order: CollectionOrder::of(&params.ordering),
-            count,
+            count: params.count,
             pointers,
             context: &pagination.context,
             query: &pagination.query,
         };
         let window = pagination.policy.window(&params.page, request)?;
-        Ok(QueriedPage::of(window, count, pointers, pagination.context, pagination.pointed))
+        Ok(QueriedPage::of(window, params.count, pointers, pagination.context, pagination.pointed))
     }
 
     /// Whether the client asked for the total (clause 6.3.13).

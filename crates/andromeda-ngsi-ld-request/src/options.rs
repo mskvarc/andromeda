@@ -6,10 +6,7 @@ use crate::{
     unsupported_representation::UnsupportedRepresentation,
 };
 use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
-use andromeda_ngsi_ld_query::{
-    comma_separated_list::{ListedItem, listed_members},
-    count_policy::CountPolicy,
-};
+use andromeda_ngsi_ld_query::comma_separated_list::{ListedItem, listed_members};
 use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use serde::Deserialize;
 use strum::{Display, EnumString};
@@ -28,15 +25,6 @@ pub struct EntityRepresentationOptions {
 pub struct TemporalRepresentationOptions {
     /// Deprecated temporal representation selection through `options`.
     pub format: Option<TemporalFormat>,
-    /// Whether system-generated temporal attributes are included.
-    pub sys_attrs: SysAttrsInclusion,
-}
-
-/// Subscription-list response options from clauses 6.3.13 and 6.3.11.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct ListOptions {
-    /// Whether the response emits the total result count.
-    pub count: CountPolicy,
     /// Whether system-generated temporal attributes are included.
     pub sys_attrs: SysAttrsInclusion,
 }
@@ -107,7 +95,6 @@ impl RepresentationGrammar for EntityRepresentationOptions {
                 OptionsToken::TemporalValues
                 | OptionsToken::AggregatedValues
                 | OptionsToken::GroupedValues
-                | OptionsToken::Count
                 | OptionsToken::NoOverwrite
                 | OptionsToken::Replace
                 | OptionsToken::Update => return Err(UnsupportedRepresentation::UnsupportedOptionsToken(token)),
@@ -137,37 +124,6 @@ impl RepresentationGrammar for TemporalRepresentationOptions {
                 | OptionsToken::Concise
                 | OptionsToken::Simplified
                 | OptionsToken::KeyValues
-                | OptionsToken::Count
-                | OptionsToken::NoOverwrite
-                | OptionsToken::Replace
-                | OptionsToken::Update => return Err(UnsupportedRepresentation::UnsupportedOptionsToken(token)),
-            }
-        }
-        Ok(parsed)
-    }
-}
-
-// Clauses 6.3.13 and 6.3.11: a listing's `options` carries `count` and
-// `sysAttrs` and nothing else.
-impl RepresentationGrammar for ListOptions {
-    const PARAMETER: RepresentationParameter = RepresentationParameter::Options;
-
-    fn parse(written: &str) -> Result<ListOptions, UnsupportedRepresentation> {
-        let mut parsed = ListOptions::default();
-        for token in option_tokens(written)? {
-            match token {
-                OptionsToken::Count => match parsed.count {
-                    CountPolicy::Omit => parsed.count = CountPolicy::Emit,
-                    CountPolicy::Emit => return Err(UnsupportedRepresentation::DuplicateOptionsToken(token)),
-                },
-                OptionsToken::SysAttrs => include_sys_attrs(&mut parsed.sys_attrs)?,
-                OptionsToken::Normalized
-                | OptionsToken::Concise
-                | OptionsToken::Simplified
-                | OptionsToken::KeyValues
-                | OptionsToken::TemporalValues
-                | OptionsToken::AggregatedValues
-                | OptionsToken::GroupedValues
                 | OptionsToken::NoOverwrite
                 | OptionsToken::Replace
                 | OptionsToken::Update => return Err(UnsupportedRepresentation::UnsupportedOptionsToken(token)),
@@ -194,7 +150,6 @@ impl RepresentationGrammar for SysAttrsOptions {
             | OptionsToken::TemporalValues
             | OptionsToken::AggregatedValues
             | OptionsToken::GroupedValues
-            | OptionsToken::Count
             | OptionsToken::NoOverwrite
             | OptionsToken::Replace
             | OptionsToken::Update) => Err(UnsupportedRepresentation::UnsupportedOptionsToken(token)),
@@ -217,7 +172,6 @@ impl RepresentationGrammar for OverwritePolicy {
             | OptionsToken::TemporalValues
             | OptionsToken::AggregatedValues
             | OptionsToken::GroupedValues
-            | OptionsToken::Count
             | OptionsToken::Replace
             | OptionsToken::Update) => Err(UnsupportedRepresentation::UnsupportedOptionsToken(token)),
         }
@@ -240,7 +194,6 @@ impl RepresentationGrammar for UpsertMode {
             | OptionsToken::TemporalValues
             | OptionsToken::AggregatedValues
             | OptionsToken::GroupedValues
-            | OptionsToken::Count
             | OptionsToken::NoOverwrite) => Err(UnsupportedRepresentation::UnsupportedOptionsToken(token)),
         }
     }
@@ -298,13 +251,12 @@ fn set_temporal_format(options: &mut TemporalRepresentationOptions, token: Optio
 #[cfg(test)]
 mod tests {
     use crate::{
-        options::{EntityRepresentationOptions, ListOptions, OverwritePolicy, SysAttrsOptions, TemporalRepresentationOptions, UpsertMode},
+        options::{EntityRepresentationOptions, OverwritePolicy, SysAttrsOptions, TemporalRepresentationOptions, UpsertMode},
         options_token::OptionsToken,
         representation_parameter::RepresentationGrammar,
         unsupported_representation::UnsupportedRepresentation,
     };
     use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
-    use andromeda_ngsi_ld_query::count_policy::CountPolicy;
     use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 
     #[test]
@@ -330,8 +282,8 @@ mod tests {
         );
         pretty_assertions::assert_eq!(EntityRepresentationOptions::parse(""), Err(UnsupportedRepresentation::EmptyOptionsToken));
         pretty_assertions::assert_eq!(
-            EntityRepresentationOptions::parse("count"),
-            Err(UnsupportedRepresentation::UnsupportedOptionsToken(OptionsToken::Count))
+            EntityRepresentationOptions::parse("noOverwrite"),
+            Err(UnsupportedRepresentation::UnsupportedOptionsToken(OptionsToken::NoOverwrite))
         );
     }
 
@@ -377,19 +329,17 @@ mod tests {
                 sys_attrs: SysAttrsInclusion::Include
             })
         );
-        assert!(SysAttrsOptions::parse("count").is_err());
+        assert!(SysAttrsOptions::parse("noOverwrite").is_err());
     }
 
+    /// Clause 6.3.13 makes `count` a URL parameter of its own, so no table
+    /// defines it as an `options` token.
     #[test]
-    fn list_options_are_typed_and_repeated_tokens_are_rejected() {
-        let options = ListOptions::parse("count,sysAttrs").expect("valid options");
-        pretty_assertions::assert_eq!(options.count, CountPolicy::Emit);
-        pretty_assertions::assert_eq!(options.sys_attrs, SysAttrsInclusion::Include);
+    fn count_is_no_options_token() {
+        pretty_assertions::assert_eq!(SysAttrsOptions::parse("count"), Err(UnsupportedRepresentation::UnknownOptionsToken));
         pretty_assertions::assert_eq!(
-            ListOptions::parse("count,count"),
-            Err(UnsupportedRepresentation::DuplicateOptionsToken(OptionsToken::Count))
+            EntityRepresentationOptions::parse("keyValues,count"),
+            Err(UnsupportedRepresentation::UnknownOptionsToken)
         );
-        assert!(ListOptions::parse("unknown").is_err());
-        assert!(ListOptions::parse("").is_err());
     }
 }

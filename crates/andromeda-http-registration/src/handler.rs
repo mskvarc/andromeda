@@ -116,16 +116,15 @@ pub(crate) async fn query(
 ) -> Result<Response, ProblemResponse> {
     let options = params.parse_options().with_registration_instance(&uri)?;
     let language_filter = params.lang.as_ref().or(protocol.language_filter.as_ref());
-    // Clause 5.10.2: a discovery always reports its total, so `limit=0` asks
-    // for that total alone (Table 6.3.10-1). The registrations are paged in
-    // identifier order in either pagination mode.
+    // The registrations are paged in identifier order in either pagination
+    // mode.
     let window = pagination
         .window(
             &params.page,
             PageRequest {
                 size: QUERY_PAGE_SIZE,
                 order: CollectionOrder::Identifier,
-                count: CountPolicy::Emit,
+                count: params.count,
                 pointers: PagePointers::OverRequestUri,
                 context: &page_context,
                 query: &page_query,
@@ -163,13 +162,6 @@ pub(crate) async fn query(
         .with_registration_instance(&uri)?
         .with_collection(&registrations);
     let rendered = RenderedResponse::resource(ready).with_registration_instance(&uri)?;
-    let total_count = usize::try_from(total).map_err(|error| {
-        internal_problem(
-            RegistrationCountError::ResponsePlatform(error),
-            InternalFailureSummary::new("internal registration error"),
-            &uri,
-        )
-    })?;
     let pagination_total = i64::try_from(total).map_err(|error| {
         internal_problem(
             RegistrationCountError::OffsetPagination(error),
@@ -177,7 +169,21 @@ pub(crate) async fn query(
             &uri,
         )
     })?;
-    let mut response = NgsiLdCollectionResponse::ok(rendered).with_total_count(total_count).into_response();
+    let mut response = NgsiLdCollectionResponse::ok(rendered);
+    match params.count {
+        CountPolicy::Emit => {
+            let total_count = usize::try_from(total).map_err(|error| {
+                internal_problem(
+                    RegistrationCountError::ResponsePlatform(error),
+                    InternalFailureSummary::new("internal registration error"),
+                    &uri,
+                )
+            })?;
+            response = response.with_total_count(total_count);
+        }
+        CountPolicy::Omit => {}
+    }
+    let mut response = response.into_response();
     // Clause 5.5.9.1: the cursor pointers and whether the collection continues are read
     // from the raw store page, before the clause-5.10.2.5 trim thinned it, so a
     // walk continues past every registration the store scanned.

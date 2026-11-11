@@ -39,8 +39,8 @@ mod tests {
             "duplicate options token 'sysAttrs'"
         );
         pretty_assertions::assert_eq!(
-            UnsupportedRepresentation::UnsupportedOptionsToken(OptionsToken::Count).to_string(),
-            "options token 'count' is not supported by this operation"
+            UnsupportedRepresentation::UnsupportedOptionsToken(OptionsToken::NoOverwrite).to_string(),
+            "options token 'noOverwrite' is not supported by this operation"
         );
     }
 }

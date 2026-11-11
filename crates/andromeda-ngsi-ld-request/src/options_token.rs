@@ -6,9 +6,10 @@ use strum::{Display, EnumString};
 ///
 /// This is the union of the tokens every operation's `options` grammar draws
 /// on (the renderings of Tables 6.3.7-1 and 6.3.12-1, `sysAttrs` (clause
-/// 6.3.11), `count` (clause 6.3.13), `noOverwrite` (clause 6.3.9) and the two
-/// upsert modes of clause 6.15.3.1). Which of them one operation accepts is that
-/// operation's grammar; a token outside the union names nothing at all.
+/// 6.3.11), `noOverwrite` (clause 6.3.9) and the two upsert modes of clause
+/// 6.15.3.1). Which of them one operation accepts is that operation's grammar;
+/// a token outside the union names nothing at all. The total of a paged query
+/// is the `count` URL parameter of clause 6.3.13, not a token.
 #[derive(Clone, Copy, Debug, Display, EnumString, Eq, Hash, PartialEq)]
 #[strum(serialize_all = "camelCase")]
 pub enum OptionsToken {
@@ -29,8 +30,6 @@ pub enum OptionsToken {
     /// The grouped temporal rendering of the temporal aggregation grouping
     /// extension.
     GroupedValues,
-    /// Emit the total result count.
-    Count,
     /// Preserve existing attributes on append and batch update.
     NoOverwrite,
     /// Replace an existing entity on batch upsert.
@@ -50,7 +49,6 @@ mod tests {
             (OptionsToken::SysAttrs, "sysAttrs"),
             (OptionsToken::NoOverwrite, "noOverwrite"),
             (OptionsToken::GroupedValues, "groupedValues"),
-            (OptionsToken::Count, "count"),
         ] {
             pretty_assertions::assert_eq!(token.to_string(), spelling);
             pretty_assertions::assert_eq!(spelling.parse::<OptionsToken>(), Ok(token));

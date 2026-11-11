@@ -27,6 +27,7 @@ use crate::{
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
     dataset::DatasetSelector,
     defined_token::deserialize_optional_token,
     filter::expression::Expr,
@@ -83,8 +84,10 @@ pub struct EntityQueryParameters {
     /// `cursor`), decided by the broker's pagination policy.
     #[serde(flatten)]
     pub page: PageParameters,
-    /// Whether the response reports the total number of matches (`count`).
-    pub count: Option<bool>,
+    /// Whether the response reports the total number of matches (clause
+    /// 6.3.13 `count`).
+    #[serde(default)]
+    pub count: CountPolicy,
     /// Typed representation and system-attribute options (`options`).
     pub options: Option<WrittenValue<EntityRepresentationOptions>>,
     /// Whether the operation is confined to this broker (clause 5.10 `local`).
@@ -203,8 +206,6 @@ pub struct EntityQueryParametersOptions {
     pub render_mode: ResponseFormat,
     /// Whether to include system-generated attributes (`createdAt`, `modifiedAt`).
     pub sys_attrs: SysAttrsInclusion,
-    /// When true, include a total count of matching entities in the response.
-    pub count: bool,
 }
 
 #[cfg(test)]

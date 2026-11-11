@@ -37,6 +37,7 @@ use andromeda_ngsi_ld_lexicon::{
     time_rel::TimeRel,
 };
 use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
     dataset::DatasetSelector,
     defined_token::deserialize_optional_token,
     filter::expression::Expr,
@@ -156,8 +157,10 @@ pub struct TemporalQueryParameters {
     /// (`Content-Range`).
     #[serde(flatten)]
     pub page: PageParameters,
-    /// Whether the response reports the total number of matches (`count`).
-    pub count: Option<bool>,
+    /// Whether the response reports the total number of matches (clause
+    /// 6.3.13 `count`).
+    #[serde(default)]
+    pub count: CountPolicy,
     /// Typed ordering semantics shared by GET and POST query bindings.
     #[serde(flatten)]
     pub ordering: OrderingParameters,

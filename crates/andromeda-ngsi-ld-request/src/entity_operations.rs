@@ -10,6 +10,7 @@ use crate::{
     representation_parameter::{WrittenValue, supported_option},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_query::count_policy::CountPolicy;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use serde::Deserialize;
 
@@ -81,7 +82,8 @@ pub struct PostQueryParams {
     pub page: OffsetPageParameters,
     /// Whether the response reports the total number of matches
     /// (clause 6.3.13 `count`).
-    pub count: Option<bool>,
+    #[serde(default)]
+    pub count: CountPolicy,
     /// Typed representation and system-attribute options (`options`).
     pub options: Option<WrittenValue<EntityRepresentationOptions>>,
     /// The representation the response uses (clause 4.5.1 `format`).
@@ -127,6 +129,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::query::body::Query;
+    use andromeda_ngsi_ld_query::count_policy::CountPolicy;
     use serde_json::json;
 
     fn body_query() -> EntityQueryParameters {
@@ -151,7 +154,7 @@ mod tests {
                 query: None,
             }
         );
-        pretty_assertions::assert_eq!(query.count, Some(true));
+        pretty_assertions::assert_eq!(query.count, CountPolicy::Emit);
     }
 
     /// Clauses 6.3.7, 6.3.15 and 6.3.18 grant `format`, `geometryProperty` and

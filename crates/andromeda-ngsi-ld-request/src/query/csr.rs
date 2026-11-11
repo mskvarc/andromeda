@@ -25,6 +25,7 @@ use crate::{
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::instant_serde, time_prop::TimeProp, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
     dataset::DatasetSelector,
     filter::expression::Expr,
     pattern::Pattern,
@@ -106,6 +107,11 @@ pub struct CsrQueryParameters {
     /// `cursor`), decided by the broker's pagination policy.
     #[serde(flatten)]
     pub page: PageParameters,
+    /// Whether the response reports the total number of matching
+    /// registrations (clause 6.3.13 `count`, which clause 4.12 grants this
+    /// paginated operation).
+    #[serde(default)]
+    pub count: CountPolicy,
     /// The deprecated representation selector, comma-separated (`options`).
     pub options: Option<WrittenValue<SysAttrsOptions>>,
 }
@@ -127,6 +133,7 @@ query_parameter_set!(
         TimeAt,
         EndTimeAt,
         Timeproperty,
+        Count,
         Options
     } + OptionalGeoQuery
         + PageParameters
@@ -348,5 +355,22 @@ mod tests {
         pretty_assertions::assert_eq!(p.page.limit, Some(50));
         pretty_assertions::assert_eq!(p.page.offset, Some(10));
         pretty_assertions::assert_eq!(p.page.cursor, None);
+        pretty_assertions::assert_eq!(p.count, CountPolicy::Omit);
+    }
+
+    /// The discovery is paginated (clause 4.12), so it reads the clause 6.3.13
+    /// `count`.
+    #[test]
+    fn the_count_is_read_beside_the_page() {
+        let p = params_from_query("type=Vehicle&limit=0&count=true");
+        pretty_assertions::assert_eq!(p.page.limit, Some(0));
+        pretty_assertions::assert_eq!(p.count, CountPolicy::Emit);
+    }
+
+    /// Table 6.3.11-1 gives the discovery's `options` only `sysAttrs`.
+    #[test]
+    fn a_count_through_options_is_refused() {
+        let p = params_from_query("type=Vehicle&options=count");
+        assert!(matches!(p.parse_options(), Err(ParameterError::OptionsInvalid(_))));
     }
 }

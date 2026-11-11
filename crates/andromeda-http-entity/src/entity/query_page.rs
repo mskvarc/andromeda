@@ -76,7 +76,7 @@ pub(crate) struct QueryPage {
 }
 
 /// The window `query` asks for under `pagination`, on a binding whose pointers
-/// `pointers` describes, counted as `count` says.
+/// `pointers` describes, counted as its `count` says.
 ///
 /// Decided before anything runs, so a pagination parameter the collection
 /// cannot honour is refused before a single context source is contacted.
@@ -84,16 +84,11 @@ pub(crate) struct QueryPage {
 /// # Errors
 ///
 /// Returns whatever the pagination policy refuses (clauses 5.5.9 and 6.3.10).
-pub(crate) fn requested_window(
-    pagination: &RequestPagination,
-    query: &EntityQueryParameters,
-    count: CountPolicy,
-    pointers: PagePointers,
-) -> Result<PageWindow, ParameterError> {
+pub(crate) fn requested_window(pagination: &RequestPagination, query: &EntityQueryParameters, pointers: PagePointers) -> Result<PageWindow, ParameterError> {
     let request = PageRequest {
         size: QUERY_PAGE_SIZE,
         order: CollectionOrder::of(&query.ordering),
-        count,
+        count: query.count,
         pointers,
         context: &pagination.context,
         query: &pagination.query,

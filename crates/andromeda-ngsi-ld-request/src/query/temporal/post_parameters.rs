@@ -19,6 +19,7 @@ use crate::{
     representation_parameter::WrittenValue,
 };
 use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
+use andromeda_ngsi_ld_query::count_policy::CountPolicy;
 use serde::Deserialize;
 
 /// The query string of `POST /temporal/entityOperations/query`.
@@ -35,7 +36,8 @@ pub struct TemporalPostQueryParams {
     pub page: OffsetPageParameters,
     /// Whether the response reports the total number of matches
     /// (clause 6.3.13 `count`).
-    pub count: Option<bool>,
+    #[serde(default)]
+    pub count: CountPolicy,
     /// The temporal representation the response uses (clause 6.3.12 `format`).
     pub format: Option<WrittenValue<TemporalFormat>>,
     /// The deprecated representation selector and the system-attribute
@@ -80,6 +82,7 @@ mod tests {
         representation_parameter::WrittenValue,
     };
     use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
+    use andromeda_ngsi_ld_query::count_policy::CountPolicy;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 
     /// Clause 6.3.10 with clause 6.3.13: the POST binding reads its page and
@@ -89,7 +92,7 @@ mod tests {
         let params = serde_urlencoded::from_str::<TemporalPostQueryParams>("limit=5&offset=10&count=true").expect("query parses");
         pretty_assertions::assert_eq!(params.page.limit, Some(5));
         pretty_assertions::assert_eq!(params.page.offset, Some(10));
-        pretty_assertions::assert_eq!(params.count, Some(true));
+        pretty_assertions::assert_eq!(params.count, CountPolicy::Emit);
     }
 
     /// Clauses 6.3.11 and 6.3.12 name "Query Temporal Evolutions of Entities"
@@ -133,7 +136,7 @@ mod tests {
                 query: None,
             }
         );
-        pretty_assertions::assert_eq!(params.count, Some(true));
+        pretty_assertions::assert_eq!(params.count, CountPolicy::Emit);
         assert!(params.is_local());
     }
 
@@ -147,7 +150,7 @@ mod tests {
         url.apply_to(&mut params);
 
         pretty_assertions::assert_eq!(params.page, PageParameters::default());
-        pretty_assertions::assert_eq!(params.count, None);
+        pretty_assertions::assert_eq!(params.count, CountPolicy::Omit);
         assert!(!params.is_local());
     }
 }

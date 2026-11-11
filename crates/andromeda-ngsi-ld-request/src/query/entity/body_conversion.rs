@@ -7,6 +7,7 @@ use crate::{
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_model::query::body::Query;
+use andromeda_ngsi_ld_query::count_policy::CountPolicy;
 
 impl TryFrom<Query> for EntityQueryParameters {
     type Error = ParameterError;
@@ -42,7 +43,7 @@ impl TryFrom<Query> for EntityQueryParameters {
             // Table 5.2.23-1 defines no pagination member: the POST binding
             // reads its page from the URL (clause 6.23.3.1).
             page: PageParameters::default(),
-            count: None,
+            count: CountPolicy::Omit,
             options: None,
             local: None,
             pick: query.pick,

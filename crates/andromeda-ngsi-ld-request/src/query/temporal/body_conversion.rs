@@ -7,7 +7,10 @@ use crate::{
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_model::query::body::Query;
-use andromeda_ngsi_ld_query::projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity};
+use andromeda_ngsi_ld_query::{
+    count_policy::CountPolicy,
+    projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
+};
 
 impl TryFrom<Query> for TemporalQueryParameters {
     type Error = ParameterError;
@@ -59,7 +62,7 @@ impl TryFrom<Query> for TemporalQueryParameters {
             // Table 5.2.23-1 defines no pagination member: the POST binding
             // reads its page from the URL (clause 6.24.3.1).
             page: PageParameters::default(),
-            count: None,
+            count: CountPolicy::Omit,
             ordering: query.ordering.unwrap_or_default(),
             pick: query.pick,
             omit: query.omit,
