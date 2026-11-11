@@ -12,12 +12,11 @@ use andromeda_delivery::{
 };
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_notification::{
-    delivery_backoff::retry_due_at,
+    delivery_backoff::{DeliveryBackoff, retry_due_at},
     delivery_error_bound::DeliveryErrorBound,
     delivery_policy::{error_bound, retry_schedule},
 };
 use andromeda_postgresql_context_store::snapshot::status_outbox::{SnapshotDeliveryFailure, SnapshotStatusDelivery};
-use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_snapshot::{error::SnapshotError, snapshot_invariant::SnapshotInvariant};
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
@@ -63,7 +62,7 @@ pub(crate) struct SnapshotStatusDeliveryDrain {
     /// `notifications.delivery.max_attempts`, saturated at `i32::MAX`.
     max_attempts: i32,
     /// The wait before a failed status notification is due again.
-    retry_schedule: BackoffSchedule,
+    retry_schedule: DeliveryBackoff,
     /// Deliveries one pass claims and sends at once at most:
     /// `notifications.delivery.max_concurrent`.
     claim_width: NonZeroU32,

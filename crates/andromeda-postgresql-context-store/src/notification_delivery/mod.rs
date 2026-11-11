@@ -28,6 +28,8 @@ pub mod claimed_event;
 pub mod claimed_event_read;
 /// Reaping delivered rows and the events they leave behind.
 pub mod cleanup;
+/// The instant a retried delivery, or a held Subscription's next probe, falls due.
+pub(crate) mod due_after;
 /// Which commit a stored notification event records the instant of.
 pub mod event_commit;
 /// Writing one write's notification events and their deliveries.

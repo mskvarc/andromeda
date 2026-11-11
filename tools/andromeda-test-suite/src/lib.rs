@@ -49,6 +49,7 @@ pub mod database_name;
 pub mod dataset_instance_time;
 pub mod deferred_creation;
 pub mod deleted_instance;
+pub mod delivery_queue;
 pub mod discovery_state;
 pub mod entity_lookup;
 pub mod entity_matcher;

@@ -11,7 +11,8 @@
 //! deliveries it set aside, each with the attempt count and the due instant it
 //! had, so they go out in the order they were queued. A probe that runs out of
 //! attempts hands the hold to the delivery set aside first, due one retry step
-//! later; a hold with nothing left to hand over is deleted.
+//! after the hand-over on the store's clock; a hold with nothing left to hand
+//! over is deleted.
 //!
 //! An acknowledgement changes the holds in two statements of its own
 //! transaction. The first records the outcomes and locks the hold rows, by
@@ -32,12 +33,15 @@
 //! the hold is being taken reaches the claim index unheld, and the claim's own
 //! hold check keeps it back until the probe's next failure sets it aside.
 
-use crate::error::ContextStoreError;
+use crate::{
+    error::ContextStoreError,
+    notification_delivery::due_after::{due_after, step_seconds},
+};
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_notification::delivery_backoff::BackoffStep;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::notification::{NotificationDeliveries, NotificationDeliveryHolds};
 use andromeda_postgresql_seaquery::pg_array::any;
-use chrono::{DateTime, Utc};
 use sea_query::{
     CommonTableExpression,
     Expr,
@@ -219,7 +223,8 @@ pub(crate) fn probed_on_exhaustion(target: &ContextTarget) -> CommonTableExpress
 }
 
 /// Hand the hold of `subscription_key` to the delivery it set aside first, due
-/// at `next_probe_at`, or delete it when it set none aside.
+/// `probe_after` once the transaction began, or delete it when it set none
+/// aside.
 ///
 /// ```sql
 /// WITH successor AS (SELECT delivery_key FROM notification_deliveries WHERE subscription_key = $1 AND held_at IS NOT NULL
@@ -227,14 +232,15 @@ pub(crate) fn probed_on_exhaustion(target: &ContextTarget) -> CommonTableExpress
 ///      handed_over AS (UPDATE notification_delivery_holds SET delivery_key = successor.delivery_key FROM successor
 ///                      WHERE notification_delivery_holds.subscription_key = $1),
 ///      dropped AS (DELETE FROM notification_delivery_holds WHERE subscription_key = $1 AND NOT EXISTS (SELECT 1 FROM successor)),
-///      revived AS (UPDATE notification_deliveries SET held_at = NULL, next_attempt_at = $2 FROM successor
-///                  WHERE notification_deliveries.delivery_key = successor.delivery_key)
+///      revived AS (UPDATE notification_deliveries SET held_at = NULL,
+///                    next_attempt_at = CURRENT_TIMESTAMP + make_interval(secs => $2)
+///                  FROM successor WHERE notification_deliveries.delivery_key = successor.delivery_key)
 /// SELECT delivery_key FROM successor
 /// ```
 ///
 /// The successor waits one retry step like any retry, so the endpoint still
 /// sees one attempt per step across the hand-over.
-pub(crate) fn hand_over_statement(target: &ContextTarget, subscription_key: i64, next_probe_at: DateTime<Utc>) -> WithQuery {
+pub(crate) fn hand_over_statement(target: &ContextTarget, subscription_key: i64, probe_after: BackoffStep) -> WithQuery {
     let successor = Query::select()
         .column(NotificationDeliveries::DeliveryKey)
         .from(table_of(target, NotificationDeliveries::Table))
@@ -261,7 +267,7 @@ pub(crate) fn hand_over_statement(target: &ContextTarget, subscription_key: i64,
     let revived = Query::update()
         .table(table_of(target, NotificationDeliveries::Table))
         .value(NotificationDeliveries::HeldAt, null())
-        .value(NotificationDeliveries::NextAttemptAt, next_probe_at)
+        .value(NotificationDeliveries::NextAttemptAt, due_after(step_seconds(probe_after)))
         .from(Successor)
         .and_where(Expr::col((NotificationDeliveries::Table, NotificationDeliveries::DeliveryKey)).equals((Successor, NotificationDeliveries::DeliveryKey)))
         .to_owned();
@@ -346,7 +352,9 @@ mod tests {
         statement_text::text_of,
     };
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
-    use chrono::Utc;
+    use andromeda_notification::delivery_backoff::{BackoffStep, DeliveryBackoff};
+    use andromeda_retry::schedule::BackoffSchedule;
+    use std::time::Duration;
 
     fn held() -> HeldSubscription {
         HeldSubscription {
@@ -358,6 +366,12 @@ mod tests {
     fn snapshot() -> ContextTarget {
         let key = SnapshotKey::try_from(5).expect("positive key");
         ContextTarget::Snapshot(SnapshotTarget::published(key, "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri")))
+    }
+
+    fn first_step() -> BackoffStep {
+        DeliveryBackoff::new(BackoffSchedule::constant(Duration::from_secs(5)))
+            .expect("a schedule within the longest step")
+            .first_step()
     }
 
     /// The endpoint answered, so every released Subscription's deliveries
@@ -387,10 +401,11 @@ mod tests {
     }
 
     /// The hold passes to the delivery set aside first, which rejoins the
-    /// claim order at the instant given; with none set aside the hold goes.
+    /// claim order one step after the transaction began, on the clock the
+    /// claim compares it with; with none set aside the hold goes.
     #[test]
     fn an_exhausted_probe_hands_its_hold_to_the_delivery_set_aside_first() {
-        let sql = text_of(&hand_over_statement(&ContextTarget::Live, 7, Utc::now()));
+        let sql = text_of(&hand_over_statement(&ContextTarget::Live, 7, first_step()));
         assert!(
             sql.starts_with(concat!(
                 r#"WITH "successor" AS (SELECT "delivery_key" FROM "notification_deliveries" WHERE "subscription_key" = $1 "#,
@@ -399,7 +414,8 @@ mod tests {
                 r#"FROM "successor" WHERE "notification_delivery_holds"."subscription_key" = $2) , "#,
                 r#""dropped" AS (DELETE FROM "notification_delivery_holds" WHERE "subscription_key" = $3 "#,
                 r#"AND (NOT EXISTS(SELECT $4 FROM "successor"))) , "#,
-                r#""revived" AS (UPDATE "notification_deliveries" SET "held_at" = NULL, "next_attempt_at" = $5"#
+                r#""revived" AS (UPDATE "notification_deliveries" SET "held_at" = NULL, "#,
+                r#""next_attempt_at" = CURRENT_TIMESTAMP + (make_interval(secs => $5)) "#
             )),
             "{sql}"
         );
@@ -414,7 +430,7 @@ mod tests {
 
     #[test]
     fn the_hold_statements_of_a_snapshot_branch_touch_its_own_tables() {
-        assert!(text_of(&hand_over_statement(&snapshot(), 7, Utc::now())).contains(r#""snap_5"."notification_delivery_holds""#));
+        assert!(text_of(&hand_over_statement(&snapshot(), 7, first_step())).contains(r#""snap_5"."notification_delivery_holds""#));
         for sql in [
             text_of(&set_aside_statement(&snapshot(), held())),
             text_of(&resume_statement(&snapshot(), vec![7])),

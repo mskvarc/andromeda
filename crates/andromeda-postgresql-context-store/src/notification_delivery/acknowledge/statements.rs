@@ -5,8 +5,10 @@
 //! `acknowledged` common table expression, and its hold piece reads the rows
 //! from it, so a row whose guard refused updates nothing and moves no hold.
 //! The rows a failure or an exhaustion records each carry their own
-//! diagnostic and due instant, bound as parallel arrays and unnested into a
-//! source the update joins on the delivery key.
+//! diagnostic, and a failure its own retry step, bound as parallel arrays and
+//! unnested into a source the update joins on the delivery key. A failure is
+//! due again its step after `CURRENT_TIMESTAMP`, the clock the claim compares
+//! it with (see [`due_after`]).
 //!
 //! The guard names the worker that holds the lease and requires that lease to
 //! still be live, row by row. A worker whose lease expired while it was
@@ -16,21 +18,14 @@
 
 use crate::{
     error::ContextStoreError,
-    notification_delivery::hold::{
-        Acknowledged,
-        Probed,
-        Released,
-        Taken,
-        acknowledged_beside,
-        cte,
-        null,
-        probed_on_exhaustion,
-        released_on_delivery,
-        taken_on_failure,
+    notification_delivery::{
+        due_after::due_after,
+        hold::{Acknowledged, Probed, Released, Taken, acknowledged_beside, cte, null, probed_on_exhaustion, released_on_delivery, taken_on_failure},
     },
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::context_target::ContextTarget;
+use andromeda_notification::delivery_backoff::BackoffStep;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::notification::{NotificationDeliveries, NotificationDeliveryHolds};
 use andromeda_postgresql_seaquery::{
@@ -38,8 +33,22 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
-use chrono::{DateTime, Utc};
-use sea_query::{Alias, CommonTableExpression, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement, SimpleExpr, UpdateStatement, WithClause, WithQuery};
+use sea_query::{
+    Alias,
+    CommonTableExpression,
+    DynIden,
+    Expr,
+    ExprTrait,
+    Iden,
+    IntoIden,
+    JoinType,
+    Query,
+    SelectStatement,
+    SimpleExpr,
+    UpdateStatement,
+    WithClause,
+    WithQuery,
+};
 
 /// The failed attempts a group records, `failure`.
 #[derive(Iden, Clone, Copy)]
@@ -51,6 +60,12 @@ struct Failure;
 #[iden = "exhaustion"]
 struct Exhaustion;
 
+/// The column of the failed attempts holding each one's retry step in
+/// seconds, `retry_after`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "retry_after"]
+struct RetryAfter;
+
 /// The failed attempts of one group on one branch, as parallel arrays.
 #[derive(Debug, Default)]
 pub(crate) struct FailedRows<'a> {
@@ -58,8 +73,8 @@ pub(crate) struct FailedRows<'a> {
     pub(crate) delivery_keys: Vec<i64>,
     /// Each one's diagnostic, already within the stored bound.
     pub(crate) failures: Vec<&'a str>,
-    /// When each one is due again.
-    pub(crate) next_attempts: Vec<DateTime<Utc>>,
+    /// How long after the acknowledgement each one is due again.
+    pub(crate) retry_steps: Vec<BackoffStep>,
 }
 
 /// The exhausted deliveries of one group on one branch, as parallel arrays.
@@ -105,14 +120,15 @@ pub(crate) fn delivered_statement(target: &ContextTarget, worker_id: LeaseHolder
 }
 
 /// Count each failed attempt, record its diagnostic, release its lease for a
-/// retry at its own due instant, and take or find the hold of each
-/// Subscription.
+/// retry its own step after the transaction began, and take or find the hold
+/// of each Subscription.
 ///
 /// ```sql
-/// WITH failure AS (SELECT f.delivery_key, f.last_error, f.next_attempt_at
-///                  FROM UNNEST($1::bigint[], $2::text[], $3::timestamptz[]) AS f(delivery_key, last_error, next_attempt_at)),
+/// WITH failure AS (SELECT f.delivery_key, f.last_error, f.retry_after
+///                  FROM UNNEST($1::bigint[], $2::text[], $3::float8[]) AS f(delivery_key, last_error, retry_after)),
 ///      acknowledged AS (UPDATE notification_deliveries SET attempt_count = attempt_count + 1,
-///                         last_error = failure.last_error, next_attempt_at = failure.next_attempt_at,
+///                         last_error = failure.last_error,
+///                         next_attempt_at = CURRENT_TIMESTAMP + make_interval(secs => failure.retry_after),
 ///                         claimed_by = NULL, lease_until = NULL
 ///                       FROM failure WHERE notification_deliveries.delivery_key = failure.delivery_key AND <lease guard>
 ///                       RETURNING delivery_key, subscription_key),
@@ -126,14 +142,19 @@ pub(crate) fn delivered_statement(target: &ContextTarget, worker_id: LeaseHolder
 /// Returns [`ContextStoreError::StatementBuild`] when the hold insert cannot
 /// take its rows from the acknowledged deliveries.
 pub(crate) fn failed_statement(target: &ContextTarget, worker_id: LeaseHolder, rows: FailedRows<'_>) -> Result<UnnestAliased<WithQuery>, ContextStoreError> {
+    let retry_seconds: Vec<f64> = rows.retry_steps.into_iter().map(BackoffStep::seconds).collect();
     let (source, columns) = settled_rows([
-        (NotificationDeliveries::DeliveryKey, PostgresType::BigintArray, Expr::val(rows.delivery_keys)),
-        (NotificationDeliveries::LastError, PostgresType::TextArray, text_array(&rows.failures)),
         (
-            NotificationDeliveries::NextAttemptAt,
-            PostgresType::TimestamptzArray,
-            Expr::val(rows.next_attempts),
+            NotificationDeliveries::DeliveryKey.into_iden(),
+            PostgresType::BigintArray,
+            Expr::val(rows.delivery_keys),
         ),
+        (
+            NotificationDeliveries::LastError.into_iden(),
+            PostgresType::TextArray,
+            text_array(&rows.failures),
+        ),
+        (RetryAfter.into_iden(), PostgresType::Float8Array, Expr::val(retry_seconds)),
     ]);
     let mut update = acknowledgement(target, worker_id);
     update
@@ -142,10 +163,7 @@ pub(crate) fn failed_statement(target: &ContextTarget, worker_id: LeaseHolder, r
             delivery_column(NotificationDeliveries::AttemptCount).add(1),
         )
         .value(NotificationDeliveries::LastError, Expr::col((Failure, NotificationDeliveries::LastError)))
-        .value(
-            NotificationDeliveries::NextAttemptAt,
-            Expr::col((Failure, NotificationDeliveries::NextAttemptAt)),
-        )
+        .value(NotificationDeliveries::NextAttemptAt, due_after(Expr::col((Failure, RetryAfter))))
         .value(NotificationDeliveries::ClaimedBy, null())
         .value(NotificationDeliveries::LeaseUntil, null())
         .from(Failure)
@@ -188,8 +206,16 @@ pub(crate) fn failed_statement(target: &ContextTarget, worker_id: LeaseHolder, r
 /// row that still holds a claim.
 pub(crate) fn exhausted_statement(target: &ContextTarget, worker_id: LeaseHolder, rows: ExhaustedRows<'_>) -> UnnestAliased<WithQuery> {
     let (source, columns) = settled_rows([
-        (NotificationDeliveries::DeliveryKey, PostgresType::BigintArray, Expr::val(rows.delivery_keys)),
-        (NotificationDeliveries::LastError, PostgresType::TextArray, text_array(&rows.failures)),
+        (
+            NotificationDeliveries::DeliveryKey.into_iden(),
+            PostgresType::BigintArray,
+            Expr::val(rows.delivery_keys),
+        ),
+        (
+            NotificationDeliveries::LastError.into_iden(),
+            PostgresType::TextArray,
+            text_array(&rows.failures),
+        ),
     ]);
     let mut update = acknowledgement(target, worker_id);
     update
@@ -246,13 +272,15 @@ fn source_alias() -> Alias {
 /// `SELECT f.<column>, … FROM UNNEST(<array>, …) AS f(<column>, …)`: one row
 /// per settled delivery, each column's array bound as one parameter of its
 /// array type, and the columns the alias names.
-fn settled_rows<const N: usize>(columns: [(NotificationDeliveries, PostgresType, SimpleExpr); N]) -> (SelectStatement, [UnnestColumn; N]) {
-    let unnested = columns.each_ref().map(|(name, array_type, _)| UnnestColumn::new(*name, *array_type));
+fn settled_rows<const N: usize>(columns: [(DynIden, PostgresType, SimpleExpr); N]) -> (SelectStatement, [UnnestColumn; N]) {
+    // clone: the alias and the projection each take the column's name by value.
+    let unnested = columns.each_ref().map(|(name, array_type, _)| UnnestColumn::new(name.clone(), *array_type));
     let mut select = Query::select();
-    for (name, _, _) in &columns {
-        select.column((source_alias(), *name));
-    }
-    select.from_function(unnest_call(unnested.iter().zip(columns.into_iter().map(|(_, _, array)| array))), source_alias());
+    let arrays = columns.map(|(name, _, array)| {
+        select.column((source_alias(), name));
+        array
+    });
+    select.from_function(unnest_call(unnested.iter().zip(arrays)), source_alias());
     (select, unnested)
 }
 
@@ -273,7 +301,9 @@ mod tests {
     };
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
-    use chrono::Utc;
+    use andromeda_notification::delivery_backoff::DeliveryBackoff;
+    use andromeda_retry::{growth::Growth, schedule::BackoffSchedule};
+    use std::time::Duration;
     use uuid::Uuid;
 
     fn worker() -> LeaseHolder {
@@ -285,10 +315,12 @@ mod tests {
     }
 
     fn failed(target: &ContextTarget) -> String {
+        let backoff = DeliveryBackoff::new(BackoffSchedule::new(Duration::from_secs(5), Duration::from_secs(300), Growth::Doubling))
+            .expect("a schedule within the longest step");
         let rows = FailedRows {
             delivery_keys: vec![1, 2],
             failures: vec!["boom", "bang"],
-            next_attempts: vec![Utc::now(), Utc::now()],
+            retry_steps: vec![backoff.first_step(), backoff.step(3).expect("a recorded attempt count")],
         };
         text_of(&failed_statement(target, worker(), rows).expect("a buildable statement"))
     }
@@ -378,22 +410,28 @@ mod tests {
         );
     }
 
-    /// Each failed row takes its own diagnostic and due instant from the
-    /// unnested arrays, joined on its key.
+    /// Each failed row takes its own diagnostic and retry step from the
+    /// unnested arrays, joined on its key, and is due that step after the
+    /// transaction began: the clock the claim compares it with, never an
+    /// instant the broker bound.
     #[test]
     fn a_group_of_failures_records_each_row_from_its_own_element_of_the_arrays() {
         let sql = failed(&ContextTarget::Live);
         assert!(
             sql.starts_with(concat!(
-                r#"WITH "failure" AS (SELECT "f"."delivery_key", "f"."last_error", "f"."next_attempt_at" "#,
-                r#"FROM UNNEST($1::bigint[], $2::text[], $3::timestamptz[]) AS f(delivery_key, last_error, next_attempt_at))"#
+                r#"WITH "failure" AS (SELECT "f"."delivery_key", "f"."last_error", "f"."retry_after" "#,
+                r#"FROM UNNEST($1::bigint[], $2::text[], $3::float8[]) AS f(delivery_key, last_error, retry_after))"#
             )),
             "{sql}"
         );
         let guard = acknowledgement_of(&sql);
         assert!(guard.contains(r#""attempt_count" = "notification_deliveries"."attempt_count" + $"#), "{sql}");
         assert!(guard.contains(r#""last_error" = "failure"."last_error""#), "{sql}");
-        assert!(guard.contains(r#""next_attempt_at" = "failure"."next_attempt_at""#), "{sql}");
+        assert!(
+            guard.contains(r#""next_attempt_at" = CURRENT_TIMESTAMP + (make_interval(secs => "failure"."retry_after"))"#),
+            "{sql}"
+        );
+        assert!(!sql.contains("timestamptz"), "no due instant is bound: {sql}");
         assert!(guard.contains(r#""claimed_by" = NULL, "lease_until" = NULL FROM "failure""#), "{sql}");
         assert!(
             guard.contains(r#""notification_deliveries"."delivery_key" = "failure"."delivery_key""#),

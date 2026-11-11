@@ -47,7 +47,7 @@ use sqlx::{Postgres, Transaction};
 /// equivalent: the second names only the event keys the first returned.
 ///
 /// Every event records the instant of the commit that made its change, as
-/// `commit` names it, which its deliveries are compared with.
+/// `commit` names it, which its deliveries are compared with and start due at.
 ///
 /// Each state an event carries is stored as one `entity_state_record`, its
 /// names as the keys `keys` holds for them; the caller resolved every name the
@@ -94,7 +94,7 @@ pub async fn insert_events_in_tx(
     if event_keys.is_empty() {
         return Ok(());
     }
-    insert_deliveries_statement(target, event_keys, subscription_keys, record.recorded_at())?
+    insert_deliveries_statement(target, event_keys, subscription_keys, commit)?
         .to_query()
         .execute(&mut **tx)
         .await?;
@@ -298,8 +298,10 @@ fn pair_source() -> (Alias, [UnnestColumn; 2]) {
 /// later waits for this transaction and cascades onto the rows it wrote. The
 /// lock is the weakest row lock there is, so it blocks only deletions and key
 /// changes of the subscription, never its ordinary updates. Every delivery starts
-/// due at the write's own ingestion instant so the queue's ordering reflects
-/// the order changes were accepted in, and one queued for a held Subscription
+/// due at the instant of the commit that made its change, read from the
+/// store's clock, so the queue's ordering reflects the order changes were
+/// committed in and a broker whose clock runs ahead of the store's does not
+/// hold the delivery back from a claim. One queued for a held Subscription
 /// starts set aside ([`held_at_insert`]).
 ///
 /// A change owes each subscription one delivery (clause 5.8.6), which
@@ -311,7 +313,7 @@ fn insert_deliveries_statement(
     target: &ContextTarget,
     event_keys: Vec<i64>,
     subscription_keys: Vec<i64>,
-    next_attempt_at: DateTime<Utc>,
+    commit: EventCommit,
 ) -> Result<UnnestAliased<InsertStatement>, ContextStoreError> {
     let (pairs, columns) = pair_source();
     let aliased = pairs.clone(); // clone: the statement consumes the alias, so the column mapping takes this copy.
@@ -319,7 +321,7 @@ fn insert_deliveries_statement(
     let source = Query::select()
         .column((pairs.clone(), NotificationDeliveries::EventKey))
         .column((subscription.clone(), Subscriptions::SubscriptionKey))
-        .expr(Expr::val(next_attempt_at))
+        .expr(commit.value())
         .expr(held_at_insert(target, &subscription))
         .from_function(
             unnest_call([(&columns[0], Expr::val(event_keys)), (&columns[1], Expr::val(subscription_keys))]),
@@ -648,13 +650,13 @@ mod tests {
 
     #[test]
     fn every_delivery_of_every_written_event_is_inserted_from_one_pair_of_arrays() {
-        let sql = text_of(&insert_deliveries_statement(&target(), vec![42, 42, 43], vec![1, 2, 1], Utc::now()).expect("a valid insert"));
+        let sql = text_of(&insert_deliveries_statement(&target(), vec![42, 42, 43], vec![1, 2, 1], EventCommit::ThisTransaction).expect("a valid insert"));
         assert!(
             sql.contains(r#"INSERT INTO "notification_deliveries" ("event_key", "subscription_key", "next_attempt_at", "held_at")"#),
             "{sql}"
         );
         assert!(
-            sql.contains(r"FROM UNNEST($2::bigint[], $3::bigint[]) AS p(event_key, subscription_key)"),
+            sql.contains(r"FROM UNNEST($1::bigint[], $2::bigint[]) AS p(event_key, subscription_key)"),
             "{sql}"
         );
         assert!(
@@ -664,15 +666,35 @@ mod tests {
         assert!(sql.contains(r#"SELECT "p"."event_key", "s"."subscription_key""#), "{sql}");
     }
 
+    /// A claim compares a due instant with the store's clock, so a fresh
+    /// delivery starts due at its own transaction's instant on that clock,
+    /// the instant its event records as `committed_at`, and binds none.
+    #[test]
+    fn a_delivery_of_this_transaction_starts_due_at_the_transactions_instant() {
+        let sql = text_of(&insert_deliveries_statement(&target(), vec![42], vec![1], EventCommit::ThisTransaction).expect("a valid insert"));
+        assert!(sql.contains(r#"SELECT "p"."event_key", "s"."subscription_key", NOW(), (CASE"#), "{sql}");
+    }
+
+    /// A replay queues the change an earlier commit made, so its delivery
+    /// starts due at that commit's instant, already read from the store's
+    /// clock when the change was first committed.
+    #[test]
+    fn a_replayed_delivery_starts_due_at_the_instant_of_the_commit_that_made_the_change() {
+        let earlier = EventCommit::Earlier(StoreInstant::new(Utc::now()));
+        let sql = text_of(&insert_deliveries_statement(&target(), vec![42], vec![1], earlier).expect("a valid insert"));
+        assert!(sql.contains(r#"SELECT "p"."event_key", "s"."subscription_key", $1, (CASE"#), "{sql}");
+        assert!(sql.contains(r"FROM UNNEST($2::bigint[], $3::bigint[])"), "{sql}");
+    }
+
     #[test]
     fn the_delivery_insert_key_share_locks_only_the_subscriptions_it_joins() {
-        let sql = text_of(&insert_deliveries_statement(&target(), vec![42], vec![1], Utc::now()).expect("a valid insert"));
+        let sql = text_of(&insert_deliveries_statement(&target(), vec![42], vec![1], EventCommit::ThisTransaction).expect("a valid insert"));
         assert!(sql.contains(r#"FOR KEY SHARE OF "s" ON CONFLICT"#), "{sql}");
     }
 
     #[test]
     fn a_delivery_queued_for_a_held_subscription_is_written_already_set_aside() {
-        let sql = text_of(&insert_deliveries_statement(&target(), vec![42], vec![1], Utc::now()).expect("a valid insert"));
+        let sql = text_of(&insert_deliveries_statement(&target(), vec![42], vec![1], EventCommit::ThisTransaction).expect("a valid insert"));
         assert!(
             sql.contains(concat!(
                 r#"(CASE WHEN (EXISTS(SELECT "h"."subscription_key" FROM "notification_delivery_holds" AS "h" "#,
@@ -688,7 +710,7 @@ mod tests {
         let key = SnapshotKey::try_from(5).expect("positive key");
         let id = "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri");
         let branch = ContextTarget::Snapshot(SnapshotTarget::published(key, id));
-        let sql = text_of(&insert_deliveries_statement(&branch, vec![42], vec![1], Utc::now()).expect("a valid insert"));
+        let sql = text_of(&insert_deliveries_statement(&branch, vec![42], vec![1], EventCommit::ThisTransaction).expect("a valid insert"));
         assert!(sql.contains(r#"FROM "snap_5"."notification_delivery_holds" AS "h""#), "{sql}");
     }
 
@@ -696,7 +718,7 @@ mod tests {
     /// queue already holds is not queued a second time.
     #[test]
     fn a_change_already_queued_for_a_subscription_is_not_queued_again() {
-        let sql = text_of(&insert_deliveries_statement(&target(), vec![42, 42], vec![1, 1], Utc::now()).expect("a valid insert"));
+        let sql = text_of(&insert_deliveries_statement(&target(), vec![42, 42], vec![1, 1], EventCommit::ThisTransaction).expect("a valid insert"));
         assert!(sql.ends_with(r#"ON CONFLICT ("event_key", "subscription_key") DO NOTHING"#), "{sql}");
     }
 

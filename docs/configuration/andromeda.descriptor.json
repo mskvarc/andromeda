@@ -4062,6 +4062,15 @@
             "kind": "key",
             "key": "notifications.delivery.queue.retry_interval"
           }
+        },
+        {
+          "statement": "at most 1day",
+          "kind": "ordered",
+          "relation": "at-most",
+          "bound": {
+            "kind": "fixed",
+            "value": "1day"
+          }
         }
       ],
       "conditions": []

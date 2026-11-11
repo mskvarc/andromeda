@@ -20,7 +20,7 @@ mod delivery_acknowledgement;
 mod delivery_attempt;
 /// Attempt ceiling after which a notification delivery is dead-lettered.
 pub mod delivery_attempt_ceiling;
-/// Retry wait for a failed notification delivery.
+/// Retry schedule and wait for a failed notification delivery.
 pub mod delivery_backoff;
 /// What a claim hands the delivery drain for each delivery it leased.
 pub mod delivery_claim;

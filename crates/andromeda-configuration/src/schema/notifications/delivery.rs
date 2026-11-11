@@ -30,6 +30,11 @@ pub const MAX_DELIVERY_ATTEMPTS_CEILING: u32 = 2_147_483_647;
 /// one day, the longest lease term the store accepts.
 pub const MAX_DELIVERY_LEASE: Duration = Duration::from_hours(24);
 
+/// The longest wait `notifications.delivery.queue.max_retry_interval` may
+/// grow a retry to: one day, the longest retry step the store adds to its
+/// clock.
+pub const MAX_DELIVERY_RETRY_INTERVAL: Duration = Duration::from_hours(24);
+
 /// How notifications are delivered to HTTP and MQTT subscribers.
 ///
 /// Both deliver every notification; they differ only in durability.

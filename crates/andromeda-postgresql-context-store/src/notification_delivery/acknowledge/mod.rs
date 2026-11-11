@@ -38,10 +38,12 @@ use crate::{
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_notification::delivery_settlement::{DeliverySettlement, DeliveryVerdict};
+use andromeda_notification::{
+    delivery_backoff::BackoffStep,
+    delivery_settlement::{DeliverySettlement, DeliveryVerdict},
+};
 use andromeda_postgresql_seaquery::statement::Statement;
 use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
-use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use sqlx::postgres::PgConnection;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -55,9 +57,9 @@ struct BranchSettlements<'a> {
     failed: FailedRows<'a>,
     /// The exhausted deliveries.
     exhausted: ExhaustedRows<'a>,
-    /// When the next probe of each exhausted delivery's Subscription is due,
-    /// if it was the probe.
-    next_probes: HashMap<i64, DateTime<Utc>>,
+    /// How long after the acknowledgement the next probe of each exhausted
+    /// delivery's Subscription is due, if it was the probe.
+    next_probes: HashMap<i64, BackoffStep>,
 }
 
 impl<'a> BranchSettlements<'a> {
@@ -65,15 +67,15 @@ impl<'a> BranchSettlements<'a> {
     fn add(&mut self, key: i64, verdict: &'a DeliveryVerdict) {
         match verdict {
             DeliveryVerdict::Delivered => self.delivered.push(key),
-            DeliveryVerdict::Failed { detail, next_attempt_at } => {
+            DeliveryVerdict::Failed { detail, retry_after } => {
                 self.failed.delivery_keys.push(key);
                 self.failed.failures.push(detail);
-                self.failed.next_attempts.push(*next_attempt_at);
+                self.failed.retry_steps.push(*retry_after);
             }
-            DeliveryVerdict::Exhausted { detail, next_probe_at } => {
+            DeliveryVerdict::Exhausted { detail, probe_after } => {
                 self.exhausted.delivery_keys.push(key);
                 self.exhausted.failures.push(detail);
-                self.next_probes.insert(key, *next_probe_at);
+                self.next_probes.insert(key, *probe_after);
             }
         }
     }
@@ -184,14 +186,14 @@ async fn record_failed(
 }
 
 /// Record the exhausted deliveries of `rows` and hand each hold one of them
-/// was the probe of to its successor, due at the instant `next_probes` names
-/// for that probe; returns the keys recorded.
+/// was the probe of to its successor, due the step `next_probes` names for
+/// that probe after the transaction began; returns the keys recorded.
 async fn record_exhausted(
     connection: &mut PgConnection,
     target: &ContextTarget,
     worker_id: LeaseHolder,
     rows: ExhaustedRows<'_>,
-    next_probes: &HashMap<i64, DateTime<Utc>>,
+    next_probes: &HashMap<i64, BackoffStep>,
 ) -> Result<Vec<i64>, ContextStoreError> {
     if rows.delivery_keys.is_empty() {
         return Ok(Vec::new());
@@ -202,10 +204,10 @@ async fn record_exhausted(
     )
     .await?;
     for (probe, subscription_key) in &recorded {
-        if let (Some(subscription_key), Some(next_probe_at)) = (subscription_key, next_probes.get(probe)) {
+        if let (Some(subscription_key), Some(probe_after)) = (subscription_key, next_probes.get(probe)) {
             observe_statement(
                 ObservedStatement::NotificationDeliveryHold,
-                hand_over_statement(target, *subscription_key, *next_probe_at)
+                hand_over_statement(target, *subscription_key, *probe_after)
                     .to_query()
                     .execute(&mut *connection),
             )

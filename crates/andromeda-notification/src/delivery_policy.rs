@@ -2,6 +2,7 @@
 
 use crate::{
     delivery_attempt_ceiling::{DeliveryAttemptCeiling, DeliveryAttemptCeilingError},
+    delivery_backoff::{DeliveryBackoff, DeliveryBackoffError},
     delivery_concurrency::{DeliveryConcurrency, DeliveryConcurrencyError},
     delivery_error_bound::{DeliveryErrorBound, DeliveryErrorBoundError},
     delivery_lease::{LeaseTerm, LeaseTermError},
@@ -10,13 +11,16 @@ use andromeda_configuration::schema::notifications::delivery::DeliveryConfig;
 use andromeda_retry::{growth::Growth, schedule::BackoffSchedule, schedule_error::BackoffScheduleError};
 use thiserror::Error;
 
-/// The retry delays of `[notifications.delivery.queue]` do not bound a retry
-/// schedule.
+/// The retry delays of `[notifications.delivery.queue]` do not form a retry
+/// schedule the delivery queue can wait on.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum DeliveryPolicyError {
     /// The retry delays do not bound a retry schedule.
     #[error("notifications.delivery.queue.retry_interval and max_retry_interval do not form a retry schedule: {0}")]
     RetrySchedule(#[source] BackoffScheduleError),
+    /// The longest retry delay is longer than the queue waits.
+    #[error("notifications.delivery.queue.max_retry_interval is longer than a delivery waits: {0}")]
+    RetryStep(#[source] DeliveryBackoffError),
 }
 
 /// The configured in-flight delivery bound.
@@ -45,14 +49,19 @@ pub fn attempt_ceiling(config: &DeliveryConfig) -> Result<DeliveryAttemptCeiling
 /// # Errors
 ///
 /// Returns [`DeliveryPolicyError::RetrySchedule`] when `retry_interval` is
-/// zero or `max_retry_interval` below it.
-pub const fn retry_schedule(config: &DeliveryConfig) -> Result<BackoffSchedule, DeliveryPolicyError> {
+/// zero or `max_retry_interval` below it, and
+/// [`DeliveryPolicyError::RetryStep`] when `max_retry_interval` exceeds
+/// [`DeliveryBackoff::MAX_STEP`].
+pub const fn retry_schedule(config: &DeliveryConfig) -> Result<DeliveryBackoff, DeliveryPolicyError> {
     match BackoffSchedule::validated(
         config.queue.retry_interval.duration(),
         config.queue.max_retry_interval.duration(),
         Growth::Doubling,
     ) {
-        Ok(schedule) => Ok(schedule),
+        Ok(schedule) => match DeliveryBackoff::new(schedule) {
+            Ok(backoff) => Ok(backoff),
+            Err(error) => Err(DeliveryPolicyError::RetryStep(error)),
+        },
         Err(error) => Err(DeliveryPolicyError::RetrySchedule(error)),
     }
 }
@@ -88,14 +97,25 @@ mod tests {
         delivery_lease::LeaseTerm,
         delivery_policy::{attempt_ceiling, delivery_concurrency, error_bound, lease_term, retry_schedule},
     };
-    use andromeda_configuration::schema::notifications::delivery::{
-        DeliveryConfig,
-        MAX_CONCURRENT_DELIVERIES_CEILING,
-        MAX_DELIVERY_ATTEMPTS_CEILING,
-        MAX_DELIVERY_LEASE,
-        MAX_ERROR_LENGTH_CEILING,
+    use andromeda_configuration::{
+        human_duration::HumanDuration,
+        schema::notifications::delivery::{
+            DeliveryConfig,
+            MAX_CONCURRENT_DELIVERIES_CEILING,
+            MAX_DELIVERY_ATTEMPTS_CEILING,
+            MAX_DELIVERY_LEASE,
+            MAX_DELIVERY_RETRY_INTERVAL,
+            MAX_ERROR_LENGTH_CEILING,
+        },
     };
-    use std::num::NonZeroU32;
+    use std::{num::NonZeroU32, time::Duration};
+
+    /// The shipped delivery values with `max_retry_interval` at `ceiling`.
+    fn retrying_up_to(ceiling: Duration) -> DeliveryConfig {
+        let mut config = DeliveryConfig::default();
+        config.queue.max_retry_interval = HumanDuration::new(ceiling);
+        config
+    }
 
     #[test]
     fn the_shipped_delivery_values_are_usable() {
@@ -115,6 +135,7 @@ mod tests {
         assert!(DeliveryErrorBound::from_characters(MAX_ERROR_LENGTH_CEILING).is_ok());
         assert!(NonZeroU32::new(MAX_DELIVERY_ATTEMPTS_CEILING).is_some_and(|attempts| DeliveryAttemptCeiling::from_attempts(attempts).is_ok()));
         assert!(u32::try_from(MAX_DELIVERY_LEASE.as_secs()).is_ok_and(|seconds| LeaseTerm::from_seconds(seconds).is_ok()));
+        assert!(retry_schedule(&retrying_up_to(MAX_DELIVERY_RETRY_INTERVAL)).is_ok());
     }
 
     /// Pinned from above too, so a ceiling the delivery layer raises is
@@ -127,5 +148,6 @@ mod tests {
             NonZeroU32::new(MAX_DELIVERY_ATTEMPTS_CEILING.saturating_add(1)).is_some_and(|attempts| DeliveryAttemptCeiling::from_attempts(attempts).is_err())
         );
         assert!(u32::try_from(MAX_DELIVERY_LEASE.as_secs().saturating_add(1)).is_ok_and(|seconds| LeaseTerm::from_seconds(seconds).is_err()));
+        assert!(retry_schedule(&retrying_up_to(MAX_DELIVERY_RETRY_INTERVAL + Duration::from_nanos(1))).is_err());
     }
 }

@@ -1374,7 +1374,8 @@ retry_interval = "5s"
 
 # The longest a retry delay grows to.
 #
-# Must be at least `notifications.delivery.queue.retry_interval`.
+# Must be at least `notifications.delivery.queue.retry_interval`, and at most
+# 1day.
 max_retry_interval = "5m"
 
 # How long finished deliveries and their change events are kept.

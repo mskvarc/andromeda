@@ -8,7 +8,6 @@
 //! records what happened when a worker tried to act on a delivery whose lease
 //! it may no longer hold.
 
-use chrono::{DateTime, Duration, Utc};
 use derive_more::Display;
 use std::num::NonZeroU32;
 use thiserror::Error;
@@ -64,29 +63,11 @@ impl LeaseTerm {
     pub const fn seconds(self) -> u32 {
         self.0.get()
     }
-
-    /// The term as a signed duration.
-    #[must_use]
-    pub fn as_duration(self) -> Duration {
-        Duration::seconds(i64::from(self.seconds()))
-    }
-
-    /// The instant at which a lease taken at `now` expires.
-    ///
-    /// The authoritative deadline is computed by the database from its own
-    /// clock; this projection exists so a worker can report the deadline it
-    /// expects. `None` means the addition would leave the representable
-    /// timestamp range, which no reachable claim clock produces.
-    #[must_use]
-    pub fn expires_at(self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
-        now.checked_add_signed(self.as_duration())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::delivery_lease::{LeaseTerm, LeaseTermError};
-    use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -106,19 +87,10 @@ mod tests {
     }
 
     #[test]
-    fn lease_term_reports_its_seconds_and_duration() -> Result<(), LeaseTermError> {
+    fn lease_term_reports_its_seconds_and_reads_as_them() -> Result<(), LeaseTermError> {
         let term = LeaseTerm::from_seconds(30)?;
         assert_eq!(term.seconds(), 30);
-        assert_eq!(term.as_duration().num_seconds(), 30);
-        Ok(())
-    }
-
-    #[test]
-    fn lease_expiry_is_the_claim_instant_plus_the_term() -> Result<(), LeaseTermError> {
-        let term = LeaseTerm::from_seconds(45)?;
-        let now = DateTime::<Utc>::UNIX_EPOCH;
-        assert_eq!(term.expires_at(now), Some(now + term.as_duration()));
-        assert_eq!(term.expires_at(now).map(|at| at.timestamp()), Some(45));
+        assert_eq!(term.to_string(), "30s");
         Ok(())
     }
 }
