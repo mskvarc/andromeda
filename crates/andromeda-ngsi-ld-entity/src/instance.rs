@@ -7,7 +7,7 @@
 //! used in temporal representation of Properties", and clause 5.2.5 has a Core
 //! write ignore one a producer supplies.
 
-use crate::{attributes::Attributes, family_value::FamilyValue, proof_seals::ProofSeals};
+use crate::{attributes::Attributes, family_value::FamilyValue};
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     time::{date_time::NgsiLdDateTime, system_instant::SystemInstant},
@@ -32,9 +32,6 @@ pub struct Instance {
     /// `modifiedAt` (clause 4.8), stamped by the broker.
     #[builder(default = None)]
     modified_at: Option<SystemInstant>,
-    /// The `entityIdSealed` and `entityTypeSealed` members of clause 4.5.2.2.
-    #[builder(default = ProofSeals::default())]
-    proof_seals: ProofSeals,
     /// The sub-attributes (clause 4.5.2), recursively.
     #[builder(default = Attributes::new())]
     sub_attributes: Attributes,
@@ -77,12 +74,6 @@ impl Instance {
         self.modified_at
     }
 
-    /// The data-integrity seals.
-    #[must_use]
-    pub const fn proof_seals(&self) -> &ProofSeals {
-        &self.proof_seals
-    }
-
     /// The sub-attributes.
     #[must_use]
     pub const fn sub_attributes(&self) -> &Attributes {
@@ -97,11 +88,6 @@ impl Instance {
     /// The family value, for a mutation that keeps the family.
     pub const fn value_mut(&mut self) -> &mut FamilyValue {
         &mut self.value
-    }
-
-    /// Replace the data-integrity seals.
-    pub fn set_proof_seals(&mut self, proof_seals: ProofSeals) {
-        self.proof_seals = proof_seals;
     }
 
     /// Replace `observedAt`.
@@ -144,7 +130,6 @@ impl Instance {
         self.value == other.value
             && self.observed_at == other.observed_at
             && self.expires_at == other.expires_at
-            && self.proof_seals == other.proof_seals
             && self.sub_attributes.same_content(&other.sub_attributes)
     }
 }

@@ -18,6 +18,9 @@ excluded_rules = [
     # These cannot tell a table created earlier in the same unreleased migration set, empty when it deploys, from a live one, and no migration may switch a rule off inline to tell them. andromeda-sql's constraint-on-sealed-table rule reads the seal ledger and checks the foreign keys and checks added to a sealed table instead.
     "adding-foreign-key-constraint",
     "constraint-missing-not-valid",
+    # The broker is the schema's only reader, one broker per database server and tenant prefix, and it migrates a schema before it serves it, so no reader is left that expects a dropped column, composite type field or view.
+    "ban-drop-column",
+    "ban-drop-view",
 ]
 
 included_rules = [

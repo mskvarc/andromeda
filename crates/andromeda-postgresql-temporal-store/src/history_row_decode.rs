@@ -42,7 +42,6 @@ use andromeda_ngsi_ld_number::{JsonNumber, declared_number::DeclaredNumber};
 use andromeda_postgresql_attribute_instance::{
     name_keys::{HeldKeys, KeyNames},
     name_resolution::names_of,
-    stored_json::StoredJson,
     stored_number::StoredNumber,
     sub_attribute::{SubAttributeElement, SubAttributeRecord},
 };
@@ -60,7 +59,7 @@ use cefact_units::UnitCode;
 use langtag::LangTagBuf;
 use sea_query::Iden;
 use serde_json::value::RawValue;
-use sqlx::{Row, postgres::PgRow, types::Json};
+use sqlx::{Row, postgres::PgRow};
 
 /// The table every row this module decodes comes from.
 const TABLE: HistoryTable = HistoryTable::AttributeHistory;
@@ -96,7 +95,7 @@ impl DecodedHistoryRow {
             members,
             datatype_key,
         } = self;
-        observation.row.metadata = members.metadata(&observation.row.attribute_name, names)?;
+        observation.row.metadata = members.metadata(names)?;
         if let Some(key) = datatype_key {
             let datatype = names.type_name(key).cloned().ok_or(StoredHistoryError::ValueDatatype(key))?;
             observation.row.value = typed(observation.row.value, datatype)?;
@@ -298,7 +297,6 @@ fn decode_members(row: &PgRow) -> Result<HistoryMembers, TemporalStoreError> {
             .collect(),
         unit_code: decode_unit_code(row, UnitCodeColumn::UnitCodeId)?,
         expires_at: row.try_get("expires_at")?,
-        proof_seals: row.try_get::<Option<Json<Box<RawValue>>>, _>("proof_seals")?.map(StoredJson::from),
         sub_attributes,
     })
 }
@@ -338,6 +336,7 @@ fn decode_value(row: &PgRow, attribute_type: AttributeType, attribute_name: &Att
             datatype: None,
         }),
         ValueKind::Geometry => Ok(TemporalValue::Geometry(decode_geometry(row, attribute_name)?)),
+        ValueKind::DataIntegrityProof => Err(StoredHistoryError::Seal(TABLE).into()),
         ValueKind::Object => {
             let stored: &RawValue = required_column(row, TABLE, HistoryColumn::ValueObject)?;
             Ok(StructuredValue::from_stored(attribute_type, attribute_name, stored.get())
@@ -438,7 +437,6 @@ mod tests {
                 unit_code: None,
                 observed_at: None,
                 expires_at: None,
-                proof_seals: None,
             },
             created_at: None,
             modified_at: None,

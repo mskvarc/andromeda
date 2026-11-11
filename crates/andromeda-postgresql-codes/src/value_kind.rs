@@ -57,20 +57,25 @@ compact_code_registry! {
             /// The row's value is a JSON string declared as `xsd:boolean`, held
             /// in the boolean column.
             DeclaredBoolean = 11, "declared-boolean";
+            /// The value of a data-integrity seal (clause 4.5.2.2): a W3C Data
+            /// Integrity proof, held in the proof fields of a `sub_attribute`
+            /// element with its two seals. A seal is only ever a
+            /// sub-attribute, so no row holds this kind.
+            DataIntegrityProof = 12, "data-integrity-proof";
         }
     }
 }
 
 impl ValueKind {
     /// The `attribute_history` column a row of this kind holds its value in;
-    /// `None` for the tombstone, which holds none. A `Date` and a `Time` share
-    /// the string column with a String, a declared number the number column
-    /// with a JSON number, and a declared Boolean the boolean column with a
-    /// JSON boolean.
+    /// `None` for the tombstone, which holds none, and for a seal, which no
+    /// row holds. A `Date` and a `Time` share the string column with a String,
+    /// a declared number the number column with a JSON number, and a declared
+    /// Boolean the boolean column with a JSON boolean.
     #[must_use]
     pub const fn history_column(self) -> Option<AttributeHistory> {
         match self {
-            ValueKind::Tombstone => None,
+            ValueKind::Tombstone | ValueKind::DataIntegrityProof => None,
             ValueKind::Number | ValueKind::DeclaredNumber => Some(AttributeHistory::ValueNumber),
             ValueKind::String | ValueKind::Date | ValueKind::Time => Some(AttributeHistory::ValueString),
             ValueKind::Boolean | ValueKind::DeclaredBoolean => Some(AttributeHistory::ValueBoolean),
@@ -87,11 +92,12 @@ mod tests {
     use crate::value_kind::ValueKind;
     use andromeda_postgresql_schema::temporal::AttributeHistory;
 
-    /// Only the tombstone holds no value; three kinds share the string column
-    /// and two each the number and boolean columns.
+    /// Only the tombstone and a seal hold no history column; three kinds
+    /// share the string column and two each the number and boolean columns.
     #[test]
-    fn every_kind_but_the_tombstone_names_the_column_it_holds_its_value_in() {
+    fn every_kind_but_the_tombstone_and_a_seal_names_the_column_it_holds_its_value_in() {
         assert_eq!(ValueKind::Tombstone.history_column(), None);
+        assert_eq!(ValueKind::DataIntegrityProof.history_column(), None);
         for kind in [ValueKind::String, ValueKind::Date, ValueKind::Time] {
             assert_eq!(kind.history_column(), Some(AttributeHistory::ValueString), "{kind:?}");
         }
@@ -122,7 +128,7 @@ mod tests {
 
     #[test]
     fn every_value_shape_has_exactly_one_member() {
-        assert_eq!(ValueKind::ALL.len(), 12);
+        assert_eq!(ValueKind::ALL.len(), 13);
     }
 
     #[test]
@@ -132,6 +138,6 @@ mod tests {
 
     #[test]
     fn a_value_shape_a_newer_release_might_add_fails_to_decode() {
-        assert!(ValueKind::try_from(12).is_err());
+        assert!(ValueKind::try_from(13).is_err());
     }
 }

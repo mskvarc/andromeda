@@ -27,12 +27,7 @@ use andromeda_ngsi_ld_lexicon::{
     instance_identity::InstanceIdentity,
 };
 use andromeda_ngsi_ld_model::temporal::{TemporalValue, observation_metadata::ObservationMetadata};
-use andromeda_postgresql_attribute_instance::{
-    name_keys::MentionedNames,
-    name_resolution::resolve_mentioned,
-    stored_json::StoredJson,
-    sub_attribute::SubAttributeRecord,
-};
+use andromeda_postgresql_attribute_instance::{name_keys::MentionedNames, name_resolution::resolve_mentioned, sub_attribute::SubAttributeRecord};
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, stored_unit_code::stored_unit_code};
 use andromeda_postgresql_encoding::{
@@ -133,7 +128,6 @@ impl TemporalRepository {
             object_type_keys,
             unit_code,
             expires_at,
-            proof_seals,
             sub_attributes,
         } = state
             .metadata
@@ -162,7 +156,6 @@ impl TemporalRepository {
             unit_code: unit_code.map(stored_unit_code),
             attribute_kind: stored_attribute_kind(state.attribute_type).code(),
             object_type_keys,
-            proof_seals: proof_seals.as_ref().map(StoredJson::get),
             expires_at,
             number,
         };
@@ -335,7 +328,7 @@ mod tests {
             .map(|element| (element.parent, element.members.attribute_name_key))
             .collect();
         assert_eq!(keyed, vec![(0, AttributeNameKey::from(7))]);
-        assert!(members.proof_seals.is_none() && members.value_type_key.is_none() && members.object_type_keys.is_empty());
+        assert!(members.value_type_key.is_none() && members.object_type_keys.is_empty());
         let value: Value = serde_json::from_str(encoded(&update).object().expect("the structured column").get()).expect("parses");
         assert_eq!(value, json!([{"@value": 1}]));
     }

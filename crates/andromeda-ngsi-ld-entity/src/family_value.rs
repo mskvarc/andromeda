@@ -4,9 +4,19 @@
 //! Exactly one family per instance. Each variant holds the members only that
 //! family defines, so a `unitCode` on a Relationship or an `objectType` on a
 //! Property is not a state this type can reach (clauses 4.5.2.2, 4.5.3.2,
-//! 4.5.18.2, 4.5.20.2, 4.5.21.2, 4.5.22.2, 4.5.24.2).
+//! 4.5.18.2, 4.5.20.2, 4.5.21.2, 4.5.22.2, 4.5.24.2). The `ngsildproof`
+//! Property is a variant of its own, because it alone carries the two seals
+//! and its value is a typed proof (clause 4.5.2.2): a seal on any other
+//! Property, or a proof that is not one, is not a state either.
 
-use crate::{expanded_value::ExpandedValue, geo_value::GeoValue, language_entries::LanguageEntries, list_object::ListObject, non_empty::NonEmpty};
+use crate::{
+    expanded_value::ExpandedValue,
+    geo_value::GeoValue,
+    language_entries::LanguageEntries,
+    list_object::ListObject,
+    non_empty::NonEmpty,
+    proof::{attribute_proof::AttributeProof, proof_fault::ProofFault, proof_seals::ProofSeals},
+};
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, reference::NgsiLdReference, uri::Uri};
 use cefact_units::UnitCode;
@@ -24,6 +34,9 @@ pub enum FamilyValue {
         /// The `valueType`.
         value_type: Option<NgsiLdReference>,
     },
+    /// The `ngsildproof` Property of a sealed attribute (clause 4.5.2.2):
+    /// its seals and the W3C Data Integrity proof its value is.
+    Proof(Box<AttributeProof>),
     /// A `GeoProperty` (clause 4.7).
     GeoProperty {
         /// The geometry of `hasValue`.
@@ -81,11 +94,57 @@ pub enum FamilyValue {
 }
 
 impl FamilyValue {
+    /// The `ngsildproof` this Property value is once sealed with `seals`
+    /// (clause 4.5.2.2): its one value read as the proof, its `unitCode` and
+    /// `valueType` kept.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProofFault::NotAProperty`] for a value of another family, and
+    /// the fault of a value that is no proof.
+    pub fn sealed(self, seals: ProofSeals) -> Result<FamilyValue, ProofFault> {
+        match self {
+            FamilyValue::Property { values, unit_code, value_type } => {
+                let mut proof = AttributeProof::try_from_values(seals, values)?;
+                proof.set_unit_code(unit_code);
+                proof.set_value_type(value_type);
+                Ok(FamilyValue::Proof(Box::new(proof)))
+            }
+            FamilyValue::Proof(mut proof) => {
+                proof.set_seals(seals);
+                Ok(FamilyValue::Proof(proof))
+            }
+            other @ (FamilyValue::GeoProperty { .. }
+            | FamilyValue::Relationship { .. }
+            | FamilyValue::LanguageProperty { .. }
+            | FamilyValue::VocabProperty { .. }
+            | FamilyValue::JsonProperty { .. }
+            | FamilyValue::ListProperty { .. }
+            | FamilyValue::ListRelationship { .. }) => Err(ProofFault::NotAProperty(other.family())),
+        }
+    }
+
+    /// The seal, for the `ngsildproof` Property.
+    #[must_use]
+    pub fn proof(&self) -> Option<&AttributeProof> {
+        match self {
+            FamilyValue::Proof(proof) => Some(proof),
+            FamilyValue::Property { .. }
+            | FamilyValue::GeoProperty { .. }
+            | FamilyValue::Relationship { .. }
+            | FamilyValue::LanguageProperty { .. }
+            | FamilyValue::VocabProperty { .. }
+            | FamilyValue::JsonProperty { .. }
+            | FamilyValue::ListProperty { .. }
+            | FamilyValue::ListRelationship { .. } => None,
+        }
+    }
+
     /// The family.
     #[must_use]
     pub const fn family(&self) -> AttributeType {
         match self {
-            FamilyValue::Property { .. } => AttributeType::Property,
+            FamilyValue::Property { .. } | FamilyValue::Proof(_) => AttributeType::Property,
             FamilyValue::GeoProperty { .. } => AttributeType::GeoProperty,
             FamilyValue::Relationship { .. } => AttributeType::Relationship,
             FamilyValue::LanguageProperty { .. } => AttributeType::LanguageProperty,
@@ -101,6 +160,7 @@ impl FamilyValue {
     pub const fn unit_code(&self) -> Option<UnitCode> {
         match self {
             FamilyValue::Property { unit_code, .. } | FamilyValue::GeoProperty { unit_code, .. } | FamilyValue::ListProperty { unit_code, .. } => *unit_code,
+            FamilyValue::Proof(proof) => proof.unit_code(),
             FamilyValue::Relationship { .. }
             | FamilyValue::LanguageProperty { .. }
             | FamilyValue::VocabProperty { .. }
@@ -119,6 +179,7 @@ impl FamilyValue {
             | FamilyValue::VocabProperty { value_type, .. }
             | FamilyValue::JsonProperty { value_type, .. }
             | FamilyValue::ListProperty { value_type, .. } => value_type.as_ref(),
+            FamilyValue::Proof(proof) => proof.value_type(),
             FamilyValue::Relationship { .. } | FamilyValue::ListRelationship { .. } => None,
         }
     }
@@ -129,6 +190,7 @@ impl FamilyValue {
         match self {
             FamilyValue::Relationship { object_types, .. } | FamilyValue::ListRelationship { object_types, .. } => object_types,
             FamilyValue::Property { .. }
+            | FamilyValue::Proof(_)
             | FamilyValue::GeoProperty { .. }
             | FamilyValue::LanguageProperty { .. }
             | FamilyValue::VocabProperty { .. }
@@ -143,6 +205,7 @@ impl FamilyValue {
         match self {
             FamilyValue::GeoProperty { geometry, .. } => Some(geometry),
             FamilyValue::Property { .. }
+            | FamilyValue::Proof(_)
             | FamilyValue::Relationship { .. }
             | FamilyValue::LanguageProperty { .. }
             | FamilyValue::VocabProperty { .. }

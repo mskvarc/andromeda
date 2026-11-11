@@ -52,7 +52,7 @@ async fn n_cmn_val_9008_a_seal_outside_ngsildproof_is_refused_by_merge_and_accep
     expect_that!(&answer_2, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData));
     let fragment_3 = EntityFragment::builder().build()?;
     // The model refuses it (an attribute proof), so `temperature` is written as text.
-    let temperature_3: RawJson = format!(r#"{{"type": "Property", "value": 23.0, "ngsildproof": {{"type": "Property", "value": {{"type": "DataIntegrityProof", "cryptosuite": "eddsa-jcs-2022", "proofValue": "z2aB"}}, "entityIdSealed": "urn:ngsi-ld:Building:{namespace}-1", "entityTypeSealed": "Building_{namespace}"}}}}"#).parse()?;
+    let temperature_3: RawJson = format!(r#"{{"type": "Property", "value": 23.0, "ngsildproof": {{"type": "Property", "value": {{"type": "DataIntegrityProof", "created": "2025-01-27T21:02:24Z", "verificationMethod": "https://example.edu/issuers/565049#z6MkwXG2WjeQnN", "cryptosuite": "eddsa-jcs-2022", "proofPurpose": "assertionMethod", "proofValue": "z2aB"}}, "entityIdSealed": "urn:ngsi-ld:Building:{namespace}-1", "entityTypeSealed": "Building_{namespace}"}}}}"#).parse()?;
     let document_3 = UncheckedDocument::try_from(fragment_3.render(Lossless::Normalized))?.set_member("temperature", &temperature_3);
     let request_3 = broker
         .unchecked(&MergeEntity::builder().id(&building_id).fragment(&fragment_3).build())?

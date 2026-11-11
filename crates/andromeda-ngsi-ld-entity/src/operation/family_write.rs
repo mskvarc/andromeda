@@ -18,6 +18,7 @@ use crate::{
         mutation_error::MutationError,
         value_merge::{MemberMerge, merge_language_entries, merge_values, settled_entries, settled_values},
     },
+    proof::attribute_proof::names_a_seal,
     refusal::EntityRefusal,
 };
 use andromeda_json_literal::JsonLiteral;
@@ -130,6 +131,20 @@ pub(crate) fn write_family_value(attribute: &AttributeName, value: &mut FamilyVa
                 *values = settled_values(written_values).map_err(MutationError::LiteralMerge)?;
             }
         }
+        FamilyValue::Proof(proof) => {
+            let WrittenValue::Value(written_values) = written else {
+                return Err(missing());
+            };
+            let mut values = proof.values().to_vec(); // clone: the proof is replaced only once the written value has landed whole.
+            let merged = match depth {
+                ValueDepth::Merge => merge_values(&mut values, written_values).map_err(MutationError::LiteralMerge)?,
+                ValueDepth::Replace => MemberMerge::Replace,
+            };
+            if merged == MemberMerge::Replace {
+                values = settled_values(written_values).map_err(MutationError::LiteralMerge)?;
+            }
+            proof.set_values(values).map_err(|fault| EntityRefusal::proof(attribute, fault))?;
+        }
         FamilyValue::GeoProperty { geometry, .. } => *geometry = written_geometry(attribute, written)?,
         FamilyValue::Relationship { objects, .. } => {
             let WrittenValue::Object(written_objects) = written else {
@@ -212,6 +227,7 @@ pub(crate) fn apply_companion_members(attribute: &AttributeName, value: &mut Fam
             FamilyValue::Property { unit_code, .. } | FamilyValue::GeoProperty { unit_code, .. } | FamilyValue::ListProperty { unit_code, .. } => {
                 *unit_code = slot.as_set().copied();
             }
+            FamilyValue::Proof(proof) => proof.set_unit_code(slot.as_set().copied()),
             FamilyValue::Relationship { .. }
             | FamilyValue::LanguageProperty { .. }
             | FamilyValue::VocabProperty { .. }
@@ -237,6 +253,7 @@ pub(crate) fn apply_companion_members(attribute: &AttributeName, value: &mut Fam
             | FamilyValue::ListProperty { value_type, .. } => {
                 *value_type = slot.as_set().cloned(); // clone: the stored instance owns its copy of the borrowed fragment.
             }
+            FamilyValue::Proof(proof) => proof.set_value_type(slot.as_set().cloned()), // clone: the stored instance owns its copy of the borrowed fragment.
             FamilyValue::Relationship { .. } | FamilyValue::ListRelationship { .. } => {
                 if let Slot::Set(_) = slot {
                     return Err(MutationError::from(EntityRefusal::member_forbidden(
@@ -254,6 +271,7 @@ pub(crate) fn apply_companion_members(attribute: &AttributeName, value: &mut Fam
                 *object_types = slot.as_set().cloned().unwrap_or_default(); // clone: the stored instance owns its copy of the borrowed fragment.
             }
             FamilyValue::Property { .. }
+            | FamilyValue::Proof(_)
             | FamilyValue::GeoProperty { .. }
             | FamilyValue::LanguageProperty { .. }
             | FamilyValue::VocabProperty { .. }
@@ -270,6 +288,66 @@ pub(crate) fn apply_companion_members(attribute: &AttributeName, value: &mut Fam
         }
     }
     Ok(())
+}
+
+/// The family value a new instance of `attribute` holds once the seals its
+/// written instance names are applied: the `ngsildproof` Property is sealed
+/// with them, which needs both (clause 4.5.2.2), and every other attribute
+/// carries none.
+///
+/// # Errors
+///
+/// Returns [`EntityRefusal::Proof`] for an `ngsildproof` that is no seal, and
+/// [`EntityRefusal::MemberForbidden`] for a seal on any other attribute.
+pub(crate) fn sealed_family_value(attribute: &AttributeName, value: FamilyValue, document: &InstanceDocument) -> Result<FamilyValue, MutationError> {
+    let seals = document.proof_seals();
+    if names_a_seal(attribute) {
+        let sealed = seals.complete().and_then(|seals| value.sealed(seals));
+        return sealed.map_err(|fault| MutationError::from(EntityRefusal::proof(attribute, fault)));
+    }
+    if seals.is_empty() {
+        Ok(value)
+    } else {
+        Err(MutationError::from(EntityRefusal::member_forbidden(
+            Some(attribute),
+            Some(value.family()),
+            properties::ENTITY_ID_SEALED,
+        )))
+    }
+}
+
+/// Lay the seals a written instance names over those `value` holds: a
+/// written seal replaces the held one, an omitted one is kept (clauses 5.5.8
+/// and 5.5.12).
+///
+/// # Errors
+///
+/// Returns [`EntityRefusal::MemberForbidden`] for a seal written onto any
+/// value but an `ngsildproof`.
+pub(crate) fn apply_written_seals(attribute: &AttributeName, value: &mut FamilyValue, document: &InstanceDocument) -> Result<(), MutationError> {
+    let written = document.proof_seals();
+    if written.is_empty() {
+        return Ok(());
+    }
+    match value {
+        FamilyValue::Proof(proof) => {
+            let seals = written.laid_over(proof.seals());
+            proof.set_seals(seals);
+            Ok(())
+        }
+        FamilyValue::Property { .. }
+        | FamilyValue::GeoProperty { .. }
+        | FamilyValue::Relationship { .. }
+        | FamilyValue::LanguageProperty { .. }
+        | FamilyValue::VocabProperty { .. }
+        | FamilyValue::JsonProperty { .. }
+        | FamilyValue::ListProperty { .. }
+        | FamilyValue::ListRelationship { .. } => Err(MutationError::from(EntityRefusal::member_forbidden(
+            Some(attribute),
+            Some(value.family()),
+            properties::ENTITY_ID_SEALED,
+        ))),
+    }
 }
 
 /// The geometry a written `GeoProperty` value carries.

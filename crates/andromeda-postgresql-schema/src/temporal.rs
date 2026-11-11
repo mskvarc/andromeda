@@ -110,8 +110,6 @@ pub enum AttributeHistory {
     ValueDatatypeKey,
     /// `entity_type_names` keys of the instance's `objectType` list (clause 4.5.3), in written order
     ObjectTypeKeys,
-    /// The instance's `entityIdSealed` and `entityTypeSealed` members (clause 4.5.2.2)
-    ProofSeals,
     /// The instance's `expiresAt` (clause 4.22) as it was recorded
     ExpiresAt,
     /// The instance's sub-attributes as `sub_attribute` elements in pre-order
@@ -223,7 +221,6 @@ mod tests {
             [
                 AttributeHistory::ValueTypeKey,
                 AttributeHistory::ObjectTypeKeys,
-                AttributeHistory::ProofSeals,
                 AttributeHistory::ExpiresAt,
                 AttributeHistory::SubAttributes,
                 AttributeHistory::ValueGeometryValid,
@@ -235,7 +232,6 @@ mod tests {
             [
                 "value_type_key",
                 "object_type_keys",
-                "proof_seals",
                 "expires_at",
                 "sub_attributes",
                 "value_geometry_valid",

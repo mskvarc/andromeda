@@ -157,7 +157,8 @@ pub(crate) fn integer_of(instance: &Instance) -> Option<i64> {
             },
             [ExpandedValue::Json(_) | ExpandedValue::Node(_) | ExpandedValue::List(_)] | [] | [_, _, ..] => None,
         },
-        FamilyValue::GeoProperty { .. }
+        FamilyValue::Proof(_)
+        | FamilyValue::GeoProperty { .. }
         | FamilyValue::Relationship { .. }
         | FamilyValue::LanguageProperty { .. }
         | FamilyValue::VocabProperty { .. }

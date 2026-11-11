@@ -28,6 +28,7 @@ use crate::{
     },
     expanded_value::ExpandedValue,
     operation::instance_patch::written_family,
+    proof::attribute_proof::names_a_seal,
     refusal::EntityRefusal,
     value_mode::{Fragment, FragmentMember, FragmentText},
 };
@@ -46,10 +47,13 @@ impl EntityDocument {
     /// # Errors
     ///
     /// Returns the [`EntityRefusal`] of the first rule the document breaks, in
-    /// the order the attribute envelopes, the sub-attribute instance
-    /// identities, the family members, the NGSI-LD Null placements, the scope
-    /// and the geometries are checked.
+    /// the order a seal on the entity, the attribute envelopes, the
+    /// sub-attribute instance identities, the family members, the NGSI-LD Null
+    /// placements, the scope and the geometries are checked.
     pub fn admit(&self, admission: NullSentinelAdmission) -> Result<(), EntityRefusal> {
+        if self.attributes().keys().any(names_a_seal) {
+            return Err(EntityRefusal::ProofOnEntity);
+        }
         for (name, member) in self.attributes() {
             admit_envelopes(name, member, admission.value_omission())?;
         }
@@ -103,9 +107,14 @@ impl InstanceDocument {
     /// # Errors
     ///
     /// Returns the [`EntityRefusal`] of the first rule the fragment breaks:
-    /// the family's missing-value refusal comes first for a
-    /// [`InstanceCompleteness::Complete`] fragment that names no value member.
+    /// [`EntityRefusal::ProofOnEntity`] for an `ngsildproof`, which the
+    /// fragment would put on the entity, then the family's missing-value
+    /// refusal for a [`InstanceCompleteness::Complete`] fragment that names no
+    /// value member.
     pub fn admit_fragment(&self, attribute: &AttributeName, admission: NullSentinelAdmission, completeness: InstanceCompleteness) -> Result<(), EntityRefusal> {
+        if names_a_seal(attribute) {
+            return Err(EntityRefusal::ProofOnEntity);
+        }
         if completeness == InstanceCompleteness::Complete && matches!(self.value(), ValueSlot::Absent) {
             return Err(EntityRefusal::missing_value(attribute, written_family(self, None)));
         }

@@ -21,6 +21,7 @@
 
 use compact_str::CompactString;
 use derive_more::{AsRef, Display};
+use iri_rs::Iri;
 use std::{borrow::Borrow, str::FromStr};
 use thiserror::Error;
 
@@ -46,6 +47,13 @@ impl ExpandedValueName {
     #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
+    }
+
+    /// The name of a vocabulary IRI. An absolute IRI holds the `:` of its
+    /// scheme and never starts with `@`, so the name always reads back.
+    #[must_use]
+    pub fn from_static(iri: Iri<&'static str>) -> ExpandedValueName {
+        ExpandedValueName(CompactString::const_new(iri.into_inner()))
     }
 }
 

@@ -24,7 +24,7 @@ use crate::{
 use pg_query::{
     Node,
     NodeEnum,
-    protobuf::{AlterTableCmd, AlterTableStmt, AlterTableType, ColumnDef, CreateStmt, SelectStmt, Token},
+    protobuf::{AlterTableCmd, AlterTableStmt, AlterTableType, ColumnDef, CreateStmt, ObjectType, SelectStmt, Token},
 };
 
 /// The function that converts a table into a hypertable.
@@ -211,25 +211,30 @@ impl SchemaObjects {
         usize::try_from(relation.location).ok()
     }
 
-    /// Read an `alter table`: the columns it adds or retypes, the compression
-    /// and the replica identity it sets and the constraints it adds or
-    /// validates.
+    /// Read an `alter table`, or an `alter type` of a composite type, which
+    /// PostgreSQL parses alike: the columns or fields it adds, the columns it
+    /// retypes, the compression and the replica identity it sets and the
+    /// constraints it adds or validates.
     fn read_alter_table(&mut self, alter: &AlterTableStmt, context: &StatementContext<'_>) {
         let table = alter.relation.as_ref().map_or_default(|relation| relation.relname.as_str());
+        let added = match ObjectType::try_from(alter.objtype) {
+            Ok(ObjectType::ObjectType) => ColumnSource::CompositeType,
+            Ok(_) | Err(_) => ColumnSource::AddColumn,
+        };
         for command in alter.cmds.iter().filter_map(|node| match &node.node {
             Some(NodeEnum::AlterTableCmd(command)) => Some(command),
             Some(_) | None => None,
         }) {
-            self.read_alter_table_command(command, table, context);
+            self.read_alter_table_command(command, table, added, context);
         }
     }
 
-    /// Read one action of an `alter table`.
-    fn read_alter_table_command(&mut self, command: &AlterTableCmd, table: &str, context: &StatementContext<'_>) {
+    /// Read one action of an `alter table`, a column it adds being of `added`.
+    fn read_alter_table_command(&mut self, command: &AlterTableCmd, table: &str, added: ColumnSource, context: &StatementContext<'_>) {
         let definition = command.def.as_ref().and_then(|definition| definition.node.as_ref());
         match (AlterTableType::try_from(command.subtype), definition) {
             (Ok(AlterTableType::AtAddColumn), Some(NodeEnum::ColumnDef(column))) => {
-                self.add_column(column, &column.colname, table, ColumnSource::AddColumn, context);
+                self.add_column(column, &column.colname, table, added, context);
             }
             (Ok(AlterTableType::AtAlterColumnType), Some(NodeEnum::ColumnDef(column))) => {
                 if let Some(column) = DeclaredColumn::read(column, &command.name, table, ColumnSource::AlterColumnType, context) {

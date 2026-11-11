@@ -1,19 +1,14 @@
 //! An attribute a new entity brings joins the details.
 
 use andromeda_test_suite::{
-    body_json::{json_count, json_includes},
     broker,
     namespace::Namespace,
     outcome::Done,
     type_information::{attribute_names, families_of},
 };
 use googletest::prelude::*;
-use http::StatusCode;
 use ngsi_ld::{
-    http::{
-        headers::Accept,
-        operation::{RetrieveAttributes, RetrieveEntityTypeDetails},
-    },
+    http::headers::Accept,
     model::{
         AttributeKind,
         Entity,
@@ -78,23 +73,19 @@ async fn n_dsc_tyi_0001_an_attribute_a_new_entity_brings_joins_the_details() -> 
     expect_that!(families_of(&information_2, &owner), some(elements_are![eq(&AttributeKind::Relationship)]));
     expect_that!(families_of(&information_2, &floors), some(elements_are![eq(&AttributeKind::Property)]));
     expect_that!(families_of(&information_2, &position), some(elements_are![eq(&AttributeKind::GeoProperty)]));
-    // Sibling tests leave the reserved `ngsildproof` attribute in the tenant, which the typed list refuses, so the catalog is read as received.
-    let client = broker.with_accept(Accept::any());
-    let details = client.send_unchecked(client.unchecked(&RetrieveEntityTypeDetails::builder().build())?).await?;
-    expect_that!(details.status(), eq(StatusCode::OK));
-    let building = format!("$[?@.typeName == '{building_type}']");
-    expect_that!(details.body(), json_count(&format!("{building}.attributeNames"), 4));
-    for name in [&height, &owner, &floors, &position] {
-        expect_that!(details.body(), json_includes(&format!("{building}.attributeNames"), name.to_string()));
-    }
+    let details = broker.with_accept(Accept::any()).entity_types().list_details().send().await?;
+    let building = details.iter().find(|item| item.type_name == building_type).or_fail()?;
+    expect_that!(
+        building.attribute_names,
+        unordered_elements_are![eq(&height), eq(&owner), eq(&floors), eq(&position)]
+    );
     expect_that!(
         attribute_names(&information_2),
         unordered_elements_are![eq(&height), eq(&owner), eq(&floors), eq(&position)]
     );
-    let attributes = client.send_unchecked(client.unchecked(&RetrieveAttributes::builder().build())?).await?;
-    expect_that!(attributes.status(), eq(StatusCode::OK));
+    let attributes = broker.with_accept(Accept::any()).attributes().list().send().await?;
     for name in [&height, &owner, &floors, &position] {
-        expect_that!(attributes.body(), json_includes("$.attributeList", name.to_string()));
+        expect_that!(attributes.attribute_list, contains(eq(name)));
     }
     let position_information = broker.with_accept(Accept::any()).attributes().retrieve(&position).send().await?;
     expect_that!(position_information.attribute_count, some(eq(1)));

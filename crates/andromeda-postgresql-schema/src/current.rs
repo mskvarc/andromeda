@@ -211,9 +211,6 @@ pub enum CurrentAttributes {
     /// `entity_type_names` keys of a Relationship's clause 4.5.3 `objectType`,
     /// in written order, NULL when it carries none
     ObjectTypeKeys,
-    /// The clause 4.5.2.2 `entityIdSealed` and `entityTypeSealed` members,
-    /// NULL when the instance carries neither
-    ProofSeals,
     /// The instance's sub-attribute tree as an array of
     /// [`SubAttribute`] elements in written order, parents before
     /// children, NULL when the instance has no sub-attribute
@@ -276,9 +273,6 @@ pub enum SubAttribute {
     /// `entity_type_names` keys of a Relationship's clause 4.5.3 `objectType`,
     /// in written order, NULL when it carries none
     ObjectTypeKeys,
-    /// The clause 4.5.2.2 `entityIdSealed` and `entityTypeSealed` members,
-    /// NULL when the element carries neither
-    ProofSeals,
     /// `cefact-units` identity of the element's `unitCode` (clause 4.5.2)
     UnitCodeId,
     /// The element's clause 4.5.2 `observedAt`, NULL when it carries none
@@ -289,6 +283,22 @@ pub enum SubAttribute {
     ModifiedAt,
     /// The element's own clause 4.22 `expiresAt`, NULL when it never expires
     ExpiresAt,
+    /// The clause 4.5.2.2 `entityIdSealed` of a seal, NULL on any other
+    /// element
+    SealEntityId,
+    /// `entity_type_names` keys of a seal's clause 4.5.2.2 `entityTypeSealed`,
+    /// in written order, NULL on any other element
+    SealEntityTypeKeys,
+    /// The W3C Data Integrity proof a seal holds as its value, a
+    /// `data_integrity_proof`, NULL on any other element
+    ValueProof,
+}
+
+impl SubAttribute {
+    /// The fields `sub_attribute_value_object` reads an element's structured
+    /// value from, in its parameter order: `value_object`, or for a
+    /// data-integrity seal the expanded proof `value_proof` holds.
+    pub const STRUCTURED_VALUE_FIELDS: [SubAttribute; 3] = [SubAttribute::ValueKind, SubAttribute::ValueObject, SubAttribute::ValueProof];
 }
 
 /// Alias `e` for the entities table.
@@ -391,7 +401,6 @@ mod tests {
             CurrentAttributes::ValueLongText,
             CurrentAttributes::ValueLongUri,
             CurrentAttributes::ObjectTypeKeys,
-            CurrentAttributes::ProofSeals,
             CurrentAttributes::SubAttributes,
             CurrentAttributes::SubEqKeys,
         ]
@@ -427,7 +436,6 @@ mod tests {
                 "value_long_text",
                 "value_long_uri",
                 "object_type_keys",
-                "proof_seals",
                 "sub_attributes",
                 "sub_eq_keys",
             ]
@@ -454,12 +462,14 @@ mod tests {
             SubAttribute::ValueLanguage,
             SubAttribute::ValueTypeKey,
             SubAttribute::ObjectTypeKeys,
-            SubAttribute::ProofSeals,
             SubAttribute::UnitCodeId,
             SubAttribute::ObservedAt,
             SubAttribute::CreatedAt,
             SubAttribute::ModifiedAt,
             SubAttribute::ExpiresAt,
+            SubAttribute::SealEntityId,
+            SubAttribute::SealEntityTypeKeys,
+            SubAttribute::ValueProof,
         ]
         .map(|field| field.to_string());
         assert_eq!(SubAttribute::Type.to_string(), "sub_attribute");
@@ -483,12 +493,14 @@ mod tests {
                 "value_language",
                 "value_type_key",
                 "object_type_keys",
-                "proof_seals",
                 "unit_code_id",
                 "observed_at",
                 "created_at",
                 "modified_at",
                 "expires_at",
+                "seal_entity_id",
+                "seal_entity_type_keys",
+                "value_proof",
             ]
         );
     }

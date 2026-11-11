@@ -1,6 +1,6 @@
 //! `constraint-on-sealed-table`: a foreign key or check added to a table a
 //! sealed migration created is added `not valid`, and a later migration
-//! validates it.
+//! validates it, unless the table is a hypertable.
 //!
 //! A sealed table may hold rows on every installation, so adding the
 //! constraint checks all of them under the `access exclusive` lock
@@ -11,6 +11,12 @@
 //! the two locks are never held in one transaction. A table created by a
 //! migration not yet sealed is still empty when its release deploys, so a
 //! constraint added to it costs nothing and the rule passes it over.
+//!
+//! TimescaleDB refuses `validate constraint` on a hypertable whose columnstore
+//! is enabled, and the broker enables it at run time, so a constraint added
+//! `not valid` to a hypertable could never be validated. A constraint on a
+//! hypertable is therefore added validated, in the one statement that checks
+//! the rows its uncompressed chunks hold.
 
 use crate::{
     declared_schema::constraint::{ConstraintKind, DeclaredConstraint},
@@ -26,6 +32,17 @@ enum UnstagedConstraint<'schema> {
         /// What the constraint enforces.
         kind: ConstraintKind,
         /// The constraint, or how it is written when unnamed.
+        name: &'schema str,
+        /// The table.
+        table: &'schema str,
+    },
+    /// The constraint is added `not valid` to a hypertable, which can never
+    /// validate it.
+    #[display("{kind} {name} is added not valid to {table}, a hypertable, which cannot validate it once its columnstore is enabled")]
+    Unvalidatable {
+        /// What the constraint enforces.
+        kind: ConstraintKind,
+        /// The constraint.
         name: &'schema str,
         /// The table.
         table: &'schema str,
@@ -46,7 +63,8 @@ enum UnstagedConstraint<'schema> {
 const UNNAMED: &str = "an unnamed constraint";
 
 /// Every foreign key or check on a sealed table that is not added `not valid`
-/// and validated by a later migration.
+/// and validated by a later migration, or on a sealed hypertable that is not
+/// added validated.
 #[must_use]
 pub fn check(context: &RuleContext<'_>) -> Vec<RuleFinding> {
     let schema = context.schema();
@@ -63,18 +81,15 @@ pub fn check(context: &RuleContext<'_>) -> Vec<RuleFinding> {
         })
         .filter_map(|constraint| {
             let name = constraint.name().unwrap_or(UNNAMED);
-            let violation = match constraint.name() {
-                Some(name) if constraint.is_not_valid() && is_validated_later(context, constraint, name) => return None,
-                Some(name) if constraint.is_not_valid() => UnstagedConstraint::NeverValidated {
-                    kind: constraint.kind(),
-                    name,
-                    table: constraint.table(),
-                },
-                Some(_) | None => UnstagedConstraint::Validated {
-                    kind: constraint.kind(),
-                    name,
-                    table: constraint.table(),
-                },
+            let hypertable = schema.hypertables().iter().any(|hypertable| hypertable.table() == constraint.table());
+            let kind = constraint.kind();
+            let table = constraint.table();
+            let violation = match (constraint.name(), hypertable, constraint.is_not_valid()) {
+                (_, true, false) => return None,
+                (Some(name), false, true) if is_validated_later(context, constraint, name) => return None,
+                (_, true, true) => UnstagedConstraint::Unvalidatable { kind, name, table },
+                (Some(name), false, true) => UnstagedConstraint::NeverValidated { kind, name, table },
+                (_, false, false) | (None, false, true) => UnstagedConstraint::Validated { kind, name, table },
             };
             Some(context.finding(
                 Rule::ConstraintOnSealedTable,
@@ -170,6 +185,45 @@ mod tests {
         assert_eq!(
             findings_sealing(Rule::ConstraintOnSealedTable, &[ENTITIES, both], &[ENTITIES.0])?,
             ["migrations/tenant/0002_entity_kind_check.sql:2:9"]
+        );
+        Ok(())
+    }
+
+    const HYPERTABLE: (&str, &str) = (
+        "tenant/0002_entity_hypertable.sql",
+        "select\n    create_hypertable('entities', by_range('entity_key'));\n",
+    );
+
+    #[test]
+    fn a_check_added_validated_to_a_sealed_hypertable_is_accepted() -> Result<(), FixtureError> {
+        let check = (
+            "tenant/0003_entity_kind_check.sql",
+            "alter table entities\n    add constraint chk_entities_kind check (kind_key >= 0);\n",
+        );
+        assert_eq!(
+            findings_sealing(Rule::ConstraintOnSealedTable, &[ENTITIES, HYPERTABLE, check], &[ENTITIES.0, HYPERTABLE.0])?,
+            Vec::<String>::new()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_check_added_not_valid_to_a_sealed_hypertable_is_refused_though_validated_later() -> Result<(), FixtureError> {
+        let check = (
+            "tenant/0003_entity_kind_check.sql",
+            "alter table entities\n    add constraint chk_entities_kind check (kind_key >= 0) not valid;\n",
+        );
+        let validation = (
+            "tenant/0004_entity_kind_validation.sql",
+            "alter table entities\n    validate constraint chk_entities_kind;\n",
+        );
+        assert_eq!(
+            findings_sealing(
+                Rule::ConstraintOnSealedTable,
+                &[ENTITIES, HYPERTABLE, check, validation],
+                &[ENTITIES.0, HYPERTABLE.0]
+            )?,
+            ["migrations/tenant/0003_entity_kind_check.sql:2:9"]
         );
         Ok(())
     }

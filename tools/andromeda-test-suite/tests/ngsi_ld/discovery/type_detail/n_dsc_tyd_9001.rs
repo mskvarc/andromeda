@@ -1,21 +1,17 @@
 //! The entity type lists use the declared terms.
 
-use andromeda_test_suite::{
-    body_json::{json_count, json_equals, json_includes},
-    broker,
-    namespace::Namespace,
-    outcome::Done,
-    remote_context::RemoteContexts,
-};
+use andromeda_test_suite::{broker, namespace::Namespace, outcome::Done, remote_context::RemoteContexts};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::{headers::Accept, operation::RetrieveEntityTypeDetails},
+    http::headers::Accept,
     model::{
+        AttributeName,
         Context,
         Entity,
         EntityTypeName,
         NgsiLdMediaType,
+        Uri,
         geometry::{Position, Shape},
     },
 };
@@ -65,19 +61,18 @@ async fn n_dsc_tyd_9001_the_entity_type_lists_use_the_declared_terms() -> Result
     let types = client.with_heads().entity_types().list().send().await?;
     expect_that!(types.status, eq(StatusCode::OK));
     expect_that!(types.outcome.type_list, contains(eq(&vehicle_term)));
-    // Sibling tests leave the reserved `ngsildproof` attribute in the tenant, which the typed list refuses, so the catalog is read as received.
-    let details = client.send_unchecked(client.unchecked(&RetrieveEntityTypeDetails::builder().build())?).await?;
-    expect_that!(details.status(), eq(StatusCode::OK));
-    let vehicle_details = format!("$[?@.id == 'http://example.org/{namespace}/Vehicle']");
-    expect_that!(details.body(), json_equals(&format!("{vehicle_details}.typeName"), vehicle_term.to_string()));
-    expect_that!(details.body(), json_count(&format!("{vehicle_details}.attributeNames"), 4));
-    for name in [
-        format!("isParked_{namespace}"),
-        format!("speed_{namespace}"),
-        "location".to_owned(),
-        format!("http://example.org/{namespace}/status"),
-    ] {
-        expect_that!(details.body(), json_includes(&format!("{vehicle_details}.attributeNames"), name));
-    }
+    let details = client.entity_types().list_details().send().await?;
+    let vehicle_id: Uri = format!("http://example.org/{namespace}/Vehicle").parse()?;
+    let vehicle = details.iter().find(|item| item.id == vehicle_id).or_fail()?;
+    expect_that!(vehicle.type_name, eq(&vehicle_term));
+    expect_that!(
+        vehicle.attribute_names,
+        unordered_elements_are![
+            eq(&format!("isParked_{namespace}").parse::<AttributeName>()?),
+            eq(&format!("speed_{namespace}").parse::<AttributeName>()?),
+            eq(&"location".parse::<AttributeName>()?),
+            eq(&format!("http://example.org/{namespace}/status").parse::<AttributeName>()?)
+        ]
+    );
     Ok(())
 }

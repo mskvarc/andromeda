@@ -81,6 +81,7 @@ impl Instance {
         }
         let values = match value {
             FamilyValue::Property { values, .. } => values.as_slice(),
+            FamilyValue::Proof(proof) => proof.values(),
             FamilyValue::ListProperty { items, .. } => items.as_slice(),
             FamilyValue::GeoProperty { .. }
             | FamilyValue::Relationship { .. }

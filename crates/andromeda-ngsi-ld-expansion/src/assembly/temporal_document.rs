@@ -8,7 +8,7 @@
 //! member, and the entity's system times are the peer's, carried apart.
 
 use crate::{assembly::attribute_member, expanded_tree::ExpandedNode};
-use andromeda_ngsi_ld_entity::{document::EntityDocument, member_role::MemberRole, refusal::EntityRefusal};
+use andromeda_ngsi_ld_entity::{document::EntityDocument, member_role::MemberRole, proof::attribute_proof::names_a_seal, refusal::EntityRefusal};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{entity_system_times::EntitySystemTimes, temporal::temporal_document::TemporalDocument};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
@@ -42,6 +42,9 @@ pub(crate) fn temporal_document(node: Option<ExpandedNode>, system_times: Entity
         let name = name.parse::<AttributeName>().map_err(EntityRefusal::ExpandedAttributeName)?;
         if name.as_str() != properties::SCOPE.as_str() && MemberRole::is_reserved(name.as_str()) {
             return Err(EntityRefusal::ReservedAttributeName { attribute: name });
+        }
+        if names_a_seal(&name) {
+            return Err(EntityRefusal::ProofOnEntity);
         }
         let member = attribute_member(&name, items)?;
         attributes.insert(name, member);

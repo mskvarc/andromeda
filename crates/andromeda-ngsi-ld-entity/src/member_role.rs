@@ -11,15 +11,18 @@
 //! of clause 4.5.2.2. None of them is an attribute.
 
 use crate::document::value_carrier::ValueCarrier;
-use andromeda_ngsi_ld_vocabulary::expanded::properties;
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, expanded::properties};
+use derive_more::Display;
 use iri_rs::Iri;
 
-/// A seal member of clause 4.5.2.2.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+/// A seal member of clause 4.5.2.2, displayed as its core `@context` term.
+#[derive(Clone, Copy, Debug, Display, Eq, Hash, PartialEq)]
 pub enum ProofSeal {
     /// `entityIdSealed`.
+    #[display("{}", compact_properties::ENTITY_ID_SEALED)]
     EntityId,
     /// `entityTypeSealed`.
+    #[display("{}", compact_properties::ENTITY_TYPE_SEALED)]
     EntityType,
 }
 

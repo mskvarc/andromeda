@@ -15,14 +15,12 @@
 
 use crate::{
     document::{instance_document::InstanceDocument, slot::Slot, value_carrier::ValueCarrier, written_value::ValueSlot},
-    expanded_value::ExpandedValue,
     instance::Instance,
     operation::{
-        family_write::{ValueDepth, apply_companion_members, fresh_family_value, write_family_value},
+        family_write::{ValueDepth, apply_companion_members, apply_written_seals, fresh_family_value, sealed_family_value, write_family_value},
         mutation_error::MutationError,
         sub_attribute_patch::{new_sub_attributes, patch_sub_attributes},
     },
-    proof_seals::ProofSeals,
     refusal::EntityRefusal,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, time::date_time::NgsiLdDateTime};
@@ -81,7 +79,7 @@ pub(crate) fn new_instance(
     let mut value = fresh_family_value(attribute, family, written)?;
     apply_companion_members(attribute, &mut value, document)?;
     let mut instance = Instance::builder()
-        .value(value)
+        .value(sealed_family_value(attribute, value, document)?)
         .sub_attributes(new_sub_attributes(document.sub_attributes())?)
         .build();
     apply_instance_members(&mut instance, document, observed_at);
@@ -135,6 +133,7 @@ pub(crate) fn patch_instance(
         ValueSlot::Remove(_) => return Err(reserved_null(attribute)),
     }
     apply_companion_members(attribute, held.value_mut(), document)?;
+    apply_written_seals(attribute, held.value_mut(), document)?;
     // A merge can put a written value beside a held `valueType`, or the
     // reverse, which neither the document nor the held instance shows alone.
     held.admit_datatypes(attribute)?;
@@ -155,15 +154,6 @@ fn apply_instance_members(instance: &mut Instance, document: &InstanceDocument, 
     }
     if let Some(slot) = document.expires_at() {
         instance.set_expires_at(slot.as_set().copied());
-    }
-    let written_seals = document.proof_seals();
-    if !written_seals.is_empty() {
-        let held_seals = instance.proof_seals();
-        let seals = ProofSeals::new(
-            written_seals.entity_id().or_else(|| held_seals.entity_id()).map(<[ExpandedValue]>::to_vec),
-            written_seals.entity_type().or_else(|| held_seals.entity_type()).map(<[ExpandedValue]>::to_vec),
-        );
-        instance.set_proof_seals(seals);
     }
 }
 

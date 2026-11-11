@@ -67,8 +67,6 @@ pub enum TemporalEntry {
     ValueUri,
     /// `entity_type_names` keys of the clause 4.5.3 `objectType`, in written order
     ObjectTypeKeys,
-    /// The clause 4.5.2.2 `entityIdSealed` and `entityTypeSealed` members
-    ProofSeals,
     /// The instance's sub-attributes as `sub_attribute` elements
     SubAttributes,
     /// `ltree` label path of a Scope entry, NULL for a Scope deletion

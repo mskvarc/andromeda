@@ -18,10 +18,13 @@ use crate::{
         raw_scalar::RawScalar,
     },
     document::{attribute_member::AttributeMember, instance_document::InstanceDocument, slot::Slot, value_carrier::ValueCarrier, written_value::ValueSlot},
-    expanded_value::ExpandedValue,
+    entity_types::EntityTypes,
     member_role::{MemberRole, ProofSeal},
     member_shape::MemberShape,
-    proof_seals::ProofSeals,
+    proof::{
+        proof_seals::{sealed_entity_id, sealed_entity_types},
+        written_seals::WrittenSeals,
+    },
     refusal::EntityRefusal,
 };
 use andromeda_ngsi_ld_lexicon::{
@@ -182,9 +185,15 @@ impl<'de> Visitor<'de> for InstanceSeed<'_> {
                         }
                         MemberRole::Seal(seal) => {
                             let values = seal_values(map.next_value_seed(elements)?, attribute).map_err(refuse)?;
+                            let unsealed = |fault| {
+                                refuse(EntityRefusal::Proof {
+                                    attribute: attribute.clone(), // clone: the refusal outlives the borrowed attribute.
+                                    fault,
+                                })
+                            };
                             match seal {
-                                ProofSeal::EntityId => parts.seal_entity_id = Some(values),
-                                ProofSeal::EntityType => parts.seal_entity_type = Some(values),
+                                ProofSeal::EntityId => parts.seal_entity_id = Some(sealed_entity_id(&values).map_err(unsealed)?),
+                                ProofSeal::EntityType => parts.seal_entity_types = Some(sealed_entity_types(&values).map_err(unsealed)?),
                             }
                         }
                         MemberRole::OutputOnly | MemberRole::Scope => {
@@ -259,9 +268,9 @@ struct InstanceParts {
     /// `objectType`.
     object_types: Option<Slot<Vec<NgsiLdReference>>>,
     /// `entityIdSealed`.
-    seal_entity_id: Option<Vec<ExpandedValue>>,
+    seal_entity_id: Option<Identifier>,
     /// `entityTypeSealed`.
-    seal_entity_type: Option<Vec<ExpandedValue>>,
+    seal_entity_types: Option<EntityTypes>,
     /// The sub-attributes.
     sub_attributes: IndexMap<AttributeName, AttributeMember>,
 }
@@ -282,7 +291,7 @@ impl InstanceParts {
             && self.value_type.is_none()
             && self.object_types.is_none()
             && self.seal_entity_id.is_none()
-            && self.seal_entity_type.is_none()
+            && self.seal_entity_types.is_none()
             && self.sub_attributes.is_empty()
     }
 
@@ -329,7 +338,7 @@ impl InstanceParts {
             .modified_at(self.modified_at)
             .deleted_at(self.deleted_at)
             .instance_id(self.instance_id)
-            .proof_seals(ProofSeals::new(self.seal_entity_id, self.seal_entity_type))
+            .proof_seals(WrittenSeals::new(self.seal_entity_id, self.seal_entity_types))
             .sub_attributes(self.sub_attributes)
             .build();
         Ok(InstanceDecoded::Instance(Box::new(document)))

@@ -18,11 +18,11 @@ use crate::{
 use andromeda_ngsi_ld_entity::{
     attributes::Attributes,
     document::value_carrier::ValueCarrier,
+    entity_types::EntityTypes,
     family_value::FamilyValue,
-    proof_seals::ProofSeals,
     value_mode::Stored,
 };
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, reference::NgsiLdReference, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier, reference::NgsiLdReference, uri::Uri};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use jsonld::{BlankIdBuf, IriBuf, Term};
 use std::slice::from_ref;
@@ -75,19 +75,26 @@ impl Walk<'_> {
             self.compact_date_time(&mut result, &reserved().modified_at, modified_at.as_deref())?;
         }
         self.compact_reference(&mut result, &reserved().dataset_id, stored.dataset_id.map(Identifier::as_str))?;
-        self.compact_seals(&mut result, instance.proof_seals())?;
         self.compact_stored_attributes(&mut result, instance.sub_attributes(), stored.system_times)?;
         Ok(Compacted::Object(result))
     }
 
     /// Compact the `entityIdSealed` and `entityTypeSealed` members (clause
-    /// 4.5.2.2).
-    pub(crate) fn compact_seals<'a>(&mut self, result: &mut CompactedObject<'a>, seals: &'a ProofSeals) -> Result<(), Undecidable> {
-        if let Some(values) = seals.entity_id() {
-            self.compact_property(result, &reserved().entity_id_sealed, &ExpandedItem::of_values(values)?)?;
+    /// 4.5.2.2): the identifier a plain string, the types references, as the
+    /// core `@context` expands them.
+    pub(crate) fn compact_seals<'a>(
+        &mut self,
+        result: &mut CompactedObject<'a>,
+        entity_id: Option<&Identifier>,
+        entity_types: Option<&EntityTypes>,
+    ) -> Result<(), Undecidable> {
+        if let Some(entity_id) = entity_id {
+            let item: StoredItems<'a> = vec![ExpandedItem::text(entity_id.as_str())];
+            self.compact_property(result, &reserved().entity_id_sealed, &item)?;
         }
-        if let Some(values) = seals.entity_type() {
-            self.compact_property(result, &reserved().entity_type_sealed, &ExpandedItem::of_values(values)?)?;
+        if let Some(entity_types) = entity_types {
+            let items: StoredItems<'a> = carrier_items::references(entity_types.as_slice().iter().map(EntityTypeName::as_str));
+            self.compact_property(result, &reserved().entity_type_sealed, &items)?;
         }
         Ok(())
     }
@@ -126,6 +133,7 @@ impl Walk<'_> {
         let carrier = reserved().carrier(ValueCarrier::of(value.family()));
         let items: StoredItems<'a> = match value {
             FamilyValue::Property { values, .. } => ExpandedItem::of_values(values.as_slice())?,
+            FamilyValue::Proof(proof) => ExpandedItem::of_values(proof.values())?,
             FamilyValue::GeoProperty { geometry, .. } => carrier_items::geometry(geometry),
             FamilyValue::Relationship { objects, .. } => carrier_items::references(objects.iter().map(Uri::as_str)),
             FamilyValue::LanguageProperty { entries, .. } => carrier_items::language_entries(entries),
@@ -135,6 +143,9 @@ impl Walk<'_> {
             FamilyValue::ListRelationship { objects, .. } => carrier_items::object_list(objects),
         };
         self.compact_property(result, carrier, &items)?;
+        if let Some(proof) = value.proof() {
+            self.compact_seals(result, Some(proof.seals().entity_id()), Some(proof.seals().entity_types()))?;
+        }
         if let Some(unit_code) = value.unit_code() {
             let item: StoredItems<'a> = vec![ExpandedItem::text(unit_code.as_str())];
             self.compact_property(result, &reserved().unit_code, &item)?;

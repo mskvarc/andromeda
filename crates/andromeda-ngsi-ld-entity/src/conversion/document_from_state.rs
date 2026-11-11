@@ -21,6 +21,7 @@ use crate::{
     expanded_value::ExpandedValue,
     family_value::FamilyValue,
     instance::Instance,
+    proof::written_seals::WrittenSeals,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use indexmap::IndexMap;
@@ -54,7 +55,7 @@ impl InstanceDocument {
             .object_types((!object_types.is_empty()).then(|| Slot::Set(object_types.to_vec())))
             .created_at(instance.created_at())
             .modified_at(instance.modified_at())
-            .proof_seals(instance.proof_seals().clone()) // clone: the state stays borrowed, so the document owns its proof seals
+            .proof_seals(written_seals(value))
             .sub_attributes(instance.sub_attributes().written_members())
             .build()
     }
@@ -82,6 +83,7 @@ fn instance_members(instances: &AttributeInstances) -> AttributeMember {
 fn written_value(value: &FamilyValue) -> WrittenValue {
     match value {
         FamilyValue::Property { values, .. } => WrittenValue::Value(values.iter().map(ExpandedValue::to_fragment).collect()),
+        FamilyValue::Proof(proof) => WrittenValue::Value(proof.values().iter().map(ExpandedValue::to_fragment).collect()),
         FamilyValue::GeoProperty { geometry, .. } => WrittenValue::Geometry(geometry.clone()),
         FamilyValue::Relationship { objects, .. } => WrittenValue::Object(objects.clone()),
         FamilyValue::LanguageProperty { entries, .. } => WrittenValue::LanguageMap(entries.to_fragment()),
@@ -89,6 +91,25 @@ fn written_value(value: &FamilyValue) -> WrittenValue {
         FamilyValue::JsonProperty { json, .. } => WrittenValue::Json(json.clone()),
         FamilyValue::ListProperty { items, .. } => WrittenValue::ValueList(items.iter().map(ExpandedValue::to_fragment).collect()),
         FamilyValue::ListRelationship { objects, .. } => WrittenValue::ObjectList(objects.clone()),
+    }
+}
+
+/// The seals a stored `ngsildproof` writes, none for any other family value.
+fn written_seals(value: &FamilyValue) -> WrittenSeals {
+    match value {
+        FamilyValue::Proof(proof) => {
+            let seals = proof.seals();
+            // clone: the state stays borrowed, so the document owns its seals.
+            WrittenSeals::new(Some(seals.entity_id().clone()), Some(seals.entity_types().clone()))
+        }
+        FamilyValue::Property { .. }
+        | FamilyValue::GeoProperty { .. }
+        | FamilyValue::Relationship { .. }
+        | FamilyValue::LanguageProperty { .. }
+        | FamilyValue::VocabProperty { .. }
+        | FamilyValue::JsonProperty { .. }
+        | FamilyValue::ListProperty { .. }
+        | FamilyValue::ListRelationship { .. } => WrittenSeals::default(),
     }
 }
 

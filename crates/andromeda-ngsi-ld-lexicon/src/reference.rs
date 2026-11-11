@@ -3,7 +3,7 @@
 use crate::{entity_type_name::EntityTypeName, identifier_length::IdentifierTooLong, name::grammar::Name, uri::Uri};
 use compact_str::CompactString;
 use derive_more::{AsRef, Deref, Display, Into};
-use iri_rs::IriBuf;
+use iri_rs::{Iri, IriBuf};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use thiserror::Error;
@@ -71,6 +71,17 @@ validated_ngsi_name! {
     NgsiLdReference,
     derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, AsRef, Deref, Into),
     as_ref(str, CompactString)
+}
+
+impl NgsiLdReference {
+    /// The reference of a vocabulary IRI: a datatype or term the broker names
+    /// itself. The grammar is checked at compile time by `iri!`, and an absolute
+    /// IRI is one of the reference forms; the caller passing a literal it wrote
+    /// is the guarantor that it is within the identifier bound.
+    #[must_use]
+    pub fn from_static(iri: Iri<&'static str>) -> NgsiLdReference {
+        NgsiLdReference(CompactString::const_new(iri.into_inner()))
+    }
 }
 
 // Hand-written: no derive converts between two newtypes. Total, because an

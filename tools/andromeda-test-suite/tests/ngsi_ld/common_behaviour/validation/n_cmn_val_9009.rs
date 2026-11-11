@@ -81,7 +81,7 @@ async fn n_cmn_val_9009_a_seal_on_a_relationship_is_refused_on_creation() -> Res
     expect_that!(&answer_4, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData));
     let building_proof = Entity::builder().id(building_proof_id).entity_type(building_type.clone()).build()?;
     // The model refuses it (an attribute proof), so `temperature` is written as text.
-    let temperature: RawJson = format!(r#"{{"type": "Property", "value": 21.5, "ngsildproof": {{"type": "Property", "value": {{"type": "DataIntegrityProof", "cryptosuite": "eddsa-jcs-2022", "proofValue": "z2aB"}}, "entityIdSealed": "urn:ngsi-ld:Building:{namespace}-proof", "entityTypeSealed": "Building_{namespace}"}}}}"#).parse()?;
+    let temperature: RawJson = format!(r#"{{"type": "Property", "value": 21.5, "ngsildproof": {{"type": "Property", "value": {{"type": "DataIntegrityProof", "created": "2025-01-27T21:02:24Z", "verificationMethod": "https://example.edu/issuers/565049#z6MkwXG2WjeQnN", "cryptosuite": "eddsa-jcs-2022", "proofPurpose": "assertionMethod", "proofValue": "z2aB"}}, "entityIdSealed": "urn:ngsi-ld:Building:{namespace}-proof", "entityTypeSealed": "Building_{namespace}"}}}}"#).parse()?;
     let document_5 = UncheckedDocument::from_entity(&building_proof, Lossless::Normalized).set_member("temperature", &temperature);
     let request_5 = broker
         .unchecked(&CreateEntity::builder().entity(&building_proof).build())?

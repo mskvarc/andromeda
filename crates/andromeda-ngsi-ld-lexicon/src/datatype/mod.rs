@@ -13,4 +13,5 @@
 pub mod declaration;
 pub mod declared_value;
 pub mod primitive_literal;
+pub mod proof_datatypes;
 pub mod recognised;

@@ -67,11 +67,7 @@ impl StoredFamily<'_> {
         match self.family {
             AttributeType::Property => {
                 self.refuse_present(!object_types.is_empty())?;
-                Ok(FamilyValue::Property {
-                    values: self.property_values(value, value_type.as_ref())?,
-                    unit_code,
-                    value_type,
-                })
+                self.property(value, unit_code, value_type)
             }
             AttributeType::GeoProperty => {
                 self.refuse_present(!object_types.is_empty())?;
@@ -159,6 +155,30 @@ impl StoredFamily<'_> {
         }
     }
 
+    /// The value of a Property: the `ngsildproof` a stored seal holds, or the
+    /// values any other stored value holds beside the `valueType`
+    /// `value_type`.
+    fn property(self, value: StoredValue, unit_code: Option<UnitCode>, value_type: Option<NgsiLdReference>) -> Result<FamilyValue, AssemblyError> {
+        match value {
+            StoredValue::Proof(proof) => self.sealed(*proof, unit_code, value_type),
+            plain @ (StoredValue::Number { .. }
+            | StoredValue::String { .. }
+            | StoredValue::Boolean { .. }
+            | StoredValue::DeclaredNumber { .. }
+            | StoredValue::DeclaredBoolean { .. }
+            | StoredValue::DateTime { .. }
+            | StoredValue::Date { .. }
+            | StoredValue::Time { .. }
+            | StoredValue::Geometry { .. }
+            | StoredValue::Object(_)
+            | StoredValue::Uri(_)) => Ok(FamilyValue::Property {
+                values: self.property_values(plain, value_type.as_ref())?,
+                unit_code,
+                value_type,
+            }),
+        }
+    }
+
     /// The values of a Property beside the `valueType` `value_type`: one
     /// literal from a scalar column, else the stored structured value.
     fn property_values(self, value: StoredValue, value_type: Option<&NgsiLdReference>) -> Result<Vec<ExpandedValue>, AssemblyError> {
@@ -180,7 +200,7 @@ impl StoredFamily<'_> {
             | StoredValue::DateTime { .. }
             | StoredValue::Date { .. }
             | StoredValue::Time { .. }) => Ok(vec![ExpandedValue::Literal(self.literal(scalar, value_type)?)]),
-            other @ (StoredValue::Geometry { .. } | StoredValue::Uri(_)) => Err(self.mismatch(other.kind())),
+            other @ (StoredValue::Geometry { .. } | StoredValue::Uri(_) | StoredValue::Proof(_)) => Err(self.mismatch(other.kind())),
         }
     }
 
@@ -208,7 +228,8 @@ impl StoredFamily<'_> {
             | StoredValue::Date { .. }
             | StoredValue::Time { .. }
             | StoredValue::Object(_)
-            | StoredValue::Uri(_)) => Err(self.mismatch(other.kind())),
+            | StoredValue::Uri(_)
+            | StoredValue::Proof(_)) => Err(self.mismatch(other.kind())),
         }
     }
 
@@ -234,7 +255,8 @@ impl StoredFamily<'_> {
             | StoredValue::DateTime { .. }
             | StoredValue::Date { .. }
             | StoredValue::Time { .. }
-            | StoredValue::Geometry { .. }) => Err(self.mismatch(other.kind())),
+            | StoredValue::Geometry { .. }
+            | StoredValue::Proof(_)) => Err(self.mismatch(other.kind())),
         }
     }
 
@@ -264,7 +286,8 @@ impl StoredFamily<'_> {
             | StoredValue::Date { .. }
             | StoredValue::Time { .. }
             | StoredValue::Geometry { .. }
-            | StoredValue::Uri(_)) => Err(self.mismatch(other.kind())),
+            | StoredValue::Uri(_)
+            | StoredValue::Proof(_)) => Err(self.mismatch(other.kind())),
         }
     }
 
@@ -303,7 +326,9 @@ impl StoredFamily<'_> {
                 LiteralAnnotation::Datatype(key) => Literal::typed(LiteralValue::String(text.into()), self.type_name(key)?),
                 LiteralAnnotation::Language(language) => Literal::try_new(LiteralValue::String(text.into()), None, Some(language), None)?,
             },
-            other @ (StoredValue::Geometry { .. } | StoredValue::Object(_) | StoredValue::Uri(_)) => return Err(self.mismatch(other.kind())),
+            other @ (StoredValue::Geometry { .. } | StoredValue::Object(_) | StoredValue::Uri(_) | StoredValue::Proof(_)) => {
+                return Err(self.mismatch(other.kind()));
+            }
         })
     }
 
@@ -320,17 +345,18 @@ impl StoredFamily<'_> {
             | StoredValue::Date { .. }
             | StoredValue::Time { .. }
             | StoredValue::Geometry { .. }
-            | StoredValue::Uri(_)) => Err(self.mismatch(other.kind())),
+            | StoredValue::Uri(_)
+            | StoredValue::Proof(_)) => Err(self.mismatch(other.kind())),
         }
     }
 
     /// Read stored JSON as the structured value of the family.
-    fn read(self, json: &StoredJson) -> Result<StructuredValue, AssemblyError> {
+    pub(crate) fn read(self, json: &StoredJson) -> Result<StructuredValue, AssemblyError> {
         Ok(StructuredValue::from_stored(self.family, self.name, json.get())?)
     }
 
     /// Values read from a stored structured value, which hold no deletion.
-    fn stored_values(self, values: Vec<ExpandedValue<Fragment>>) -> Result<Vec<ExpandedValue>, AssemblyError> {
+    pub(crate) fn stored_values(self, values: Vec<ExpandedValue<Fragment>>) -> Result<Vec<ExpandedValue>, AssemblyError> {
         values
             .into_iter()
             .map(|value| value.into_stored().ok_or_else(|| self.null_in_state()))
@@ -354,7 +380,7 @@ impl StoredFamily<'_> {
     }
 
     /// A value of `kind` the family does not hold.
-    fn mismatch(self, kind: ValueKind) -> AssemblyError {
+    pub(crate) fn mismatch(self, kind: ValueKind) -> AssemblyError {
         AssemblyError::ValueOfAnotherFamily {
             attribute: self.name.clone(),
             family: self.family,

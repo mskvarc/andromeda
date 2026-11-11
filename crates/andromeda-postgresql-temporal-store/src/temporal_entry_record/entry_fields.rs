@@ -14,7 +14,6 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, instance_identity::InstanceIdentity};
 use andromeda_postgresql_attribute_instance::{
     name_keys::NameKeys,
-    stored_json::StoredJson,
     stored_number::StoredNumber,
     sub_attribute::{EwkbGeometry, SubAttributeRecord},
 };
@@ -154,8 +153,6 @@ pub(super) struct MemberColumns {
     unit_code_id: Option<i16>,
     /// `expires_at`.
     expires_at: Option<DateTime<Utc>>,
-    /// `proof_seals`.
-    proof_seals: Option<Json<Box<RawValue>>>,
     /// `sub_attributes`.
     sub_attributes: Option<Vec<SubAttributeRecord>>,
 }
@@ -168,7 +165,6 @@ impl MemberColumns {
             object_type_keys,
             unit_code,
             expires_at,
-            proof_seals,
             sub_attributes,
         } = members;
         let sub_attributes = sub_attributes.into_iter().map(SubAttributeRecord::try_from).collect::<Result<Vec<_>, _>>()?;
@@ -177,7 +173,6 @@ impl MemberColumns {
             object_type_keys: (!object_type_keys.is_empty()).then(|| object_type_keys.into_iter().map(EntityTypeNameKey::get).collect()),
             unit_code_id: unit_code.map(stored_unit_code),
             expires_at,
-            proof_seals: proof_seals.map(StoredJson::into_json),
             sub_attributes: (!sub_attributes.is_empty()).then_some(sub_attributes),
         })
     }
@@ -227,7 +222,6 @@ pub(super) fn record(grain: Grain, value: ValueColumns, members: MemberColumns, 
         object_type_keys,
         unit_code_id,
         expires_at,
-        proof_seals,
         sub_attributes,
     } = members;
     TemporalEntryRecord {
@@ -257,7 +251,6 @@ pub(super) fn record(grain: Grain, value: ValueColumns, members: MemberColumns, 
         value_object,
         value_uri,
         object_type_keys,
-        proof_seals,
         sub_attributes,
         scope_path: None,
         verbatim_scope_path: None,

@@ -103,7 +103,7 @@ impl Serialize for InstanceDocumentOut<'_> {
             Some(Slot::Remove) => write_reference(&mut map, properties::OBJECT_TYPE.as_str(), NULL_URI.as_str())?,
             None => {}
         }
-        write_seals(&mut map, instance.proof_seals())?;
+        write_seals(&mut map, instance.proof_seals().entity_id(), instance.proof_seals().entity_types())?;
         write_members(&mut map, instance.sub_attributes())?;
         map.end()
     }

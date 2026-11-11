@@ -19,7 +19,6 @@ use andromeda_ngsi_ld_entity::{
     attributes::Attributes,
     instance::Instance,
     literal::LiteralError,
-    proof_seals::ProofSeals,
     refusal::EntityRefusal,
 };
 use andromeda_ngsi_ld_geometry::geojson::GeometryError;
@@ -92,7 +91,7 @@ pub enum AssemblyError {
     /// The structured value does not read as the value of its family.
     #[error(transparent)]
     StoredValue(Box<StoredValueError>),
-    /// Geometry members or seals do not read as expanded members.
+    /// Geometry members do not read as expanded members.
     #[error(transparent)]
     Refused(Box<EntityRefusal>),
     /// A structured value holds the NGSI-LD Null, which state never does.
@@ -234,7 +233,6 @@ pub fn instance(
         unit_code,
         observed_at,
         expires_at,
-        proof_seals,
     } = members;
     let stored = StoredFamily {
         name: &name,
@@ -247,17 +245,12 @@ pub fn instance(
         object_types: object_type_keys.into_iter().map(|key| stored.type_name(key)).collect::<Result<_, _>>()?,
     };
     let value = stored.value(value, envelope)?;
-    let proof_seals = proof_seals
-        .map(|seals| ProofSeals::from_stored(&name, seals.get()))
-        .transpose()?
-        .unwrap_or_default();
     let instance = Instance::builder()
         .value(value)
         .observed_at(observed_at.map(NgsiLdDateTime::normalise).transpose()?)
         .expires_at(expires_at.map(NgsiLdDateTime::normalise).transpose()?)
         .created_at(created_at.map(SystemInstant::new))
         .modified_at(modified_at.map(SystemInstant::new))
-        .proof_seals(proof_seals)
         .sub_attributes(sub_attributes)
         .build();
     Ok((name, dataset_id, instance))

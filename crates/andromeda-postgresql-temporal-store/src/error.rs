@@ -149,10 +149,7 @@ impl TemporalStoreError {
                 Some(PersistenceFailure::Undecodable)
             }
             TemporalStoreError::Render(_) | TemporalStoreError::StatementBuild(_) => Some(PersistenceFailure::StatementUnbuildable),
-            TemporalStoreError::Encoding(_)
-            | TemporalStoreError::WriteOrdinal(_)
-            | TemporalStoreError::StoredJson(_)
-            | TemporalStoreError::HistoryMembers(HistoryMembersError::Seals(_)) => Some(PersistenceFailure::Unencodable),
+            TemporalStoreError::Encoding(_) | TemporalStoreError::WriteOrdinal(_) | TemporalStoreError::StoredJson(_) => Some(PersistenceFailure::Unencodable),
             TemporalStoreError::Collation(CollationProvisioningError::Statement { .. }) => Some(PersistenceFailure::StatementRejected),
             TemporalStoreError::Invariant(TemporalStoreInvariant::NotAHypertable(_) | TemporalStoreInvariant::NoTimeDimension(_)) => {
                 Some(PersistenceFailure::SchemaMismatch)

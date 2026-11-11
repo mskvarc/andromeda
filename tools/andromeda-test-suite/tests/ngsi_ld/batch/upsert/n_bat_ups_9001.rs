@@ -56,7 +56,7 @@ async fn n_bat_ups_9001_a_seal_on_a_relationship_is_refused_per_entity() -> Resu
     let document_4 = UncheckedDocument::from_entity(&building_concise_entity_type_sealed, Lossless::Normalized).set_member("belongsTo", &belongs_to_4);
     let building_proof = Entity::builder().id(building_proof_id.clone()).entity_type(building_type.clone()).build()?;
     // The model refuses it (an attribute proof), so `temperature` is written as text.
-    let temperature: RawJson = format!(r#"{{"type": "Property", "value": 21.5, "ngsildproof": {{"type": "Property", "value": {{"type": "DataIntegrityProof", "cryptosuite": "eddsa-jcs-2022", "proofValue": "z2aB"}}, "entityIdSealed": "urn:ngsi-ld:Building:{namespace}-proof", "entityTypeSealed": "Building_{namespace}"}}}}"#).parse()?;
+    let temperature: RawJson = format!(r#"{{"type": "Property", "value": 21.5, "ngsildproof": {{"type": "Property", "value": {{"type": "DataIntegrityProof", "created": "2025-01-27T21:02:24Z", "verificationMethod": "https://example.edu/issuers/565049#z6MkwXG2WjeQnN", "cryptosuite": "eddsa-jcs-2022", "proofPurpose": "assertionMethod", "proofValue": "z2aB"}}, "entityIdSealed": "urn:ngsi-ld:Building:{namespace}-proof", "entityTypeSealed": "Building_{namespace}"}}}}"#).parse()?;
     let document_5 = UncheckedDocument::from_entity(&building_proof, Lossless::Normalized).set_member("temperature", &temperature);
     let entities = [
         building_normalized_entity_id_sealed,

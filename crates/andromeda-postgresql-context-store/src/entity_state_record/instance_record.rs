@@ -7,12 +7,11 @@
 
 use crate::current_attribute::row::{CurrentAttributeRow, row_column};
 use andromeda_postgresql_attribute_instance::{
-    stored_members::{InstanceMembers, MemberColumns, StoredInstanceError},
+    stored_members::{InstanceMembers, MemberColumns, RowColumnsError, StoredInstanceError},
     stored_number::StoredNumber,
     sub_attribute::{EwkbGeometry, SubAttributeElement, SubAttributeRecord},
 };
 use andromeda_postgresql_codes::value_kind::ValueKind;
-use andromeda_postgresql_encoding::ewkb::EwkbError;
 use andromeda_postgresql_query::dataset_key::DatasetKey;
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use chrono::{DateTime, Utc};
@@ -72,16 +71,14 @@ pub struct AttributeInstanceRecord {
     pub value_long_uri: Option<String>,
     /// `object_type_keys`, NULL when the list is empty.
     pub object_type_keys: Option<Vec<i32>>,
-    /// `proof_seals`.
-    pub proof_seals: Option<Json<Box<RawValue>>>,
     /// `sub_attributes`, NULL when the instance has none.
     pub sub_attributes: Option<Vec<SubAttributeRecord>>,
 }
 
 impl TryFrom<CurrentAttributeRow> for AttributeInstanceRecord {
-    type Error = EwkbError;
+    type Error = RowColumnsError;
 
-    fn try_from(row: CurrentAttributeRow) -> Result<AttributeInstanceRecord, EwkbError> {
+    fn try_from(row: CurrentAttributeRow) -> Result<AttributeInstanceRecord, RowColumnsError> {
         let CurrentAttributeRow {
             ordinal,
             members,
@@ -89,7 +86,7 @@ impl TryFrom<CurrentAttributeRow> for AttributeInstanceRecord {
             modified_at,
             sub_attributes,
         } = row;
-        let column = row_column(&members.value);
+        let column = row_column(&members.value).ok_or(RowColumnsError::Seal)?;
         let (dataset_id, columns) = members.into_columns()?;
         let MemberColumns {
             attribute_name_key,
@@ -107,7 +104,6 @@ impl TryFrom<CurrentAttributeRow> for AttributeInstanceRecord {
             value_language,
             value_type_key,
             object_type_keys,
-            proof_seals,
             unit_code_id,
             observed_at,
             expires_at,
@@ -152,7 +148,6 @@ impl TryFrom<CurrentAttributeRow> for AttributeInstanceRecord {
             value_long_text,
             value_long_uri,
             object_type_keys,
-            proof_seals,
             sub_attributes,
         })
     }
@@ -187,7 +182,6 @@ impl TryFrom<AttributeInstanceRecord> for CurrentAttributeRow {
             value_long_text,
             value_long_uri,
             object_type_keys,
-            proof_seals,
             sub_attributes,
         } = record;
         let columns = MemberColumns {
@@ -206,7 +200,6 @@ impl TryFrom<AttributeInstanceRecord> for CurrentAttributeRow {
             value_language,
             value_type_key,
             object_type_keys,
-            proof_seals,
             unit_code_id,
             observed_at,
             expires_at,

@@ -1,20 +1,10 @@
 //! Is not found once its last instance is gone.
 
-use andromeda_test_suite::{
-    body_json::{json_count, json_includes},
-    broker,
-    namespace::Namespace,
-    outcome::Done,
-    problem::problem,
-    type_information::attribute_names,
-};
+use andromeda_test_suite::{broker, namespace::Namespace, outcome::Done, problem::problem, type_information::attribute_names};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::{
-        headers::Accept,
-        operation::{RetrieveAttributes, RetrieveEntityTypeDetails},
-    },
+    http::headers::Accept,
     model::{
         AttributeKind,
         Entity,
@@ -62,18 +52,12 @@ async fn n_dsc_ati_0002_is_not_found_once_its_last_instance_is_gone() -> Result<
     expect_that!(information.entity_count, eq(2));
     expect_that!(information.attribute_details, len(eq(2)));
     expect_that!(attribute_names(&information), unordered_elements_are![eq(&height), eq(&floors)]);
-    // Sibling tests leave the reserved `ngsildproof` attribute in the tenant, which the typed list refuses, so the catalog is read as received.
-    let client = broker.with_accept(Accept::any());
-    let details = client.send_unchecked(client.unchecked(&RetrieveEntityTypeDetails::builder().build())?).await?;
-    expect_that!(details.status(), eq(StatusCode::OK));
-    let building = format!("$[?@.typeName == '{building_type}']");
-    expect_that!(details.body(), json_count(&format!("{building}.attributeNames"), 2));
-    expect_that!(details.body(), json_includes(&format!("{building}.attributeNames"), height.to_string()));
-    expect_that!(details.body(), json_includes(&format!("{building}.attributeNames"), floors.to_string()));
-    let attributes = client.send_unchecked(client.unchecked(&RetrieveAttributes::builder().build())?).await?;
-    expect_that!(attributes.status(), eq(StatusCode::OK));
-    expect_that!(attributes.body(), json_includes("$.attributeList", height.to_string()));
-    expect_that!(attributes.body(), not(json_includes("$.attributeList", position.to_string())));
+    let details = broker.with_accept(Accept::any()).entity_types().list_details().send().await?;
+    let building = details.iter().find(|item| item.type_name == building_type).or_fail()?;
+    expect_that!(building.attribute_names, unordered_elements_are![eq(&height), eq(&floors)]);
+    let attributes = broker.with_accept(Accept::any()).attributes().list().send().await?;
+    expect_that!(attributes.attribute_list, contains(eq(&height)));
+    expect_that!(attributes.attribute_list, not(contains(eq(&position))));
     let fragment = EntityFragment::builder().property(namespace.attribute("position")?, 5).build()?;
     broker.entities().append_attributes(&building_x_id, &fragment).send().await?.done()?;
     let regained = broker.with_accept(Accept::any()).attributes().retrieve(&position).send().await?;

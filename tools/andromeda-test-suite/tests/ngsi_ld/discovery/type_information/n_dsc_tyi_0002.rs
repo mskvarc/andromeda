@@ -1,20 +1,10 @@
 //! Is not found once every entity is deleted.
 
-use andromeda_test_suite::{
-    body_json::{json_absent, json_exists, json_includes},
-    broker,
-    namespace::Namespace,
-    outcome::Done,
-    problem::problem,
-    type_information::attribute_names,
-};
+use andromeda_test_suite::{broker, namespace::Namespace, outcome::Done, problem::problem, type_information::attribute_names};
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::{
-        headers::Accept,
-        operation::{RetrieveAttributes, RetrieveEntityTypeDetails},
-    },
+    http::headers::Accept,
     model::{Entity, ErrorType},
 };
 
@@ -63,14 +53,10 @@ async fn n_dsc_tyi_0002_is_not_found_once_every_entity_is_deleted() -> Result<()
     let types = client.with_heads().entity_types().list().send().await?;
     expect_that!(types.status, eq(StatusCode::OK));
     expect_that!(types.outcome.type_list, not(contains(eq(&building_type))));
-    // Sibling tests leave the reserved `ngsildproof` attribute in the tenant, which the typed list refuses, so the catalog is read as received.
-    let attributes = client.send_unchecked(client.unchecked(&RetrieveAttributes::builder().build())?).await?;
-    expect_that!(attributes.status(), eq(StatusCode::OK));
-    expect_that!(attributes.body(), json_exists("$.attributeList"));
-    expect_that!(attributes.body(), not(json_includes("$.attributeList", height.to_string())));
-    expect_that!(attributes.body(), not(json_includes("$.attributeList", owner.to_string())));
-    let details = client.send_unchecked(client.unchecked(&RetrieveEntityTypeDetails::builder().build())?).await?;
-    expect_that!(details.status(), eq(StatusCode::OK));
-    expect_that!(details.body(), json_absent(&format!("$[?@.typeName == '{building_type}']")));
+    let attributes = client.attributes().list().send().await?;
+    expect_that!(attributes.attribute_list, not(contains(eq(&height))));
+    expect_that!(attributes.attribute_list, not(contains(eq(&owner))));
+    let details = client.entity_types().list_details().send().await?;
+    expect_that!(details.iter().find(|item| item.type_name == building_type), none());
     Ok(())
 }

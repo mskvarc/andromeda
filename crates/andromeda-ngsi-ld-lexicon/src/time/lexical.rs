@@ -61,6 +61,8 @@ pub(crate) struct TimeComponents {
     pub(crate) second: u32,
     /// The fraction of the second in microseconds, zero when none is written.
     pub(crate) microsecond: u32,
+    /// How many fractional digits were written, zero when none is.
+    pub(crate) fractional_digits: u8,
 }
 
 /// Read a `DateTime`: `YYYY-MM-DDThh:mm:ss[.ffffff]Z`.
@@ -170,21 +172,23 @@ impl<'a> Cursor<'a> {
         let minute = self.digits(2)?;
         self.expect(b':')?;
         let second = self.digits(2)?;
-        let microsecond = self.fraction()?;
+        let (microsecond, fractional_digits) = self.fraction()?;
         Ok(TimeComponents {
             hour,
             minute,
             second,
             microsecond,
+            fractional_digits,
         })
     }
 
     /// Consume the optional fraction of the second: a decimal point or, as the
-    /// clause 4.6.3 compatibility form, a comma, then one to six digits.
-    fn fraction(&mut self) -> Result<u32, LexicalError> {
+    /// clause 4.6.3 compatibility form, a comma, then one to six digits. Answers
+    /// the fraction in microseconds and how many digits were written.
+    fn fraction(&mut self) -> Result<(u32, u8), LexicalError> {
         match self.rest().first() {
             Some(b'.' | b',') => self.position += 1,
-            Some(_) | None => return Ok(0),
+            Some(_) | None => return Ok((0, 0)),
         }
         let width = self.rest().iter().take_while(|byte| byte.is_ascii_digit()).count();
         if width == 0 {
@@ -195,7 +199,8 @@ impl<'a> Cursor<'a> {
         }
         let written = self.digits(width)?;
         let scale = (width..MAX_FRACTIONAL_DIGITS).fold(1_u32, |scale, _| scale * 10);
-        Ok(written * scale)
+        let digits = u8::try_from(width).map_err(|_| LexicalError::TooManyFractionalDigits)?;
+        Ok((written * scale, digits))
     }
 
     /// Consume the trailing `Z`, which has to end the text.
@@ -234,7 +239,8 @@ mod tests {
                 hour: 5,
                 minute: 6,
                 second: 7,
-                microsecond: 123_456
+                microsecond: 123_456,
+                fractional_digits: 6
             }
         );
     }
@@ -245,6 +251,14 @@ mod tests {
         pretty_assertions::assert_eq!(time("12:00:00.5Z").expect("one digit").microsecond, 500_000);
         pretty_assertions::assert_eq!(time("12:00:00.000001Z").expect("six digits").microsecond, 1);
         pretty_assertions::assert_eq!(time("12:00:00Z").expect("no fraction").microsecond, 0);
+    }
+
+    #[test]
+    fn the_written_fraction_width_is_kept() {
+        pretty_assertions::assert_eq!(time("12:00:00.5Z").expect("one digit").fractional_digits, 1);
+        pretty_assertions::assert_eq!(time("12:00:00.500Z").expect("three digits").fractional_digits, 3);
+        pretty_assertions::assert_eq!(time("12:00:00,000001Z").expect("six digits").fractional_digits, 6);
+        pretty_assertions::assert_eq!(time("12:00:00Z").expect("no fraction").fractional_digits, 0);
     }
 
     /// Clause 4.6.3: "In requests, also a comma instead of a decimal point may

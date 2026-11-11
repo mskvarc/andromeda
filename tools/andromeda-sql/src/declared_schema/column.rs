@@ -17,7 +17,8 @@ pub enum ColumnSource {
     AddColumn,
     /// The new type `alter table ... alter column ... type` gives a column.
     AlterColumnType,
-    /// A field of a `create type ... as (...)`.
+    /// A field of a `create type ... as (...)`, or one `alter type ... add
+    /// attribute` adds.
     CompositeType,
 }
 

@@ -31,8 +31,14 @@ pub mod stored_json;
 pub mod stored_members;
 /// The value of the number column.
 pub mod stored_number;
+/// A data-integrity seal as an element stores it.
+pub mod stored_proof;
+/// The family value of a stored data-integrity seal.
+mod stored_seal;
 /// The value of one instance, by the column that holds it.
 pub mod stored_value;
+/// The value fields of one stored instance.
+mod stored_value_fields;
 /// One sub-attribute element and the composite it travels as.
 pub mod sub_attribute;
 /// The equality keys of one instance's sub-attribute tree.

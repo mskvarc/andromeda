@@ -15,7 +15,7 @@
 //! stores it to order by: always six digits, so byte-wise order over the
 //! stored text is chronological order.
 
-use crate::time::resolution::to_microsecond;
+use crate::time::{lexical::MAX_FRACTIONAL_DIGITS, resolution::to_microsecond};
 use chrono::{DateTime, NaiveDate, NaiveTime, SecondsFormat, Utc};
 
 /// The spelling of an instant, at the microsecond: `2024-06-15T12:30:00Z`,
@@ -27,6 +27,24 @@ use chrono::{DateTime, NaiveDate, NaiveTime, SecondsFormat, Utc};
 #[must_use]
 pub fn instant_text(instant: DateTime<Utc>) -> String {
     to_microsecond(instant).to_rfc3339_opts(SecondsFormat::AutoSi, true)
+}
+
+/// The spelling of an instant written with `fractional_digits` digits after
+/// the decimal point: `2024-06-15T12:30:00Z` for none, `...:00.5Z` for one,
+/// `...:00.500Z` for three.
+///
+/// The instant is held at the microsecond, so no more than six digits carry
+/// anything; a digit the instant does not reach is written as zero.
+pub(crate) fn instant_text_at_width(instant: DateTime<Utc>, fractional_digits: u8) -> String {
+    let instant = to_microsecond(instant);
+    let whole = instant.format("%Y-%m-%dT%H:%M:%S");
+    let width = usize::from(fractional_digits).min(MAX_FRACTIONAL_DIGITS);
+    if width == 0 {
+        return format!("{whole}Z");
+    }
+    let scale = (width..MAX_FRACTIONAL_DIGITS).fold(1_u32, |scale, _| scale * 10);
+    let fraction = instant.timestamp_subsec_micros() / scale;
+    format!("{whole}.{fraction:0width$}Z")
 }
 
 /// The spelling of a time of day a client reads, at the microsecond:

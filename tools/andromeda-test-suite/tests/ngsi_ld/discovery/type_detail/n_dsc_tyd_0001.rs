@@ -1,15 +1,9 @@
 //! Lists under each entry the attributes its own entities carry.
 
-use andromeda_test_suite::{
-    body_json::{json_count, json_equals, json_includes},
-    broker,
-    namespace::Namespace,
-    outcome::Done,
-};
+use andromeda_test_suite::{broker, namespace::Namespace, outcome::Done};
 use googletest::prelude::*;
-use http::StatusCode;
 use ngsi_ld::{
-    http::{headers::Accept, operation::RetrieveEntityTypeDetails},
+    http::headers::Accept,
     model::{
         Entity,
         Property,
@@ -71,19 +65,10 @@ async fn n_dsc_tyd_0001_lists_under_each_entry_the_attributes_its_own_entities_c
             .build()?,
     ];
     broker.entities().batch_create(&entities).send().await?.done()?;
-    // Sibling tests leave the reserved `ngsildproof` attribute in the tenant, which the typed list refuses, so the catalog is read as received.
-    let client = broker.with_accept(Accept::any());
-    let details = client.send_unchecked(client.unchecked(&RetrieveEntityTypeDetails::builder().build())?).await?;
-    expect_that!(details.status(), eq(StatusCode::OK));
-    let building = format!("$[?@.typeName == '{building_type}']");
-    expect_that!(details.body(), json_equals(&format!("{building}.type"), "EntityType"));
-    expect_that!(details.body(), json_count(&format!("{building}.attributeNames"), 3));
-    expect_that!(details.body(), json_includes(&format!("{building}.attributeNames"), marker.to_string()));
-    expect_that!(details.body(), json_includes(&format!("{building}.attributeNames"), owner.to_string()));
-    expect_that!(details.body(), json_includes(&format!("{building}.attributeNames"), position.to_string()));
-    let store = format!("$[?@.typeName == '{store_type}']");
-    expect_that!(details.body(), json_equals(&format!("{store}.type"), "EntityType"));
-    expect_that!(details.body(), json_count(&format!("{store}.attributeNames"), 1));
-    expect_that!(details.body(), json_equals(&format!("{store}.attributeNames[0]"), marker.to_string()));
+    let details = broker.with_accept(Accept::any()).entity_types().list_details().send().await?;
+    let building = details.iter().find(|item| item.type_name == building_type).or_fail()?;
+    expect_that!(building.attribute_names, unordered_elements_are![eq(&marker), eq(&owner), eq(&position)]);
+    let store = details.iter().find(|item| item.type_name == store_type).or_fail()?;
+    expect_that!(store.attribute_names, elements_are![eq(&marker)]);
     Ok(())
 }

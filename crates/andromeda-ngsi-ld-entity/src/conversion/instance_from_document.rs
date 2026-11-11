@@ -26,6 +26,7 @@ use crate::{
     instance::Instance,
     member_role::MemberRole,
     member_shape::MemberShape,
+    proof::{attribute_proof::names_a_seal, proof_fault::ProofFault},
     refusal::EntityRefusal,
 };
 use andromeda_json_literal::JsonLiteral;
@@ -73,18 +74,24 @@ impl Instance {
         if parts.deleted_at.is_some() {
             return Err(EntityRefusal::member_forbidden(Some(attribute), Some(family), properties::DELETED_AT));
         }
-        let seals_admitted = attribute.as_str() == properties::NGSILDPROOF.as_str() && family == AttributeType::Property;
-        if !parts.proof_seals.is_empty() && !seals_admitted {
+        let sealing = names_a_seal(attribute);
+        if !parts.proof_seals.is_empty() && !sealing {
             return Err(EntityRefusal::member_forbidden(Some(attribute), Some(family), properties::ENTITY_ID_SEALED));
         }
-        let value = family_value(attribute, family, parts.value, envelope)?;
+        if sealing && family != AttributeType::Property {
+            return Err(EntityRefusal::proof(attribute, ProofFault::NotAProperty(family)));
+        }
+        let mut value = family_value(attribute, family, parts.value, envelope)?;
+        if sealing {
+            let seals = parts.proof_seals.complete().map_err(|fault| EntityRefusal::proof(attribute, fault))?;
+            value = value.sealed(seals).map_err(|fault| EntityRefusal::proof(attribute, fault))?;
+        }
         let instance = Instance::builder()
             .value(value)
             .observed_at(parts.observed_at.and_then(Slot::into_set))
             .expires_at(parts.expires_at.and_then(Slot::into_set))
             .created_at(parts.created_at)
             .modified_at(parts.modified_at)
-            .proof_seals(parts.proof_seals)
             .sub_attributes(Attributes::try_from_members(parts.sub_attributes)?)
             .build();
         Ok((parts.dataset_id, instance))

@@ -273,6 +273,12 @@ impl AttributeMatcher {
         self.with(Check::Proof)
     }
 
+    /// Requires the attribute to carry no `ngsildproof` (clause 4.5.2.2).
+    #[must_use]
+    pub fn without_proof(self) -> AttributeMatcher {
+        self.with(Check::NoProof)
+    }
+
     /// Requires the attribute's `ngsildproof` to be sealed to the entity `id` (`entityIdSealed`).
     #[must_use]
     pub fn sealed_to(self, id: EntityId) -> AttributeMatcher {

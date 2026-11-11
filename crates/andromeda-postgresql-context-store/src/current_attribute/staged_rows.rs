@@ -45,6 +45,10 @@ pub enum StagedRowError {
     /// The equality keys of a row's sub-attribute tree cannot be computed.
     #[error(transparent)]
     SubAttributeKeys(#[from] SubAttributeKeyError),
+    /// A row would hold a data-integrity seal, which is stored only as a
+    /// sub-attribute (clause 4.5.2.2).
+    #[error("a data-integrity seal is stored only as a sub-attribute")]
+    Seal,
 }
 
 /// The value columns one stored value occupies, exactly one of them set.
@@ -77,8 +81,8 @@ struct ValueColumns {
 impl ValueColumns {
     /// The columns `value` occupies, a String or a URI past its B-tree bound
     /// in its overflow column.
-    fn of(value: StoredValue) -> Result<ValueColumns, EwkbError> {
-        let column = row_column(&value);
+    fn of(value: StoredValue) -> Result<ValueColumns, StagedRowError> {
+        let column = row_column(&value).ok_or(StagedRowError::Seal)?;
         let mut columns = ValueColumns::default();
         match value {
             StoredValue::Number { number, .. } => columns.number = Some(StoredNumber::from(number)),
@@ -97,6 +101,7 @@ impl ValueColumns {
             StoredValue::Object(object) => columns.object = Some(object.into_json()),
             StoredValue::Uri(uri) if column == CurrentAttributes::ValueLongUri => columns.long_uri = Some(String::from(uri)),
             StoredValue::Uri(uri) => columns.uri = Some(String::from(uri)),
+            StoredValue::Proof(_) => return Err(StagedRowError::Seal),
         }
         Ok(columns)
     }
@@ -157,8 +162,6 @@ pub struct StagedRows<'a> {
     modified_ats: Vec<DateTime<Utc>>,
     /// `expires_at`.
     expires_ats: Vec<Option<DateTime<Utc>>>,
-    /// `proof_seals`.
-    proof_seals: Vec<Option<Json<Box<RawValue>>>>,
     /// `sub_attributes`, NULL when the instance has none.
     sub_attributes: Vec<Option<SubAttributeTree>>,
     /// `sub_eq_keys`, as array literals, NULL when the tree holds no keyed
@@ -194,7 +197,6 @@ impl<'a> StagedRows<'a> {
                 unit_code,
                 observed_at,
                 expires_at,
-                proof_seals,
             } = members;
             let datatype_key = value.datatype_key().map(EntityTypeNameKey::get);
             let language = value.language().map(|language| language.as_str().to_owned());
@@ -232,7 +234,6 @@ impl<'a> StagedRows<'a> {
             self.created_ats.push(created_at);
             self.modified_ats.push(modified_at);
             self.expires_ats.push(expires_at);
-            self.proof_seals.push(proof_seals.map(StoredJson::into_json));
             self.sub_attributes.push((!elements.is_empty()).then_some(SubAttributeTree { elements }));
             self.sub_eq_keys.push(sub_eq_keys);
         }
@@ -289,7 +290,6 @@ impl<'a> StagedRows<'a> {
             Expr::val(self.created_ats),
             Expr::val(self.modified_ats),
             nullable_array(self.expires_ats),
-            external.push(self.proof_seals),
             external.push(self.sub_attributes),
             nullable_array(sub_eq_keys),
         ]

@@ -92,17 +92,17 @@ fn geometry_members() -> Value {
 }
 
 /// One instance of each of the eight families, every optional member set,
-/// each carrying `sub_attributes`.
+/// each carrying `sub_attributes`, the Property sealed besides.
 pub(crate) fn every_family(sub_attributes: &Value) -> Value {
     let geo = point(&json!([{"@value": 13.5}, {"@value": 52.25}]), &geometry_members());
     json!({
-        ex("speed"): [with(with(property(&json!([{"@value": 55.5}])), &json!({
+        ex("speed"): [with(with(with(property(&json!([{"@value": 55.5}])), &json!({
             ngsi("unitCode"): [{"@value": "KMH"}],
             ngsi("hasValueType"): [{"@id": ex("Speed")}],
             ngsi("observedAt"): date_time("2026-01-01T00:00:00.500Z"),
             ngsi("expiresAt"): date_time("2027-01-01T00:00:00Z"),
             ngsi("datasetId"): [{"@id": "urn:ngsi-ld:Dataset:a"}]
-        })), sub_attributes)],
+        })), &seal()), sub_attributes)],
         ex("location"): [with(json!({
             "@type": family("GeoProperty"),
             ngsi("hasValue"): [geo],
@@ -142,13 +142,28 @@ pub(crate) fn every_family(sub_attributes: &Value) -> Value {
             ngsi("hasObjectList"): [{"@list": [{ngsi("hasObject"): [{"@id": "urn:ngsi-ld:Stop:2"}]}, {ngsi("hasObject"): [{"@id": "urn:ngsi-ld:Stop:1"}]}]}],
             ngsi("hasObjectType"): [{"@id": ex("Stop")}]
         }), sub_attributes)],
-        ngsi("ngsildproof"): [with(json!({
-            "@type": family("Property"),
-            ngsi("hasValue"): [{"@value": "proof"}],
-            ngsi("entityIdSealed"): [{"@value": "urn:ngsi-ld:Building:1"}],
-            ngsi("entityTypeSealed"): [{"@value": "Building"}, {"@value": "Shop"}]
-        }), sub_attributes)]
     })
+}
+
+/// The `ngsildproof` sub-attribute sealing an attribute to the Building
+/// `urn:ngsi-ld:Building:1` of types Building and Shop (clause 4.5.2.2): a
+/// proof of the members annex C.11 prints, its `created` written at two
+/// fractional digits, and one further member.
+pub(crate) fn seal() -> Value {
+    json!({ngsi("ngsildproof"): [{
+        "@type": family("Property"),
+        ngsi("hasValue"): [{
+            "@type": ["https://w3id.org/security#DataIntegrityProof"],
+            "http://purl.org/dc/terms/created": [{"@type": "http://www.w3.org/2001/XMLSchema#dateTime", "@value": "2025-01-27T21:02:24.50Z"}],
+            "https://w3id.org/security#verificationMethod": [{"@id": "https://example.edu/issuers/565049#key"}],
+            "https://w3id.org/security#cryptosuite": [{"@type": "https://w3id.org/security#cryptosuiteString", "@value": "eddsa-rdfc-2022"}],
+            "https://w3id.org/security#proofPurpose": [{"@id": "https://w3id.org/security#assertionMethod"}],
+            "https://w3id.org/security#proofValue": [{"@type": "https://w3id.org/security#multibase", "@value": "z3XrH3"}],
+            "https://w3id.org/security#nonce": [{"@value": "n"}]
+        }],
+        ngsi("entityIdSealed"): [{"@value": "urn:ngsi-ld:Building:1"}],
+        ngsi("entityTypeSealed"): [{"@id": ex("Building")}, {"@id": ex("Shop")}]
+    }]})
 }
 
 /// One sub-attribute of each of the eight families, each holding one
@@ -157,9 +172,7 @@ pub(crate) fn nested_every_family() -> Value {
     let inner = every_family(&json!({}));
     let mut nested = serde_json::Map::new();
     if let Some(families) = inner.as_object() {
-        // Only an `ngsildproof` attribute carries seals (clause 4.5.2.2), so it
-        // is not renamed into a sub-attribute here.
-        for (name, instances) in families.iter().filter(|(name, _)| **name != ngsi("ngsildproof")) {
+        for (name, instances) in families {
             let child = json!({format!("{name}Inner"): instances});
             let outer = instances
                 .as_array()
@@ -270,13 +283,27 @@ fn held<'a>(attributes: &'a Attributes, name: &str, dataset_id: Option<&str>) ->
         .expect("the instance")
 }
 
+/// The seals among the elements of `row`.
+fn seals(row: &CurrentAttributeRow) -> usize {
+    row.sub_attributes
+        .iter()
+        .filter(|element| matches!(element.members.value, StoredValue::Proof(_)))
+        .count()
+}
+
+/// Every row holds the eight families and their children, the sealed
+/// Property and its child with a seal each, and the sealed Property's own row
+/// its seal besides.
 #[test]
 fn every_family_round_trips() {
     let state = committed(&document(&every_family(&nested_every_family())));
+    let (keys, _) = dictionary(&state);
+    let speed = keys.attribute(&ex("speed").parse().expect("a name")).expect("a key");
     let rows = round_trip(&state);
-    pretty_assertions::assert_eq!(rows.len(), 9);
+    pretty_assertions::assert_eq!(rows.len(), 8);
     for row in &rows {
-        pretty_assertions::assert_eq!(row.sub_attributes.len(), 16, "eight families, each with its child");
+        pretty_assertions::assert_eq!(row.sub_attributes.len() - seals(row), 16, "eight families, each with its child");
+        pretty_assertions::assert_eq!(seals(row), if row.members.attribute_name_key == speed { 3 } else { 2 });
         assert!(row.sub_attributes.iter().any(|element| element.parent > 0), "a second level");
     }
 }
@@ -307,7 +334,11 @@ fn every_family_round_trips_as_a_sub_attribute() {
     ));
     let rows = round_trip(&state);
     let [row] = rows.as_slice() else { panic!("one row") };
-    pretty_assertions::assert_eq!(row.sub_attributes.iter().map(|element| element.parent).collect::<Vec<_>>(), vec![0; 9]);
+    pretty_assertions::assert_eq!(
+        row.sub_attributes.iter().map(|element| element.parent).collect::<Vec<_>>(),
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 8],
+        "the eight families in written order, the seal last, below the sealed Property"
+    );
 }
 
 #[test]
@@ -553,7 +584,7 @@ fn a_single_object_relationship_stays_inline() {
     ));
     let rows = round_trip(&state);
     assert!(matches!(only_value(&rows), StoredValue::Uri(uri) if uri.as_str() == "urn:a"));
-    pretty_assertions::assert_eq!(row_column(only_value(&rows)).to_string(), "value_uri");
+    pretty_assertions::assert_eq!(row_column(only_value(&rows)).map(|column| column.to_string()), Some("value_uri".to_owned()));
 }
 
 #[test]
@@ -603,7 +634,10 @@ fn an_object_longer_than_the_index_bound_goes_to_the_long_column() {
         &json!({ex("owner"): [{"@type": family("Relationship"), ngsi("hasObject"): [{"@id": target}]}]}),
     ));
     let rows = round_trip(&state);
-    pretty_assertions::assert_eq!(row_column(only_value(&rows)).to_string(), "value_long_uri");
+    pretty_assertions::assert_eq!(
+        row_column(only_value(&rows)).map(|column| column.to_string()),
+        Some("value_long_uri".to_owned())
+    );
 }
 
 #[test]

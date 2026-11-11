@@ -172,4 +172,11 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn a_field_alter_type_adds_takes_no_compression_clause() -> Result<(), FixtureError> {
+        let sql = "create type pair as (\n    label text\n);\n\nalter type pair\n    add attribute note text;\n";
+        assert_eq!(findings(Rule::Lz4Compression, &[(FILE, sql)])?, Vec::<String>::new());
+        Ok(())
+    }
 }

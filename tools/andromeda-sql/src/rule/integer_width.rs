@@ -29,6 +29,7 @@ const DICTIONARY_KEY_NAMES: &[&str] = &[
     "value_type_key",
     "value_datatype_key",
     "object_type_keys",
+    "seal_entity_type_keys",
     "watched_attributes",
     "expand_values",
     "json_keys",
@@ -200,6 +201,13 @@ mod tests {
     fn an_unchecked_smallint_column_is_refused_and_a_composite_field_is_not() -> Result<(), FixtureError> {
         let sql = "create type entry as (\n    entry_kind smallint\n);\n\ncreate table deliveries (\n    revision smallint not null\n);\n";
         assert_eq!(findings(Rule::IntegerWidth, &[(FILE, sql)])?, ["migrations/branch/0001_deliveries.sql:6:5"]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_smallint_field_alter_type_adds_is_bounded_where_it_is_written() -> Result<(), FixtureError> {
+        let sql = "create type entry as (\n    entry_kind smallint\n);\n\nalter type entry\n    add attribute revision smallint;\n";
+        assert_eq!(findings(Rule::IntegerWidth, &[(FILE, sql)])?, Vec::<String>::new());
         Ok(())
     }
 

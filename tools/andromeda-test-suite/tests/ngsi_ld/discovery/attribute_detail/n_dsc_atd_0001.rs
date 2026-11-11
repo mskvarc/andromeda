@@ -15,13 +15,11 @@ use ngsi_ld::{
 /// Pins: Retrieve Details of Available Attributes names for each attribute exactly the types of the entities
 /// carrying it, both types of a multi-typed entity included
 /// Clause: 5.7.9.4, 5.2.28, 4.16, 6.27.3.1
-/// Tenant: private (the unfiltered attribute list reads every entity of the tenant, and another file's attribute
-/// named `ngsildproof`, which the model refuses, breaks the read)
 #[gtest]
 #[tokio::test]
 async fn n_dsc_atd_0001_names_every_type_whose_entities_carry_it() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker = broker::private_tenant(&broker::front()?, &namespace).await?;
+    let broker = broker::front()?;
     let building_id = namespace.urn("Building", 1)?;
     let building_type = namespace.entity_type("Building")?;
     let building_2_id = namespace.urn("Building", 2)?;

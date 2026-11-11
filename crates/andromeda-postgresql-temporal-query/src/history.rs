@@ -174,7 +174,6 @@ pub(crate) fn project_base_columns(select: &mut SelectStatement) {
         AttributeHistory::ValueTypeKey,
         AttributeHistory::ValueDatatypeKey,
         AttributeHistory::ObjectTypeKeys,
-        AttributeHistory::ProofSeals,
         AttributeHistory::ExpiresAt,
         AttributeHistory::SubAttributes,
         AttributeHistory::WriteId,

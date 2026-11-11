@@ -90,6 +90,8 @@ pub(crate) enum Check {
     PreviousObject(OneOrMany<EntityId>),
     /// The attribute carries an `ngsildproof`.
     Proof,
+    /// The attribute carries no `ngsildproof`.
+    NoProof,
     /// The `entityIdSealed` of the attribute's `ngsildproof`.
     SealedId(EntityId),
     /// The `entityTypeSealed` of the attribute's `ngsildproof`, one type.
@@ -165,6 +167,7 @@ pub(crate) fn check_mismatch(check: &Check, attribute: &Attribute<Output>) -> Op
             matches!(attribute, Attribute::Relationship(relationship) if relationship.output().previous_object.as_ref() == Some(expected))
         }
         Check::Proof => meta.proof.is_some(),
+        Check::NoProof => meta.proof.is_none(),
         Check::SealedId(expected) => meta.proof.as_ref().is_some_and(|proof| proof.entity_id_sealed() == expected),
         Check::SealedType(expected) => meta
             .proof

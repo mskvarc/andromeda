@@ -24,10 +24,12 @@ pub struct CurrentAttributeRow {
 }
 
 /// The `current_attributes` column a row holds `value` in: a String or a URI
-/// past its B-tree bound moves to its overflow column.
+/// past its B-tree bound moves to its overflow column. `None` for a
+/// data-integrity seal, which is stored only as a sub-attribute (clause
+/// 4.5.2.2), so no row holds one.
 #[must_use]
-pub fn row_column(value: &StoredValue) -> CurrentAttributes {
-    match value {
+pub fn row_column(value: &StoredValue) -> Option<CurrentAttributes> {
+    Some(match value {
         StoredValue::Number { .. } | StoredValue::DeclaredNumber { .. } => CurrentAttributes::ValueNumber,
         StoredValue::String { text, .. } => StringValueColumn::of(text).column(),
         StoredValue::Boolean { .. } | StoredValue::DeclaredBoolean { .. } => CurrentAttributes::ValueBoolean,
@@ -36,5 +38,6 @@ pub fn row_column(value: &StoredValue) -> CurrentAttributes {
         StoredValue::Geometry { .. } => CurrentAttributes::ValueGeometry,
         StoredValue::Object(_) => CurrentAttributes::ValueObject,
         StoredValue::Uri(uri) => UriValueColumn::of(uri.as_str()).column(),
-    }
+        StoredValue::Proof(_) => return None,
+    })
 }

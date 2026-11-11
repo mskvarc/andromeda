@@ -28,7 +28,7 @@ async fn n_ctx_exp_9022_the_core_contexts_scoped_proof_term_still_expands() -> R
     let device_type = namespace.entity_type("Device")?;
     let device = Entity::builder().id(device_id.clone()).entity_type(device_type).build()?;
     // The model refuses it (an attribute proof), so `speed` is written as text.
-    let speed: RawJson = format!(r#"{{"type": "Property", "value": 1, "ngsildproof": {{"type": "Property", "value": {{"type": "DataIntegrityProof", "cryptosuite": "eddsa-jcs-2022"}}, "entityIdSealed": "urn:ngsi-ld:Device:{namespace}-1", "entityTypeSealed": "Device_{namespace}"}}}}"#).parse()?;
+    let speed: RawJson = format!(r#"{{"type": "Property", "value": 1, "ngsildproof": {{"type": "Property", "value": {{"type": "DataIntegrityProof", "created": "2025-01-27T21:02:24Z", "verificationMethod": "https://example.edu/issuers/565049#z6MkwXG2WjeQnN", "cryptosuite": "eddsa-jcs-2022", "proofPurpose": "assertionMethod", "proofValue": "z2aB"}}, "entityIdSealed": "urn:ngsi-ld:Device:{namespace}-1", "entityTypeSealed": "Device_{namespace}"}}}}"#).parse()?;
     let document = UncheckedDocument::from_entity(&device, Lossless::Normalized).set_member("speed", &speed);
     let request = core_context_list_body
         .unchecked(&CreateEntity::builder().entity(&device).build())?

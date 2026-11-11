@@ -927,7 +927,10 @@ mod tests {
     fn a_nested_compound_path_below_a_sub_attribute_reads_no_language_map() {
         let (sql, _) = render("\"https://example.com/address\".\"https://example.com/label\"[a.b]==\"x\"");
         assert!(!sql.contains("'@language'"), "{sql}");
-        assert!(sql.contains(r#"jsonb_path_query("l0"."value_object""#), "{sql}");
+        assert!(
+            sql.contains(r#"jsonb_path_query(sub_attribute_value_object("l0"."value_kind", "l0"."value_object""#),
+            "{sql}"
+        );
     }
 
     #[test]
@@ -1081,12 +1084,17 @@ mod tests {
     }
 
     /// A member of a sub-attribute's compound value is read out of the
-    /// element's `value_object`, which no key covers, so the term walks.
+    /// element's structured value, which no key covers, so the term walks: its
+    /// `value_object`, or the proof a data-integrity seal holds in its own
+    /// fields.
     #[test]
     fn a_value_object_sub_attribute_walks() {
         let (sql, _) = render("\"https://example.com/address\".\"https://example.com/label\"[c]==\"x\"");
         assert!(!sql.contains("&&"), "{sql}");
-        assert!(sql.contains(r#"jsonb_path_query("l0"."value_object""#), "{sql}");
+        assert!(
+            sql.contains(r#"jsonb_path_query(sub_attribute_value_object("l0"."value_kind", "l0"."value_object""#),
+            "{sql}"
+        );
         assert!(sql.contains("OFFSET"), "{sql}");
     }
 

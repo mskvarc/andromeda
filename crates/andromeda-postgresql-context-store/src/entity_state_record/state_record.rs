@@ -4,8 +4,7 @@
 use crate::{current_attribute::flatten::flatten, entity_state_record::instance_record::AttributeInstanceRecord};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, scope::path::ScopePath, time::date_time::NgsiLdDateTime};
-use andromeda_postgresql_attribute_instance::{flatten::FlattenError, name_keys::NameKeys};
-use andromeda_postgresql_encoding::ewkb::EwkbError;
+use andromeda_postgresql_attribute_instance::{flatten::FlattenError, name_keys::NameKeys, stored_members::RowColumnsError};
 use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
@@ -34,9 +33,10 @@ pub enum StateRecordError {
     /// An entity type has no `entity_type_names` key.
     #[error("the entity type {0} has no dictionary key")]
     UnresolvedType(EntityTypeName),
-    /// A geometry has no EWKB.
+    /// A top-level instance has no row columns: a geometry with no EWKB, or a
+    /// data-integrity seal, which is stored only as a sub-attribute.
     #[error(transparent)]
-    Geometry(#[from] EwkbError),
+    Row(#[from] RowColumnsError),
 }
 
 /// The record of the committed `state`, every name held as its key in `keys`.

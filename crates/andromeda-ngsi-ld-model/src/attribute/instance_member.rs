@@ -30,7 +30,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_representation::{
     attribute_type_validation::AttributeNodeFault,
-    compact_node::{CompactNode, NodeMembers},
+    compact_node::{CompactNode, NodeMembers, NodeShape},
     family_member_admission::{MemberAdmission, prohibited_member},
     proof_seal_admission::{ProofSealMember, proof_seal_admission},
 };
@@ -175,7 +175,9 @@ impl<'n, N: CompactNode<'n>> InstanceMembers<'n, N> {
     /// # Errors
     ///
     /// Returns [`AttributeNodeFault::ProofSealOutsideNgsildproof`], located at
-    /// the instance, for a seal clause 4.5.2.2 does not admit on it, and
+    /// the instance, for a seal clause 4.5.2.2 does not admit on it,
+    /// [`AttributeNodeFault::ProofValueNotAnObject`] for an `ngsildproof`
+    /// whose `value` is not one JSON object, and
     /// [`AttributeNodeFault::ValueMemberOfAnotherFamily`] for a value member
     /// the family's clause prohibits.
     pub(crate) fn sorted(attribute: &str, family: AttributeType, members: NodeMembers<'n, N>) -> Result<InstanceMembers<'n, N>, ReadError<'n, N>> {
@@ -232,6 +234,12 @@ impl<'n, N: CompactNode<'n>> InstanceMembers<'n, N> {
                 }
             };
             *slot = Some(member);
+        }
+        if attribute == compact_properties::NGSILDPROOF
+            && let Some(value) = sorted.value
+            && !matches!(value.shape(), NodeShape::Object(_))
+        {
+            return Err(NodeRefusal::Shape(AttributeNodeFault::ProofValueNotAnObject).into());
         }
         Ok(sorted)
     }

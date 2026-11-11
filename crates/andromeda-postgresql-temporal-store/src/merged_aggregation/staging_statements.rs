@@ -373,7 +373,7 @@ mod tests {
         let copy = copy_history(None, &vehicle(), CopiedHistory::Whole)
             .expect("the copy builds")
             .to_string(PostgresQueryBuilder);
-        for column in ["value_type_key", "object_type_keys", "proof_seals", "expires_at", "sub_attributes"] {
+        for column in ["value_type_key", "object_type_keys", "expires_at", "sub_attributes"] {
             assert!(copy.contains(&format!(r#""{column}""#)), "{column} missing: {copy}");
         }
         assert!(!copy.contains("metadata"), "{copy}");

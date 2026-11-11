@@ -48,7 +48,7 @@ mod nesting_probe;
 pub mod node_id;
 pub mod non_empty;
 pub mod operation;
-pub mod proof_seals;
+pub mod proof;
 pub mod queried;
 pub mod reads;
 pub mod refusal;

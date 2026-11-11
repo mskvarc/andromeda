@@ -147,7 +147,7 @@ mod tests {
         },
         member_shape::MemberShape,
         non_empty::NonEmpty,
-        proof_seals::ProofSeals,
+        proof::written_seals::WrittenSeals,
         scope_refusal::ScopeRefusal,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, scope::path::ScopePath, uri::Uri};
@@ -273,7 +273,7 @@ mod tests {
                 MemberShape::ProofSeal,
                 InstanceDocument::builder()
                     .value(madrid())
-                    .proof_seals(ProofSeals::new(Some(Vec::new()), None))
+                    .proof_seals(WrittenSeals::new(Some("urn:ngsi-ld:Store:1".parse().expect("an identifier")), None))
                     .build(),
             ),
         ];

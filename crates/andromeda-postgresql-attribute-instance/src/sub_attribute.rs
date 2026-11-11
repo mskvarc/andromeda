@@ -10,6 +10,7 @@
 use crate::{
     stored_members::{InstanceMembers, MemberColumns, StoredInstanceError},
     stored_number::StoredNumber,
+    stored_proof::{DataIntegrityProofRecord, ProofFields},
 };
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_postgresql_encoding::{
@@ -127,8 +128,6 @@ pub struct SubAttributeRecord {
     pub value_type_key: Option<i32>,
     /// `object_type_keys`.
     pub object_type_keys: Option<Vec<i32>>,
-    /// `proof_seals`.
-    pub proof_seals: Option<Json<Box<RawValue>>>,
     /// `unit_code_id`.
     pub unit_code_id: Option<i16>,
     /// `observed_at`.
@@ -139,6 +138,12 @@ pub struct SubAttributeRecord {
     pub modified_at: Option<DateTime<Utc>>,
     /// `expires_at`.
     pub expires_at: Option<DateTime<Utc>>,
+    /// `seal_entity_id`.
+    pub seal_entity_id: Option<String>,
+    /// `seal_entity_type_keys`.
+    pub seal_entity_type_keys: Option<Vec<i32>>,
+    /// `value_proof`.
+    pub value_proof: Option<DataIntegrityProofRecord>,
 }
 
 /// The `sub_attribute_tree` composite: one row's elements as one value, which
@@ -160,7 +165,7 @@ impl TryFrom<SubAttributeElement> for SubAttributeRecord {
             created_at,
             modified_at,
         } = element;
-        let (dataset_id, columns) = members.into_columns()?;
+        let (dataset_id, columns, proof) = members.into_element_columns()?;
         let MemberColumns {
             attribute_name_key,
             attribute_kind,
@@ -177,7 +182,6 @@ impl TryFrom<SubAttributeElement> for SubAttributeRecord {
             value_language,
             value_type_key,
             object_type_keys,
-            proof_seals,
             unit_code_id,
             observed_at,
             expires_at,
@@ -200,12 +204,14 @@ impl TryFrom<SubAttributeElement> for SubAttributeRecord {
             value_language,
             value_type_key,
             object_type_keys,
-            proof_seals,
             unit_code_id,
             observed_at,
             created_at,
             modified_at,
             expires_at,
+            seal_entity_id: proof.seal_entity_id,
+            seal_entity_type_keys: proof.seal_entity_type_keys,
+            value_proof: proof.value_proof,
         })
     }
 }
@@ -232,12 +238,14 @@ impl TryFrom<SubAttributeRecord> for SubAttributeElement {
             value_language,
             value_type_key,
             object_type_keys,
-            proof_seals,
             unit_code_id,
             observed_at,
             created_at,
             modified_at,
             expires_at,
+            seal_entity_id,
+            seal_entity_type_keys,
+            value_proof,
         } = record;
         let columns = MemberColumns {
             attribute_name_key,
@@ -255,14 +263,21 @@ impl TryFrom<SubAttributeRecord> for SubAttributeElement {
             value_language,
             value_type_key,
             object_type_keys,
-            proof_seals,
             unit_code_id,
             observed_at,
             expires_at,
         };
         Ok(SubAttributeElement {
             parent,
-            members: InstanceMembers::read(dataset_id.map(|dataset_id| dataset_id.parse()).transpose()?, columns)?,
+            members: InstanceMembers::read_element(
+                dataset_id.map(|dataset_id| dataset_id.parse()).transpose()?,
+                columns,
+                ProofFields {
+                    seal_entity_id,
+                    seal_entity_type_keys,
+                    value_proof,
+                },
+            )?,
             created_at,
             modified_at,
         })
@@ -275,6 +290,7 @@ mod tests {
         stored_json::StoredJson,
         stored_members::{InstanceMembers, StoredInstanceError},
         stored_number::StoredNumber,
+        stored_proof::StoredProof,
         stored_value::StoredValue,
         sub_attribute::{SubAttributeElement, SubAttributeRecord},
     };
@@ -306,12 +322,14 @@ mod tests {
             value_language: None,
             value_type_key: None,
             object_type_keys: None,
-            proof_seals: None,
             unit_code_id: None,
             observed_at: None,
             created_at: None,
             modified_at: None,
             expires_at: None,
+            seal_entity_id: None,
+            seal_entity_type_keys: None,
+            value_proof: None,
         }
     }
 
@@ -381,9 +399,6 @@ mod tests {
                 unit_code: Some(UnitCode::Kgm),
                 observed_at: Some(instant),
                 expires_at: Some(instant),
-                proof_seals: Some(StoredJson::new(
-                    to_raw_value(&json!({"https://uri.etsi.org/ngsi-ld/entityIdSealed": [{"@value": "x"}]})).expect("JSON"),
-                )),
             },
             created_at: Some(instant),
             modified_at: Some(instant),
@@ -400,7 +415,6 @@ mod tests {
                 unit_code: None,
                 observed_at: None,
                 expires_at: None,
-                proof_seals: None,
             },
             created_at: None,
             modified_at: None,
@@ -412,6 +426,52 @@ mod tests {
         pretty_assertions::assert_eq!(format!("{:?}", through(full)), full_debug);
         pretty_assertions::assert_eq!(through(empty()), empty());
         let record = SubAttributeRecord::try_from(empty()).expect("the element encodes");
-        assert!(record.object_type_keys.is_none() && record.value_geometry_members.is_none() && record.proof_seals.is_none());
+        assert!(record.object_type_keys.is_none() && record.value_geometry_members.is_none() && record.seal_entity_id.is_none());
+    }
+
+    /// A seal keeps its proof in `value_proof` and its seals beside it,
+    /// `value_object` NULL, and reads back as written.
+    #[test]
+    fn a_seal_element_round_trips_through_its_record() {
+        let seal = || SubAttributeElement {
+            parent: 1,
+            members: InstanceMembers {
+                attribute_name_key: AttributeNameKey::from(9),
+                dataset_id: None,
+                attribute_kind: AttributeKind::Property,
+                value: StoredValue::Proof(Box::new(StoredProof {
+                    entity_id: "urn:ngsi-ld:Store:002".parse().expect("an identifier"),
+                    entity_type_keys: vec![EntityTypeNameKey::from(3)],
+                    created: "2025-01-27T21:02:24Z".parse().expect("a DateTime"),
+                    verification_method: "https://example.edu/issuers/565049#key".parse().expect("a URI"),
+                    cryptosuite: "eddsa-rdfc-2022".parse().expect("a suite"),
+                    proof_purpose: "https://w3id.org/security#assertionMethod".parse().expect("a URI"),
+                    proof_value: "z3XrH3".parse().expect("a signature"),
+                    members: Some(StoredJson::new(
+                        to_raw_value(&json!({"https://w3id.org/security#nonce": [{"@value": "n"}]})).expect("JSON"),
+                    )),
+                })),
+                value_type_key: None,
+                object_type_keys: Vec::new(),
+                unit_code: None,
+                observed_at: None,
+                expires_at: None,
+            },
+            created_at: None,
+            modified_at: None,
+        };
+        let record = SubAttributeRecord::try_from(seal()).expect("the seal encodes");
+        pretty_assertions::assert_eq!(record.value_kind, ValueKind::code(ValueKind::DataIntegrityProof));
+        assert!(record.value_object.is_none() && record.seal_entity_id.is_some());
+        assert!(record.value_proof.as_ref().is_some_and(|proof| proof.further_members.is_some()));
+        pretty_assertions::assert_eq!(SubAttributeElement::try_from(record).expect("the record decodes"), seal());
+    }
+
+    /// A seal field beside a value of another kind is no stored state.
+    #[test]
+    fn a_seal_field_beside_another_value_is_refused() {
+        let mut record = number_record();
+        record.seal_entity_id = Some("urn:ngsi-ld:Store:002".to_owned());
+        assert!(matches!(SubAttributeElement::try_from(record), Err(StoredInstanceError::SealFields)));
     }
 }
