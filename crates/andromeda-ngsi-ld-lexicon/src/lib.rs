@@ -48,6 +48,9 @@ pub mod unit_code_resolution;
 pub mod uri;
 
 #[cfg(test)]
+mod composed_grammar_tests;
+
+#[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-configuration",

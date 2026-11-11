@@ -1,0 +1,48 @@
+; One level of an NGSI-LD scope path (ETSI GS CIM 009 v1.9.1, clause 4.18).
+;
+; Split out of `scope.abnf` so a scope *pattern*, whose wildcards are a query
+; construct rather than a lexical one, can validate its labels against the same
+; production the path itself is derived from instead of restating it by hand.
+
+ScopeLevel      = unicodeLetter *ScopeLevelChar
+ScopeLevelChar  = unicodeNumber / unicodeLetter / %x5F   ; _ (underscore)
+; Shared Unicode character classes for NGSI-LD grammars (ETSI GS CIM 009
+; v1.9.1, section 4.6.2, ref [22]). Concatenated at build time into every
+; top-level grammar that starts with a letter and contains letter/digit runs.
+;
+; Not valid on its own — it defines `unicodeLetter` and `unicodeNumber` only.
+
+; Unicode Letter - \p{L} approximation.
+; Based on XML NameStartChar ranges (W3C XML 1.0 5th ed.) which cover
+; Latin, Greek, Cyrillic, Armenian, Hebrew, Arabic, Devanagari, Bengali,
+; Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam, Thai,
+; Lao, Georgian, Hangul, CJK, Katakana, Hiragana, and supplementary planes.
+unicodeLetter = %x41-5A / %x61-7A       ; A-Z, a-z
+        / %xC0-D6 / %xD8-F6 / %xF8-2FF  ; Latin Extended + IPA
+        / %x370-37D / %x37F-1FFF        ; Greek through Myanmar
+        / %x200C-200D                   ; Zero-width non-joiner/joiner
+        / %x2070-218F                   ; Superscripts, Letterlike Symbols
+        / %x2C00-2FEF                   ; Glagolitic, Latin Extended-C, CJK Radicals
+        / %x3001-D7FF                   ; CJK, Hangul
+        / %xF900-FDCF                   ; CJK Compatibility Ideographs
+        / %xFDF0-FFFD                   ; Arabic Presentation Forms-A
+        / %x10000-EFFFF                 ; Supplementary planes
+
+; Unicode Number - \p{N} approximation.
+; Covers ASCII digits plus major world digit systems.
+unicodeNumber = %x30-39                 ; 0-9
+        / %x660-669                     ; Arabic-Indic
+        / %x6F0-6F9                     ; Extended Arabic-Indic
+        / %x966-96F                     ; Devanagari
+        / %x9E6-9EF                     ; Bengali
+        / %xA66-A6F                     ; Gurmukhi
+        / %xAE6-AEF                     ; Gujarati
+        / %xB66-B6F                     ; Oriya
+        / %xBE6-BEF                     ; Tamil
+        / %xC66-C6F                     ; Telugu
+        / %xCE6-CEF                     ; Kannada
+        / %xD66-D6F                     ; Malayalam
+        / %xE50-E59                     ; Thai
+        / %xED0-ED9                     ; Lao
+        / %xF20-F29                     ; Tibetan
+        / %xFF10-FF19                   ; Fullwidth
