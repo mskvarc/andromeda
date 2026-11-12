@@ -17,10 +17,12 @@ mod placement_resumption;
 mod pool_gauges;
 mod retention;
 mod snapshot;
+pub(super) mod snapshot_preparation_start;
 mod subscription_cache_reconcile;
 mod table_size_gauges;
 mod temporal_retention;
 mod temporal_sweep_failure;
+mod tenant_slots;
 
 use crate::{
     event::{entity_change_sink::QueuedEntityChangeSink, registration_change_sink::QueuedRegistrationChangeSink},

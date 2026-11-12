@@ -14,7 +14,7 @@ mod scoping;
 use crate::{
     branch_condition::BranchCondition,
     error::SnapshotError,
-    executor::{SnapshotPreparation, SnapshotPreparationOutcome},
+    preparation_start::PreparationStart,
     prepare::to_insert_params,
     query_validation::validate_snapshot_query_shapes,
     receiver_info_admission::validate_receiver_info,
@@ -57,9 +57,10 @@ pub struct SnapshotServiceConfig {
 pub struct SnapshotService {
     /// The Snapshot store.
     repo: Arc<dyn SnapshotStore>,
-    /// The bounded executor a create kicks.
-    preparation: Option<Arc<SnapshotPreparation>>,
-    /// Wakes the durable status-delivery drain.
+    /// Starts a created or cloned Snapshot's preparation ahead of the
+    /// scheduled sweep.
+    preparation: Option<Arc<dyn PreparationStart>>,
+    /// Wakes the durable status-delivery drain after a metadata update.
     delivery_signal: Option<Arc<dyn StatusDeliverySignal>>,
     /// Lifetime, wait and quota policy.
     config: SnapshotServiceConfig,
@@ -67,14 +68,14 @@ pub struct SnapshotService {
 
 impl SnapshotService {
     /// Create a new snapshot service backed by the given store. `preparation`
-    /// is the bounded executor [`SnapshotService::prepare_created`] kicks so a
-    /// freshly created snapshot does not wait for the next scheduled sweep.
-    /// `delivery_signal` wakes the durable status-delivery drain after a
-    /// create-time preparation or a metadata update enqueues notifications, so
-    /// they are not left to the drain's idle fallback interval.
+    /// is what [`SnapshotService::prepare_created`] starts a freshly created
+    /// snapshot's preparation on, so it does not wait for the next scheduled
+    /// sweep. `delivery_signal` wakes the durable status-delivery drain after a
+    /// metadata update enqueues notifications, so they are not left to the
+    /// drain's idle fallback interval.
     pub const fn new(
         repo: Arc<dyn SnapshotStore>,
-        preparation: Option<Arc<SnapshotPreparation>>,
+        preparation: Option<Arc<dyn PreparationStart>>,
         delivery_signal: Option<Arc<dyn StatusDeliverySignal>>,
         config: SnapshotServiceConfig,
     ) -> SnapshotService {
@@ -86,35 +87,16 @@ impl SnapshotService {
         }
     }
 
-    /// Start the preparation of the Snapshot `id` just created or cloned in the
-    /// background. The scheduled sweep remains the guarantee that every
-    /// `preparing` snapshot is executed; this only removes the sweep cadence
-    /// as the floor on how soon a new snapshot becomes usable (clause 5.16.1.4
-    /// executes the queries on creation). A pass racing the sweep is harmless:
-    /// only one worker holds a preparation's claim at a time.
+    /// Start the preparation of the Snapshot `id` just created or cloned. The
+    /// scheduled sweep remains the guarantee that every `preparing` snapshot
+    /// is executed; this only removes the sweep cadence as the floor on how
+    /// soon a new snapshot becomes usable (clause 5.16.1.4 executes the queries
+    /// on creation). A pass racing the sweep is harmless: only one worker
+    /// holds a preparation's claim at a time.
     pub fn prepare_created(&self, id: &Identifier) {
-        let Some(preparation) = &self.preparation else {
-            return;
-        };
-        let preparation = Arc::clone(preparation);
-        let delivery_signal = self.delivery_signal.clone();
-        let id = id.clone(); // clone: the spawned pass outlives the request that created the Snapshot.
-        tokio::spawn(async move {
-            match preparation.execute_created(&id).await {
-                Ok(SnapshotPreparationOutcome::Idle) => {}
-                Ok(SnapshotPreparationOutcome::Prepared { count }) => {
-                    info!(count, "snapshot preparation completed on create");
-                    // The preparation committed its status rows before returning,
-                    // so wake delivery now instead of leaving them to the drain's
-                    // idle fallback (the scheduled sweep will not, having found no
-                    // preparing Snapshot left to complete).
-                    if let Some(delivery_signal) = &delivery_signal {
-                        delivery_signal.signal();
-                    }
-                }
-                Err(error) => warn!(snapshot_id = %id, %error, "snapshot preparation on create failed; the scheduled sweep will retry"),
-            }
-        });
+        if let Some(preparation) = &self.preparation {
+            preparation.start(id);
+        }
     }
 
     /// Create a new snapshot from the given input parameters.

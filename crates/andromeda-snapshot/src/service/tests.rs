@@ -1,6 +1,7 @@
 use crate::{
     branch_condition::BranchCondition,
     error::SnapshotError,
+    preparation_start::PreparationStart,
     service::{SnapshotService, SnapshotServiceConfig},
     snapshot_validation_reason::SnapshotValidationReason,
     store_double::{ClaimHold, QuotaCheck, StoreDouble},
@@ -17,7 +18,10 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use url::Url;
 
 const SNAPSHOT_ID: &str = "urn:ngsi-ld:Snapshot:scoped";
@@ -56,18 +60,42 @@ fn service_holding(snapshot: Snapshot, condition: BranchCondition) -> SnapshotSe
 }
 
 fn service_over(store: StoreDouble) -> SnapshotService {
-    SnapshotService::new(
-        Arc::new(store),
+    SnapshotService::new(Arc::new(store), None, None, service_config())
+}
+
+fn service_config() -> SnapshotServiceConfig {
+    SnapshotServiceConfig {
+        default_lifetime: Duration::from_hours(1),
+        maximum_lifetime: Duration::from_hours(24),
+        scoped_operation_wait: Duration::from_millis(50),
+        tenant_count_quota: None,
+        tenant_byte_quota: None,
+    }
+}
+
+/// Records every Snapshot whose preparation was started.
+#[derive(Default)]
+struct StartedPreparations(Mutex<Vec<Identifier>>);
+
+impl PreparationStart for StartedPreparations {
+    fn start(&self, snapshot: &Identifier) {
+        self.0.lock().expect("the record is not poisoned").push(snapshot.clone());
+    }
+}
+
+#[test]
+fn preparing_a_created_snapshot_starts_its_preparation_through_the_port() {
+    let started = Arc::new(StartedPreparations::default());
+    let service = SnapshotService::new(
+        Arc::new(StoreDouble::new(stored_snapshot(None, None), BranchCondition::Current, ClaimHold::Held)),
+        Some(Arc::clone(&started) as Arc<dyn PreparationStart>),
         None,
-        None,
-        SnapshotServiceConfig {
-            default_lifetime: Duration::from_hours(1),
-            maximum_lifetime: Duration::from_hours(24),
-            scoped_operation_wait: Duration::from_millis(50),
-            tenant_count_quota: None,
-            tenant_byte_quota: None,
-        },
-    )
+        service_config(),
+    );
+
+    service.prepare_created(&snapshot_id());
+
+    pretty_assertions::assert_eq!(*started.0.lock().expect("the record is not poisoned"), vec![snapshot_id()]);
 }
 
 /// A Snapshot whose branch is behind the binary is refused for scoping with
