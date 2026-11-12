@@ -47,8 +47,9 @@ impl EntityQueryService {
     ///
     /// # Errors
     ///
-    /// Reports [`EntityError::JsonLd`] when a term of the request cannot be
-    /// expanded against `context`, [`EntityError::Query`] when the `q`, `geoQ`
+    /// Reports [`EntityError::JsonLd`] when `context` does not resolve or
+    /// process, or a term of the request cannot be expanded against it,
+    /// [`EntityError::Query`] when the `q`, `geoQ`
     /// or `orderBy` expression is not well formed, names a target language
     /// `language_targeting` does not admit, or is too complex to resolve
     /// (clause 5.5.6), and
@@ -65,32 +66,42 @@ impl EntityQueryService {
 
     /// Cache-aware compilation entry point used by every caller.
     ///
-    /// Consults the in-memory cache keyed on the request parameters and the
-    /// active JSON-LD context fingerprint; on a miss, compiles and stores.
+    /// Resolves `context` first, so a compiled query is reused only while the
+    /// documents it resolved to are still the ones the loader holds, and a
+    /// context that no longer resolves fails here as it would on a first
+    /// compilation. The cache is keyed on the request parameters and that
+    /// processed context; on a miss, the query is compiled and stored.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::JsonLd`] when `context` does not resolve or
+    /// process, and every error [`EntityQueryService::compile_query_public`]
+    /// documents on a miss.
     pub(super) async fn compile_query_cached(
         &self,
         params: &EntityQueryParameters,
         context: &ContextSpec,
         language_targeting: LanguageTargeting,
     ) -> Result<Arc<CompiledEntityQuery>, EntityError> {
-        let key = CompiledQueryKey::from_params(params, context, language_targeting);
+        let prepared_context = self.engine().prepare_term_context(context);
+        let processed = prepared_context.expansion(self.engine()).await?.id();
+        let key = CompiledQueryKey::from_params(params, processed, language_targeting);
         self.compiled_cache
-            .get_or_compile(key, || self.compile_query(params, context, language_targeting))
+            .get_or_compile(key, || self.compile_query(params, &prepared_context, language_targeting))
             .await
     }
 
-    /// Compile `params` against `context` without consulting the cache, admitting
-    /// the `q` filter's complexity on the way.
+    /// Compile `params` against `prepared_context` without consulting the
+    /// cache, admitting the `q` filter's complexity on the way.
     async fn compile_query(
         &self,
         params: &EntityQueryParameters,
-        context: &ContextSpec,
+        prepared_context: &PreparedTermContext,
         language_targeting: LanguageTargeting,
     ) -> Result<CompiledEntityQuery, EntityError> {
-        let prepared_context = self.engine().prepare_term_context(context);
-        let selectors = compile_entity_selectors(self.engine(), &prepared_context, &params.selectors()).await?;
+        let selectors = compile_entity_selectors(self.engine(), prepared_context, &params.selectors()).await?;
 
-        let expander = ContextualExpander::new(self.engine(), &prepared_context);
+        let expander = ContextualExpander::new(self.engine(), prepared_context);
         // Table 6.4.3.2-1 restricts `attrs` to "an Attribute (Property or
         // Relationship) name". A query answers in an Entity representation, where
         // clause 4.18 leaves the Scope non-reified, so `scope` names nothing the
@@ -104,7 +115,7 @@ impl EntityQueryService {
         if let Some(q) = &q_expr {
             language_targeting.admit(q)?;
         }
-        let geo = self.compile_geo_query(params, &prepared_context).await?;
+        let geo = self.compile_geo_query(params, prepared_context).await?;
 
         let projection = expand_projection(
             params.pick.as_deref().unwrap_or_default(),
@@ -240,13 +251,35 @@ fn compile_ordering_geometry(params: &EntityQueryParameters, limits: GeometryCen
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::EntityError, query::service_test_double::service_resolving};
-    use andromeda_jsonld::context_spec::ContextSpec;
+    use crate::{
+        error::EntityError,
+        query::{
+            EntityQueryService,
+            service_test_double::{service_expanding_through, service_resolving},
+        },
+    };
+    use andromeda_json_literal::JsonLiteral;
+    use andromeda_jsonld::{
+        context_cache::{CachedContext, ContextCache, ContextCacheError, StoredDocumentSource},
+        context_spec::ContextSpec,
+        engine::processor::JsonLdEngine,
+        loader::cache_lifetime::{CacheLifetime, ResidualLifetime},
+    };
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-    use andromeda_ngsi_ld_query::{error::QueryError, filter::language_targeting::LanguageTargeting, ordering::term::OrderTarget};
+    use andromeda_ngsi_ld_query::{
+        entity::compiled::CompiledEntityQuery,
+        error::QueryError,
+        filter::language_targeting::LanguageTargeting,
+        ordering::term::OrderTarget,
+    };
     use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
-    use std::num::NonZeroUsize;
+    use iri_rs::IriBuf;
+    use serde_json::{Value, json};
+    use std::{
+        num::NonZeroUsize,
+        sync::{Arc, RwLock},
+    };
 
     /// A query for the Vehicles within a square: one ring of five positions.
     const WITHIN_A_SQUARE: &str =
@@ -364,5 +397,127 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A stored `@context` row a test replaces or deletes, as Delete @context
+    /// does with and without reload (clause 5.13.5.4).
+    #[derive(Debug)]
+    struct StoredRow {
+        /// The document the row holds, or `None` once it is deleted.
+        payload: RwLock<Option<JsonLiteral>>,
+    }
+
+    impl StoredRow {
+        /// A row holding `document`.
+        fn holding(document: &Value) -> Arc<StoredRow> {
+            Arc::new(StoredRow {
+                payload: RwLock::new(Some(stored_literal(document))),
+            })
+        }
+
+        /// Replace the document the row holds.
+        fn replace(&self, document: &Value) {
+            *self.payload.write().expect("the row lock") = Some(stored_literal(document));
+        }
+
+        /// Delete the row.
+        fn delete(&self) {
+            *self.payload.write().expect("the row lock") = None;
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ContextCache for StoredRow {
+        async fn get(&self, _url: &IriBuf) -> Result<Option<CachedContext>, ContextCacheError> {
+            Ok(self.payload.read().expect("the row lock").clone().map(|payload| CachedContext {
+                payload,
+                residual: ResidualLifetime::Unbounded,
+                canonical_url: None,
+                source: StoredDocumentSource::Broker,
+            }))
+        }
+
+        async fn put(&self, _url: &IriBuf, _document_url: &IriBuf, _payload: &JsonLiteral, _lifetime: CacheLifetime) -> Result<(), ContextCacheError> {
+            Ok(())
+        }
+    }
+
+    fn stored_literal(document: &Value) -> JsonLiteral {
+        JsonLiteral::admit(&document.to_string()).expect("an admissible document")
+    }
+
+    /// The `@context` the stored row is read under.
+    fn stored_url() -> IriBuf {
+        IriBuf::new("https://example.org/stored.jsonld".to_owned()).expect("a valid IRI")
+    }
+
+    /// A query service whose engine resolves [`stored_url`] from `row` alone.
+    fn service_reading(row: &Arc<StoredRow>) -> EntityQueryService {
+        service_expanding_through(
+            JsonLdEngine::builder()
+                .allow_remote(false)
+                .with_l2_cache(Arc::clone(row) as Arc<dyn ContextCache>)
+                .build()
+                .expect("engine builds"),
+        )
+    }
+
+    /// The same query, compiled through `service`'s cache under a `Link` to
+    /// [`stored_url`].
+    async fn compiled_under_the_stored_context(service: &EntityQueryService) -> Result<Arc<CompiledEntityQuery>, EntityError> {
+        service
+            .compile_query_cached(
+                &params("type=Vehicle&attrs=speed"),
+                &ContextSpec::from_link(stored_url()),
+                LanguageTargeting::Specification,
+            )
+            .await
+    }
+
+    fn attrs(compiled: &CompiledEntityQuery) -> Vec<&str> {
+        compiled.selection.attrs.iter().map(IriBuf::as_str).collect()
+    }
+
+    #[tokio::test]
+    async fn a_query_repeated_under_an_unchanged_context_reuses_its_compilation() {
+        let row = StoredRow::holding(&json!({ "@context": { "speed": "https://example.org/speed" } }));
+        let service = service_reading(&row);
+
+        let first = compiled_under_the_stored_context(&service).await.expect("the query compiles");
+        let second = compiled_under_the_stored_context(&service).await.expect("the query compiles");
+
+        assert!(Arc::ptr_eq(&first, &second), "the second query recompiled");
+    }
+
+    /// Clause 5.13.5.4 replaces a reloaded `@context` with the document
+    /// downloaded then, so the repeated query expands `speed` by that document.
+    #[tokio::test]
+    async fn a_query_repeated_after_its_context_is_reloaded_expands_by_the_new_document() {
+        let row = StoredRow::holding(&json!({ "@context": { "speed": "https://example.org/speed" } }));
+        let service = service_reading(&row);
+        let first = compiled_under_the_stored_context(&service).await.expect("the query compiles");
+
+        row.replace(&json!({ "@context": { "speed": "https://example.org/velocity" } }));
+        service.engine().invalidate_context(&stored_url()).await;
+        let second = compiled_under_the_stored_context(&service).await.expect("the query compiles");
+
+        pretty_assertions::assert_eq!(attrs(&first), vec!["https://example.org/speed"]);
+        pretty_assertions::assert_eq!(attrs(&second), vec!["https://example.org/velocity"]);
+    }
+
+    #[tokio::test]
+    async fn a_query_repeated_after_its_context_is_deleted_names_an_unresolvable_context() {
+        let row = StoredRow::holding(&json!({ "@context": { "speed": "https://example.org/speed" } }));
+        let service = service_reading(&row);
+        compiled_under_the_stored_context(&service).await.expect("the query compiles");
+
+        row.delete();
+        service.engine().invalidate_context(&stored_url()).await;
+        let error = compiled_under_the_stored_context(&service).await.expect_err("the context no longer resolves");
+
+        assert!(
+            matches!(&error, EntityError::JsonLd(failure) if failure.is_context_not_available()),
+            "{error:?}"
+        );
     }
 }

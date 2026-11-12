@@ -117,14 +117,33 @@ pub(crate) fn service_resolving(reference_limits: GeometryCensusLimits) -> Entit
     service_with(SpatialAcceleration::StoreVerified, reference_limits)
 }
 
+/// The [`service`] test double, expanding through `engine`.
+pub(crate) fn service_expanding_through(engine: JsonLdEngine) -> EntityQueryService {
+    service_over(
+        SpatialAcceleration::StoreVerified,
+        geometry_census_limits(&RequestLimitsConfig::default()),
+        engine,
+    )
+}
+
 /// The test double narrowing through `spatial` and resolving reference
 /// geometries within `reference_limits`.
 fn service_with(spatial: SpatialAcceleration, reference_limits: GeometryCensusLimits) -> EntityQueryService {
+    service_over(
+        spatial,
+        reference_limits,
+        JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
+    )
+}
+
+/// The test double narrowing through `spatial`, resolving reference
+/// geometries within `reference_limits` and expanding through `engine`.
+fn service_over(spatial: SpatialAcceleration, reference_limits: GeometryCensusLimits, engine: JsonLdEngine) -> EntityQueryService {
     let store = Arc::new(UnusedStore);
     EntityQueryService::builder()
         .reader(store.clone() as Arc<dyn EntityReader>)
         .query_store(store as Arc<dyn EntityQueryStore>)
-        .engine(JsonLdEngine::builder().allow_remote(false).build().expect("build engine"))
+        .engine(engine)
         .spatial(spatial)
         .tenant(TenantRef::UnnamedDefault)
         .remote_linked(None)

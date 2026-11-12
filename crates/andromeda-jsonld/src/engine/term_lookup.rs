@@ -6,11 +6,14 @@
 //! attribute, or as an `@type` value for an entity type, JSON-LD 1.1 API
 //! Expansion Algorithm steps 13.2 and 13.4.4.4), never by expanding a
 //! document. The cache here keeps each answer, which depends only on the term
-//! and the resolved `@context`, so both go into the key.
+//! and the processed context it was decided against, so both go into the key.
+//! The engine processes a context again once a document it was built from
+//! changes, and that processing takes a new identity, so an answer is never
+//! reused for the changed context.
 
 use crate::{
     context_spec::ContextSpec,
-    engine::{context_url::is_full_iri, expansion_context::ExpansionContext, processor::JsonLdEngine},
+    engine::{context_url::is_full_iri, expansion_context::ExpansionContext, expansion_context_id::ExpansionContextId, processor::JsonLdEngine},
     error::JsonLdError,
     loader::cache_lifetime::CacheLifetime,
 };
@@ -102,15 +105,15 @@ enum TermRole {
 
 /// A context prepared once for all term lookups in one operation.
 ///
-/// The resolved `@context` text identifies cache entries, and the context is
-/// processed only when a lookup misses the cache, once per operation, through
-/// the engine's own cache of processed contexts.
+/// The first lookup that needs the context resolves it, once per operation,
+/// through the engine's own cache of processed contexts, which reuses a
+/// processed context only while the documents it was built from are still the
+/// ones the loader resolves. Cache entries are keyed by the identity of that
+/// processed context.
 #[derive(Debug, Clone)]
 pub struct PreparedTermContext {
     /// The context the terms are expanded under.
     spec: ContextSpec,
-    /// Equality-safe identity for cache entries under this effective context.
-    identity: Arc<str>,
     /// The processed context, once a lookup needed it.
     expansion: OnceCell<Arc<ExpansionContext>>,
     /// Counts preparation work in unit tests without affecting release builds.
@@ -123,7 +126,6 @@ impl PreparedTermContext {
     fn from_spec(spec: &ContextSpec) -> PreparedTermContext {
         PreparedTermContext {
             spec: spec.clone(), // clone: the prepared context outlives the borrowed spec of the operation
-            identity: spec.context_key(),
             expansion: OnceCell::new(),
             #[cfg(test)]
             preparation_count: Arc::new(AtomicU64::new(1)),
@@ -150,51 +152,46 @@ impl PreparedTermContext {
 /// One expanded-term cache entry's key.
 ///
 /// The role keeps a type and an attribute of the same spelling apart, the term
-/// is the raw name before expansion, and the context uses its complete
-/// canonical serialized form. Equality therefore cannot collapse distinct
-/// contexts through a hash collision.
+/// is the raw name before expansion, and the context is the processed context
+/// the term was decided against.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct TermCacheKey {
     /// Whether an entity type or an attribute name is being expanded.
     role: TermRole,
     /// The raw term as written, before expansion: a lookup token, not yet an IRI.
     term: Box<str>,
-    /// The complete canonical resolved `@context` the term is expanded against.
-    context_identity: Arc<str>,
+    /// The processed context the term is expanded against.
+    context: ExpansionContextId,
 }
 
 /// A [`TermCacheKey`] borrowed from the lookup that probes for it.
 ///
 /// A hit allocates nothing: the owned key is built only when a miss records
 /// its expansion. The fields mirror [`TermCacheKey`] in the same order and
-/// derive the same hash, because a `Box<str>` and an `Arc<str>` hash exactly
-/// as the `str` they hold.
+/// derive the same hash, because a `Box<str>` hashes exactly as the `str` it
+/// holds.
 #[derive(Debug, Clone, Copy, Hash)]
 struct TermCacheKeyRef<'a> {
     /// Whether an entity type or an attribute name is being expanded.
     role: TermRole,
     /// The raw term as written, before expansion.
     term: &'a str,
-    /// The complete canonical resolved `@context` the term is expanded against.
-    context_identity: &'a str,
+    /// The processed context the term is expanded against.
+    context: ExpansionContextId,
 }
 
 impl<'a> TermCacheKeyRef<'a> {
-    /// The key one term takes under one prepared context.
-    fn new(role: TermRole, term: &'a str, context: &'a PreparedTermContext) -> TermCacheKeyRef<'a> {
-        TermCacheKeyRef {
-            role,
-            term,
-            context_identity: &context.identity,
-        }
+    /// The key one term takes under one processed context.
+    const fn new(role: TermRole, term: &'a str, context: ExpansionContextId) -> TermCacheKeyRef<'a> {
+        TermCacheKeyRef { role, term, context }
     }
 
     /// The owned key a miss records its expansion under.
-    fn to_owned_key(self, context: &PreparedTermContext) -> TermCacheKey {
+    fn to_owned_key(self) -> TermCacheKey {
         TermCacheKey {
             role: self.role,
             term: Box::from(self.term),
-            context_identity: Arc::clone(&context.identity),
+            context: self.context,
         }
     }
 }
@@ -203,7 +200,7 @@ impl<'a> TermCacheKeyRef<'a> {
 // relation across two types, which no derive expresses.
 impl Equivalent<TermCacheKey> for TermCacheKeyRef<'_> {
     fn equivalent(&self, key: &TermCacheKey) -> bool {
-        self.role == key.role && self.term == &*key.term && self.context_identity == &*key.context_identity
+        self.role == key.role && self.term == &*key.term && self.context == key.context
     }
 }
 
@@ -226,12 +223,12 @@ impl JsonLdEngine {
         if is_full_iri(type_term) {
             return iri_of(type_term);
         }
-        let key = TermCacheKeyRef::new(TermRole::Type, type_term, context);
+        let expansion = context.expansion(self).await?;
+        let key = TermCacheKeyRef::new(TermRole::Type, type_term, expansion.id());
         if let Some(cached) = self.term_cache().get(&key).await {
             return Ok(cached);
         }
 
-        let expansion = context.expansion(self).await?;
         // `Keep` never rejects, so the rejection is never reached.
         let term = expand_type_value(no_vocabulary_mut(), expansion.active(), type_term, Action::Keep).map_err(|_rejected| JsonLdError::TypeNotExpanded)?;
         let iri = match term.as_deref() {
@@ -241,7 +238,7 @@ impl JsonLdEngine {
         };
 
         tracing::trace!("Expanded type '{}' to '{}'", type_term, iri);
-        self.term_cache().insert(key.to_owned_key(context), iri.clone()).await; // clone: the cache keeps a copy, the caller gets one
+        self.term_cache().insert(key.to_owned_key(), iri.clone()).await; // clone: the cache keeps a copy, the caller gets one
         Ok(iri)
     }
 
@@ -257,12 +254,12 @@ impl JsonLdEngine {
         if is_full_iri(term) {
             return iri_of(term);
         }
-        let key = TermCacheKeyRef::new(TermRole::Attribute, term, context);
+        let expansion = context.expansion(self).await?;
+        let key = TermCacheKeyRef::new(TermRole::Attribute, term, expansion.id());
         if let Some(cached) = self.term_cache().get(&key).await {
             return Ok(cached);
         }
 
-        let expansion = context.expansion(self).await?;
         // A key that expands to anything but an IRI is dropped by expansion
         // (Expansion Algorithm step 13.3), so it names no attribute.
         let expanded = expand_property_key(no_vocabulary_mut(), expansion.active(), term, Action::Keep).map_err(|_rejected| JsonLdError::TermNotExpanded)?;
@@ -271,7 +268,7 @@ impl JsonLdEngine {
         };
         let iri = iri.clone(); // clone: the processor's memoized term stays shared
 
-        self.term_cache().insert(key.to_owned_key(context), iri.clone()).await; // clone: the cache keeps a copy, the caller gets one
+        self.term_cache().insert(key.to_owned_key(), iri.clone()).await; // clone: the cache keeps a copy, the caller gets one
         Ok(iri)
     }
 }
@@ -288,17 +285,24 @@ fn iri_of(candidate: &str) -> Result<IriBuf, JsonLdError> {
 #[cfg(test)]
 mod tests {
     use crate::{
+        context_cache::ContextCache,
         context_spec::ContextSpec,
         engine::{
+            expansion_context_id::ExpansionContextId,
             processor::{JsonLdEngine, document_expansions},
             term_lookup::{TermCacheKeyRef, TermRole},
         },
         error::JsonLdError,
+        loader::replaceable_row::ReplaceableRow,
         test_documents::literal,
     };
+    use iri_rs::IriBuf;
     use moka::Equivalent;
     use serde_json::json;
-    use std::hash::{BuildHasher, RandomState};
+    use std::{
+        hash::{BuildHasher, RandomState},
+        sync::Arc,
+    };
 
     #[tokio::test]
     async fn repeated_lookups_reuse_one_prepared_context() {
@@ -366,10 +370,8 @@ mod tests {
     /// so the two must hash alike and compare equal, or every probe misses.
     #[test]
     fn a_borrowed_key_hashes_and_compares_like_the_owned_key_it_stands_for() {
-        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
-        let context = engine.prepare_term_context(&ContextSpec::none());
-        let borrowed = TermCacheKeyRef::new(TermRole::Attribute, "speed", &context);
-        let owned = borrowed.to_owned_key(&context);
+        let borrowed = TermCacheKeyRef::new(TermRole::Attribute, "speed", ExpansionContextId::fresh());
+        let owned = borrowed.to_owned_key();
         let state = RandomState::new();
 
         pretty_assertions::assert_eq!(state.hash_one(borrowed), state.hash_one(&owned));
@@ -377,15 +379,65 @@ mod tests {
     }
 
     /// Equality, not the hash, decides a hit: a borrowed key under another
-    /// context or for the other role is never equivalent.
+    /// processed context or for the other role is never equivalent.
     #[test]
     fn a_borrowed_key_under_another_context_or_role_is_not_equivalent() {
-        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
-        let first = engine.prepare_term_context(&ContextSpec::from_body(literal(&json!({ "custom": "https://example.com/first/custom" }))));
-        let second = engine.prepare_term_context(&ContextSpec::from_body(literal(&json!({ "custom": "https://example.com/second/custom" }))));
-        let owned = TermCacheKeyRef::new(TermRole::Attribute, "custom", &first).to_owned_key(&first);
+        let first = ExpansionContextId::fresh();
+        let owned = TermCacheKeyRef::new(TermRole::Attribute, "custom", first).to_owned_key();
 
-        assert!(!TermCacheKeyRef::new(TermRole::Attribute, "custom", &second).equivalent(&owned));
-        assert!(!TermCacheKeyRef::new(TermRole::Type, "custom", &first).equivalent(&owned));
+        assert!(!TermCacheKeyRef::new(TermRole::Attribute, "custom", ExpansionContextId::fresh()).equivalent(&owned));
+        assert!(!TermCacheKeyRef::new(TermRole::Type, "custom", first).equivalent(&owned));
+    }
+
+    /// Where the reloaded context is read from.
+    fn reloaded_url() -> IriBuf {
+        IriBuf::new("https://example.org/reloaded.jsonld".to_owned()).expect("a valid IRI")
+    }
+
+    /// An engine resolving [`reloaded_url`] from `row`.
+    fn engine_over(row: &Arc<ReplaceableRow>) -> JsonLdEngine {
+        JsonLdEngine::builder()
+            .allow_remote(false)
+            .with_l2_cache(Arc::clone(row) as Arc<dyn ContextCache>)
+            .build()
+            .expect("engine builds")
+    }
+
+    /// Expand `term` in a new operation naming [`reloaded_url`].
+    async fn expanded_in_a_new_operation(engine: &JsonLdEngine, term: &str) -> IriBuf {
+        let context = engine.prepare_term_context(&ContextSpec::from_link(reloaded_url()));
+        engine.expand_term(term, &context).await.expect("the term expands")
+    }
+
+    /// Clause 5.13.5.4 replaces a reloaded `@context` with the document
+    /// downloaded then, so a term looked up again is decided by that document.
+    #[tokio::test]
+    async fn a_term_looked_up_after_its_context_is_reloaded_expands_by_the_new_document() {
+        let row = Arc::new(ReplaceableRow::new(&json!({ "@context": { "speed": "https://example.org/speed" } })));
+        let engine = engine_over(&row);
+        pretty_assertions::assert_eq!(expanded_in_a_new_operation(&engine, "speed").await.as_str(), "https://example.org/speed");
+
+        row.replace(&json!({ "@context": { "speed": "https://example.org/velocity" } }));
+        engine.invalidate_context(&reloaded_url()).await;
+
+        pretty_assertions::assert_eq!(expanded_in_a_new_operation(&engine, "speed").await.as_str(), "https://example.org/velocity");
+    }
+
+    #[tokio::test]
+    async fn a_context_keeps_its_identity_while_its_documents_are_unchanged_and_takes_a_new_one_once_reloaded() {
+        let row = Arc::new(ReplaceableRow::new(&json!({ "@context": { "speed": "https://example.org/speed" } })));
+        let engine = engine_over(&row);
+        let identity = async || {
+            let context = engine.prepare_term_context(&ContextSpec::from_link(reloaded_url()));
+            context.expansion(&engine).await.expect("the context processes").id()
+        };
+        let first = identity().await;
+
+        pretty_assertions::assert_eq!(identity().await, first);
+
+        row.replace(&json!({ "@context": { "speed": "https://example.org/velocity" } }));
+        engine.invalidate_context(&reloaded_url()).await;
+
+        assert_ne!(identity().await, first);
     }
 }

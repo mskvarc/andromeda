@@ -16,6 +16,7 @@ pub(crate) mod context_syntax;
 pub mod context_url;
 pub mod expanded_text;
 pub mod expansion_context;
+pub mod expansion_context_id;
 pub(crate) mod member_order;
 pub mod options;
 pub mod prefixed_name;
