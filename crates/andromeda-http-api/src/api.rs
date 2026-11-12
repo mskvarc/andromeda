@@ -174,7 +174,7 @@ mod tests {
     };
     use andromeda_http_tenancy::routes::{TenancyRoutes, TenantManagement};
     use andromeda_ngsi_ld_lexicon::{
-        context_source_pseudonym::ContextSourcePseudonym,
+        context_source_alias::ContextSourceAlias,
         identifier::Identifier,
         tenant::TenantName,
         tenant_database_name::TenantDatabaseName,
@@ -320,7 +320,7 @@ mod tests {
             .snapshot(SnapshotRoutes::new(Arc::new(RejectSnapshot)))
             .source_identity(SourceIdentityRoutes::new(SourceIdentityState::new(
                 "urn:ngsi-ld:ContextSourceIdentity:test".parse::<Identifier>()?,
-                ContextSourceAliases::new("test".parse::<ContextSourcePseudonym>()?),
+                ContextSourceAliases::new(ContextSourceAlias::new("test")?),
                 Utc::now(),
                 None,
                 EnabledExtensions::none(),

@@ -17,7 +17,7 @@ use crate::{
 use andromeda_configuration::schema::federation::FederationConfig;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{batch_contexts::BatchContext, context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
+use andromeda_ngsi_ld_lexicon::context_source_alias::ContextSourceAlias;
 use andromeda_registration::registration_census::RegistrationCensus;
 use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
 use pretty_assertions::assert_eq;
@@ -49,7 +49,7 @@ fn service(store: &Arc<FixedRegistrationStore>, census: RegistrationCensus) -> F
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
         LocalSource::new(
-            ContextSourceAliases::new(ContextSourcePseudonym::new("andromeda-test").expect("a valid alias")),
+            ContextSourceAliases::new(ContextSourceAlias::new("andromeda-test").expect("a valid alias")),
             TenantRef::UnnamedDefault,
         ),
         &FederationConfig::default(),

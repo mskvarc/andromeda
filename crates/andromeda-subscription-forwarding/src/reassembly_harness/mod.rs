@@ -45,7 +45,7 @@ use andromeda_entity::{
 use andromeda_federation::{FederationService, local_source::LocalSource};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{context_source_alias::ContextSourceAlias, identifier::Identifier};
 use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription::Subscription};
 use andromeda_ngsi_ld_query::{
     filter::language_targeting::LanguageTargeting,
@@ -206,7 +206,7 @@ impl ReassemblyScene {
             Arc::new(NoLocalTypes),
             offline_engine(),
             LocalSource::new(
-                ContextSourceAliases::new(ContextSourcePseudonym::new("andromeda-test").expect("a valid alias")),
+                ContextSourceAliases::new(ContextSourceAlias::new("andromeda-test").expect("a valid alias")),
                 TenantRef::UnnamedDefault,
             ),
             &FederationConfig::default(),

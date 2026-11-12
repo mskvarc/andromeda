@@ -48,7 +48,7 @@ mod tests {
     use andromeda_http_context_registry::tenant_context_hosting::TenantContextHosting;
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_cache::DownloadedContext, engine::processor::JsonLdEngine};
-    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
+    use andromeda_ngsi_ld_lexicon::{context_source_alias::ContextSourceAlias, identifier::Identifier, ngsi_ld_urn::JsonLdContextId};
     use andromeda_ngsi_ld_query::page_reach::PageReach;
     use andromeda_tenancy::{
         context_source_alias::ContextSourceAliases,
@@ -185,7 +185,7 @@ mod tests {
     fn routes(store: Arc<RecordingStore>) -> Result<SourceIdentityRoutes, Box<dyn Error + Send + Sync>> {
         let state = SourceIdentityState::new(
             "urn:ngsi-ld:ContextSourceIdentity:test".parse::<Identifier>()?,
-            ContextSourceAliases::new("test".parse::<ContextSourcePseudonym>()?),
+            ContextSourceAliases::new(ContextSourceAlias::new("test")?),
             Utc::now(),
             None,
             EnabledExtensions::none(),

@@ -1594,7 +1594,10 @@ max_retry_interval = "1day"
 
 # The `id` the broker reports at `/ngsi-ld/v1/info/sourceIdentity`. Must be an
 # IRI. Left out, it is `urn:ngsi-ld:ContextSourceIdentity:` followed by the
-# alias in effect, as `federation.identity.source_alias` describes.
+# alias in effect, as `federation.identity.source_alias` describes, with every
+# character of the alias other than letters, digits and `-._!$'*+` percent-
+# encoded, so the alias `broker~a` gives `urn:ngsi-
+# ld:ContextSourceIdentity:broker%7Ea`.
 # source_id = "urn:ngsi-ld:ContextSourceIdentity:broker-a"
 
 # The name the broker adds to the `Via` header of every request it forwards. A

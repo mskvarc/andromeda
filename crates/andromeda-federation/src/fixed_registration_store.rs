@@ -7,7 +7,7 @@ use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
-    context_source_pseudonym::ContextSourcePseudonym,
+    context_source_alias::ContextSourceAlias,
     entity_type_name::EntityTypeName,
     identifier::Identifier,
 };
@@ -55,7 +55,7 @@ pub(crate) fn offline_service(registrations: Vec<ContextSourceRegistration>) -> 
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("engine builds"),
         LocalSource::new(
-            ContextSourceAliases::new(ContextSourcePseudonym::new("andromeda-test").expect("a valid alias")),
+            ContextSourceAliases::new(ContextSourceAlias::new("andromeda-test").expect("a valid alias")),
             TenantRef::UnnamedDefault,
         ),
         &FederationConfig::default(),
@@ -75,7 +75,7 @@ pub(crate) fn service_holding_entity_of(registrations: Vec<ContextSourceRegistra
         Arc::new(LocalEntityOf(local_types)),
         JsonLdEngine::builder().allow_remote(false).build().expect("engine builds"),
         LocalSource::new(
-            ContextSourceAliases::new(ContextSourcePseudonym::new("andromeda-test").expect("a valid alias")),
+            ContextSourceAliases::new(ContextSourceAlias::new("andromeda-test").expect("a valid alias")),
             TenantRef::UnnamedDefault,
         ),
         &FederationConfig::default(),
