@@ -9,6 +9,7 @@ use crate::{
         TenantFactoryConfig,
         assembly_invariant::AssemblyInvariant,
         error::TenantAssemblyError,
+        snapshot_services::compose_snapshot_services,
         storage::TenantStorage,
         subscription_services::{DistributedSubscriptionEdge, compose_subscription_services},
         tasks::TenantSignals,
@@ -16,7 +17,6 @@ use crate::{
     },
     tenant_state::AndromedaState,
 };
-use andromeda_configuration::human_byte_size::HumanByteSize;
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_registry::{service::ContextRegistryService, store::ContextRegistryStore};
 use andromeda_delivery::dispatch::TransportDispatcher;
@@ -36,18 +36,19 @@ use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_federation::{FederationService, local_source::LocalSource};
 use andromeda_http_context_registry::tenant_context_hosting::TenantContextHosting;
 use andromeda_linked_retrieval::admission::TemporalJoin;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
 use andromeda_posted_query::{retention::PostedQueryRetention, service::PostedQueryService};
 use andromeda_postgresql_context_store::jsonld_context::repo::JsonLdContextRepository;
 use andromeda_registration::{RegistrationService, entity_probe::RegisteredEntityProbe, removal_hook::RegistrationRemovalHook};
 use andromeda_retry::tokio_retry_delay::TokioRetryDelay;
 use andromeda_snapshot::{
-    executor::{SnapshotPreparation, SnapshotPreparationConfig, capture_sources::SnapshotCaptureSources},
-    service::{SnapshotService, SnapshotServiceConfig},
+    executor::{SnapshotPreparation, capture_sources::SnapshotCaptureSources},
     status_delivery_signal::StatusDeliverySignal,
 };
 use andromeda_subscription::filter_admission::SubscriptionFilterAdmission;
 use andromeda_subscription_forwarding::{mapping::ForwardedSubscriptionRouter, service::SubscriptionForwardingService};
+use andromeda_task_runtime::keyed_slots::KeyedSlots;
 use andromeda_temporal::{
     instance_limits::TemporalInstanceLimits,
     port::{mutator::TemporalMutator, service_ports::TemporalServicePorts},
@@ -56,7 +57,7 @@ use andromeda_temporal::{
     service_limits::TemporalServiceLimits,
 };
 use andromeda_tenancy::context_source_alias::ContextSourceAliases;
-use std::{num::NonZeroUsize, sync::Arc};
+use std::sync::Arc;
 
 /// Request-facing state and the scheduled snapshot preparation operation composed with it.
 pub(super) struct ConstructedServices {
@@ -69,8 +70,9 @@ pub(super) struct ConstructedServices {
 
 /// Broker-level collaborators handed down to every tenant's services: the atomic
 /// commit implementation each write path reaches, the router outgoing forwarded
-/// subscriptions traverse, and the wake signal that keeps create-time and
-/// updated Snapshot notifications prompt.
+/// subscriptions traverse, the wake signal that keeps create-time and updated
+/// Snapshot notifications prompt, and the slots a created Snapshot's
+/// preparation starts on.
 pub(super) struct TenantServiceCollaborators<'a> {
     /// The complete atomic commit implementation every write path reaches.
     pub(super) writes: &'a Arc<dyn ContextCommitter>,
@@ -79,6 +81,9 @@ pub(super) struct TenantServiceCollaborators<'a> {
     /// Wakes the Snapshot status-delivery drain after a create-time preparation
     /// or a metadata update enqueues notifications outside the scheduled sweep.
     pub(super) snapshot_delivery_signal: Arc<dyn StatusDeliverySignal>,
+    /// The tenant's slots a created or cloned Snapshot's preparation runs on,
+    /// stopped with the tenant's tasks.
+    pub(super) snapshot_preparation_slots: KeyedSlots<Arc<Identifier>>,
 }
 
 /// Construct all request-facing services for one tenant.
@@ -94,6 +99,7 @@ pub(super) fn construct_services(
         writes,
         subscription_router,
         snapshot_delivery_signal,
+        snapshot_preparation_slots,
     } = collaborators;
     let notifier = compose_change_notifier(config, storage, signals);
     let entities = compose_entity_service(config, storage, &notifier, writes);
@@ -121,7 +127,19 @@ pub(super) fn construct_services(
     let context_store = Arc::new(JsonLdContextRepository::new(&storage.pool)) as Arc<dyn ContextRegistryStore>;
     let contexts = Arc::new(ContextRegistryService::new(context_store, storage.engine.clone()));
     let context_hosting = TenantContextHosting::new(contexts);
-    let (snapshot_preparation, snapshots) = compose_snapshot_services(config, storage, writes, &entity_query, &temporal, &forwarding, snapshot_delivery_signal);
+    let (snapshot_preparation, snapshots) = compose_snapshot_services(
+        config,
+        storage,
+        writes,
+        SnapshotCaptureSources {
+            live_target: storage.live_target.clone(),
+            entity_query: Arc::clone(&entity_query),
+            temporal: Arc::clone(&temporal),
+            forwarding: Arc::clone(&forwarding),
+        },
+        snapshot_preparation_slots,
+        snapshot_delivery_signal,
+    );
     let edge = DistributedSubscriptionEdge::resolve(config.public_url.as_ref(), subscription_router, &forwarding, &storage.tenant);
     let subscriptions = compose_subscription_services(
         storage,
@@ -311,50 +329,6 @@ fn compose_entity_query_service(config: &TenantFactoryConfig, storage: &TenantSt
             .filter_complexity(filter_complexity_limits(&config.request_limits))
             .build(),
     )
-}
-
-/// Compose the snapshot preparation operation and the service scheduling it.
-fn compose_snapshot_services(
-    config: &TenantFactoryConfig,
-    storage: &TenantStorage,
-    writes: &Arc<dyn ContextCommitter>,
-    entity_query: &Arc<EntityQueryService>,
-    temporal: &Arc<TemporalService>,
-    forwarding: &Arc<FederationService>,
-    delivery_signal: Arc<dyn StatusDeliverySignal>,
-) -> (Arc<SnapshotPreparation>, Arc<SnapshotService>) {
-    let snapshot = &config.snapshot;
-    let preparation = Arc::new(SnapshotPreparation::new(
-        SnapshotCaptureSources {
-            live_target: storage.live_target.clone(),
-            entity_query: Arc::clone(entity_query),
-            temporal: Arc::clone(temporal),
-            forwarding: Arc::clone(forwarding),
-        },
-        Arc::clone(&storage.snapshot_store),
-        Arc::clone(writes),
-        SnapshotPreparationConfig {
-            capture_page_size: snapshot.preparation.page_size.get(),
-            max_per_pass: snapshot.preparation.max_concurrent.get(),
-            lease_duration: snapshot.preparation.lease_timeout.duration(),
-            tenant_count_quota: snapshot.quota.max_per_tenant.limit().map(NonZeroUsize::get),
-            tenant_byte_quota: snapshot.quota.max_storage_per_tenant.limit().map(HumanByteSize::as_u64),
-            attribute_nesting: payload_budget(&config.request_limits).attribute_nesting,
-        },
-    ));
-    let service = Arc::new(SnapshotService::new(
-        Arc::clone(&storage.snapshot_store),
-        Some(Arc::clone(&preparation)),
-        Some(delivery_signal),
-        SnapshotServiceConfig {
-            default_lifetime: snapshot.default_lifetime.duration(),
-            maximum_lifetime: snapshot.max_lifetime.duration(),
-            scoped_operation_wait: snapshot.preparation.scoped_operation_timeout.duration(),
-            tenant_count_quota: snapshot.quota.max_per_tenant.limit().map(NonZeroUsize::get),
-            tenant_byte_quota: snapshot.quota.max_storage_per_tenant.limit().map(HumanByteSize::as_u64),
-        },
-    ));
-    (preparation, service)
 }
 
 /// Compose registration policy with the admission probe clauses 5.9.2.4 and

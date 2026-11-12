@@ -15,7 +15,14 @@ use crate::{
         services::{TenantServiceCollaborators, construct_services},
         spatial::indexed_commits,
         storage::initialize_storage,
-        tasks::{PeriodicPacing, TenantSignals, TenantTaskChannels, snapshot_delivery_signal, supervise_tasks},
+        tasks::{
+            PeriodicPacing,
+            TenantSignals,
+            TenantTaskChannels,
+            snapshot_delivery_signal,
+            snapshot_preparation_start::register_snapshot_preparation_slots,
+            supervise_tasks,
+        },
         temporal_history::compose_temporal_history,
         transport::construct_dispatcher,
     },
@@ -69,6 +76,7 @@ mod periodic_due;
 /// Runtime ownership and ordered shutdown.
 pub(crate) mod runtime;
 mod services;
+mod snapshot_services;
 mod snapshot_subscriptions;
 mod spatial;
 mod storage;
@@ -292,6 +300,7 @@ async fn build_tenant_state(
     // the drain's idle fallback.
     let (snapshot_status_wake, snapshot_status_receiver) = wake_channel();
     let snapshot_delivery_signal = snapshot_delivery_signal(snapshot_status_wake.clone());
+    let snapshot_preparation_slots = register_snapshot_preparation_slots(&task_supervisor, config.snapshot.preparation.max_concurrent)?;
     let consequence_publisher: Arc<dyn CommitConsequencePublisher> =
         Arc::new(RuntimeCommitConsequencePublisher::new(committed_notification_wake, side_effect_wake));
     let writes: Arc<dyn ContextCommitter> = Arc::new(PostgresAtomicCommitter::new(
@@ -314,6 +323,7 @@ async fn build_tenant_state(
             writes: &writes,
             subscription_router,
             snapshot_delivery_signal,
+            snapshot_preparation_slots,
         },
     )?;
     let channels = TenantTaskChannels {

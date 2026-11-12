@@ -8,9 +8,10 @@
 /// preparing Snapshot, but a create-time preparation and a metadata update both
 /// enqueue status rows outside that sweep. Without a signal their notifications
 /// would wait for the delivery drain's fallback, which backs off toward its
-/// ceiling while idle, so the service raises this signal after each such change.
-/// A spurious signal is harmless: the drain claims no rows and returns to its
-/// fallback.
+/// ceiling while idle, so the service raises this signal after a metadata
+/// update, and the create-time preparation start after a pass that prepared
+/// a Snapshot. A spurious signal is harmless: the drain claims no rows and
+/// returns to its fallback.
 pub trait StatusDeliverySignal: Send + Sync {
     /// Request one prompt status-delivery pass.
     fn signal(&self);

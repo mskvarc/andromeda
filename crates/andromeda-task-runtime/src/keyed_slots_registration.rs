@@ -21,7 +21,7 @@ impl TaskSupervisor {
     ///
     /// Returns [`TaskRegistrationError`] when the task name is already reserved
     /// by this supervisor.
-    pub fn register_keyed_slots<K: Eq + Hash + Copy + Send + Sync + 'static>(
+    pub fn register_keyed_slots<K: Eq + Hash + Clone + Send + Sync + 'static>(
         &self,
         registration: TaskRegistration,
         width: NonZeroUsize,

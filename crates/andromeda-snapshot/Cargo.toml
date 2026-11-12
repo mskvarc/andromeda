@@ -38,7 +38,7 @@ futures = "0.3.34"
 indexmap = "2.14.2"
 serde_json = "1.0.154"
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["rt", "time"] }
+tokio = { version = "1.54.1", features = ["macros", "time"] }
 tracing = "0.1.44"
 url = "2.5.8"
 

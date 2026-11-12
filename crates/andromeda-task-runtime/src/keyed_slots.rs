@@ -56,7 +56,7 @@ struct SlotsInner<K: Eq + Hash> {
     cancellation: CancellationToken,
 }
 
-impl<K: Eq + Hash + Copy + Send + Sync + 'static> KeyedSlots<K> {
+impl<K: Eq + Hash + Clone + Send + Sync + 'static> KeyedSlots<K> {
     /// `width` slots, whose work stops when `cancellation` is cancelled.
     #[must_use]
     pub fn new(width: NonZeroUsize, cancellation: CancellationToken) -> KeyedSlots<K> {
@@ -83,15 +83,14 @@ impl<K: Eq + Hash + Copy + Send + Sync + 'static> KeyedSlots<K> {
         W: Future<Output = ()> + Send + 'static,
         F: FnOnce() + Send + 'static,
     {
-        match self.inner.in_flight.entry(key) {
+        let key = match self.inner.in_flight.entry(key) {
             Entry::Occupied(mut running) => {
                 *running.get_mut() = Contention::Refused;
                 return Admission::Busy;
             }
-            Entry::Vacant(free) => {
-                free.insert(Contention::Uncontended);
-            }
-        }
+            // clone: the map and the work's task each hold the key.
+            Entry::Vacant(free) => free.insert(Contention::Uncontended).key().clone(),
+        };
         let inner = Arc::clone(&self.inner);
         self.inner.tasks.spawn(async move {
             let release = Release {

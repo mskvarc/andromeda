@@ -10,22 +10,13 @@
 //! grid point stays owed, and the sweep is woken once the evaluation ends so
 //! the next pass picks it up.
 
-use crate::tenant_factory::{assembly_invariant::AssemblyInvariant, error::TenantAssemblyError};
+use crate::tenant_factory::{error::TenantAssemblyError, tasks::tenant_slots::register_tenant_slots};
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_notification::{csource_interval::CsourceIntervalNotificationOperation, error::NotificationError, interval::IntervalNotificationOperation};
-use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_subscription::stored_subscription::StoredSubscription;
-use andromeda_task_runtime::{
-    criticality::TaskCriticality,
-    keyed_slots::KeyedSlots,
-    registration::TaskRegistration,
-    restart_policy::RestartPolicy,
-    shutdown_policy::ShutdownPolicy,
-    supervisor::TaskSupervisor,
-    task_name::TaskName,
-};
+use andromeda_task_runtime::{keyed_slots::KeyedSlots, supervisor::TaskSupervisor};
 use chrono::{DateTime, Utc};
-use std::{num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{num::NonZeroUsize, sync::Arc};
 
 /// How many periodic evaluations of one tenant run at once, entity and
 /// context source Subscriptions together.
@@ -134,17 +125,7 @@ where
 /// Returns [`TenantAssemblyError`] when the task name is rejected or the
 /// supervisor refuses the registration.
 pub(super) fn register_periodic_evaluations(supervisor: &TaskSupervisor) -> Result<KeyedSlots<SubscriptionKey>, TenantAssemblyError> {
-    let grace = Duration::from_secs(1);
-    let name = TaskName::try_from("notification-periodic-evaluations").map_err(AssemblyInvariant::from)?;
-    let registration = TaskRegistration::new(
-        name,
-        TaskCriticality::Observed,
-        RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(grace)),
-        ShutdownPolicy::new(grace),
-    );
-    supervisor
-        .register_keyed_slots(registration, PERIODIC_EVALUATION_WIDTH)
-        .map_err(|error| TenantAssemblyError::from(AssemblyInvariant::from(error)))
+    register_tenant_slots(supervisor, "notification-periodic-evaluations", PERIODIC_EVALUATION_WIDTH)
 }
 
 #[cfg(test)]
