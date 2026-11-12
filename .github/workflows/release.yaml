@@ -236,10 +236,29 @@ jobs:
           cp docs/configuration/andromeda.schema.json "dist/andromeda-${{ github.ref_name }}.schema.json"
           cp docs/configuration/andromeda.descriptor.json "dist/andromeda-${{ github.ref_name }}.descriptor.json"
 
+      # Every release, a pre-release too, lists the changes since the previous stable release. git-cliff's --current
+      # stops at the newest tag of any kind, so the range names the stable tag. Via env: never parsed as shell.
+      - name: Resolve the release notes range
+        id: notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          range=""
+          if previous="$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' "${TAG}^" 2>/dev/null)"; then
+            range="${previous}..${TAG}"
+          fi
+          echo "range=${range}" >> "$GITHUB_OUTPUT"
+
+      # GIT_CLIFF_TAG names the release and is the one cliff.toml lists internal changes for. The template's
+      # commit_groups filter needs git-cliff 2.14.
       - name: Generate release notes
         uses: orhun/git-cliff-action@v4
+        env:
+          GIT_CLIFF_TAG: ${{ github.ref_name }}
         with:
-          args: --current --strip all -o RELEASE_NOTES.md
+          version: v2.14.2
+          args: ${{ steps.notes.outputs.range }} --strip all -o RELEASE_NOTES.md
 
       - name: Compose release body
         env:
