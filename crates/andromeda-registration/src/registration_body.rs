@@ -6,7 +6,8 @@
 //! use to delete the member) or absent. A JSON `null` is no value of any member
 //! (clause 5.2.1) and is refused as the body is read. The body decodes straight from the request text
 //! into the types that own each member's restriction (`NonEmptyText`,
-//! `TimeInterval`, `RegistrationManagementInfo`, `DatasetSelector`), so a value
+//! `TimeInterval`, `RegistrationManagementInfo`, `DatasetSelector`,
+//! `ContextSourceAlias`), so a value
 //! outside Table 5.2.9-1 fails the decoding, naming the member, as
 //! `BadRequestData`. What the body carries beyond Table 5.2.9-1 is the
 //! registration's Context Source Properties, held as data (clause 4.9); one
@@ -25,6 +26,7 @@ use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
+    context_source_alias::ContextSourceAlias,
     context_source_pseudonym::ContextSourcePseudonym,
     dereferenceable_uri::DereferenceableUri,
     duration::Iso8601Duration,
@@ -92,8 +94,10 @@ pub struct RegistrationBody {
     pub(crate) management: Clearable<RegistrationManagementInfo>,
     /// `contextSourceInfo`.
     pub(crate) context_source_info: Clearable<Vec<KeyValuePair>>,
-    /// `contextSourceAlias`.
-    pub(crate) context_source_alias: Clearable<ContextSourcePseudonym>,
+    /// `contextSourceAlias`, an HTTP token (Table 5.2.9-1). The registration
+    /// stores it as a `Via` pseudonym, the grammar a stored alias is read back
+    /// with.
+    pub(crate) context_source_alias: Clearable<ContextSourceAlias>,
     /// The Context Source Properties (clause 4.9): every member beyond the ones
     /// Table 5.2.9-1 defines, in the order the body wrote them.
     pub(crate) additional_properties: IndexMap<AttributeName, JsonLiteral>,
@@ -212,7 +216,7 @@ impl RegistrationBody {
             refresh_rate: present(refresh_rate, CsrMember::RefreshRate)?,
             management: present(management, CsrMember::Management)?,
             context_source_info: present(context_source_info, CsrMember::ContextSourceInfo)?,
-            context_source_alias: present(context_source_alias, CsrMember::ContextSourceAlias)?,
+            context_source_alias: present(context_source_alias.map(ContextSourcePseudonym::from), CsrMember::ContextSourceAlias)?,
             additional_properties,
         })
     }
@@ -276,7 +280,7 @@ impl RegistrationBody {
             refresh_rate,
             management,
             context_source_info,
-            context_source_alias,
+            context_source_alias: context_source_alias.map(ContextSourcePseudonym::from),
             additional_properties,
         })
     }
@@ -285,7 +289,7 @@ impl RegistrationBody {
 #[cfg(test)]
 mod tests {
     use crate::{registration_body::RegistrationBody, store::create_params::CreateCsrParams};
-    use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::rendering::instant_text};
+    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, time::rendering::instant_text};
     use andromeda_ngsi_ld_model::{clearable::Clearable, registration::operation::CsrOperation, request_body::RequestBody};
     use andromeda_ngsi_ld_representation::{
         compact_node::context_reading::ContextReading,
@@ -594,6 +598,30 @@ mod tests {
                 .map_err(|error| error.to_string())
                 .and_then(|body| body.into_update_fragment().map_err(|error| error.to_string()));
             assert!(refused.is_err(), "{member} must be rejected");
+        }
+    }
+
+    /// Table 5.2.9-1 makes `contextSourceAlias` an IETF RFC 7230 pseudonym,
+    /// which is a token, so a host and port, a path, a user part or a quoted
+    /// string is refused on create and on update.
+    #[test]
+    fn a_context_source_alias_outside_the_token_characters_is_refused_on_create_and_update() {
+        for alias in ["example.com:8080", "broker/a", "broker@a", "\"broker\""] {
+            assert!(create_of(&with("contextSourceAlias", json!(alias))).is_err(), "{alias} on create");
+            assert!(body_of(&json!({"contextSourceAlias": alias})).is_err(), "{alias} on update");
+        }
+    }
+
+    #[test]
+    fn a_context_source_alias_of_token_characters_is_created_and_updated_as_written() {
+        for alias in ["broker-a", "broker.example.org", "a_b~c!#$%&'*+^`|", "broker-a~fleet"] {
+            let created = create_of(&with("contextSourceAlias", json!(alias))).expect("a token alias");
+            pretty_assertions::assert_eq!(created.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str), Some(alias));
+            let fragment = body_of(&json!({"contextSourceAlias": alias}))
+                .expect("a body")
+                .into_update_fragment()
+                .expect("a token alias");
+            pretty_assertions::assert_eq!(fragment.context_source_alias.as_set().map(ContextSourcePseudonym::as_str), Some(alias));
         }
     }
 

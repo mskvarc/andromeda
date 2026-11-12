@@ -65,7 +65,7 @@ mod tests {
     }
 
     /// `alias` as a hop of a `Via` chain or the alias of a registration.
-    fn pseudonym(alias: &ContextSourceAlias) -> ContextSourcePseudonym {
+    fn pseudonym(alias: ContextSourceAlias) -> ContextSourcePseudonym {
         ContextSourcePseudonym::from(alias)
     }
 
@@ -123,11 +123,11 @@ mod tests {
     #[test]
     fn the_alias_of_every_tenant_names_this_source_and_another_broker_s_does_not() {
         let aliases = aliases();
-        assert!(aliases.names_this_source(&pseudonym(&aliases.for_tenant(&TenantRef::UnnamedDefault))));
-        assert!(aliases.names_this_source(&pseudonym(&aliases.for_tenant(&named("alpha")))));
+        assert!(aliases.names_this_source(&pseudonym(aliases.for_tenant(&TenantRef::UnnamedDefault))));
+        assert!(aliases.names_this_source(&pseudonym(aliases.for_tenant(&named("alpha")))));
         let other = ContextSourceAliases::new(ContextSourceAlias::new("broker-b").expect("a valid alias"));
-        assert!(!aliases.names_this_source(&pseudonym(&other.for_tenant(&TenantRef::UnnamedDefault))));
-        assert!(!aliases.names_this_source(&pseudonym(&other.for_tenant(&named("alpha")))));
+        assert!(!aliases.names_this_source(&pseudonym(other.for_tenant(&TenantRef::UnnamedDefault))));
+        assert!(!aliases.names_this_source(&pseudonym(other.for_tenant(&named("alpha")))));
     }
 
     /// A hop another broker names by host and port is read, and never names

@@ -159,7 +159,7 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
 mod tests {
     use crate::{resolved_update::apply_fragment, store::update_fragment::CsrUpdateFragment};
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym};
     use andromeda_ngsi_ld_model::{clearable::Clearable, registration::ContextSourceRegistration};
     use serde_json::json;
 
@@ -218,6 +218,40 @@ mod tests {
 
         let merged: Vec<&str> = resolved.additional_properties.keys().map(AttributeName::as_str).collect();
         pretty_assertions::assert_eq!(merged, vec!["beta"]);
+    }
+
+    /// A registration stored with an alias outside the token characters keeps
+    /// it through an update that leaves the alias alone, and a token the
+    /// fragment writes replaces it.
+    #[test]
+    fn a_stored_alias_outside_the_token_characters_is_kept_until_the_fragment_replaces_it() {
+        let aliased = || {
+            let mut registration = stored();
+            registration.access.context_source_alias = Some(ContextSourcePseudonym::new("example.com:8080").expect("a stored pseudonym"));
+            registration
+        };
+        let untouched = CsrUpdateFragment {
+            additional_properties: [property("alpha", "5")].into_iter().collect(),
+            ..CsrUpdateFragment::default()
+        };
+        pretty_assertions::assert_eq!(
+            apply_fragment(aliased(), &untouched)
+                .context_source_alias
+                .as_ref()
+                .map(ContextSourcePseudonym::as_str),
+            Some("example.com:8080")
+        );
+        let replacing = CsrUpdateFragment {
+            context_source_alias: Clearable::Set(ContextSourcePseudonym::new("broker-a").expect("a pseudonym")),
+            ..CsrUpdateFragment::default()
+        };
+        pretty_assertions::assert_eq!(
+            apply_fragment(aliased(), &replacing)
+                .context_source_alias
+                .as_ref()
+                .map(ContextSourcePseudonym::as_str),
+            Some("broker-a")
+        );
     }
 
     /// Clause 5.5.8: an omitted geometry keeps the stored one, the NGSI-LD Null

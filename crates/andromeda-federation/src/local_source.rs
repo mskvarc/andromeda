@@ -28,7 +28,7 @@ impl LocalSource {
     /// This broker answering to `aliases`, serving `tenant`.
     #[must_use]
     pub fn new(aliases: ContextSourceAliases, tenant: TenantRef) -> LocalSource {
-        let alias = ContextSourcePseudonym::from(&aliases.for_tenant(&tenant));
+        let alias = ContextSourcePseudonym::from(aliases.for_tenant(&tenant));
         LocalSource { aliases, tenant, alias }
     }
 

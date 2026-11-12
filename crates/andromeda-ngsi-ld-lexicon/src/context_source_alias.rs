@@ -1,5 +1,6 @@
 //! The `contextSourceAlias` a Context Source answers to (ETSI GS CIM 009
-//! v1.9.1 Table 5.2.40-1), and the hop it writes into a `Via` chain.
+//! v1.9.1 Table 5.2.40-1), the hop it writes into a `Via` chain, and the
+//! `contextSourceAlias` a client writes into a registration (Table 5.2.9-1).
 
 use crate::{
     context_source_pseudonym::ContextSourcePseudonym,
@@ -10,8 +11,8 @@ use crate::{
     uri::NGSI_LD_URN_NID,
 };
 use andromeda_configuration::schema::source_alias::SourceAlias;
-use derive_more::Display;
-use serde::Serialize;
+use derive_more::{Display, Into};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use urn_rs::{UrnBuilder, percent::encode_nss};
 
@@ -36,9 +37,13 @@ const TENANT_SEPARATOR: char = '~';
 /// ``!#$%&'*+-.^_`|~``. Another broker's `Via` element may name its hop by
 /// `uri-host [ ":" port ]` instead, which [`ContextSourcePseudonym`] reads; the
 /// hop this broker writes is always the token.
-#[derive(Debug, Clone, PartialEq, Eq, Display, Serialize)]
+///
+/// Table 5.2.9-1 restricts the `contextSourceAlias` of a registration the same
+/// way, so a registration a client writes is read with this type too.
+#[derive(Debug, Clone, PartialEq, Eq, Display, Into, Serialize, Deserialize)]
 #[display("{_0}")]
-#[serde(transparent)]
+#[into(String)]
+#[serde(try_from = "String", into = "String")]
 pub struct ContextSourceAlias(String);
 
 /// Why a string cannot be a [`ContextSourceAlias`].
@@ -139,6 +144,14 @@ impl ContextSourceAlias {
     }
 }
 
+impl TryFrom<String> for ContextSourceAlias {
+    type Error = ContextSourceAliasError;
+
+    fn try_from(alias: String) -> Result<ContextSourceAlias, ContextSourceAliasError> {
+        ContextSourceAlias::new(alias)
+    }
+}
+
 // The configured alias carries no grammar of its own; this conversion applies
 // the alias's, so it is the one place the configured alias is held to it.
 impl TryFrom<&SourceAlias> for ContextSourceAlias {
@@ -205,6 +218,15 @@ mod tests {
                 Err(ContextSourceAliasError::NotAToken { offending }),
                 "{raw:?} must name its first character outside tchar"
             );
+        }
+    }
+
+    /// Table 5.2.9-1: a registration's `contextSourceAlias` is read as a token.
+    #[test]
+    fn an_alias_is_read_from_json_only_when_it_is_a_token() {
+        assert_eq!(serde_json::from_str::<ContextSourceAlias>(r#""broker-a""#).ok(), Some(alias("broker-a")));
+        for refused in [r#""example.com:8080""#, r#""""#, "5"] {
+            assert!(serde_json::from_str::<ContextSourceAlias>(refused).is_err(), "{refused} is no alias");
         }
     }
 
@@ -285,7 +307,7 @@ mod tests {
     fn an_alias_is_named_by_itself_and_by_every_tenant_of_it() {
         let broker = alias("broker-a");
         assert!(broker.is_named_by(&pseudonym("broker-a")));
-        assert!(broker.is_named_by(&ContextSourcePseudonym::from(&broker.scoped_to_tenant(&tenant("alpha")))));
+        assert!(broker.is_named_by(&ContextSourcePseudonym::from(broker.scoped_to_tenant(&tenant("alpha")))));
     }
 
     /// A `received-by` that only shares a prefix with this alias, or names a
