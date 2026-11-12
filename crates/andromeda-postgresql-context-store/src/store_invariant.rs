@@ -57,6 +57,12 @@ pub enum StoreInvariant {
         /// The value the rows carried.
         step: i16,
     },
+    /// Counting the registration rows answered a negative number.
+    #[error("the registration rows counted {count}, which is no count")]
+    NegativeRegistrationCount {
+        /// The number the count answered.
+        count: i64,
+    },
 }
 
 #[cfg(test)]

@@ -52,8 +52,11 @@ async fn three_thousand_identifiers_reach_a_query_entity_source_in_urls_within_t
         [ResponseTemplate::new(StatusCode::OK).set_body_raw(b"[]".to_vec(), "application/json")],
     )
     .await;
+    let store = Arc::new(FixedRegistrationStore::new(vec![query_entity_source(&source)]));
+    let census = store.census();
     let service = FederationService::new(
-        Arc::new(FixedRegistrationStore::new(vec![query_entity_source(&source)])),
+        store,
+        census,
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
         LocalSource::new(

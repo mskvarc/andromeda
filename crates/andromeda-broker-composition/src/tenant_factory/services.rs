@@ -108,6 +108,7 @@ pub(super) fn construct_services(
     let forwarding = Arc::new(
         FederationService::new(
             Arc::clone(&storage.registration_store),
+            storage.registration_census.clone(),
             Arc::new(EntityStoreTypeResolver::new(Arc::clone(&storage.entity_ports.entity_types))),
             storage.engine.clone(),
             LocalSource::new(aliases, storage.tenant.clone()),
@@ -373,6 +374,7 @@ fn compose_registration_service(
     )) as Arc<dyn RegisteredEntityProbe>;
     let service = RegistrationService::new(
         Arc::clone(&storage.registration_store),
+        storage.registration_census.clone(),
         probe,
         storage.engine.clone(),
         Some(Arc::new(signals.registration.clone())),

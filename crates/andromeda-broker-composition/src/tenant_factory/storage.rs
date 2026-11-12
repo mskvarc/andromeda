@@ -6,11 +6,12 @@ use crate::{
         TenantFactoryConfig,
         assembly_invariant::AssemblyInvariant,
         error::TenantAssemblyError,
+        name_dictionaries::name_dictionaries,
         snapshot_subscriptions::load_snapshot_subscriptions,
         spatial::initialize_spatial,
     },
 };
-use andromeda_configuration::schema::{database::name_cache::NameLoading, temporal::storage::TemporalStorageConfig};
+use andromeda_configuration::schema::temporal::storage::TemporalStorageConfig;
 use andromeda_context_registry::{cached_context_invalidation::CachedContextInvalidation, hit_store::ContextHitStore};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
@@ -49,10 +50,10 @@ use andromeda_postgresql_context_store::{
     subscription::repo::SubscriptionRepository,
     tenant_migration::{TenantSchemaState, migrate_single_tenant_db, tenant_schema_state, upgrade_single_tenant_snapshot_branches},
 };
-use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_lookup::NameLookup, schema_epoch::read_established_epoch};
+use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_pool::{pool_options::configure_pool_options, pool_share::PoolShare};
 use andromeda_postgresql_temporal_store::{columnstore_capability::ColumnstoreSupport, repo::TemporalRepository};
-use andromeda_registration::store::RegistrationStore;
+use andromeda_registration::{registration_census::RegistrationCensus, store::RegistrationStore};
 use andromeda_snapshot::store::SnapshotStore;
 use andromeda_subscription::cache::SubscriptionCache;
 use andromeda_temporal::storage_policy::TemporalStoragePolicy;
@@ -89,6 +90,9 @@ pub(super) struct TenantStorage {
     pub(super) entity_ports: EntityStoragePorts,
     /// Context Source Registration store.
     pub(super) registration_store: Arc<dyn RegistrationStore>,
+    /// How many registrations the tenant holds, shared by the registration
+    /// service, the expiry sweep and forwarding.
+    pub(super) registration_census: RegistrationCensus,
     /// Types and attributes the registrations advertise, for discovery to union
     /// with the local store.
     pub(super) registry_type_source: Arc<dyn RegistryTypeSource>,
@@ -226,40 +230,6 @@ fn tenant_engine(config: &TenantFactoryConfig, context_repo: &Arc<JsonLdContextR
     Ok(build_engine(&config.jsonld, Arc::clone(context_repo), recognizer)?)
 }
 
-/// The tenant's attribute and entity type name dictionary caches, warmed as
-/// the configuration asks.
-///
-/// One cache per dictionary per tenant, shared by every path that resolves an
-/// attribute or type IRI: the temporal catalogue, the entity repository's read
-/// path and the entity rows and projection the commit writes.
-async fn name_dictionaries(pool: &PgPool, config: &TenantFactoryConfig) -> (Arc<dyn NameLookup<AttributeName>>, Arc<dyn NameLookup<EntityTypeName>>) {
-    let attribute_names = Arc::new(NameCache::<AttributeName>::new(pool, &config.database.name_cache));
-    let entity_type_names = Arc::new(NameCache::<EntityTypeName>::new(pool, &config.database.name_cache));
-    // Read the schema stamp once and hand it to both dictionaries as their
-    // baseline, so a later out-of-band drop and recreate of this tenant is
-    // detected as a change from a known baseline rather than adopted silently,
-    // and the two caches share one catalogue read instead of each issuing its own.
-    match read_established_epoch(pool).await {
-        Ok(epoch) => {
-            attribute_names.adopt_epoch(epoch);
-            entity_type_names.adopt_epoch(epoch);
-        }
-        Err(error) => tracing::warn!(%error, event = "name_dictionary_epoch_unestablished"),
-    }
-    if matches!(config.database.name_cache.loading, NameLoading::Eager) {
-        if let Err(error) = attribute_names.preload().await {
-            tracing::warn!(%error, event = "attribute_names_preload_failed");
-        }
-        if let Err(error) = entity_type_names.preload().await {
-            tracing::warn!(%error, event = "entity_type_names_preload_failed");
-        }
-    }
-    (
-        attribute_names as Arc<dyn NameLookup<AttributeName>>,
-        entity_type_names as Arc<dyn NameLookup<EntityTypeName>>,
-    )
-}
-
 /// Open, migrate, validate, and warm every storage component for a tenant.
 ///
 /// The database is migrated over `migration_url`, which reaches PostgreSQL
@@ -344,6 +314,7 @@ pub(super) async fn initialize_storage(
         entity_types: entity_repository as Arc<dyn EntityTypeReader>,
     };
     let registration_repository = Arc::new(PostgresRegistrationStore::new(&pool, clock_writers.clone(), Arc::clone(&attribute_names)));
+    let registration_census = RegistrationCensus::new(registration_repository.held_registrations().await?);
     let registry_type_source = Arc::clone(&registration_repository) as Arc<dyn RegistryTypeSource>;
     let registration_store = registration_repository as Arc<dyn RegistrationStore>;
     let entity_map_store = Arc::new(EntityMapRepository::new(&pool)) as Arc<dyn EntityMapStore>;
@@ -370,6 +341,7 @@ pub(super) async fn initialize_storage(
         temporal_repo,
         entity_ports,
         registration_store,
+        registration_census,
         registry_type_source,
         entity_map_store,
         posted_query_store,

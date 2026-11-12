@@ -51,6 +51,7 @@ use andromeda_ngsi_ld_query::{
     filter::language_targeting::LanguageTargeting,
     geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
 };
+use andromeda_registration::registration_census::RegistrationCensus;
 use andromeda_subscription::{
     csource::CsrSubscriptionVariant,
     deleted_members::DeletedMembers,
@@ -198,8 +199,10 @@ impl ReassemblyScene {
             },
         );
         let held = Arc::new(HeldEntities::new(held));
+        let census = RegistrationCensus::new(u64::try_from(registrations.len()).expect("a registration count fits a u64"));
         let federation = FederationService::new(
             Arc::new(ScriptedRegistrations::new(registrations, registration_failures)),
+            census,
             Arc::new(NoLocalTypes),
             offline_engine(),
             LocalSource::new(

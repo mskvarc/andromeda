@@ -64,6 +64,7 @@ mod due_work_check;
 mod error;
 #[cfg(test)]
 mod held_change_fixture;
+mod name_dictionaries;
 mod periodic_due;
 /// Runtime ownership and ordered shutdown.
 pub(crate) mod runtime;

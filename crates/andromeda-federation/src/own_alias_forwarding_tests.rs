@@ -53,8 +53,11 @@ fn registration_naming_this_broker(source: &MockServer, tenant: Option<&str>) ->
 /// The requests `source` received, and the warnings of the forwarded query
 /// `tenant` runs over `registration`.
 async fn query_over(source: &MockServer, registration: ContextSourceRegistration, tenant: TenantRef) -> (usize, Vec<NgsiLdWarning>) {
+    let store = Arc::new(FixedRegistrationStore::new(vec![registration]));
+    let census = store.census();
     let service = FederationService::new(
-        Arc::new(FixedRegistrationStore::new(vec![registration])),
+        store,
+        census,
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
         LocalSource::new(

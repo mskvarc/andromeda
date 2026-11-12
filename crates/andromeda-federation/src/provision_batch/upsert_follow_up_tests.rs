@@ -53,8 +53,11 @@ fn registration(source: &MockServer, operations: &[&str]) -> ContextSourceRegist
 }
 
 fn service(registration: &ContextSourceRegistration) -> FederationService {
+    let store = Arc::new(FixedRegistrationStore::new(vec![registration.clone()]));
+    let census = store.census();
     FederationService::new(
-        Arc::new(FixedRegistrationStore::new(vec![registration.clone()])),
+        store,
+        census,
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
         LocalSource::new(

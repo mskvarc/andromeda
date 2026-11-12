@@ -1,6 +1,6 @@
 //! Context-source registration policy (ETSI GS CIM 009 clause 5.9).
 
-use crate::{entity_probe::RegisteredEntityProbe, removal_hook::RegistrationRemovalHook, store::RegistrationStore};
+use crate::{entity_probe::RegisteredEntityProbe, registration_census::RegistrationCensus, removal_hook::RegistrationRemovalHook, store::RegistrationStore};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use andromeda_ngsi_ld_query::geo::admission::GeoQueryAdmission;
@@ -32,6 +32,8 @@ pub mod query;
 /// The Create and Update Context Source Registration request body.
 pub mod registration_body;
 mod registration_body_reading;
+/// How many registrations a tenant holds.
+pub mod registration_census;
 mod registration_compaction;
 /// The typed reasons a registration collides with existing context data.
 pub mod registration_conflict_reason;
@@ -55,6 +57,9 @@ mod validation;
 pub struct RegistrationService {
     /// Persists and reads the registrations.
     repo: Arc<dyn RegistrationStore>,
+    /// How many registrations the tenant holds, counted as they are created
+    /// and deleted.
+    census: RegistrationCensus,
     /// Looks into the local entity store when a proxied registration is admitted.
     entity_probe: Arc<dyn RegisteredEntityProbe>,
     /// Expands and compacts registration terms and resolves the `@context` a response names.
@@ -82,10 +87,11 @@ pub trait RegistrationChangeSink: Send + Sync + 'static {
 
 impl RegistrationService {
     /// Create a context-source registration service backed by the supplied
-    /// store, the local-entity probe proxied-registration admission consults,
-    /// and JSON-LD processor.
+    /// store and the census of what it holds, the local-entity probe
+    /// proxied-registration admission consults, and JSON-LD processor.
     pub const fn new(
         repo: Arc<dyn RegistrationStore>,
+        census: RegistrationCensus,
         entity_probe: Arc<dyn RegisteredEntityProbe>,
         engine: JsonLdEngine,
         change_sink: Option<Arc<dyn RegistrationChangeSink>>,
@@ -93,6 +99,7 @@ impl RegistrationService {
     ) -> RegistrationService {
         RegistrationService {
             repo,
+            census,
             entity_probe,
             engine,
             change_sink,

@@ -66,8 +66,11 @@ async fn read_under(registration: &ContextSourceRegistration, forwarding: Forwar
         forwarding,
         ..FederationConfig::default()
     };
+    let store = Arc::new(FixedRegistrationStore::new(vec![registration.clone()]));
+    let census = store.census();
     let service = FederationService::new(
-        Arc::new(FixedRegistrationStore::new(vec![registration.clone()])),
+        store,
+        census,
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
         LocalSource::new(

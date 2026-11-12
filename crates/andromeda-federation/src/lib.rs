@@ -224,7 +224,7 @@ use andromeda_outbound_http::{
     client::{DEFAULT_POOL_IDLE_TIMEOUT, OutboundHttpPolicy},
     endpoint_guard::PrivateIpGuard,
 };
-use andromeda_registration::store::RegistrationStore;
+use andromeda_registration::{registration_census::RegistrationCensus, store::RegistrationStore};
 use std::{num::NonZeroU32, sync::Arc, time::Duration};
 
 /// Service for forwarding NGSI-LD operations to registered context sources.
@@ -237,6 +237,9 @@ pub struct FederationService {
     guard: PrivateIpGuard,
     /// The registrations forwarded operations are matched against.
     csr_repo: Arc<dyn RegistrationStore>,
+    /// How many registrations the tenant holds; a batch in a tenant holding
+    /// none reads no registration.
+    census: RegistrationCensus,
     /// Resolves a locally-held entity's type so an attribute-level write whose
     /// request carries no `type` is matched against registrations by the type
     /// the entity actually has, rather than treated as covering every type.
@@ -282,6 +285,7 @@ impl FederationService {
     /// cooldown policy of `config` does not validate.
     pub fn new(
         csr_repo: Arc<dyn RegistrationStore>,
+        census: RegistrationCensus,
         local_entity_types: Arc<dyn LocalEntityTypeResolver>,
         engine: JsonLdEngine,
         local: LocalSource,
@@ -310,6 +314,7 @@ impl FederationService {
             http_client,
             guard: policy.guard(),
             csr_repo,
+            census,
             local_entity_types,
             engine,
             local,

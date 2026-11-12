@@ -461,8 +461,10 @@ mod tests {
 
     /// A walking service choosing among what `store` holds, under `config`.
     fn service_configured(store: Arc<FixedRegistrationStore>, config: &FederationConfig) -> FederationService {
+        let census = store.census();
         FederationService::new(
             store,
+            census,
             Arc::new(NoLocalEntities),
             JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
             LocalSource::new(
