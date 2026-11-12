@@ -332,6 +332,6 @@ async fn build_tenant_state(
     let supervision = supervise_tasks(config, &storage, &services, &writes, &dispatcher, task_supervisor, channels)?;
     Ok((
         services.state,
-        BrokerTenantRuntime::new(storage.context_workers, supervision, dispatcher, storage.pool, pacer, periodic_due),
+        BrokerTenantRuntime::new(storage.hit_flush, supervision, dispatcher, storage.pool, pacer, periodic_due),
     ))
 }

@@ -12,7 +12,6 @@ use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_telemetry::tenancy::{EvictionReason, record_eviction};
 use std::{
     collections::HashSet,
-    sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
 use tokio::time::interval as tokio_interval;
@@ -20,14 +19,20 @@ use tracing::info;
 
 impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     /// Sweep for orphaned, excess and idle runtimes and settle provisional
-    /// tenants until the process ends, and release a suspended tenant's retired
+    /// tenants until `stop` resolves, and release a suspended tenant's retired
     /// runtime the moment its last lease drops.
-    pub(super) async fn run_janitor(self: Arc<TenantRuntimeManager<D, F>>) {
+    ///
+    /// `stop` is awaited only between sweeps, so a sweep under way always
+    /// finishes and a runtime it took out of the cache always reaches its
+    /// teardown.
+    pub async fn run_janitor(&self, stop: impl Future<Output = ()>) {
         let interval = self.config.residency.sweep_interval.duration().max(Duration::from_secs(1));
         let ttl = self.config.residency.idle_eviction_after.duration().max(Duration::from_secs(1));
         let mut ticker = tokio_interval(interval);
+        tokio::pin!(stop);
         loop {
             tokio::select! {
+                () = &mut stop => return,
                 _ = ticker.tick() => {}
                 () = self.release_signal.notified() => {
                     self.evict_retired_runtimes().await;

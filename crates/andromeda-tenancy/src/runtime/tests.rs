@@ -38,6 +38,7 @@ use andromeda_telemetry::tenancy::{EvictionReason, WakeOutcome};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::{
+    future::ready,
     num::NonZeroUsize,
     sync::{
         Arc,
@@ -1339,9 +1340,11 @@ async fn a_runtime_older_than_the_ttl_is_idle_and_the_default_never_is() {
 }
 
 #[tokio::test]
-async fn a_single_tenant_broker_starts_no_janitor() {
-    let Harness { manager, .. } = harness(&[], false, 64);
-    assert!(manager.spawn_janitor().is_none());
+async fn the_janitor_returns_once_told_to_stop() {
+    let Harness { manager, .. } = harness(&["acme"], true, 64);
+    timeout(Duration::from_secs(5), manager.run_janitor(ready(())))
+        .await
+        .expect("a stopped janitor returns");
 }
 
 /// A factory that records how many builds run at once, so the admission bound
@@ -2581,7 +2584,12 @@ async fn a_tenant_suspended_mid_request_is_refused_then_released_when_the_reques
     // than leaving a suspended tenant's runtime, and its background work,
     // running until it idles out.
     let Harness { manager, shutdowns, .. } = harness(&["acme"], true, 64);
-    let janitor = manager.spawn_janitor().expect("a multi-tenant broker runs a janitor");
+    let stop = CancellationToken::new();
+    let janitor = tokio::spawn({
+        let manager = Arc::clone(&manager);
+        let stop = stop.clone();
+        async move { manager.run_janitor(stop.cancelled()).await }
+    });
     let tenant = TenantRef::Named(named("acme"));
     let in_flight = manager.resolve_state(&tenant, TenantCreationPolicy::MustExist).await.expect("resolves");
 
@@ -2611,7 +2619,8 @@ async fn a_tenant_suspended_mid_request_is_refused_then_released_when_the_reques
     .expect("the retired runtime is released as soon as its last lease drops");
     manager.await_evictions().await;
     pretty_assertions::assert_eq!(shutdowns.load(Ordering::SeqCst), 1, "the released runtime is torn down");
-    janitor.abort();
+    stop.cancel();
+    janitor.await.expect("the janitor returns once stopped");
 }
 
 #[tokio::test]

@@ -2,6 +2,7 @@
 
 mod abandoned_drain;
 mod columnstore_conversion;
+mod context_hit_flush;
 mod csource_notification;
 mod discovery_census;
 mod entity_notification;
@@ -33,6 +34,7 @@ use crate::{
         storage::TenantStorage,
         tasks::{
             columnstore_conversion::register_columnstore_conversion,
+            context_hit_flush::register_context_hit_flush,
             csource_notification::{CsourceNotificationStreams, register_csource_notification_workers},
             discovery_census::register_discovery_census_fold,
             entity_notification::{
@@ -304,6 +306,7 @@ pub(super) fn supervise_tasks(
         },
     )?;
     register_expiry_workers(&task_supervisor, config, storage, &services.state, &registration, &pacer)?;
+    register_context_hit_flush(&task_supervisor, storage.hit_flush.as_ref())?;
     if let Some(forwarding) = &services.state.subscription_forwarding {
         register_placement_resumption(&task_supervisor, Arc::clone(&pacer), Arc::clone(forwarding))?;
     }
