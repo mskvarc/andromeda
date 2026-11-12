@@ -26,7 +26,7 @@ http = "1.5.0"
 http-body = "1.1.0"
 http-body-util = "0.1.5"
 indexmap = { version = "2.14.2", features = ["serde"] }
-iri-rs = { version = "4.1.0", features = ["static", "serde"] }
+iri-rs = { version = "4.1.1", features = ["static", "serde"] }
 mediatype = "0.23.0"
 ngsi-ld = { version = "2.1.0", default-features = false, features = ["chrono", "reqwest", "reqwest-http2", "reqwest-rustls"] }
 percent-encoding = "2.3.2"
