@@ -12,9 +12,9 @@ use http::StatusCode;
 use ngsi_ld::{
     http::{
         headers::Accept,
-        operation::{RetrieveTemporalEvolution, TemporalSelection},
+        operation::{NormalizedTemporal, RetrieveTemporalEvolution, TemporalSelection},
     },
-    model::{Lossless, NgsiLdMediaType},
+    model::NgsiLdMediaType,
     query::temporal_query::TemporalQuery,
 };
 
@@ -32,7 +32,7 @@ async fn n_tmp_ret_9025_a_preference_naming_no_version_is_not_echoed() -> Result
     let operation = RetrieveTemporalEvolution::builder()
         .id(&vehicle_unreadable_id)
         .selection(TemporalSelection::Query(&window))
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     // The typed preference names versions only, so the text `latest` is sent as written.
     let answer = send_preferring(&broker.with_accept(Accept::new(NgsiLdMediaType::Json)), &operation, "ngsi-ld=latest").await?;

@@ -13,8 +13,8 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::operation::{QueryRegistrations, QueryTemporalEvolution, RetrieveSubscription},
-    model::{APPLICATION_JSON, Lossless},
+    http::operation::{NormalizedTemporal, QueryRegistrations, QueryTemporalEvolution, RetrieveSubscription},
+    model::APPLICATION_JSON,
     query::{builders::SelectorTypeBuilder, temporal_query, type_selection},
     subscription::EntitySubscription,
 };
@@ -50,7 +50,7 @@ async fn e049_02_02_query_temporal_entities() -> Result<()> {
     let query = QueryTemporalEvolution::builder()
         .entity_type(&vehicle_type)
         .temporal_q(&window)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     // The temporal query asks for GeoJSON, which no typed operation writes, so the Accept is replaced.
     let request = accept(broker.unchecked(&query)?, "application/geo+json");

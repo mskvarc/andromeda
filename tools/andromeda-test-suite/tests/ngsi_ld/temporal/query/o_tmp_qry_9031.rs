@@ -11,8 +11,11 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::{headers::Accept, operation::QueryTemporalEvolution},
-    model::{Lossless, NgsiLdMediaType},
+    http::{
+        headers::Accept,
+        operation::{NormalizedTemporal, QueryTemporalEvolution},
+    },
+    model::NgsiLdMediaType,
     query::{builders::SelectorTypeBuilder, temporal_query::TemporalQuery},
 };
 
@@ -40,7 +43,7 @@ async fn o_tmp_qry_9031_a_version_preference_amends_the_temporal_query_and_is_ec
         .entity_type(&selector)
         .ids(&ids)
         .temporal_q(&window)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let answer = send_versioned(&broker.with_accept(Accept::new(NgsiLdMediaType::Json)), &query, Some("1.0")).await?;
     expect_that!(answer.status, eq(StatusCode::NON_AUTHORITATIVE_INFORMATION));

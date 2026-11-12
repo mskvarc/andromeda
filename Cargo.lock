@@ -504,6 +504,7 @@ dependencies = [
  "tracing",
  "typed-builder",
  "url",
+ "urn-rs",
  "wiremock",
 ]
 
@@ -1538,6 +1539,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "tokio",
+ "urn-rs",
 ]
 
 [[package]]
@@ -5778,9 +5780,9 @@ checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
 
 [[package]]
 name = "iri-rs"
-version = "4.1.0"
+version = "4.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c749bca6e986e64390bc4b02a52837ed8f0701a166fc21efe49324b92dba56d"
+checksum = "ed21e90d0f220dc68aa035ceda7f11ccfa7b5da4170199e019f300efedd93bcd"
 dependencies = [
  "iri-rs-core",
  "iri-rs-static",
@@ -5868,9 +5870,9 @@ checksum = "3bd1574e617a9a6c1f8f8181bd7e841e1f20e4277607ef28945765188d6284d4"
 
 [[package]]
 name = "jiff"
-version = "0.2.41"
+version = "0.2.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcefdcefac59ac8f8401852e3427d55610481fc41e6625c39bac62d2d771623a"
+checksum = "26699905cc795a23e3949585cc7ba3ee8ade090872a27e4316304a777297894a"
 dependencies = [
  "jiff-core",
  "jiff-static",
@@ -5884,18 +5886,18 @@ dependencies = [
 
 [[package]]
 name = "jiff-core"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77a24020db0ee88d1c681d677681bd31f9f4ea189a455425223d52ce4f1508aa"
+checksum = "ffe6854081f5ac0a3046a9b223729ccd7a20b1e0e8277e44dc0660eedf67dfe2"
 dependencies = [
  "log",
 ]
 
 [[package]]
 name = "jiff-static"
-version = "0.2.41"
+version = "0.2.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "203edf9b0ce4083ec8fbf4adc823eac89768ea994b4953fc0dab1b90083234dd"
+checksum = "4b4ff49b2887190c760b86207b55cdcaabbdecaf7a0660d68aa2ed6f652abf0a"
 dependencies = [
  "jiff-core",
  "proc-macro2",
@@ -6177,9 +6179,9 @@ dependencies = [
 
 [[package]]
 name = "jstrict"
-version = "0.16.1"
+version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d72d6a34fd0f5b000844a925bda388579c157dbc20e9aeac97f03a2d83f40f3"
+checksum = "0cf8bbb86bd7a41874dc054e65e864ae8797497bfcdc520e612e4416b4987d45"
 dependencies = [
  "compact_str",
  "contextual",
@@ -6696,9 +6698,9 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
 name = "ngsi-ld"
-version = "2.0.0"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25a830725c3b6b1836dcca11f4fa882ce37219f47638b1324f6323aaf28fde33"
+checksum = "a4cabbfedadfc65c79fedff6090adab7612d29cd1bfec0889c696e1512536260"
 dependencies = [
  "bon",
  "bytes",
@@ -9588,12 +9590,35 @@ checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
 name = "urn-rs"
-version = "0.9.2"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd0d8da255a93df330194029a0f508dc4c86e3270083c51905ea59fa372b6845"
+checksum = "0567c4f6bc0d61751a24a164d01510a071b378fb0e0a8d91bc81d2778e68c0ac"
+dependencies = [
+ "urn-rs-core",
+ "urn-rs-static",
+]
+
+[[package]]
+name = "urn-rs-core"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4f450d46c56f894b15ba9d9c0dc3d12d5551f2a491abc9684b9773325d96e48"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "urn-rs-static"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e088cd2675e1034f68da60ddc6cb944dd8f64e7962bc59aa88d88f53b1a11577"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
+ "urn-rs-core",
 ]
 
 [[package]]

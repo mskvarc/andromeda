@@ -9,8 +9,7 @@ use andromeda_test_suite::{
 };
 use googletest::prelude::*;
 use ngsi_ld::{
-    http::operation::QueryTemporalEvolution,
-    model::Lossless,
+    http::operation::{NormalizedTemporal, QueryTemporalEvolution},
     query::{builders::SelectorTypeBuilder, temporal_query::TemporalQuery},
 };
 
@@ -33,7 +32,7 @@ async fn o_cmn_cnt_0012_query_temporal_entities_accepting_geojson_is_406_listing
             &QueryTemporalEvolution::builder()
                 .entity_type(&selection)
                 .temporal_q(&after)
-                .format(Lossless::Normalized)
+                .format(NormalizedTemporal)
                 .build(),
         )?,
         "application/geo+json",

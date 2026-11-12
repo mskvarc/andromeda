@@ -6,19 +6,14 @@ use crate::{
     context_source_pseudonym::ContextSourcePseudonym,
     http_token::is_tchar,
     identifier::Identifier,
-    identifier_length::IdentifierTooLong,
+    ngsi_ld_urn::{ContextSourceId, NgsiLdUrnError, ngsi_ld_identifier},
     tenant::TenantName,
-    uri::NGSI_LD_URN_NID,
 };
 use andromeda_configuration::schema::source_alias::SourceAlias;
 use derive_more::{Display, Into};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use urn_rs::{UrnBuilder, percent::encode_nss};
-
-/// The kind the identifier an alias derives names, the first segment of its
-/// namespace-specific string.
-const IDENTITY_KIND: &str = "ContextSourceIdentity";
+use urn_rs::percent::encode_nss;
 
 /// Separator between a context source's own alias and the tenant it names.
 ///
@@ -60,17 +55,6 @@ pub enum ContextSourceAliasError {
     },
 }
 
-/// Why an alias derives no identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-pub enum DerivedIdentifierError {
-    /// The alias spells no URN namespace-specific string.
-    #[error("the alias spells no URN: {0}")]
-    Urn(#[from] urn_rs::Error),
-    /// The URN is longer than an identifier may be.
-    #[error(transparent)]
-    TooLong(#[from] IdentifierTooLong),
-}
-
 impl ContextSourceAlias {
     /// Validate `alias` as an HTTP token.
     ///
@@ -98,17 +82,16 @@ impl ContextSourceAlias {
 
     /// The identifier of the context source this alias names when none is
     /// configured: `urn:ngsi-ld:ContextSourceIdentity:` and the alias
-    /// percent-encoded as a namespace-specific string, which keeps letters,
-    /// digits and `-._!$'*+` as written.
+    /// percent-encoded as a namespace-specific string (RFC 8141 section 2),
+    /// which keeps letters, digits and `-._~!$&'*+` as written.
     ///
     /// # Errors
     ///
-    /// Returns [`DerivedIdentifierError::TooLong`] when the URN is longer than
-    /// an identifier may be. [`DerivedIdentifierError::Urn`] is unreachable: a
-    /// token is never empty and encodes into a valid namespace-specific string.
-    pub fn derived_identifier(&self) -> Result<Identifier, DerivedIdentifierError> {
-        let nss = format!("{IDENTITY_KIND}:{}", encode_nss(&self.0)?);
-        Ok(Identifier::try_from(UrnBuilder::new(NGSI_LD_URN_NID, &nss).build()?)?)
+    /// Returns [`NgsiLdUrnError::TooLong`] when the URN is longer than an
+    /// identifier may be. [`NgsiLdUrnError::Urn`] is unreachable: a token is
+    /// never empty and encodes into a valid namespace-specific string.
+    pub fn derived_identifier(&self) -> Result<Identifier, NgsiLdUrnError> {
+        ngsi_ld_identifier(ContextSourceId::KIND, &encode_nss(&self.0)?)
     }
 
     /// The alias naming `tenant` within the context source this alias names.
@@ -250,13 +233,14 @@ mod tests {
         }
     }
 
-    /// The namespace-specific string keeps letters, digits and `-._!$'*+` as
-    /// written and percent-encodes every other token character.
+    /// RFC 8141 section 2: the namespace-specific string keeps letters, digits
+    /// and `-._~!$&'*+` as written and percent-encodes every other token
+    /// character.
     #[test]
     fn the_derived_identifier_percent_encodes_the_other_token_characters() {
         assert_eq!(
             alias("a_b~c!#$%&'*+^`|").derived_identifier().map(|identifier| identifier.as_str().to_owned()),
-            Ok("urn:ngsi-ld:ContextSourceIdentity:a_b%7Ec!%23$%25%26'*+%5E%60%7C".to_owned())
+            Ok("urn:ngsi-ld:ContextSourceIdentity:a_b~c!%23$%25&'*+%5E%60%7C".to_owned())
         );
     }
 

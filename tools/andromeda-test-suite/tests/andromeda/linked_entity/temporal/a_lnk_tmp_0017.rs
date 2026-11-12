@@ -9,8 +9,7 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::operation::QueryTemporalEvolution,
-    model::Lossless,
+    http::operation::{NormalizedTemporal, QueryTemporalEvolution},
     query::{Join, builders::SelectorTypeBuilder, temporal_query},
 };
 
@@ -37,7 +36,7 @@ async fn a_lnk_tmp_0017_an_inline_temporal_join_nests_a_chain_of_2000_linked_ent
         .temporal_q(&window)
         .entity_type(&selector)
         .ids(&ids)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     // The temporal query writes no `join`, so the parameters follow the query it writes. The answer nests the chain
     // 2000 deep, which no model reads, so the nested linked entities are counted in the text.

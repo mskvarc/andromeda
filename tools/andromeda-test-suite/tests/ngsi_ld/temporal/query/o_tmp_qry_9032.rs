@@ -13,9 +13,9 @@ use http::StatusCode;
 use ngsi_ld::{
     http::{
         headers::Accept,
-        operation::{QueryMethod, QueryTemporalEvolution},
+        operation::{NormalizedTemporal, QueryMethod, QueryTemporalEvolution},
     },
-    model::{Lossless, NgsiLdMediaType},
+    model::NgsiLdMediaType,
     query::{builders::SelectorTypeBuilder, temporal_query::TemporalQuery},
 };
 
@@ -44,7 +44,7 @@ async fn o_tmp_qry_9032_a_version_preference_amends_the_post_temporal_query_and_
         .ids(&ids)
         .temporal_q(&window)
         .method(QueryMethod::Post)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let answer = send_versioned(&broker.with_accept(Accept::new(NgsiLdMediaType::Json)), &query, Some("1.0")).await?;
     expect_that!(answer.status, eq(StatusCode::NON_AUTHORITATIVE_INFORMATION));

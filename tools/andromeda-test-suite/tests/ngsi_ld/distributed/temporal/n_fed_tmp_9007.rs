@@ -12,7 +12,10 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::{HeaderValue, StatusCode, header::CONTENT_RANGE};
 use ngsi_ld::{
-    http::{headers::Accept, operation::QueryTemporalEvolution},
+    http::{
+        headers::Accept,
+        operation::{NormalizedTemporal, QueryTemporalEvolution},
+    },
     model::{Lossless, NgsiLdMediaType, Property, evolution::TemporalEntity},
     query::{IdPattern, builders::SelectorTypeBuilder, temporal_query},
     registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo, RegistrationMode},
@@ -74,7 +77,7 @@ async fn n_fed_tmp_9007_a_source_cut_short_backwards_narrows_the_hub_history() -
     let query = QueryTemporalEvolution::builder()
         .entity_type(&selector)
         .temporal_q(&temporal)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let first = broker.with_heads().with_accept(Accept::new(NgsiLdMediaType::Json)).send(&query).await?;
     expect_that!(first.status, eq(StatusCode::PARTIAL_CONTENT));

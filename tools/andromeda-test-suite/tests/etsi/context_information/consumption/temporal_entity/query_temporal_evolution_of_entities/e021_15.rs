@@ -16,8 +16,11 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::{HeaderMap, StatusCode};
 use ngsi_ld::{
-    http::{UncheckedRequest, headers::Accept, operation::QueryTemporalEvolution},
-    model::Lossless,
+    http::{
+        UncheckedRequest,
+        headers::Accept,
+        operation::{NormalizedTemporal, QueryTemporalEvolution},
+    },
     query::{
         SelectorType,
         temporal_query::{self, builders::TemporalQueryBuilder},
@@ -69,7 +72,7 @@ fn normalized_request(client: &BrokerClient, relation: TemporalQueryBuilder) -> 
     let operation = QueryTemporalEvolution::builder()
         .temporal_q(&temporal_q)
         .entity_type(&selector)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     Ok(client.unchecked(&operation)?)
 }

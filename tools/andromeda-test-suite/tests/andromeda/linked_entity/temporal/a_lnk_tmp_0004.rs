@@ -9,8 +9,7 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::operation::QueryTemporalEvolution,
-    model::Lossless,
+    http::operation::{NormalizedTemporal, QueryTemporalEvolution},
     query::{Join, builders::SelectorTypeBuilder, temporal_query},
 };
 
@@ -35,7 +34,7 @@ async fn a_lnk_tmp_0004_an_inline_join_nests_the_linked_entity_under_every_in_wi
         .temporal_q(&window)
         .entity_type(&selector)
         .ids(&ids)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     // The temporal query writes no `join`, so the parameters follow the query it writes. Vehicle `a` nests the linked
     // vehicle under each in-window instance, which no model reads, so the answer is read as received.

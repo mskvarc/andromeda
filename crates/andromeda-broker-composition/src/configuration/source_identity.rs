@@ -12,8 +12,9 @@
 use andromeda_configuration::schema::federation::identity::IdentityConfig;
 use andromeda_json_literal::{JsonLiteral, configured_extras::ConfiguredExtrasError};
 use andromeda_ngsi_ld_lexicon::{
-    context_source_alias::{ContextSourceAlias, ContextSourceAliasError, DerivedIdentifierError},
+    context_source_alias::{ContextSourceAlias, ContextSourceAliasError},
     identifier::{Identifier, IdentifierParseError},
+    ngsi_ld_urn::NgsiLdUrnError,
 };
 use derive_more::Display;
 use thiserror::Error;
@@ -55,7 +56,7 @@ pub(crate) enum SourceIdentityError {
     Identifier(#[from] IdentifierParseError),
     /// No identifier is configured, and the alias in effect derives none.
     #[error("federation.identity.source_id is not set, and the alias in effect derives no identifier: {0}; set federation.identity.source_id")]
-    DerivedIdentifier(#[from] DerivedIdentifierError),
+    DerivedIdentifier(#[from] NgsiLdUrnError),
     /// `federation.identity.extras` holds a value JSON cannot spell, or is no
     /// admissible JSON.
     #[error(transparent)]
@@ -193,13 +194,13 @@ mod tests {
     }
 
     /// The identifier derived from an alias keeps letters, digits and
-    /// `-._!$'*+` as written and percent-encodes every other token character.
+    /// `-._~!$&'*+` as written and percent-encodes every other token character.
     #[test]
     fn a_configured_alias_of_token_characters_only_is_used_as_written() {
         for (alias, id) in [
             ("broker-a", "urn:ngsi-ld:ContextSourceIdentity:broker-a"),
             ("broker.example.org", "urn:ngsi-ld:ContextSourceIdentity:broker.example.org"),
-            ("a_b~c!#$%&'*+^`|", "urn:ngsi-ld:ContextSourceIdentity:a_b%7Ec!%23$%25%26'*+%5E%60%7C"),
+            ("a_b~c!#$%&'*+^`|", "urn:ngsi-ld:ContextSourceIdentity:a_b~c!%23$%25&'*+%5E%60%7C"),
         ] {
             assert_eq!(
                 resolved(&configured_alias(alias), None, Some("machine")).ok(),

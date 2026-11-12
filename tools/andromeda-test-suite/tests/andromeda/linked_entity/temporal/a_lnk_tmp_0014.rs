@@ -10,9 +10,9 @@ use http::StatusCode;
 use ngsi_ld::{
     http::{
         headers::Accept,
-        operation::{EntityMapRequest, QueryTemporalEvolution},
+        operation::{EntityMapRequest, NormalizedTemporal, QueryTemporalEvolution},
     },
-    model::{Lossless, NgsiLdMediaType},
+    model::NgsiLdMediaType,
     query::{Join, builders::SelectorTypeBuilder, temporal_query},
     registration::EntityMapId,
 };
@@ -39,7 +39,7 @@ async fn a_lnk_tmp_0014_the_entity_map_of_a_joined_temporal_query_maps_the_linke
         .entity_type(&selector)
         .ids(&ids)
         .entity_map(&entity_map)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     // The temporal query writes no `join`, so the parameters follow the query it writes. The answer is the 201 that
     // names the map, which the typed page does not keep.

@@ -6,9 +6,9 @@ use http::StatusCode;
 use ngsi_ld::{
     http::{
         headers::Accept,
-        operation::{RetrieveTemporalEvolution, TemporalSelection},
+        operation::{NormalizedTemporal, RetrieveTemporalEvolution, TemporalSelection},
     },
-    model::{Lossless, NgsiLdMediaType},
+    model::NgsiLdMediaType,
     query::temporal_query::TemporalQuery,
 };
 
@@ -30,7 +30,7 @@ async fn o_tmp_ret_9024_the_conformant_version_is_answered_200_unamended_and_ech
     let operation = RetrieveTemporalEvolution::builder()
         .id(&vehicle_conformant_id)
         .selection(TemporalSelection::Query(&window))
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let client = broker.with_accept(Accept::new(NgsiLdMediaType::Json));
     let unadapted = send_versioned(&client, &operation, None).await?;

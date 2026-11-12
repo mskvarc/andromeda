@@ -10,8 +10,8 @@ use andromeda_test_suite::{
 };
 use googletest::prelude::*;
 use ngsi_ld::{
-    http::operation::{RetrieveTemporalEvolution, TemporalSelection},
-    model::{EntityId, Input, Lossless, Property, evolution::TemporalEntity},
+    http::operation::{NormalizedTemporal, RetrieveTemporalEvolution, TemporalSelection},
+    model::{EntityId, Input, Property, evolution::TemporalEntity},
     query::temporal_query::{self, TemporalQuery},
 };
 use serde_json::Value;
@@ -46,7 +46,7 @@ async fn read_as_written(broker: &BrokerClient, vocabulary: &Vocabulary, id: &En
     let retrieve = RetrieveTemporalEvolution::builder()
         .id(id)
         .selection(TemporalSelection::Query(window))
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let answer = client.send_unchecked(client.unchecked(&retrieve)?).await?;
     Ok(serde_json::from_slice(answer.body())?)

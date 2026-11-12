@@ -9,8 +9,7 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::operation::QueryTemporalEvolution,
-    model::Lossless,
+    http::operation::{NormalizedTemporal, QueryTemporalEvolution},
     query::{Join, builders::SelectorTypeBuilder, projection::Projection, temporal_query},
 };
 
@@ -37,7 +36,7 @@ async fn a_lnk_tmp_0015_a_linked_entity_whose_current_state_was_deleted_is_still
         .entity_type(&selector)
         .ids(&ids)
         .pick(&pick)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     // The temporal query writes no `join`, so the parameters follow the query it writes. The narrowed entities have no
     // `id` or `type`, which no model reads whole, so the answer is read as received.

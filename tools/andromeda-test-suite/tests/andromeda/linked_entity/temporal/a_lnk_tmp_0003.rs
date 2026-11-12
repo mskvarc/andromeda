@@ -13,8 +13,7 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::operation::QueryTemporalEvolution,
-    model::Lossless,
+    http::operation::{NormalizedTemporal, QueryTemporalEvolution},
     query::{Join, builders::SelectorTypeBuilder, temporal_query},
 };
 
@@ -39,7 +38,7 @@ async fn a_lnk_tmp_0003_a_flat_join_appends_the_linked_entity_as_history_over_th
         .temporal_q(&window)
         .entity_type(&selector)
         .ids(&ids)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     // The temporal query writes no `join`, so the parameters follow the query it writes.
     let answer = send_joined(&broker, &query, Join::Flat, 1).await?;

@@ -14,9 +14,9 @@ use http::StatusCode;
 use ngsi_ld::{
     http::{
         headers::Accept,
-        operation::{BatchCreate, QueryTemporalEvolution},
+        operation::{BatchCreate, NormalizedTemporal, QueryTemporalEvolution},
     },
-    model::{Entity, Lossless, NgsiLdMediaType, Number, Property, Value},
+    model::{Entity, NgsiLdMediaType, Number, Property, Value},
     query::{builders::SelectorTypeBuilder, q, temporal_query},
 };
 
@@ -58,7 +58,7 @@ async fn a_tmp_qry_9074_a_temporal_q_on_a_sub_attribute_of_a_respond_async_creat
             .temporal_q(&temporal_q)
             .entity_type(&selector)
             .q(&accurate)
-            .format(Lossless::Normalized)
+            .format(NormalizedTemporal)
             .build();
         let page = client.send_unchecked(client.unchecked(&query)?).await;
         expect_that!(&page, answered(StatusCode::OK));

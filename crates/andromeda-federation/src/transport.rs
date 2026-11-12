@@ -21,12 +21,12 @@ use andromeda_ngsi_ld_lexicon::{identifier::Identifier, spec_version::SpecVersio
 use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, registration::ContextSourceRegistration, registration_management::LocalScope};
 use headers::{Header, HeaderMapExt};
 use http::{HeaderMap, HeaderName, HeaderValue};
-use iri_rs::{Iri, iri};
 use std::iter;
 use url::Url;
+use urn_rs::{UrnSlice, urn};
 
 /// The value of a `contextSourceInfo` pair that is copied from the triggering request (clause 6.3.19).
-const FROM_TRIGGERING_REQUEST: Iri<&'static str> = iri!("urn:ngsi-ld:request");
+const FROM_TRIGGERING_REQUEST: UrnSlice<'static> = urn!("urn:ngsi-ld:request");
 
 /// One forwarded request, fully decided: where it goes and what it carries.
 pub(crate) struct ForwardedRequest<'a> {

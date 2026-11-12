@@ -13,9 +13,9 @@ use http::StatusCode;
 use ngsi_ld::{
     http::{
         headers::Accept,
-        operation::{RetrieveTemporalEvolution, TemporalSelection},
+        operation::{NormalizedTemporal, RetrieveTemporalEvolution, TemporalSelection},
     },
-    model::{Lossless, NgsiLdMediaType},
+    model::NgsiLdMediaType,
     query::temporal_query::TemporalQuery,
 };
 
@@ -41,7 +41,7 @@ async fn o_tmp_ret_9022_a_version_preference_amends_the_temporal_evolution_and_i
     let operation = RetrieveTemporalEvolution::builder()
         .id(&vehicle_retrieve_id)
         .selection(TemporalSelection::Query(&window))
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let answer = send_versioned(&broker.with_accept(Accept::new(NgsiLdMediaType::Json)), &operation, Some("1.0")).await?;
     expect_that!(answer.status, eq(StatusCode::NON_AUTHORITATIVE_INFORMATION));

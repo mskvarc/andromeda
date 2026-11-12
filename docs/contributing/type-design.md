@@ -6,7 +6,7 @@
 
 - A URL is a `url::Url`.
 - An IRI is an `IriBuf` or a borrowed `Iri` from `iri-rs`, and an IRI reference is an `IriRefBuf`.
-- A URN is an `urn_rs::Urn`.
+- A URN is an `urn_rs::Urn`. A `urn:ngsi-ld:<Kind>:<id>` URN is built with the lexicon's `ngsi_ld_urn` and read through its namespace and namespace-specific string, never by a string prefix.
 - A language tag is a `langtag::LangTagBuf`.
 - A media type is a `mediatype::MediaType`.
 - Everything the specification gives a grammar has a validated type in `andromeda-ngsi-ld-lexicon`, such as `Identifier`, `Uri`, `Name`, `Scope`, `ScopePath`, `TenantName`, `NgsiLdDateTime` and `NonEmptyText`. The resources built from them live in `andromeda-ngsi-ld-model`. Follow the patterns of both crates when you add a type.
@@ -25,6 +25,7 @@ A request body is decoded straight into the typed model of its operation, such a
 A constant is validated at compile time, never parsed when the broker starts.
 
 - An IRI constant uses `iri_rs::iri!`.
+- A URN constant uses `urn_rs::urn!`. Declare it `static` when a caller keeps the text it lends, because every use of a `const` is a temporary.
 - A URL constant uses `url_macro::url!`.
 - A string newtype gets an infallible `from_static(&'static str)` constructor in the crate that owns it.
 - A fixed token such as an entity's `type` discriminator is a zero-sized type declared with the lexicon's `constant_string!` macro.

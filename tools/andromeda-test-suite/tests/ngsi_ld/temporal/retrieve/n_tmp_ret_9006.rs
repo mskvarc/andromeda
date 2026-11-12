@@ -15,9 +15,9 @@ use http::{Method, StatusCode};
 use ngsi_ld::{
     http::{
         headers::Accept,
-        operation::{RetrieveTemporalEvolution, TemporalSelection},
+        operation::{NormalizedTemporal, RetrieveTemporalEvolution, TemporalSelection},
     },
-    model::{AttributeKind, Lossless, NgsiLdMediaType},
+    model::{AttributeKind, NgsiLdMediaType},
     query::temporal_query::{self, TemporalQuery},
 };
 
@@ -68,7 +68,7 @@ async fn n_tmp_ret_9006_a_temporal_evolution_keeps_relationship_objects() -> Res
     let operation = RetrieveTemporalEvolution::builder()
         .id(&building_object_list_temporal_id)
         .selection(TemporalSelection::Query(&window))
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let answer = send_versioned(&client, &operation, None).await?;
     expect_that!(answer.status, eq(StatusCode::OK));

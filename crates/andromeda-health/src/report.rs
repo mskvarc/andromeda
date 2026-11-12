@@ -52,12 +52,10 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use serde_json::json;
     use std::collections::BTreeMap;
-    use urn_rs::UrnBuilder;
+    use urn_rs::{Urn, urn};
 
     fn sample_response() -> HealthCheckResponse {
-        let id_urn = UrnBuilder::new("ngsi-ld", "HealthCheck:550e8400-e29b-41d4-a716-446655440000")
-            .build()
-            .expect("a well-formed URN");
+        let id_urn = Urn::from(urn!("urn:ngsi-ld:HealthCheck:550e8400-e29b-41d4-a716-446655440000"));
 
         let mut components = BTreeMap::new();
         components.insert(

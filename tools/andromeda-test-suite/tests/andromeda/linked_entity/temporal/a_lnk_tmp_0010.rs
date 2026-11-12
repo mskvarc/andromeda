@@ -9,8 +9,7 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::operation::{RetrieveTemporalEvolution, TemporalSelection},
-    model::Lossless,
+    http::operation::{NormalizedTemporal, RetrieveTemporalEvolution, TemporalSelection},
     query::{Join, projection::Projection, temporal_query},
 };
 
@@ -34,7 +33,7 @@ async fn a_lnk_tmp_0010_an_inline_join_nests_a_copy_narrowed_per_relationship() 
         .id(&graph.building)
         .selection(TemporalSelection::Query(&window))
         .pick(&pick)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     // The temporal retrieval writes no `join`, so the parameters follow the query it writes. Each instance nests a
     // narrowed copy of its linked entity, which no model reads, so the answer is read as received.

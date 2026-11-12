@@ -2,10 +2,7 @@
 
 use andromeda_failure_classification::{classified_report::ClassifiedReport, internal_failure_summary::InternalFailureSummary};
 use andromeda_http_extraction::classification::classify_tenancy_error;
-use andromeda_ngsi_ld_lexicon::{
-    identifier::{Identifier, IdentifierParseError},
-    tenant::InvalidTenantName,
-};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, ngsi_ld_urn::NgsiLdUrnError, tenant::InvalidTenantName};
 use andromeda_tenancy::error::TenancyError;
 
 /// A tenant path segment that is not a valid tenant name.
@@ -30,7 +27,7 @@ pub enum TenancyHttpError {
     /// The tenant resource identifier could not be constructed from its name,
     /// which a validated tenant name never triggers in practice.
     #[error("the tenant resource identifier could not be constructed")]
-    TenantId(#[from] IdentifierParseError),
+    TenantId(#[from] NgsiLdUrnError),
 }
 
 /// Classify every tenancy-binding failure exhaustively.
