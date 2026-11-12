@@ -399,7 +399,7 @@ mod tests {
         warn_text::WARN_TEXT_BYTES,
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-    use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
+    use andromeda_ngsi_ld_lexicon::context_source_alias::ContextSourceAlias;
     use andromeda_ngsi_ld_model::{
         registration::ContextSourceRegistration,
         temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory},
@@ -468,7 +468,7 @@ mod tests {
             Arc::new(NoLocalEntities),
             JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
             LocalSource::new(
-                ContextSourceAliases::new(ContextSourcePseudonym::new("walking-broker").expect("a valid alias")),
+                ContextSourceAliases::new(ContextSourceAlias::new("walking-broker").expect("a valid alias")),
                 TenantRef::UnnamedDefault,
             ),
             config,

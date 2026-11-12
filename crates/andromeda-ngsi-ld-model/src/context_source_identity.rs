@@ -3,7 +3,7 @@
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{
     constant_string,
-    context_source_pseudonym::ContextSourcePseudonym,
+    context_source_alias::ContextSourceAlias,
     duration::Iso8601Duration,
     identifier::Identifier,
     time::instant_serde,
@@ -27,8 +27,9 @@ pub struct ContextSourceIdentity {
     /// Always `"ContextSourceIdentity"`.
     #[serde(rename = "type")]
     pub type_: ContextSourceIdentityType,
-    /// The pseudonym used to identify this source in a `Via` chain.
-    pub context_source_alias: ContextSourcePseudonym,
+    /// The pseudonym used to identify this source in a `Via` chain, an HTTP
+    /// token.
+    pub context_source_alias: ContextSourceAlias,
     /// Total duration the source has been available, as an ISO 8601 duration.
     pub context_source_uptime: Iso8601Duration,
     /// The current time observed at the source.
@@ -46,7 +47,7 @@ pub struct ContextSourceIdentity {
 mod tests {
     use crate::context_source_identity::{ContextSourceIdentity, ContextSourceIdentityType};
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_lexicon::duration::Iso8601Duration;
+    use andromeda_ngsi_ld_lexicon::{context_source_alias::ContextSourceAlias, duration::Iso8601Duration};
     use chrono::{TimeZone, Utc};
     use serde_json::json;
     use std::time::Duration;
@@ -56,7 +57,7 @@ mod tests {
         ContextSourceIdentity {
             id: "urn:ngsi-ld:ContextSourceIdentity:andromeda".parse().expect("valid context source id"),
             type_: ContextSourceIdentityType,
-            context_source_alias: "andromeda".parse().expect("valid context source alias"),
+            context_source_alias: ContextSourceAlias::new("andromeda").expect("valid context source alias"),
             context_source_uptime: Iso8601Duration::from_std(Duration::from_secs(90_061)),
             context_source_time_at: Utc.with_ymd_and_hms(2026, 8, 21, 12, 0, 0).single().expect("valid instant"),
             context_source_extras: extras,

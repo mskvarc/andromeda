@@ -20,7 +20,7 @@ use crate::{
 use andromeda_configuration::schema::federation::FederationConfig;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
+use andromeda_ngsi_ld_lexicon::context_source_alias::ContextSourceAlias;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters};
 use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
@@ -69,7 +69,7 @@ fn service(registration: ContextSourceRegistration) -> FederationService {
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
         LocalSource::new(
-            ContextSourceAliases::new(ContextSourcePseudonym::new("splitting-broker").expect("a valid alias")),
+            ContextSourceAliases::new(ContextSourceAlias::new("splitting-broker").expect("a valid alias")),
             TenantRef::UnnamedDefault,
         ),
         &FederationConfig::default(),

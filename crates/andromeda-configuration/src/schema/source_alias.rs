@@ -7,10 +7,10 @@ use serde::{Deserialize, Serialize};
 /// The alias configured for this broker as a Context Source
 /// (`federation.identity.source_alias`, ETSI GS CIM 009 v1.9.1 Table 5.2.40-1).
 ///
-/// The token grammar a `Via` element's `received-by` imposes (RFC 9110 clause
-/// 7.6.3) belongs to the lexicon's pseudonym, which also reads every token
-/// another broker writes; loading converts the configured alias into it, so a
-/// configuration naming an alias outside that grammar is refused there.
+/// The grammar Table 5.2.40-1 sets, an HTTP token (RFC 7230 sections 3.2.6
+/// and 5.7.1), belongs to the lexicon's context source alias; loading converts
+/// the configured alias into it, so a configuration naming an alias outside
+/// that grammar is refused there.
 #[derive(Debug, Clone, PartialEq, Eq, Display, Serialize, Deserialize, JsonSchema)]
 #[display("{_0}")]
 #[serde(transparent)]

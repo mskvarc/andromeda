@@ -19,8 +19,8 @@ pub struct LocalSource {
     aliases: ContextSourceAliases,
     /// The tenant the forwarding service serves.
     tenant: TenantRef,
-    /// The alias of that tenant: the pseudonym every forwarded request appends
-    /// to its `Via` chain (clause 6.3.18).
+    /// The alias of that tenant, as the `received-by` every forwarded request
+    /// appends to its `Via` chain (clause 6.3.18).
     alias: ContextSourcePseudonym,
 }
 
@@ -28,7 +28,7 @@ impl LocalSource {
     /// This broker answering to `aliases`, serving `tenant`.
     #[must_use]
     pub fn new(aliases: ContextSourceAliases, tenant: TenantRef) -> LocalSource {
-        let alias = aliases.for_tenant(&tenant);
+        let alias = ContextSourcePseudonym::from(&aliases.for_tenant(&tenant));
         LocalSource { aliases, tenant, alias }
     }
 
@@ -67,13 +67,13 @@ impl LocalSource {
 mod tests {
     use crate::local_source::LocalSource;
     use andromeda_http_headers::{received_protocol::ReceivedProtocol, via::Via};
-    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, tenant::TenantName};
+    use andromeda_ngsi_ld_lexicon::{context_source_alias::ContextSourceAlias, context_source_pseudonym::ContextSourcePseudonym, tenant::TenantName};
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
     use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
     use serde_json::json;
 
     fn pseudonym(raw: &str) -> ContextSourcePseudonym {
-        ContextSourcePseudonym::new(raw).expect("a valid alias")
+        ContextSourcePseudonym::new(raw).expect("a valid pseudonym")
     }
 
     fn named(raw: &str) -> TenantRef {
@@ -82,7 +82,7 @@ mod tests {
 
     /// Broker `broker-a`, serving `tenant`.
     fn broker_a(tenant: TenantRef) -> LocalSource {
-        LocalSource::new(ContextSourceAliases::new(pseudonym("broker-a")), tenant)
+        LocalSource::new(ContextSourceAliases::new(ContextSourceAlias::new("broker-a").expect("a valid alias")), tenant)
     }
 
     /// A registration aliased `alias`, targeting `tenant` when one is given.
@@ -148,5 +148,17 @@ mod tests {
         assert!(!local.closed_by(&registration("broker-c", None), Some(&via("broker-b"))));
         assert!(!local.closed_by(&registration("broker-c", None), None));
         assert!(!local.closed_by(&registration("broker-ab", None), None));
+    }
+
+    /// RFC 7230 section 5.7.1 lets a peer name its hop by host and port, and
+    /// clause 5.12 excludes a registration whose alias the chain lists, so
+    /// such a hop still matches.
+    #[test]
+    fn a_hop_named_by_host_and_port_closes_the_loop_of_a_registration_aliased_by_it() {
+        let local = broker_a(TenantRef::UnnamedDefault);
+        let hop = via("peer.example.org:8080");
+        assert!(local.closed_by(&registration("peer.example.org:8080", None), Some(&hop)));
+        assert!(!local.closed_by(&registration("peer.example.org:8081", None), Some(&hop)));
+        assert!(!local.already_passed(Some(&hop)));
     }
 }

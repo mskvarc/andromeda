@@ -1,33 +1,23 @@
-//! The pseudonym naming one intermediary in a `Via` chain (RFC 9110 clause 7.6.3).
+//! The `received-by` naming one intermediary in a `Via` chain (RFC 9110 clause 7.6.3).
 
-use crate::tenant::TenantName;
-use andromeda_configuration::schema::source_alias::SourceAlias;
+use crate::context_source_alias::ContextSourceAlias;
 use derive_more::{Display, Into};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use thiserror::Error;
 
-/// Separator between a context source's own alias and the tenant it names.
+/// The `received-by` of one hop in a `Via` header chain (RFC 9110 clause
+/// 7.6.3, ETSI GS CIM 009 clause 6.3.18), and the `contextSourceAlias` a
+/// registration carries.
 ///
-/// RFC 9110 clause 5.6.2 lists `~` among the `tchar` set, so a composed alias
-/// remains a single `received-by` token that a `Via` element can carry, and
-/// [`TenantName`]'s grammar (`[A-Za-z_][A-Za-z0-9_-]*`) never contains it, so
-/// the tenant half of a composed alias is unambiguous.
-const TENANT_SEPARATOR: char = '~';
-
-/// The pseudonym of one hop in a `Via` header chain (RFC 9110 clause 7.6.3,
-/// ETSI GS CIM 009 clause 6.3.18).
-///
-/// This is the `received-by` token a broker writes to name itself in the `Via`
-/// chain and the value forwarding loop detection compares against
-/// ([`Via::contains_pseudonym`](crate::via::Via::contains_pseudonym)). It is
-/// deliberately permissive: an incoming `Via` from another broker may carry any
-/// opaque token, whether a bare label (`broker-a`), a host (`example.com:8080`), or a
-/// URI (`urn:ngsi-ld:ContextSourceIdentity:broker1`). The only structure
-/// required is that a `Via` element can carry the value at all. RFC 9110 makes a
-/// `received-by` a single whitespace-delimited token, so the value must be
-/// non-empty and free of whitespace and control characters; being URI-shaped is
-/// allowed but never required.
+/// Forwarding loop detection compares these with each other and with this
+/// broker's own [`ContextSourceAlias`]. The type is deliberately permissive: an
+/// incoming `Via` from another broker may name its hop by a pseudonym
+/// (`broker-a`) or by a host and port (`example.com:8080`), and RFC 7230 section
+/// 5.7.1 admits both. The only structure required is that a `Via` element can
+/// carry the value at all. RFC 9110 makes a `received-by` a single
+/// whitespace-delimited token, so the value must be non-empty and free of
+/// whitespace and control characters.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Display, Into, Serialize, Deserialize)]
 #[display("{_0}")]
 #[into(String)]
@@ -68,58 +58,19 @@ impl ContextSourcePseudonym {
         Ok(ContextSourcePseudonym(token))
     }
 
-    /// Build a pseudonym from a caller-authored static token, without routing
-    /// it back through validation.
-    ///
-    /// The token must already be a non-empty `received-by` token free of
-    /// whitespace and control characters; the caller passing a fixed literal it
-    /// wrote is the guarantor of that invariant. This exists for built-in
-    /// configuration defaults, where the literal is compile-time fixed and
-    /// covered by a test, so no fallible construction belongs on the path.
-    #[must_use]
-    pub fn from_static(token: &'static str) -> ContextSourcePseudonym {
-        ContextSourcePseudonym(token.to_owned())
-    }
-
     /// The pseudonym as a string slice.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
 
-    /// The pseudonym naming `tenant` within the context source this pseudonym
-    /// names.
-    ///
-    /// Table 5.2.40-1 requires that "in the multi-tenancy use case (see clause
-    /// 4.14), this id shall be identifying a specific Tenant within a
-    /// registered Context Source", and clause 4.3.6.4 requires that "each
-    /// Tenant found within each registered Context Source shall be considered
-    /// separately" when a distributed operation excludes the sources it has
-    /// already traversed. One alias shared by every tenant satisfies neither:
-    /// a request that has passed through one tenant would look like a loop at
-    /// every other tenant of the same broker.
-    ///
-    /// The composition is total, so no fallible constructor is needed: this
-    /// pseudonym carries no whitespace and no control character by its own
-    /// invariant, [`TenantName`] is a non-empty `[A-Za-z_][A-Za-z0-9_-]*`
-    /// label, and the separator is neither, so the result always satisfies the
-    /// pseudonym invariant.
-    #[must_use]
-    pub fn scoped_to_tenant(&self, tenant: &TenantName) -> ContextSourcePseudonym {
-        ContextSourcePseudonym(format!("{}{TENANT_SEPARATOR}{}", self.0, tenant.as_str()))
-    }
-
-    /// Whether this pseudonym names the context source `source` names: it is
-    /// `source` itself, or `source` scoped to one of its tenants as
-    /// [`ContextSourcePseudonym::scoped_to_tenant`] composes it.
-    #[must_use]
-    pub fn names_source(&self, source: &ContextSourcePseudonym) -> bool {
-        self == source
-            || self
-                .0
-                .strip_prefix(source.as_str())
-                .and_then(|rest| rest.strip_prefix(TENANT_SEPARATOR))
-                .is_some_and(|tenant| tenant.parse::<TenantName>().is_ok())
+// No derive copies one validated newtype into another. The conversion is
+// total: an alias is made of `tchar` only, none of which is whitespace or a
+// control character.
+impl From<&ContextSourceAlias> for ContextSourcePseudonym {
+    fn from(alias: &ContextSourceAlias) -> ContextSourcePseudonym {
+        ContextSourcePseudonym(alias.as_str().to_owned())
     }
 }
 
@@ -139,16 +90,6 @@ impl TryFrom<&str> for ContextSourcePseudonym {
     }
 }
 
-// The configured alias carries no grammar of its own; this conversion applies
-// the pseudonym's, so it is the one place the configured alias is held to it.
-impl TryFrom<&SourceAlias> for ContextSourcePseudonym {
-    type Error = ContextSourcePseudonymError;
-
-    fn try_from(configured: &SourceAlias) -> Result<ContextSourcePseudonym, ContextSourcePseudonymError> {
-        ContextSourcePseudonym::new(configured.as_str())
-    }
-}
-
 impl FromStr for ContextSourcePseudonym {
     type Err = ContextSourcePseudonymError;
 
@@ -160,15 +101,9 @@ impl FromStr for ContextSourcePseudonym {
 #[cfg(test)]
 mod tests {
     use crate::{
+        context_source_alias::ContextSourceAlias,
         context_source_pseudonym::{ContextSourcePseudonym, ContextSourcePseudonymError},
-        tenant::{TENANT_NAME_BYTE_LIMIT, TenantName},
     };
-    use andromeda_configuration::schema::source_alias::SourceAlias;
-
-    /// A validated tenant label, for composing tenant-scoped aliases.
-    fn tenant(raw: &str) -> TenantName {
-        raw.parse::<TenantName>().expect("a valid tenant name")
-    }
 
     #[test]
     fn a_bare_label_is_accepted_and_round_trips() {
@@ -177,8 +112,10 @@ mod tests {
         pretty_assertions::assert_eq!(pseudonym.to_string(), "broker-a");
     }
 
+    /// RFC 7230 section 5.7.1: `received-by = ( uri-host [ ":" port ] ) /
+    /// pseudonym`, so a hop another broker names by host and port is read.
     #[test]
-    fn a_uri_shaped_token_is_accepted_but_not_required() {
+    fn a_host_and_port_or_a_uri_shaped_token_is_accepted() {
         let urn = ContextSourcePseudonym::new("urn:ngsi-ld:ContextSourceIdentity:broker1").expect("valid pseudonym");
         pretty_assertions::assert_eq!(urn.as_str(), "urn:ngsi-ld:ContextSourceIdentity:broker1");
         let host = ContextSourcePseudonym::new("example.com:8080").expect("valid pseudonym");
@@ -209,88 +146,13 @@ mod tests {
     }
 
     #[test]
-    fn a_configured_alias_converts_only_when_it_is_a_token() {
-        assert_eq!(
-            ContextSourcePseudonym::try_from(&SourceAlias::from_static("broker-a")).map(|alias| alias.as_str().to_owned()),
-            Ok("broker-a".to_owned())
-        );
-        assert_eq!(
-            ContextSourcePseudonym::try_from(&SourceAlias::from_static("")),
-            Err(ContextSourcePseudonymError::Empty)
-        );
-        assert_eq!(
-            ContextSourcePseudonym::try_from(&SourceAlias::from_static("broker a")),
-            Err(ContextSourcePseudonymError::NotAToken { offending: ' ' })
-        );
-    }
-
-    /// Table 5.2.40-1: the alias identifies a specific Tenant within a
-    /// registered Context Source, so the tenant is part of the value.
-    #[test]
-    fn a_tenant_scoped_alias_names_both_the_context_source_and_the_tenant() {
-        let broker = ContextSourcePseudonym::new("broker-a").expect("valid pseudonym");
-        pretty_assertions::assert_eq!(broker.scoped_to_tenant(&tenant("alpha")).as_str(), "broker-a~alpha");
-    }
-
-    /// Clause 4.3.6.4 considers each Tenant of a registered Context Source
-    /// separately, which only holds if two tenants never share one alias.
-    #[test]
-    fn two_tenants_of_one_context_source_never_share_an_alias() {
-        let broker = ContextSourcePseudonym::new("broker-a").expect("valid pseudonym");
-        assert_ne!(broker.scoped_to_tenant(&tenant("alpha")), broker.scoped_to_tenant(&tenant("beta")));
-        assert_ne!(broker.scoped_to_tenant(&tenant("alpha")), broker);
-    }
-
-    /// Two brokers keep distinct aliases for the same tenant name, so a hop
-    /// through one is never mistaken for a hop through the other.
-    #[test]
-    fn two_context_sources_keep_distinct_aliases_for_the_same_tenant() {
-        let first = ContextSourcePseudonym::new("broker-a").expect("valid pseudonym");
-        let second = ContextSourcePseudonym::new("broker-b").expect("valid pseudonym");
-        assert_ne!(first.scoped_to_tenant(&tenant("alpha")), second.scoped_to_tenant(&tenant("alpha")));
-    }
-
-    /// A composed alias is itself a pseudonym, so it can be composed again and
-    /// can travel in a `Via` element like any other.
-    #[test]
-    fn a_tenant_scoped_alias_is_itself_a_valid_pseudonym() {
-        let composed = ContextSourcePseudonym::new("broker-a")
-            .expect("valid pseudonym")
-            .scoped_to_tenant(&tenant("alpha"));
-        pretty_assertions::assert_eq!(ContextSourcePseudonym::new(composed.as_str()).expect("valid pseudonym"), composed);
-    }
-
-    /// Every tenant label the grammar admits composes to a valid pseudonym
-    /// (leading underscore, hyphens, digits and the maximum length included).
-    #[test]
-    fn every_admissible_tenant_label_composes_to_a_valid_pseudonym() {
-        let broker = ContextSourcePseudonym::new("urn:ngsi-ld:ContextSourceIdentity:broker1").expect("valid pseudonym");
-        for label in ["_internal", "A_B", "tenant-a", "t9", &"a".repeat(TENANT_NAME_BYTE_LIMIT)] {
-            let composed = broker.scoped_to_tenant(&tenant(label));
-            assert!(
-                ContextSourcePseudonym::new(composed.as_str()).is_ok(),
-                "composed alias must stay a pseudonym: {composed}"
-            );
-            assert!(composed.as_str().ends_with(label), "the tenant must be recoverable from {composed}");
-        }
-    }
-
-    #[test]
-    fn a_pseudonym_names_its_source_itself_and_every_tenant_of_it() {
-        let broker = ContextSourcePseudonym::new("broker-a").expect("valid pseudonym");
-        assert!(broker.names_source(&broker));
-        assert!(broker.scoped_to_tenant(&tenant("alpha")).names_source(&broker));
-    }
-
-    #[test]
-    fn a_pseudonym_that_only_shares_a_prefix_with_a_source_does_not_name_it() {
-        let broker = ContextSourcePseudonym::new("broker-a").expect("valid pseudonym");
-        for other in ["broker-ab", "broker-a~", "broker-a~9alpha", "broker", "broker-b~alpha"] {
-            assert!(
-                !ContextSourcePseudonym::new(other).expect("valid pseudonym").names_source(&broker),
-                "{other} names another source"
+    fn every_alias_is_a_pseudonym_as_written() {
+        for raw in ["broker-a", "broker-a~alpha", "a_b~c!#$%&'*+^`|"] {
+            let alias = ContextSourceAlias::new(raw).expect("a valid alias");
+            pretty_assertions::assert_eq!(
+                ContextSourcePseudonym::from(&alias),
+                ContextSourcePseudonym::new(raw).expect("a valid pseudonym")
             );
         }
-        assert!(!broker.names_source(&broker.scoped_to_tenant(&tenant("alpha"))));
     }
 }

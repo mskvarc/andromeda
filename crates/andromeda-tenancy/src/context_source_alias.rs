@@ -1,7 +1,7 @@
 //! The `contextSourceAlias` this broker answers to, one per tenant.
 
 use crate::tenant_ref::TenantRef;
-use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
+use andromeda_ngsi_ld_lexicon::{context_source_alias::ContextSourceAlias, context_source_pseudonym::ContextSourcePseudonym};
 
 /// The `contextSourceAlias` values (Table 5.2.40-1) this broker publishes, one
 /// for every tenant it serves.
@@ -25,20 +25,20 @@ use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContextSourceAliases {
     /// The alias the unnamed default tenant answers to, exactly as configured.
-    default_tenant: ContextSourcePseudonym,
+    default_tenant: ContextSourceAlias,
 }
 
 impl ContextSourceAliases {
     /// The alias family of a context source whose default tenant is configured
     /// to answer to `default_tenant`.
     #[must_use]
-    pub const fn new(default_tenant: ContextSourcePseudonym) -> ContextSourceAliases {
+    pub const fn new(default_tenant: ContextSourceAlias) -> ContextSourceAliases {
         ContextSourceAliases { default_tenant }
     }
 
     /// The alias identifying `tenant` within this context source.
     #[must_use]
-    pub fn for_tenant(&self, tenant: &TenantRef) -> ContextSourcePseudonym {
+    pub fn for_tenant(&self, tenant: &TenantRef) -> ContextSourceAlias {
         match tenant {
             TenantRef::UnnamedDefault => self.default_tenant.clone(),
             TenantRef::Named(name) => self.default_tenant.scoped_to_tenant(name),
@@ -50,18 +50,23 @@ impl ContextSourceAliases {
     /// tenant's identity writes it whatever tenant its registration targets.
     #[must_use]
     pub fn names_this_source(&self, alias: &ContextSourcePseudonym) -> bool {
-        alias.names_source(&self.default_tenant)
+        self.default_tenant.is_named_by(alias)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
-    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, tenant::TenantName};
+    use andromeda_ngsi_ld_lexicon::{context_source_alias::ContextSourceAlias, context_source_pseudonym::ContextSourcePseudonym, tenant::TenantName};
 
     /// The alias family of a broker configured as `broker-a`.
     fn aliases() -> ContextSourceAliases {
-        ContextSourceAliases::new(ContextSourcePseudonym::new("broker-a").expect("a valid pseudonym"))
+        ContextSourceAliases::new(ContextSourceAlias::new("broker-a").expect("a valid alias"))
+    }
+
+    /// `alias` as a hop of a `Via` chain or the alias of a registration.
+    fn pseudonym(alias: &ContextSourceAlias) -> ContextSourcePseudonym {
+        ContextSourcePseudonym::from(alias)
     }
 
     /// The named tenant `raw`.
@@ -107,21 +112,29 @@ mod tests {
         pretty_assertions::assert_eq!(aliases.for_tenant(&TenantRef::UnnamedDefault), aliases.for_tenant(&TenantRef::UnnamedDefault));
     }
 
-    /// A broker configured with a URI-shaped alias derives URI-shaped tenant
-    /// aliases; the derivation never assumes a bare label.
+    /// A dotted alias, such as the host of `server.public_url`, derives dotted
+    /// tenant aliases; the derivation never assumes a bare label.
     #[test]
-    fn a_uri_shaped_configured_alias_derives_uri_shaped_tenant_aliases() {
-        let aliases = ContextSourceAliases::new(ContextSourcePseudonym::new("urn:ngsi-ld:ContextSourceIdentity:broker1").expect("a valid pseudonym"));
-        pretty_assertions::assert_eq!(aliases.for_tenant(&named("alpha")).as_str(), "urn:ngsi-ld:ContextSourceIdentity:broker1~alpha");
+    fn a_dotted_configured_alias_derives_dotted_tenant_aliases() {
+        let aliases = ContextSourceAliases::new(ContextSourceAlias::new("broker.example.org").expect("a valid alias"));
+        pretty_assertions::assert_eq!(aliases.for_tenant(&named("alpha")).as_str(), "broker.example.org~alpha");
     }
 
     #[test]
     fn the_alias_of_every_tenant_names_this_source_and_another_broker_s_does_not() {
         let aliases = aliases();
-        assert!(aliases.names_this_source(&aliases.for_tenant(&TenantRef::UnnamedDefault)));
-        assert!(aliases.names_this_source(&aliases.for_tenant(&named("alpha"))));
-        let other = ContextSourceAliases::new(ContextSourcePseudonym::new("broker-b").expect("a valid pseudonym"));
-        assert!(!aliases.names_this_source(&other.for_tenant(&TenantRef::UnnamedDefault)));
-        assert!(!aliases.names_this_source(&other.for_tenant(&named("alpha"))));
+        assert!(aliases.names_this_source(&pseudonym(&aliases.for_tenant(&TenantRef::UnnamedDefault))));
+        assert!(aliases.names_this_source(&pseudonym(&aliases.for_tenant(&named("alpha")))));
+        let other = ContextSourceAliases::new(ContextSourceAlias::new("broker-b").expect("a valid alias"));
+        assert!(!aliases.names_this_source(&pseudonym(&other.for_tenant(&TenantRef::UnnamedDefault))));
+        assert!(!aliases.names_this_source(&pseudonym(&other.for_tenant(&named("alpha")))));
+    }
+
+    /// A hop another broker names by host and port is read, and never names
+    /// this broker, whose alias is a token.
+    #[test]
+    fn a_host_and_port_hop_names_another_source() {
+        let host = ContextSourcePseudonym::new("broker-a:8080").expect("a valid pseudonym");
+        assert!(!aliases().names_this_source(&host));
     }
 }

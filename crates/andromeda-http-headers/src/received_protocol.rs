@@ -1,5 +1,6 @@
 //! The `received-protocol` of a `Via` element (RFC 9110 clause 7.6.3).
 
+use andromeda_ngsi_ld_lexicon::http_token::is_tchar;
 use derive_more::Display;
 use std::str::FromStr;
 use thiserror::Error;
@@ -34,15 +35,6 @@ pub enum ReceivedProtocolError {
         /// The first character that is not a `tchar`.
         offending: char,
     },
-}
-
-/// Whether a character is an RFC 9110 `tchar` (the character class of an HTTP `token`).
-const fn is_tchar(character: char) -> bool {
-    character.is_ascii_alphanumeric()
-        || matches!(
-            character,
-            '!' | '#' | '$' | '%' | '&' | '\'' | '*' | '+' | '-' | '.' | '^' | '_' | '`' | '|' | '~'
-        )
 }
 
 impl ReceivedProtocol {

@@ -110,7 +110,7 @@ mod tests {
     };
     use andromeda_extensions::{advertisement::EXTENSION_KEY, enabled::EnabledExtensions};
     use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
-    use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier, tenant::TenantName};
+    use andromeda_ngsi_ld_lexicon::{context_source_alias::ContextSourceAlias, identifier::Identifier, tenant::TenantName};
     use andromeda_tenancy::{context_source_alias::ContextSourceAliases, error::TenancyError, tenant_ref::TenantRef};
     use chrono::{Duration, Utc};
     use futures::future::BoxFuture;
@@ -133,7 +133,7 @@ mod tests {
     fn state_with(enabled: EnabledExtensions) -> Result<SourceIdentityState, Box<dyn Error>> {
         Ok(SourceIdentityState::new(
             "urn:ngsi-ld:ContextSourceIdentity:test".parse::<Identifier>()?,
-            ContextSourceAliases::new("test".parse::<ContextSourcePseudonym>()?),
+            ContextSourceAliases::new(ContextSourceAlias::new("test")?),
             Utc::now() - Duration::hours(2),
             Some(node_extras()?),
             enabled,

@@ -41,7 +41,7 @@ use andromeda_configuration::{
 };
 use andromeda_context_commit::{commit_consequence_publisher::CommitConsequencePublisher, committer::ContextCommitter};
 use andromeda_delivery::mqtt::pool::MqttTransportPool;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, tenant_database_name::TenantDatabaseName};
+use andromeda_ngsi_ld_lexicon::{context_source_alias::ContextSourceAlias, tenant_database_name::TenantDatabaseName};
 use andromeda_postgresql_atomic_write::committer::PostgresAtomicCommitter;
 use andromeda_postgresql_context_store::{database_defaults::DatabaseDefaults, tenant_extension_versions::PostgresTenantExtensionVersions};
 use andromeda_postgresql_pool::database_url::DatabaseUrl;
@@ -138,12 +138,12 @@ struct TenantFactoryConfig {
     public_url: Option<Url>,
     /// The default tenant's alias in effect, from which each tenant's alias
     /// in the `Via` chain follows (Table 5.2.40-1).
-    source_alias: ContextSourcePseudonym,
+    source_alias: ContextSourceAlias,
 }
 
 impl TenantFactoryConfig {
     /// The sections a tenant is built from, beside the alias in effect.
-    fn new(config: &BrokerConfig, source_alias: ContextSourcePseudonym) -> TenantFactoryConfig {
+    fn new(config: &BrokerConfig, source_alias: ContextSourceAlias) -> TenantFactoryConfig {
         TenantFactoryConfig {
             database: config.database.clone(),
             database_defaults: database_defaults(config),
@@ -169,7 +169,7 @@ impl BrokerTenantFactory {
     /// A factory over the broker's configuration.
     pub(super) fn new(
         config: &BrokerConfig,
-        source_alias: ContextSourcePseudonym,
+        source_alias: ContextSourceAlias,
         request_url: DatabaseUrl,
         direct_url: DatabaseUrl,
         process_tasks: TaskSupervisor,

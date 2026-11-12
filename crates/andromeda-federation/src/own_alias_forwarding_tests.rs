@@ -12,7 +12,7 @@ use andromeda_configuration::schema::federation::FederationConfig;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, tenant::TenantName};
+use andromeda_ngsi_ld_lexicon::{context_source_alias::ContextSourceAlias, tenant::TenantName};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use andromeda_tenancy::{context_source_alias::ContextSourceAliases, tenant_ref::TenantRef};
@@ -61,7 +61,7 @@ async fn query_over(source: &MockServer, registration: ContextSourceRegistration
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
         LocalSource::new(
-            ContextSourceAliases::new(ContextSourcePseudonym::new(CONFIGURED_ALIAS).expect("a valid alias")),
+            ContextSourceAliases::new(ContextSourceAlias::new(CONFIGURED_ALIAS).expect("a valid alias")),
             tenant,
         ),
         &FederationConfig::default(),
