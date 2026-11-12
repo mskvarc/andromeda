@@ -27,7 +27,13 @@ use andromeda_entity::{
 };
 use andromeda_entity_map::{error::EntityMapError, expiry::EntityMapExpiry, store::EntityMapStore};
 use andromeda_posted_query::{error::PostedQueryError, expiry::PostedQueryExpiry, store::PostedQueryStore};
-use andromeda_registration::{RegistrationChangeSink, expiry::RegistrationExpiry, removal_hook::RegistrationRemovalHook, store::RegistrationStore};
+use andromeda_registration::{
+    RegistrationChangeSink,
+    expiry::RegistrationExpiry,
+    registration_census::RegistrationCensus,
+    removal_hook::RegistrationRemovalHook,
+    store::RegistrationStore,
+};
 use andromeda_retry::schedule::BackoffSchedule;
 use andromeda_subscription::{expiry::SubscriptionExpiry, lifecycle::SubscriptionService, variant::SubscriptionVariant};
 use andromeda_task_runtime::{
@@ -82,6 +88,7 @@ pub(super) fn register_expiry_workers(
         supervisor,
         shared_pacer(),
         Arc::clone(&storage.registration_store),
+        storage.registration_census.clone(),
         Arc::new(registration_changes.clone()),
         state
             .subscription_forwarding
@@ -246,6 +253,7 @@ fn register_registration_expiry(
     supervisor: &TaskSupervisor,
     pacer: Arc<BackgroundPacer>,
     store: Arc<dyn RegistrationStore>,
+    census: RegistrationCensus,
     change_sink: Arc<dyn RegistrationChangeSink>,
     removal_hook: Option<Arc<dyn RegistrationRemovalHook>>,
     cadence: Duration,
@@ -258,7 +266,7 @@ fn register_registration_expiry(
         RestartPolicy::transient(u32::MAX, BackoffSchedule::constant(cadence)),
         ShutdownPolicy::new(cadence),
     );
-    let expiry = Arc::new(RegistrationExpiry::new(store, Some(change_sink), removal_hook));
+    let expiry = Arc::new(RegistrationExpiry::new(store, census, Some(change_sink), removal_hook));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
         let expiry = Arc::clone(&expiry);
         let pacer = Arc::clone(&pacer);

@@ -73,8 +73,10 @@ async fn registered(id: &'static str, extra: &Value) -> (Source, ContextSourceRe
 }
 
 fn service(store: Arc<FixedRegistrationStore>) -> FederationService {
+    let census = store.census();
     FederationService::new(
         store,
+        census,
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
         LocalSource::new(

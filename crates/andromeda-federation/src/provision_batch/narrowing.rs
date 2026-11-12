@@ -31,7 +31,7 @@ pub(super) struct NarrowedEntity<'a> {
 
 /// The expanded types of an admitted document, which registrations are
 /// matched on (clause 5.12 matches on any of them); none for a deletion.
-fn entity_types<'a>(entity: &BatchEntity<'a>) -> &'a [EntityTypeName] {
+pub(super) fn entity_types<'a>(entity: &BatchEntity<'a>) -> &'a [EntityTypeName] {
     entity.document.map_or(&[], EntityDocument::types)
 }
 

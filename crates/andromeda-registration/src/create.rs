@@ -64,7 +64,15 @@ impl RegistrationService {
         })?;
         self.admit_forwarding_context(&source_info).await?;
         check_conflicts(self.repo.as_ref(), self.entity_probe.as_ref(), params.mode, &params.information, None).await?;
-        let written = self.repo.create(&id, &params).await?;
+        // Counted before the write is sent, so a registration is never held
+        // uncounted. A duplicate is refused before anything is written, so its
+        // count is given back; any other failure may have committed.
+        self.census.admit();
+        let written = self.repo.create(&id, &params).await.inspect_err(|error| {
+            if let RegistrationError::AlreadyExists { .. } = error {
+                self.census.release(1);
+            }
+        })?;
         self.emit_csr_change(CsrChangeEvent {
             csr_id: id.clone(),
             change: CsrChange::Created {
@@ -74,5 +82,77 @@ impl RegistrationService {
         })
         .await;
         Ok(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        RegistrationService,
+        error::RegistrationError,
+        fixed_store::{CreationAnswer, FixedStore},
+        registration_body::RegistrationBody,
+        registration_census::RegistrationCensus,
+        service_fixture::{offline_engine, service_counting},
+        store::RegistrationStore,
+    };
+    use andromeda_jsonld::{
+        context_spec::ContextSpec,
+        user_context_admission::{SubmittedContext, admit_user_context},
+    };
+    use andromeda_ngsi_ld_model::request_body::RequestBody;
+    use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+    use std::sync::Arc;
+
+    /// A service over a store answering creations as `creation` says, counting
+    /// its registrations in `census`.
+    fn service(creation: CreationAnswer, census: &RegistrationCensus) -> RegistrationService {
+        let store = FixedStore::new(Vec::new()).answering_creations(creation);
+        service_counting(Arc::new(store) as Arc<dyn RegistrationStore>, census.clone(), offline_engine(), None)
+    }
+
+    /// Create a registration of Vehicles through `service`.
+    async fn create(service: &RegistrationService) -> Result<(), RegistrationError> {
+        let document = json!({
+            "id": "urn:ngsi-ld:ContextSourceRegistration:counted",
+            "type": "ContextSourceRegistration",
+            "endpoint": "https://peer.example.org",
+            "information": [{"entities": [{"type": "https://example.org/Vehicle"}]}]
+        });
+        let body = RegistrationBody::from_request_text(document.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a registration body");
+        let context = admit_user_context(service.engine(), SubmittedContext::from(ContextSpec::none()))
+            .await
+            .expect("the core context is admitted");
+        service.create(body, &context).await.map(drop)
+    }
+
+    #[tokio::test]
+    async fn a_created_registration_is_counted() {
+        let census = RegistrationCensus::new(0);
+        create(&service(CreationAnswer::Written, &census)).await.expect("the registration is created");
+        assert!(!census.holds_none());
+    }
+
+    /// A lost uniqueness race refuses the insert, so nothing was written and
+    /// the count goes back to what the store holds.
+    #[tokio::test]
+    async fn a_creation_the_store_refuses_as_a_duplicate_is_not_counted() {
+        let census = RegistrationCensus::new(0);
+        let outcome = create(&service(CreationAnswer::Duplicate, &census)).await;
+        assert!(matches!(outcome, Err(RegistrationError::AlreadyExists { .. })), "{outcome:?}");
+        assert!(census.holds_none());
+    }
+
+    /// The write may have committed before the store became unreachable, so it
+    /// stays counted. The count may exceed what the store holds, never fall
+    /// short of it.
+    #[tokio::test]
+    async fn a_creation_whose_outcome_is_unknown_stays_counted() {
+        let census = RegistrationCensus::new(0);
+        let outcome = create(&service(CreationAnswer::Unavailable, &census)).await;
+        assert!(outcome.is_err(), "{outcome:?}");
+        assert_eq!(census.release(0), 1);
     }
 }

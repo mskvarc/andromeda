@@ -27,6 +27,7 @@ impl RegistrationService {
             (Some(_) | None, None) | (None, Some(_)) => None,
         };
         let revision = self.repo.delete(id).await?.require_applied(id)?;
+        self.census.release(1);
         if let (Some(hook), Some(teardown)) = (self.removal_hook.as_deref(), teardown.as_ref()) {
             hook.removed(teardown).await;
         }
@@ -47,8 +48,9 @@ mod tests {
     use crate::{
         error::RegistrationError,
         fixed_store::{FixedStore, registration},
+        registration_census::RegistrationCensus,
         removal_hook::{ForwardedSubscriptionCopy, RegistrationRemovalHook, RegistrationTeardown},
-        service_fixture::{offline_engine, service_over},
+        service_fixture::{offline_engine, service_counting, service_over},
         store::RegistrationStore,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -171,5 +173,40 @@ mod tests {
 
         assert!(matches!(outcome, Err(RegistrationError::NotFound { .. })), "{outcome:?}");
         assert!(hook.steps.lock().expect("step log").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_deleted_registration_is_no_longer_counted() {
+        let store = Arc::new(FixedStore::new(vec![registration(
+            REGISTRATION_ID,
+            "inclusive",
+            &json!([{"entities": [{"type": "https://example.org/Vehicle"}]}]),
+        )]));
+        let census = RegistrationCensus::new(1);
+        let service = service_counting(store as Arc<dyn RegistrationStore>, census.clone(), offline_engine(), None);
+
+        let id: Identifier = REGISTRATION_ID.parse().expect("valid URI");
+        service.delete(&id).await.expect("the registration is deleted");
+
+        assert!(census.holds_none());
+    }
+
+    /// A deletion that finds nothing removes nothing, so every registration
+    /// the store holds stays counted.
+    #[tokio::test]
+    async fn deleting_an_unknown_registration_keeps_the_count() {
+        let census = RegistrationCensus::new(1);
+        let service = service_counting(
+            Arc::new(FixedStore::new(Vec::new())) as Arc<dyn RegistrationStore>,
+            census.clone(),
+            offline_engine(),
+            None,
+        );
+
+        let id: Identifier = "urn:ngsi-ld:ContextSourceRegistration:unknown".parse().expect("valid URI");
+        let outcome = service.delete(&id).await;
+
+        assert!(matches!(outcome, Err(RegistrationError::NotFound { .. })), "{outcome:?}");
+        assert_eq!(census.release(0), 1);
     }
 }

@@ -22,6 +22,7 @@ use andromeda_ngsi_ld_query::{
     csr::{compiled::CompiledCsrQuery, expanded_entity_specification::ExpandedEntitySpecification},
     page_window::PageWindow,
 };
+use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use serde_json::json;
@@ -40,14 +41,30 @@ use std::sync::Mutex;
 /// assert what the policy layer would have written, and answers the held
 /// registration carrying it; `delete` records
 /// the identifier it was asked to remove, so a test can tell what happened
-/// before the row went from what happened after.
+/// before the row went from what happened after; `delete_expired` answers the
+/// registrations the store was given as expired.
 pub(crate) struct FixedStore {
     /// The registrations the store holds.
     registrations: Vec<ContextSourceRegistration>,
+    /// How the store answers a creation.
+    creation: CreationAnswer,
+    /// The registrations the expiry sweep deletes.
+    expired: Vec<ContextSourceRegistration>,
     /// The `information` of every update applied, in order.
     updated_information: Mutex<Vec<Vec<RegistrationInfo>>>,
     /// Every identifier deleted, in order.
     deleted: Mutex<Vec<Identifier>>,
+}
+
+/// How a [`FixedStore`] answers a creation.
+#[derive(Clone, Copy)]
+pub(crate) enum CreationAnswer {
+    /// The registration is written.
+    Written,
+    /// The identifier is already taken, as a lost uniqueness race reports it.
+    Duplicate,
+    /// The store cannot be reached, so whether the write committed is unknown.
+    Unavailable,
 }
 
 impl FixedStore {
@@ -55,9 +72,23 @@ impl FixedStore {
     pub(crate) fn new(registrations: Vec<ContextSourceRegistration>) -> FixedStore {
         FixedStore {
             registrations,
+            creation: CreationAnswer::Written,
+            expired: Vec::new(),
             updated_information: Mutex::new(Vec::new()),
             deleted: Mutex::new(Vec::new()),
         }
+    }
+
+    /// The same store, answering every creation as `creation` says.
+    pub(crate) fn answering_creations(mut self, creation: CreationAnswer) -> FixedStore {
+        self.creation = creation;
+        self
+    }
+
+    /// The same store, its expiry sweep deleting `expired`.
+    pub(crate) fn expiring(mut self, expired: Vec<ContextSourceRegistration>) -> FixedStore {
+        self.expired = expired;
+        self
     }
 
     /// Every identifier deleted so far.
@@ -76,10 +107,11 @@ impl RegistrationStore for FixedStore {
     where
         'life0: 'async_trait,
     {
+        let registrations = self.expired.clone();
         Box::pin(async {
             Ok(ExpiredDeletion {
                 revision: CsourceChangeRevision::from(1),
-                registrations: Vec::new(),
+                registrations,
             })
         })
     }
@@ -114,12 +146,15 @@ impl RegistrationStore for FixedStore {
     {
         let mut created = registration(id.as_str(), "inclusive", &json!(params.information));
         created.access.mode = Some(params.mode);
-        Box::pin(async move {
-            Ok(WrittenRegistration {
+        let answer = match self.creation {
+            CreationAnswer::Written => Ok(WrittenRegistration {
                 revision: CsourceChangeRevision::from(1),
                 registration: created,
-            })
-        })
+            }),
+            CreationAnswer::Duplicate => Err(RegistrationError::already_exists(id)),
+            CreationAnswer::Unavailable => Err(RegistrationError::from(PersistenceFailure::Unavailable)),
+        };
+        Box::pin(async move { answer })
     }
 
     fn get<'life0, 'life1, 'async_trait>(

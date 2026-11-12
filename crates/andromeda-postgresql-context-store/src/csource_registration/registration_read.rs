@@ -17,6 +17,7 @@ use crate::{
     },
     error::ContextStoreError,
     store_fault::persistence_error,
+    store_invariant::StoreInvariant,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
@@ -34,6 +35,7 @@ use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_postgresql_schema::csr::Csr;
 use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
     literal::int_literal,
     statement::Statement,
     transaction::{Isolation, TransactionStart},
@@ -127,6 +129,18 @@ pub(super) fn expired_select(cutoff: DateTime<Utc>) -> SelectStatement {
 /// The registrations due at or before `cutoff`, read without deleting them.
 pub(super) async fn find_expired(store: &PostgresRegistrationStore, cutoff: DateTime<Utc>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
     read_registrations(store, &expired_select(cutoff)).await
+}
+
+/// Count every registration row, those past their `expiresAt` included.
+fn held_select() -> SelectStatement {
+    Query::select().expr(count_all()).from(Csr::Table).to_owned()
+}
+
+/// How many registration rows the store holds, those past their `expiresAt`
+/// that the expiry sweep has not deleted yet included.
+pub(super) async fn held(store: &PostgresRegistrationStore) -> Result<u64, ContextStoreError> {
+    let (count,): (i64,) = held_select().to_query_as().fetch_one(&store.pool).await?;
+    u64::try_from(count).map_err(|_negative| ContextStoreError::from(StoreInvariant::NegativeRegistrationCount { count }))
 }
 
 /// Whether a registration with `id` exists.
@@ -263,4 +277,21 @@ pub(super) async fn find_all_active(
     }
     select.order_by(Csr::Id, Order::Asc).limit(u64::from(limit));
     read_registrations(store, &select).await
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::csource_registration::registration_read::held_select;
+    use pretty_assertions::assert_eq;
+    use sea_query::PostgresQueryBuilder;
+
+    /// The count a census opens with includes the rows past their
+    /// `expiresAt`, since the sweep's deletions are taken away from it.
+    #[test]
+    fn the_held_count_reads_every_registration_row() {
+        assert_eq!(
+            held_select().to_string(PostgresQueryBuilder),
+            r#"SELECT COUNT(*) FROM "context_source_registrations""#
+        );
+    }
 }

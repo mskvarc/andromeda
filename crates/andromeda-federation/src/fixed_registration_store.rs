@@ -20,6 +20,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_registration::{
     error::RegistrationError,
+    registration_census::RegistrationCensus,
     resolved_update::ResolvedCsrUpdate,
     store::{
         RegistrationStore,
@@ -46,8 +47,11 @@ use std::{
 /// A forwarding service choosing among `registrations`, holding no entity of
 /// its own and resolving only embedded contexts, never the network.
 pub(crate) fn offline_service(registrations: Vec<ContextSourceRegistration>) -> FederationService {
+    let store = Arc::new(FixedRegistrationStore::new(registrations));
+    let census = store.census();
     FederationService::new(
-        Arc::new(FixedRegistrationStore::new(registrations)),
+        store,
+        census,
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("engine builds"),
         LocalSource::new(
@@ -63,8 +67,11 @@ pub(crate) fn offline_service(registrations: Vec<ContextSourceRegistration>) -> 
 /// of `local_types` whatever its identifier, and resolving only embedded
 /// contexts, never the network.
 pub(crate) fn service_holding_entity_of(registrations: Vec<ContextSourceRegistration>, local_types: Vec<EntityTypeName>) -> FederationService {
+    let store = Arc::new(FixedRegistrationStore::new(registrations));
+    let census = store.census();
     FederationService::new(
-        Arc::new(FixedRegistrationStore::new(registrations)),
+        store,
+        census,
         Arc::new(LocalEntityOf(local_types)),
         JsonLdEngine::builder().allow_remote(false).build().expect("engine builds"),
         LocalSource::new(
@@ -107,6 +114,11 @@ impl FixedRegistrationStore {
             recorded_outcomes: AtomicUsize::new(0),
             asked_specifications: Mutex::new(Vec::new()),
         }
+    }
+
+    /// A census counting every registration the store holds.
+    pub(crate) fn census(&self) -> RegistrationCensus {
+        RegistrationCensus::new(u64::try_from(self.registrations.len()).expect("a registration count fits a u64"))
     }
 
     /// How many forwarding outcomes were recorded on the registrations.

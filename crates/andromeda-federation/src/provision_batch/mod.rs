@@ -12,8 +12,13 @@
 
 /// Reading a forwarded batch request's answer entity by entity.
 mod batch_answer;
+/// How a forwarded batch reads its candidate registrations.
+#[cfg(test)]
+mod candidate_lookup_tests;
 /// The clause 5.6.7.4 to 5.6.20.4 decision ladder for one registration.
 mod fallback_plan;
+/// The one specification a batch's candidate registrations are read with.
+mod footprint;
 /// Narrowing the client's array to what one registration receives.
 mod narrowing;
 /// The registrations and entities the batch forwarding tests share.
@@ -40,6 +45,7 @@ use crate::{
     provision_batch::{
         batch_answer::batch_outcomes,
         fallback_plan::{FallbackPlan, SingleWrite, follow_up_write, plan_for},
+        footprint::BatchFootprint,
         narrowing::{NarrowedEntity, narrow_input},
         single_write::{SingleWriteRequest, single_write_request},
     },
@@ -165,16 +171,22 @@ impl FederationService {
     /// does not fail the call: its rejections are reported per entity in the
     /// returned [`BatchForwardedResult`]s.
     pub async fn forward_batch(&self, target: &ContextTarget, request: ForwardBatchRequest<'_>) -> Result<Vec<BatchForwardedResult>, FederationError> {
-        if !target.permits_federation() {
+        if !target.permits_federation() || request.entities.is_empty() {
+            return Ok(Vec::new());
+        }
+        // A tenant holding no registration has none for the batch to reach, so
+        // no registration is read.
+        if self.census.holds_none() {
             return Ok(Vec::new());
         }
         // Clause 6.3.18: an incoming request whose Via already names this
         // broker has looped back onto it, and nothing is forwarded.
         let looped = self.is_loop_detected(request.triggering.via);
+        let footprint = BatchFootprint::of(request.entities);
         // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
         let candidates = self
             .csr_repo
-            .find_matching(&[])
+            .find_matching(&[footprint.specification()])
             .await?
             .into_iter()
             .filter(|csr| csr.access.mode != Some(ForwardingMode::Auxiliary))

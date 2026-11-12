@@ -2,6 +2,7 @@
 
 use crate::{
     csource_registration::{registration_read, registration_write},
+    error::ContextStoreError,
     store_fault::persistence_error,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
@@ -63,6 +64,17 @@ impl PostgresRegistrationStore {
             clock_writers,
             attribute_names,
         }
+    }
+
+    /// How many registrations the store holds, those past their `expiresAt`
+    /// that the expiry sweep has not deleted yet included, which is the count
+    /// a tenant's registration census opens with.
+    ///
+    /// # Errors
+    ///
+    /// Returns the database failure of the count.
+    pub async fn held_registrations(&self) -> Result<u64, ContextStoreError> {
+        registration_read::held(self).await
     }
 }
 

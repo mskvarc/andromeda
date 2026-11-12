@@ -56,8 +56,10 @@ async fn a_query_reads_its_registrations_once_and_contacts_each_source_in_its_ph
         registration(&auxiliary, "urn:ngsi-ld:ContextSourceRegistration:auxiliary", "auxiliary"),
     ]));
     let shared: Arc<FixedRegistrationStore> = Arc::clone(&store);
+    let census = store.census();
     let service = FederationService::new(
         shared,
+        census,
         Arc::new(NoLocalEntities),
         JsonLdEngine::builder().allow_remote(false).build().expect("the engine builds"),
         LocalSource::new(
