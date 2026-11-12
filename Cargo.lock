@@ -2390,6 +2390,8 @@ dependencies = [
  "futures",
  "googletest",
  "http",
+ "http-body",
+ "http-body-util",
  "indexmap 2.14.2",
  "iri-rs",
  "mediatype",

@@ -132,6 +132,58 @@ async fn an_idle_connection_gets_the_head_bound_from_the_first_octet_of_its_next
     Ok(())
 }
 
+/// Send `octets` to `stream`, read them through it, and shut it down, as the
+/// HTTP server does once it has answered what it read, and report whether the
+/// close was announced.
+async fn announced_after(octets: &[u8], served: Served) -> io::Result<bool> {
+    let (mut stream, mut peer, clock, announcement) = fixture();
+    peer.write_all(octets).await?;
+    let mut read = vec![0; octets.len()];
+    stream.read_exact(&mut read).await?;
+    if let Served::Request = served {
+        drop(clock.request_began());
+    }
+    stream.shutdown().await?;
+    Ok(announcement.is_announced())
+}
+
+/// Whether a request was served for what the stream read.
+#[derive(Clone, Copy)]
+enum Served {
+    /// A request reached the service and its response ended.
+    Request,
+    /// Nothing reached the service.
+    Nothing,
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_shutdown_with_an_http1_head_received_and_no_request_served_announces_the_close() -> io::Result<()> {
+    assert!(announced_after(b"POST /ngsi-ld/v1/entities HTTP/1.1\r\nHost: localhost\r\nX-Fill: aaaa", Served::Nothing).await?);
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_shutdown_after_the_request_was_served_announces_nothing() -> io::Result<()> {
+    assert!(!announced_after(b"GET /ngsi-ld/v1/types HTTP/1.1\r\nHost: localhost\r\n\r\n", Served::Request).await?);
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_shutdown_of_an_http2_connection_announces_nothing() -> io::Result<()> {
+    assert!(!announced_after(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", Served::Nothing).await?);
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_shutdown_of_a_connection_that_received_nothing_announces_nothing() -> io::Result<()> {
+    let (mut stream, _peer, _clock, announcement) = fixture();
+
+    stream.shutdown().await?;
+
+    assert!(!announcement.is_announced());
+    Ok(())
+}
+
 #[tokio::test(start_paused = true)]
 async fn an_unflushed_response_is_not_followed_by_a_408() -> io::Result<()> {
     let (mut stream, mut peer, _clock, _announcement) = fixture();
