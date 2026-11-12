@@ -21,7 +21,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_retry::{growth::Growth, schedule::BackoffSchedule};
 use async_trait::async_trait;
-use chrono::{DateTime, TimeDelta, TimeZone, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     mem,
@@ -54,7 +54,8 @@ struct RecordingQueueState {
     /// The wait every release wait was given.
     waits: Vec<Duration>,
     /// The keys not claimable before the instant recorded, as a retry delay
-    /// leaves them.
+    /// leaves them. A retry's delay is recorded, not waited out: a test holds
+    /// an intent back with [`RecordingQueue::defer`].
     not_before: HashMap<i64, DateTime<Utc>>,
     /// The keys another owner holds under a live lease.
     held_elsewhere: HashSet<i64>,
@@ -200,12 +201,7 @@ impl RecordingQueueState {
 
 #[async_trait]
 impl TemporalIntentQueue for RecordingQueue {
-    async fn claim(
-        &self,
-        _owner: LeaseHolder,
-        limit: TemporalIntentBatchSize,
-        _lease_until: DateTime<Utc>,
-    ) -> Result<Vec<ClaimedTemporalIntent>, TemporalError> {
+    async fn claim(&self, _owner: LeaseHolder, limit: TemporalIntentBatchSize, _lease: Duration) -> Result<Vec<ClaimedTemporalIntent>, TemporalError> {
         let mut state = self.state.lock().await;
         let now = Utc::now();
         let taken = state.claimable(limit, |claim| state.due(claim, now), |earlier| state.held(earlier) || !state.due(earlier, now));
@@ -219,7 +215,7 @@ impl TemporalIntentQueue for RecordingQueue {
         entity_id: &Identifier,
         through: TemporalIntentKey,
         limit: TemporalIntentBatchSize,
-        _lease_until: DateTime<Utc>,
+        _lease: Duration,
     ) -> Result<Vec<ClaimedTemporalIntent>, TemporalError> {
         let mut state = self.state.lock().await;
         state.entity_claims.push((entity_id.clone(), through.get()));
@@ -266,12 +262,11 @@ impl TemporalIntentQueue for RecordingQueue {
         Ok(EntityRelease::Claimable)
     }
 
-    async fn retry(&self, _owner: LeaseHolder, intent: &ClaimedTemporalIntent, retry: TemporalIntentRetry) -> Result<LeaseAcknowledgement, TemporalError> {
+    async fn retry(&self, _owner: LeaseHolder, _intent: &ClaimedTemporalIntent, retry: TemporalIntentRetry) -> Result<LeaseAcknowledgement, TemporalError> {
         let mut state = self.state.lock().await;
         if state.lease_lapsed {
             return Ok(LeaseAcknowledgement::Lost);
         }
-        state.not_before.insert(intent.key.get(), retry.eligible_at);
         state.retries.push(retry);
         Ok(LeaseAcknowledgement::Applied)
     }
@@ -409,10 +404,6 @@ fn claimed(key: i64, entity_id: &Identifier) -> ClaimedTemporalIntent {
     }
 }
 
-fn instant() -> DateTime<Utc> {
-    Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant")
-}
-
 fn live_target() -> ContextTarget {
     ContextTarget::Live
 }
@@ -485,7 +476,7 @@ async fn three_intents() -> (Arc<RecordingQueue>, Arc<RecordingApplication>) {
 #[tokio::test]
 async fn an_applied_batch_is_counted_as_acknowledged() {
     let (queue, application) = three_intents().await;
-    let outcome = drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    let outcome = drain(&queue, &application).execute().await.expect("the pass runs");
     assert_eq!(outcome.acknowledged, 3);
     assert_eq!(outcome.retried, 0);
     assert_eq!(outcome.held_back, 0);
@@ -497,7 +488,7 @@ async fn an_applied_batch_is_counted_as_acknowledged() {
 async fn a_failed_batch_is_applied_again_one_intent_at_a_time() {
     let (queue, application) = three_intents().await;
     application.fail_key(2).await;
-    drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    drain(&queue, &application).execute().await.expect("the pass runs");
     assert_eq!(application.calls().await, vec![vec![1, 2, 3], vec![1], vec![2], vec![3]]);
 }
 
@@ -505,7 +496,7 @@ async fn a_failed_batch_is_applied_again_one_intent_at_a_time() {
 async fn one_failing_intent_does_not_hold_back_its_batch() {
     let (queue, application) = three_intents().await;
     application.fail_key(2).await;
-    let outcome = drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    let outcome = drain(&queue, &application).execute().await.expect("the pass runs");
     assert_eq!(outcome.acknowledged, 2);
     assert_eq!(outcome.retried, 1);
     assert_eq!(outcome.held_back, 0, "no two of the intents share an Entity");
@@ -520,7 +511,7 @@ async fn a_single_claimed_intent_is_applied_once() {
     queue.insert(claimed(1, &vehicle(1))).await;
     let application = Arc::new(RecordingApplication::over(&queue));
     application.fail(ApplicationFailure::StoreUnavailable).await;
-    let outcome = drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    let outcome = drain(&queue, &application).execute().await.expect("the pass runs");
     assert_eq!(application.calls().await, vec![vec![1]]);
     assert_eq!(outcome.retried, 1);
 }
@@ -534,7 +525,7 @@ async fn a_lapsed_lease_is_reported_as_lost_rather_than_as_an_outcome() {
     let application = Arc::new(RecordingApplication::over(&queue));
     application.lapse_leases().await;
     let outcome = drain(&queue, &application)
-        .execute(instant())
+        .execute()
         .await
         .expect("a lapsed lease is an outcome, not a failure");
     assert_eq!(outcome.acknowledged, 0);
@@ -545,7 +536,7 @@ async fn a_lapsed_lease_is_reported_as_lost_rather_than_as_an_outcome() {
     queue.lapse_leases().await;
     application.fail(ApplicationFailure::StoreUnavailable).await;
     let outcome = drain(&queue, &application)
-        .execute(instant())
+        .execute()
         .await
         .expect("a lapsed lease is an outcome, not a failure");
     assert_eq!(outcome.retried, 0);
@@ -563,12 +554,12 @@ async fn repeated_application_failures_back_off_up_to_the_configured_ceiling() {
     application.fail(ApplicationFailure::StoreUnavailable).await;
     let drain = drain(&queue, &application);
     for _ in 0..4 {
-        drain.execute(instant()).await.expect("failure is retained per item");
+        drain.execute().await.expect("failure is retained per item");
     }
-    let delays: Vec<TimeDelta> = queue.retries().await.iter().map(|retry| retry.eligible_at - instant()).collect();
+    let delays: Vec<Duration> = queue.retries().await.iter().map(|retry| retry.delay).collect();
     assert_eq!(
         delays,
-        vec![TimeDelta::seconds(2), TimeDelta::seconds(4), TimeDelta::seconds(5), TimeDelta::seconds(5)],
+        [2, 4, 5, 5].map(Duration::from_secs),
         "doubling from two seconds, clamped at the five-second ceiling"
     );
 }
@@ -580,7 +571,7 @@ async fn a_long_application_failure_summary_is_cut_to_the_column_limit() {
     queue.insert(claimed(1, &vehicle(1))).await;
     let application = Arc::new(RecordingApplication::over(&queue));
     application.fail(ApplicationFailure::LongDiagnostic).await;
-    drain(&queue, &application).execute(instant()).await.expect("failure is retained per item");
+    drain(&queue, &application).execute().await.expect("failure is retained per item");
     let summaries: Vec<usize> = queue.retries().await.iter().map(|retry| retry.summary.chars().count()).collect();
     assert_eq!(summaries, vec![usize::try_from(FAILURE_SUMMARY_MAX_CHARACTERS).expect("fits usize")]);
 }
@@ -597,7 +588,7 @@ async fn a_stuck_intent_is_reported_by_its_key_write_and_entity() {
     let drain = drain(&queue, &application);
     let mut reported = Vec::new();
     for _ in 0..3 {
-        reported.push(drain.execute(instant()).await.expect("failure is retained per item").stuck);
+        reported.push(drain.execute().await.expect("failure is retained per item").stuck);
     }
     assert_eq!(
         reported,
@@ -646,7 +637,7 @@ async fn the_mutation_barrier_applies_an_intent_waiting_in_retry_backoff() {
     let (queue, application) = one_intent().await;
     queue.defer(1, Utc::now() + TimeDelta::minutes(5)).await;
     let drain = drain(&queue, &application);
-    let background = drain.execute(Utc::now()).await.expect("the pass runs");
+    let background = drain.execute().await.expect("the pass runs");
     assert_eq!(background.acknowledged, 0, "the background drain keeps the backoff");
     drain.synchronize(&live_target(), &vehicle(1)).await.expect("the barrier applies the intent");
     assert_eq!(application.calls().await, vec![vec![1]]);
@@ -726,17 +717,11 @@ async fn the_mutation_barrier_does_not_wait_for_intents_queued_after_it_started(
 async fn an_intent_that_still_fails_answers_with_its_own_error() {
     let (queue, application) = three_intents().await;
     application.fail_key(2).await;
-    let before = Utc::now();
     let refused = drain(&queue, &application).synchronize(&live_target(), &vehicle(2)).await;
-    let after = Utc::now();
     assert!(matches!(refused, Err(TemporalError::StoreUnavailable)), "{refused:?}");
     let retries = queue.retries().await;
     assert_eq!(retries.len(), 1, "the failure is recorded for the background drain");
-    let eligible_at = retries[0].eligible_at;
-    assert!(
-        eligible_at >= before + TimeDelta::seconds(2) && eligible_at <= after + TimeDelta::seconds(2),
-        "the first retry waits the two-second base delay: {eligible_at}"
-    );
+    assert_eq!(retries[0].delay, Duration::from_secs(2), "the first retry waits the two-second base delay");
     assert_eq!(queue.pending_keys().await, vec![1, 2, 3]);
 }
 
@@ -820,7 +805,7 @@ async fn intents_of(keys: &[(i64, u8)]) -> (Arc<RecordingQueue>, Arc<RecordingAp
 async fn a_failing_intent_holds_back_the_later_intents_of_its_entity() {
     let (queue, application) = intents_of(&[(1, 1), (2, 1), (3, 1)]).await;
     application.fail_key(1).await;
-    let outcome = drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    let outcome = drain(&queue, &application).execute().await.expect("the pass runs");
     assert_eq!(application.calls().await, vec![vec![1, 2, 3], vec![1], vec![2], vec![3]]);
     assert_eq!((outcome.acknowledged, outcome.retried, outcome.held_back), (0, 1, 2));
     assert_eq!(queue.pending_keys().await, vec![1, 2, 3]);
@@ -833,7 +818,7 @@ async fn a_failing_intent_holds_back_the_later_intents_of_its_entity() {
 async fn a_failing_intent_holds_back_none_of_another_entitys_intents() {
     let (queue, application) = intents_of(&[(1, 1), (2, 2)]).await;
     application.fail_key(1).await;
-    let outcome = drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    let outcome = drain(&queue, &application).execute().await.expect("the pass runs");
     assert_eq!((outcome.acknowledged, outcome.retried, outcome.held_back), (1, 1, 0));
     assert_eq!(queue.pending_keys().await, vec![1]);
 }
@@ -842,7 +827,7 @@ async fn a_failing_intent_holds_back_none_of_another_entitys_intents() {
 async fn an_entitys_intents_after_a_head_waiting_for_its_retry_are_not_claimed() {
     let (queue, application) = intents_of(&[(1, 1), (2, 1), (3, 2)]).await;
     queue.defer(1, Utc::now() + TimeDelta::minutes(5)).await;
-    drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    drain(&queue, &application).execute().await.expect("the pass runs");
     assert_eq!(application.calls().await, vec![vec![3]]);
     assert_eq!(queue.pending_keys().await, vec![1, 2]);
 }
@@ -851,7 +836,7 @@ async fn an_entitys_intents_after_a_head_waiting_for_its_retry_are_not_claimed()
 async fn an_entitys_intents_after_a_head_held_elsewhere_are_not_claimed() {
     let (queue, application) = intents_of(&[(1, 1), (2, 1)]).await;
     queue.hold_elsewhere(1, &[]).await;
-    drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    drain(&queue, &application).execute().await.expect("the pass runs");
     assert_eq!(application.calls().await, Vec::<Vec<i64>>::new());
     assert_eq!(queue.pending_keys().await, vec![1, 2]);
 }
@@ -864,7 +849,7 @@ async fn an_intent_claimed_past_an_earlier_one_is_released_without_an_attempt() 
     let (queue, application) = intents_of(&[(1, 1), (2, 1)]).await;
     queue.hold_elsewhere(1, &[]).await;
     queue.skip_filter_for(2).await;
-    let outcome = drain(&queue, &application).execute(instant()).await.expect("the pass runs");
+    let outcome = drain(&queue, &application).execute().await.expect("the pass runs");
     assert_eq!(application.calls().await, vec![vec![2]]);
     assert_eq!((outcome.retried, outcome.held_back), (0, 1));
     assert!(queue.retries().await.is_empty());
@@ -877,9 +862,9 @@ async fn held_back_intents_follow_their_head_once_it_applies() {
     let (queue, application) = intents_of(&[(1, 1), (2, 1), (3, 1)]).await;
     application.fail_key(1).await;
     let drain = drain(&queue, &application);
-    drain.execute(instant()).await.expect("the first pass runs");
+    drain.execute().await.expect("the first pass runs");
     application.recover_key(1).await;
-    let outcome = drain.execute(instant() + TimeDelta::minutes(1)).await.expect("the pass past the backoff runs");
+    let outcome = drain.execute().await.expect("the pass past the backoff runs");
     assert_eq!(application.calls().await.last(), Some(&vec![1, 2, 3]));
     assert_eq!(outcome.acknowledged, 3);
     assert_eq!(queue.pending_keys().await, Vec::<i64>::new());

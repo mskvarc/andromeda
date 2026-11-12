@@ -42,7 +42,7 @@ use andromeda_postgresql_schema::{
     subscriptions::Subscriptions,
 };
 use andromeda_postgresql_seaquery::{
-    interval::make_interval_secs,
+    clock::after_transaction_start,
     pg_array::{all, any, array_of_subquery},
     queue::{claimable_at, is_claimed_from},
     statement::Statement,
@@ -262,10 +262,7 @@ fn claim_statement(target: &ContextTarget, worker_id: LeaseHolder, batch_size: N
     Query::update()
         .table(table_of(target, NotificationDeliveries::Table))
         .value(NotificationDeliveries::ClaimedBy, worker_id.as_uuid())
-        .value(
-            NotificationDeliveries::LeaseUntil,
-            Expr::current_timestamp().add(make_interval_secs(Expr::val(lease_seconds))),
-        )
+        .value(NotificationDeliveries::LeaseUntil, after_transaction_start(Expr::val(lease_seconds)))
         .from(table_of(target, Subscriptions::Table).alias(DeliverySubscription))
         .and_where(is_claimed_from(
             Expr::col((NotificationDeliveries::Table, NotificationDeliveries::DeliveryKey)),

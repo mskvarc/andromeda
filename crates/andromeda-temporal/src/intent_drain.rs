@@ -34,7 +34,6 @@ use crate::{
         temporal_intent_application::{TemporalIntentApplication, TemporalIntentApplicationOutcome},
         temporal_intent_queue::{ClaimedTemporalIntent, EntityRelease, TemporalIntentBatchSize, TemporalIntentQueue, TemporalIntentRetry},
     },
-    temporal_invariant::TemporalInvariant,
     unsettled_history::UnsettledHistory,
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, write_id::WriteId};
@@ -43,7 +42,6 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
 use async_lock::Mutex;
 use async_trait::async_trait;
-use chrono::{DateTime, TimeDelta, Utc};
 use std::{
     slice,
     sync::Arc,
@@ -158,26 +156,19 @@ impl TemporalIntentDrain {
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalError::Internal`] when the configured lease duration
-    /// cannot be expressed as a calendar duration, and whatever the durable
-    /// queue reports when a claim or retry cannot be recorded. An intent that
-    /// cannot be applied is not an error: it is rescheduled and counted in the
-    /// returned outcome.
-    pub async fn execute(&self, now: DateTime<Utc>) -> Result<TemporalIntentDrainOutcome, TemporalError> {
+    /// Returns whatever the durable queue reports when a claim or retry cannot
+    /// be recorded. An intent that cannot be applied is not an error: it is
+    /// rescheduled and counted in the returned outcome.
+    pub async fn execute(&self) -> Result<TemporalIntentDrainOutcome, TemporalError> {
         let _execution = self.execution_gate.lock().await;
-        let claimed = self.queue.claim(self.owner, self.batch_size, now + self.lease_delta()?).await?;
-        Ok(self.process_claimed(&claimed, now).await?.outcome)
-    }
-
-    /// The claim lease as a calendar duration.
-    fn lease_delta(&self) -> Result<TimeDelta, TemporalError> {
-        TimeDelta::from_std(self.lease_duration).map_err(|error| TemporalError::from(TemporalInvariant::LeaseOutOfRange(error)))
+        let claimed = self.queue.claim(self.owner, self.batch_size, self.lease_duration).await?;
+        Ok(self.process_claimed(&claimed).await?.outcome)
     }
 
     /// Apply a claimed batch in one transaction, and when it does not apply,
     /// each of its intents in one of its own, in durable sequence order,
     /// releasing at the end the intents held back behind an earlier one.
-    async fn process_claimed(&self, claimed: &[ClaimedTemporalIntent], now: DateTime<Utc>) -> Result<ClaimedPass, TemporalError> {
+    async fn process_claimed(&self, claimed: &[ClaimedTemporalIntent]) -> Result<ClaimedPass, TemporalError> {
         let work_may_remain = usize::try_from(self.batch_size.get()).is_ok_and(|batch_size| claimed.len() == batch_size);
         let mut pass = ClaimedPass {
             outcome: TemporalIntentDrainOutcome {
@@ -200,7 +191,7 @@ impl TemporalIntentDrain {
         }
         let mut held_back = Vec::new();
         for claim in claimed {
-            let ended = self.apply_alone(claim, now, &mut pass.outcome.stuck).await?;
+            let ended = self.apply_alone(claim, &mut pass.outcome.stuck).await?;
             record_queue_outcome(QueueName::TemporalAppendIntents, ended.queue_outcome(), 1);
             match ended {
                 IntentEnd::Applied => pass.outcome.acknowledged += 1,
@@ -234,7 +225,7 @@ impl TemporalIntentDrain {
     /// Apply one claimed intent in a transaction of its own, rescheduling it
     /// when it does not apply and adding it to `stuck` when it has failed as
     /// often as the threshold names.
-    async fn apply_alone(&self, claim: &ClaimedTemporalIntent, now: DateTime<Utc>, stuck: &mut Vec<StuckTemporalIntent>) -> Result<IntentEnd, TemporalError> {
+    async fn apply_alone(&self, claim: &ClaimedTemporalIntent, stuck: &mut Vec<StuckTemporalIntent>) -> Result<IntentEnd, TemporalError> {
         match self.application.apply(self.owner, slice::from_ref(claim)).await {
             Ok(TemporalIntentApplicationOutcome::Applied) => Ok(IntentEnd::Applied),
             Ok(TemporalIntentApplicationOutcome::LeaseLost) => Ok(IntentEnd::LeaseLost),
@@ -242,7 +233,7 @@ impl TemporalIntentDrain {
             Err(error) => {
                 stuck.extend(self.report_if_stuck(claim, &error));
                 let retry = TemporalIntentRetry {
-                    eligible_at: self.retry_policy.retry_at(now, claim.attempts)?,
+                    delay: self.retry_policy.retry_delay(claim.attempts),
                     summary: TemporalIntentRetryPolicy::summary(&error),
                 };
                 Ok(match self.queue.retry(self.owner, claim, retry).await? {
@@ -339,17 +330,15 @@ impl TemporalIntentDrain {
         let Some(through) = self.queue.last_intent_for(entity_id).await? else {
             return Ok(());
         };
-        let lease = self.lease_delta()?;
         let started = Instant::now();
         loop {
             let pass = {
                 let _execution = self.execution_gate.lock().await;
-                let now = Utc::now();
                 let claimed = self
                     .queue
-                    .claim_for_entity(self.owner, entity_id, through, self.batch_size, now + lease)
+                    .claim_for_entity(self.owner, entity_id, through, self.batch_size, self.lease_duration)
                     .await?;
-                self.process_claimed(&claimed, now).await?
+                self.process_claimed(&claimed).await?
             };
             // The retry is recorded, so the background drain keeps its delay;
             // the mutation answers with what kept the history from applying.

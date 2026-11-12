@@ -28,12 +28,6 @@ pub enum SnapshotInvariant {
         /// The Snapshot being prepared.
         snapshot: Identifier,
     },
-    /// The configured preparation lease cannot be expressed as a calendar duration.
-    #[error("the configured Snapshot preparation lease is out of range: {0}")]
-    LeaseOutOfRange(#[source] OutOfRangeError),
-    /// A lease deadline exceeds the supported timestamp range.
-    #[error("a Snapshot lease deadline exceeds the supported timestamp range")]
-    LeaseDeadlineOverflow,
     /// The Snapshot a clone reads from no longer exists.
     #[error("clone source {source_snapshot} does not exist")]
     CloneSourceMissing {

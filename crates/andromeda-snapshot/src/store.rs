@@ -5,6 +5,11 @@
 //! temporal entities. The port keeps them apart rather than exposing a table
 //! name, because a store that keeps frozen payloads somewhere else entirely
 //! still answers the same questions.
+//!
+//! A preparation claim's lease is handed over as a span, never as an instant:
+//! the store compares every lease with its own clock, so it counts the span
+//! from that clock, and a worker whose clock differs from the store's never
+//! holds a lease that has already lapsed.
 
 use crate::{branch_condition::BranchCondition, error::SnapshotError};
 use andromeda_context_commit::lease_holder::LeaseHolder;
@@ -19,6 +24,7 @@ use andromeda_ngsi_ld_model::{
 };
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
+use std::time::Duration;
 use url::Url;
 
 /// The typed columns of a snapshot record.
@@ -120,18 +126,20 @@ pub trait SnapshotStore: Send + Sync + 'static {
         'life1: 'async_trait,
         Self: 'async_trait;
 
-    /// Return the next snapshot awaiting bounded preparation, if one exists.
+    /// Claim the next snapshot awaiting bounded preparation, if one exists,
+    /// leasing it for `lease` from the claim.
     fn next_preparing<'life0, 'async_trait>(
         &'life0 self,
         claimed_by: LeaseHolder,
-        lease_until: DateTime<Utc>,
+        lease: Duration,
     ) -> BoxFuture<'async_trait, Result<Option<SnapshotPreparationJob>, SnapshotError>>
     where
         'life0: 'async_trait,
         Self: 'async_trait;
 
-    /// Claim the preparation of the Snapshot `id` just created, if no worker
-    /// holds it and, for a clone, its source has left `preparing`.
+    /// Claim the preparation of the Snapshot `id` just created for `lease`
+    /// from the claim, if no worker holds it and, for a clone, its source has
+    /// left `preparing`.
     ///
     /// Unlike [`SnapshotStore::next_preparing`], which passes over a row
     /// another transaction holds, this waits out a brief hold such as a read
@@ -141,19 +149,20 @@ pub trait SnapshotStore: Send + Sync + 'static {
         &'life0 self,
         id: &'life1 Identifier,
         claimed_by: LeaseHolder,
-        lease_until: DateTime<Utc>,
+        lease: Duration,
     ) -> BoxFuture<'async_trait, Result<Option<SnapshotPreparationJob>, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
 
-    /// Renew a preparation lease if it is still held by `claimed_by`.
+    /// Renew a preparation lease for `lease` from the renewal if it is still
+    /// held by `claimed_by`.
     fn renew_preparation_lease<'life0, 'life1, 'async_trait>(
         &'life0 self,
         id: &'life1 Identifier,
         claimed_by: LeaseHolder,
-        lease_until: DateTime<Utc>,
+        lease: Duration,
     ) -> BoxFuture<'async_trait, Result<bool, SnapshotError>>
     where
         'life0: 'async_trait,
@@ -161,8 +170,8 @@ pub trait SnapshotStore: Send + Sync + 'static {
         Self: 'async_trait;
 
     /// Restart a preparation still claimed by `claimed_by` from an empty
-    /// staging branch, extending its lease; false when the claim was lost or
-    /// the Snapshot is no longer preparing.
+    /// staging branch, extending its lease to `lease` from the restart; false
+    /// when the claim was lost or the Snapshot is no longer preparing.
     ///
     /// A re-attempted capture writes every result again, so whatever an earlier
     /// attempt staged is discarded first.
@@ -170,7 +179,7 @@ pub trait SnapshotStore: Send + Sync + 'static {
         &'life0 self,
         id: &'life1 Identifier,
         claimed_by: LeaseHolder,
-        lease_until: DateTime<Utc>,
+        lease: Duration,
     ) -> BoxFuture<'async_trait, Result<bool, SnapshotError>>
     where
         'life0: 'async_trait,

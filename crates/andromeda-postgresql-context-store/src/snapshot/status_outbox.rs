@@ -1,4 +1,8 @@
 //! Durable delivery queue for Snapshot lifecycle notifications.
+//!
+//! Every lease and retry instant is set on the database clock, the clock the
+//! claim compares it with, so a broker whose clock differs from the database's
+//! neither stretches a lease nor moves a retry.
 
 use crate::{
     error::ContextStoreError,
@@ -9,10 +13,11 @@ use crate::{
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, snapshot::SnapshotStatus};
+use andromeda_notification::delivery_backoff::BackoffStep;
 use andromeda_postgresql_schema::snapshot::{SnapshotNotificationOutbox, Snapshots};
 use andromeda_postgresql_seaquery::{
     cast::cast,
-    clock::now,
+    clock::{now, span_after_transaction_start},
     pg_type::PostgresType,
     queue::{claimable_at, is_claimed_from},
     statement::Statement,
@@ -22,7 +27,7 @@ use chrono::{DateTime, Utc};
 use sea_query::{Alias, CaseStatement, Expr, ExprTrait, InsertStatement, JoinType, Keyword, LockBehavior, LockType, Order, Query, UpdateStatement};
 use serde_json::value::RawValue;
 use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgRow};
-use std::num::NonZeroU32;
+use std::{num::NonZeroU32, time::Duration};
 use url::Url;
 use uuid::Uuid;
 
@@ -66,16 +71,17 @@ impl SnapshotStatusOutbox {
         SnapshotStatusOutbox { pool: pool.clone() }
     }
 
-    /// Claim a due batch using a renewable, replica-safe lease.
+    /// Claim a due batch, each delivery leased for `lease` from the claim on
+    /// the database clock.
     ///
     /// # Errors
     ///
     /// Returns [`SnapshotError::persistence`] when the claim, the projection of
     /// the claimed rows or the commit fails, and when a claimed row does not map
     /// back to a delivery because its endpoint or Snapshot URI no longer parses.
-    pub async fn claim(&self, worker: LeaseHolder, lease_until: DateTime<Utc>, limit: NonZeroU32) -> Result<Vec<SnapshotStatusDelivery>, SnapshotError> {
+    pub async fn claim(&self, worker: LeaseHolder, lease: Duration, limit: NonZeroU32) -> Result<Vec<SnapshotStatusDelivery>, SnapshotError> {
         let mut transaction = self.pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
-        let claimed_ids: Vec<Uuid> = claim_statement(worker, lease_until, limit)
+        let claimed_ids: Vec<Uuid> = claim_statement(worker, lease, limit)
             .to_query_scalar()
             .fetch_all(&mut *transaction)
             .await
@@ -113,7 +119,8 @@ impl SnapshotStatusOutbox {
         rows.iter().map(map_delivery).collect()
     }
 
-    /// Extend the lease a worker holds on one claimed event.
+    /// Extend the lease a worker holds on one claimed event to `lease` from
+    /// the renewal.
     ///
     /// The guard is the one every acknowledgement carries: the row must still be
     /// claimed by `worker` and neither delivered nor dead-lettered, so a row
@@ -122,8 +129,8 @@ impl SnapshotStatusOutbox {
     /// # Errors
     ///
     /// Returns [`SnapshotError::persistence`] when the update fails.
-    pub async fn renew(&self, id: Uuid, worker: LeaseHolder, lease_until: DateTime<Utc>) -> Result<LeaseAcknowledgement, SnapshotError> {
-        let result = renew_statement(id, worker, lease_until)
+    pub async fn renew(&self, id: Uuid, worker: LeaseHolder, lease: Duration) -> Result<LeaseAcknowledgement, SnapshotError> {
+        let result = renew_statement(id, worker, lease)
             .to_query()
             .execute(&self.pool)
             .await
@@ -157,8 +164,9 @@ impl SnapshotStatusOutbox {
         Ok(LeaseAcknowledgement::of_guarded_update(result.rows_affected()))
     }
 
-    /// Record a failed attempt, scheduling retry or dead-lettering it, and
-    /// report whether the worker still held the event.
+    /// Record a failed attempt, scheduling its retry `retry_after` from the
+    /// failure on the database clock or dead-lettering it, and report whether
+    /// the worker still held the event.
     ///
     /// # Errors
     ///
@@ -169,35 +177,10 @@ impl SnapshotStatusOutbox {
         worker: LeaseHolder,
         failure: SnapshotDeliveryFailure,
         max_attempts: i32,
-        retry_at: DateTime<Utc>,
+        retry_after: BackoffStep,
         detail: &str,
     ) -> Result<LeaseAcknowledgement, SnapshotError> {
-        let max_attempts = <i32 as Ord>::max(max_attempts, 1);
-        let retry_due =
-            || Expr::val(failure == SnapshotDeliveryFailure::Retryable).and(Expr::col(SnapshotNotificationOutbox::AttemptCount).add(1).lt(max_attempts));
-        let exhausted =
-            || Expr::val(failure == SnapshotDeliveryFailure::Terminal).or(Expr::col(SnapshotNotificationOutbox::AttemptCount).add(1).gte(max_attempts));
-        let next_attempt = CaseStatement::new()
-            .case(retry_due(), Expr::val(retry_at))
-            .finally(Expr::col(SnapshotNotificationOutbox::NextAttemptAt));
-        let exhausted_at = CaseStatement::new().case(exhausted(), now()).finally(Keyword::Null);
-        let statement = Query::update()
-            .table(SnapshotNotificationOutbox::Table)
-            .value(
-                SnapshotNotificationOutbox::AttemptCount,
-                Expr::col(SnapshotNotificationOutbox::AttemptCount).add(1),
-            )
-            .value(SnapshotNotificationOutbox::NextAttemptAt, next_attempt)
-            .value(SnapshotNotificationOutbox::ExhaustedAt, exhausted_at)
-            .value(SnapshotNotificationOutbox::LastError, detail)
-            .value(SnapshotNotificationOutbox::ClaimedBy, Keyword::Null)
-            .value(SnapshotNotificationOutbox::LeaseUntil, Keyword::Null)
-            .and_where(Expr::col(SnapshotNotificationOutbox::Id).eq(id))
-            .and_where(Expr::col(SnapshotNotificationOutbox::ClaimedBy).eq(worker.as_uuid()))
-            .and_where(Expr::col(SnapshotNotificationOutbox::DeliveredAt).is_null())
-            .and_where(Expr::col(SnapshotNotificationOutbox::ExhaustedAt).is_null())
-            .to_owned();
-        let result = statement
+        let result = fail_statement(id, worker, failure, max_attempts, retry_after, detail)
             .to_query()
             .execute(&self.pool)
             .await
@@ -228,13 +211,13 @@ impl SnapshotStatusOutbox {
     }
 }
 
-/// Lease up to `limit` due events to `worker` until `lease_until`, returning
-/// their ids.
+/// Lease up to `limit` due events to `worker` for `lease` from the claim,
+/// returning their ids.
 ///
 /// The update leases exactly the ids its `FOR UPDATE SKIP LOCKED` selection
 /// picked ([`is_claimed_from`]): an event leased past the batch would wait out
 /// its lease undelivered.
-fn claim_statement(worker: LeaseHolder, lease_until: DateTime<Utc>, limit: NonZeroU32) -> UpdateStatement {
+fn claim_statement(worker: LeaseHolder, lease: Duration, limit: NonZeroU32) -> UpdateStatement {
     let claimable = || {
         claimable_at(
             Expr::col(SnapshotNotificationOutbox::NextAttemptAt),
@@ -255,17 +238,58 @@ fn claim_statement(worker: LeaseHolder, lease_until: DateTime<Utc>, limit: NonZe
     Query::update()
         .table(SnapshotNotificationOutbox::Table)
         .value(SnapshotNotificationOutbox::ClaimedBy, worker.as_uuid())
-        .value(SnapshotNotificationOutbox::LeaseUntil, lease_until)
+        .value(SnapshotNotificationOutbox::LeaseUntil, span_after_transaction_start(lease))
         .and_where(is_claimed_from(Expr::col(SnapshotNotificationOutbox::Id), candidates))
         .returning_col(SnapshotNotificationOutbox::Id)
         .to_owned()
 }
 
-/// The lease extension of one claimed event, guarded like its acknowledgement.
-fn renew_statement(id: Uuid, worker: LeaseHolder, lease_until: DateTime<Utc>) -> UpdateStatement {
+/// Count a failed attempt on one claimed event and release its lease: due
+/// again `retry_after` from the failure on the database clock while it has
+/// attempts left and the failure is retryable, dead-lettered otherwise.
+///
+/// Guarded like the acknowledgement: the event must still be claimed by
+/// `worker` and neither delivered nor dead-lettered.
+fn fail_statement(
+    id: Uuid,
+    worker: LeaseHolder,
+    failure: SnapshotDeliveryFailure,
+    max_attempts: i32,
+    retry_after: BackoffStep,
+    detail: &str,
+) -> UpdateStatement {
+    let max_attempts = <i32 as Ord>::max(max_attempts, 1);
+    let retry_due =
+        || Expr::val(failure == SnapshotDeliveryFailure::Retryable).and(Expr::col(SnapshotNotificationOutbox::AttemptCount).add(1).lt(max_attempts));
+    let exhausted = || Expr::val(failure == SnapshotDeliveryFailure::Terminal).or(Expr::col(SnapshotNotificationOutbox::AttemptCount).add(1).gte(max_attempts));
+    let next_attempt = CaseStatement::new()
+        .case(retry_due(), span_after_transaction_start(retry_after.duration()))
+        .finally(Expr::col(SnapshotNotificationOutbox::NextAttemptAt));
+    let exhausted_at = CaseStatement::new().case(exhausted(), now()).finally(Keyword::Null);
     Query::update()
         .table(SnapshotNotificationOutbox::Table)
-        .value(SnapshotNotificationOutbox::LeaseUntil, lease_until)
+        .value(
+            SnapshotNotificationOutbox::AttemptCount,
+            Expr::col(SnapshotNotificationOutbox::AttemptCount).add(1),
+        )
+        .value(SnapshotNotificationOutbox::NextAttemptAt, next_attempt)
+        .value(SnapshotNotificationOutbox::ExhaustedAt, exhausted_at)
+        .value(SnapshotNotificationOutbox::LastError, detail)
+        .value(SnapshotNotificationOutbox::ClaimedBy, Keyword::Null)
+        .value(SnapshotNotificationOutbox::LeaseUntil, Keyword::Null)
+        .and_where(Expr::col(SnapshotNotificationOutbox::Id).eq(id))
+        .and_where(Expr::col(SnapshotNotificationOutbox::ClaimedBy).eq(worker.as_uuid()))
+        .and_where(Expr::col(SnapshotNotificationOutbox::DeliveredAt).is_null())
+        .and_where(Expr::col(SnapshotNotificationOutbox::ExhaustedAt).is_null())
+        .to_owned()
+}
+
+/// The lease extension of one claimed event to `lease` from the renewal,
+/// guarded like its acknowledgement.
+fn renew_statement(id: Uuid, worker: LeaseHolder, lease: Duration) -> UpdateStatement {
+    Query::update()
+        .table(SnapshotNotificationOutbox::Table)
+        .value(SnapshotNotificationOutbox::LeaseUntil, span_after_transaction_start(lease))
         .and_where(Expr::col(SnapshotNotificationOutbox::Id).eq(id))
         .and_where(Expr::col(SnapshotNotificationOutbox::ClaimedBy).eq(worker.as_uuid()))
         .and_where(Expr::col(SnapshotNotificationOutbox::DeliveredAt).is_null())
@@ -350,22 +374,30 @@ fn map_delivery(row: &PgRow) -> Result<SnapshotStatusDelivery, SnapshotError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::snapshot::status_outbox::{claim_statement, outbox_insert, renew_statement};
+    use crate::snapshot::status_outbox::{SnapshotDeliveryFailure, claim_statement, fail_statement, outbox_insert, renew_statement};
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
-    use chrono::{TimeZone, Utc};
+    use andromeda_notification::delivery_backoff::{BackoffStep, DeliveryBackoff};
+    use andromeda_retry::schedule::BackoffSchedule;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
-    use std::num::NonZeroU32;
+    use std::{num::NonZeroU32, time::Duration};
     use url::Url;
     use uuid::Uuid;
+
+    const LEASE: Duration = Duration::from_secs(30);
+
+    fn five_seconds() -> BackoffStep {
+        DeliveryBackoff::new(BackoffSchedule::constant(Duration::from_secs(5)))
+            .expect("a schedule within the longest step")
+            .first_step()
+    }
 
     #[test]
     fn a_lease_renewal_reaches_only_an_undelivered_event_the_worker_still_claims() {
         let worker = LeaseHolder::from(Uuid::nil());
-        let lease_until = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 30).single().expect("a valid lease instant");
-        let sql = renew_statement(Uuid::nil(), worker, lease_until).to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#"SET "lease_until" = '2026-01-01 00:00:30.000000 +00:00'"#), "{sql}");
+        let sql = renew_statement(Uuid::nil(), worker, LEASE).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"SET "lease_until" = CURRENT_TIMESTAMP + (make_interval(secs => 30))"#), "{sql}");
         assert!(sql.contains(r#""id" = '00000000-0000-0000-0000-000000000000'"#), "{sql}");
         assert!(sql.contains(r#""claimed_by" = '00000000-0000-0000-0000-000000000000'"#), "{sql}");
         assert!(sql.contains(r#""delivered_at" IS NULL"#), "{sql}");
@@ -388,11 +420,46 @@ mod tests {
         assert!(!sql.contains("::jsonb"), "{sql}");
     }
 
+    /// The claim compares a lapsed lease with the database clock, so the claim
+    /// and every renewal set the lease on that clock: a lease from a broker
+    /// running ahead would hold a stopped worker's deliveries back that much
+    /// longer.
+    #[test]
+    fn the_claim_leases_each_event_for_the_lease_span_after_the_database_clock() {
+        let limit = NonZeroU32::new(16).expect("a positive limit");
+        let sql = claim_statement(LeaseHolder::from(Uuid::nil()), LEASE, limit).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#""lease_until" = CURRENT_TIMESTAMP + (make_interval(secs => 30))"#), "{sql}");
+    }
+
+    /// The claim compares `next_attempt_at` with the database clock, so a
+    /// retryable failure is due one step after that clock; a failure that ends
+    /// the attempts keeps the instant it had.
+    #[test]
+    fn a_retryable_failure_is_due_one_step_after_the_database_clock() {
+        let sql = fail_statement(
+            Uuid::nil(),
+            LeaseHolder::from(Uuid::nil()),
+            SnapshotDeliveryFailure::Retryable,
+            5,
+            five_seconds(),
+            "boom",
+        )
+        .to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains(concat!(
+                r#""next_attempt_at" = (CASE WHEN (TRUE AND "attempt_count" + 1 < 5) "#,
+                r#"THEN CURRENT_TIMESTAMP + (make_interval(secs => 5)) ELSE "next_attempt_at" END)"#
+            )),
+            "{sql}"
+        );
+        assert!(sql.contains(r#""lease_until" = NULL"#), "{sql}");
+        assert!(sql.contains(r#""claimed_by" = '00000000-0000-0000-0000-000000000000'"#), "{sql}");
+    }
+
     #[test]
     fn the_claim_leases_only_the_ids_its_limited_selection_picked() {
-        let lease_until = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 30).single().expect("a valid lease instant");
         let limit = NonZeroU32::new(16).expect("a positive limit");
-        let sql = claim_statement(LeaseHolder::from(Uuid::nil()), lease_until, limit).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(LeaseHolder::from(Uuid::nil()), LEASE, limit).to_string(PostgresQueryBuilder);
         assert!(sql.starts_with(r#"UPDATE "snapshot_notification_outbox" SET"#), "{sql}");
         assert!(
             sql.contains(r#"WHERE "id" = ANY(ARRAY (SELECT "id" FROM "snapshot_notification_outbox""#),

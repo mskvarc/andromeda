@@ -40,6 +40,7 @@ use andromeda_snapshot::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use std::time::Duration;
 
 #[async_trait]
 impl SnapshotStore for SnapshotRepository {
@@ -67,25 +68,20 @@ impl SnapshotStore for SnapshotRepository {
         resolve_snapshot_staging_target(self.pool(), id).await
     }
 
-    async fn next_preparing(&self, claimed_by: LeaseHolder, lease_until: DateTime<Utc>) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
-        next_preparing_snapshot(self.pool(), claimed_by, lease_until).await
+    async fn next_preparing(&self, claimed_by: LeaseHolder, lease: Duration) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
+        next_preparing_snapshot(self.pool(), claimed_by, lease).await
     }
 
-    async fn claim_created(
-        &self,
-        id: &Identifier,
-        claimed_by: LeaseHolder,
-        lease_until: DateTime<Utc>,
-    ) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
-        claim_created_snapshot(self.pool(), id, claimed_by, lease_until).await
+    async fn claim_created(&self, id: &Identifier, claimed_by: LeaseHolder, lease: Duration) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
+        claim_created_snapshot(self.pool(), id, claimed_by, lease).await
     }
 
-    async fn renew_preparation_lease(&self, id: &Identifier, claimed_by: LeaseHolder, lease_until: DateTime<Utc>) -> Result<bool, SnapshotError> {
-        renew_preparation_lease(self.pool(), id, claimed_by, lease_until).await
+    async fn renew_preparation_lease(&self, id: &Identifier, claimed_by: LeaseHolder, lease: Duration) -> Result<bool, SnapshotError> {
+        renew_preparation_lease(self.pool(), id, claimed_by, lease).await
     }
 
-    async fn restart_preparation(&self, id: &Identifier, claimed_by: LeaseHolder, lease_until: DateTime<Utc>) -> Result<bool, SnapshotError> {
-        restart_preparation(self.pool(), id, claimed_by, lease_until).await
+    async fn restart_preparation(&self, id: &Identifier, claimed_by: LeaseHolder, lease: Duration) -> Result<bool, SnapshotError> {
+        restart_preparation(self.pool(), id, claimed_by, lease).await
     }
 
     async fn release_preparation(&self, id: &Identifier, claimed_by: LeaseHolder) -> Result<(), SnapshotError> {

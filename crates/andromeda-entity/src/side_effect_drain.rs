@@ -21,10 +21,11 @@
 //! ones.
 //!
 //! A replay that fails, even one that ran past its lease, releases the job
-//! with its diagnostic and the policy backoff, stamped with the instant of the
-//! release rather than the start of the pass. The release is guarded by this
-//! drain still being the job's claimant, not by the lease still being live,
-//! which is what lets a failure after a lapsed lease still be recorded.
+//! with its diagnostic and the policy backoff, which the queue counts from the
+//! release on its own clock, the clock its claims compare with. The release is
+//! guarded by this drain still being the job's claimant, not by the lease still
+//! being live, which is what lets a failure after a lapsed lease still be
+//! recorded.
 //!
 //! A job is never dead-lettered for failing. It carries the notifications of a
 //! write the broker already accepted, and every matching change is notified
@@ -60,7 +61,6 @@ use andromeda_context_commit::{
     job_lease::JobLease,
     lease_acknowledgement::LeaseAcknowledgement,
     lease_holder::LeaseHolder,
-    lease_pass_clock::LeasePassClock,
     side_effect_job_id::SideEffectJobId,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -153,8 +153,7 @@ impl EntitySideEffectDrain {
         }
     }
 
-    /// Claim and process up to one bounded batch of jobs, one job at a time,
-    /// in a pass that starts at `now`.
+    /// Claim and process up to one bounded batch of jobs, one job at a time.
     ///
     /// Each job is claimed immediately before its replay, so its lease starts
     /// when the replay is about to begin, however long the jobs before it took.
@@ -168,8 +167,7 @@ impl EntitySideEffectDrain {
     ///
     /// Reports [`EntityError::Persistence`] when the queue cannot be leased or
     /// a job's release cannot be recorded; the pass ends there.
-    pub async fn execute(&self, now: DateTime<Utc>) -> Result<EntitySideEffectDrainOutcome, EntityError> {
-        let clock = LeasePassClock::starting_at(now);
+    pub async fn execute(&self) -> Result<EntitySideEffectDrainOutcome, EntityError> {
         let mut completed = 0;
         for _ in 0..self.config.batch_size.get() {
             let claimed = self
@@ -184,7 +182,7 @@ impl EntitySideEffectDrain {
                     work_may_remain: false,
                 });
             };
-            if self.process(lease, &clock).await? == JobSettlement::Settled {
+            if self.process(lease).await? == JobSettlement::Settled {
                 completed += 1;
             }
         }
@@ -195,7 +193,7 @@ impl EntitySideEffectDrain {
     }
 
     /// Replay one claimed job and record how it ended.
-    async fn process(&self, lease: LeasedSideEffect, clock: &LeasePassClock) -> Result<JobSettlement, EntityError> {
+    async fn process(&self, lease: LeasedSideEffect) -> Result<JobSettlement, EntityError> {
         let LeasedSideEffect {
             id,
             attempts,
@@ -227,22 +225,22 @@ impl EntitySideEffectDrain {
                 Ok(JobSettlement::Unsettled)
             }
             Err(error) => {
-                self.release_failed(id, attempts, &error, clock).await?;
+                self.release_failed(id, attempts, &error).await?;
                 Ok(JobSettlement::Unsettled)
             }
         }
     }
 
-    /// Release a job whose replay failed back to the queue, at the policy
-    /// backoff from the instant of the release, however many attempts it has
-    /// had.
-    async fn release_failed(&self, id: SideEffectJobId, attempts: i32, error: &EntityError, clock: &LeasePassClock) -> Result<(), EntityError> {
+    /// Release a job whose replay failed back to the queue, due the policy
+    /// backoff after the release, however many attempts it has had.
+    ///
+    /// The queue counts the backoff from the release on its own clock, so a
+    /// replay that ran long is never due again before its release.
+    async fn release_failed(&self, id: SideEffectJobId, attempts: i32, error: &EntityError) -> Result<(), EntityError> {
         let attempt = RetryNumber::try_from(attempts.saturating_add(1)).map_err(|refused| EntityError::from(EntityInvariant::RetryNumber(refused)))?;
         self.report_if_stuck(id, attempt, error);
         let backoff = self.config.retry_schedule.delay(attempt);
-        let retry_at =
-            clock.now() + chrono::Duration::from_std(backoff).map_err(|conversion| EntityError::from(EntityInvariant::BackoffOutOfRange(conversion)))?;
-        let acknowledgement = self.queue.nack(id, &self.config.lease_holder, &error.to_string(), retry_at).await?;
+        let acknowledgement = self.queue.nack(id, &self.config.lease_holder, &error.to_string(), backoff).await?;
         self.record_release(id, acknowledgement, QueueOutcome::Retried);
         Ok(())
     }
@@ -517,7 +515,7 @@ mod tests {
     struct RecordingQueue {
         leased: Mutex<VecDeque<LeasedSideEffect>>,
         claim_widths: Mutex<Vec<u32>>,
-        retried: Mutex<Vec<(SideEffectJobId, DateTime<Utc>)>>,
+        retried: Mutex<Vec<(SideEffectJobId, Duration)>>,
     }
 
     impl RecordingQueue {
@@ -567,7 +565,7 @@ mod tests {
             id: SideEffectJobId,
             _owner: &'life1 LeaseHolder,
             _error: &'life2 str,
-            next_attempt_at: DateTime<Utc>,
+            retry_after: Duration,
         ) -> BoxFuture<'async_trait, Result<LeaseAcknowledgement, EntityError>>
         where
             'life0: 'async_trait,
@@ -576,7 +574,7 @@ mod tests {
             Self: 'async_trait,
         {
             Box::pin(async move {
-                self.retried.lock().expect("the test lock is not poisoned").push((id, next_attempt_at));
+                self.retried.lock().expect("the test lock is not poisoned").push((id, retry_after));
                 Ok(LeaseAcknowledgement::Applied)
             })
         }
@@ -681,7 +679,7 @@ mod tests {
         let id = lease.id;
         let queue = Arc::new(RecordingQueue::with_lease(lease));
         let committer = Arc::new(FixedCommitter::new(CommitDisposition::Applied));
-        let outcome = drain_with_committer(Arc::clone(&queue), Arc::clone(&committer)).execute(Utc::now()).await?;
+        let outcome = drain_with_committer(Arc::clone(&queue), Arc::clone(&committer)).execute().await?;
         pretty_assertions::assert_eq!(outcome.completed, 1);
         let replays = committer.replays.lock().expect("the test lock is not poisoned");
         pretty_assertions::assert_eq!(replays.iter().map(|replay| replay.lease).collect::<Vec<JobLease>>(), vec![job_lease(id)]);
@@ -697,37 +695,27 @@ mod tests {
         let lease = lease(0);
         let id = lease.id;
         let queue = Arc::new(RecordingQueue::with_lease(lease));
-        let now = Utc::now();
-        let outcome = drain(Arc::clone(&queue), CommitDisposition::Failed).execute(now).await?;
+        let outcome = drain(Arc::clone(&queue), CommitDisposition::Failed).execute().await?;
         pretty_assertions::assert_eq!(outcome.completed, 0);
         let retried = queue.retried.lock().expect("the test lock is not poisoned");
-        pretty_assertions::assert_eq!(retried.iter().map(|(job, _)| *job).collect::<Vec<_>>(), vec![id]);
-        let backoff = chrono::Duration::seconds(5);
-        let retry_at = retried[0].1;
-        assert!(
-            retry_at >= now + backoff && retry_at < now + backoff + chrono::Duration::seconds(1),
-            "the retry is due one backoff after its release: {retry_at}"
-        );
+        pretty_assertions::assert_eq!(*retried, vec![(id, Duration::from_secs(5))]);
         Ok(())
     }
 
-    /// A retry is due one backoff after the release that scheduled it, not
-    /// after the start of the pass: a replay that ran long would otherwise be
-    /// due again before its pass ended, and be reclaimed with no backoff.
+    /// The queue counts the backoff from the release on its own clock, so the
+    /// drain hands it the whole backoff however long the replay ran: a wait
+    /// shortened by the replay would fall due early.
     #[tokio::test]
-    async fn a_retry_is_scheduled_from_the_instant_of_its_release() -> Result<(), EntityError> {
+    async fn a_retry_waits_the_whole_backoff_however_long_the_replay_ran() -> Result<(), EntityError> {
         let queue = Arc::new(RecordingQueue::with_lease(lease(0)));
-        let now = Utc::now();
-        let replay_duration = Duration::from_millis(50);
         drain_with_committer(
             Arc::clone(&queue),
-            Arc::new(FixedCommitter::lasting(CommitDisposition::Failed, replay_duration)),
+            Arc::new(FixedCommitter::lasting(CommitDisposition::Failed, Duration::from_millis(50))),
         )
-        .execute(now)
+        .execute()
         .await?;
         let retried = queue.retried.lock().expect("the test lock is not poisoned");
-        let earliest = now + chrono::Duration::seconds(5) + chrono::Duration::from_std(replay_duration).expect("a representable replay duration");
-        assert!(retried[0].1 >= earliest, "{} is earlier than {earliest}", retried[0].1);
+        pretty_assertions::assert_eq!(retried.iter().map(|(_, wait)| *wait).collect::<Vec<_>>(), vec![Duration::from_secs(5)]);
         Ok(())
     }
 
@@ -739,7 +727,7 @@ mod tests {
         let lease = lease(2);
         let id = lease.id;
         let queue = Arc::new(RecordingQueue::with_lease(lease));
-        let outcome = drain(Arc::clone(&queue), CommitDisposition::Failed).execute(Utc::now()).await?;
+        let outcome = drain(Arc::clone(&queue), CommitDisposition::Failed).execute().await?;
         pretty_assertions::assert_eq!(outcome.completed, 0);
         pretty_assertions::assert_eq!(queue.retried_jobs(), vec![id]);
         Ok(())
@@ -753,7 +741,7 @@ mod tests {
         let id = lease.id;
         let queue = Arc::new(RecordingQueue::with_lease(lease));
         let committer = Arc::new(FixedCommitter::new(CommitDisposition::Applied));
-        let outcome = drain_with_committer(Arc::clone(&queue), Arc::clone(&committer)).execute(Utc::now()).await?;
+        let outcome = drain_with_committer(Arc::clone(&queue), Arc::clone(&committer)).execute().await?;
         pretty_assertions::assert_eq!(outcome.completed, 1);
         let replays = committer.replays.lock().expect("the test lock is not poisoned");
         pretty_assertions::assert_eq!(replays.iter().map(|replay| replay.lease).collect::<Vec<JobLease>>(), vec![job_lease(id)]);
@@ -767,14 +755,12 @@ mod tests {
     async fn a_failure_after_many_attempts_waits_the_capped_backoff() -> Result<(), EntityError> {
         for attempts in [100_000, i32::MAX] {
             let queue = Arc::new(RecordingQueue::with_lease(lease(attempts)));
-            let now = Utc::now();
-            drain(Arc::clone(&queue), CommitDisposition::Failed).execute(now).await?;
+            drain(Arc::clone(&queue), CommitDisposition::Failed).execute().await?;
             let retried = queue.retried.lock().expect("the test lock is not poisoned");
-            let ceiling = chrono::Duration::seconds(300);
-            assert!(
-                retried[0].1 >= now + ceiling && retried[0].1 < now + ceiling + chrono::Duration::seconds(1),
-                "a job with {attempts} attempts is due one capped backoff after its release: {}",
-                retried[0].1
+            pretty_assertions::assert_eq!(
+                retried.iter().map(|(_, wait)| *wait).collect::<Vec<_>>(),
+                vec![Duration::from_secs(300)],
+                "a job with {attempts} attempts waits one capped backoff"
             );
         }
         Ok(())
@@ -810,7 +796,7 @@ mod tests {
                         again.attempts = i32::try_from(attempts).expect("a small attempt count");
                         queue.offer(again);
                     }
-                    completed += drain.execute(Utc::now()).await.expect("a pass over a recording queue").completed;
+                    completed += drain.execute().await.expect("a pass over a recording queue").completed;
                 }
                 completed
             })
@@ -841,7 +827,7 @@ mod tests {
     async fn a_job_below_its_stuck_threshold_is_still_replayed() -> Result<(), EntityError> {
         let queue = Arc::new(RecordingQueue::with_lease(lease(2)));
         let committer = Arc::new(FixedCommitter::new(CommitDisposition::Applied));
-        let outcome = drain_with_committer(Arc::clone(&queue), Arc::clone(&committer)).execute(Utc::now()).await?;
+        let outcome = drain_with_committer(Arc::clone(&queue), Arc::clone(&committer)).execute().await?;
         pretty_assertions::assert_eq!(outcome.completed, 1);
         pretty_assertions::assert_eq!(queue.retried_jobs(), Vec::<SideEffectJobId>::new());
         Ok(())
@@ -861,7 +847,7 @@ mod tests {
                 ..drain_config()
             },
         );
-        let outcome = drain.execute(Utc::now()).await?;
+        let outcome = drain.execute().await?;
         pretty_assertions::assert_eq!(outcome.completed, 2);
         assert!(outcome.work_may_remain, "the pass stopped at its bound with a job still queued");
         let widths = queue.claim_widths.lock().expect("the test lock is not poisoned");
@@ -883,7 +869,7 @@ mod tests {
                 ..drain_config()
             },
         );
-        let outcome = drain.execute(Utc::now()).await?;
+        let outcome = drain.execute().await?;
         pretty_assertions::assert_eq!(outcome.completed, 2);
         assert!(!outcome.work_may_remain);
         let widths = queue.claim_widths.lock().expect("the test lock is not poisoned");
@@ -902,7 +888,7 @@ mod tests {
         let expected_lease = job_lease(leased.id);
         let queue = Arc::new(RecordingQueue::with_lease(leased));
         let committer = Arc::new(FixedCommitter::new(CommitDisposition::Applied));
-        drain_with_committer(queue, Arc::clone(&committer)).execute(Utc::now()).await?;
+        drain_with_committer(queue, Arc::clone(&committer)).execute().await?;
         let replays = committer.replays.lock().expect("the test lock is not poisoned");
         pretty_assertions::assert_eq!(
             replays.as_slice(),
@@ -917,7 +903,7 @@ mod tests {
     #[tokio::test]
     async fn a_replay_refused_for_a_lost_lease_is_neither_completed_nor_retried() -> Result<(), EntityError> {
         let queue = Arc::new(RecordingQueue::with_lease(lease(0)));
-        let outcome = drain(Arc::clone(&queue), CommitDisposition::LeaseLost).execute(Utc::now()).await?;
+        let outcome = drain(Arc::clone(&queue), CommitDisposition::LeaseLost).execute().await?;
         pretty_assertions::assert_eq!(outcome.completed, 0);
         pretty_assertions::assert_eq!(queue.retried_jobs(), Vec::<SideEffectJobId>::new());
         Ok(())
@@ -929,9 +915,7 @@ mod tests {
     async fn an_applied_delivery_publishes_its_change_events_once() -> Result<(), EntityError> {
         let queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()));
         let sink = Arc::new(RecordingSink::default());
-        let outcome = drain_with_sink(queue, CommitDisposition::Applied, Arc::clone(&sink))
-            .execute(Utc::now())
-            .await?;
+        let outcome = drain_with_sink(queue, CommitDisposition::Applied, Arc::clone(&sink)).execute().await?;
         pretty_assertions::assert_eq!(outcome.completed, 1);
         pretty_assertions::assert_eq!(sink.count(), 1, "an applied delivery must publish its one change event exactly once");
         Ok(())
@@ -944,9 +928,7 @@ mod tests {
     async fn a_lost_lease_publishes_no_change_events() -> Result<(), EntityError> {
         let queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()));
         let sink = Arc::new(RecordingSink::default());
-        let outcome = drain_with_sink(queue, CommitDisposition::LeaseLost, Arc::clone(&sink))
-            .execute(Utc::now())
-            .await?;
+        let outcome = drain_with_sink(queue, CommitDisposition::LeaseLost, Arc::clone(&sink)).execute().await?;
         pretty_assertions::assert_eq!(outcome.completed, 0);
         pretty_assertions::assert_eq!(sink.count(), 0, "a replay refused for a lost lease must publish no change event");
         Ok(())
@@ -961,15 +943,11 @@ mod tests {
         let sink = Arc::new(RecordingSink::default());
 
         let lost_queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()));
-        drain_with_sink(lost_queue, CommitDisposition::LeaseLost, Arc::clone(&sink))
-            .execute(Utc::now())
-            .await?;
+        drain_with_sink(lost_queue, CommitDisposition::LeaseLost, Arc::clone(&sink)).execute().await?;
         pretty_assertions::assert_eq!(sink.count(), 0, "the worker that lost its lease publishes nothing");
 
         let applied_queue = Arc::new(RecordingQueue::with_lease(lease_with_change_event()));
-        drain_with_sink(applied_queue, CommitDisposition::Applied, Arc::clone(&sink))
-            .execute(Utc::now())
-            .await?;
+        drain_with_sink(applied_queue, CommitDisposition::Applied, Arc::clone(&sink)).execute().await?;
         pretty_assertions::assert_eq!(sink.count(), 1, "the reclaiming worker performs the single publication");
         Ok(())
     }
@@ -1052,7 +1030,7 @@ mod tests {
         let queue = Arc::new(RecordingQueue::with_lease(lease_of(job)));
         let committer = Arc::new(FixedCommitter::new(CommitDisposition::Applied));
 
-        let outcome = durable_drain(queue, Arc::clone(&committer)).await.execute(Utc::now()).await?;
+        let outcome = durable_drain(queue, Arc::clone(&committer)).await.execute().await?;
 
         pretty_assertions::assert_eq!(outcome.completed, 1);
         let writes = committer.replayed_writes.lock().expect("the test lock is not poisoned");
@@ -1077,9 +1055,7 @@ mod tests {
         let queue = Arc::new(RecordingQueue::with_lease(lease_of(job)));
         let sink = Arc::new(RecordingSink::default());
 
-        drain_with_sink(queue, CommitDisposition::Applied, Arc::clone(&sink))
-            .execute(Utc::now())
-            .await?;
+        drain_with_sink(queue, CommitDisposition::Applied, Arc::clone(&sink)).execute().await?;
 
         let published = sink.published.lock().expect("the test lock is not poisoned");
         pretty_assertions::assert_eq!(published.len(), 1);

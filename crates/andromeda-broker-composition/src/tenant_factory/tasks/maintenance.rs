@@ -179,8 +179,7 @@ fn register_entity_side_effect_drain(
         async move {
             pacer
                 .run_drain_pass(execution.cause(), async move {
-                    let now = DateTime::<Utc>::from(execution.cutoff());
-                    let outcome = drain.execute(now).await.map_err(classify_entity_expiry_failure)?;
+                    let outcome = drain.execute().await.map_err(classify_entity_expiry_failure)?;
                     if outcome.work_may_remain {
                         Ok(DrainPassOutcome::WorkMayRemain)
                     } else {

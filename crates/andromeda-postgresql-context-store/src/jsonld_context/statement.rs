@@ -8,7 +8,7 @@
 use andromeda_json_literal::JsonLiteral;
 use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
 use andromeda_postgresql_schema::jsonld::JsonldContexts;
-use andromeda_postgresql_seaquery::{cast::cast, interval::make_interval_secs, pg_type::PostgresType};
+use andromeda_postgresql_seaquery::{cast::cast, clock::after_transaction_start, pg_type::PostgresType};
 use sea_query::{
     Alias,
     Condition,
@@ -143,7 +143,7 @@ pub fn cached_upsert(local_id: &str, url: &str, document_url: &str, payload: &Js
             Expr::current_timestamp(),
             Expr::current_timestamp(),
             0_i64.into(),
-            Expr::current_timestamp().add(make_interval_secs(Expr::val(lifetime_seconds))),
+            after_transaction_start(Expr::val(lifetime_seconds)),
         ])?
         .on_conflict(
             OnConflict::column(JsonldContexts::Url)

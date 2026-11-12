@@ -1,11 +1,9 @@
 //! How a rejected temporal append intent is rescheduled and when it is
 //! reported as stuck.
 
-use crate::{error::TemporalError, temporal_invariant::TemporalInvariant};
 use andromeda_context_commit::failure_summary::{FAILURE_SUMMARY_LIMIT, bounded_failure_summary};
 use andromeda_retry::{retry_number::RetryNumber, schedule::BackoffSchedule};
-use chrono::{DateTime, TimeDelta, Utc};
-use std::{fmt::Display, num::NonZeroU32};
+use std::{fmt::Display, num::NonZeroU32, time::Duration};
 
 /// The retry schedule and stuck threshold of the temporal intent drain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -28,16 +26,11 @@ impl TemporalIntentRetryPolicy {
         TemporalIntentRetryPolicy { schedule, stuck_after }
     }
 
-    /// The next eligible claim time after `attempts` completed attempts.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemporalInvariant::RetryDelayOutOfRange`] when the delay cannot be expressed
-    /// as a calendar duration.
-    pub fn retry_at(&self, now: DateTime<Utc>, attempts: u32) -> Result<DateTime<Utc>, TemporalError> {
-        let delay = self.schedule.delay(RetryNumber::new(NonZeroU32::MIN.saturating_add(attempts)));
-        let delay = TimeDelta::from_std(delay).map_err(|error| TemporalError::from(TemporalInvariant::RetryDelayOutOfRange(error)))?;
-        Ok(now + delay)
+    /// The wait before an intent that failed after `attempts` completed
+    /// attempts may be claimed again.
+    #[must_use]
+    pub fn retry_delay(&self, attempts: u32) -> Duration {
+        self.schedule.delay(RetryNumber::new(NonZeroU32::MIN.saturating_add(attempts)))
     }
 
     /// Whether an intent that has now failed `attempts` completed attempts is
@@ -60,7 +53,6 @@ mod tests {
     use crate::intent_retry_policy::TemporalIntentRetryPolicy;
     use andromeda_context_commit::failure_summary::FAILURE_SUMMARY_MAX_CHARACTERS;
     use andromeda_retry::{growth::Growth, schedule::BackoffSchedule};
-    use chrono::{TimeDelta, TimeZone, Utc};
     use pretty_assertions::assert_eq;
     use std::{num::NonZeroU32, time::Duration};
 
@@ -73,12 +65,9 @@ mod tests {
 
     #[test]
     fn the_delay_grows_with_the_attempt_count_until_the_ceiling() {
-        let now = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
         let policy = policy();
-        assert_eq!(policy.retry_at(now, 0).expect("in range"), now + TimeDelta::seconds(2));
-        assert_eq!(policy.retry_at(now, 1).expect("in range"), now + TimeDelta::seconds(4));
-        assert_eq!(policy.retry_at(now, 2).expect("in range"), now + TimeDelta::seconds(5));
-        assert_eq!(policy.retry_at(now, u32::MAX).expect("in range"), now + TimeDelta::seconds(5));
+        let delays: Vec<Duration> = [0, 1, 2, u32::MAX].into_iter().map(|attempts| policy.retry_delay(attempts)).collect();
+        assert_eq!(delays, [2, 4, 5, 5].map(Duration::from_secs));
     }
 
     #[test]

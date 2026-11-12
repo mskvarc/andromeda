@@ -106,7 +106,7 @@ mod tests {
                 NgsiLdErrorType::InternalError,
             ),
             (
-                SnapshotError::Internal(SnapshotInvariant::LeaseDeadlineOverflow),
+                SnapshotError::Internal(SnapshotInvariant::QuotaWithoutEvictable),
                 NgsiLdErrorType::InternalError,
             ),
         ] {

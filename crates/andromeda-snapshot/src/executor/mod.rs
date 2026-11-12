@@ -58,7 +58,6 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::snapshot::Snapshot;
 use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingLimit;
-use chrono::Utc;
 use futures::future::BoxFuture;
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, info, warn};
@@ -338,14 +337,6 @@ impl SnapshotPreparation {
             None => Box::pin(self.executor.execute(&job.snapshot, &job.query_context, self.worker_id)),
         }
     }
-}
-
-/// A checked wall-clock deadline `lease` from now.
-fn lease_deadline(lease: Duration) -> Result<chrono::DateTime<Utc>, SnapshotError> {
-    let lease = chrono::Duration::from_std(lease).map_err(SnapshotInvariant::LeaseOutOfRange)?;
-    Utc::now()
-        .checked_add_signed(lease)
-        .ok_or_else(|| SnapshotInvariant::LeaseDeadlineOverflow.into())
 }
 
 #[cfg(test)]

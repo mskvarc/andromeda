@@ -2,16 +2,23 @@
 //! statements of the temporal append intent queue.
 //!
 //! The queue lives only in the live branch, in the tenant's default schema, so
-//! no statement here names a branch. The statements naming one entity are
+//! no statement here names a branch.
+//!
+//! Every lease and retry instant is set on the database clock, the clock every
+//! claim, removal and release compares it with, so a broker whose clock
+//! differs from the database's neither shortens a lease nor moves a retry. The statements naming one entity are
 //! answered by `idx_temporal_append_intents_entity (entity_id, intent_key)`.
 
 use crate::intent_store::queue_order::{ClaimedIntent, HeadBlock, earlier_intent_blocks};
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_schema::queue::TemporalAppendIntents;
-use andromeda_postgresql_seaquery::{clock::wall_clock, pg_array::is_any_of, queue::is_claimed_from};
+use andromeda_postgresql_seaquery::{
+    clock::{span_after_transaction_start, wall_clock},
+    pg_array::is_any_of,
+    queue::is_claimed_from,
+};
 use andromeda_temporal::append_intent::TemporalIntentKey;
-use chrono::{DateTime, Utc};
 use sea_query::{
     CaseStatement,
     Cond,
@@ -30,6 +37,7 @@ use sea_query::{
     SimpleExpr,
     UpdateStatement,
 };
+use std::time::Duration;
 use uuid::Uuid;
 
 /// Which queued intents one claim may take.
@@ -67,7 +75,8 @@ fn unleased_by(clock: SimpleExpr) -> SimpleExpr {
         .or(Expr::col(TemporalAppendIntents::LeaseUntil).lte(clock))
 }
 
-/// Claim an ordered bounded batch of the intents `scope` admits for `owner`.
+/// Claim an ordered bounded batch of the intents `scope` admits for `owner`,
+/// each leased for `lease` from the claim.
 ///
 /// One `UPDATE` both selects and claims the batch atomically, leasing exactly
 /// the keys its `FOR UPDATE SKIP LOCKED` selection picked
@@ -79,7 +88,7 @@ fn unleased_by(clock: SimpleExpr) -> SimpleExpr {
 /// `SKIP LOCKED` lets a claim pass an earlier intent another claim has locked
 /// but not yet leased, so the filter avoids churn without ordering anything:
 /// the application's own guard refuses an intent claimed that way.
-pub(super) fn claim_statement(owner: LeaseHolder, scope: ClaimScope<'_>, limit: u32, lease_until: DateTime<Utc>) -> UpdateStatement {
+pub(super) fn claim_statement(owner: LeaseHolder, scope: ClaimScope<'_>, limit: u32, lease: Duration) -> UpdateStatement {
     let mut eligible = Query::select();
     eligible
         .column(TemporalAppendIntents::IntentKey)
@@ -105,7 +114,7 @@ pub(super) fn claim_statement(owner: LeaseHolder, scope: ClaimScope<'_>, limit: 
 
     Query::update()
         .table(TemporalAppendIntents::Table)
-        .value(TemporalAppendIntents::LeaseUntil, lease_until)
+        .value(TemporalAppendIntents::LeaseUntil, span_after_transaction_start(lease))
         .value(TemporalAppendIntents::ClaimedBy, owner.as_uuid())
         .value(TemporalAppendIntents::AttemptCount, Expr::col(TemporalAppendIntents::AttemptCount).add(1))
         .and_where(is_claimed_from(Expr::col(TemporalAppendIntents::IntentKey), eligible))
@@ -202,11 +211,12 @@ pub(super) fn release_statement(intent_keys: &[i64], owner: LeaseHolder) -> Upda
         .to_owned()
 }
 
-/// Reschedule one intent held under this worker's live lease and release the lease.
-pub(super) fn retry_statement(next_attempt_at: DateTime<Utc>, last_error: &str, intent_key: i64, write_id: Uuid, owner: LeaseHolder) -> UpdateStatement {
+/// Reschedule one intent held under this worker's live lease `delay` after the
+/// retry is recorded, and release the lease.
+pub(super) fn retry_statement(delay: Duration, last_error: &str, intent_key: i64, write_id: Uuid, owner: LeaseHolder) -> UpdateStatement {
     Query::update()
         .table(TemporalAppendIntents::Table)
-        .value(TemporalAppendIntents::NextAttemptAt, next_attempt_at)
+        .value(TemporalAppendIntents::NextAttemptAt, span_after_transaction_start(delay))
         .value(TemporalAppendIntents::LastError, last_error)
         .value(TemporalAppendIntents::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
         .value(TemporalAppendIntents::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
@@ -228,8 +238,8 @@ mod tests {
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_temporal::append_intent::TemporalIntentKey;
-    use chrono::Utc;
     use sea_query::PostgresQueryBuilder;
+    use std::time::Duration;
     use uuid::Uuid;
 
     fn holder() -> LeaseHolder {
@@ -244,9 +254,48 @@ mod tests {
         TemporalIntentKey::new(value).expect("a positive key")
     }
 
+    fn lease() -> Duration {
+        Duration::from_secs(30)
+    }
+
+    /// Every claim, removal and release compares the lease with the database
+    /// clock, so the claim sets it on that clock: a lease from the broker's
+    /// clock would be short, or already lapsed, by however far the broker
+    /// runs behind.
+    #[test]
+    fn the_claim_leases_the_batch_for_the_lease_span_after_the_database_clock() {
+        for scope in [
+            ClaimScope::Due,
+            ClaimScope::EntityThrough {
+                entity_id: &vehicle(),
+                through: key(42),
+            },
+        ] {
+            let (sql, values) = claim_statement(holder(), scope, 10, lease()).build(PostgresQueryBuilder);
+            assert!(
+                sql.starts_with(r#"UPDATE "temporal_append_intents" SET "lease_until" = CURRENT_TIMESTAMP + (make_interval(secs => $1)), "#),
+                "{sql}"
+            );
+            pretty_assertions::assert_eq!(values.0.first(), Some(&30.0_f64.into()), "{sql}");
+        }
+    }
+
+    /// The background claim compares `next_attempt_at` with the database
+    /// clock, so a retry is due one step after that clock: an instant from
+    /// the broker's clock would fall due early or late by the offset.
+    #[test]
+    fn a_retry_is_due_its_delay_after_the_database_clock() {
+        let (sql, values) = retry_statement(Duration::from_secs(2), "boom", 1, Uuid::nil(), holder()).build(PostgresQueryBuilder);
+        assert!(
+            sql.starts_with(r#"UPDATE "temporal_append_intents" SET "next_attempt_at" = CURRENT_TIMESTAMP + (make_interval(secs => $1)), "#),
+            "{sql}"
+        );
+        pretty_assertions::assert_eq!(values.0.first(), Some(&2.0_f64.into()), "{sql}");
+    }
+
     #[test]
     fn the_claim_steps_over_locked_rows_and_leases_the_batch() {
-        let sql = claim_statement(holder(), ClaimScope::Due, 10, Utc::now()).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(holder(), ClaimScope::Due, 10, lease()).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"UPDATE "temporal_append_intents""#), "{sql}");
         assert!(sql.contains("FOR UPDATE SKIP LOCKED"), "{sql}");
         assert!(sql.contains(r#""attempt_count" = "attempt_count" + 1"#), "{sql}");
@@ -256,7 +305,7 @@ mod tests {
     /// its limit would count attempts on intents it never applies.
     #[test]
     fn the_claim_leases_only_the_keys_its_limited_selection_picked() {
-        let sql = claim_statement(holder(), ClaimScope::Due, 10, Utc::now()).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(holder(), ClaimScope::Due, 10, lease()).to_string(PostgresQueryBuilder);
         assert!(
             sql.contains(r#"WHERE "intent_key" = ANY(ARRAY (SELECT "intent_key" FROM "temporal_append_intents" AS "c""#),
             "{sql}"
@@ -267,7 +316,7 @@ mod tests {
 
     #[test]
     fn the_background_claim_takes_only_intents_whose_retry_delay_has_passed() {
-        let sql = claim_statement(holder(), ClaimScope::Due, 10, Utc::now()).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(holder(), ClaimScope::Due, 10, lease()).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""next_attempt_at" <= CURRENT_TIMESTAMP"#), "{sql}");
         assert!(!sql.contains(r#""entity_id" = '"#), "{sql}");
     }
@@ -277,7 +326,7 @@ mod tests {
     /// Entity that is leased or waiting for its retry delay.
     #[test]
     fn the_background_claim_takes_no_intent_behind_a_leased_or_backing_off_one_of_its_entity() {
-        let sql = claim_statement(holder(), ClaimScope::Due, 10, Utc::now()).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(holder(), ClaimScope::Due, 10, lease()).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"FROM "temporal_append_intents" AS "c""#), "{sql}");
         assert!(
             sql.contains(concat!(
@@ -297,7 +346,7 @@ mod tests {
             entity_id: &vehicle(),
             through: key(42),
         };
-        let sql = claim_statement(holder(), scope, 10, Utc::now()).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(holder(), scope, 10, lease()).to_string(PostgresQueryBuilder);
         assert!(!sql.contains(r#""next_attempt_at""#), "{sql}");
         assert!(sql.contains(r#""entity_id" = 'urn:ngsi-ld:Vehicle:1'"#), "{sql}");
         assert!(sql.contains(r#""intent_key" <= 42"#), "{sql}");
@@ -313,7 +362,7 @@ mod tests {
     /// applies them where they wait.
     #[test]
     fn the_claim_returns_the_intent_identity_and_no_entries() {
-        let sql = claim_statement(holder(), ClaimScope::Due, 10, Utc::now()).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(holder(), ClaimScope::Due, 10, lease()).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"RETURNING "intent_key", "write_id", "entity_id", "attempt_count""#), "{sql}");
         assert!(!sql.contains("entries"), "{sql}");
     }
@@ -350,7 +399,7 @@ mod tests {
         assert!(removal.contains(r#""intent_key" = ANY(ARRAY [1,2])"#), "{removal}");
         assert!(removal.contains(r#""claimed_by" ="#), "{removal}");
         assert!(removal.contains(r#""lease_until" > CLOCK_TIMESTAMP()"#), "{removal}");
-        let retry = retry_statement(Utc::now(), "boom", 1, Uuid::nil(), holder()).to_string(PostgresQueryBuilder);
+        let retry = retry_statement(Duration::from_secs(2), "boom", 1, Uuid::nil(), holder()).to_string(PostgresQueryBuilder);
         assert!(retry.contains(r#""claimed_by" = NULL"#) && retry.contains(r#""lease_until" = NULL"#), "{retry}");
         assert!(retry.contains(r#""lease_until" > CURRENT_TIMESTAMP"#), "{retry}");
     }

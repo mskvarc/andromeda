@@ -11,9 +11,9 @@ use andromeda_postgresql_schema::{
     subscription_forwarding::{ForwardedSubscriptionClaims, ForwardedSubscriptions},
     subscriptions::Subscriptions,
 };
-use andromeda_postgresql_seaquery::{interval::make_interval_secs, scalar_subquery::scalar_subquery};
+use andromeda_postgresql_seaquery::{clock::span_after_transaction_start, scalar_subquery::scalar_subquery};
 use andromeda_subscription_forwarding::error::SubscriptionForwardingError;
-use sea_query::{Alias, DeleteStatement, Expr, ExprTrait, InsertStatement, JoinType, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
+use sea_query::{Alias, DeleteStatement, Expr, ExprTrait, InsertStatement, JoinType, Order, Query, SelectStatement, UpdateStatement};
 use std::time::Duration;
 
 /// The alias the stale read takes the claims under.
@@ -24,12 +24,6 @@ const COPY: &str = "f";
 
 /// The alias the stale read joins `subscriptions` under.
 const SUBSCRIPTION: &str = "s";
-
-/// The instant a lease of `lease` taken now ends. The length is bound as
-/// seconds, never spelled into the statement.
-fn lease_end(lease: Duration) -> SimpleExpr {
-    Expr::current_timestamp().add(make_interval_secs(Expr::val(lease.as_secs_f64())))
-}
 
 /// Claim the copy of `local` just recorded at `registration` under a lease of
 /// `lease`.
@@ -45,7 +39,11 @@ pub(crate) fn lease_claim_statement(local: &Identifier, registration: &Identifie
             ForwardedSubscriptionClaims::LeaseUntil,
             ForwardedSubscriptionClaims::RegistrationId,
         ])
-        .values([scalar_subquery(subscription_key_of(local)), lease_end(lease), Expr::val(registration.as_str())])
+        .values([
+            scalar_subquery(subscription_key_of(local)),
+            span_after_transaction_start(lease),
+            Expr::val(registration.as_str()),
+        ])
         .map_err(|error| persistence_error::<SubscriptionForwardingError>(error))?;
     Ok(insert)
 }
@@ -59,7 +57,7 @@ pub(crate) fn lease_claim_statement(local: &Identifier, registration: &Identifie
 pub(crate) fn take_over_claim_statement(local: &Identifier, registration: &Identifier, lease: Duration) -> UpdateStatement {
     Query::update()
         .table(ForwardedSubscriptionClaims::Table)
-        .value(ForwardedSubscriptionClaims::LeaseUntil, lease_end(lease))
+        .value(ForwardedSubscriptionClaims::LeaseUntil, span_after_transaction_start(lease))
         .from(ForwardedSubscriptions::Table)
         .and_where(
             Expr::col((ForwardedSubscriptionClaims::Table, ForwardedSubscriptionClaims::LocalSubscriptionKey))

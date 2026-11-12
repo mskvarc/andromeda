@@ -2,7 +2,7 @@
 
 use crate::event::snapshot_status_queue::SnapshotStatusQueue;
 use andromeda_configuration::schema::notifications::delivery::DeliveryConfig;
-use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, lease_pass_clock::LeasePassClock};
+use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_delivery::{
     dispatch::{DeliveryResult, TransportDispatcher},
     endpoint::transport::EndpointTransport,
@@ -12,16 +12,16 @@ use andromeda_delivery::{
 };
 use andromeda_http_headers::media_type::ResponseMediaType;
 use andromeda_notification::{
-    delivery_backoff::{DeliveryBackoff, retry_due_at},
+    delivery_backoff::DeliveryBackoff,
     delivery_error_bound::DeliveryErrorBound,
     delivery_policy::{error_bound, retry_schedule},
 };
 use andromeda_postgresql_context_store::snapshot::status_outbox::{SnapshotDeliveryFailure, SnapshotStatusDelivery};
 use andromeda_snapshot::{error::SnapshotError, snapshot_invariant::SnapshotInvariant};
 use async_trait::async_trait;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use futures::future::join_all;
-use std::{num::NonZeroU32, sync::Arc};
+use std::{num::NonZeroU32, sync::Arc, time::Duration};
 
 /// Delivers snapshot status notifications through the configured transport dispatcher.
 pub(crate) struct DeliverySnapshotNotificationSink {
@@ -55,8 +55,8 @@ pub(crate) struct SnapshotStatusDeliveryDrain {
     /// Lease owner identity minted once per drain; claims, renewals and
     /// acknowledgements are all made under it.
     worker: LeaseHolder,
-    /// How long a claim or renewal holds a delivery:
-    /// `notifications.delivery.queue.lease_timeout`, saturated at `i64::MAX` seconds.
+    /// How long a claim or renewal holds a delivery, from the claim or renewal
+    /// on the queue's clock: `notifications.delivery.queue.lease_timeout`.
     lease: Duration,
     /// Attempts after which a failed delivery is dead:
     /// `notifications.delivery.max_attempts`, saturated at `i32::MAX`.
@@ -70,10 +70,10 @@ pub(crate) struct SnapshotStatusDeliveryDrain {
     error_bound: DeliveryErrorBound,
     /// How long an acknowledged delivery stays before cleanup removes it:
     /// `notifications.delivery.retention.acknowledged_after`.
-    delivered_retention: Duration,
+    delivered_retention: TimeDelta,
     /// How long an exhausted delivery stays before cleanup removes it:
     /// `notifications.delivery.retention.dead_letter_after`.
-    dead_retention: Duration,
+    dead_retention: TimeDelta,
 }
 
 impl SnapshotStatusDeliveryDrain {
@@ -87,7 +87,7 @@ impl SnapshotStatusDeliveryDrain {
             outbox,
             transport,
             worker: LeaseHolder::mint(),
-            lease: Duration::seconds(i64::try_from(config.queue.lease_timeout.duration().as_secs()).unwrap_or(i64::MAX)),
+            lease: config.queue.lease_timeout.duration(),
             max_attempts: i32::try_from(config.max_attempts.get()).unwrap_or(i32::MAX),
             retry_schedule: retry_schedule(config).map_err(|error| {
                 tracing::error!(%error, "the configured Snapshot notification retry schedule is unusable");
@@ -98,8 +98,8 @@ impl SnapshotStatusDeliveryDrain {
                 tracing::error!(%error, "the configured Snapshot notification error bound is unusable");
                 SnapshotInvariant::NotificationErrorBound
             })?,
-            delivered_retention: Duration::seconds(i64::try_from(config.retention.acknowledged_after.duration().as_secs()).unwrap_or(i64::MAX)),
-            dead_retention: Duration::seconds(i64::try_from(config.retention.dead_letter_after.duration().as_secs()).unwrap_or(i64::MAX)),
+            delivered_retention: TimeDelta::seconds(i64::try_from(config.retention.acknowledged_after.duration().as_secs()).unwrap_or(i64::MAX)),
+            dead_retention: TimeDelta::seconds(i64::try_from(config.retention.dead_letter_after.duration().as_secs()).unwrap_or(i64::MAX)),
         })
     }
 
@@ -122,11 +122,10 @@ impl SnapshotStatusDeliveryDrain {
     /// acknowledgement reports, after every claimed delivery has been settled.
     /// A lease another worker took over is counted in
     /// [`SnapshotStatusPassOutcome::lease_lost`] rather than surfaced as an error.
-    pub(crate) async fn execute(&self, now: DateTime<Utc>) -> Result<SnapshotStatusPassOutcome, SnapshotError> {
-        let clock = LeasePassClock::starting_at(now);
-        let entries = self.outbox.claim(self.worker, self.lease_deadline(clock.now())?, self.claim_width).await?;
+    pub(crate) async fn execute(&self) -> Result<SnapshotStatusPassOutcome, SnapshotError> {
+        let entries = self.outbox.claim(self.worker, self.lease, self.claim_width).await?;
         let claimed = entries.len();
-        let results = join_all(entries.into_iter().map(|entry| self.deliver_one(entry, &clock))).await;
+        let results = join_all(entries.into_iter().map(|entry| self.deliver_one(entry))).await;
         let mut lease_lost = 0;
         for result in results {
             if result? == LeaseAcknowledgement::Lost {
@@ -156,18 +155,13 @@ impl SnapshotStatusDeliveryDrain {
         Ok(())
     }
 
-    /// The instant a lease taken at `from` runs out.
-    fn lease_deadline(&self, from: DateTime<Utc>) -> Result<DateTime<Utc>, SnapshotError> {
-        Ok(from.checked_add_signed(self.lease).ok_or(SnapshotInvariant::LeaseDeadlineOverflow)?)
-    }
-
     /// Renew one claimed delivery's lease, send it, and record the outcome.
     ///
     /// The outcome is [`LeaseAcknowledgement::Lost`] when another worker owned
     /// the delivery at the renewal, which sends nothing, or at the recording of
     /// its outcome.
-    async fn deliver_one(&self, entry: SnapshotStatusDelivery, clock: &LeasePassClock) -> Result<LeaseAcknowledgement, SnapshotError> {
-        let renewal = self.outbox.renew(&entry, self.worker, self.lease_deadline(clock.now())?).await?;
+    async fn deliver_one(&self, entry: SnapshotStatusDelivery) -> Result<LeaseAcknowledgement, SnapshotError> {
+        let renewal = self.outbox.renew(&entry, self.worker, self.lease).await?;
         if renewal == LeaseAcknowledgement::Lost {
             Self::report_lease_lost(&entry);
             return Ok(LeaseAcknowledgement::Lost);
@@ -181,14 +175,17 @@ impl SnapshotStatusDeliveryDrain {
                 } else {
                     SnapshotDeliveryFailure::Terminal
                 };
-                let retry_at = retry_due_at(&self.retry_schedule, entry.attempt_count, clock.now()).map_err(SnapshotInvariant::NotificationAttemptCount)?;
+                let retry_after = self
+                    .retry_schedule
+                    .step(entry.attempt_count)
+                    .map_err(SnapshotInvariant::NotificationAttemptCount)?;
                 let detail = if retryable {
                     "Snapshot notification delivery failed transiently"
                 } else {
                     "Snapshot notification delivery failed terminally"
                 };
                 let detail = self.error_bound.truncate(detail);
-                self.outbox.fail(&entry, self.worker, failure, self.max_attempts, retry_at, &detail).await?
+                self.outbox.fail(&entry, self.worker, failure, self.max_attempts, retry_after, &detail).await?
             }
         };
         if acknowledgement == LeaseAcknowledgement::Lost {

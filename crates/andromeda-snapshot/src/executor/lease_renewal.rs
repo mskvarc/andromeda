@@ -6,11 +6,7 @@
 //! while it publishes, a clone while it copies. The renewal therefore has to be
 //! polled beside the execution, never in its place.
 
-use crate::{
-    error::SnapshotError,
-    executor::{attempts::PreparationEnd, lease_deadline},
-    store::SnapshotStore,
-};
+use crate::{error::SnapshotError, executor::attempts::PreparationEnd, store::SnapshotStore};
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use std::{future::Future, time::Duration};
@@ -45,9 +41,8 @@ impl LeaseRenewal<'_> {
     ///
     /// # Errors
     ///
-    /// Returns the execution's own error, the store's failure when a renewal
-    /// does not complete, and [`SnapshotError::Internal`] when the lease cannot
-    /// be turned into a wall-clock deadline. A claim found lost by a renewal is
+    /// Returns the execution's own error and the store's failure when a renewal
+    /// does not complete. A claim found lost by a renewal is
     /// [`PreparationEnd::ClaimLost`], not an error.
     pub(crate) async fn drive(&self, execution: impl Future<Output = Result<PreparationEnd, SnapshotError>>) -> Result<PreparationEnd, SnapshotError> {
         let renewal = self.hold();
@@ -66,7 +61,7 @@ impl LeaseRenewal<'_> {
         renewals.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             renewals.tick().await;
-            if !self.store.renew_preparation_lease(self.id, self.worker, lease_deadline(self.lease)?).await? {
+            if !self.store.renew_preparation_lease(self.id, self.worker, self.lease).await? {
                 return Ok(LeaseLost);
             }
         }

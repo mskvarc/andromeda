@@ -39,7 +39,7 @@ async fn store(claim: ClaimHold) -> StoreDouble {
         .expires_at(now + ChronoDuration::hours(1))
         .build();
     let store = StoreDouble::new(snapshot, BranchCondition::Current, claim);
-    let job = store.next_preparing(LeaseHolder::mint(), now).await.expect("the double claims");
+    let job = store.next_preparing(LeaseHolder::mint(), LEASE).await.expect("the double claims");
     assert!(job.is_some(), "the preparing Snapshot is claimed");
     store
 }

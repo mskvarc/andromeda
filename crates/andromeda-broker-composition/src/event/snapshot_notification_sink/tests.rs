@@ -8,6 +8,7 @@ use andromeda_configuration::{
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder};
 use andromeda_delivery::{dispatch::DeliveryResult, endpoint_failure::EndpointFailure, outcome::EndpointRejection};
+use andromeda_notification::delivery_backoff::BackoffStep;
 use andromeda_postgresql_context_store::snapshot::status_outbox::{SnapshotDeliveryFailure, SnapshotStatusDelivery};
 use andromeda_snapshot::error::SnapshotError;
 use async_trait::async_trait;
@@ -20,6 +21,7 @@ use std::{
     mem::take,
     num::NonZeroU32,
     sync::{Arc, Mutex, MutexGuard, PoisonError},
+    time::Duration,
 };
 use url::Url;
 use uuid::Uuid;
@@ -52,6 +54,10 @@ struct RecordingQueue {
     due: Mutex<Vec<SnapshotStatusDelivery>>,
     taken_over: Mutex<Vec<Uuid>>,
     calls: Mutex<Vec<Call>>,
+    /// The lease every claim and renewal asked for, in order.
+    leases: Mutex<Vec<Duration>>,
+    /// The wait every failure asked for, in order.
+    retry_steps: Mutex<Vec<Duration>>,
 }
 
 impl RecordingQueue {
@@ -87,11 +93,13 @@ impl RecordingQueue {
 
 #[async_trait]
 impl SnapshotStatusQueue for RecordingQueue {
-    async fn claim(&self, _worker: LeaseHolder, _lease_until: DateTime<Utc>, _limit: NonZeroU32) -> Result<Vec<SnapshotStatusDelivery>, SnapshotError> {
+    async fn claim(&self, _worker: LeaseHolder, lease: Duration, _limit: NonZeroU32) -> Result<Vec<SnapshotStatusDelivery>, SnapshotError> {
+        locked(&self.leases).push(lease);
         Ok(take(&mut *locked(&self.due)))
     }
 
-    async fn renew(&self, delivery: &SnapshotStatusDelivery, _worker: LeaseHolder, _lease_until: DateTime<Utc>) -> Result<LeaseAcknowledgement, SnapshotError> {
+    async fn renew(&self, delivery: &SnapshotStatusDelivery, _worker: LeaseHolder, lease: Duration) -> Result<LeaseAcknowledgement, SnapshotError> {
+        locked(&self.leases).push(lease);
         Ok(self.guarded(Call::Renew(delivery.id), delivery.id))
     }
 
@@ -105,9 +113,10 @@ impl SnapshotStatusQueue for RecordingQueue {
         _worker: LeaseHolder,
         _failure: SnapshotDeliveryFailure,
         _max_attempts: i32,
-        _retry_at: DateTime<Utc>,
+        retry_after: BackoffStep,
         _detail: &str,
     ) -> Result<LeaseAcknowledgement, SnapshotError> {
+        locked(&self.retry_steps).push(retry_after.duration());
         Ok(self.guarded(Call::Fail(delivery.id), delivery.id))
     }
 
@@ -174,7 +183,7 @@ fn run_pass(count: u128, answer: Answer, takes_over_while_sending: BTreeMap<Uuid
     let concurrent = u32::try_from(count).unwrap_or(u32::MAX);
     let port: Arc<dyn SnapshotStatusQueue> = Arc::<RecordingQueue>::clone(&queue);
     let drain = SnapshotStatusDeliveryDrain::new(port, Arc::new(receiver), &config(concurrent))?;
-    let outcome = block_on(drain.execute(Utc::now()))?;
+    let outcome = block_on(drain.execute())?;
     Ok((outcome, queue.calls()))
 }
 
@@ -237,6 +246,28 @@ fn a_failure_record_that_finds_its_delivery_taken_over_is_counted_as_a_lost_leas
     let (outcome, calls) = run_pass(1, Answer::FailsTransiently, takeovers)?;
     assert_eq!(outcome, SnapshotStatusPassOutcome { claimed: 1, lease_lost: 1 });
     assert_eq!(calls, vec![Call::Renew(id(1)), Call::Send(id(1)), Call::Fail(id(1))]);
+    Ok(())
+}
+
+/// The queue counts a lease and a retry wait from its own clock, the clock its
+/// claims compare with, so the drain hands both over as spans: the configured
+/// lease for the claim and each renewal, and the first retry step, five
+/// seconds by default, for a delivery's first failure.
+#[test]
+fn the_drain_hands_the_queue_the_lease_span_and_the_retry_step() -> Result<(), SnapshotError> {
+    let queue = Arc::new(RecordingQueue::holding([delivery(1)]));
+    let receiver = SlowReceiver {
+        queue: Arc::clone(&queue),
+        answer: Answer::FailsTransiently,
+        takes_over_while_sending: BTreeMap::new(),
+    };
+    let config = config(1);
+    let port: Arc<dyn SnapshotStatusQueue> = Arc::<RecordingQueue>::clone(&queue);
+    let drain = SnapshotStatusDeliveryDrain::new(port, Arc::new(receiver), &config)?;
+    block_on(drain.execute())?;
+    let lease = config.queue.lease_timeout.duration();
+    assert_eq!(*locked(&queue.leases), vec![lease, lease], "the claim and the renewal");
+    assert_eq!(*locked(&queue.retry_steps), vec![Duration::from_secs(5)]);
     Ok(())
 }
 

@@ -33,15 +33,12 @@
 //! the hold is being taken reaches the claim index unheld, and the claim's own
 //! hold check keeps it back until the probe's next failure sets it aside.
 
-use crate::{
-    error::ContextStoreError,
-    notification_delivery::due_after::{due_after, step_seconds},
-};
+use crate::error::ContextStoreError;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_notification::delivery_backoff::BackoffStep;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::notification::{NotificationDeliveries, NotificationDeliveryHolds};
-use andromeda_postgresql_seaquery::pg_array::any;
+use andromeda_postgresql_seaquery::{clock::span_after_transaction_start, pg_array::any};
 use sea_query::{
     CommonTableExpression,
     Expr,
@@ -267,7 +264,7 @@ pub(crate) fn hand_over_statement(target: &ContextTarget, subscription_key: i64,
     let revived = Query::update()
         .table(table_of(target, NotificationDeliveries::Table))
         .value(NotificationDeliveries::HeldAt, null())
-        .value(NotificationDeliveries::NextAttemptAt, due_after(step_seconds(probe_after)))
+        .value(NotificationDeliveries::NextAttemptAt, span_after_transaction_start(probe_after.duration()))
         .from(Successor)
         .and_where(Expr::col((NotificationDeliveries::Table, NotificationDeliveries::DeliveryKey)).equals((Successor, NotificationDeliveries::DeliveryKey)))
         .to_owned();

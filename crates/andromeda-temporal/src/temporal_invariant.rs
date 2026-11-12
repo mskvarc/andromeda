@@ -8,7 +8,6 @@ use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
 use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReferenceError, time::date_time::NgsiLdDateTimeError};
 use andromeda_ngsi_ld_render::temporal::history_row::HistoryRowRenderError;
-use chrono::OutOfRangeError;
 use thiserror::Error;
 
 /// A temporal policy invariant that did not hold.
@@ -26,12 +25,6 @@ pub enum TemporalInvariant {
     /// Folding a Temporal Evolution into the current state produced no entity.
     #[error("folding a Temporal Evolution into no entity created none")]
     FoldCreatedNoEntity,
-    /// A temporal intent retry delay cannot be expressed as a calendar duration.
-    #[error("a temporal intent retry delay is out of range: {0}")]
-    RetryDelayOutOfRange(#[source] OutOfRangeError),
-    /// A temporal intent lease duration cannot be expressed as a calendar duration.
-    #[error("a temporal intent lease duration is out of range: {0}")]
-    LeaseOutOfRange(#[source] OutOfRangeError),
     /// An attribute IRI the JSON-LD engine expanded is not an attribute name.
     #[error("an expanded attribute IRI is not an attribute name: {0}")]
     ExpandedAttributeName(#[source] NgsiLdReferenceError),

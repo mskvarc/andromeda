@@ -1,6 +1,10 @@
 //! Durable Snapshot preparation claiming, lease renewal, restart and release,
 //! the staging reset a claim or restart performs, and the `FOR KEY SHARE` fence
 //! a clone copy holds on its claimed preparation.
+//!
+//! Every lease is set on the database clock, the clock a claim compares it
+//! with, so a broker whose clock runs behind the database's never stamps a
+//! lease another worker already reads as lapsed.
 
 use crate::{
     snapshot::{
@@ -19,11 +23,11 @@ use andromeda_postgresql_schema::{
     branch_schema_version::BranchSchemaVersion,
     snapshot::{SnapshotPreparation, Snapshots, branch_is_current},
 };
-use andromeda_postgresql_seaquery::statement::Statement;
+use andromeda_postgresql_seaquery::{clock::span_after_transaction_start, statement::Statement};
 use andromeda_snapshot::{error::SnapshotError, store::SnapshotPreparationJob};
-use chrono::{DateTime, Utc};
 use sea_query::{Alias, Expr, ExprTrait, JoinType, Keyword, LockBehavior, LockType, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
 use sqlx::{PgPool, Postgres, Row, Transaction};
+use std::time::Duration;
 
 /// The alias the clone-source lookup reads the source's control record under.
 const CLONE_SOURCE: &str = "clone_source";
@@ -98,24 +102,21 @@ fn created_preparation_statement(current: BranchSchemaVersion, id: &Identifier) 
     select
 }
 
-/// Stamp the durable preparation claim on one Snapshot's preparation row.
-fn claim_statement(snapshot_key: SnapshotKey, claimed_by: LeaseHolder, lease_until: DateTime<Utc>) -> UpdateStatement {
+/// Stamp the durable preparation claim on one Snapshot's preparation row,
+/// leased for `lease` from the claiming transaction's start.
+fn claim_statement(snapshot_key: SnapshotKey, claimed_by: LeaseHolder, lease: Duration) -> UpdateStatement {
     Query::update()
         .table(SnapshotPreparation::Table)
         .value(SnapshotPreparation::ClaimedBy, claimed_by.as_uuid())
-        .value(SnapshotPreparation::LeaseUntil, lease_until)
+        .value(SnapshotPreparation::LeaseUntil, span_after_transaction_start(lease))
         .and_where(Expr::col(SnapshotPreparation::SnapshotKey).eq(snapshot_key.as_i64()))
         .to_owned()
 }
 
 /// Claim the highest-priority, oldest eligible Snapshot in one locked
 /// transaction, resetting its staging branch before the worker re-runs it.
-pub(crate) async fn next_preparing_snapshot(
-    pool: &PgPool,
-    claimed_by: LeaseHolder,
-    lease_until: DateTime<Utc>,
-) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
-    claim_selected(pool, &next_preparing_statement(current_version()?), claimed_by, lease_until).await
+pub(crate) async fn next_preparing_snapshot(pool: &PgPool, claimed_by: LeaseHolder, lease: Duration) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
+    claim_selected(pool, &next_preparing_statement(current_version()?), claimed_by, lease).await
 }
 
 /// Claim the just-created Snapshot `id` in one locked transaction when it is
@@ -124,9 +125,9 @@ pub(crate) async fn claim_created_snapshot(
     pool: &PgPool,
     id: &Identifier,
     claimed_by: LeaseHolder,
-    lease_until: DateTime<Utc>,
+    lease: Duration,
 ) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
-    claim_selected(pool, &created_preparation_statement(current_version()?, id), claimed_by, lease_until).await
+    claim_selected(pool, &created_preparation_statement(current_version()?, id), claimed_by, lease).await
 }
 
 /// Claim the Snapshot `select` row-locks, if it finds one: stamp the claim and
@@ -135,7 +136,7 @@ async fn claim_selected(
     pool: &PgPool,
     select: &SelectStatement,
     claimed_by: LeaseHolder,
-    lease_until: DateTime<Utc>,
+    lease: Duration,
 ) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
     let mut transaction = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     let row = select
@@ -160,7 +161,7 @@ async fn claim_selected(
         .transpose()
         .map_err(|error| SnapshotError::from(undecodable(&error)))?;
     let query_context = row_query_context(&row).map_err(|error| persistence_error::<SnapshotError>(error))?;
-    claim_statement(snapshot_key, claimed_by, lease_until)
+    claim_statement(snapshot_key, claimed_by, lease)
         .to_query()
         .execute(&mut *transaction)
         .await
@@ -186,21 +187,21 @@ fn key_of(id: &Identifier) -> SelectStatement {
         .to_owned()
 }
 
-/// Extend a claim held by this replica, returning false if ownership was lost.
-pub(crate) async fn renew_preparation_lease(
-    pool: &PgPool,
-    id: &Identifier,
-    claimed_by: LeaseHolder,
-    lease_until: DateTime<Utc>,
-) -> Result<bool, SnapshotError> {
-    let statement = Query::update()
+/// Extend a claim held by this replica to `lease` from the renewal.
+fn renewal_statement(id: &Identifier, claimed_by: LeaseHolder, lease: Duration) -> UpdateStatement {
+    Query::update()
         .table(SnapshotPreparation::Table)
-        .value(SnapshotPreparation::LeaseUntil, lease_until)
+        .value(SnapshotPreparation::LeaseUntil, span_after_transaction_start(lease))
         .and_where(Expr::col(SnapshotPreparation::SnapshotKey).in_subquery(key_of(id)))
         .and_where(Expr::col(SnapshotPreparation::ClaimedBy).eq(claimed_by.as_uuid()))
         .and_where(status_is_preparing())
-        .to_owned();
-    let result = statement
+        .to_owned()
+}
+
+/// Extend a claim held by this replica to `lease` from the renewal, returning
+/// false if ownership was lost.
+pub(crate) async fn renew_preparation_lease(pool: &PgPool, id: &Identifier, claimed_by: LeaseHolder, lease: Duration) -> Result<bool, SnapshotError> {
+    let result = renewal_statement(id, claimed_by, lease)
         .to_query()
         .execute(pool)
         .await
@@ -284,11 +285,12 @@ async fn claimed_key(transaction: &mut Transaction<'_, Postgres>, statement: &Se
         .transpose()
 }
 
-/// Extend the lease on one Snapshot's preparation row.
-fn lease_statement(snapshot_key: SnapshotKey, lease_until: DateTime<Utc>) -> UpdateStatement {
+/// Extend the lease on one Snapshot's preparation row to `lease` from the
+/// restarting transaction's start.
+fn lease_statement(snapshot_key: SnapshotKey, lease: Duration) -> UpdateStatement {
     Query::update()
         .table(SnapshotPreparation::Table)
-        .value(SnapshotPreparation::LeaseUntil, lease_until)
+        .value(SnapshotPreparation::LeaseUntil, span_after_transaction_start(lease))
         .and_where(Expr::col(SnapshotPreparation::SnapshotKey).eq(snapshot_key.as_i64()))
         .to_owned()
 }
@@ -297,13 +299,13 @@ fn lease_statement(snapshot_key: SnapshotKey, lease_until: DateTime<Utc>) -> Upd
 /// empty its staging branch in one transaction, so the next attempt captures
 /// into a branch no earlier attempt wrote. Returns false when the claim was
 /// lost or the Snapshot left `preparing`.
-pub(crate) async fn restart_preparation(pool: &PgPool, id: &Identifier, claimed_by: LeaseHolder, lease_until: DateTime<Utc>) -> Result<bool, SnapshotError> {
+pub(crate) async fn restart_preparation(pool: &PgPool, id: &Identifier, claimed_by: LeaseHolder, lease: Duration) -> Result<bool, SnapshotError> {
     let mut transaction = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     let Some(snapshot_key) = lock_claimed_preparation(&mut transaction, id, claimed_by).await? else {
         transaction.rollback().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
         return Ok(false);
     };
-    lease_statement(snapshot_key, lease_until)
+    lease_statement(snapshot_key, lease)
         .to_query()
         .execute(&mut *transaction)
         .await
@@ -344,17 +346,21 @@ mod tests {
         claim_statement,
         claimed_preparation_statement,
         created_preparation_statement,
+        lease_statement,
         next_preparing_statement,
         release_statement,
+        renewal_statement,
         shared_claim_statement,
     };
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_context_space::snapshot_key::SnapshotKey;
     use andromeda_postgresql_schema::branch_schema_version::BranchSchemaVersion;
-    use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
+    use std::time::Duration;
     use uuid::Uuid;
+
+    const LEASE: Duration = Duration::from_secs(30);
 
     #[test]
     fn the_preparing_selection_orders_by_priority_then_age_and_skips_leased_rows() {
@@ -404,10 +410,44 @@ mod tests {
     fn the_claim_stamps_the_lease_on_the_preparation_row_by_key() {
         let key = SnapshotKey::try_from(7).expect("positive key");
         let worker = LeaseHolder::from(Uuid::from_u128(1));
-        let lease_until = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 30).single().expect("valid lease instant");
-        let sql = claim_statement(key, worker, lease_until).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(key, worker, LEASE).to_string(PostgresQueryBuilder);
         assert!(sql.starts_with("UPDATE \"snapshot_preparation\" SET \"claimed_by\" ="), "{sql}");
         assert!(sql.contains("WHERE \"snapshot_key\" = 7"), "{sql}");
+    }
+
+    /// A claim takes a preparation whose lease is at or before the database
+    /// clock, so the claim, the renewal every half lease and the restart all
+    /// set the lease on that clock: a lease from a broker running behind the
+    /// database would read as lapsed before its next renewal, and another
+    /// worker would capture the Snapshot again.
+    #[test]
+    fn every_lease_a_preparation_takes_runs_its_span_past_the_database_clock() {
+        let key = SnapshotKey::try_from(7).expect("positive key");
+        let worker = LeaseHolder::from(Uuid::from_u128(1));
+        let id = "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri");
+        for statement in [
+            claim_statement(key, worker, LEASE),
+            renewal_statement(&id, worker, LEASE),
+            lease_statement(key, LEASE),
+        ] {
+            let sql = statement.to_string(PostgresQueryBuilder);
+            assert!(sql.contains(r#""lease_until" = CURRENT_TIMESTAMP + (make_interval(secs => 30))"#), "{sql}");
+        }
+    }
+
+    /// A renewal reaches only a preparation this worker still claims and that
+    /// is still preparing.
+    #[test]
+    fn a_renewal_extends_only_a_preparation_this_worker_still_claims() {
+        let worker = LeaseHolder::from(Uuid::from_u128(1));
+        let id = "urn:ngsi-ld:Snapshot:s".parse().expect("valid snapshot uri");
+        let sql = renewal_statement(&id, worker, LEASE).to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains(r#""snapshot_key" IN (SELECT "snapshot_key" FROM "snapshots" WHERE "id" = 'urn:ngsi-ld:Snapshot:s')"#),
+            "{sql}"
+        );
+        assert!(sql.contains(&format!("\"claimed_by\" = '{}'", Uuid::from_u128(1))), "{sql}");
+        assert!(sql.contains("\"status\" = 1"), "{sql}");
     }
 
     #[test]

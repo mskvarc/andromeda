@@ -8,7 +8,7 @@
 //! diagnostic, and a failure its own retry step, bound as parallel arrays and
 //! unnested into a source the update joins on the delivery key. A failure is
 //! due again its step after `CURRENT_TIMESTAMP`, the clock the claim compares
-//! it with (see [`due_after`]).
+//! it with (see [`after_transaction_start`]).
 //!
 //! The guard names the worker that holds the lease and requires that lease to
 //! still be live, row by row. A worker whose lease expired while it was
@@ -18,9 +18,17 @@
 
 use crate::{
     error::ContextStoreError,
-    notification_delivery::{
-        due_after::due_after,
-        hold::{Acknowledged, Probed, Released, Taken, acknowledged_beside, cte, null, probed_on_exhaustion, released_on_delivery, taken_on_failure},
+    notification_delivery::hold::{
+        Acknowledged,
+        Probed,
+        Released,
+        Taken,
+        acknowledged_beside,
+        cte,
+        null,
+        probed_on_exhaustion,
+        released_on_delivery,
+        taken_on_failure,
     },
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
@@ -29,6 +37,7 @@ use andromeda_notification::delivery_backoff::BackoffStep;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::notification::{NotificationDeliveries, NotificationDeliveryHolds};
 use andromeda_postgresql_seaquery::{
+    clock::after_transaction_start,
     pg_array::{any, text_array},
     pg_type::PostgresType,
     unnest::{UnnestAliased, UnnestColumn, unnest_call},
@@ -163,7 +172,7 @@ pub(crate) fn failed_statement(target: &ContextTarget, worker_id: LeaseHolder, r
             delivery_column(NotificationDeliveries::AttemptCount).add(1),
         )
         .value(NotificationDeliveries::LastError, Expr::col((Failure, NotificationDeliveries::LastError)))
-        .value(NotificationDeliveries::NextAttemptAt, due_after(Expr::col((Failure, RetryAfter))))
+        .value(NotificationDeliveries::NextAttemptAt, after_transaction_start(Expr::col((Failure, RetryAfter))))
         .value(NotificationDeliveries::ClaimedBy, null())
         .value(NotificationDeliveries::LeaseUntil, null())
         .from(Failure)

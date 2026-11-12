@@ -193,7 +193,7 @@ mod tests {
         };
         let commit = CommitError::Persistence(PersistenceFailure::StatementRejected);
         let temporal = TemporalError::Persistence(PersistenceFailure::StatementRejected);
-        let preparation = SnapshotError::from(SnapshotInvariant::LeaseDeadlineOverflow);
+        let preparation = SnapshotError::from(SnapshotInvariant::QuotaWithoutEvictable);
         for failure in [
             ExecutionFailure::Preparation { cause: &preparation },
             ExecutionFailure::UnreadableEntity { id: &identifier },

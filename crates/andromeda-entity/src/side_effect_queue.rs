@@ -21,7 +21,7 @@ use andromeda_context_commit::{
 };
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
-use std::num::NonZeroU32;
+use std::{num::NonZeroU32, time::Duration};
 
 /// One side-effect job leased for execution.
 #[derive(Debug)]
@@ -82,8 +82,13 @@ pub trait SideEffectQueue: Send + Sync + 'static {
         'life1: 'async_trait,
         Self: 'async_trait;
 
-    /// Release a failed job for another attempt at `next_attempt_at`, counting
-    /// the attempt.
+    /// Release a failed job for another attempt `retry_after` from the
+    /// release, counted on the queue's own clock, and count the attempt.
+    ///
+    /// The queue compares a job's due instant with its own clock, so the
+    /// release measures the wait from that clock too: an instant from the
+    /// broker's clock would put the retry early or late by however far the
+    /// two clocks differ.
     ///
     /// Guarded by `owner` still being the job's claimant, not by its lease
     /// still being live. A replay may outlive its lease, its settlement locks
@@ -101,7 +106,7 @@ pub trait SideEffectQueue: Send + Sync + 'static {
         id: SideEffectJobId,
         owner: &'life1 LeaseHolder,
         error: &'life2 str,
-        next_attempt_at: DateTime<Utc>,
+        retry_after: Duration,
     ) -> BoxFuture<'async_trait, Result<LeaseAcknowledgement, EntityError>>
     where
         'life0: 'async_trait,
