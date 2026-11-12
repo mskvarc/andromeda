@@ -3,7 +3,8 @@
 //!
 //! A create returns the surrogate key it minted, because the delivery-state
 //! row that completes the subscription is inserted under it in the same
-//! transaction.
+//! transaction. A replacement returns the key of the row it replaced, which
+//! the commit of every subscription write is given.
 //!
 //! `notification_triggers` is stored as the clause-5.3.3 registry codes the
 //! notification queue is numbered from, not as their camel-case labels, so a
@@ -139,6 +140,7 @@ pub(super) fn entity_update(
         )
         .and_where(Expr::col(Subscriptions::Id).eq(id.as_str()))
         .and_where(of_kind(StoredKind::Entity))
+        .returning(Query::returning().column(Subscriptions::SubscriptionKey))
         .to_owned())
 }
 
@@ -230,6 +232,12 @@ mod tests {
     #[test]
     fn the_create_returns_the_surrogate_key_the_delivery_state_row_is_inserted_under() {
         let (sql, _) = create_sql();
+        assert!(sql.ends_with(r#"RETURNING "subscription_key""#), "{sql}");
+    }
+
+    #[test]
+    fn the_update_returns_the_surrogate_key_of_the_row_it_replaced() {
+        let (sql, _) = update_sql();
         assert!(sql.ends_with(r#"RETURNING "subscription_key""#), "{sql}");
     }
 

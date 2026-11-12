@@ -26,6 +26,7 @@ use crate::{
         projection::{count_of_kind, listing_page, one_of, projected_select},
         status_code::{status_is, status_is_not, stored_status},
         stored_kind::{StoredKind, of_kind},
+        write_commit::{commit_csource_write, commit_entity_write},
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -64,9 +65,18 @@ fn is_reaped_snapshot_branch(target: &ContextTarget, error: &sqlx::Error) -> boo
 /// `writes` names the repository field a create or a replacement begins its
 /// transaction on. A kind whose writes advance the context source change clock
 /// begins them through the tenant's clock-writer share, every other kind on the
-/// pool.
+/// pool. `commit` ends the transaction of a write that found its row, given the
+/// row's surrogate key.
 macro_rules! impl_subscription_store {
-    ($type:ty, kind: $kind:expr, has_dataset_id: $hdi:expr, writes: $writes:ident, create: $create:path, update: $update:path) => {
+    (
+        $type:ty,
+        kind: $kind:expr,
+        has_dataset_id: $hdi:expr,
+        writes: $writes:ident,
+        create: $create:path,
+        update: $update:path,
+        commit: $commit:path
+    ) => {
         #[async_trait::async_trait]
         impl SubscriptionStore for $type {
             async fn get(&self, target: &ContextTarget, id: &Identifier) -> Result<Option<StoredSubscription>, SubscriptionError> {
@@ -244,10 +254,7 @@ macro_rules! impl_subscription_store {
                     .execute(&mut *transaction)
                     .await
                     .map_err(|error| persistence_error::<SubscriptionError>(error))?;
-                transaction
-                    .commit()
-                    .await
-                    .map_err(|error| persistence_error::<SubscriptionError>(error))?;
+                $commit(transaction, target, subscription_key).await?;
                 tracing::info!("Created {} subscription: {}", $kind.code().label(), id);
                 Ok(())
             }
@@ -266,16 +273,25 @@ macro_rules! impl_subscription_store {
                     .await
                     .map_err(|error| persistence_error::<SubscriptionError>(error))?;
                 let interned = intern_attribute_lists(self.attribute_names.as_ref(), &mut transaction, fields).await?;
-                let result = $update(target, id, fields, interned, status, restart)?
+                let updated = $update(target, id, fields, interned, status, restart)?
                     .to_query()
-                    .execute(&mut *transaction)
+                    .fetch_optional(&mut *transaction)
                     .await
                     .map_err(|error| persistence_error::<SubscriptionError>(error))?;
-                transaction
-                    .commit()
-                    .await
+                // A missing subscription has nothing to commit, and the names
+                // interned for it roll back with the transaction.
+                let Some(updated) = updated else {
+                    transaction
+                        .rollback()
+                        .await
+                        .map_err(|error| persistence_error::<SubscriptionError>(error))?;
+                    return Ok(0);
+                };
+                let subscription_key: i64 = updated
+                    .try_get("subscription_key")
                     .map_err(|error| persistence_error::<SubscriptionError>(error))?;
-                Ok(result.rows_affected())
+                $commit(transaction, target, subscription_key).await?;
+                Ok(1)
             }
 
             async fn find_due_interval_subscriptions(
@@ -343,7 +359,8 @@ impl_subscription_store!(
     has_dataset_id: DatasetIdPresence::Present,
     writes: pool,
     create: entity_create,
-    update: entity_update
+    update: entity_update,
+    commit: commit_entity_write
 );
 
 impl_subscription_store!(
@@ -352,7 +369,8 @@ impl_subscription_store!(
     has_dataset_id: DatasetIdPresence::Absent,
     writes: clock_writers,
     create: csource_create,
-    update: csource_update
+    update: csource_update,
+    commit: commit_csource_write
 );
 
 #[cfg(test)]

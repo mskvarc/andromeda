@@ -3,7 +3,7 @@
 //! its registration row.
 
 use crate::{
-    context_source_change_clock::advance,
+    context_source_change_clock::advance_and_commit,
     csource_registration::{
         information_write::{prepare_information, replace_registration_information},
         registration_columns::{RegistrationFields, registration_columns},
@@ -91,8 +91,7 @@ pub(super) async fn delete_expired(store: &PostgresRegistrationStore, cutoff: Da
         .await
         .map_err(|error| persistence_error::<RegistrationError>(error))?;
 
-    let revision = advance(&mut transaction).await.map_err(|error| persistence_error::<RegistrationError>(error))?;
-    transaction.commit().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
+    let revision = advance_and_commit::<RegistrationError>(transaction).await?;
     Ok(ExpiredDeletion {
         revision,
         registrations: expired,
@@ -127,8 +126,7 @@ pub(super) async fn create(store: &PostgresRegistrationStore, id: &Identifier, p
         .await
         .map_err(|error| persistence_error::<RegistrationError>(error))?;
     let registration = written(&mut transaction, id, &information.key_names()).await?;
-    let revision = advance(&mut transaction).await.map_err(|error| persistence_error::<RegistrationError>(error))?;
-    transaction.commit().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
+    let revision = advance_and_commit::<RegistrationError>(transaction).await?;
     Ok(WrittenRegistration { revision, registration })
 }
 
@@ -163,8 +161,7 @@ pub(super) async fn update(
         .await
         .map_err(|error| persistence_error::<RegistrationError>(error))?;
     let registration = written(&mut transaction, id, &information.key_names()).await?;
-    let revision = advance(&mut transaction).await.map_err(|error| persistence_error::<RegistrationError>(error))?;
-    transaction.commit().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
+    let revision = advance_and_commit::<RegistrationError>(transaction).await?;
     Ok(RegistrationMutation::Applied(WrittenRegistration { revision, registration }))
 }
 
@@ -215,8 +212,7 @@ pub(super) async fn delete(store: &PostgresRegistrationStore, id: &Identifier) -
         transaction.rollback().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
         return Ok(RegistrationMutation::Missing);
     }
-    let revision = advance(&mut transaction).await.map_err(|error| persistence_error::<RegistrationError>(error))?;
-    transaction.commit().await.map_err(|error| persistence_error::<RegistrationError>(error))?;
+    let revision = advance_and_commit::<RegistrationError>(transaction).await?;
     Ok(RegistrationMutation::Applied(revision))
 }
 

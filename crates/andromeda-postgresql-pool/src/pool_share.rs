@@ -22,10 +22,10 @@
 //! statement the same way.
 
 use andromeda_configuration::schema::database::write_reserve::WriteReserve;
-use andromeda_postgresql_seaquery::{statement::Statement, statement_planning::StatementPlanning};
+use andromeda_postgresql_seaquery::{committing_statement::CommittingStatement, statement::Statement, statement_planning::StatementPlanning};
 use derive_more::{Deref, DerefMut};
 use sea_query::SelectStatement;
-use sqlx::{PgPool, Postgres, Transaction, pool::PoolConnection, postgres::PgRow};
+use sqlx::{Decode, PgPool, Postgres, Transaction, Type, pool::PoolConnection, postgres::PgRow};
 use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore},
@@ -192,6 +192,49 @@ impl SharedTransaction {
     /// Returns the driver's error when the rollback fails.
     pub async fn rollback(self) -> Result<(), sqlx::Error> {
         self.transaction.rollback().await
+    }
+
+    /// Run `last` and commit in the one round trip that carries both, then
+    /// release the permit, returning the first column of the first row `last`
+    /// returns.
+    ///
+    /// # Errors
+    ///
+    /// Returns the driver's error when `last` or the commit fails, and
+    /// [`sqlx::Error::RowNotFound`] when `last` returns no row.
+    pub async fn commit_fetching<O>(self, last: &CommittingStatement) -> Result<O, sqlx::Error>
+    where
+        O: for<'row> Decode<'row, Postgres> + Type<Postgres>,
+    {
+        let SharedTransaction { mut transaction, _permit } = self;
+        let value = last.fetch_ending(&mut transaction).await?;
+        close_committed(transaction).await;
+        Ok(value)
+    }
+
+    /// Run `last` and commit in the one round trip that carries both, then
+    /// release the permit.
+    ///
+    /// # Errors
+    ///
+    /// Returns the driver's error when `last` or the commit fails.
+    pub async fn commit_executing(self, last: &CommittingStatement) -> Result<(), sqlx::Error> {
+        let SharedTransaction { mut transaction, _permit } = self;
+        last.execute_ending(&mut transaction).await?;
+        close_committed(transaction).await;
+        Ok(())
+    }
+}
+
+/// Close the empty transaction a [`CommittingStatement`] leaves open once it
+/// has committed the write before it.
+///
+/// The write is durable by then, so a close that fails changes nothing about
+/// it. Only the connection can fail it, and the readiness probe the pool runs
+/// on a returned connection then finds it broken and closes it.
+async fn close_committed(transaction: Transaction<'static, Postgres>) {
+    if let Err(error) = transaction.commit().await {
+        tracing::warn!(%error, "the empty transaction after a committed write could not be closed");
     }
 }
 

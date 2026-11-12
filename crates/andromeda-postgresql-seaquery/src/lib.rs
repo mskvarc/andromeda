@@ -6,9 +6,10 @@
 //! for, the casts a fragment needs, the utility commands (schema and database
 //! DDL, settings, maintenance, `TimescaleDB` procedures) sea-query has no form
 //! for, and the execution of every statement: [`statement::Statement`] for a
-//! statement with bound values, [`command::Command`] for a utility command.
-//! Both are sealed and render privately, so statement text never leaves this
-//! crate as a string and no other crate builds SQL.
+//! statement with bound values, [`command::Command`] for a utility command,
+//! and [`committing_statement::CommittingStatement`] for the last statement of
+//! a transaction, sent with its commit. Each renders privately, so statement
+//! text never leaves this crate as a string and no other crate builds SQL.
 //!
 //! It knows nothing of the query languages ETSI GS CIM 009 v1.9.1 defines
 //! (that translation is `andromeda-postgresql-query`, built on these
@@ -32,6 +33,7 @@ pub mod columnstore_chunk;
 pub mod columnstore_conversion;
 pub mod columnstore_enablement;
 pub mod command;
+pub mod committing_statement;
 pub mod conflict_image;
 pub mod database_definition;
 pub mod date_field;

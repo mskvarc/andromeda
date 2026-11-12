@@ -16,6 +16,7 @@ use andromeda_postgresql_encoding::ewkb::EwkbError;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
 use andromeda_postgresql_pool::persistence_classification::classify;
 use andromeda_postgresql_query::error::RenderError;
+use andromeda_postgresql_seaquery::committing_statement::BoundCommittingStatement;
 use sea_query::error::Error as SeaQueryError;
 use std::{fmt::Display, num::TryFromIntError};
 
@@ -78,6 +79,7 @@ store_fault_class! {
     EwkbError => Unencodable,
     JsonLiteralError => Unencodable,
     // A statement the adapter could not assemble.
+    BoundCommittingStatement => StatementUnbuildable,
     RenderError => StatementUnbuildable,
     SeaQueryError => StatementUnbuildable,
     // An identifier the adapter minted that its own typed identifier refuses.

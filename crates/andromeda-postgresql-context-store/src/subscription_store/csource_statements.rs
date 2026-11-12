@@ -6,14 +6,17 @@
 //! transaction. A context-source subscription stores no `dataset_ids`, no
 //! `local_only` and no `split_entities`.
 //!
-//! Both statements advance the tenant's context source change clock in a
-//! `WITH` clause and stamp the revision drawn as `context_source_revision`:
-//! that orders the write against every registration write (clauses 5.11.2.4
-//! and 5.11.3.4). It is the statement's last lock, taken after the attribute
-//! lists were interned.
+//! Neither statement draws the write's revision. The write ends with
+//! [`csource_revision_stamp`], which advances the tenant's context source change
+//! clock and stamps the revision drawn as `context_source_revision` in the
+//! message that commits the transaction. The revision orders the write against
+//! every registration write (clauses 5.11.2.4 and 5.11.3.4), and the clock is
+//! the write's last lock. Until then a created row carries the latest revision
+//! committed before it, as the row's check requires every context-source
+//! subscription to carry one, and a replacement keeps the row's own.
 
 use crate::{
-    context_source_change_clock::{advance_clause, advanced_revision},
+    context_source_change_clock::{advance_clause, advanced_revision, committed_revision},
     store_fault::persistence_error,
     subscription_store::{
         conformance_text::stored_conformance,
@@ -31,7 +34,7 @@ use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_ngsi_ld_query::filter::serialize::serialize_written_members;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
-use andromeda_postgresql_seaquery::clock::now;
+use andromeda_postgresql_seaquery::{clock::now, literal::int_literal};
 use andromeda_subscription::{error::SubscriptionError, notifying_since::NotifyingRestart, store::SubscriptionFields};
 use iri_rs::IriBuf;
 use sea_query::{Expr, ExprTrait, InsertStatement, Query, SimpleExpr, UpdateStatement};
@@ -69,7 +72,6 @@ fn written_columns(
         (Subscriptions::JsonldContext, Expr::val(fields.jsonld_context.map(IriBuf::as_str))),
         (Subscriptions::NgsildConformance, Expr::val(stored_conformance(fields.ngsild_conformance))),
         (Subscriptions::QWrittenMembers, Expr::val(fields.q.map(serialize_written_members))),
-        (Subscriptions::ContextSourceRevision, advanced_revision()),
     ])
 }
 
@@ -89,6 +91,7 @@ pub(super) fn csource_create(
 ) -> Result<InsertStatement, SubscriptionError> {
     let mut columns = written_columns(fields, interned, status)?;
     columns.push((Subscriptions::TemporalQ, json_document(fields.temporal_q)?));
+    columns.push((Subscriptions::ContextSourceRevision, committed_revision()));
     let (names, values): (Vec<Subscriptions>, Vec<SimpleExpr>) = columns.into_iter().unzip();
     let mut insert = Query::insert();
     insert
@@ -100,7 +103,6 @@ pub(super) fn csource_create(
                 .chain([Subscriptions::CreatedAt, Subscriptions::ModifiedAt])
                 .chain(created_since().map(|(column, _)| column)),
         )
-        .with_cte(advance_clause())
         .values(
             [Expr::val(id.as_str()), Expr::val(StoredKind::Csource.code().code())]
                 .into_iter()
@@ -114,7 +116,7 @@ pub(super) fn csource_create(
 }
 
 /// The context-source-subscription replacement of `id` with the values
-/// `fields` carries.
+/// `fields` carries, returning the surrogate key the revision stamp names.
 ///
 /// # Errors
 ///
@@ -135,20 +137,36 @@ pub(super) fn csource_update(
         .values(columns.into_iter().chain([(Subscriptions::ModifiedAt, now())]).chain(restarted_since(restart)))
         .and_where(Expr::col(Subscriptions::Id).eq(id.as_str()))
         .and_where(of_kind(StoredKind::Csource))
-        .with_cte(advance_clause())
+        .returning(Query::returning().column(Subscriptions::SubscriptionKey))
         .to_owned())
+}
+
+/// Advance the tenant's context source change clock and stamp the revision
+/// drawn on the context-source subscription `subscription_key` names, as the
+/// last statement of the subscription's write, sent with its commit.
+///
+/// The key is minted by the database, so it is written into the statement,
+/// which binds no value.
+pub(super) fn csource_revision_stamp(target: &ContextTarget, subscription_key: i64) -> UpdateStatement {
+    Query::update()
+        .table(table_of(target, Subscriptions::Table))
+        .value(Subscriptions::ContextSourceRevision, advanced_revision())
+        .and_where(Expr::col(Subscriptions::SubscriptionKey).eq(int_literal(subscription_key)))
+        .with_cte(advance_clause())
+        .to_owned()
 }
 
 #[cfg(test)]
 mod tests {
     use crate::subscription_store::{
         bare_fields_fixture::bare_fields,
-        csource_statements::{csource_create, csource_update},
+        csource_statements::{csource_create, csource_revision_stamp, csource_update},
         interned_attributes::InternedAttributeLists,
     };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
+    use andromeda_postgresql_seaquery::committing_statement::CommittingStatement;
     use andromeda_subscription::notifying_since::{NotifyingRestart, SinceRestart};
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
@@ -194,7 +212,10 @@ mod tests {
         let (sql, values) = create_sql();
         assert!(sql.contains("VALUES ($1, $2, $3"), "the identifier then the context-source kind code: {sql}");
         assert!(!sql.contains("::subscription_status"), "no enum cast remains: {sql}");
-        assert_eq!(values, 23, "the create binds every column but the two timestamps and the drawn revision: {sql}");
+        assert_eq!(
+            values, 23,
+            "the create binds every column but the two timestamps and the committed revision: {sql}"
+        );
         assert!(!sql.contains("dataset_ids"), "a context-source subscription stores no datasetId: {sql}");
         assert!(!sql.contains("local_only"), "a context-source subscription stores no localOnly: {sql}");
     }
@@ -217,19 +238,47 @@ mod tests {
         }
     }
 
-    /// Clauses 5.11.2.4 and 5.11.3.4: a context-source write is ordered
-    /// against every registration write by the clock revision it draws in its
-    /// own statement.
+    /// The clock is the write's last lock, taken by the stamp its commit
+    /// carries, so neither the create nor the replacement takes it.
     #[test]
-    fn both_statements_advance_the_change_clock_and_stamp_the_revision_drawn() {
+    fn neither_statement_advances_the_change_clock() {
         for (sql, _) in [create_sql(), update_sql()] {
-            assert!(
-                sql.starts_with(r#"WITH "advanced_clock" AS (UPDATE "context_source_change_clock" SET "revision" = "revision" + (1) RETURNING "revision")"#),
-                "{sql}"
-            );
-            assert!(sql.contains(r#""context_source_revision""#), "{sql}");
-            assert!(sql.contains(r#"(SELECT "revision" FROM "advanced_clock")"#), "{sql}");
+            assert!(!sql.contains("advanced_clock"), "{sql}");
+            assert!(!sql.contains(r#"UPDATE "context_source_change_clock""#), "{sql}");
         }
+    }
+
+    /// The row's check requires a revision on every context-source
+    /// subscription, so a create carries the latest committed one until its
+    /// stamp replaces it, and a replacement keeps the row's own.
+    #[test]
+    fn a_create_carries_the_committed_revision_and_a_replacement_keeps_its_own() {
+        let (create, _) = create_sql();
+        assert!(create.contains(r#""context_source_revision""#), "{create}");
+        assert!(create.contains(r#"(SELECT "revision" FROM "context_source_change_clock")"#), "{create}");
+        let (update, _) = update_sql();
+        assert!(!update.contains("context_source_revision"), "{update}");
+    }
+
+    #[test]
+    fn the_update_returns_the_surrogate_key_the_revision_stamp_names() {
+        let (sql, _) = update_sql();
+        assert!(sql.ends_with(r#"RETURNING "subscription_key""#), "{sql}");
+    }
+
+    /// Clauses 5.11.2.4 and 5.11.3.4: a context-source write is ordered
+    /// against every registration write by the clock revision its last
+    /// statement draws and stamps on the row it wrote.
+    #[test]
+    fn the_stamp_advances_the_change_clock_and_stamps_the_revision_drawn_on_the_written_row() {
+        let stamp = csource_revision_stamp(&ContextTarget::Live, 42);
+        let (sql, values) = stamp.build(PostgresQueryBuilder);
+        assert_eq!(
+            sql,
+            r#"WITH "advanced_clock" AS (UPDATE "context_source_change_clock" SET "revision" = "revision" + (1) RETURNING "revision") UPDATE "subscriptions" SET "context_source_revision" = (SELECT "revision" FROM "advanced_clock") WHERE "subscription_key" = (42)"#
+        );
+        assert_eq!(values.0.len(), 0, "{sql}");
+        assert!(CommittingStatement::new(&stamp).is_ok(), "the stamp is sent with the commit: {sql}");
     }
 
     #[test]
