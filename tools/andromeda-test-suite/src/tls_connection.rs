@@ -13,12 +13,12 @@ use crate::{
     exchange_log::ExchangeLog,
     request_version::RequestVersion,
 };
-use http::Version;
+use http::{Method, Version};
 use ngsi_ld::{
     client::{Client, ReqwestTransport},
     http::EndpointError,
 };
-use reqwest::{Certificate, Identity, redirect::Policy, tls};
+use reqwest::{Certificate, Identity, RequestBuilder, redirect::Policy, tls};
 use std::{
     fs,
     io,
@@ -158,8 +158,7 @@ impl Connection {
     /// Returns [`TlsError`] when the stack names no such broker, a file cannot be read, or the client cannot be built.
     pub async fn client(&self, role: BrokerRole) -> Result<BrokerClient, TlsError> {
         let config = SuiteConfig::get().map_err(|error| TlsError::Config(error.clone()))?;
-        let broker = config.broker(role)?;
-        let base_url = broker.join("ngsi-ld/v1/").map_err(|error| TlsError::ApiPath(broker.clone(), error))?;
+        let base_url = api_root(config, role)?;
         let transport = self.transport(config).await?;
         Client::builder()
             .base_url(base_url.clone())
@@ -168,8 +167,40 @@ impl Connection {
             .map_err(|error| TlsError::Endpoint(base_url, Box::new(error)))
     }
 
+    /// A plain HTTP client of the broker of `role` connecting this way, for a request the typed client cannot send.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TlsError`] when the stack names no such broker, a file cannot be read, or the client cannot be built.
+    pub async fn raw_client(&self, role: BrokerRole) -> Result<RawClient, TlsError> {
+        let config = SuiteConfig::get().map_err(|error| TlsError::Config(error.clone()))?;
+        Ok(RawClient {
+            client: self.http_client(config).await?,
+            api_root: api_root(config, role)?,
+            version: self.pinned_version(),
+        })
+    }
+
     /// The transport of this connection.
     async fn transport(&self, config: &SuiteConfig) -> Result<SuiteTransport, TlsError> {
+        let transport = ReqwestTransport::new(self.http_client(config).await?);
+        Ok(ExchangeLog::new(match self.pinned_version() {
+            Some(version) => RequestVersion::pinned(transport, version),
+            None => RequestVersion::as_written(transport),
+        }))
+    }
+
+    /// The version every request of this connection is sent under, when the version it is written with does not
+    /// decide: `reqwest` takes the QUIC path of a client built for HTTP/3 only for a request whose version is HTTP/3.
+    const fn pinned_version(&self) -> Option<Version> {
+        match self.version {
+            HttpVersion::Http3 => Some(Version::HTTP_3),
+            HttpVersion::Negotiated | HttpVersion::Http11 | HttpVersion::Http2 => None,
+        }
+    }
+
+    /// The HTTP client of this connection.
+    async fn http_client(&self, config: &SuiteConfig) -> Result<reqwest::Client, TlsError> {
         let mut builder = reqwest::Client::builder()
             .redirect(Policy::none())
             .no_proxy()
@@ -196,18 +227,53 @@ impl Connection {
         if let Some(newest) = self.newest_tls {
             builder = builder.max_tls_version(newest);
         }
-        let (builder, request_version) = match self.version {
-            HttpVersion::Negotiated => (builder, None),
-            HttpVersion::Http11 => (builder.http1_only(), None),
-            HttpVersion::Http2 => (builder.http2_prior_knowledge(), None),
-            HttpVersion::Http3 => (builder.http3_prior_knowledge(), Some(Version::HTTP_3)),
+        let builder = match self.version {
+            HttpVersion::Negotiated => builder,
+            HttpVersion::Http11 => builder.http1_only(),
+            HttpVersion::Http2 => builder.http2_prior_knowledge(),
+            HttpVersion::Http3 => builder.http3_prior_knowledge(),
         };
-        let transport = ReqwestTransport::new(builder.build().map_err(TlsError::Http)?);
-        Ok(ExchangeLog::new(match request_version {
-            Some(version) => RequestVersion::pinned(transport, version),
-            None => RequestVersion::as_written(transport),
-        }))
+        builder.build().map_err(TlsError::Http)
     }
+}
+
+/// A plain HTTP client of one broker over one connection, for a request the typed client cannot send.
+#[derive(Debug, Clone)]
+pub struct RawClient {
+    /// The client, set up as its connection says.
+    client: reqwest::Client,
+    /// The broker's API root, with its trailing `/`.
+    api_root: Url,
+    /// The version every request is sent under; `None` leaves the client to choose.
+    version: Option<Version>,
+}
+
+impl RawClient {
+    /// A request with `method` to `path` below the API root, with its query.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TlsError::ApiPath`] when the API root cannot carry `path`.
+    pub fn request(&self, method: Method, path: &str) -> Result<RequestBuilder, TlsError> {
+        // clone: the error must own the URL it reports
+        let url = self.api_root.join(path).map_err(|error| TlsError::ApiPath(self.api_root.clone(), error))?;
+        let request = self.client.request(method, url);
+        Ok(match self.version {
+            Some(version) => request.version(version),
+            None => request,
+        })
+    }
+}
+
+/// The API root of the broker of `role`, with its trailing `/`.
+///
+/// # Errors
+///
+/// Returns [`TlsError`] when the stack names no such broker, or its URL cannot carry the API path.
+fn api_root(config: &SuiteConfig, role: BrokerRole) -> Result<Url, TlsError> {
+    let broker = config.broker(role)?;
+    // clone: the error must own the URL it reports
+    broker.join("ngsi-ld/v1/").map_err(|error| TlsError::ApiPath(broker.clone(), error))
 }
 
 /// The contents of `path`.

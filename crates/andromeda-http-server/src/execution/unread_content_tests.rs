@@ -83,14 +83,15 @@ enum Framing {
     Chunked,
 }
 
-/// Write the head of an upload to `path` and then its content, until the
-/// connection fails; resolves when the first write failed.
-async fn upload(mut writer: OwnedWriteHalf, path: &str, framing: Framing) -> Result<Instant, Box<dyn Error + Send + Sync>> {
+/// Write the head of an upload to `path`, with the field lines `fields`, and
+/// then its content, until the connection fails; resolves when the first
+/// write failed.
+async fn upload(mut writer: OwnedWriteHalf, path: &str, framing: Framing, fields: &str) -> Result<Instant, Box<dyn Error + Send + Sync>> {
     let length = match framing {
         Framing::Declared => format!("Content-Length: {DECLARED}"),
         Framing::Chunked => "Transfer-Encoding: chunked".to_owned(),
     };
-    let head = format!("POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\n{length}\r\n\r\n");
+    let head = format!("POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\n{fields}{length}\r\n\r\n");
     writer.write_all(head.as_bytes()).await?;
     let data = vec![b' '; CHUNK];
     let chunk = match framing {
@@ -119,13 +120,14 @@ async fn response_head(reader: &mut OwnedReadHalf) -> Result<(String, Instant), 
     Ok((String::from_utf8_lossy(&received).to_ascii_lowercase(), Instant::now()))
 }
 
-/// Upload to `path` as `framing` says, and report the response head and how
-/// long after it the upload could go on.
-async fn refused_upload(path: &str, framing: Framing) -> Result<(String, Duration), Box<dyn Error + Send + Sync>> {
+/// Upload to `path` as `framing` says, with the field lines `fields`, and
+/// report the response head and how long after it the upload could go on.
+async fn refused_upload(path: &str, framing: Framing, fields: &str) -> Result<(String, Duration), Box<dyn Error + Send + Sync>> {
     let (address, shutdown, server) = serve().await?;
     let (mut reader, writer) = TcpStream::connect(address).await?.into_split();
     let path = path.to_owned();
-    let uploading = tokio::spawn(async move { upload(writer, &path, framing).await });
+    let fields = fields.to_owned();
+    let uploading = tokio::spawn(async move { upload(writer, &path, framing, &fields).await });
     let (head, answered) = timeout(UPLOAD_TIMEOUT, response_head(&mut reader)).await??;
     let failed = timeout(UPLOAD_TIMEOUT, uploading).await???;
     shutdown.send(()).map_err(|()| "the server stopped early")?;
@@ -143,21 +145,31 @@ fn assert_announced_close(head: &str, uploading: Duration, status: StatusCode) {
 
 #[tokio::test]
 async fn a_bare_411_to_a_chunked_upload_announces_the_close_and_lets_the_upload_run_for_the_delay() -> TestResult {
-    let (head, uploading) = refused_upload("/entities", Framing::Chunked).await?;
+    let (head, uploading) = refused_upload("/entities", Framing::Chunked, "").await?;
     assert_announced_close(&head, uploading, StatusCode::LENGTH_REQUIRED);
     Ok(())
 }
 
 #[tokio::test]
 async fn a_415_to_a_declared_upload_announces_the_close_and_lets_the_upload_run_for_the_delay() -> TestResult {
-    let (head, uploading) = refused_upload("/typed", Framing::Declared).await?;
+    let (head, uploading) = refused_upload("/typed", Framing::Declared, "").await?;
     assert_announced_close(&head, uploading, StatusCode::UNSUPPORTED_MEDIA_TYPE);
     Ok(())
 }
 
 #[tokio::test]
 async fn a_404_to_a_declared_upload_announces_the_close_and_lets_the_upload_run_for_the_delay() -> TestResult {
-    let (head, uploading) = refused_upload("/nothing-here", Framing::Declared).await?;
+    let (head, uploading) = refused_upload("/nothing-here", Framing::Declared, "").await?;
     assert_announced_close(&head, uploading, StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+/// A head twice the 8 KiB limit overflows the HTTP/1.1 read buffer, so the
+/// server answers it 431 itself before any request reaches the router.
+#[tokio::test]
+async fn a_431_to_a_head_over_the_read_buffer_announces_the_close_and_lets_the_upload_run_for_the_delay() -> TestResult {
+    let fill = format!("X-Fill: {}\r\n", "a".repeat(16 * 1024));
+    let (head, uploading) = refused_upload("/entities", Framing::Declared, &fill).await?;
+    assert_announced_close(&head, uploading, StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
     Ok(())
 }

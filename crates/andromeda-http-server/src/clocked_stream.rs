@@ -13,8 +13,18 @@
 //! ([`crate::staged_close_stream`]). A connection that received nothing, or
 //! only part of the HTTP/2 preface, is closed without an answer: there is no
 //! HTTP/1.1 request to answer.
+//!
+//! The HTTP server answers an HTTP/1.1 head it cannot read, one over the
+//! header section limit among them, without serving a request, and shuts the
+//! connection down. The client may still be sending the content behind that
+//! head, so a shutdown with a head received and no request served announces
+//! the close as well (RFC 9112 section 9.6).
 
-use crate::{announced_close::AnnouncedClose, connection_clock::ConnectionClock, http2_preface::PrefaceReading};
+use crate::{
+    announced_close::AnnouncedClose,
+    connection_clock::{ConnectionClock, Phase},
+    http2_preface::PrefaceReading,
+};
 use std::{
     io,
     pin::Pin,
@@ -231,7 +241,21 @@ where
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().io).poll_shutdown(cx)
+        let stream = self.get_mut();
+        if stream.head_left_unserved() {
+            stream.announcement.announce();
+        }
+        Pin::new(&mut stream.io).poll_shutdown(cx)
+    }
+}
+
+impl<Io> ClockedStream<Io> {
+    /// Whether an HTTP/1.1 head arrived that no request was served for: the
+    /// HTTP server answers a head it cannot read (400, 414 or 431) itself and
+    /// shuts the connection down, while the client may still be sending what
+    /// follows the head.
+    fn head_left_unserved(&self) -> bool {
+        matches!(self.preface, PrefaceReading::Http1) && matches!(self.clock.phase(), Phase::Opening { .. } | Phase::Receiving { .. })
     }
 }
 
