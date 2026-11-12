@@ -20,17 +20,14 @@ use andromeda_tenancy::{
 use async_trait::async_trait;
 use sqlx::PgPool;
 use std::{sync::Arc, time::SystemTime};
-use tokio::{sync::watch, task::JoinHandle};
 use tokio_util::task::TaskTracker;
-use tracing::{error, info};
+use tracing::info;
 
 /// Everything one tenant's runtime holds open.
 pub(crate) struct BrokerTenantRuntime {
     /// Context hit accounting, drained after the transport stops so the last
     /// hits land before the pool closes; `None` when the engine counts none.
     hit_flush: Option<Arc<ContextHitFlush>>,
-    /// Unsupervised tasks, aborted and joined after the hand-offs finish.
-    background_handles: Vec<JoinHandle<()>>,
     /// The hand-offs of committed changes to notification evaluation.
     handoffs: Vec<TaskTracker>,
     /// The committed changes handed to live evaluation and not yet evaluated.
@@ -39,9 +36,6 @@ pub(crate) struct BrokerTenantRuntime {
     transport: Arc<TransportDispatcher>,
     /// The tenant's serving pool, closed last.
     pool: PgPool,
-    /// Stops the MQTT health probe; `None` in every tenant but the unnamed
-    /// default.
-    health_shutdown: Option<watch::Sender<bool>>,
     /// Supervisor of the tenant's registered tasks, shut down first.
     task_supervisor: TaskSupervisor,
     /// Paces the tenant's sweeps; told of every use of the runtime.
@@ -62,20 +56,16 @@ impl BrokerTenantRuntime {
         periodic_due: Arc<PeriodicDue>,
     ) -> BrokerTenantRuntime {
         let TaskSupervision {
-            handles,
             handoffs,
             commits,
-            health_shutdown,
             task_supervisor,
         } = supervision;
         BrokerTenantRuntime {
             hit_flush,
-            background_handles: handles,
             handoffs,
             commits,
             transport,
             pool,
-            health_shutdown,
             task_supervisor,
             pacer,
             periodic_due,
@@ -101,12 +91,8 @@ impl BrokerTenantRuntime {
 #[async_trait]
 impl TenantRuntime for BrokerTenantRuntime {
     async fn shutdown(self, bound: TeardownBound) {
-        if let Some(shutdown) = self.health_shutdown {
-            let _ = shutdown.send(true);
-        }
         stop_supervised_tasks(&self.task_supervisor, bound).await;
         wait_for_handoffs(&self.handoffs).await;
-        stop_background_tasks(self.background_handles).await;
         info!(event = "tenant_background_tasks_stopped");
         self.transport.shutdown().await;
         if let Some(flush) = &self.hit_flush {
@@ -154,20 +140,6 @@ async fn wait_for_handoffs(handoffs: &[TaskTracker]) {
     }
 }
 
-/// Cancel tenant background tasks and wait until every task has stopped.
-async fn stop_background_tasks(handles: Vec<JoinHandle<()>>) {
-    for handle in &handles {
-        handle.abort();
-    }
-    for handle in handles {
-        match handle.await {
-            Ok(()) => {}
-            Err(join_error) if join_error.is_cancelled() => {}
-            Err(join_error) => error!(error = %join_error, event = "tenant_worker_join_failed"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -176,17 +148,12 @@ mod tests {
         let task_shutdown = source
             .find("stop_supervised_tasks(&self.task_supervisor, bound).await")
             .ok_or("task shutdown call missing")?;
-        let background_shutdown = source
-            .find("stop_background_tasks(self.background_handles).await")
-            .ok_or("background task shutdown call missing")?;
         let handoff_wait = source.find("wait_for_handoffs(&self.handoffs).await").ok_or("hand-off wait call missing")?;
         let transport_shutdown = source.find("self.transport.shutdown().await").ok_or("transport shutdown call missing")?;
         let hits_drain = source.find("flush.drain().await").ok_or("hit drain call missing")?;
         let pool_shutdown = source.find("self.pool.close().await").ok_or("pool shutdown call missing")?;
         assert!(task_shutdown < handoff_wait);
-        assert!(handoff_wait < background_shutdown);
-        assert!(task_shutdown < background_shutdown);
-        assert!(background_shutdown < transport_shutdown);
+        assert!(handoff_wait < transport_shutdown);
         assert!(transport_shutdown < hits_drain);
         assert!(hits_drain < pool_shutdown);
         Ok(())

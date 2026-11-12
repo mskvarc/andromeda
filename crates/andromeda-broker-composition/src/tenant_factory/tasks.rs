@@ -9,6 +9,7 @@ mod entity_notification;
 mod expiry;
 mod expiry_sweep;
 mod maintenance;
+mod mqtt_health_probe;
 mod notification_delivery;
 mod notification_schedule;
 mod notification_worker_failure;
@@ -49,6 +50,7 @@ use crate::{
             },
             expiry::register_expiry_workers,
             maintenance::{register_entity_side_effects, register_spatial_workers},
+            mqtt_health_probe::register_mqtt_health_probe,
             notification_delivery::{DeliveryDrainDrive, delivery_queue},
             periodic_evaluation::register_periodic_evaluations,
             placement_resumption::register_placement_resumption,
@@ -78,10 +80,7 @@ use andromeda_task_runtime::{
 };
 use andromeda_temporal::storage_policy::TemporalStoragePolicy;
 use std::{num::NonZeroUsize, sync::Arc, time::Duration};
-use tokio::{
-    sync::{Mutex, broadcast, mpsc, watch},
-    task::JoinHandle,
-};
+use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio_util::task::TaskTracker;
 
 /// Committed registration changes queued for context source notification
@@ -134,36 +133,22 @@ impl TenantSignals {
 
 /// Handles needed to stop the complete tenant worker set.
 pub(super) struct TaskSupervision {
-    /// Unsupervised tasks the runtime aborts and joins on shutdown: the MQTT
-    /// health probe in the unnamed default tenant, none elsewhere.
-    pub(super) handles: Vec<JoinHandle<()>>,
     /// The tasks finishing the hand-off of committed changes to notification
     /// evaluation, which the runtime waits for after its tasks stop.
     pub(super) handoffs: Vec<TaskTracker>,
     /// The committed changes handed to live evaluation and not yet evaluated,
     /// which the runtime cache reads to spare a tenant with a backlog.
     pub(super) commits: Arc<PendingCommits>,
-    /// Stops the MQTT health probe; `None` in every tenant but the unnamed
-    /// default.
-    pub(super) health_shutdown: Option<watch::Sender<bool>>,
     /// Supervisor of the tenant's registered tasks, shut down first.
     pub(super) task_supervisor: TaskSupervisor,
 }
 
 impl TaskSupervision {
     /// Gather what stops the tenant's tasks with the sinks they read from.
-    fn new(
-        handles: Vec<JoinHandle<()>>,
-        health_shutdown: Option<watch::Sender<bool>>,
-        task_supervisor: TaskSupervisor,
-        entity: &QueuedEntityChangeSink,
-        registration: &QueuedRegistrationChangeSink,
-    ) -> TaskSupervision {
+    fn new(task_supervisor: TaskSupervisor, entity: &QueuedEntityChangeSink, registration: &QueuedRegistrationChangeSink) -> TaskSupervision {
         TaskSupervision {
-            handles,
             handoffs: vec![entity.handoffs().clone(), registration.handoffs().clone()],
             commits: Arc::clone(entity.commits()),
-            health_shutdown,
             task_supervisor,
         }
     }
@@ -220,18 +205,6 @@ pub(super) fn snapshot_delivery_signal(wake: WakeHandle) -> Arc<dyn StatusDelive
     Arc::new(snapshot::StatusDeliveryWaker::new(wake))
 }
 
-/// Start the MQTT pool's health probe in the unnamed default tenant, which
-/// exists once per process, and return its handle with the sender that stops
-/// it; every other tenant starts none.
-fn spawn_mqtt_health_probe(storage: &TenantStorage, transport: &TransportDispatcher) -> (Vec<JoinHandle<()>>, Option<watch::Sender<bool>>) {
-    if storage.tenant.is_unnamed_default() {
-        let (shutdown, receiver) = watch::channel(false);
-        (vec![transport.mqtt_pool().spawn_health_probe(receiver)], Some(shutdown))
-    } else {
-        (Vec::new(), None)
-    }
-}
-
 /// Whether entity notifications are delivered live or through the durable queue.
 #[derive(Clone, Copy)]
 enum EntityNotificationDelivery {
@@ -279,7 +252,7 @@ pub(super) fn supervise_tasks(
     register_table_size_gauges(&task_supervisor, Arc::clone(&pacer), storage.pool.clone(), &storage.tenant)?;
     register_discovery_census_fold(&task_supervisor, Arc::clone(&pacer), storage.pool.clone())?;
     register_entity_side_effects(&task_supervisor, config, storage, writes, &entity, side_effect_wake, Arc::clone(&pacer))?;
-    let (handles, health_shutdown) = spawn_mqtt_health_probe(storage, transport);
+    register_mqtt_health_probe(&task_supervisor, &storage.tenant, transport)?;
     let entity_subscriptions = Arc::new(SubscriptionRepository::new(&storage.pool, Arc::clone(&storage.attribute_names))) as Arc<dyn SubscriptionStore>;
     let csource_subscriptions = Arc::new(storage.csource_subscription_repository()) as Arc<dyn SubscriptionStore>;
     let notification_query = compose_notification_query(storage, &services.state.forwarding, config);
@@ -357,7 +330,7 @@ pub(super) fn supervise_tasks(
         },
     )?;
     register_spatial_workers(&task_supervisor, config, storage)?;
-    Ok(TaskSupervision::new(handles, health_shutdown, task_supervisor, &entity, &registration))
+    Ok(TaskSupervision::new(task_supervisor, &entity, &registration))
 }
 
 /// Register the history sweeps, conversion and retention, under the horizons
