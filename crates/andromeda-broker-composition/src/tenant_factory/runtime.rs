@@ -1,11 +1,13 @@
 //! Runtime resources owned by one tenant and their shutdown order.
 
-use crate::tenant_factory::{
-    background_pacer::{BackgroundPacer, TenantObligations},
-    due_work_check::TenantDueWork,
-    periodic_due::PeriodicDue,
-    storage::TenantContextWorkers,
-    tasks::TaskSupervision,
+use crate::{
+    context_hit_flush::ContextHitFlush,
+    tenant_factory::{
+        background_pacer::{BackgroundPacer, TenantObligations},
+        due_work_check::TenantDueWork,
+        periodic_due::PeriodicDue,
+        tasks::TaskSupervision,
+    },
 };
 use andromeda_delivery::{dispatch::TransportDispatcher, mqtt::pool::MqttTransportPool};
 use andromeda_notification::pending_change::PendingCommits;
@@ -24,9 +26,9 @@ use tracing::{error, info};
 
 /// Everything one tenant's runtime holds open.
 pub(crate) struct BrokerTenantRuntime {
-    /// Context hit flush, stopped after the transport so its final drain runs last
-    /// before the pool closes.
-    context_workers: TenantContextWorkers,
+    /// Context hit accounting, drained after the transport stops so the last
+    /// hits land before the pool closes; `None` when the engine counts none.
+    hit_flush: Option<Arc<ContextHitFlush>>,
     /// Unsupervised tasks, aborted and joined after the hand-offs finish.
     background_handles: Vec<JoinHandle<()>>,
     /// The hand-offs of committed changes to notification evaluation.
@@ -52,7 +54,7 @@ impl BrokerTenantRuntime {
     /// Assemble the runtime from the tenant's started workers and the
     /// resources they share.
     pub(super) fn new(
-        context_workers: TenantContextWorkers,
+        hit_flush: Option<Arc<ContextHitFlush>>,
         supervision: TaskSupervision,
         transport: Arc<TransportDispatcher>,
         pool: PgPool,
@@ -67,7 +69,7 @@ impl BrokerTenantRuntime {
             task_supervisor,
         } = supervision;
         BrokerTenantRuntime {
-            context_workers,
+            hit_flush,
             background_handles: handles,
             handoffs,
             commits,
@@ -107,7 +109,9 @@ impl TenantRuntime for BrokerTenantRuntime {
         stop_background_tasks(self.background_handles).await;
         info!(event = "tenant_background_tasks_stopped");
         self.transport.shutdown().await;
-        self.context_workers.shutdown().await;
+        if let Some(flush) = &self.hit_flush {
+            flush.drain().await;
+        }
         info!(event = "tenant_context_hits_flushed");
         self.pool.close().await;
         info!(event = "tenant_pool_closed");
@@ -177,12 +181,14 @@ mod tests {
             .ok_or("background task shutdown call missing")?;
         let handoff_wait = source.find("wait_for_handoffs(&self.handoffs).await").ok_or("hand-off wait call missing")?;
         let transport_shutdown = source.find("self.transport.shutdown().await").ok_or("transport shutdown call missing")?;
+        let hits_drain = source.find("flush.drain().await").ok_or("hit drain call missing")?;
         let pool_shutdown = source.find("self.pool.close().await").ok_or("pool shutdown call missing")?;
         assert!(task_shutdown < handoff_wait);
         assert!(handoff_wait < background_shutdown);
         assert!(task_shutdown < background_shutdown);
         assert!(background_shutdown < transport_shutdown);
-        assert!(transport_shutdown < pool_shutdown);
+        assert!(transport_shutdown < hits_drain);
+        assert!(hits_drain < pool_shutdown);
         Ok(())
     }
 }

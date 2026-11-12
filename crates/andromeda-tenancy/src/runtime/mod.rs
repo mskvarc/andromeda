@@ -59,7 +59,7 @@ use dashmap::DashMap;
 use std::sync::{Arc, Weak};
 use tokio::{
     sync::{Mutex, Notify, Semaphore},
-    task::{JoinHandle, JoinSet},
+    task::JoinSet,
 };
 
 /// Manages per-tenant runtimes: builds them on demand, hands them out, and
@@ -198,19 +198,6 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     #[must_use]
     pub fn wake_alarm(&self) -> &WakeAlarm {
         &self.alarm
-    }
-
-    /// Start the background janitor, if this deployment serves named tenants.
-    ///
-    /// A single-tenant broker holds exactly one runtime that is never evicted,
-    /// so the sweep would have nothing to do.
-    #[must_use]
-    pub fn spawn_janitor(self: &Arc<TenantRuntimeManager<D, F>>) -> Option<JoinHandle<()>> {
-        if !self.config.is_enabled() {
-            return None;
-        }
-        let manager = Arc::clone(self);
-        Some(tokio::spawn(async move { manager.run_janitor().await }))
     }
 
     /// A fresh eviction origin for `runtime` about to enter the cache, wired to

@@ -1,69 +1,14 @@
-//! Durable flushing for one tenant's JSON-LD context hit counter.
+//! Durable flushing of one tenant's JSON-LD context hit counter.
+//!
+//! A supervised scheduled task moves the accumulated hits into the store every
+//! flush interval while the tenant is loaded. The tenant's teardown drains what
+//! is left once nothing can count a hit any more, before the tenant's pool
+//! closes.
 
-use andromeda_context_registry::hit_store::ContextHitStore;
-use andromeda_jsonld::hit_counter::{HitCounter, HitDelta};
+use andromeda_context_registry::{error::ContextRegistryError, hit_store::ContextHitStore};
+use andromeda_jsonld::hit_counter::HitCounter;
 use std::{sync::Arc, time::Duration};
-use tokio::{
-    sync::watch,
-    task::JoinHandle,
-    time::{MissedTickBehavior, interval as tokio_interval, sleep},
-};
-
-/// A tenant-owned flush worker with an orderly final-drain protocol.
-pub(crate) struct ContextHitFlushWorker {
-    /// Signals the worker to stop ticking and run the final bounded drain.
-    shutdown: watch::Sender<()>,
-    /// The worker task, joined on shutdown so the final drain completes first.
-    handle: JoinHandle<()>,
-}
-
-impl ContextHitFlushWorker {
-    /// Start periodically transferring accumulated hits into the durable store.
-    pub(crate) fn spawn(counter: Arc<HitCounter>, store: Arc<dyn ContextHitStore>, interval: Duration) -> ContextHitFlushWorker {
-        let (shutdown, mut shutdown_rx) = watch::channel(());
-        let handle = tokio::spawn(async move {
-            let mut ticker = tokio_interval(interval);
-            ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
-            ticker.tick().await;
-            loop {
-                tokio::select! {
-                    _ = ticker.tick() => flush_once(&counter, store.as_ref()).await,
-                    changed = shutdown_rx.changed() => {
-                        if changed.is_ok() {
-                            flush_until_durable(&counter, store.as_ref(), interval).await;
-                        }
-                        break;
-                    }
-                }
-            }
-        });
-        ContextHitFlushWorker { shutdown, handle }
-    }
-
-    /// Stop periodic work and wait until the final durable flush succeeds.
-    pub(crate) async fn shutdown(self) {
-        let _receivers = self.shutdown.send(());
-        if let Err(error) = self.handle.await {
-            tracing::error!(error = %error, event = "context_hit_flush_worker_join_failed");
-        } else {
-            tracing::info!(event = "context_hit_final_flush_complete");
-        }
-    }
-}
-
-/// Drain once, atomically restoring the entire delta set on failure.
-async fn flush_once(counter: &HitCounter, store: &dyn ContextHitStore) {
-    let _readers_held_off = counter.flush_exclusively().await;
-    let pending = counter.drain();
-    if pending.is_empty() {
-        return;
-    }
-    if let Err(error) = store.flush_hits(&pending).await {
-        let count = pending.len();
-        counter.requeue(pending);
-        tracing::warn!(error = %error, count, event = "context_hit_flush_failed");
-    }
-}
+use tokio::time::sleep;
 
 /// How many times the final drain may fail before the tenant stops waiting.
 ///
@@ -73,47 +18,88 @@ async fn flush_once(counter: &HitCounter, store: &dyn ContextHitStore) {
 /// than a broker that never exits.
 const FINAL_FLUSH_ATTEMPTS: u32 = 3;
 
-/// Drain the counter on the way out, giving up after `FINAL_FLUSH_ATTEMPTS`
-/// consecutive failures.
-///
-/// A successful pass does not restore the budget: a store that keeps accepting
-/// writes empties the counter, and one that does not must not be retried
-/// indefinitely just because an earlier pass landed.
-async fn flush_until_durable(counter: &HitCounter, store: &dyn ContextHitStore, interval: Duration) {
-    let mut failures = 0_u32;
-    while failures < FINAL_FLUSH_ATTEMPTS {
-        let readers_held_off = counter.flush_exclusively().await;
-        let pending = counter.drain();
-        if pending.is_empty() {
-            return;
-        }
-        let count = pending.len();
-        if let Err(error) = store.flush_hits(&pending).await {
-            restore(counter, pending);
-            // The retry waits with readers let back in.
-            drop(readers_held_off);
-            failures += 1;
-            tracing::warn!(error = %error, count, attempt = failures, limit = FINAL_FLUSH_ATTEMPTS, event = "context_hit_final_flush_failed");
-            if failures < FINAL_FLUSH_ATTEMPTS {
-                sleep(interval).await;
-            }
-        }
-    }
-    tracing::error!(
-        limit = FINAL_FLUSH_ATTEMPTS,
-        event = "context_hit_final_flush_abandoned",
-        "shutdown continues without the remaining clause 5.13.3.5 access counts"
-    );
+/// One tenant's hit counter and the store its hits are flushed to.
+pub(crate) struct ContextHitFlush {
+    /// The hits counted since the last flush that landed.
+    counter: Arc<HitCounter>,
+    /// Where the hits are added to each stored `@context`'s count.
+    store: Arc<dyn ContextHitStore>,
+    /// How often the hits are flushed, and how long a failed final drain waits
+    /// before it tries again.
+    interval: Duration,
 }
 
-/// Restore deltas as one operation so concurrent increments remain additive.
-fn restore(counter: &HitCounter, pending: Vec<HitDelta>) {
-    counter.requeue(pending);
+impl ContextHitFlush {
+    /// Flush the hits `counter` accumulates into `store` every `interval`.
+    pub(crate) fn new(counter: Arc<HitCounter>, store: Arc<dyn ContextHitStore>, interval: Duration) -> ContextHitFlush {
+        ContextHitFlush { counter, store, interval }
+    }
+
+    /// How often the hits are flushed.
+    pub(crate) const fn interval(&self) -> Duration {
+        self.interval
+    }
+
+    /// Move the accumulated hits into the store, restoring every one of them to
+    /// the counter when the store refuses, so concurrent increments stay
+    /// additive.
+    ///
+    /// # Errors
+    ///
+    /// Returns the store's [`ContextRegistryError`] when it refuses the hits.
+    pub(crate) async fn flush(&self) -> Result<(), ContextRegistryError> {
+        let _readers_held_off = self.counter.flush_exclusively().await;
+        let pending = self.counter.drain();
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let refused = self.store.flush_hits(&pending).await;
+        if let Err(error) = &refused {
+            let count = pending.len();
+            self.counter.requeue(pending);
+            tracing::warn!(error = %error, count, event = "context_hit_flush_failed");
+        }
+        refused
+    }
+
+    /// Drain the counter on the way out, giving up after
+    /// [`FINAL_FLUSH_ATTEMPTS`] consecutive failures.
+    ///
+    /// A successful pass does not restore the budget: a store that keeps
+    /// accepting writes empties the counter, and one that does not must not be
+    /// retried indefinitely just because an earlier pass landed.
+    pub(crate) async fn drain(&self) {
+        let mut failures = 0_u32;
+        while failures < FINAL_FLUSH_ATTEMPTS {
+            let readers_held_off = self.counter.flush_exclusively().await;
+            let pending = self.counter.drain();
+            if pending.is_empty() {
+                tracing::info!(event = "context_hit_final_flush_complete");
+                return;
+            }
+            let count = pending.len();
+            if let Err(error) = self.store.flush_hits(&pending).await {
+                self.counter.requeue(pending);
+                // The retry waits with readers let back in.
+                drop(readers_held_off);
+                failures += 1;
+                tracing::warn!(error = %error, count, attempt = failures, limit = FINAL_FLUSH_ATTEMPTS, event = "context_hit_final_flush_failed");
+                if failures < FINAL_FLUSH_ATTEMPTS {
+                    sleep(self.interval).await;
+                }
+            }
+        }
+        tracing::error!(
+            limit = FINAL_FLUSH_ATTEMPTS,
+            event = "context_hit_final_flush_abandoned",
+            "shutdown continues without the remaining clause 5.13.3.5 access counts"
+        );
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::context_hit_flush::{FINAL_FLUSH_ATTEMPTS, flush_until_durable};
+    use crate::context_hit_flush::{ContextHitFlush, FINAL_FLUSH_ATTEMPTS};
     use andromeda_context_registry::{
         error::ContextRegistryError,
         hit_store::{ContextHitStore, ContextHitStoreFuture},
@@ -122,7 +108,10 @@ mod tests {
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use iri_rs::IriBuf;
     use std::{
-        sync::atomic::{AtomicU32, Ordering},
+        sync::{
+            Arc,
+            atomic::{AtomicU32, Ordering},
+        },
         time::Duration,
     };
     use tokio::time::timeout;
@@ -140,16 +129,38 @@ mod tests {
         }
     }
 
+    /// A flush of one counted hit into a store that refuses every write, with
+    /// the counter and the store kept for inspection.
+    fn unreachable_flush() -> (ContextHitFlush, Arc<HitCounter>, Arc<UnreachableStore>) {
+        let counter = Arc::new(HitCounter::new());
+        counter.bump(&IriBuf::new("https://example.com/context.jsonld".to_owned()).expect("valid URL"));
+        let store = Arc::new(UnreachableStore { attempts: AtomicU32::new(0) });
+        let flush = ContextHitFlush::new(Arc::clone(&counter), Arc::clone(&store) as Arc<dyn ContextHitStore>, Duration::from_millis(1));
+        (flush, counter, store)
+    }
+
+    #[tokio::test]
+    async fn a_flush_the_store_refuses_reports_the_refusal_and_keeps_every_hit() {
+        let (flush, counter, store) = unreachable_flush();
+
+        let flushed = flush.flush().await;
+
+        assert!(
+            matches!(flushed, Err(ContextRegistryError::Persistence(PersistenceFailure::Unavailable))),
+            "{flushed:?}"
+        );
+        pretty_assertions::assert_eq!(store.attempts.load(Ordering::Relaxed), 1);
+        pretty_assertions::assert_eq!(counter.drain().len(), 1);
+    }
+
     /// An unreachable database must not hold a tenant's teardown open: the
     /// final drain gives up after a bounded number of failures and shutdown
     /// continues without the optional clause 5.13.3.5 counts.
     #[tokio::test]
     async fn the_final_drain_gives_up_rather_than_wedging_shutdown() {
-        let counter = HitCounter::new();
-        counter.bump(&IriBuf::new("https://example.com/context.jsonld".to_owned()).expect("valid URL"));
-        let store = UnreachableStore { attempts: AtomicU32::new(0) };
+        let (flush, _counter, store) = unreachable_flush();
 
-        timeout(Duration::from_secs(5), flush_until_durable(&counter, &store, Duration::from_millis(1)))
+        timeout(Duration::from_secs(5), flush.drain())
             .await
             .expect("the final drain must terminate against an unreachable store");
 
@@ -161,11 +172,9 @@ mod tests {
     /// while the process is still running.
     #[tokio::test]
     async fn deltas_the_drain_abandoned_are_left_in_the_counter() {
-        let counter = HitCounter::new();
-        counter.bump(&IriBuf::new("https://example.com/context.jsonld".to_owned()).expect("valid URL"));
-        let store = UnreachableStore { attempts: AtomicU32::new(0) };
+        let (flush, counter, _store) = unreachable_flush();
 
-        flush_until_durable(&counter, &store, Duration::from_millis(1)).await;
+        flush.drain().await;
 
         pretty_assertions::assert_eq!(counter.drain().len(), 1);
     }

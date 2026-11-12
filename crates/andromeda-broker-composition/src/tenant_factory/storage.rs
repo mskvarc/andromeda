@@ -1,7 +1,7 @@
 //! Initialization of one tenant's database-backed storage graph.
 
 use crate::{
-    context_hit_flush::ContextHitFlushWorker,
+    context_hit_flush::ContextHitFlush,
     tenant_factory::{
         TenantFactoryConfig,
         assembly_invariant::AssemblyInvariant,
@@ -76,8 +76,10 @@ pub(super) struct TenantStorage {
     pub(super) live_target: ContextTarget,
     /// The tenant's JSON-LD engine; every service holds a clone of the handle.
     pub(super) engine: JsonLdEngine,
-    /// Workers over the stored `@context`s, handed to the runtime for shutdown.
-    pub(super) context_workers: TenantContextWorkers,
+    /// Clause 5.13.3.5 hit accounting, when the engine attached a counter:
+    /// flushed by a supervised scheduled task and drained by the runtime's
+    /// teardown.
+    pub(super) hit_flush: Option<Arc<ContextHitFlush>>,
     /// The clause 5.13.1 invalidation port, driven by a supervised scheduled task.
     pub(super) cached_context_invalidation: Arc<dyn CachedContextInvalidation>,
     /// The tenant's one attribute name dictionary cache.
@@ -116,29 +118,6 @@ impl TenantStorage {
     /// clock-writer share beside the registration store's.
     pub(super) fn csource_subscription_repository(&self) -> CsourceSubscriptionRepository {
         CsourceSubscriptionRepository::new(&self.pool, self.clock_writers.clone(), Arc::clone(&self.attribute_names))
-    }
-}
-
-/// The background workers one tenant runs over its stored `@contexts`.
-///
-/// Both are driven by clause 5.13 and by the same `jsonld_contexts` table, and
-/// both are stopped together when the tenant is torn down, so they travel as
-/// one rather than as two more parameters threaded through the runtime.
-pub(super) struct TenantContextWorkers {
-    /// Clause 5.13.3.5 hit accounting, when the engine attached a counter.
-    hit_flush: Option<ContextHitFlushWorker>,
-}
-
-impl TenantContextWorkers {
-    /// Stop the hit-counter flush, waiting for its final drain.
-    ///
-    /// The clause 5.13.1 invalidation pass is a supervised scheduled task rather
-    /// than a worker held here, so this stops only the hit flush, which still
-    /// owes the store its accumulated deltas.
-    pub(super) async fn shutdown(self) {
-        if let Some(worker) = self.hit_flush {
-            worker.shutdown().await;
-        }
     }
 }
 
@@ -263,15 +242,13 @@ pub(super) async fn initialize_storage(
     let live_target = resolve_live_target();
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
     let engine = tenant_engine(config, &context_repo)?;
-    let context_workers = TenantContextWorkers {
-        hit_flush: engine.hit_counter().map(|hit_counter| {
-            ContextHitFlushWorker::spawn(
-                hit_counter,
-                Arc::clone(&context_repo) as Arc<dyn ContextHitStore>,
-                config.jsonld.cache.hit_flush_interval.duration(),
-            )
-        }),
-    };
+    let hit_flush = engine.hit_counter().map(|hit_counter| {
+        Arc::new(ContextHitFlush::new(
+            hit_counter,
+            Arc::clone(&context_repo) as Arc<dyn ContextHitStore>,
+            config.jsonld.cache.hit_flush_interval.duration(),
+        ))
+    });
     // Clause 5.13.1: "Implementations shall periodically invalidate the "Cached"
     // @contexts." The obligation is the broker's and not the resolver's, so the
     // pass runs unconditionally as a supervised scheduled task registered from
@@ -334,7 +311,7 @@ pub(super) async fn initialize_storage(
         clock_writers,
         live_target,
         engine,
-        context_workers,
+        hit_flush,
         cached_context_invalidation,
         attribute_names,
         entity_type_names,

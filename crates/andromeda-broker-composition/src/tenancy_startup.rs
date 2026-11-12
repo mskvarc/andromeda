@@ -1,6 +1,7 @@
 //! Starting the tenant runtime cache before the broker serves traffic.
 
 use crate::{
+    tenant_janitor::{TenantJanitorRegistrationError, register_tenant_janitor},
     tenant_loading::{TenantLoadingRegistrationError, register_tenant_loading},
     tenant_waker::{TenantWakerRegistrationError, register_tenant_waker},
 };
@@ -26,6 +27,9 @@ pub(crate) enum TenancyStartupError {
     /// The task supervising tenant loading could not be registered.
     #[error(transparent)]
     LoadingTask(#[from] TenantLoadingRegistrationError),
+    /// The tenant runtime janitor could not be registered.
+    #[error(transparent)]
+    JanitorTask(#[from] TenantJanitorRegistrationError),
     /// The dormant-tenant wake tasks could not be registered.
     #[error(transparent)]
     WakerTask(#[from] TenantWakerRegistrationError),
@@ -60,7 +64,7 @@ pub(crate) async fn start_tenancy<D: TenantDatabase, F: TenantStateFactory>(
         Arc::clone(&wake_schedule),
         loading_slots,
     );
-    drop(tenants.spawn_janitor());
+    register_tenant_janitor(process_tasks, Arc::clone(&tenants), tenancy)?;
     // The wake tasks share the schedule with the manager and run only when named
     // tenancy is enabled; registered after the janitor so a woken runtime is
     // subject to the same eviction sweeps.
@@ -136,16 +140,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn starting_tenancy_supervises_the_loading_task_and_serves_the_default_tenant() {
+    async fn starting_tenancy_supervises_the_loading_task_and_the_janitor_and_serves_the_default_tenant() {
         let supervisor = TaskSupervisor::process(Handle::current());
 
         let tenants = started(&supervisor, FixedStateFactory::new(Arc::new("default".to_owned())))
             .await
             .expect("tenancy starts");
 
-        let name = TaskName::try_from("tenant-loading").expect("a valid task name");
-        let health = supervisor.health(&name).await.expect("the loading task is registered");
-        assert!(!health.state.is_terminal(), "{:?}", health.state);
+        for task in ["tenant-loading", "tenant-janitor"] {
+            let name = TaskName::try_from(task).expect("a valid task name");
+            let health = supervisor.health(&name).await.expect("the task is registered");
+            assert!(!health.state.is_terminal(), "{task}: {:?}", health.state);
+        }
         let served = tenants.resolve_state(&TenantRef::UnnamedDefault, TenantCreationPolicy::MustExist).await;
         pretty_assertions::assert_eq!(served.ok().map(|leased| leased.state.as_str().to_owned()), Some("default".to_owned()));
     }
