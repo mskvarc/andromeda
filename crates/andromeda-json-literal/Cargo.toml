@@ -16,7 +16,7 @@ workspace = true
 andromeda-configuration.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
-jstrict = "0.16.1"
+jstrict = "0.16.2"
 serde = "1.0.229"
 serde_json = { version = "1.0.154", features = ["arbitrary_precision", "raw_value"] }
 thiserror = "2.0.21"

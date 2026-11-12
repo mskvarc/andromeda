@@ -18,7 +18,7 @@ clap = { version = "4.6.7", features = ["derive", "wrap_help"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "display", "from_str"] }
 gix = { version = "0.90.0", default-features = false, features = ["revision", "sha1"] }
 hex = "0.4.3"
-iri-rs = { version = "4.1.0", features = ["static"] }
+iri-rs = { version = "4.1.1", features = ["static"] }
 miette = { version = "7.6.0", features = ["fancy-no-backtrace"] }
 pg_query = "18.1.0"
 semver = "1.0.28"

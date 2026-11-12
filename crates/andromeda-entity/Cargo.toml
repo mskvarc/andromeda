@@ -44,7 +44,7 @@ derive_more = { version = "2.1.1", features = ["as_ref", "display", "from", "is_
 futures = "0.3.34"
 geo = "0.33.1"
 indexmap = { version = "2.14.2", features = ["serde"] }
-iri-rs = { version = "4.1.0", features = ["serde", "static"] }
+iri-rs = { version = "4.1.1", features = ["serde", "static"] }
 langtag = "1.1.0"
 moka = { version = "0.12.16", features = ["future"] }
 serde_json = { version = "1.0.154", features = ["raw_value"] }

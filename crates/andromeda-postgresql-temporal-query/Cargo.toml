@@ -22,7 +22,7 @@ andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
 cefact-units = "1.0.0"
 chrono = "0.4.45"
-iri-rs = { version = "4.1.0", features = ["serde", "static"] }
+iri-rs = { version = "4.1.1", features = ["serde", "static"] }
 sea-query = { version = "1.0.2", features = ["backend-postgres", "with-chrono"] }
 thiserror = "2.0.21"
 

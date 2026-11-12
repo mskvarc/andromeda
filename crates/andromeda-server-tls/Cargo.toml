@@ -22,7 +22,7 @@ andromeda-configuration.workspace = true
 notify-debouncer-full = "0.7.0"
 rcgen = { version = "0.14.10", optional = true }
 rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
-rustls-pki-types = "1.15.1"
+rustls-pki-types = "1.16.0"
 tempfile = { version = "3.27.0", optional = true }
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["macros", "rt", "sync"] }

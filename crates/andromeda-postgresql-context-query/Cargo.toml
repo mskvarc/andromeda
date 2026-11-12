@@ -25,7 +25,7 @@ andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
 chrono = "0.4.45"
 derive_more = { version = "2.1.1", features = ["try_from"] }
-iri-rs = { version = "4.1.0", features = ["serde", "static"] }
+iri-rs = { version = "4.1.1", features = ["serde", "static"] }
 sea-query = { version = "1.0.2", features = ["backend-postgres", "with-chrono"] }
 
 [dev-dependencies]
