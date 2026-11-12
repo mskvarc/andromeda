@@ -165,8 +165,9 @@ jobs:
         with:
           check: clippy
           fresh: ${{ inputs.fresh }}
-      - if: *unless-reused
-        uses: ./.github/actions/rust-toolchain
+      - name: Install pinned toolchain
+        if: *unless-reused
+        run: rustup toolchain install --profile minimal
       - id: cache
         if: *unless-reused
         uses: ./.github/actions/build-cache-restore
@@ -197,8 +198,9 @@ jobs:
         with:
           check: unit
           fresh: ${{ inputs.fresh }}
-      - if: *unless-reused
-        uses: ./.github/actions/rust-toolchain
+      - name: Install pinned toolchain
+        if: *unless-reused
+        run: rustup toolchain install --profile minimal
       - id: cache
         if: *unless-reused
         uses: ./.github/actions/build-cache-restore
@@ -209,16 +211,12 @@ jobs:
       # andromeda-sql shells out to pg_format and Squawk and is tested by sql; andromeda-test-suite needs a live stack.
       - name: Workspace unit tests
         if: *unless-reused
-        run: cargo nextest run --workspace --exclude andromeda --exclude andromeda-sql --exclude andromeda-test-suite --lib --bins --tests --all-features --locked --no-fail-fast -E 'not test(architecture)'
+        run: cargo nextest run --workspace --exclude andromeda-sql --exclude andromeda-test-suite --lib --bins --tests --all-features --locked --no-fail-fast -E 'not test(architecture)'
       # The selection and flags of the step above, so the test binaries it built are run again rather than rebuilt. The
       # architecture checks are generated into every crate; andromeda-sql's run with its tests in sql.
       - name: Architecture checks
         if: &unless-reused-or-cancelled ${{ !cancelled() && steps.verdict.outputs.reused != 'true' }}
-        run: cargo nextest run --workspace --exclude andromeda --exclude andromeda-sql --exclude andromeda-test-suite --lib --bins --tests --all-features --locked --no-fail-fast -E 'test(architecture)'
-      # The broker's root tests/ need a live stack.
-      - name: Broker unit tests
-        if: *unless-reused-or-cancelled
-        run: cargo nextest run --package andromeda --bins --all-features --locked --no-fail-fast
+        run: cargo nextest run --workspace --exclude andromeda-sql --exclude andromeda-test-suite --lib --bins --tests --all-features --locked --no-fail-fast -E 'test(architecture)'
       - if: *unless-reused
         uses: ./.github/actions/verdict-record
         with:
@@ -269,8 +267,9 @@ jobs:
           check: sql
           parts: base-ledger=${{ steps.base.outputs.ledger }}
           fresh: ${{ inputs.fresh }}
-      - if: *unless-reused
-        uses: ./.github/actions/rust-toolchain
+      - name: Install pinned toolchain
+        if: *unless-reused
+        run: rustup toolchain install --profile minimal
       - id: cache
         if: *unless-reused
         uses: ./.github/actions/build-cache-restore
