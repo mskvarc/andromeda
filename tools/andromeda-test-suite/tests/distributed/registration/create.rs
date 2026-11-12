@@ -16,6 +16,7 @@ mod n_csr_cre_6015;
 mod n_csr_cre_6016;
 mod n_csr_cre_6017;
 mod n_csr_cre_6018;
+mod n_csr_cre_6019;
 mod n_csr_cre_6400;
 mod n_csr_cre_6402;
 mod n_csr_cre_6403;

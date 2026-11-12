@@ -65,12 +65,12 @@ impl ContextSourcePseudonym {
     }
 }
 
-// No derive copies one validated newtype into another. The conversion is
+// No derive converts one validated newtype into another. The conversion is
 // total: an alias is made of `tchar` only, none of which is whitespace or a
 // control character.
-impl From<&ContextSourceAlias> for ContextSourcePseudonym {
-    fn from(alias: &ContextSourceAlias) -> ContextSourcePseudonym {
-        ContextSourcePseudonym(alias.as_str().to_owned())
+impl From<ContextSourceAlias> for ContextSourcePseudonym {
+    fn from(alias: ContextSourceAlias) -> ContextSourcePseudonym {
+        ContextSourcePseudonym(String::from(alias))
     }
 }
 
@@ -150,7 +150,7 @@ mod tests {
         for raw in ["broker-a", "broker-a~alpha", "a_b~c!#$%&'*+^`|"] {
             let alias = ContextSourceAlias::new(raw).expect("a valid alias");
             pretty_assertions::assert_eq!(
-                ContextSourcePseudonym::from(&alias),
+                ContextSourcePseudonym::from(alias),
                 ContextSourcePseudonym::new(raw).expect("a valid pseudonym")
             );
         }

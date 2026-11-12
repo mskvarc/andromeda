@@ -7,6 +7,7 @@ mod n_csr_upd_6004;
 mod n_csr_upd_6005;
 mod n_csr_upd_6006;
 mod n_csr_upd_6007;
+mod n_csr_upd_6008;
 mod n_csr_upd_7200;
 mod n_csr_upd_7600;
 mod n_csr_upd_7601;
