@@ -277,13 +277,18 @@ impl<T> IntoIterator for ContextGroups<T> {
 mod tests {
     use crate::{
         batch_contexts::{BatchContext, BatchContexts, ContextGroups, EntityContextAdmission},
+        batch_failure_scope::run_in_batch_scope,
         context_spec::ContextSpec,
         engine::processor::JsonLdEngine,
+        error::JsonLdError,
+        loader::test_origin::TestOrigin,
         test_documents::literal,
     };
     use iri_rs::IriBuf;
+    use reqwest::StatusCode;
     use serde_json::json;
     use std::borrow::Cow;
+    use wiremock::ResponseTemplate;
 
     /// Entities writing equal `@context` members share one identity, whatever
     /// the allocation; different members get different ones, in first-seen
@@ -384,6 +389,71 @@ mod tests {
         let shared = BatchContext::shared(ContextSpec::from_body(literal(&json!({"speed": "https://example.org/speed"}))));
         let admitted = shared.admit_for_request(&offline_engine()).await.expect("the context processes");
         pretty_assertions::assert_eq!(admitted.id(), shared.id());
+    }
+
+    /// The path the context host answers 503 at.
+    const UNAVAILABLE: &str = "/unavailable.jsonld";
+
+    /// A context host answering [`UNAVAILABLE`] with 503, and three distinct
+    /// contexts of one batch, each naming that document.
+    async fn contexts_naming_an_unavailable_document() -> (TestOrigin, Vec<BatchContext>) {
+        let origin = TestOrigin::start().await;
+        origin.stage(UNAVAILABLE, ResponseTemplate::new(StatusCode::SERVICE_UNAVAILABLE)).await;
+        let url = origin.url(UNAVAILABLE);
+        let mut contexts = BatchContexts::per_entity();
+        let named = vec![
+            contexts.context_of(Some(literal(&json!(url.as_str())))),
+            contexts.context_of(Some(literal(&json!([url.as_str(), {"speed": "https://example.org/speed"}])))),
+            contexts.context_of(Some(literal(&json!([url.as_str(), {"brand": "https://example.org/brand"}])))),
+        ];
+        (origin, named)
+    }
+
+    /// Every admission of `named` on `engine`, one after another.
+    async fn admissions(engine: &JsonLdEngine, named: &[BatchContext]) -> Vec<Result<EntityContextAdmission, JsonLdError>> {
+        let mut admissions = Vec::with_capacity(named.len());
+        for context in named {
+            admissions.push(context.admit(engine).await);
+        }
+        admissions
+    }
+
+    /// Clause 5.5.6 answers every entity naming a document that cannot be
+    /// retrieved with `LdContextNotAvailable`, so within one batch the document
+    /// is requested once, however many distinct contexts name it.
+    #[tokio::test]
+    async fn distinct_contexts_naming_one_unavailable_document_request_it_once_per_batch() {
+        let (origin, named) = contexts_naming_an_unavailable_document().await;
+        let engine = JsonLdEngine::builder().allow_remote(true).build().expect("the engine builds");
+
+        let admitted = run_in_batch_scope(admissions(&engine, &named)).await;
+
+        pretty_assertions::assert_eq!(admitted.len(), 3);
+        assert!(
+            admitted
+                .iter()
+                .all(|admission| admission.as_ref().is_err_and(JsonLdError::is_context_not_available)),
+            "{admitted:?}"
+        );
+        pretty_assertions::assert_eq!(origin.requests(UNAVAILABLE).await, 1);
+    }
+
+    /// A failure is remembered for one batch only: outside one, every
+    /// admission requests the document again.
+    #[tokio::test]
+    async fn outside_a_batch_each_admission_requests_the_unavailable_document_again() {
+        let (origin, named) = contexts_naming_an_unavailable_document().await;
+        let engine = JsonLdEngine::builder().allow_remote(true).build().expect("the engine builds");
+
+        let admitted = admissions(&engine, &named).await;
+
+        assert!(
+            admitted
+                .iter()
+                .all(|admission| admission.as_ref().is_err_and(JsonLdError::is_context_not_available)),
+            "{admitted:?}"
+        );
+        pretty_assertions::assert_eq!(origin.requests(UNAVAILABLE).await, 3);
     }
 
     /// Items are grouped by the identity of the context they name, in

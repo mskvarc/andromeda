@@ -18,6 +18,7 @@
 //! `numberOfHits` is decided beside the pipeline.
 
 use crate::{
+    batch_failure_scope::resolve_within_batch,
     context_cache::{ContextCache, DownloadedContext},
     context_registry::ContextRegistry,
     context_tail::ContextTail,
@@ -254,14 +255,20 @@ impl HttpContextLoader {
     /// the tenant does not hold may be another broker's, so it is resolved as
     /// the URL it is, but its download is never recorded as a "Cached" copy:
     /// the broker holds no Cached row for a URL shaped like its own.
+    ///
+    /// Within a batch scope (see
+    /// [`run_in_batch_scope`](crate::batch_failure_scope::run_in_batch_scope))
+    /// a reference that already failed fails again at once, with no attempt of
+    /// its own.
     async fn load_entry(&self, requested: &IriBuf) -> Result<LoadedContext, Arc<LoaderError>> {
-        let loaded = match self.resolution_of(requested)? {
+        let loaded = resolve_within_batch(requested, async || match self.resolution_of(requested)? {
             Resolution::Stored(identifier) => match self.load_stored(&identifier).await? {
-                StoredLookup::Held(loaded) => *loaded,
-                StoredLookup::NotHeld => self.load_url(requested, CachedCopy::Forbidden).await?,
+                StoredLookup::Held(loaded) => Ok(*loaded),
+                StoredLookup::NotHeld => self.load_url(requested, CachedCopy::Forbidden).await,
             },
-            Resolution::Url => self.load_url(requested, CachedCopy::Recorded).await?,
-        };
+            Resolution::Url => self.load_url(requested, CachedCopy::Recorded).await,
+        })
+        .await?;
         note_source(requested, &loaded.document);
         Ok(loaded)
     }

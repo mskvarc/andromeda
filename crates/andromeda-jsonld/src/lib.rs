@@ -52,6 +52,7 @@
 //! names against a processed context.
 
 pub mod batch_contexts;
+pub mod batch_failure_scope;
 pub mod compound_context_host;
 pub mod configured_engine;
 pub mod container_terms;
