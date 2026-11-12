@@ -15,7 +15,6 @@ use andromeda_retry::{
     retry_number::{RetryNumber, RetryNumberError},
     schedule::BackoffSchedule,
 };
-use chrono::{DateTime, TimeDelta, Utc};
 use std::time::Duration;
 use thiserror::Error;
 
@@ -102,29 +101,10 @@ impl BackoffStep {
     }
 }
 
-/// The instant a delivery that had failed `attempt_count` attempts before the
-/// one now failing is due again, counted from `now`.
-///
-/// A due instant past what the calendar represents is the end of time, which
-/// no claim reaches.
-///
-/// # Errors
-///
-/// Returns [`RetryNumberError`] when `attempt_count` is negative, which the
-/// queue never records.
-pub fn retry_due_at(backoff: &DeliveryBackoff, attempt_count: i32, now: DateTime<Utc>) -> Result<DateTime<Utc>, RetryNumberError> {
-    let step = backoff.step(attempt_count)?;
-    Ok(TimeDelta::from_std(step.duration())
-        .ok()
-        .and_then(|wait| now.checked_add_signed(wait))
-        .unwrap_or(DateTime::<Utc>::MAX_UTC))
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::delivery_backoff::{BackoffStep, DeliveryBackoff, DeliveryBackoffError, retry_due_at};
+    use crate::delivery_backoff::{BackoffStep, DeliveryBackoff, DeliveryBackoffError};
     use andromeda_retry::{growth::Growth, retry_number::RetryNumber, schedule::BackoffSchedule};
-    use chrono::{DateTime, TimeDelta, TimeZone, Utc};
     use pretty_assertions::assert_eq;
     use std::{num::NonZeroU32, time::Duration};
 
@@ -136,10 +116,6 @@ mod tests {
             RetryNumber::new(NonZeroU32::MIN.saturating_add(5)),
         ))
         .expect("a schedule within the longest step")
-    }
-
-    fn now() -> DateTime<Utc> {
-        Utc.timestamp_opt(1_700_000_000, 0).single().expect("a valid instant")
     }
 
     #[test]
@@ -180,15 +156,5 @@ mod tests {
                 maximum: Duration::from_hours(24),
             })
         );
-    }
-
-    #[test]
-    fn the_due_instant_is_the_step_after_now() {
-        assert_eq!(retry_due_at(&backoff(), 1, now()), Ok(now() + TimeDelta::seconds(10)));
-    }
-
-    #[test]
-    fn a_wait_past_the_calendar_is_due_at_the_end_of_time() {
-        assert_eq!(retry_due_at(&backoff(), 0, DateTime::<Utc>::MAX_UTC), Ok(DateTime::<Utc>::MAX_UTC));
     }
 }

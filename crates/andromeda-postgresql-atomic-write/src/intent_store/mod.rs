@@ -47,7 +47,6 @@ use andromeda_temporal::{
     },
 };
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgRow};
 use std::time::Duration;
 use uuid::Uuid;
@@ -91,11 +90,11 @@ impl PostgresTemporalIntentStore {
         owner: LeaseHolder,
         scope: ClaimScope<'_>,
         limit: TemporalIntentBatchSize,
-        lease_until: DateTime<Utc>,
+        lease: Duration,
     ) -> Result<Vec<ClaimedTemporalIntent>, TemporalError> {
         let rows = observe_statement(
             ObservedStatement::TemporalIntentClaim,
-            claim_statement(owner, scope, limit.get(), lease_until).to_query().fetch_all(&self.pool),
+            claim_statement(owner, scope, limit.get(), lease).to_query().fetch_all(&self.pool),
         )
         .await
         .map_err(|error| persistence(&error))?;
@@ -142,8 +141,8 @@ impl PostgresTemporalIntentStore {
 
 #[async_trait]
 impl TemporalIntentQueue for PostgresTemporalIntentStore {
-    async fn claim(&self, owner: LeaseHolder, limit: TemporalIntentBatchSize, lease_until: DateTime<Utc>) -> Result<Vec<ClaimedTemporalIntent>, TemporalError> {
-        self.claim_matching(owner, ClaimScope::Due, limit, lease_until).await
+    async fn claim(&self, owner: LeaseHolder, limit: TemporalIntentBatchSize, lease: Duration) -> Result<Vec<ClaimedTemporalIntent>, TemporalError> {
+        self.claim_matching(owner, ClaimScope::Due, limit, lease).await
     }
 
     async fn claim_for_entity(
@@ -152,10 +151,9 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
         entity_id: &Identifier,
         through: TemporalIntentKey,
         limit: TemporalIntentBatchSize,
-        lease_until: DateTime<Utc>,
+        lease: Duration,
     ) -> Result<Vec<ClaimedTemporalIntent>, TemporalError> {
-        self.claim_matching(owner, ClaimScope::EntityThrough { entity_id, through }, limit, lease_until)
-            .await
+        self.claim_matching(owner, ClaimScope::EntityThrough { entity_id, through }, limit, lease).await
     }
 
     async fn last_intent_for(&self, entity_id: &Identifier) -> Result<Option<TemporalIntentKey>, TemporalError> {
@@ -176,7 +174,7 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
     async fn retry(&self, owner: LeaseHolder, intent: &ClaimedTemporalIntent, retry: TemporalIntentRetry) -> Result<LeaseAcknowledgement, TemporalError> {
         let result = observe_statement(
             ObservedStatement::TemporalIntentRetry,
-            retry_statement(retry.eligible_at, &retry.summary, intent.key.get(), intent.write_id.as_uuid(), owner)
+            retry_statement(retry.delay, &retry.summary, intent.key.get(), intent.write_id.as_uuid(), owner)
                 .to_query()
                 .execute(&self.pool),
         )

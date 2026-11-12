@@ -270,7 +270,7 @@ mod tests {
     fn invalid_transitions_and_broken_invariants_are_persistent() {
         for error in [
             SnapshotError::from(SnapshotValidationReason::IdImmutable),
-            SnapshotError::from(SnapshotInvariant::LeaseDeadlineOverflow),
+            SnapshotError::from(SnapshotInvariant::QuotaWithoutEvictable),
             SnapshotError::from(EntityError::from(EntityInvariant::BatchPreparationFailed)),
             SnapshotError::from(TemporalError::from(TemporalInvariant::FoldCreatedNoEntity)),
         ] {

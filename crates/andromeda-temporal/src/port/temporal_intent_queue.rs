@@ -2,12 +2,16 @@
 //!
 //! Only the live branch queues its temporal history, so the queue is the live
 //! branch's and no operation names a branch.
+//!
+//! A claim's lease and a retry's delay are handed over as spans, never as
+//! instants: the queue compares both with its own clock, so it counts them
+//! from that clock, and a drain whose clock differs from the queue's neither
+//! shortens a lease nor moves a retry.
 
 use crate::{append_intent::TemporalIntentKey, error::TemporalError};
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, lease_holder::LeaseHolder, write_id::WriteId};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use std::{num::NonZeroU32, time::Duration};
 
 /// Non-zero upper bound for one temporal intent claim.
@@ -45,8 +49,9 @@ pub struct ClaimedTemporalIntent {
 /// Retry metadata recorded after a failed application.
 #[derive(Clone, Debug)]
 pub struct TemporalIntentRetry {
-    /// Next eligible claim time.
-    pub eligible_at: DateTime<Utc>,
+    /// The wait before the intent may be claimed again, counted on the queue's
+    /// clock from the instant the retry is recorded.
+    pub delay: Duration,
     /// Human-readable application failure summary for operators.
     pub summary: String,
 }
@@ -71,18 +76,19 @@ pub enum EntityRelease {
 /// Durable queue operations consumed by the temporal policy drain.
 #[async_trait]
 pub trait TemporalIntentQueue: Send + Sync {
-    /// Claim the oldest intents whose retry delay has passed, for one bounded
-    /// lease interval.
+    /// Claim the oldest intents whose retry delay has passed, each leased for
+    /// `lease` from the claim on the queue's clock.
     ///
     /// An intent is claimed only when no earlier intent of its Entity is
     /// leased or waiting for its retry delay, so a claim takes the head of an
     /// Entity's queued intents and the run after it.
     #[must_use = "temporal intent claims must be awaited"]
-    async fn claim(&self, owner: LeaseHolder, limit: TemporalIntentBatchSize, lease_until: DateTime<Utc>) -> Result<Vec<ClaimedTemporalIntent>, TemporalError>;
+    async fn claim(&self, owner: LeaseHolder, limit: TemporalIntentBatchSize, lease: Duration) -> Result<Vec<ClaimedTemporalIntent>, TemporalError>;
 
     /// Claim the oldest unleased intents of `entity_id` keyed at most
     /// `through`, before an immediate mutation, whether or not their retry
-    /// delay has passed.
+    /// delay has passed, each leased for `lease` from the claim on the queue's
+    /// clock.
     ///
     /// The retry delay paces the background drain; a client waiting on its
     /// own mutation is better served by an attempt now. An intent behind an
@@ -94,7 +100,7 @@ pub trait TemporalIntentQueue: Send + Sync {
         entity_id: &Identifier,
         through: TemporalIntentKey,
         limit: TemporalIntentBatchSize,
-        lease_until: DateTime<Utc>,
+        lease: Duration,
     ) -> Result<Vec<ClaimedTemporalIntent>, TemporalError>;
 
     /// The key of the newest intent the queue holds for `entity_id`, leased

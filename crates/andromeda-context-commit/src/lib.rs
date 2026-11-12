@@ -45,8 +45,6 @@ pub mod job_lease;
 pub mod lease_acknowledgement;
 /// The identity a worker holds a durable queue lease under.
 pub mod lease_holder;
-/// The clock one pass over a leased queue stamps its releases with.
-pub mod lease_pass_clock;
 /// Preconditions and retry classification for entity mutations.
 pub mod precondition;
 /// The attributes a payload carries, with the family of every instance.

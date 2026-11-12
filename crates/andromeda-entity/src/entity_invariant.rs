@@ -55,9 +55,6 @@ pub enum EntityInvariant {
     /// A durable side-effect attempt count names no retry.
     #[error("a durable side-effect attempt count names no retry: {0}")]
     RetryNumber(#[source] RetryNumberError),
-    /// A durable side-effect retry backoff left the range a timestamp can carry.
-    #[error("a durable side-effect retry backoff is out of range: {0}")]
-    BackoffOutOfRange(#[source] chrono::OutOfRangeError),
     /// The lock collecting a batch's prepared entries was poisoned by a panic.
     #[error("the batch preparation output lock was poisoned")]
     BatchOutputPoisoned,

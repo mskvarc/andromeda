@@ -220,10 +220,7 @@ fn register_snapshot_status_delivery(
         async move {
             pacer
                 .run_drain_pass(execution.cause(), async move {
-                    let outcome = drain
-                        .execute(DateTime::<Utc>::from(execution.cutoff()))
-                        .await
-                        .map_err(classify_snapshot_failure)?;
+                    let outcome = drain.execute().await.map_err(classify_snapshot_failure)?;
                     if outcome.claimed > 0 {
                         tracing::info!(
                             claimed = outcome.claimed,

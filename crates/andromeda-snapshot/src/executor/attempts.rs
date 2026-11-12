@@ -10,7 +10,7 @@
 
 use crate::{
     error::{Recurrence, SnapshotError},
-    executor::{execution_failure::ExecutionFailure, lease_deadline, status::failure_detail},
+    executor::{execution_failure::ExecutionFailure, status::failure_detail},
     store::{SnapshotPreparationJob, SnapshotStore},
 };
 use andromeda_context_commit::{lease_holder::LeaseHolder, write_retry::WRITE_BACKOFF};
@@ -175,16 +175,14 @@ impl PreparationClaim<'_> {
 }
 
 /// Empty the staging branch of the preparation `id` still claimed by `worker`,
-/// leasing it for `lease` from now; false when the claim was lost or the
-/// Snapshot is no longer preparing.
+/// leasing it for `lease` from the restart; false when the claim was lost or
+/// the Snapshot is no longer preparing.
 ///
 /// # Errors
 ///
-/// Returns [`SnapshotError::Internal`] when `lease` cannot be turned into a
-/// deadline, and the store's own failure when the restart does not complete.
+/// Returns the store's own failure when the restart does not complete.
 pub(super) async fn restart_staging(store: &dyn SnapshotStore, id: &Identifier, worker: LeaseHolder, lease: Duration) -> Result<bool, SnapshotError> {
-    let deadline = lease_deadline(lease)?;
-    store.restart_preparation(id, worker, deadline).await
+    store.restart_preparation(id, worker, lease).await
 }
 
 /// One failed execution result per query, or none when there are no queries.

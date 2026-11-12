@@ -11,7 +11,7 @@
 
 use crate::{
     error::SnapshotError,
-    executor::{attempts::PreparationEnd, lease_deadline},
+    executor::attempts::PreparationEnd,
     store::{SnapshotPreparationJob, SnapshotStore},
 };
 use andromeda_context_commit::lease_holder::LeaseHolder;
@@ -106,7 +106,7 @@ impl DrainWorker<'_> {
         id: &Identifier,
         prepare: impl Fn(SnapshotPreparationJob) -> BoxFuture<'f, Option<PreparationEnd>> + Sync,
     ) -> Result<usize, SnapshotError> {
-        let moved = if let Some(job) = self.store.claim_created(id, self.worker, lease_deadline(self.lease)?).await? {
+        let moved = if let Some(job) = self.store.claim_created(id, self.worker, self.lease).await? {
             usize::from(prepare(job).await.is_some_and(PreparationEnd::left_preparing))
         } else {
             info!(
@@ -122,7 +122,7 @@ impl DrainWorker<'_> {
     async fn claim_round(&self) -> Result<Vec<SnapshotPreparationJob>, SnapshotError> {
         let mut jobs = Vec::with_capacity(self.max_per_round);
         while jobs.len() < self.max_per_round {
-            let Some(job) = self.store.next_preparing(self.worker, lease_deadline(self.lease)?).await? else {
+            let Some(job) = self.store.next_preparing(self.worker, self.lease).await? else {
                 break;
             };
             jobs.push(job);

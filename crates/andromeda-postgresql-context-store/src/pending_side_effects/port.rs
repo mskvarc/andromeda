@@ -20,13 +20,17 @@ use andromeda_entity::{
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_attribute_instance::name_resolution::names_of;
 use andromeda_postgresql_schema::queue::PendingSideEffects;
-use andromeda_postgresql_seaquery::{interval::make_interval_secs, queue::is_claimed_from, statement::Statement};
+use andromeda_postgresql_seaquery::{
+    clock::{after_transaction_start, span_after_transaction_start},
+    queue::is_claimed_from,
+    statement::Statement,
+};
 use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sea_query::{CaseStatement, DeleteStatement, Expr, ExprTrait, Keyword, LockBehavior, LockType, Order, Query, SimpleExpr, UpdateStatement};
 use sqlx::postgres::PgRow;
-use std::num::NonZeroU32;
+use std::{num::NonZeroU32, time::Duration};
 use tracing::error;
 use uuid::Uuid;
 
@@ -61,10 +65,10 @@ impl SideEffectQueue for PendingSideEffectsRepository {
         Ok(leased)
     }
 
-    async fn nack(&self, id: SideEffectJobId, owner: &LeaseHolder, error: &str, next_attempt_at: DateTime<Utc>) -> Result<LeaseAcknowledgement, EntityError> {
+    async fn nack(&self, id: SideEffectJobId, owner: &LeaseHolder, error: &str, retry_after: Duration) -> Result<LeaseAcknowledgement, EntityError> {
         let result = observe_statement(
             ObservedStatement::PendingSideEffectRelease,
-            nack_statement(id.as_uuid(), *owner, error, next_attempt_at).to_query().execute(self.pool()),
+            nack_statement(id.as_uuid(), *owner, error, retry_after).to_query().execute(self.pool()),
         )
         .await
         .map_err(|error| persistence(&error))?;
@@ -182,10 +186,7 @@ fn lease_batch_statement(owner: LeaseHolder, limit: u64, lease_seconds: f64) -> 
     Query::update()
         .table(PendingSideEffects::Table)
         .value(PendingSideEffects::AttemptCount, counted_attempts)
-        .value(
-            PendingSideEffects::LeaseUntil,
-            Expr::current_timestamp().add(make_interval_secs(Expr::val(lease_seconds))),
-        )
+        .value(PendingSideEffects::LeaseUntil, after_transaction_start(Expr::val(lease_seconds)))
         .value(PendingSideEffects::ClaimedBy, owner.as_uuid())
         .and_where(is_claimed_from(Expr::col(PendingSideEffects::Id), candidates))
         .returning(Query::returning().columns([
@@ -224,14 +225,16 @@ fn claimant_guard(id: Uuid, owner: LeaseHolder) -> SimpleExpr {
         .and(Expr::col(PendingSideEffects::ClaimedBy).eq(owner.as_uuid()))
 }
 
-/// Count the attempt, record its diagnostic, and release the lease for a retry.
+/// Count the attempt, record its diagnostic, and release the lease for a retry
+/// due `retry_after` from now on the database clock, the clock the claim
+/// compares it with.
 ///
 /// The diagnostic is cut to the bound `chk_pse_last_error_length` states, so the
 /// retry never fails on its own bookkeeping.
 ///
 /// Both claim columns are released together: `chk_pse_claim_coherent` rejects
 /// a row that holds one of `lease_until` and `claimed_by` without the other.
-fn nack_statement(id: Uuid, owner: LeaseHolder, error: &str, next_attempt_at: DateTime<Utc>) -> UpdateStatement {
+fn nack_statement(id: Uuid, owner: LeaseHolder, error: &str, retry_after: Duration) -> UpdateStatement {
     Query::update()
         .table(PendingSideEffects::Table)
         .value(PendingSideEffects::AttemptCount, Expr::col(PendingSideEffects::AttemptCount).add(1))
@@ -239,7 +242,7 @@ fn nack_statement(id: Uuid, owner: LeaseHolder, error: &str, next_attempt_at: Da
             PendingSideEffects::LastError,
             bounded_failure_summary(error, FAILURE_SUMMARY_LIMIT).into_owned(),
         )
-        .value(PendingSideEffects::NextAttemptAt, next_attempt_at)
+        .value(PendingSideEffects::NextAttemptAt, span_after_transaction_start(retry_after))
         .value(PendingSideEffects::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
         .value(PendingSideEffects::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
         .and_where(claimant_guard(id, owner))
@@ -294,6 +297,7 @@ mod tests {
     use andromeda_entity::side_effect_queue::SideEffectQueue;
     use chrono::Utc;
     use sea_query::{PostgresQueryBuilder, Value};
+    use std::time::Duration;
     use uuid::Uuid;
 
     fn assert_side_effect_queue<T: SideEffectQueue>() {}
@@ -309,7 +313,7 @@ mod tests {
         assert!(sql.contains(r#""exhausted_at" IS NULL"#), "{sql}");
         assert!(sql.contains("FOR UPDATE SKIP LOCKED"), "{sql}");
         assert!(sql.contains("LIMIT 10"), "{sql}");
-        assert!(sql.contains("make_interval(secs =>"), "{sql}");
+        assert!(sql.contains(r#""lease_until" = CURRENT_TIMESTAMP + (make_interval(secs => 30))"#), "{sql}");
         assert!(sql.contains(r#""claimed_by" = '00000000-0000-0000-0000-000000000000'"#), "{sql}");
     }
 
@@ -346,7 +350,7 @@ mod tests {
     #[test]
     fn every_release_is_guarded_by_the_claimant_and_not_by_the_clock() {
         for sql in [
-            nack_statement(Uuid::nil(), holder(), "boom", Utc::now()).to_string(PostgresQueryBuilder),
+            nack_statement(Uuid::nil(), holder(), "boom", Duration::from_secs(2)).to_string(PostgresQueryBuilder),
             mark_dead_statement(Uuid::nil(), holder(), "boom").to_string(PostgresQueryBuilder),
         ] {
             assert!(sql.contains(r#""id" = '00000000-0000-0000-0000-000000000000'"#), "{sql}");
@@ -358,10 +362,20 @@ mod tests {
 
     #[test]
     fn a_nack_counts_the_attempt_and_releases_the_claim() {
-        let sql = nack_statement(Uuid::nil(), holder(), "boom", Utc::now()).to_string(PostgresQueryBuilder);
+        let sql = nack_statement(Uuid::nil(), holder(), "boom", Duration::from_secs(2)).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""attempt_count" = "attempt_count" + 1"#), "{sql}");
         assert!(sql.contains(r#""lease_until" = NULL"#), "{sql}");
         assert!(sql.contains(r#""claimed_by" = NULL"#), "{sql}");
+    }
+
+    /// The claim compares `next_attempt_at` with `CURRENT_TIMESTAMP`, so the
+    /// retry is set on that clock: an instant from the broker's clock would
+    /// fall due early or late by however far the two clocks differ.
+    #[test]
+    fn a_nack_sets_the_retry_one_step_after_the_database_clock() {
+        let (sql, values) = nack_statement(Uuid::nil(), holder(), "boom", Duration::from_millis(2_500)).build(PostgresQueryBuilder);
+        assert!(sql.contains(r#""next_attempt_at" = CURRENT_TIMESTAMP + (make_interval(secs => $3))"#), "{sql}");
+        pretty_assertions::assert_eq!(values.0.get(2), Some(&2.5_f64.into()), "{sql}");
     }
 
     #[test]
@@ -392,7 +406,7 @@ mod tests {
     fn a_failure_detail_past_the_bound_is_truncated_before_it_is_written() {
         let detail = "\u{e9}".repeat(3000);
         for statement in [
-            nack_statement(Uuid::nil(), holder(), &detail, Utc::now()),
+            nack_statement(Uuid::nil(), holder(), &detail, Duration::from_secs(2)),
             mark_dead_statement(Uuid::nil(), holder(), &detail),
         ] {
             let (_, values) = statement.build(PostgresQueryBuilder);

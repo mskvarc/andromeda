@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_model::{
 };
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
-use std::sync::atomic::Ordering;
+use std::{sync::atomic::Ordering, time::Duration};
 use url::Url;
 
 /// The answer of an operation no test exercises.
@@ -70,7 +70,7 @@ impl SnapshotStore for StoreDouble {
         &'life0 self,
         _id: &'life1 Identifier,
         _claimed_by: LeaseHolder,
-        _lease_until: DateTime<Utc>,
+        _lease: Duration,
     ) -> BoxFuture<'async_trait, Result<bool, SnapshotError>>
     where
         'life0: 'async_trait,
@@ -181,7 +181,7 @@ impl SnapshotStore for StoreDouble {
     fn next_preparing<'life0, 'async_trait>(
         &'life0 self,
         _claimed_by: LeaseHolder,
-        _lease_until: DateTime<Utc>,
+        _lease: Duration,
     ) -> BoxFuture<'async_trait, Result<Option<SnapshotPreparationJob>, SnapshotError>>
     where
         'life0: 'async_trait,
@@ -194,7 +194,7 @@ impl SnapshotStore for StoreDouble {
         &'life0 self,
         id: &'life1 Identifier,
         _claimed_by: LeaseHolder,
-        _lease_until: DateTime<Utc>,
+        _lease: Duration,
     ) -> BoxFuture<'async_trait, Result<Option<SnapshotPreparationJob>, SnapshotError>>
     where
         'life0: 'async_trait,
@@ -208,7 +208,7 @@ impl SnapshotStore for StoreDouble {
         &'life0 self,
         _id: &'life1 Identifier,
         _claimed_by: LeaseHolder,
-        _lease_until: DateTime<Utc>,
+        _lease: Duration,
     ) -> BoxFuture<'async_trait, Result<bool, SnapshotError>>
     where
         'life0: 'async_trait,

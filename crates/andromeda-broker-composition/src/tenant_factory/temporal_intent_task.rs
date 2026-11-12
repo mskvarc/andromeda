@@ -26,7 +26,6 @@ use andromeda_temporal::{
         temporal_intent_queue::{TemporalIntentBatchSize, TemporalIntentQueue},
     },
 };
-use chrono::{DateTime, Utc};
 use std::{sync::Arc, time::Duration};
 
 /// Runtime wake capability exposed through the temporal-owned commit notification port.
@@ -112,8 +111,7 @@ pub(super) fn register_temporal_intent_drain(
         async move {
             pacer
                 .run_drain_pass(execution.cause(), async move {
-                    let now = DateTime::<Utc>::from(execution.cutoff());
-                    let outcome = drain.execute(now).await.map_err(classify_temporal_drain_failure)?;
+                    let outcome = drain.execute().await.map_err(classify_temporal_drain_failure)?;
                     if outcome.work_may_remain {
                         Ok(DrainPassOutcome::WorkMayRemain)
                     } else {
