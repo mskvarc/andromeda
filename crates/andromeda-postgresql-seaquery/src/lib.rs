@@ -50,6 +50,7 @@ pub mod hashed_membership;
 mod identifier;
 pub mod interval;
 pub mod introspection;
+pub mod json_record;
 pub mod json_type;
 pub mod jsonb;
 pub mod keyed_lookup;

@@ -1,5 +1,5 @@
 # The default profile runs the workspace's unit tests, locally and in CI; `suite` and `suite-verdict` belong to
-# andromeda-test-suite.
+# andromeda-test-suite, and `upgrade` to andromeda-upgrade-tests.
 
 # An inheriting profile takes its parent's overrides from nextest 0.9.145 on; an older nextest would run `suite-verdict`
 # with no test group at all.
@@ -19,6 +19,12 @@ private-tenants = { max-threads = 4 }
 # time fits a host that holds the whole stack; more than one and the servers of the scale tests, each carrying a
 # hundred tenant databases, drive the host past its memory and the brokers die under it.
 pgbouncer = { max-threads = 1 }
+
+# The test targets of andromeda-upgrade-tests rehearse upgrades on a PostgreSQL server, which a unit-test run has none
+# of, so every profile but `upgrade` leaves them out and keeps the crate's unit tests. A filterset given on the command
+# line narrows this set, never widens it.
+[profile.default]
+default-filter = 'not (package(andromeda-upgrade-tests) & kind(test))'
 
 # The large geometry test bounds the ratio of two decode times measured in one process; the CPU load of tests running
 # beside it skews that ratio, so it runs alone. It is named by its test rather than its binary, because nextest checks
@@ -188,3 +194,7 @@ inherits = "suite"
 
 [profile.suite-verdict.junit]
 path = "junit.xml"
+
+# The upgrade rehearsals, on the server `ANDROMEDA_UPGRADE_TESTS__SERVER` names.
+[profile.upgrade]
+default-filter = 'package(andromeda-upgrade-tests)'
