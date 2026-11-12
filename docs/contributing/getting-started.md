@@ -40,8 +40,7 @@ CI requires every one of these checks to pass, so run them before you open a pul
 cargo fmt --all
 taplo fmt
 cargo clippy --workspace --all-targets --all-features
-cargo nextest run --workspace --exclude andromeda --exclude andromeda-test-suite
-cargo nextest run --bin andromeda
+cargo nextest run --workspace --exclude andromeda-test-suite
 cargo machete --with-metadata
 cargo deny --all-features --locked check
 git ls-files -z '*.sh' | xargs -0 shellcheck
@@ -52,7 +51,7 @@ cargo run -p andromeda-sql -- verify --against origin/main
 
 `cargo fmt` runs the toolchain `rust-toolchain.toml` pins, which is the one CI checks formatting with. Don't override it with `+nightly`, because a newer nightly can format differently.
 
-The `andromeda` crate is a binary with no library target, so never pass it `--lib`. The broker's own integration tests and the black-box suite need a live stack, so they are left out here. [Testing](testing.md) explains how to run the suite.
+The `andromeda` crate is a binary with no library target, so never pass it `--lib`. The black-box suite needs a live stack, so it is left out here. [Testing](testing.md) explains how to run the suite.
 
 The workspace is large and linking it takes a while. When you only want to know that the code compiles, `cargo check` or `cargo clippy` is much faster than `cargo build`, which is only worth running when you're going to start the binary.
 
