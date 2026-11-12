@@ -37,7 +37,7 @@ pub enum PositionError {
     /// Fewer than the two ordinates RFC 7946 section 3.1.1 requires
     /// ("a position is an array of numbers[; t]here MUST be two or more
     /// elements").
-    #[error("GeoJSON position has {ordinates} ordinates; RFC 7946 allows exactly 2 (longitude, latitude) or 3 (longitude, latitude, altitude)")]
+    #[error("GeoJSON position has too few ordinates ({ordinates}); a position needs at least two, longitude and latitude (RFC 7946 section 3.1.1)")]
     TooFewOrdinates {
         /// The number of ordinates the position actually carried.
         ordinates: usize,
@@ -45,8 +45,13 @@ pub enum PositionError {
     /// More than longitude, latitude and altitude. RFC 7946 section 3.1.1
     /// allows additional elements but assigns them no meaning, and NGSI-LD
     /// assigns them none either, so they cannot be carried without inventing
-    /// semantics the specification does not define.
-    #[error("GeoJSON position has {ordinates} ordinates; RFC 7946 allows exactly 2 (longitude, latitude) or 3 (longitude, latitude, altitude)")]
+    /// semantics the specification does not define. The bound at three is the
+    /// broker's own: the RFC only says implementations SHOULD NOT go past it
+    /// and lets parsers ignore the rest, and ignoring them would drop part of
+    /// the client's value without a word.
+    #[error(
+        "GeoJSON position has {ordinates} ordinates; RFC 7946 section 3.1.1 defines no meaning beyond the third (altitude), so the broker accepts two or three and refuses a position with more rather than drop the extra ones"
+    )]
     TooManyOrdinates {
         /// The number of ordinates the position actually carried.
         ordinates: usize,
@@ -228,18 +233,19 @@ mod tests {
     }
 
     #[test]
-    fn an_arity_failure_states_the_ordinate_count_and_the_rfc_7946_rule() {
+    fn an_arity_failure_states_the_ordinate_count_and_whose_rule_it_breaks() {
         // This wording is the diagnostic every write-side and query-side caller
         // prefixes with its own locus to build the BadRequestData detail that
         // ETSI GS CIM 009 v1.9.1 clause 5.5.4 requires, so it is contractual
-        // rather than incidental.
+        // rather than incidental. RFC 7946 section 3.1.1 sets only the lower
+        // bound; the upper bound is the broker's and is stated as such.
         pretty_assertions::assert_eq!(
             PositionError::TooManyOrdinates { ordinates: 4 }.to_string(),
-            "GeoJSON position has 4 ordinates; RFC 7946 allows exactly 2 (longitude, latitude) or 3 (longitude, latitude, altitude)"
+            "GeoJSON position has 4 ordinates; RFC 7946 section 3.1.1 defines no meaning beyond the third (altitude), so the broker accepts two or three and refuses a position with more rather than drop the extra ones"
         );
         pretty_assertions::assert_eq!(
             PositionError::TooFewOrdinates { ordinates: 1 }.to_string(),
-            "GeoJSON position has 1 ordinates; RFC 7946 allows exactly 2 (longitude, latitude) or 3 (longitude, latitude, altitude)"
+            "GeoJSON position has too few ordinates (1); a position needs at least two, longitude and latitude (RFC 7946 section 3.1.1)"
         );
     }
 

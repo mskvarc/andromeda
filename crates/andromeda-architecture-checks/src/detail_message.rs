@@ -454,7 +454,7 @@ mod tests {
         assert!(has_clause_citation("a type is required (clause 4.5.1)"));
         assert!(has_clause_citation("clause 4.18 uses the null only for a deleted scope"));
         assert!(has_clause_citation("ETSI GS CIM 009 excludes this geometry"));
-        assert!(!has_clause_citation("RFC 7946 allows exactly 2 or 3 ordinates"));
+        assert!(!has_clause_citation("a position needs at least two ordinates (RFC 7946 section 3.1.1)"));
         assert!(!has_clause_citation("the value is not an RFC 3339 timestamp"));
     }
 

@@ -9,7 +9,7 @@ use ngsi_ld::{
 };
 
 /// Pins: Create Entity refuses a Point whose position has four ordinates with `BadRequestData`, naming the arity in
-/// the detail, and stores nothing
+/// the detail and stating the bound of three as the broker's own, and stores nothing
 /// Clause: 4.7.1, 5.6.1, 5.5.4
 /// Recorded: RFC 7946 section 3.1.1 says implementations "SHOULD NOT extend positions beyond three elements" and
 /// that parsers "MAY ignore" extra elements, and 4.7.1 requires a valid `GeoJSON` geometry without saying what a
@@ -33,6 +33,7 @@ async fn o_qry_geo_0045_create_with_a_four_ordinate_position_is_bad_request_data
         problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData)
             .with_title()
             .with_detail_containing("4 ordinates")
+            .with_detail_containing("the broker accepts two or three")
     );
     // Nothing was stored.
     let answer_2 = broker
