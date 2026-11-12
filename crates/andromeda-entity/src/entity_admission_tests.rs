@@ -259,7 +259,7 @@ fn an_expanded_node_location_whose_position_carries_one_ordinate_is_rejected() {
         ]}
     ]}));
     let error = admit_expanded(&entity).expect_err("one ordinate is not a position");
-    assert!(error.to_string().contains("1 ordinates"), "got {error}");
+    assert!(error.to_string().contains("too few ordinates (1)"), "got {error}");
 }
 
 /// The check recurses: the offending vertex is in an interior ring, four
