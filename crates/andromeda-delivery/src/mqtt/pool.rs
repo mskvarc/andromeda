@@ -17,11 +17,7 @@ use andromeda_outbound_http::endpoint_guard::PrivateIpGuard;
 use andromeda_retry::cursor::BackoffCursor;
 use dashmap::DashMap;
 use std::{sync::Arc, time::Duration};
-use tokio::{
-    sync::{Mutex, watch},
-    task::JoinHandle,
-    time::{Instant, interval as tokio_interval},
-};
+use tokio::{sync::Mutex, time::Instant};
 use tracing::{debug, info};
 
 /// How many keep-alive intervals of silence make a connection degraded.
@@ -86,40 +82,33 @@ impl MqttTransportPool {
         self.config.publish_ack_timeout
     }
 
-    /// Spawn a background task that marks connections degraded once they have
-    /// gone quiet for longer than the protocol allows.
+    /// How often [`MqttTransportPool::mark_quiet_connections_degraded`] is
+    /// meant to run.
+    #[must_use]
+    pub const fn health_probe_interval(&self) -> Duration {
+        self.config.health_probe_interval
+    }
+
+    /// Mark every healthy connection that has gone quiet for longer than the
+    /// protocol allows as degraded.
     ///
     /// This is not a probe in the sense of sending anything: MQTT's own
     /// keep-alive already does that, and a broker that has stopped answering it
     /// will stop producing packets. What this notices is the absence.
-    #[must_use]
-    pub fn spawn_health_probe(self: &Arc<MqttTransportPool>, mut shutdown_rx: watch::Receiver<bool>) -> JoinHandle<()> {
-        let pool = Arc::clone(self);
-        let interval = pool.config.health_probe_interval;
-        let quiet_threshold = pool.config.keepalive.as_secs() * DEGRADED_AFTER_KEEPALIVES;
-
-        tokio::spawn(async move {
-            let mut tick = tokio_interval(interval);
-            loop {
-                tokio::select! {
-                    _ = shutdown_rx.changed() => break,
-                    _ = tick.tick() => {
-                        let connections: Vec<_> = pool.connections.iter().map(|entry| (entry.key().clone(), Arc::clone(entry.value()))).collect();
-                        for (key, connection) in connections {
-                            let last = *connection.state.last_healthy.read().await;
-                            if last.elapsed().as_secs() > quiet_threshold && connection.state.is_healthy() {
-                                connection.state.mark_degraded();
-                                debug!(
-                                    host = %key.authority.host(),
-                                    port = key.authority.port(),
-                                    "MQTT connection marked degraded (no activity beyond 2x keepalive)"
-                                );
-                            }
-                        }
-                    }
-                }
+    pub async fn mark_quiet_connections_degraded(&self) {
+        let quiet_threshold = self.config.keepalive.as_secs() * DEGRADED_AFTER_KEEPALIVES;
+        let connections: Vec<_> = self.connections.iter().map(|entry| Arc::clone(entry.value())).collect();
+        for connection in connections {
+            let last = *connection.state.last_healthy.read().await;
+            if last.elapsed().as_secs() > quiet_threshold && connection.state.is_healthy() {
+                connection.state.mark_degraded();
+                debug!(
+                    host = %connection.key.authority.host(),
+                    port = connection.key.authority.port(),
+                    "MQTT connection marked degraded (no activity beyond 2x keepalive)"
+                );
             }
-        })
+        }
     }
 
     /// The connection for an endpoint, opening one if the pool has none that
@@ -304,6 +293,7 @@ mod tests {
             connection::{ConnectionState, MqttClientVariant, MqttConnection},
             connection_key::MqttConnectionKey,
             dial::{DialFuture, MqttDialer, RumqttcDialer},
+            health::ConnectionHealth,
             packet_ceiling::MqttPacketCeiling,
             pool::MqttTransportPool,
         },
@@ -319,7 +309,7 @@ mod tests {
         },
         time::Duration,
     };
-    use tokio::time::sleep;
+    use tokio::time::{Instant, sleep};
     use url::Url;
 
     /// An endpoint whose broker refuses connections: port 1 on the loopback is
@@ -405,6 +395,34 @@ mod tests {
 
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(dialer.calls.load(Ordering::Relaxed), 1);
+    }
+
+    /// The keep-alive is one second, so a connection is quiet for too long once
+    /// more than two whole seconds pass without a packet; three is past that.
+    #[tokio::test]
+    async fn a_sweep_marks_a_connection_quiet_beyond_twice_its_keepalive_degraded_and_leaves_an_answering_one_healthy() {
+        let config = MqttPoolConfig {
+            keepalive: Duration::from_secs(1),
+            ..MqttPoolConfig::default()
+        };
+        let pool = MqttTransportPool::new(config, Arc::new(ScriptedDialer::succeeding()));
+        let quiet = pool.get_or_create_connection(&refused_endpoint()).await.expect("scripted dial succeeds");
+        let answering = pool
+            .get_or_create_connection(&MqttEndpointConfig {
+                authority: HostPort::from_str("127.0.0.1:2").expect("a valid authority"),
+                endpoint_uri: Url::parse("mqtt://127.0.0.1:2/andromeda/test").expect("a valid endpoint URI"),
+                ..refused_endpoint()
+            })
+            .await
+            .expect("scripted dial succeeds");
+        *quiet.state.last_healthy.write().await = Instant::now()
+            .checked_sub(Duration::from_secs(3))
+            .expect("the clock reaches three seconds back");
+
+        pool.mark_quiet_connections_degraded().await;
+
+        assert_eq!(quiet.state.health.load(), ConnectionHealth::Degraded);
+        assert_eq!(answering.state.health.load(), ConnectionHealth::Healthy);
     }
 
     #[tokio::test]
