@@ -57,3 +57,5 @@ pub(crate) mod surrogate_key;
 /// The number a subscription's `notificationTrigger` list stores each trigger
 /// condition as.
 pub(crate) mod trigger_code;
+/// How a client write of a subscription ends its transaction.
+mod write_commit;
