@@ -20,6 +20,17 @@ The issue goes on a line of its own, never in the header. Write `Closes #N` when
 
 Each commit is one coherent change that compiles, passes clippy without warnings and passes the tests on its own, because `git bisect` lands on single commits. Use `git rebase -i` to fix up, split and reorder commits before review, and force-push with `--force-with-lease`.
 
+## In the changelog
+
+The changelog and the release notes are built from commit headers and footers, with the summary as written, so every commit is also a changelog entry.
+
+- `feat`, `fix` and `perf` commits are listed for users. Every other type is an internal change, listed only for the newest release. A change users can see takes `feat` or `fix`, whatever files it touches.
+- The `security` scope, as in `fix(security): ...`, files a commit under Security. Use it for the fix to a vulnerability.
+- A summary that starts with `deprecate` files the commit under Deprecations.
+- A breaking commit is listed under Breaking changes, with its summary followed by its `BREAKING CHANGE:` footer. Write the footer as sentences an operator can act on.
+- `Closes #N` and `Refs #N` become links to the issues. Each goes on its own line in the last paragraph of the message.
+- Put `@` words such as `@context` in backticks, because GitHub links a bare one to the account of that name.
+
 ## Pull request title
 
 The title is a Conventional Commits header for the whole pull request. With a single commit, it is that commit's header. With several, take the type of the main change (a `fix` with its tests is a `fix`) and summarise the outcome rather than the steps. Mark a breaking change with `!`. Issue numbers go in the body, not the title.

@@ -1,8 +1,6 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
-
-## [v1.0.0] - 2026-11-09
+## [1.0.0](https://github.com/mskvarc/andromeda/releases/tag/v1.0.0) - 2026-11-09
 
 Initial release.
 
