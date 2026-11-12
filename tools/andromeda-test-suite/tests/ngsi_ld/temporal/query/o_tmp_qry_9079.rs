@@ -12,9 +12,11 @@ use andromeda_test_suite::{
 };
 use googletest::prelude::*;
 use ngsi_ld::{
-    http::{headers::Accept, operation::QueryTemporalEvolution},
+    http::{
+        headers::Accept,
+        operation::{NormalizedTemporal, QueryTemporalEvolution},
+    },
     model::{
-        Lossless,
         NgsiLdMediaType,
         Property,
         evolution::{TemporalAttributeName, TemporalEntity},
@@ -94,7 +96,7 @@ async fn o_tmp_qry_9079_an_attrs_selection_pages_the_holders_of_every_type_once_
         .temporal_q(&window)
         .attrs(&attrs)
         .limit(2)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let page = cursor_walk::first_page(&tenant.with_accept(Accept::new(NgsiLdMediaType::JsonLd)), &query)
         .await?

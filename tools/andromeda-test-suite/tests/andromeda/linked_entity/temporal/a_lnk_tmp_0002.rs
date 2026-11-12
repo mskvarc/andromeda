@@ -10,8 +10,8 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::operation::QueryTemporalEvolution,
-    model::{ListRelationship, Lossless, Property, evolution::TemporalEntity},
+    http::operation::{NormalizedTemporal, QueryTemporalEvolution},
+    model::{ListRelationship, Property, evolution::TemporalEntity},
     query::{Join, builders::SelectorTypeBuilder, q, temporal_query},
 };
 
@@ -63,7 +63,7 @@ async fn a_lnk_tmp_0002_a_temporal_q_hop_follows_every_object_of_a_list_relation
             .temporal_q(&temporal_q)
             .entity_type(&selector)
             .q(&hop)
-            .format(Lossless::Normalized)
+            .format(NormalizedTemporal)
             .build();
         // The temporal query writes no `join`, so the parameters follow the query it writes. Each building nests its
         // linked devices, which no model reads, so the answer is read as received.

@@ -12,10 +12,12 @@
 
 use andromeda_ngsi_ld_lexicon::{
     constant_string,
-    identifier::{Identifier, IdentifierParseError},
-    tenant::{TENANT_ID_PREFIX, TenantName},
+    identifier::Identifier,
+    ngsi_ld_urn::{NgsiLdUrnError, ngsi_ld_identifier},
+    tenant::{TENANT_KIND, TenantName},
     tenant_database_name::TenantDatabaseName,
     time::instant_serde,
+    uri::NGSI_LD_URN_NID,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -110,11 +112,11 @@ pub struct Tenant {
 ///
 /// # Errors
 ///
-/// Returns [`IdentifierParseError`] when the name cannot be assembled into an NGSI-LD
+/// Returns [`NgsiLdUrnError`] when the name cannot be assembled into an NGSI-LD
 /// URN, which a validated [`TenantName`] never triggers: its grammar keeps the
 /// URN well formed and its length bound keeps it within the identifier limit.
-pub fn tenant_id(name: &TenantName) -> Result<Identifier, IdentifierParseError> {
-    format!("{TENANT_ID_PREFIX}{}", name.as_str()).parse::<Identifier>()
+pub fn tenant_id(name: &TenantName) -> Result<Identifier, NgsiLdUrnError> {
+    ngsi_ld_identifier(TENANT_KIND, name.as_str())
 }
 
 /// The tenant name a tenant identifier carries, if it is a well-formed tenant id.
@@ -123,9 +125,9 @@ pub fn tenant_id(name: &TenantName) -> Result<Identifier, IdentifierParseError> 
 /// identifier back into the name the registry orders by.
 #[must_use]
 pub fn tenant_name_from_id(id: &Identifier) -> Option<TenantName> {
-    let rendered = id.to_string();
-    let name = rendered.strip_prefix(TENANT_ID_PREFIX)?;
-    TenantName::try_from(name.to_string()).ok()
+    let urn = id.as_urn().filter(|urn| urn.nid() == NGSI_LD_URN_NID)?;
+    let name = urn.nss().strip_prefix(TENANT_KIND)?.strip_prefix(':')?;
+    TenantName::try_from(name.to_owned()).ok()
 }
 
 #[cfg(test)]

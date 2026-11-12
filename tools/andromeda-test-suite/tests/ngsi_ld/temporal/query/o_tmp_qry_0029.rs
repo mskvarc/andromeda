@@ -7,9 +7,9 @@ use ngsi_ld::{
     http::{
         ResponseHead,
         headers::{Accept, Link, NgsiLdEntityMap, RelationType},
-        operation::QueryTemporalEvolution,
+        operation::{NormalizedTemporal, QueryTemporalEvolution},
     },
-    model::{Input, Lossless, NgsiLdMediaType, Property, evolution::TemporalEntity},
+    model::{Input, NgsiLdMediaType, Property, evolution::TemporalEntity},
     query::{Locality, builders::SelectorTypeBuilder, temporal_query},
 };
 
@@ -40,7 +40,7 @@ async fn o_tmp_qry_0029_an_entity_map_created_from_a_cursor_page_maps_every_matc
         .entity_type(&selector)
         .locality(Locality::Local)
         .limit(1)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let walk = cursor_walk::first_page(&broker.with_accept(Accept::new(NgsiLdMediaType::JsonLd)), &query).await?;
     expect_that!(walk.page.next(), some(anything()));

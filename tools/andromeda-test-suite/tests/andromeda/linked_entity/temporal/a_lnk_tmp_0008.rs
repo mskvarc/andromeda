@@ -10,8 +10,11 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::{headers::Accept, operation::QueryTemporalEvolution},
-    model::{ErrorType, Lossless, NgsiLdMediaType},
+    http::{
+        headers::Accept,
+        operation::{NormalizedTemporal, QueryTemporalEvolution},
+    },
+    model::{ErrorType, NgsiLdMediaType},
     query::{Join, builders::SelectorTypeBuilder, projection::Projection, temporal_query},
 };
 
@@ -38,7 +41,7 @@ async fn a_lnk_tmp_0008_a_pick_into_a_linked_entity_needs_a_retrieving_join() ->
         .entity_type(&selector)
         .ids(&ids)
         .pick(&pick)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let client = broker.with_accept(Accept::new(NgsiLdMediaType::Json));
     let refused = client.send_unchecked(client.unchecked(&query)?).await;

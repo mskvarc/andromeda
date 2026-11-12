@@ -17,7 +17,7 @@ use http::StatusCode;
 use ngsi_ld::{
     http::{
         headers::Accept,
-        operation::{RetrieveEntity, RetrieveTemporalEvolution, TemporalSelection},
+        operation::{NormalizedTemporal, RetrieveEntity, RetrieveTemporalEvolution, TemporalSelection},
     },
     model::{AttributeKind, EntityId, ListRelationship, Lossless, NgsiLdMediaType, OneOrMany, Relationship, evolution::TemporalEntity},
 };
@@ -83,7 +83,7 @@ async fn n_tmp_ups_9026_a_percent_encoded_relationship_object_is_recorded_as_wri
     let temporal = RetrieveTemporalEvolution::builder()
         .id(&room_encoded_id)
         .selection(selection)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let answer = send_versioned(&client, &temporal, None).await?;
     expect_that!(answer.status, eq(StatusCode::OK));

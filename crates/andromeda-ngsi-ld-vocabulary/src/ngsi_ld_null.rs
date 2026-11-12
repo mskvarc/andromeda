@@ -12,13 +12,14 @@
 //! expanded item, a stored document, a JSON literal), decides through
 //! [`is_ngsi_ld_null`], so no two readers can disagree on what the Null is.
 
-use iri_rs::{Iri, iri};
+use urn_rs::{UrnSlice, urn};
 
-/// The NGSI-LD Null, `urn:ngsi-ld:null`.
+/// The NGSI-LD Null, the URN `urn:ngsi-ld:null`.
 ///
 /// It appears as data rather than as an `@context` term, so the core context
-/// declares no term for it.
-pub const NULL_URI: Iri<&'static str> = iri!("urn:ngsi-ld:null");
+/// declares no term for it. A `static`, so the text it lends lives as long as
+/// the program and a writer can hand it on.
+pub static NULL_URI: UrnSlice<'static> = urn!("urn:ngsi-ld:null");
 
 /// Whether `text` is the NGSI-LD Null.
 #[must_use]

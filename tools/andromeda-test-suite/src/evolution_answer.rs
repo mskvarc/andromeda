@@ -8,8 +8,8 @@ use bytes::Bytes;
 use http::Response;
 use ngsi_ld::{
     client::{ClientError, ReqwestError},
-    http::operation::{RetrieveTemporalEvolution, TemporalSelection},
-    model::{EntityId, Lossless},
+    http::operation::{NormalizedTemporal, RetrieveTemporalEvolution, TemporalSelection},
+    model::EntityId,
 };
 
 /// Why an evolution could not be fetched.
@@ -37,7 +37,7 @@ pub async fn retrieve_unread(client: &BrokerClient, id: &EntityId, selection: Te
     let operation = RetrieveTemporalEvolution::builder()
         .id(id)
         .selection(selection)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let request = client.unchecked(&operation).map_err(|error| EvolutionAnswerError(Box::new(error)))?;
     client.send_unchecked(request).await.map_err(|error| EvolutionAnswerError(Box::new(error)))

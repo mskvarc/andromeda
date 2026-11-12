@@ -11,8 +11,11 @@ use andromeda_test_suite::{
 };
 use googletest::prelude::*;
 use ngsi_ld::{
-    http::{headers::Accept, operation::QueryTemporalEvolution},
-    model::{Input, Lossless, NgsiLdMediaType, Property, evolution::TemporalEntity},
+    http::{
+        headers::Accept,
+        operation::{NormalizedTemporal, QueryTemporalEvolution},
+    },
+    model::{Input, NgsiLdMediaType, Property, evolution::TemporalEntity},
     query::{builders::SelectorTypeBuilder, temporal_query},
 };
 
@@ -58,7 +61,7 @@ async fn o_tmp_qry_0025_without_local_the_walk_goes_by_cursor_over_every_entity(
         .temporal_q(&window)
         .entity_type(&selector)
         .limit(2)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let page = cursor_walk::first_page(&tenant.with_accept(Accept::new(NgsiLdMediaType::JsonLd)), &query)
         .await?

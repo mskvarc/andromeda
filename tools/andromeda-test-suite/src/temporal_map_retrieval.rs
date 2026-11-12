@@ -9,7 +9,7 @@ use ngsi_ld::{
     http::{
         ResponseHead,
         headers::NgsiLdEntityMap,
-        operation::{EntityMapRequest, RetrieveTemporalEvolution, TemporalSelection},
+        operation::{EntityMapRequest, NormalizedTemporal, RetrieveTemporalEvolution, TemporalSelection},
     },
     model::{DocumentError, EntityId, Lossless, Output, evolution::TemporalEntity},
     query::temporal_query::TemporalQuery,
@@ -57,7 +57,7 @@ pub async fn retrieve_making_map(client: &BrokerClient, id: &EntityId, query: &T
         .id(id)
         .selection(TemporalSelection::Query(query))
         .entity_map(request)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let unchecked = client.unchecked(&operation).map_err(|error| MadeMapError::Client(Box::new(error)))?;
     let response = client.send_unchecked(unchecked).await.map_err(|error| MadeMapError::Client(Box::new(error)))?;

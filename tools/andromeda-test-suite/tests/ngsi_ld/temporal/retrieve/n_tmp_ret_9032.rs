@@ -6,9 +6,9 @@ use http::{Method, StatusCode};
 use ngsi_ld::{
     http::{
         headers::Accept,
-        operation::{RetrieveTemporalEvolution, TemporalSelection},
+        operation::{NormalizedTemporal, RetrieveTemporalEvolution, TemporalSelection},
     },
-    model::{Lossless, NgsiLdMediaType, evolution::ScopeValue},
+    model::{NgsiLdMediaType, evolution::ScopeValue},
     query::temporal_query::{self, TemporalQuery},
 };
 
@@ -48,7 +48,7 @@ async fn n_tmp_ret_9032_a_removed_scope_reads_back_as_the_null_beside_its_delete
     let operation = RetrieveTemporalEvolution::builder()
         .id(&vehicle_removed_id)
         .selection(TemporalSelection::Query(&window))
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let answer = send_versioned(&client, &operation, None).await?;
     expect_that!(answer.status, eq(StatusCode::OK));

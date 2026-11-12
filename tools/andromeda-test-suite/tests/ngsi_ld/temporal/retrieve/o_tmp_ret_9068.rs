@@ -22,9 +22,9 @@ use ngsi_ld::{
     http::{
         ResponseHead,
         headers::{Accept, ContentRange, ContentRangeSize, Link, RelationType},
-        operation::{RetrieveTemporalEvolution, TemporalSelection},
+        operation::{NormalizedTemporal, RetrieveTemporalEvolution, TemporalSelection},
     },
-    model::{Lossless, NgsiLdMediaType, Output, evolution::TemporalEntity},
+    model::{NgsiLdMediaType, Output, evolution::TemporalEntity},
 };
 use std::{num::NonZeroU64, ops::RangeInclusive};
 
@@ -107,7 +107,7 @@ async fn o_tmp_ret_9068_following_next_links_walks_a_backward_last_n_serving_eve
     let operation = RetrieveTemporalEvolution::builder()
         .id(&paged_series_backward_id)
         .selection(window)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let client = broker.with_accept(Accept::new(NgsiLdMediaType::JsonLd));
     let mut answer = client.send_unchecked(client.unchecked(&operation)?).await?;

@@ -12,8 +12,11 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::{headers::Accept, operation::QueryTemporalEvolution},
-    model::{Lossless, NgsiLdMediaType, Property, Relationship, evolution::TemporalEntity},
+    http::{
+        headers::Accept,
+        operation::{NormalizedTemporal, QueryTemporalEvolution},
+    },
+    model::{NgsiLdMediaType, Property, Relationship, evolution::TemporalEntity},
     query::{EntitySplitting, Join, builders::SelectorTypeBuilder, q, temporal_query},
     registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo},
 };
@@ -101,7 +104,7 @@ async fn a_fed_tmp_7452_a_local_relationship_reaches_a_linked_entity_a_peer_hold
         .entity_type(&selector)
         .q(&linked_q)
         .split_entities(EntitySplitting::Split)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     // The temporal query writes no `join`, so the parameters follow the query the operation writes. Each vehicle nests
     // its linked parking, which no model reads, so the answer is read as received.

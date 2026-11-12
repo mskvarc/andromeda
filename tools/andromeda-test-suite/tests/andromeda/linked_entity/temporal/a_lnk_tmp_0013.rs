@@ -4,8 +4,11 @@ use andromeda_test_suite::{broker, linked_temporal_fixtures::OwnedBuilding, name
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::{headers::Accept, operation::QueryTemporalEvolution},
-    model::{ErrorType, Lossless, NgsiLdMediaType},
+    http::{
+        headers::Accept,
+        operation::{NormalizedTemporal, QueryTemporalEvolution},
+    },
+    model::{ErrorType, NgsiLdMediaType},
     query::{Join, builders::SelectorTypeBuilder, projection::Projection, temporal_query},
 };
 
@@ -31,7 +34,7 @@ async fn a_lnk_tmp_0013_a_pick_deeper_than_join_level_is_bad_request_data() -> R
         .entity_type(&selector)
         .ids(&ids)
         .pick(&pick)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let client = broker.with_accept(Accept::new(NgsiLdMediaType::Json));
     // The temporal query writes no `join`, so the parameters follow the query it writes.

@@ -21,15 +21,51 @@
 //! UUIDs, and temporal Attribute and scope instances are the lowercase
 //! `urn:ngsi-ld:attribute:instance:<uuid>` family whose shape is permanent
 //! ([`crate::instance_identity::InstanceIdentity`]).
+//!
+//! Every `urn:ngsi-ld:<Kind>:<id>` URN the broker builds, these and the tenant
+//! and context source identifiers, is built by [`ngsi_ld_urn`], and every one
+//! it reads is taken apart by its namespace and namespace-specific string.
 
-use crate::{identifier::Identifier, identifier_length::IdentifierTooLong};
+use crate::{identifier::Identifier, identifier_length::IdentifierTooLong, uri::NGSI_LD_URN_NID};
 use derive_more::{AsRef, Deref, Display};
 use iri_rs::{InvalidIri, IriBuf};
 use serde::{Deserialize, Serialize, Serializer};
 use std::str::FromStr;
 use thiserror::Error;
-use urn_rs::Urn;
+use urn_rs::{Urn, UrnBuilder};
 use uuid::Uuid;
+
+/// The URN `urn:ngsi-ld:<kind>:<local>` (Annex A.3).
+///
+/// # Errors
+///
+/// Returns the [`urn_rs::Error`] of a `kind` or `local` that a URN's
+/// namespace-specific string cannot hold as written.
+pub fn ngsi_ld_urn(kind: &str, local: &str) -> Result<Urn, urn_rs::Error> {
+    UrnBuilder::new(NGSI_LD_URN_NID, &format!("{kind}:{local}")).build()
+}
+
+/// Why `urn:ngsi-ld:<kind>:<local>` names no [`Identifier`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum NgsiLdUrnError {
+    /// The kind or the local id spells no namespace-specific string.
+    #[error("the identifier spells no URN: {0}")]
+    Urn(#[from] urn_rs::Error),
+    /// The URN is longer than an identifier may be.
+    #[error(transparent)]
+    TooLong(#[from] IdentifierTooLong),
+}
+
+/// The identifier `urn:ngsi-ld:<kind>:<local>`, held to the identifier bound.
+///
+/// # Errors
+///
+/// Returns [`NgsiLdUrnError::Urn`] for a `kind` or `local` that a URN cannot
+/// hold as written, and [`NgsiLdUrnError::TooLong`] when the URN is longer than
+/// an identifier may be.
+pub fn ngsi_ld_identifier(kind: &str, local: &str) -> Result<Identifier, NgsiLdUrnError> {
+    Ok(Identifier::try_from(ngsi_ld_urn(kind, local)?)?)
+}
 
 /// Declares one `urn:ngsi-ld:<Kind>:<id>` newtype over [`Urn`] together with its
 /// parse-error enum.
@@ -54,7 +90,7 @@ macro_rules! ngsi_ld_urn_id {
         pub enum $error {
             /// The value is not a syntactically valid URN at all.
             #[error("invalid URN: {0}")]
-            InvalidUrn(String),
+            InvalidUrn(#[source] urn_rs::Error),
             /// The URN names a different kind of resource.
             #[error("identifier must use the 'urn:ngsi-ld:{0}:' prefix", $constant)]
             WrongConstant,
@@ -72,7 +108,6 @@ macro_rules! ngsi_ld_urn_id {
         impl $name {
             /// The resource kind this identifier names.
             pub const KIND: &'static str = $constant;
-            const PREFIX: &'static str = concat!("urn:ngsi-ld:", $constant, ":");
 
             /// Borrow the identifier as the URN it wraps.
             pub const fn as_urn(&self) -> &Urn {
@@ -91,7 +126,12 @@ macro_rules! ngsi_ld_urn_id {
 
             /// The identifier of this kind whose local id is `uuid`, hyphenated.
             fn around_uuid(uuid: Uuid) -> Result<Self, $error> {
-                Self::try_from(format!("{}{}", Self::PREFIX, uuid.hyphenated()))
+                Self::around_local_id(uuid.hyphenated().encode_lower(&mut Uuid::encode_buffer()))
+            }
+
+            /// The identifier of this kind whose local id is `local`.
+            fn around_local_id(local: &str) -> Result<Self, $error> {
+                Self::try_from(ngsi_ld_urn(Self::KIND, local).map_err($error::InvalidUrn)?)
             }
         }
 
@@ -99,16 +139,15 @@ macro_rules! ngsi_ld_urn_id {
             type Error = $error;
 
             fn try_from(value: Urn) -> Result<Self, Self::Error> {
-                let raw = value.as_str();
-                IdentifierTooLong::check(raw)?;
-                if !raw.starts_with(Self::PREFIX) {
-                    return Err($error::WrongConstant);
-                }
-                let suffix = &raw[Self::PREFIX.len()..];
-                if suffix.is_empty() {
+                IdentifierTooLong::check(value.as_str())?;
+                let local = (value.nid() == NGSI_LD_URN_NID)
+                    .then(|| value.nss().strip_prefix(Self::KIND)?.strip_prefix(':'))
+                    .flatten()
+                    .ok_or($error::WrongConstant)?;
+                if local.is_empty() {
                     return Err($error::EmptyId);
                 }
-                if suffix.contains(':') {
+                if local.contains(':') {
                     return Err($error::ExtraColonInSuffix);
                 }
                 Ok(Self(value))
@@ -127,11 +166,7 @@ macro_rules! ngsi_ld_urn_id {
             type Error = $error;
 
             fn try_from(value: String) -> Result<Self, Self::Error> {
-                let urn = match value.parse::<Urn>() {
-                    Ok(value) => value,
-                    Err(error) => return Err($error::InvalidUrn(error.to_string())),
-                };
-                urn.try_into()
+                value.parse::<Urn>().map_err($error::InvalidUrn)?.try_into()
             }
         }
 
@@ -230,7 +265,7 @@ impl SubscriptionId {
 
     /// The forwarded-subscription identifier whose local id carries `uuid`.
     fn forwarded_around(uuid: Uuid) -> Result<SubscriptionId, SubscriptionIdParseError> {
-        SubscriptionId::try_from(format!("{}{FORWARDED_SUBSCRIPTION_MARKER}{}", SubscriptionId::PREFIX, uuid.hyphenated()))
+        SubscriptionId::around_local_id(&format!("{FORWARDED_SUBSCRIPTION_MARKER}{}", uuid.hyphenated()))
     }
 }
 
@@ -355,11 +390,13 @@ mod tests {
             JsonLdContextIdParseError,
             NotificationId,
             SnapshotId,
+            SnapshotIdParseError,
             SnapshotNotificationId,
             SubscriptionId,
+            ngsi_ld_urn,
         },
     };
-    use urn_rs::Urn;
+    use urn_rs::{Urn, urn};
     use uuid::{Uuid, Version};
 
     /// The UUID a minted identifier carries after its kind prefix.
@@ -611,9 +648,35 @@ mod tests {
 
     #[test]
     fn try_from_urn() {
-        let urn = "urn:ngsi-ld:AttributeList:1".parse::<Urn>().expect("valid urn");
-        let id = AttributeListId::try_from(urn).expect("valid typed id");
+        let id = AttributeListId::try_from(Urn::from(urn!("urn:ngsi-ld:AttributeList:1"))).expect("valid typed id");
         pretty_assertions::assert_eq!(id.to_string(), "urn:ngsi-ld:AttributeList:1");
+    }
+
+    #[test]
+    fn a_kind_and_a_local_id_build_the_urn_under_the_ngsi_ld_namespace() {
+        pretty_assertions::assert_eq!(ngsi_ld_urn("Snapshot", "abc"), Ok(Urn::from(urn!("urn:ngsi-ld:Snapshot:abc"))));
+        assert!(ngsi_ld_urn("Snapshot", "a b").is_err(), "a space is no namespace-specific string character");
+    }
+
+    /// The kind is the whole first segment of the namespace-specific string,
+    /// in the `ngsi-ld` namespace only.
+    #[test]
+    fn another_namespace_or_a_kind_that_only_shares_a_prefix_is_the_wrong_constant() {
+        for other in [
+            urn!("urn:example:Snapshot:abc"),
+            urn!("urn:ngsi-ld:SnapshotList:abc"),
+            urn!("urn:ngsi-ld:snapshot:abc"),
+        ] {
+            pretty_assertions::assert_eq!(SnapshotId::try_from(Urn::from(other)), Err(SnapshotIdParseError::WrongConstant));
+        }
+    }
+
+    /// RFC 8141 section 2: the r-, q- and f-components follow the
+    /// namespace-specific string, so a colon in one is no part of the local id.
+    #[test]
+    fn a_component_after_the_local_id_leaves_the_local_id_as_it_is() {
+        let id = SnapshotId::try_from(Urn::from(urn!("urn:ngsi-ld:Snapshot:abc?=at:noon"))).expect("a Snapshot identifier");
+        pretty_assertions::assert_eq!(id.as_urn().q_component(), Some("at:noon"));
     }
 
     #[test]

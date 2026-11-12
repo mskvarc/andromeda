@@ -15,9 +15,9 @@ use ngsi_ld::{
     http::{
         ResponseHead,
         headers::{Accept, Link, NgsiLdResultsCount, RelationType},
-        operation::QueryTemporalEvolution,
+        operation::{NormalizedTemporal, QueryTemporalEvolution},
     },
-    model::{Input, Lossless, NgsiLdMediaType, Property, evolution::TemporalEntity},
+    model::{Input, NgsiLdMediaType, Property, evolution::TemporalEntity},
     query::{builders::SelectorTypeBuilder, temporal_query},
 };
 
@@ -58,7 +58,7 @@ async fn o_tmp_qry_0027_a_counted_cursor_page_without_local_counts_the_whole_col
         .temporal_q(&window)
         .entity_type(&selector)
         .limit(2)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let walk = cursor_walk::first_page(&tenant.with_accept(Accept::new(NgsiLdMediaType::JsonLd)), &query).await?;
     expect_that!(walk.page.next(), some(anything()));

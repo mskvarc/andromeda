@@ -15,9 +15,9 @@ use http::StatusCode;
 use ngsi_ld::{
     http::{
         headers::Accept,
-        operation::{InstanceSelection, RetrieveTemporalEvolution, TemporalSelection},
+        operation::{InstanceSelection, NormalizedTemporal, RetrieveTemporalEvolution, TemporalSelection},
     },
-    model::{AttributeKind, AttributeName, Entity, ListRelationship, Lossless, NgsiLdMediaType},
+    model::{AttributeKind, AttributeName, Entity, ListRelationship, NgsiLdMediaType},
     query::temporal_query::{TemporalProperty, TemporalQuery},
 };
 
@@ -67,7 +67,7 @@ async fn n_tmp_ret_9007_a_deleted_list_relationship_reads_back_as_a_bare_null() 
     let operation = RetrieveTemporalEvolution::builder()
         .id(&building_object_list_deleted_id)
         .selection(TemporalSelection::Query(&window))
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let answer = send_versioned(&client, &operation, None).await?;
     expect_that!(answer.status, eq(StatusCode::OK));

@@ -30,7 +30,7 @@ static-regular-grammar = "2.0.2"
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 url = { version = "2.5.8", features = ["serde"] }
-urn-rs = { version = "0.9.2", features = ["serde"] }
+urn-rs = { version = "1.0.0", features = ["serde", "static"] }
 uuid = { version = "1.29.2", features = ["serde", "v4", "v5", "v7"] }
 xsd-rs = "0.11.0"
 

@@ -9,8 +9,7 @@ use andromeda_test_suite::{
 };
 use googletest::prelude::*;
 use ngsi_ld::{
-    http::operation::QueryTemporalEvolution,
-    model::Lossless,
+    http::operation::{NormalizedTemporal, QueryTemporalEvolution},
     query::{builders::SelectorTypeBuilder, temporal_query::TemporalQuery},
 };
 
@@ -33,7 +32,7 @@ async fn o_cmn_cnt_0010_query_temporal_entities_accepting_xml_is_406_listing_jso
             &QueryTemporalEvolution::builder()
                 .entity_type(&selection)
                 .temporal_q(&after)
-                .format(Lossless::Normalized)
+                .format(NormalizedTemporal)
                 .build(),
         )?,
         "application/xml",

@@ -7,9 +7,9 @@ use ngsi_ld::{
     http::{
         ContextDelivery,
         headers::Accept,
-        operation::{AddTemporalAttributes, CreateOrUpdateTemporalEvolution, QueryMethod, QueryTemporalEvolution},
+        operation::{AddTemporalAttributes, CreateOrUpdateTemporalEvolution, NormalizedTemporal, QueryMethod, QueryTemporalEvolution},
     },
-    model::{Context, ContextEntry, InlineContext, Lossless, NgsiLdMediaType, Property, evolution::TemporalEntity},
+    model::{Context, ContextEntry, InlineContext, NgsiLdMediaType, Property, evolution::TemporalEntity},
     query::{builders::SelectorTypeBuilder, temporal_query},
 };
 use serde_json::{Value, json};
@@ -66,7 +66,7 @@ async fn o_ctx_exp_2003_a_relative_context_reference_in_a_temporal_body_resolves
         .temporal_q(&temporal_q)
         .entity_type(&selector)
         .method(QueryMethod::Post)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let request_3 = with_context_text(body_context.with_accept(Accept::new(NgsiLdMediaType::Json)).unchecked(&query)?, &reference)?;
     let queried = body_context.with_accept(Accept::new(NgsiLdMediaType::Json)).send_unchecked(request_3).await;

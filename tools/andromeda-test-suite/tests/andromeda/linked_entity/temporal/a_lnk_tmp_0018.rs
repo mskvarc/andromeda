@@ -10,8 +10,8 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::operation::QueryTemporalEvolution,
-    model::{Entity, Lossless, Property, Relationship, evolution::TemporalEntity},
+    http::operation::{NormalizedTemporal, QueryTemporalEvolution},
+    model::{Entity, Property, Relationship, evolution::TemporalEntity},
     query::{Join, builders::SelectorTypeBuilder, q, temporal_query},
 };
 
@@ -70,7 +70,7 @@ async fn a_lnk_tmp_0018_a_temporal_q_hop_reads_the_linked_entity_over_the_window
             .temporal_q(&window)
             .entity_type(&selector)
             .q(&hop)
-            .format(Lossless::Normalized)
+            .format(NormalizedTemporal)
             .build();
         // The temporal query writes no `join`, so the parameters follow the query it writes. A machine nests its linked
         // part, which no model reads, so the answer is read as received.

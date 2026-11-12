@@ -12,8 +12,11 @@ use crate::{
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::{headers::Accept, operation::QueryTemporalEvolution},
-    model::{EntityId, Input, Lossless, NgsiLdMediaType, Property, Relationship, evolution::TemporalEntity},
+    http::{
+        headers::Accept,
+        operation::{NormalizedTemporal, QueryTemporalEvolution},
+    },
+    model::{EntityId, Input, NgsiLdMediaType, Property, Relationship, evolution::TemporalEntity},
     query::{EntitySplitting, Join, builders::SelectorTypeBuilder, q, temporal_query},
     registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationId, RegistrationInfo},
 };
@@ -127,7 +130,7 @@ pub async fn expect_hop_selects(broker_e: &BrokerClient, namespace: &Namespace, 
         .entity_type(&selector)
         .q(&linked_q)
         .split_entities(EntitySplitting::Split)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     // The temporal query writes no `join`, so the parameters follow the query the operation writes.
     let request = with_join(broker_e.with_accept(Accept::new(NgsiLdMediaType::Json)).unchecked(&query)?, Join::Inline, 1)?;

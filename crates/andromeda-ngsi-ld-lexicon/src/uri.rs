@@ -209,7 +209,7 @@ mod tests {
     use iri_rs::IriBuf;
     use std::hash::{DefaultHasher, Hash, Hasher};
     use url::Url;
-    use urn_rs::Urn;
+    use urn_rs::{Urn, urn};
 
     /// A string of exactly `length` octets that starts with `prefix`.
     fn of_length(prefix: &str, length: usize) -> String {
@@ -242,8 +242,7 @@ mod tests {
 
     #[test]
     fn uri_from_urn() {
-        let urn: Urn = "urn:ngsi-ld:Building:001".parse().unwrap();
-        let uri = Uri::from(urn);
+        let uri = Uri::from(Urn::from(urn!("urn:ngsi-ld:Building:001")));
         assert!(matches!(uri.view(), UriView::Urn(_)));
         assert!(uri.as_urn().is_some());
     }

@@ -13,10 +13,10 @@ use serde::{Deserialize, Serialize};
 pub struct IdentityConfig {
     /// The URI identifying this Context Source. Left out, it is
     /// `urn:ngsi-ld:ContextSourceIdentity:` followed by the alias in effect,
-    /// every character but letters, digits and `-._!$'*+` percent-encoded.
+    /// every character but letters, digits and `-._~!$&'*+` percent-encoded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "The `id` the broker reports at `/ngsi-ld/v1/info/sourceIdentity`. Must be an IRI. Left out, it is `urn:ngsi-ld:ContextSourceIdentity:` followed by the alias in effect, as `federation.identity.source_alias` describes, with every character of the alias other than letters, digits and `-._!$'*+` percent-encoded, so the alias `broker~a` gives `urn:ngsi-ld:ContextSourceIdentity:broker%7Ea`."
+        description = "The `id` the broker reports at `/ngsi-ld/v1/info/sourceIdentity`. Must be an IRI. Left out, it is `urn:ngsi-ld:ContextSourceIdentity:` followed by the alias in effect, as `federation.identity.source_alias` describes, with every character of the alias other than letters, digits and `-._~!$&'*+` percent-encoded, so the alias `broker|a` gives `urn:ngsi-ld:ContextSourceIdentity:broker%7Ca`."
     )]
     pub source_id: Option<SourceIdentifier>,
     /// The pseudonym appended to forwarded requests' `Via` fields. Left out,

@@ -15,9 +15,9 @@ use ngsi_ld::{
     http::{
         UncheckedRequest,
         headers::Accept,
-        operation::{QueryMethod, QueryTemporalEvolution},
+        operation::{NormalizedTemporal, QueryMethod, QueryTemporalEvolution},
     },
-    model::{ErrorType, Lossless, NgsiLdMediaType, Property, evolution::TemporalEntity},
+    model::{ErrorType, NgsiLdMediaType, Property, evolution::TemporalEntity},
     query::{builders::SelectorTypeBuilder, temporal_query::TemporalQuery},
 };
 
@@ -54,7 +54,7 @@ async fn n_tmp_qry_9378_post_a_wildcard_selector_beside_another_refuses_local_fa
         .entity_type(&selector)
         .temporal_q(&before)
         .method(QueryMethod::Post)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let json = broker.with_accept(Accept::new(NgsiLdMediaType::Json));
     let body = format!(

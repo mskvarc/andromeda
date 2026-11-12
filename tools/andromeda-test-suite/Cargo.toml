@@ -28,7 +28,7 @@ http-body-util = "0.1.5"
 indexmap = { version = "2.14.2", features = ["serde"] }
 iri-rs = { version = "4.1.0", features = ["static", "serde"] }
 mediatype = "0.23.0"
-ngsi-ld = { version = "2.0.0", default-features = false, features = ["chrono", "reqwest", "reqwest-http2", "reqwest-rustls"] }
+ngsi-ld = { version = "2.1.0", default-features = false, features = ["chrono", "reqwest", "reqwest-http2", "reqwest-rustls"] }
 percent-encoding = "2.3.2"
 prometheus-parse = "0.2.5"
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }

@@ -15,9 +15,9 @@ use http::StatusCode;
 use ngsi_ld::{
     http::{
         headers::Accept,
-        operation::{EntityMapRequest, QueryTemporalEvolution},
+        operation::{EntityMapRequest, NormalizedTemporal, QueryTemporalEvolution},
     },
-    model::{Lossless, Property, evolution::TemporalEntity},
+    model::{Property, evolution::TemporalEntity},
     query::{
         builders::SelectorTypeBuilder,
         temporal_query::{self, TemporalQuery},
@@ -60,7 +60,7 @@ async fn n_map_qte_0004_a_temporal_query_under_an_entity_map_echoes_it() -> Resu
         .entity_type(&selector)
         .temporal_q(&before)
         .entity_map(&entity_map_request_2)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let client = broker.with_accept(Accept::any());
     // The operation writes no query without its temporal query, so it is sent to the path as written.

@@ -9,8 +9,7 @@ use andromeda_test_suite::{
 };
 use googletest::prelude::*;
 use ngsi_ld::{
-    http::operation::{QueryRegistrations, QueryTemporalEvolution, RetrieveEntityTypes, RetrieveSubscription},
-    model::Lossless,
+    http::operation::{NormalizedTemporal, QueryRegistrations, QueryTemporalEvolution, RetrieveEntityTypes, RetrieveSubscription},
     query::{builders::SelectorTypeBuilder, temporal_query::TemporalQuery, type_selection},
     subscription::EntitySubscription,
 };
@@ -39,7 +38,7 @@ async fn o_cmn_cnt_9006_a_resource_without_a_geojson_form_refuses_it_with_its_ow
             &QueryTemporalEvolution::builder()
                 .entity_type(&vehicle_type)
                 .temporal_q(&after)
-                .format(Lossless::Normalized)
+                .format(NormalizedTemporal)
                 .build(),
         )?,
     ];

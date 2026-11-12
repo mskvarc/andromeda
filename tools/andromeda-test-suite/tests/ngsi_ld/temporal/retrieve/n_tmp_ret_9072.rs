@@ -16,9 +16,9 @@ use ngsi_ld::{
     http::{
         ResponseHead,
         headers::{Accept, NgsiLdEntityMap},
-        operation::{EntityMapRequest, RetrieveTemporalEvolution, TemporalSelection},
+        operation::{EntityMapRequest, NormalizedTemporal, RetrieveTemporalEvolution, TemporalSelection},
     },
-    model::{ErrorType, Lossless, NgsiLdMediaType, Property, evolution::TemporalEntity},
+    model::{ErrorType, NgsiLdMediaType, Property, evolution::TemporalEntity},
     query::projection::Projection,
 };
 
@@ -75,7 +75,7 @@ async fn n_tmp_ret_9072_retrieve_temporal_evolution_refuses_the_query_only_param
             aggregation_period: None,
         })
         .entity_map(&map_request)
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .build();
     let request = client.unchecked(&operation)?;
     let created = client.send_unchecked(request).await?;

@@ -1,27 +1,31 @@
 //! The tenant identifier the broker keys every request by (ETSI GS CIM 009 clause 6.3.14).
 
-use crate::identifier_length::IDENTIFIER_BYTE_LIMIT;
+use crate::{identifier_length::IDENTIFIER_BYTE_LIMIT, uri::NGSI_LD_URN_NID};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use static_regular_grammar::RegularGrammar;
 use std::str::FromStr;
 
-/// The prefix of the identifier a tenant resource is exposed under,
-/// `urn:ngsi-ld:Tenant:{tenantName}`: the Annex A.3 `urn:ngsi-ld:` prefix and the
-/// `Tenant` kind.
-pub const TENANT_ID_PREFIX: &str = concat!("urn:ngsi-ld:", "Tenant", ":");
+/// The kind of the identifier a tenant resource is exposed under,
+/// `urn:ngsi-ld:Tenant:{tenantName}` (Annex A.3).
+pub const TENANT_KIND: &str = "Tenant";
+
+/// The octets `urn:ngsi-ld:Tenant:` takes ahead of the name in a tenant's
+/// identifier: the `urn` scheme, the namespace and the kind, each followed by
+/// its `:`.
+const TENANT_ID_PREFIX_LEN: usize = "urn".len() + NGSI_LD_URN_NID.len() + TENANT_KIND.len() + 3;
 
 /// The greatest length, in UTF-8 octets, a tenant name may have.
 ///
 /// Clause 6.3.14 types the tenant as a String and sets no length, so this is
 /// Andromeda's own bound. The registry keeps every name under a unique B-tree
 /// index, which is the storage reason [`IDENTIFIER_BYTE_LIMIT`] exists for, and
-/// a tenant resource is exposed as [`TENANT_ID_PREFIX`] followed by its name, an
-/// identifier held to that same limit. The bound is the identifier limit less
-/// the prefix, so the identifier of every admissible tenant fits it. The tenant's
-/// database name sets no bound: it is derived with a hash suffix that always
-/// fits PostgreSQL's identifier limit.
-pub const TENANT_NAME_BYTE_LIMIT: usize = IDENTIFIER_BYTE_LIMIT - TENANT_ID_PREFIX.len();
+/// a tenant resource is exposed as `urn:ngsi-ld:Tenant:` followed by its name,
+/// an identifier held to that same limit. The bound is the identifier limit
+/// less that prefix, so the identifier of every admissible tenant fits it. The
+/// tenant's database name sets no bound: it is derived with a hash suffix that
+/// always fits PostgreSQL's identifier limit.
+pub const TENANT_NAME_BYTE_LIMIT: usize = IDENTIFIER_BYTE_LIMIT - TENANT_ID_PREFIX_LEN;
 
 /// Grammar-validated tenant label (FIWARE convention).
 ///
@@ -103,7 +107,8 @@ impl From<TenantName> for String {
 mod tests {
     use crate::{
         identifier_length::IDENTIFIER_BYTE_LIMIT,
-        tenant::{InvalidTenantName, TENANT_ID_PREFIX, TENANT_NAME_BYTE_LIMIT, TenantName},
+        ngsi_ld_urn::ngsi_ld_identifier,
+        tenant::{InvalidTenantName, TENANT_KIND, TENANT_NAME_BYTE_LIMIT, TenantName},
     };
 
     #[test]
@@ -155,7 +160,8 @@ mod tests {
     #[test]
     fn the_tenant_name_limit_is_the_identifier_limit_less_the_tenant_id_prefix() {
         pretty_assertions::assert_eq!(TENANT_NAME_BYTE_LIMIT, 1005);
-        pretty_assertions::assert_eq!(TENANT_ID_PREFIX.len() + TENANT_NAME_BYTE_LIMIT, IDENTIFIER_BYTE_LIMIT);
+        let longest = ngsi_ld_identifier(TENANT_KIND, &"t".repeat(TENANT_NAME_BYTE_LIMIT)).expect("the longest tenant identifier fits");
+        pretty_assertions::assert_eq!(longest.as_str().len(), IDENTIFIER_BYTE_LIMIT);
     }
 
     #[test]

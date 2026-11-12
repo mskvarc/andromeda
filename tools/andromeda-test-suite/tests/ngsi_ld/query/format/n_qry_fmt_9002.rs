@@ -6,7 +6,16 @@ use http::StatusCode;
 use ngsi_ld::{
     http::{
         headers::Accept,
-        operation::{RepresentationSpelling, RetrieveEntity, RetrieveTemporalEvolution, Simplified, SimplifiedTemporal, SystemAttributes, TemporalSelection},
+        operation::{
+            NormalizedTemporal,
+            RepresentationSpelling,
+            RetrieveEntity,
+            RetrieveTemporalEvolution,
+            Simplified,
+            SimplifiedTemporal,
+            SystemAttributes,
+            TemporalSelection,
+        },
     },
     model::{Entity, Lossless, NgsiLdMediaType, Property},
     query::temporal_query::TemporalQuery,
@@ -80,7 +89,7 @@ async fn n_qry_fmt_9002_every_representation_the_tables_define_is_accepted() -> 
     let retrieve = RetrieveTemporalEvolution::builder()
         .id(&vehicle_id)
         .selection(TemporalSelection::Query(&after))
-        .format(Lossless::Normalized)
+        .format(NormalizedTemporal)
         .system_attributes(SystemAttributes::Include)
         .build();
     requests.push(json_ld.unchecked(&retrieve)?);
