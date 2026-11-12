@@ -8,6 +8,9 @@
 //! intact. Each entity is read under the context it names (clause 5.5.4:
 //! "according to the @context"), so every distinct context is admitted once,
 //! and the entities are decoded through its aliases, their `id` included.
+//! The admissions share one batch scope, so a document that cannot be
+//! retrieved is requested once however many distinct contexts name it, and
+//! every entity naming one of them is answered with the same failure.
 
 use crate::{
     compact_screening::screen_compact_entity,
@@ -28,6 +31,7 @@ use andromeda_http_extraction::{
 use andromeda_http_response::{batch_projection::batch_entity_error, problem_response::ProblemResponse};
 use andromeda_jsonld::{
     batch_contexts::{AdmittedBatchContext, BatchContext, BatchContextId, EntityContextAdmission},
+    batch_failure_scope::run_in_batch_scope,
     context_spec::ContextSpec,
     engine::processor::JsonLdEngine,
     error::JsonLdError,
@@ -98,13 +102,13 @@ pub(crate) async fn admitted_batch_entities<W: BatchWriteKind>(
         Some(shared) => Some(shared.admit_for_request(engine).await.with_entity_instance(uri)?),
         None => None,
     };
-    let submitted = screened_batch_entities(
+    let submitted = run_in_batch_scope(screened_batch_entities(
         async |context: &BatchContext| context.admit(engine).await.map_err(EntityError::from),
         shared,
         items,
         batch.blocking_decode(),
         &mut refused,
-    )
+    ))
     .await
     .with_entity_instance(uri)?;
     let (admitted, placements) = service.admit_batch_write(kind, submitted).await;
