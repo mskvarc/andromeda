@@ -25,7 +25,13 @@ use crate::{
     context_spec::ContextSpec,
     core_term_aliases::core_term_aliases,
     document_context::{ReferenceReading, resolved_context},
-    engine::{context_syntax::context_syntax, processing_warning::LoggedWarnings, processor::JsonLdEngine, processor_text::ProcessorTextError},
+    engine::{
+        context_syntax::context_syntax,
+        expansion_context_id::ExpansionContextId,
+        processing_warning::LoggedWarnings,
+        processor::JsonLdEngine,
+        processor_text::ProcessorTextError,
+    },
     error::JsonLdError,
     loader::{error::LoaderError, http::HttpContextLoader},
 };
@@ -65,6 +71,9 @@ static EMBEDDED_CONTEXTS: LazyLock<Cache<Arc<str>, Arc<ExpansionContext>>> = Laz
 /// The active context one request is expanded under.
 #[derive(derive_more::Debug)]
 pub struct ExpansionContext {
+    /// This processing of the `@context`, distinct from every other one, so
+    /// what was decided against it can be kept under it.
+    id: ExpansionContextId,
     /// The active context the request's `@context` processed into.
     #[debug(skip)]
     active: ActiveContext<IriBuf, BlankIdBuf>,
@@ -79,6 +88,15 @@ pub struct ExpansionContext {
 }
 
 impl ExpansionContext {
+    /// The identity of this processed context.
+    ///
+    /// Two operations see the same identity only while the documents the
+    /// context was processed from are still the ones the loader resolves.
+    #[must_use]
+    pub const fn id(&self) -> ExpansionContextId {
+        self.id
+    }
+
     /// The active context every term of the request is decided against.
     #[must_use]
     pub const fn active(&self) -> &ActiveContext<IriBuf, BlankIdBuf> {
@@ -172,6 +190,7 @@ impl ExpansionContext {
         let property_scoped = property_scoped_contexts(&active, loader).await;
         let terms = Arc::new(ContextTerms::new(core_term_aliases(&active), container_terms(&active)));
         Ok(ExpansionContext {
+            id: ExpansionContextId::fresh(),
             active,
             property_scoped,
             terms,

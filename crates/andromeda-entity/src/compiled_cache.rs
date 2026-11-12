@@ -3,14 +3,21 @@
 //! Entity-query compilation expands terms through the JSON-LD engine and
 //! parses `q`, `type`, `geo`, and projection clauses into a compiled query.
 //! For repeated queries (dashboards, polling clients) these results can be
-//! cached behind a capacity-limited, time-limited cache keyed on the context
-//! fingerprint and every parameter that can influence the compiled output.
+//! cached behind a capacity-limited, time-limited cache keyed on the processed
+//! `@context` the terms were expanded against and every parameter that can
+//! influence the compiled output.
+//!
+//! The processed context stands for the documents the request's `@context`
+//! resolved to: the engine processes it again, under a new identity, once one
+//! of them is no longer the document the loader resolves (a reload or deletion
+//! under clause 5.13.5, a download whose lifetime lapsed). A compiled query is
+//! therefore reused only while those documents are unchanged.
 //!
 //! Each cache instance is owned by an entity query service, which is already
 //! scoped to a single tenant, so tenant identity is implicit in the cache owner
 //! and does not need to be part of the key.
 
-use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext};
+use andromeda_jsonld::engine::expansion_context_id::ExpansionContextId;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
@@ -27,13 +34,7 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::{query::entity::parameters::EntityQueryParameters, representation_parameter::WrittenValue};
 use moka::future::Cache;
-use std::{
-    fmt::Write,
-    future::Future,
-    hash::{DefaultHasher, Hash, Hasher},
-    sync::Arc,
-    time::Duration,
-};
+use std::{fmt::Write, future::Future, sync::Arc, time::Duration};
 
 /// Default capacity for the compiled-query cache.
 const DEFAULT_CAPACITY: u64 = 1024;
@@ -53,8 +54,8 @@ const DEFAULT_TTL: Duration = Duration::from_secs(300);
 /// impersonate the boundary between two others.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CompiledQueryKey {
-    /// Fingerprint of the `@context` every term is expanded against.
-    context_digest: u64,
+    /// The processed `@context` every term is expanded against.
+    context: ExpansionContextId,
     /// Canonical rendering of every parameter that influences compilation.
     parameters: Box<str>,
     /// The level the compiled `q`'s target languages were admitted and are
@@ -66,9 +67,11 @@ impl CompiledQueryKey {
     /// Construct a cache key from the inputs to
     /// [`EntityQueryService::compile_query`](crate::query::EntityQueryService::compile_query).
     ///
-    /// The page the query answers with is not part of the key: it never takes
-    /// part in compilation, so every page of one query shares one entry.
-    pub fn from_params(params: &EntityQueryParameters, context: &ContextSpec, language_targeting: LanguageTargeting) -> CompiledQueryKey {
+    /// `context` is the processed `@context` the query's terms are expanded
+    /// against. The page the query answers with is not part of the key: it
+    /// never takes part in compilation, so every page of one query shares one
+    /// entry.
+    pub fn from_params(params: &EntityQueryParameters, context: ExpansionContextId, language_targeting: LanguageTargeting) -> CompiledQueryKey {
         let mut parameters = String::new();
         let id_pattern = params.id_pattern.as_ref().map(ToString::to_string);
         let q = params.q.as_ref().map(ToString::to_string);
@@ -115,7 +118,7 @@ impl CompiledQueryKey {
         }
 
         CompiledQueryKey {
-            context_digest: context_digest(context),
+            context,
             parameters: parameters.into_boxed_str(),
             language_targeting,
         }
@@ -225,34 +228,14 @@ fn push_field(buffer: &mut String, value: Option<&str>) {
     }
 }
 
-/// Hash the JSON-LD context configuration into a 64-bit fingerprint.
-///
-/// Covers every dimension that affects term expansion: where the request named
-/// its context and what it named there, and the core-context policy.
-fn context_digest(context: &ContextSpec) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    match context.request_context() {
-        RequestContext::Default => 0_u8.hash(&mut hasher),
-        RequestContext::Link(url) => {
-            1_u8.hash(&mut hasher);
-            url.hash(&mut hasher);
-        }
-        RequestContext::Body(body) => {
-            2_u8.hash(&mut hasher);
-            body.to_string().hash(&mut hasher);
-        }
-    }
-    context.core_policy().hash(&mut hasher);
-    hasher.finish()
-}
-
 /// Thread-safe cache of compiled entity queries.
 ///
 /// Cloning is cheap: the underlying moka cache is `Arc`-shared internally.
 #[derive(Debug, Clone)]
 pub struct CompiledQueryCache {
-    /// Compiled queries keyed on parameters, context fingerprint and language
-    /// targeting, bounded by capacity and TTL.
+    /// Compiled queries keyed on parameters, processed context and language
+    /// targeting, bounded by capacity and TTL. An entry whose processed context
+    /// was replaced is never looked up again and ages out.
     inner: Cache<CompiledQueryKey, Arc<CompiledEntityQuery>>,
 }
 
@@ -300,12 +283,14 @@ impl Default for CompiledQueryCache {
 
 #[cfg(test)]
 mod tests {
-    use crate::compiled_cache::{CompiledQueryKey, context_digest};
+    use crate::compiled_cache::CompiledQueryKey;
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_jsonld::{
+        context_spec::ContextSpec,
+        engine::{expansion_context_id::ExpansionContextId, processor::JsonLdEngine},
+    };
     use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
     use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
-    use iri_rs::IriBuf;
     use pretty_assertions::{assert_eq, assert_ne};
     use serde_json::json;
 
@@ -313,36 +298,48 @@ mod tests {
         serde_urlencoded::from_str(query).expect("valid query string")
     }
 
-    fn key(query: &str) -> CompiledQueryKey {
-        CompiledQueryKey::from_params(&params(query), &ContextSpec::default(), LanguageTargeting::Specification)
+    /// The identity `context` processes to on an engine that fetches nothing.
+    async fn processed(context: &ContextSpec) -> ExpansionContextId {
+        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
+        let prepared = engine.prepare_term_context(context);
+        prepared.expansion(&engine).await.expect("the context processes").id()
     }
 
-    #[test]
-    fn identical_parameters_produce_one_key() {
-        assert_eq!(key("q=speed>50"), key("q=speed>50"));
+    /// The key of `query` under the core context.
+    async fn key(query: &str) -> CompiledQueryKey {
+        CompiledQueryKey::from_params(&params(query), processed(&ContextSpec::none()).await, LanguageTargeting::Specification)
+    }
+
+    #[tokio::test]
+    async fn identical_parameters_produce_one_key() {
+        assert_eq!(key("q=speed>50").await, key("q=speed>50").await);
     }
 
     /// One `q` compiled at two `q_target_languages` levels may select
     /// different languageMap keys, so the two are two compilations.
-    #[test]
-    fn the_target_language_level_is_part_of_the_key() {
-        let filtered = CompiledQueryKey::from_params(&params("q=name[en]==\"Lift\""), &ContextSpec::default(), LanguageTargeting::LanguageRanges);
-        assert_ne!(key("q=name[en]==\"Lift\""), filtered);
+    #[tokio::test]
+    async fn the_target_language_level_is_part_of_the_key() {
+        let filtered = CompiledQueryKey::from_params(
+            &params("q=name[en]==\"Lift\""),
+            processed(&ContextSpec::none()).await,
+            LanguageTargeting::LanguageRanges,
+        );
+        assert_ne!(key("q=name[en]==\"Lift\"").await, filtered);
     }
 
     /// The page never takes part in compilation, so two pages of one query
     /// share one compilation.
-    #[test]
-    fn two_pages_of_one_query_share_one_compilation() {
-        assert_eq!(key("q=speed>50&limit=10"), key("q=speed>50&limit=20&offset=40"));
-        assert_eq!(key("q=speed>50"), key("q=speed>50&cursor="));
+    #[tokio::test]
+    async fn two_pages_of_one_query_share_one_compilation() {
+        assert_eq!(key("q=speed>50&limit=10").await, key("q=speed>50&limit=20&offset=40").await);
+        assert_eq!(key("q=speed>50").await, key("q=speed>50&cursor=").await);
     }
 
     /// The rendering is length-prefixed precisely so adjacent parameter values
     /// cannot impersonate a different parameter boundary.
-    #[test]
-    fn a_value_containing_the_separator_cannot_impersonate_another_parameter() {
-        assert_ne!(key("attrs=ab&q=c"), key("attrs=a&q=bc"));
+    #[tokio::test]
+    async fn a_value_containing_the_separator_cannot_impersonate_another_parameter() {
+        assert_ne!(key("attrs=ab&q=c").await, key("attrs=a&q=bc").await);
     }
 
     #[test]
@@ -352,67 +349,32 @@ mod tests {
 
     /// Clause 4.9: a bare `time` and a quoted `quotedStr` in the same form are
     /// different operands, so they compile apart.
-    #[test]
-    fn a_bare_time_and_a_quoted_time_form_string_produce_different_keys() {
-        assert_ne!(key("q=opens%3D%3D09:30:00Z"), key("q=opens%3D%3D%2209:30:00Z%22"));
+    #[tokio::test]
+    async fn a_bare_time_and_a_quoted_time_form_string_produce_different_keys() {
+        assert_ne!(key("q=opens%3D%3D09:30:00Z").await, key("q=opens%3D%3D%2209:30:00Z%22").await);
     }
 
-    #[test]
-    fn different_parameters_produce_different_keys() {
-        assert_ne!(key("q=speed>50"), key("q=speed>10"));
+    #[tokio::test]
+    async fn different_parameters_produce_different_keys() {
+        assert_ne!(key("q=speed>50").await, key("q=speed>10").await);
     }
 
-    #[test]
-    fn typed_identifier_and_dataset_values_are_part_of_the_key() {
-        assert_ne!(key("id=urn%3Angsi-ld%3AEntity%3Aa"), key("id=urn%3Angsi-ld%3AEntity%3Ab"));
+    #[tokio::test]
+    async fn typed_identifier_and_dataset_values_are_part_of_the_key() {
+        assert_ne!(key("id=urn%3Angsi-ld%3AEntity%3Aa").await, key("id=urn%3Angsi-ld%3AEntity%3Ab").await);
         assert_ne!(
-            key("type=Vehicle&datasetId=urn%3Angsi-ld%3ADataset%3Aa"),
-            key("type=Vehicle&datasetId=urn%3Angsi-ld%3ADataset%3Ab")
+            key("type=Vehicle&datasetId=urn%3Angsi-ld%3ADataset%3Aa").await,
+            key("type=Vehicle&datasetId=urn%3Angsi-ld%3ADataset%3Ab").await
         );
     }
 
-    fn context_iri(url: &str) -> IriBuf {
-        IriBuf::new(url.to_owned()).expect("a valid context IRI")
-    }
+    /// One query under two processed contexts may expand its terms to
+    /// different IRIs, so the two are two compilations.
+    #[tokio::test]
+    async fn the_processed_context_is_part_of_the_key() {
+        let inline = ContextSpec::from_body(JsonLiteral::admit(&json!({ "speed": "https://example.com/speed" }).to_string()).expect("an admissible literal"));
+        let under_inline = CompiledQueryKey::from_params(&params("q=speed>50"), processed(&inline).await, LanguageTargeting::Specification);
 
-    /// The same context named by no carrier, by a `Link` header and by the
-    /// body is three different requests (clause 6.3.5), so each compiles to its
-    /// own entry.
-    #[test]
-    fn where_the_request_named_its_context_is_part_of_the_digest() {
-        let url = "https://example.com/context.jsonld";
-        let default = context_digest(&ContextSpec::none());
-        let link = context_digest(&ContextSpec::from_link(context_iri(url)));
-        let body = context_digest(&ContextSpec::from_body(
-            JsonLiteral::admit(&json!(url).to_string()).expect("an admissible literal"),
-        ));
-
-        assert_ne!(default, link);
-        assert_ne!(default, body);
-        assert_ne!(link, body);
-    }
-
-    /// JSON-LD processes an `@context` array in order, repeats included, so
-    /// `[A, B, A]` leaves A's definitions in force where `[A, B]` leaves B's.
-    #[test]
-    fn a_repeated_context_is_part_of_the_digest() {
-        let repeated = ContextSpec::from_body(
-            JsonLiteral::admit(&json!(["https://example.com/a.jsonld", "https://example.com/b.jsonld", "https://example.com/a.jsonld"]).to_string())
-                .expect("an admissible literal"),
-        );
-        let once = ContextSpec::from_body(
-            JsonLiteral::admit(&json!(["https://example.com/a.jsonld", "https://example.com/b.jsonld"]).to_string()).expect("an admissible literal"),
-        );
-
-        assert_ne!(context_digest(&repeated), context_digest(&once));
-    }
-
-    #[test]
-    fn equal_contexts_have_equal_digests() {
-        let first = ContextSpec::from_link(context_iri("https://example.com/context.jsonld"));
-        let second = ContextSpec::from_link(context_iri("https://example.com/context.jsonld"));
-
-        assert_eq!(context_digest(&first), context_digest(&second));
-        assert_eq!(context_digest(&ContextSpec::none()), context_digest(&ContextSpec::none()));
+        assert_ne!(key("q=speed>50").await, under_inline);
     }
 }
