@@ -131,13 +131,23 @@ pub enum PostgresType {
     /// `uuid[]`.
     #[iden = "uuid[]"]
     UuidArray,
+    /// `sub_attribute`: one sub-attribute of an attribute instance.
+    #[iden = "sub_attribute"]
+    SubAttribute,
     /// `sub_attribute_tree[]`: the sub-attribute elements of many attribute
     /// instances, one composite per instance.
     #[iden = "sub_attribute_tree[]"]
     SubAttributeTreeArray,
+    /// `attribute_instance_record`: one top-level attribute instance of an
+    /// Entity's state.
+    #[iden = "attribute_instance_record"]
+    AttributeInstanceRecord,
     /// `entity_state_record`: one Entity's state beside its identifier.
     #[iden = "entity_state_record"]
     EntityStateRecord,
+    /// `temporal_entry`: one entry of a temporal append intent.
+    #[iden = "temporal_entry"]
+    TemporalEntry,
     /// `temporal_intent[]`: the temporal append intents of one commit.
     #[iden = "temporal_intent[]"]
     TemporalIntentArray,
@@ -196,8 +206,11 @@ mod tests {
 
     #[test]
     fn composite_type_names_render_as_the_migrations_declare_them() {
+        assert_eq!(PostgresType::SubAttribute.to_string(), "sub_attribute");
         assert_eq!(PostgresType::SubAttributeTreeArray.to_string(), "sub_attribute_tree[]");
+        assert_eq!(PostgresType::AttributeInstanceRecord.to_string(), "attribute_instance_record");
         assert_eq!(PostgresType::EntityStateRecord.to_string(), "entity_state_record");
+        assert_eq!(PostgresType::TemporalEntry.to_string(), "temporal_entry");
         assert_eq!(PostgresType::TemporalIntentArray.to_string(), "temporal_intent[]");
         assert_eq!(PostgresType::PendingChangeEventArray.to_string(), "pending_change_event[]");
     }

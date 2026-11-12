@@ -1,0 +1,32 @@
+[package]
+name = "andromeda-upgrade-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+description = "Upgrade rehearsals: databases holding the data a released version stored, brought to the current schema on a PostgreSQL server with TimescaleDB"
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-postgresql-context-store.workspace = true
+andromeda-postgresql-pool.workspace = true
+andromeda-retry = { workspace = true, features = ["tokio"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["postgres", "runtime-tokio"] }
+thiserror = "2.0.21"
+url = "2.5.8"
+uuid = { version = "1.29.2", features = ["v4"] }
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true
+andromeda-postgresql-seaquery.workspace = true
+pretty_assertions = "1.4.1"
+sea-query = { version = "1.0.2", default-features = false, features = ["backend-postgres", "thread-safe"] }
+serde_json = "1.0.154"
+sqlx = { version = "0.9.0", default-features = false, features = ["json"] }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread"] }

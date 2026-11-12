@@ -198,7 +198,8 @@ create function sealed_entity_id (seals jsonb)
 
 -- The type names `entityTypeSealed` names in the seals of an instance, each
 -- once in written order, NULL unless it references at least one and only
--- URIs that are entity type names other than the NGSI-LD Null.
+-- URIs that are entity type names other than the NGSI-LD Null. A value that
+-- is not a reference counts against the seal.
 create function sealed_entity_type_names (seals jsonb)
     returns text[]
     language sql
@@ -206,9 +207,9 @@ create function sealed_entity_type_names (seals jsonb)
     parallel safe
     return (
         select
-            case when bool_and(type_name <> 'urn:ngsi-ld:null'
+            case when bool_and(coalesce(type_name <> 'urn:ngsi-ld:null'
                 and octet_length(type_name) < 1024
-                and admits_uri(type_name)) then
+                and admits_uri(type_name), false)) then
                 array_agg(type_name order by first_position)
             end
         from (

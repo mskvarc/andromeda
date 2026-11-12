@@ -2422,6 +2422,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-upgrade-tests"
+version = "1.0.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-postgresql-context-store",
+ "andromeda-postgresql-pool",
+ "andromeda-postgresql-seaquery",
+ "andromeda-retry",
+ "pretty_assertions",
+ "sea-query",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.21",
+ "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
