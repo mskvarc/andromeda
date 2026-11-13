@@ -24,13 +24,13 @@ use thiserror::Error;
 /// in.
 pub const PAGE_QUERY_PARAMETER: &str = "pageQuery";
 
-/// How many leading bytes of the SHA-256 digest a [`PageQuery`] keeps: enough
+/// How many leading bytes of the SHA-256 digest a [`QueryDigest`] keeps: enough
 /// that two different queries never meet by accident, short enough for a URL.
-pub const PAGE_QUERY_DIGEST_BYTES: usize = 16;
+pub const QUERY_DIGEST_BYTES: usize = 16;
 
 /// The digest of the parameters that decide which elements a walk passes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PageQuery([u8; PAGE_QUERY_DIGEST_BYTES]);
+pub struct QueryDigest([u8; QUERY_DIGEST_BYTES]);
 
 /// What a query parameter decides about a paged walk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,7 +49,7 @@ enum ParameterRole {
     Selection,
 }
 
-impl PageQuery {
+impl QueryDigest {
     /// The digest of the selection parameters of `query`, the raw query string
     /// of a request, absent when it has none.
     ///
@@ -57,13 +57,13 @@ impl PageQuery {
     /// with another percent-encoding or parameter order digests alike. A name
     /// outside the vocabulary counts as selection.
     #[must_use]
-    pub fn of(query: Option<&str>) -> PageQuery {
+    pub fn of(query: Option<&str>) -> QueryDigest {
         let mut pairs: Vec<_> = form_urlencoded::parse(query.unwrap_or_default().as_bytes())
             .filter(|(name, _)| QueryParameter::from_str(name).map_or(ParameterRole::Selection, role) == ParameterRole::Selection)
             .collect();
         pairs.sort_unstable();
         let pairs = pairs;
-        PageQuery::of_parts(pairs.iter().flat_map(|(name, value)| [name.as_bytes(), value.as_bytes()]))
+        QueryDigest::of_parts(pairs.iter().flat_map(|(name, value)| [name.as_bytes(), value.as_bytes()]))
     }
 
     /// The digest of the sequence `parts`.
@@ -74,16 +74,16 @@ impl PageQuery {
     /// an even number of parts, so a sequence of an odd number of parts is never
     /// hashed from the bytes of any query string.
     #[must_use]
-    pub fn of_parts<'part>(parts: impl IntoIterator<Item = &'part [u8]>) -> PageQuery {
+    pub fn of_parts<'part>(parts: impl IntoIterator<Item = &'part [u8]>) -> QueryDigest {
         let mut hasher = Sha256::new();
         for part in parts {
             hasher.update(u64::try_from(part.len()).unwrap_or(u64::MAX).to_be_bytes());
             hasher.update(part);
         }
         let digest = hasher.finalize();
-        let mut kept = [0; PAGE_QUERY_DIGEST_BYTES];
-        kept.copy_from_slice(&digest[..PAGE_QUERY_DIGEST_BYTES]);
-        PageQuery(kept)
+        let mut kept = [0; QUERY_DIGEST_BYTES];
+        kept.copy_from_slice(&digest[..QUERY_DIGEST_BYTES]);
+        QueryDigest(kept)
     }
 
     /// The token a cursor pointer spells the digest with.
@@ -92,9 +92,9 @@ impl PageQuery {
         URL_SAFE_NO_PAD.encode(self.0)
     }
 
-    /// The digest itself, the bytes [`PageQuery::encode`] spells.
+    /// The digest itself, the bytes [`QueryDigest::encode`] spells.
     #[must_use]
-    pub const fn as_bytes(&self) -> &[u8; PAGE_QUERY_DIGEST_BYTES] {
+    pub const fn as_bytes(&self) -> &[u8; QUERY_DIGEST_BYTES] {
         &self.0
     }
 }
@@ -164,38 +164,38 @@ const fn role(parameter: QueryParameter) -> ParameterRole {
 /// decode was corrupted or forged: a `BadRequestData` (clause 6.3.20).
 #[derive(Debug, Error, PartialEq, Eq)]
 #[error("invalid pageQuery: not a query digest")]
-pub struct PageQueryError;
+pub struct QueryDigestError;
 
-impl TryFrom<&str> for PageQuery {
-    type Error = PageQueryError;
+impl TryFrom<&str> for QueryDigest {
+    type Error = QueryDigestError;
 
-    fn try_from(text: &str) -> Result<PageQuery, PageQueryError> {
-        let bytes = URL_SAFE_NO_PAD.decode(text).map_err(|_| PageQueryError)?;
-        <[u8; PAGE_QUERY_DIGEST_BYTES]>::try_from(bytes.as_slice())
-            .map(PageQuery)
-            .map_err(|_| PageQueryError)
+    fn try_from(text: &str) -> Result<QueryDigest, QueryDigestError> {
+        let bytes = URL_SAFE_NO_PAD.decode(text).map_err(|_| QueryDigestError)?;
+        <[u8; QUERY_DIGEST_BYTES]>::try_from(bytes.as_slice())
+            .map(QueryDigest)
+            .map_err(|_| QueryDigestError)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::pagination::page_query::{PageQuery, PageQueryError};
+    use crate::pagination::query_digest::{QueryDigest, QueryDigestError};
     use pretty_assertions::{assert_eq, assert_ne};
 
-    fn of(query: &str) -> PageQuery {
-        PageQuery::of(Some(query))
+    fn of(query: &str) -> QueryDigest {
+        QueryDigest::of(Some(query))
     }
 
     #[test]
     fn a_token_reads_back_as_the_digest_it_spells() {
         let digest = of("type=Vehicle&q=speed%3E10");
-        assert_eq!(PageQuery::try_from(digest.encode().as_str()), Ok(digest));
+        assert_eq!(QueryDigest::try_from(digest.encode().as_str()), Ok(digest));
     }
 
     #[test]
     fn a_token_that_is_not_a_digest_is_refused() {
-        assert_eq!(PageQuery::try_from("%%%"), Err(PageQueryError));
-        assert_eq!(PageQuery::try_from("YWJj"), Err(PageQueryError));
+        assert_eq!(QueryDigest::try_from("%%%"), Err(QueryDigestError));
+        assert_eq!(QueryDigest::try_from("YWJj"), Err(QueryDigestError));
     }
 
     #[test]
@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn a_request_without_a_query_digests_like_one_with_only_paging() {
-        assert_eq!(PageQuery::of(None), of("limit=5&offset=0"));
+        assert_eq!(QueryDigest::of(None), of("limit=5&offset=0"));
     }
 
     /// Unpadded base64url spends one character on every six bits, so the 16
@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn every_token_spells_the_digest_bytes_in_22_characters() {
         for query in [None, Some("type=Vehicle"), Some("q=speed%3E10&type=Vehicle")] {
-            let digest = PageQuery::of(query);
+            let digest = QueryDigest::of(query);
             assert_eq!(digest.encode().len(), 22);
             assert_eq!(digest.as_bytes().len(), 16);
         }
@@ -265,13 +265,13 @@ mod tests {
     #[test]
     fn a_query_string_digests_as_the_sequence_of_its_sorted_pairs() {
         let parts: [&[u8]; 4] = [b"q", b"speed>10", b"type", b"Vehicle"];
-        assert_eq!(of("type=Vehicle&q=speed%3E10"), PageQuery::of_parts(parts));
+        assert_eq!(of("type=Vehicle&q=speed%3E10"), QueryDigest::of_parts(parts));
     }
 
     #[test]
     fn a_part_boundary_cannot_be_shifted() {
         let shifted: [&[u8]; 2] = [b"ab", b"c"];
         let original: [&[u8]; 2] = [b"a", b"bc"];
-        assert_ne!(PageQuery::of_parts(shifted), PageQuery::of_parts(original));
+        assert_ne!(QueryDigest::of_parts(shifted), QueryDigest::of_parts(original));
     }
 }

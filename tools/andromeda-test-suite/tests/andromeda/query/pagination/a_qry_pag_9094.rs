@@ -12,11 +12,11 @@ use ngsi_ld::{
     query::{Locality, q},
 };
 
-/// A key of the shape the broker emits, 16 bytes in unpadded base64url, that no posted query digests to.
-const UNHELD_KEY: &str = "AAAAAAAAAAAAAAAAAAAAAA";
+/// A digest of the shape the broker emits, 16 bytes in unpadded base64url, that no posted query digests to.
+const UNHELD_DIGEST: &str = "AAAAAAAAAAAAAAAAAAAAAA";
 
 /// Pins: the next Link of Query Entities through POST `/entityOperations/query` with its `postedQuery` replaced by a
-/// well-formed key no query was held under, or by text that is no key, answers 400 `BadRequestData`
+/// well-formed digest no query was held under, or by text that is no digest, answers 400 `BadRequestData`
 /// Clause: 5.5.9.1, 6.3.10, 6.23.3.1
 #[gtest]
 #[tokio::test]
@@ -37,9 +37,9 @@ async fn a_qry_pag_9094_a_page_link_naming_no_held_query_is_bad_request_data() -
         .send()
         .await?;
     let link = first.head.typed::<Link>().valid().cloned().or_fail()?;
-    for key in [UNHELD_KEY, "not-a-key"] {
+    for digest in [UNHELD_DIGEST, "not-a-digest"] {
         let request =
-            request_replacing(&broker, &link, &RelationType::Next, "postedQuery", key)?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
+            request_replacing(&broker, &link, &RelationType::Next, "postedQuery", digest)?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
         let answer = broker.send_unchecked(request).await;
         expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData));
     }

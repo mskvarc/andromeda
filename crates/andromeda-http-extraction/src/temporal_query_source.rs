@@ -15,11 +15,11 @@ use axum::{extract::FromRequestParts, http::request::Parts};
 pub enum TemporalQuerySource<A> {
     /// The query itself, admitted.
     Query(Box<AdmittedTemporalQuery<A>>),
-    /// A posted query the broker holds, by its key, beside the URL parameters
+    /// A posted query the broker holds, by its digest, beside the URL parameters
     /// of the POST that posted it (clause 6.24.3.1). The held query is
     /// admitted by `admission` once it is read back.
     Posted {
-        /// The key and the URL parameters the pointer carries.
+        /// The digest and the URL parameters the pointer carries.
         reference: PostedQueryReference<TemporalPostQueryParams>,
         /// The admission the route installed.
         admission: A,

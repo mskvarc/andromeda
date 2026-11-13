@@ -13,9 +13,9 @@
 pub mod cursor_request;
 pub mod page_context;
 pub mod page_pointers;
-pub mod page_query;
 pub mod page_request;
 pub mod page_size;
 pub mod parameters;
 pub mod policy;
 pub mod posted_reference;
+pub mod query_digest;

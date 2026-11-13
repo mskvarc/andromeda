@@ -19,12 +19,12 @@ use ngsi_ld::{
     query::{Locality, temporal_query},
 };
 
-/// A key of the shape the broker emits, 16 bytes in unpadded base64url, that no posted query digests to.
-const UNHELD_KEY: &str = "AAAAAAAAAAAAAAAAAAAAAA";
+/// A digest of the shape the broker emits, 16 bytes in unpadded base64url, that no posted query digests to.
+const UNHELD_DIGEST: &str = "AAAAAAAAAAAAAAAAAAAAAA";
 
 /// Pins: the next Link of Query Temporal Evolution of Entities through POST `/temporal/entityOperations/query` with its
-/// `postedQuery` replaced by a well-formed key no query was held under answers 400 `BadRequestData`, and so does GET
-/// `/temporal/entities` naming the key of a posted Query Entities
+/// `postedQuery` replaced by a well-formed digest no query was held under answers 400 `BadRequestData`, and so does GET
+/// `/temporal/entities` naming the digest of a posted Query Entities
 /// Clause: 5.5.9.1, 6.3.10, 6.24.3.1
 #[gtest]
 #[tokio::test]
@@ -51,8 +51,8 @@ async fn a_tmp_qry_9099_a_temporal_page_link_naming_no_held_temporal_query_is_ba
         .send()
         .await?;
     let link = first.head.typed::<Link>().valid().cloned().or_fail()?;
-    let unheld =
-        request_replacing(&broker, &link, &RelationType::Next, "postedQuery", UNHELD_KEY)?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
+    let unheld = request_replacing(&broker, &link, &RelationType::Next, "postedQuery", UNHELD_DIGEST)?
+        .append_header(ACCEPT, HeaderValue::from_static("application/json"));
     let answer = broker.send_unchecked(unheld).await;
     expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData));
     let building_type = namespace.entity_type("Building")?;
@@ -73,7 +73,7 @@ async fn a_tmp_qry_9099_a_temporal_page_link_naming_no_held_temporal_query_is_ba
         .limit(2)
         .send()
         .await?;
-    let key = entities
+    let digest = entities
         .next()
         .or_fail()?
         .query_pairs()
@@ -81,7 +81,7 @@ async fn a_tmp_qry_9099_a_temporal_page_link_naming_no_held_temporal_query_is_ba
         .map(|(_, value)| value.into_owned())
         .or_fail()?;
     // The client cannot write a parameter of this read, so it is sent as written.
-    let crossed = request_to(&broker, Method::GET, &format!("temporal/entities?postedQuery={key}&limit=2"))?
+    let crossed = request_to(&broker, Method::GET, &format!("temporal/entities?postedQuery={digest}&limit=2"))?
         .append_header(ACCEPT, HeaderValue::from_static("application/json"));
     let crossed_answer = broker.send_unchecked(crossed).await;
     expect_that!(&crossed_answer, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData));

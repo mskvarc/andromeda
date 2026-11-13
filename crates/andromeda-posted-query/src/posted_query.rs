@@ -15,7 +15,7 @@
 use crate::error::PostedQueryError;
 use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext};
 use andromeda_ngsi_ld_model::query::body::Query;
-use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
+use andromeda_ngsi_ld_request::pagination::query_digest::QueryDigest;
 use strum::{Display, EnumIter, IntoStaticStr};
 
 /// The API a query was posted to, and whose GET binding its page links follow.
@@ -36,7 +36,7 @@ pub enum PostedQueryKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PostedQuery {
     /// The digest naming the query, derived from every other field.
-    key: PageQuery,
+    digest: QueryDigest,
     /// The API the query was posted to.
     kind: PostedQueryKind,
     /// The query as the broker read it, without its `@context`.
@@ -49,9 +49,9 @@ impl PostedQuery {
     /// The query `query` posted to `kind`, read under the context the request
     /// named, `context`.
     ///
-    /// The key is digested from three parts, the API, the query's JSON and the
+    /// The digest is taken over three parts, the API, the query's JSON and the
     /// resolved `@context`: an odd number of parts, which no query string's
-    /// digest is taken over, so the key of a posted query never names a query
+    /// digest is taken over, so the digest of a posted query never names a query
     /// string.
     ///
     /// # Errors
@@ -62,14 +62,14 @@ impl PostedQuery {
         let context = ContextSpec::from_request(context);
         let document = serde_json::to_vec(&query).map_err(PostedQueryError::Unencodable)?;
         let api: &'static str = kind.into();
-        let key = PageQuery::of_parts([api.as_bytes(), document.as_slice(), context.context_key().as_bytes()]);
-        Ok(PostedQuery { key, kind, query, context })
+        let digest = QueryDigest::of_parts([api.as_bytes(), document.as_slice(), context.context_key().as_bytes()]);
+        Ok(PostedQuery { digest, kind, query, context })
     }
 
     /// The digest a page link names the query by.
     #[must_use]
-    pub const fn key(&self) -> &PageQuery {
-        &self.key
+    pub const fn digest(&self) -> &QueryDigest {
+        &self.digest
     }
 
     /// The API the query was posted to.
@@ -125,7 +125,7 @@ mod tests {
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, request_context::RequestContext};
     use andromeda_ngsi_ld_model::query::body::Query;
-    use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
+    use andromeda_ngsi_ld_request::pagination::query_digest::QueryDigest;
     use iri_rs::IriBuf;
     use pretty_assertions::{assert_eq, assert_ne};
 
@@ -149,8 +149,8 @@ mod tests {
     #[test]
     fn the_same_query_posted_again_is_named_alike() {
         assert_eq!(
-            posted(PostedQueryKind::Entities, UNION, RequestContext::Default).key(),
-            posted(PostedQueryKind::Entities, UNION, RequestContext::Default).key()
+            posted(PostedQueryKind::Entities, UNION, RequestContext::Default).digest(),
+            posted(PostedQueryKind::Entities, UNION, RequestContext::Default).digest()
         );
     }
 
@@ -169,7 +169,7 @@ mod tests {
                 RequestContext::Default,
             ),
         ] {
-            assert_ne!(other.key(), named.key(), "{other:?}");
+            assert_ne!(other.digest(), named.digest(), "{other:?}");
         }
     }
 
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn a_posted_query_is_not_named_as_the_query_string_of_its_selection() {
         let named = posted(PostedQueryKind::Entities, r#"{"type":"Query","q":"speed>10"}"#, RequestContext::Default);
-        assert_ne!(named.key(), &PageQuery::of(Some("q=speed%3E10")));
+        assert_ne!(named.digest(), &QueryDigest::of(Some("q=speed%3E10")));
     }
 
     /// Clause 5.5.9.1: a follower naming no context reads the query under the

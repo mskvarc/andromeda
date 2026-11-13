@@ -9,7 +9,7 @@ use crate::{
     posted_query::{PostedQuery, PostedQueryKind},
     retention::PostedQueryQuota,
 };
-use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
+use andromeda_ngsi_ld_request::pagination::query_digest::QueryDigest;
 use chrono::{DateTime, Utc};
 use std::{future::Future, pin::Pin};
 
@@ -20,13 +20,13 @@ pub type PostedQueryStoreFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, P
 /// every instance sharing the store agrees on what is live.
 pub trait PostedQueryStore: Send + Sync + 'static {
     /// Hold `query` until `expires_at`, moving the expiry of the query already
-    /// held under its key, then delete the held queries that expire soonest,
+    /// held under its digest, then delete the held queries that expire soonest,
     /// never `query`, until the tenant is within `quota`.
     fn hold<'a>(&'a self, query: &'a PostedQuery, expires_at: DateTime<Utc>, quota: PostedQueryQuota) -> PostedQueryStoreFuture<'a, ()>;
 
-    /// The live query `key` names among those posted to `kind`, treating an
+    /// The live query `digest` names among those posted to `kind`, treating an
     /// expired query as absent.
-    fn get<'a>(&'a self, key: &'a PageQuery, kind: PostedQueryKind) -> PostedQueryStoreFuture<'a, Option<PostedQuery>>;
+    fn get<'a>(&'a self, digest: &'a QueryDigest, kind: PostedQueryKind) -> PostedQueryStoreFuture<'a, Option<PostedQuery>>;
 
     /// Remove every posted query whose expiry is at or before `cutoff`,
     /// returning how many.

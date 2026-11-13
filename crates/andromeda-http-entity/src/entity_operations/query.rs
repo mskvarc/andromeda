@@ -13,7 +13,7 @@
 //! "a URI-reference that could be dereferenced by an NGSI-LD Client". The query
 //! is in the body, which no URI-reference carries, so the binding hands the
 //! operation the query as a posted query: the broker holds it when the page
-//! points at another page, and every pointer names it by its key on the GET
+//! points at another page, and every pointer names it by its digest on the GET
 //! binding.
 
 use crate::{
@@ -47,8 +47,8 @@ pub(crate) async fn query(
     let posted = PostedQuery::new(PostedQueryKind::Entities, body, context.request_context().clone()).with_entity_instance(&uri)?;
     // clone: the held query keeps its body, while the operation consumes its own reading of it
     let query = url.parameters_of(posted.query().clone()).with_entity_instance(&uri)?;
-    // clone: the binding holds the posted query, whose key the walk is paged under
-    let pagination = pagination.posted(posted.key().clone()).with_entity_instance(&uri)?;
+    // clone: the binding holds the posted query, whose digest the walk is paged under
+    let pagination = pagination.posted(posted.digest().clone()).with_entity_instance(&uri)?;
     run(EntityQueryRequest::builder()
         .services(services)
         .target(target)

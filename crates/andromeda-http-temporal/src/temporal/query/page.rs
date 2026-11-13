@@ -144,7 +144,7 @@ mod tests {
         page_reach::PageReach,
         page_window::{PageStart, PageWindow},
     };
-    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_pointers::PagePointers, page_query::PageQuery};
+    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_pointers::PagePointers, query_digest::QueryDigest};
     use axum::{
         http::{StatusCode, Uri},
         response::{IntoResponse, Response},
@@ -167,7 +167,7 @@ mod tests {
         PagePointing::new(
             pointers,
             PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
-            PageQuery::of(Some("type=Vehicle")),
+            QueryDigest::of(Some("type=Vehicle")),
             PointedRequest::new(None, pointed),
         )
     }
@@ -297,9 +297,9 @@ mod tests {
     /// NGSI-LD Client to retrieve the next page of NGSI-LD Elements". The
     /// clause 5.2.23 body of the clause 6.24.3.1 POST binding is in no
     /// URI-reference, so its pointers name the query the broker holds by its
-    /// key, on the GET binding of the same query.
+    /// digest, on the GET binding of the same query.
     #[test]
-    fn a_body_carried_query_points_by_the_key_of_the_held_query() {
+    fn a_body_carried_query_points_by_the_digest_of_the_held_query() {
         let followed: Uri = "/ngsi-ld/v1/temporal/entities?limit=2".parse().expect("a valid request URI");
         let page = QueriedPage::of(PageWindow::offset(2, 4), CountPolicy::Omit, pointing(PagePointers::OverPostedQuery, followed));
         let mut response = StatusCode::OK.into_response();
@@ -307,9 +307,9 @@ mod tests {
         append_links(&page, &mut response, ResponseMediaType::JsonLd, Some(99), PageReach::Continues, None);
 
         let link = links(&response);
-        let key = PageQuery::of(Some("type=Vehicle")).encode();
+        let digest = QueryDigest::of(Some("type=Vehicle")).encode();
         assert!(
-            link.contains(&format!("/ngsi-ld/v1/temporal/entities?limit=2&offset=6&postedQuery={key}")),
+            link.contains(&format!("/ngsi-ld/v1/temporal/entities?limit=2&offset=6&postedQuery={digest}")),
             "{link}"
         );
         assert!(!link.contains("pageContext"), "{link}");

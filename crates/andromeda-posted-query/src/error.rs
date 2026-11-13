@@ -1,6 +1,6 @@
 //! Failures reported by posted-query policy and storage implementations.
 
-use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
+use andromeda_ngsi_ld_request::pagination::query_digest::QueryDigest;
 use andromeda_persistence_failure::{persistence_failure::PersistenceFailure, retryability::RetryCause};
 use thiserror::Error;
 
@@ -8,18 +8,18 @@ use thiserror::Error;
 /// failure.
 #[derive(Debug, Error)]
 pub enum PostedQueryError {
-    /// No live posted query of the API asked for carries the key: none was
+    /// No live posted query of the API asked for carries the digest: none was
     /// held under it, or the query expired or was evicted.
-    #[error("no kept query is named {}", .key.encode())]
+    #[error("no kept query is named {}", .digest.encode())]
     NotFound {
-        /// The key that named no live query.
-        key: PageQuery,
+        /// The digest that named no live query.
+        digest: QueryDigest,
     },
     /// A request following a pointer of a posted query names another
     /// `@context` than the query was posted with (clause 5.5.9.1).
     #[error("the request names another @context than the posted query it follows was read under")]
     ContextChanged,
-    /// The query cannot be written as the JSON its key is digested from.
+    /// The query cannot be written as the JSON its digest is taken over.
     #[error("the posted query cannot be written as JSON: {0}")]
     Unencodable(#[source] serde_json::Error),
     /// The configured lifetime, counted from now, passes the representable
@@ -71,15 +71,15 @@ impl From<PersistenceFailure> for PostedQueryError {
 #[cfg(test)]
 mod tests {
     use crate::error::PostedQueryError;
-    use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
+    use andromeda_ngsi_ld_request::pagination::query_digest::QueryDigest;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn a_missing_query_error_names_the_key_as_a_link_spells_it() {
-        let key = PageQuery::of(Some("type=Vehicle"));
-        let token = key.encode();
-        assert_eq!(PostedQueryError::NotFound { key }.to_string(), format!("no kept query is named {token}"));
+    fn a_missing_query_error_names_the_digest_as_a_link_spells_it() {
+        let digest = QueryDigest::of(Some("type=Vehicle"));
+        let token = digest.encode();
+        assert_eq!(PostedQueryError::NotFound { digest }.to_string(), format!("no kept query is named {token}"));
     }
 
     #[test]

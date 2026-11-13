@@ -29,8 +29,8 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_request::pagination::{
     page_context::{PAGE_CONTEXT_PARAMETER, PageContext},
-    page_query::{PAGE_QUERY_PARAMETER, PageQuery},
     posted_reference::POSTED_QUERY_PARAMETER,
+    query_digest::{PAGE_QUERY_PARAMETER, QueryDigest},
 };
 use axum::response::Response;
 
@@ -70,9 +70,9 @@ pub fn page_link_targets(request: &PointedRequest, walk: PageWalk<'_>, window: &
             let query = query.encode();
             pagination_targets(PageUri::query_string(request, context, &query), window, links)
         }
-        PageWalk::PostedQuery(key) => {
-            let key = key.encode();
-            pagination_targets(PageUri::posted_query(request, &key), window, links)
+        PageWalk::PostedQuery(digest) => {
+            let digest = digest.encode();
+            pagination_targets(PageUri::posted_query(request, &digest), window, links)
         }
     }
 }
@@ -89,7 +89,7 @@ pub fn append_page_links(
     outcome: PageOutcome,
     media_type: ResponseMediaType,
 ) {
-    let query = PageQuery::of(request.query());
+    let query = QueryDigest::of(request.query());
     page_link_targets(request, PageWalk::QueryString { context, query: &query }, window, outcome).append_to(response, media_type);
 }
 
@@ -215,12 +215,12 @@ impl<'request> PageUri<'request> {
         }
     }
 
-    /// A page of a posted query's walk: every pointer carries `key`, the
-    /// encoded key of the posted query, which binds a cursor as well.
-    const fn posted_query(request: &'request PointedRequest, key: &'request str) -> PageUri<'request> {
+    /// A page of a posted query's walk: every pointer carries `digest`, the
+    /// encoded digest of the posted query, which binds a cursor as well.
+    const fn posted_query(request: &'request PointedRequest, digest: &'request str) -> PageUri<'request> {
         PageUri {
             request,
-            walk: (POSTED_QUERY_PARAMETER, key),
+            walk: (POSTED_QUERY_PARAMETER, digest),
             cursor_query: None,
         }
     }
@@ -321,8 +321,8 @@ fn offset_targets(uri: PageUri<'_>, limit: i64, offset: i64, extent: PageExtent)
 /// `prev`/`next`/`last` carry an opaque token. `first` carries the empty
 /// `cursor=` that starts a walk (clause 5.5.9.1), so a client following it
 /// stays in cursor mode whatever the broker's default for a fresh request is.
-/// Each binds the cursor to the query, by its digest or by the posted query's
-/// key.
+/// Each binds the cursor to the query, by the digest of its query string or of
+/// the posted query.
 ///
 /// The boundary relations track the page's position: `prev` is absent exactly
 /// on the first page and `next` exactly on the last (`CursorPointers` mirrors
@@ -364,7 +364,7 @@ mod tests {
         page_reach::PageReach,
         page_window::{PageStart, PageWindow},
     };
-    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_query::PageQuery};
+    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, query_digest::QueryDigest};
     use axum::{
         http::{StatusCode, header::LINK},
         response::{IntoResponse, Response},
@@ -381,17 +381,17 @@ mod tests {
         pagination_targets(uri, window, links).append_to(response, media_type);
     }
 
-    /// A posted query's pointers name it by its key alone: they carry neither
-    /// the `@context` nor the digest of a query string, which the key stands
-    /// for, and a cursor pointer is bound by the key as well.
+    /// A posted query's pointers name it by its digest alone: they carry neither
+    /// the `@context` nor a `pageQuery`, which the digest stands for, and a
+    /// cursor pointer is bound by the digest as well.
     #[test]
-    fn every_pointer_of_a_posted_query_names_it_by_its_key_alone() {
-        let key = PageQuery::of(Some("type=Posted"));
-        let token = key.encode();
+    fn every_pointer_of_a_posted_query_names_it_by_its_digest_alone() {
+        let digest = QueryDigest::of(Some("type=Posted"));
+        let token = digest.encode();
         let request = pointed("/ngsi-ld/v1/entities?limit=2&count=true");
         let offset_page = page_link_targets(
             &request,
-            PageWalk::PostedQuery(&key),
+            PageWalk::PostedQuery(&digest),
             &PageWindow::offset(2, 2),
             PageOutcome {
                 total: Some(6),
@@ -401,7 +401,7 @@ mod tests {
         );
         let cursor_page = page_link_targets(
             &request,
-            PageWalk::PostedQuery(&key),
+            PageWalk::PostedQuery(&digest),
             &PageWindow::after(2, ngsi_ld_uri("urn:e:2")),
             PageOutcome {
                 total: None,
@@ -427,10 +427,10 @@ mod tests {
     /// A page pointing nowhere has no pointer to hold a posted query for.
     #[test]
     fn a_single_page_of_a_posted_query_points_nowhere() {
-        let key = PageQuery::of(Some("type=Posted"));
+        let digest = QueryDigest::of(Some("type=Posted"));
         let targets = page_link_targets(
             &pointed("/ngsi-ld/v1/entities?limit=2"),
-            PageWalk::PostedQuery(&key),
+            PageWalk::PostedQuery(&digest),
             &PageWindow::offset(2, 0),
             PageOutcome {
                 total: None,
@@ -1082,7 +1082,7 @@ mod tests {
         };
         append_page_links(&mut response, &uri, &core(), &window, outcome, ResponseMediaType::JsonLd);
         let link_str = link_header(&response);
-        let digest = format!("pageQuery={}", PageQuery::of(Some("type=V")).encode());
+        let digest = format!("pageQuery={}", QueryDigest::of(Some("type=V")).encode());
         assert_eq!(link_str.matches(&digest).count(), 4, "{link_str}");
         assert!(!link_str.contains("b2xk"), "{link_str}");
     }

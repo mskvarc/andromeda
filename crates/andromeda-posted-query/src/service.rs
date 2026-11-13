@@ -6,7 +6,7 @@ use crate::{
     retention::PostedQueryRetention,
     store::PostedQueryStore,
 };
-use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
+use andromeda_ngsi_ld_request::pagination::query_digest::QueryDigest;
 use chrono::{TimeDelta, Utc};
 use std::sync::Arc;
 
@@ -28,7 +28,7 @@ impl PostedQueryService {
     /// Hold `query` for one lifetime from now, so the page links of its
     /// result can name it.
     ///
-    /// A query already held under the same key has its lifetime counted again
+    /// A query already held under the same digest has its lifetime counted again
     /// from now. The tenant's other queries that expire soonest are then
     /// deleted until it is within its quota.
     ///
@@ -43,15 +43,15 @@ impl PostedQueryService {
         self.store.hold(query, expires_at, self.retention.quota).await
     }
 
-    /// The live query `key` names among those posted to `kind`.
+    /// The live query `digest` names among those posted to `kind`.
     ///
     /// # Errors
     ///
     /// [`PostedQueryError::NotFound`] when no live query posted to `kind`
-    /// carries the key, and the store's error when it cannot be read.
-    pub async fn resolve(&self, key: &PageQuery, kind: PostedQueryKind) -> Result<PostedQuery, PostedQueryError> {
-        self.store.get(key, kind).await?.ok_or_else(|| PostedQueryError::NotFound {
-            key: key.clone(), // clone: the error must own the key after this call returns.
+    /// carries the digest, and the store's error when it cannot be read.
+    pub async fn resolve(&self, digest: &QueryDigest, kind: PostedQueryKind) -> Result<PostedQuery, PostedQueryError> {
+        self.store.get(digest, kind).await?.ok_or_else(|| PostedQueryError::NotFound {
+            digest: digest.clone(), // clone: the error must own the digest after this call returns.
         })
     }
 }
@@ -66,7 +66,7 @@ mod tests {
         store::{PostedQueryStore, PostedQueryStoreFuture},
     };
     use andromeda_jsonld::request_context::RequestContext;
-    use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
+    use andromeda_ngsi_ld_request::pagination::query_digest::QueryDigest;
     use chrono::{DateTime, TimeDelta, Utc};
     use pretty_assertions::assert_eq;
     use std::{
@@ -78,7 +78,7 @@ mod tests {
     /// One `hold` the store was asked for.
     #[derive(Debug)]
     struct HoldCall {
-        key: PageQuery,
+        digest: QueryDigest,
         expires_at: DateTime<Utc>,
         quota: PostedQueryQuota,
     }
@@ -94,7 +94,7 @@ mod tests {
         fn hold<'a>(&'a self, query: &'a PostedQuery, expires_at: DateTime<Utc>, quota: PostedQueryQuota) -> PostedQueryStoreFuture<'a, ()> {
             Box::pin(async move {
                 self.holds.lock().expect("unpoisoned").push(HoldCall {
-                    key: query.key().clone(),
+                    digest: query.digest().clone(),
                     expires_at,
                     quota,
                 });
@@ -103,14 +103,14 @@ mod tests {
             })
         }
 
-        fn get<'a>(&'a self, key: &'a PageQuery, kind: PostedQueryKind) -> PostedQueryStoreFuture<'a, Option<PostedQuery>> {
+        fn get<'a>(&'a self, digest: &'a QueryDigest, kind: PostedQueryKind) -> PostedQueryStoreFuture<'a, Option<PostedQuery>> {
             Box::pin(async move {
                 Ok(self
                     .held
                     .lock()
                     .expect("unpoisoned")
                     .clone()
-                    .filter(|held| held.key() == key && held.kind() == kind))
+                    .filter(|held| held.digest() == digest && held.kind() == kind))
             })
         }
 
@@ -146,19 +146,19 @@ mod tests {
         let [call] = holds.as_slice() else {
             panic!("one hold, not {holds:?}");
         };
-        assert_eq!(&call.key, posted.key());
+        assert_eq!(&call.digest, posted.digest());
         assert_eq!(call.quota, retention().quota);
         let hour = TimeDelta::hours(1);
         assert!(before + hour <= call.expires_at && call.expires_at <= after + hour, "{call:?}");
     }
 
     #[tokio::test]
-    async fn a_held_query_is_resolved_by_its_key_and_api() {
+    async fn a_held_query_is_resolved_by_its_digest_and_api() {
         let store = Arc::new(RecordingStore::default());
         let service = PostedQueryService::new(Arc::clone(&store) as Arc<dyn PostedQueryStore>, retention());
         let posted = query(PostedQueryKind::Entities);
         service.hold(&posted).await.expect("held");
-        assert_eq!(service.resolve(posted.key(), PostedQueryKind::Entities).await.expect("resolved"), posted);
+        assert_eq!(service.resolve(posted.digest(), PostedQueryKind::Entities).await.expect("resolved"), posted);
     }
 
     #[tokio::test]
@@ -167,9 +167,9 @@ mod tests {
         let service = PostedQueryService::new(Arc::clone(&store) as Arc<dyn PostedQueryStore>, retention());
         let posted = query(PostedQueryKind::Entities);
         service.hold(&posted).await.expect("held");
-        let refused = service.resolve(posted.key(), PostedQueryKind::Temporal).await;
+        let refused = service.resolve(posted.digest(), PostedQueryKind::Temporal).await;
         assert!(
-            matches!(refused, Err(PostedQueryError::NotFound { ref key }) if key == posted.key()),
+            matches!(refused, Err(PostedQueryError::NotFound { ref digest }) if digest == posted.digest()),
             "{refused:?}"
         );
     }

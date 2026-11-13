@@ -5,7 +5,7 @@ use crate::{
     pagination::{
         cursor_request::{CursorRequest, CursorRequestError},
         page_context::{PageContext, PageContextError},
-        page_query::{PageQuery, PageQueryError},
+        query_digest::{QueryDigest, QueryDigestError},
     },
     query_parameter::{QueryParameter, QueryParameterSet},
     query_parameter_set,
@@ -35,7 +35,7 @@ pub struct PageParameters {
     pub context: Option<PageContext>,
     /// The digest of the query the cursor walk a followed pointer belongs to,
     /// absent on a request that follows no cursor pointer (clause 5.5.9.1).
-    pub query: Option<PageQuery>,
+    pub query: Option<QueryDigest>,
 }
 
 query_parameter_set!(PageParameters {
@@ -113,7 +113,7 @@ pub enum PageParameterError {
     Context(#[from] PageContextError),
     /// A `pageQuery` that is not a digest the broker emitted.
     #[error(transparent)]
-    Query(#[from] PageQueryError),
+    Query(#[from] QueryDigestError),
 }
 
 /// The wire form of [`PageParameters`].
@@ -166,7 +166,7 @@ impl<'de> Deserialize<'de> for PageParameters {
             query: wire
                 .query
                 .as_deref()
-                .map(PageQuery::try_from)
+                .map(QueryDigest::try_from)
                 .transpose()
                 .map_err(|error| DeserializeError::custom(PageParameterError::from(error)))?,
         })
@@ -204,8 +204,8 @@ fn page_cursor(raw: Option<&str>) -> Result<Option<CursorRequest>, PageParameter
 mod tests {
     use crate::pagination::{
         cursor_request::CursorRequest,
-        page_query::PageQuery,
         parameters::{PageParameters, PostedPageParameters},
+        query_digest::QueryDigest,
     };
     use andromeda_ngsi_ld_query::cursor::PageCursor;
     use pretty_assertions::assert_eq;
@@ -288,7 +288,7 @@ mod tests {
         assert!(message.contains("cursor"), "{message}");
     }
 
-    /// A posted query's key stands for its `@context` and its query, so a
+    /// A posted query's digest stands for its `@context` and its query, so a
     /// body binding declares neither `pageContext` nor `pageQuery`.
     #[test]
     fn the_post_binding_declares_no_context_or_query_digest() {
@@ -336,7 +336,7 @@ mod tests {
     /// A followed cursor pointer's `pageQuery` is read as the digest it spells.
     #[test]
     fn a_page_query_is_read_from_the_pointer() {
-        let digest = PageQuery::of(Some("type=Vehicle"));
+        let digest = QueryDigest::of(Some("type=Vehicle"));
         assert_eq!(parsed(&format!("cursor=&pageQuery={}", digest.encode())).query, Some(digest));
     }
 

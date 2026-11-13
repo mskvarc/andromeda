@@ -13,7 +13,7 @@ use crate::{
     },
     store_fault::persistence_error,
 };
-use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
+use andromeda_ngsi_ld_request::pagination::query_digest::QueryDigest;
 use andromeda_posted_query::{
     error::PostedQueryError,
     posted_query::{PostedQuery, PostedQueryKind},
@@ -58,13 +58,13 @@ pub(crate) fn hold_statement(query: &PostedQuery, expires_at: DateTime<Utc>) -> 
     Ok(statement)
 }
 
-/// The query, link context and body context of the live query `key` names
+/// The query, link context and body context of the live query `digest` names
 /// among those posted to `kind`.
-pub(crate) fn live_statement(key: &PageQuery, kind: PostedQueryKind) -> SelectStatement {
+pub(crate) fn live_statement(digest: &QueryDigest, kind: PostedQueryKind) -> SelectStatement {
     Query::select()
         .columns([PostedQueries::Query, PostedQueries::ContextLink, PostedQueries::ContextBody])
         .from(PostedQueries::Table)
-        .and_where(Expr::col(PostedQueries::Digest).eq(stored_digest(key)))
+        .and_where(Expr::col(PostedQueries::Digest).eq(stored_digest(digest)))
         .and_where(Expr::col(PostedQueries::Kind).eq(stored_kind(kind).code()))
         .and_where(live())
         .to_owned()
@@ -87,7 +87,7 @@ pub(crate) fn live() -> SimpleExpr {
 mod tests {
     use crate::posted_query::lifecycle::{expired_statement, hold_statement, live_statement};
     use andromeda_jsonld::request_context::RequestContext;
-    use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
+    use andromeda_ngsi_ld_request::pagination::query_digest::QueryDigest;
     use andromeda_posted_query::posted_query::{PostedQuery, PostedQueryKind};
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn a_query_is_read_only_while_live_and_only_through_the_api_it_was_posted_to() {
-        let (sql, _) = live_statement(&PageQuery::of(None), PostedQueryKind::Temporal).build(PostgresQueryBuilder);
+        let (sql, _) = live_statement(&QueryDigest::of(None), PostedQueryKind::Temporal).build(PostgresQueryBuilder);
         assert_eq!(
             sql,
             r#"SELECT "query", "context_link", "context_body" FROM "posted_queries" WHERE "digest" = $1 AND "kind" = $2 AND "expires_at" > NOW()"#

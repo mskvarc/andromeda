@@ -17,7 +17,7 @@ use andromeda_http_response::{
     link_target::{NotAPostedQuery, PointedRequest},
     problem_response::ProblemResponse,
 };
-use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_query::PageQuery, policy::PaginationPolicy};
+use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, policy::PaginationPolicy, query_digest::QueryDigest};
 use axum::{extract::FromRequestParts, http::request::Parts};
 use iri_rs::IriBuf;
 use thiserror::Error;
@@ -32,32 +32,32 @@ pub struct RequestPagination {
     /// The context the request's `Link` header named, or the core context.
     pub context: PageContext,
     /// The digest of the query the request's URI names.
-    pub query: PageQuery,
+    pub query: QueryDigest,
     /// The request as a client reaches it through the configured `apiRoot`.
     pub pointed: PointedRequest,
 }
 
 impl RequestPagination {
     /// The pagination of a query sent by POST that the broker holds under
-    /// `key`: paged under the key, its pointers rebuilt on the GET binding of
-    /// the same query.
+    /// `digest`: paged under the digest, its pointers rebuilt on the GET binding
+    /// of the same query.
     ///
     /// # Errors
     ///
     /// [`NotAPostedQuery`] for a request addressed to no POST query binding.
-    pub fn posted(self, key: PageQuery) -> Result<RequestPagination, NotAPostedQuery> {
+    pub fn posted(self, digest: QueryDigest) -> Result<RequestPagination, NotAPostedQuery> {
         Ok(RequestPagination {
-            query: key,
+            query: digest,
             pointed: self.pointed.into_query_binding()?,
             ..self
         })
     }
 
-    /// The pagination of a followed pointer naming the posted query `key`:
-    /// paged under the key, which stands for the query and its `@context`.
+    /// The pagination of a followed pointer naming the posted query `digest`:
+    /// paged under the digest, which stands for the query and its `@context`.
     #[must_use]
-    pub fn following(self, key: PageQuery) -> RequestPagination {
-        RequestPagination { query: key, ..self }
+    pub fn following(self, digest: QueryDigest) -> RequestPagination {
+        RequestPagination { query: digest, ..self }
     }
 }
 
@@ -88,7 +88,7 @@ where
             policy,
             // clone: the walk's context outlives the request that named it
             context: PageContext::new(context.link_context().cloned().unwrap_or_else(|| IriBuf::from(context.effective_core_url()))),
-            query: PageQuery::of(parts.uri.query()),
+            query: QueryDigest::of(parts.uri.query()),
             pointed: PointedRequest::new(
                 // clone: the configured URL stays in the request's extensions for later extractors
                 parts.extensions.get::<ConfiguredApiRoot>().map(|root| root.url().clone()),
@@ -103,7 +103,7 @@ mod tests {
     use crate::{api_root::ConfiguredApiRoot, pagination_policy::RequestPagination};
     use andromeda_http_response::link_target::PointedRequest;
     use andromeda_jsonld::context_spec::ContextSpec;
-    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_query::PageQuery, policy::PaginationPolicy};
+    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, policy::PaginationPolicy, query_digest::QueryDigest};
     use axum::{
         extract::{FromRequestParts, OriginalUri},
         http::{Request, StatusCode, Uri},
@@ -124,7 +124,7 @@ mod tests {
             RequestPagination {
                 policy: PaginationPolicy::OffsetDefault,
                 context: PageContext::new(IriBuf::from(ContextSpec::none().effective_core_url())),
-                query: PageQuery::of(None),
+                query: QueryDigest::of(None),
                 pointed: PointedRequest::new(None, Uri::from_static("/ngsi-ld/v1/entities")),
             }
         );
@@ -155,25 +155,25 @@ mod tests {
             .into_parts();
         parts.extensions.insert(PaginationPolicy::OffsetDefault);
         let extracted = RequestPagination::from_request_parts(&mut parts, &()).await.expect("installed");
-        assert_eq!(extracted.query, PageQuery::of(Some("type=Vehicle")));
+        assert_eq!(extracted.query, QueryDigest::of(Some("type=Vehicle")));
     }
 
-    /// A query sent by POST is paged under its key, and its pointers rebuild
+    /// A query sent by POST is paged under its digest, and its pointers rebuild
     /// the GET binding of the same query; a followed pointer is paged under
-    /// the key it names.
+    /// the digest it names.
     #[tokio::test]
-    async fn a_posted_query_is_paged_under_its_key_on_the_get_binding() {
+    async fn a_posted_query_is_paged_under_its_digest_on_the_get_binding() {
         let (mut parts, ()) = Request::post("/ngsi-ld/v1/entityOperations/query?limit=2")
             .body(())
             .expect("a request")
             .into_parts();
         parts.extensions.insert(PaginationPolicy::OffsetDefault);
         let extracted = RequestPagination::from_request_parts(&mut parts, &()).await.expect("installed");
-        let key = PageQuery::of(Some("type=Posted"));
-        let posted = extracted.clone().posted(key.clone()).expect("a POST query binding");
-        assert_eq!(posted.query, key);
+        let digest = QueryDigest::of(Some("type=Posted"));
+        let posted = extracted.clone().posted(digest.clone()).expect("a POST query binding");
+        assert_eq!(posted.query, digest);
         assert_eq!(posted.pointed, PointedRequest::new(None, Uri::from_static("/ngsi-ld/v1/entities?limit=2")));
-        assert_eq!(extracted.following(key.clone()).query, key);
+        assert_eq!(extracted.following(digest.clone()).query, digest);
     }
 
     /// The request is paged under the context its `Link` header named.

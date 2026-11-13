@@ -5,10 +5,10 @@
 //! names only a position, so a followed pointer has to name the walk it
 //! belongs to. A query-string walk names it by the `@context` the page was
 //! read under and, beside a cursor, by the digest of its query. A posted
-//! query's walk names it by the key of the query the broker holds, which
+//! query's walk names it by the digest of the query the broker holds, which
 //! stands for both.
 
-use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_query::PageQuery};
+use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, query_digest::QueryDigest};
 
 /// The walk a page's pointers belong to, as each pointer names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,9 +20,9 @@ pub enum PageWalk<'walk> {
         /// The `@context` the page was read under.
         context: &'walk PageContext,
         /// The digest of the query the page answered.
-        query: &'walk PageQuery,
+        query: &'walk QueryDigest,
     },
-    /// The pointers name a posted query the broker holds, by the key that
+    /// The pointers name a posted query the broker holds, by the digest that
     /// stands for its query and the `@context` it was read under.
-    PostedQuery(&'walk PageQuery),
+    PostedQuery(&'walk QueryDigest),
 }

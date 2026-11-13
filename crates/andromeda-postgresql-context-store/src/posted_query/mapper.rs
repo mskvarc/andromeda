@@ -12,7 +12,7 @@ use crate::{
 };
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_jsonld::request_context::RequestContext;
-use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
+use andromeda_ngsi_ld_request::pagination::query_digest::QueryDigest;
 use andromeda_posted_query::{
     error::PostedQueryError,
     posted_query::{PostedQuery, PostedQueryKind},
@@ -63,7 +63,7 @@ pub(crate) fn held_row(query: &PostedQuery, expires_at: DateTime<Utc>) -> Result
     Ok([
         (PostedQueries::Kind, Expr::val(stored_kind(query.kind()).code())),
         (PostedQueries::ExpiresAt, Expr::val(expires_at)),
-        (PostedQueries::Digest, stored_digest(query.key())),
+        (PostedQueries::Digest, stored_digest(query.digest())),
         (PostedQueries::Query, cast(Expr::val(document), PostgresType::Json)),
         (PostedQueries::ContextLink, Expr::val(context.link_context().map(IriBuf::as_str))),
         (
@@ -73,10 +73,10 @@ pub(crate) fn held_row(query: &PostedQuery, expires_at: DateTime<Utc>) -> Result
     ])
 }
 
-/// The `digest` value of the query `key` names: the digest's own bytes, which
-/// a page link spells in base64url.
-pub(crate) fn stored_digest(key: &PageQuery) -> SimpleExpr {
-    Expr::val(key.as_bytes().to_vec())
+/// The value the `digest` column holds for `digest`: its own bytes, which a
+/// page link spells in base64url.
+pub(crate) fn stored_digest(digest: &QueryDigest) -> SimpleExpr {
+    Expr::val(digest.as_bytes().to_vec())
 }
 
 /// The posted query a live row of `kind` holds, the row carrying the columns
@@ -125,7 +125,7 @@ mod tests {
     };
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::request_context::RequestContext;
-    use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
+    use andromeda_ngsi_ld_request::pagination::query_digest::QueryDigest;
     use andromeda_posted_query::posted_query::{PostedQuery, PostedQueryKind};
     use chrono::Utc;
     use iri_rs::IriBuf;
@@ -164,9 +164,9 @@ mod tests {
     /// link spells them with.
     #[test]
     fn a_digest_is_stored_as_its_bytes() {
-        let key = PageQuery::of(Some("type=Vehicle"));
-        let sql = Query::select().expr(stored_digest(&key)).to_string(PostgresQueryBuilder);
-        assert_eq!(sql, format!(r"SELECT '\x{}'", hex::encode_upper(key.as_bytes())));
+        let digest = QueryDigest::of(Some("type=Vehicle"));
+        let sql = Query::select().expr(stored_digest(&digest)).to_string(PostgresQueryBuilder);
+        assert_eq!(sql, format!(r"SELECT '\x{}'", hex::encode_upper(digest.as_bytes())));
     }
 
     /// The query and a body context are bound as text and cast to `json`, so

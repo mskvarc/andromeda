@@ -1,4 +1,4 @@
-//! A posted query's page link followed with a selection beside its key is bad request data.
+//! A posted query's page link followed with a selection beside its digest is bad request data.
 
 use andromeda_test_suite::{broker, followed_link::request_with, namespace::Namespace, paged_buildings::PagedBuildings, problem::problem};
 use googletest::prelude::*;
@@ -17,7 +17,7 @@ use ngsi_ld::{
 /// Clause: 5.5.9.1, 6.3.10, 6.23.3.1
 #[gtest]
 #[tokio::test]
-async fn a_qry_pag_9092_a_posted_query_page_link_followed_with_a_selection_beside_its_key_is_bad_request_data() -> Result<()> {
+async fn a_qry_pag_9092_a_posted_query_page_link_followed_with_a_selection_beside_its_digest_is_bad_request_data() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let buildings = PagedBuildings::create(&broker, &namespace).await?;

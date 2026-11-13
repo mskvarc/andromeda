@@ -159,11 +159,11 @@ mod tests {
             cursor_request::CursorRequest,
             page_context::PageContext,
             page_pointers::PagePointers,
-            page_query::PageQuery,
             page_request::{CollectionOrder, PageRequest},
             page_size::{PageSizeBounds, PageSizeCap, PageSizeExceeded},
             parameters::PageParameters,
             policy::PaginationPolicy,
+            query_digest::QueryDigest,
         },
     };
     use andromeda_configuration::schema::extensions::{
@@ -193,7 +193,7 @@ mod tests {
     static CORE: LazyLock<PageContext> = LazyLock::new(|| PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"));
 
     /// The query every request of these tests is read for.
-    static QUERY: LazyLock<PageQuery> = LazyLock::new(|| PageQuery::of(Some("type=Vehicle")));
+    static QUERY: LazyLock<QueryDigest> = LazyLock::new(|| QueryDigest::of(Some("type=Vehicle")));
 
     /// A query-string request under the core context over an
     /// identifier-ordered, uncounted collection.
@@ -534,7 +534,7 @@ mod tests {
     #[test]
     fn a_cursor_followed_under_another_query_is_refused() {
         let followed = PageParameters {
-            query: Some(PageQuery::of(Some("type=Vehicle&q=speed%3E10"))),
+            query: Some(QueryDigest::of(Some("type=Vehicle&q=speed%3E10"))),
             ..page(None, None, Some(CursorRequest::Continue(after("urn:e:1"))))
         };
         let error = window(PaginationPolicy::CursorDefault, &followed, identifier()).expect_err("refused");
@@ -556,7 +556,7 @@ mod tests {
     #[test]
     fn a_first_pointer_followed_under_another_query_is_refused() {
         let followed = PageParameters {
-            query: Some(PageQuery::of(Some("type=Building"))),
+            query: Some(QueryDigest::of(Some("type=Building"))),
             ..page(None, None, Some(CursorRequest::Start))
         };
         let error = window(PaginationPolicy::CursorDefault, &followed, identifier()).expect_err("refused");

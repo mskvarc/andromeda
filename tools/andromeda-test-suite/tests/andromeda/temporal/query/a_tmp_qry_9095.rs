@@ -1,4 +1,4 @@
-//! The page links of a posted temporal query read the held query by its key.
+//! The page links of a posted temporal query read the held query by its digest.
 
 use andromeda_test_suite::{
     broker,
@@ -23,7 +23,7 @@ use ngsi_ld::{
 /// Clause: 5.5.9.1, 5.5.9.2, 6.3.10, 6.24.3.1
 #[gtest]
 #[tokio::test]
-async fn a_tmp_qry_9095_the_page_links_of_a_posted_temporal_query_read_the_held_query_by_its_key() -> Result<()> {
+async fn a_tmp_qry_9095_the_page_links_of_a_posted_temporal_query_read_the_held_query_by_its_digest() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
@@ -54,7 +54,7 @@ async fn a_tmp_qry_9095_the_page_links_of_a_posted_temporal_query_read_the_held_
     for member in ["type", "q", "timerel", "timeAt", "pageQuery", "pageContext"] {
         expect_that!(next, not(carries_parameter(member)));
     }
-    let key = next
+    let digest = next
         .query_pairs()
         .find(|(name, _)| name == "postedQuery")
         .map(|(_, value)| value.into_owned())
@@ -63,6 +63,6 @@ async fn a_tmp_qry_9095_the_page_links_of_a_posted_temporal_query_read_the_held_
     expect_that!(second.items(), len(eq(1)));
     let prev = second.prev().or_fail()?;
     expect_that!(prev.path(), ends_with("/ngsi-ld/v1/temporal/entities"));
-    expect_that!(prev, carries("postedQuery", &key));
+    expect_that!(prev, carries("postedQuery", &digest));
     Ok(())
 }
