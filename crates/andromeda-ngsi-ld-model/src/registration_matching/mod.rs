@@ -9,7 +9,9 @@
 //! 5.11.7 return the registration trimmed to the matching elements. This module
 //! is that reading: a concrete entity is the specification "any of its types,
 //! exactly its identifier", so coverage of an entity and matching of a query
-//! are one decision.
+//! are one decision. A subscription copy placed at a context source is reduced
+//! by the same reading (clause 5.8.1.4).
 
 pub mod entity_specification;
 pub mod match_specification;
+pub mod selector_reduction;

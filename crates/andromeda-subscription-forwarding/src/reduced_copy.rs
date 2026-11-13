@@ -2,12 +2,15 @@
 //!
 //! The copy placed at a context source watches only the entities and attributes
 //! the registration declared and notifies this broker rather than the
-//! subscriber. The `attributes`, `pick` and `omit` of the notification member
-//! never travel with it: this broker narrows the entities it re-assembles
-//! before delivering them (clause 5.8.6), and a source that had already
-//! narrowed its part would leave nothing to re-assemble from. The filters
-//! `q`, `geoQ` and `scopeQ` go only when entities may be split, because only
-//! then can they not be decided at one source.
+//! subscriber. Its entity selectors are the subscription's intersected with
+//! the registered entities, so no type or identifier outside the registration
+//! reaches the source (clause 4.3.6.1). The `attributes`, `pick` and `omit` of
+//! the notification member never travel with it: this broker narrows the
+//! entities it re-assembles before delivering them (clause 5.8.6), and a
+//! source that had already narrowed its part would leave nothing to
+//! re-assemble from. The filters `q`, `geoQ` and `scopeQ` go only when
+//! entities may be split, because only then can they not be decided at one
+//! source.
 
 use crate::receiver::ReceiverEndpoint;
 use andromeda_federation::split_entities::SplitEntities;
@@ -16,13 +19,12 @@ use andromeda_ngsi_ld_model::{
     clearable::Clearable,
     notification_request::NotificationRequest,
     registration::ContextSourceRegistration,
-    registration_matching::{entity_specification::EntitySpecification, match_specification::RegistrationMatchSpecification},
-    subscription::{Subscription, SubscriptionType, entity_selector::EntitySelector},
+    registration_matching::selector_reduction::reduced_selectors,
+    subscription::{Subscription, SubscriptionType},
     subscription_request::SubscriptionRequest,
 };
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use andromeda_subscription::deleted_members::{DeletableMember, DeletedMembers};
-use std::slice;
 
 /// Whether the copy keeps the filters of the original.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,22 +88,7 @@ impl ReducedSubscription {
         minted: &Identifier,
         carriage: FilterCarriage,
     ) -> ReducedSubscription {
-        let selectors: Vec<EntitySelector> = subscription
-            .selection
-            .entities
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
-            .filter(|selector| {
-                let specification = EntitySpecification::from_selector(selector);
-                RegistrationMatchSpecification {
-                    entities: slice::from_ref(&specification),
-                    attributes: &[],
-                }
-                .covers(registration)
-            })
-            .cloned()
-            .collect();
+        let selectors = reduced_selectors(subscription.selection.entities.as_deref(), &registration.coverage.information);
         let declared = declared_attributes(registration);
         let keeps_filters = carriage == FilterCarriage::Keep;
 
@@ -124,7 +111,7 @@ impl ReducedSubscription {
                 type_: Some(SubscriptionType),
                 subscription_name: Clearable::from_option(subscription.subscription_name.clone()),
                 description: Clearable::from_option(subscription.description.clone()),
-                entities: Clearable::from_option((!selectors.is_empty()).then_some(selectors)),
+                entities: Clearable::from_option(selectors.filter(|selectors| !selectors.is_empty())),
                 watched_attributes: Clearable::from_option(narrow_names(subscription.selection.watched_attributes.as_deref(), declared.as_deref())),
                 notification_trigger: Clearable::from_option(subscription.selection.notification_trigger.clone()),
                 time_interval: Clearable::from_option(subscription.delivery.time_interval),
@@ -293,16 +280,17 @@ mod tests {
         .expect("valid subscription")
     }
 
-    /// Clause 5.12: a selector pattern matching the registered `id` selects it.
+    /// Clause 5.12: a selector pattern matching the registered `id` selects it,
+    /// and the copy names that `id` alone (clause 4.3.6.1).
     #[test]
-    fn a_selector_by_pattern_is_kept_for_a_block_registering_an_id_the_pattern_matches() {
+    fn a_selector_by_pattern_reaches_the_source_as_the_registered_id_it_matches() {
         let registration = registration(&json!([{"entities": [{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7"}]}]));
         let selecting = subscription_selecting(&json!([
             {"type": VEHICLE, "idPattern": "urn:ngsi-ld:Vehicle:.*"},
             {"type": VEHICLE, "idPattern": "urn:ngsi-ld:Building:.*"}
         ]));
         let document = written(&ReducedSubscription::reduce(&selecting, &registration, &receiver(), &minted(), FilterCarriage::Keep).request);
-        pretty_assertions::assert_eq!(document["entities"], json!([{"type": VEHICLE, "idPattern": "urn:ngsi-ld:Vehicle:.*"}]));
+        pretty_assertions::assert_eq!(document["entities"], json!([{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7"}]));
     }
 
     /// Clause 5.2.8: the registered `id` decides, so a wide pattern beside it
@@ -420,6 +408,18 @@ mod tests {
         }
     }
 
+    /// Clause 5.8.1.4: an update is reduced to what the registration matches
+    /// as the copy is, so the fragment carries the narrowed selectors.
+    #[test]
+    fn the_update_fragment_carries_the_narrowed_selectors() {
+        let registration = registration(&json!([{"entities": [{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7"}]}]));
+        let fragment = written(
+            &ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Keep)
+                .as_fragment(&DeletedMembers::default(), FilterCarriage::Keep),
+        );
+        pretty_assertions::assert_eq!(fragment["entities"], json!([{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:7"}]));
+    }
+
     #[test]
     fn the_update_fragment_drops_the_identifier_and_type() {
         let registration = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
@@ -432,12 +432,25 @@ mod tests {
         assert!(fragment.get("entities").is_some());
     }
 
-    /// The fragment a local update of `local` produces for `registration`, with
-    /// the members `update` deleted.
-    fn fragment_after(local: &Subscription, update: &Value, carriage: FilterCarriage) -> Value {
-        let registration = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
+    /// The fragment a local update of `local` produces for a registration of
+    /// `information`, with the members `update` deleted.
+    fn fragment_under(information: &Value, local: &Subscription, update: &Value, carriage: FilterCarriage) -> Value {
+        let registration = registration(information);
         let deleted = DeletedMembers::of(&serde_json::from_value(update.clone()).expect("a readable fragment"));
         written(&ReducedSubscription::reduce(local, &registration, &receiver(), &minted(), carriage).as_fragment(&deleted, carriage))
+    }
+
+    /// The fragment a local update of `local` produces for a registration of
+    /// vehicles, with the members `update` deleted.
+    fn fragment_after(local: &Subscription, update: &Value, carriage: FilterCarriage) -> Value {
+        fragment_under(&json!([{"entities": [{"type": VEHICLE}]}]), local, update, carriage)
+    }
+
+    /// Registration information constraining neither the entities nor the
+    /// attributes of a subscription naming none: one block registers no
+    /// entity, the other no attribute.
+    fn unconstraining_information() -> Value {
+        json!([{"entities": [{"type": VEHICLE}]}, {"propertyNames": [SPEED]}])
     }
 
     /// Clauses 5.5.8 and 5.8.1.4: a member the local update deleted is sent to
@@ -480,13 +493,24 @@ mod tests {
     fn a_selector_is_deleted_only_while_the_other_remains() {
         let mut local = subscription();
         local.selection.entities = None;
-        let with_watched = fragment_after(&local, &json!({"entities": "urn:ngsi-ld:null"}), FilterCarriage::Keep);
+        let deleting_entities = json!({"entities": "urn:ngsi-ld:null"});
+        let with_watched = fragment_under(&unconstraining_information(), &local, &deleting_entities, FilterCarriage::Keep);
         pretty_assertions::assert_eq!(with_watched["entities"], json!(["urn:ngsi-ld:null"]));
         pretty_assertions::assert_eq!(with_watched["watchedAttributes"], json!([SPEED, COLOUR]));
 
         local.selection.watched_attributes = None;
-        let neither = fragment_after(&local, &json!({"entities": "urn:ngsi-ld:null"}), FilterCarriage::Keep);
+        let neither = fragment_under(&unconstraining_information(), &local, &deleting_entities, FilterCarriage::Keep);
         assert!(neither.get("entities").is_none());
+    }
+
+    /// Clause 4.3.6.1: a subscription that deleted its selectors still reaches
+    /// a source registered for one type with that type alone.
+    #[test]
+    fn a_deleted_selection_reaches_the_source_as_the_registered_entities() {
+        let mut local = subscription();
+        local.selection.entities = None;
+        let fragment = fragment_after(&local, &json!({"entities": "urn:ngsi-ld:null"}), FilterCarriage::Keep);
+        pretty_assertions::assert_eq!(fragment["entities"], json!([{"type": VEHICLE}]));
     }
 
     #[test]

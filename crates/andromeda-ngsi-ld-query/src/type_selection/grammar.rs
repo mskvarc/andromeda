@@ -92,6 +92,19 @@ impl TypeExprRaw {
             TypeExprRaw::And(children) | TypeExprRaw::Or(children) => children.iter().flat_map(TypeExprRaw::named_types).collect(),
         }
     }
+
+    /// One selector for `alternatives`: none for no alternative, the
+    /// alternative itself for one, and their disjunction (clause 4.17) for
+    /// several.
+    #[must_use]
+    pub fn any_of(alternatives: Vec<TypeExprRaw>) -> Option<TypeExprRaw> {
+        let mut alternatives = alternatives.into_iter();
+        match (alternatives.next(), alternatives.next()) {
+            (None, None | Some(_)) => None,
+            (Some(only), None) => Some(only),
+            (Some(first), Some(second)) => Some(TypeExprRaw::Or([first, second].into_iter().chain(alternatives).collect())),
+        }
+    }
 }
 
 impl FromStr for TypeExprRaw {
@@ -314,6 +327,17 @@ mod tests {
         let expr: TypeExprRaw = "(Home;Vehicle)".parse().expect("valid type expression");
         assert!(expr.matches(&["Home", "Vehicle"]));
         assert!(!expr.matches(&["Home"]));
+    }
+
+    #[test]
+    fn any_of_no_alternative_is_no_selector_and_of_one_is_that_alternative() {
+        let parsed = |raw: &str| raw.parse::<TypeExprRaw>().expect("valid type expression");
+        pretty_assertions::assert_eq!(TypeExprRaw::any_of(Vec::new()), None);
+        pretty_assertions::assert_eq!(TypeExprRaw::any_of(vec![parsed("(Home;Vehicle)")]), Some(parsed("(Home;Vehicle)")));
+        pretty_assertions::assert_eq!(
+            TypeExprRaw::any_of(vec![parsed("Building"), parsed("(Home;Vehicle)"), parsed("Tower")]),
+            Some(parsed("Building|(Home;Vehicle)|Tower"))
+        );
     }
 
     #[test]

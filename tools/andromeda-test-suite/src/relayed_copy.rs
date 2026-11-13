@@ -21,10 +21,12 @@ use mediatype::MediaType;
 use ngsi_ld::{
     client::{ClientError, ReqwestError},
     model::{Context, Entity, EntityTypeName, Lossless, Output},
+    query::{EntitySelector, builders::SelectorTypeBuilder},
     registration::{CSourceRegistration, EntityInfo, OperationGroup, RegistrationInfo, RegistrationMode},
     subscription::{Notification, NotificationId, SubscriptionId},
 };
 use std::result::Result as StdResult;
+use url::Url;
 use wiremock::Request;
 
 /// The prefix an entity type gets in a subscription copy: the broker expands it under the default vocabulary.
@@ -63,6 +65,23 @@ pub async fn register_copy_source(broker: &BrokerClient, source: &ContextSource,
     register_with(broker, source, namespace, prefix, 1, None).await
 }
 
+/// As [`register_copy_source`], the registration offering `entities` in its one information block in place of the
+/// test's `Vehicle` type and identifiers.
+///
+/// # Errors
+///
+/// Returns the failure to mount an answer or to register the source.
+pub async fn register_copy_source_of(
+    broker: &BrokerClient,
+    source: &ContextSource,
+    namespace: &Namespace,
+    prefix: &str,
+    entities: Vec<EntityInfo>,
+) -> Result<()> {
+    accept_copies(source, prefix).await?;
+    register_offering(broker, source.endpoint(prefix)?, namespace, 1, None, entities).await
+}
+
 /// As [`register_copy_source`], the registration carrying the test's registration number `number`, so a test can
 /// register several sources of the one type and identifier pattern.
 ///
@@ -94,21 +113,43 @@ async fn register_with(
     conformance: Option<&str>,
 ) -> Result<()> {
     accept_copies(source, prefix).await?;
-    let builder = CSourceRegistration::builder(source.endpoint(prefix)?);
+    let vehicles = EntityInfo::new(namespace.entity_type("Vehicle")?).with_id_pattern(namespace.id_pattern("Vehicle")?);
+    register_offering(broker, source.endpoint(prefix)?, namespace, number, conformance, vec![vehicles]).await
+}
+
+/// Registers `endpoint` as an inclusive source advertising `federationOps` for `entities`, under the test's
+/// registration number `number`, naming `conformance` in its `contextSourceInfo` when there is one.
+async fn register_offering(
+    broker: &BrokerClient,
+    endpoint: Url,
+    namespace: &Namespace,
+    number: u32,
+    conformance: Option<&str>,
+    entities: Vec<EntityInfo>,
+) -> Result<()> {
+    let builder = CSourceRegistration::builder(endpoint);
     let builder = match conformance {
         Some(version) => builder.context_source_info(("ngsildConformance", version)),
         None => builder,
     };
     let registration = builder
         .id(namespace.registration_id(number)?)
-        .information([RegistrationInfo::builder()
-            .entities([EntityInfo::new(namespace.entity_type("Vehicle")?).with_id_pattern(namespace.id_pattern("Vehicle")?)])
-            .build()?])
+        .information([RegistrationInfo::builder().entities(entities).build()?])
         .mode(RegistrationMode::Inclusive)
         .operations([OperationGroup::FederationOps])
         .build()?;
     broker.registrations().register(&registration).send().await?;
     Ok(())
+}
+
+/// The selector a copy names for the entities of `entity_type`, the type expanded under the default vocabulary.
+///
+/// # Errors
+///
+/// Returns the failure when the expanded type is not a type selection.
+pub fn copy_selector(entity_type: &EntityTypeName) -> Result<EntitySelector> {
+    let expanded = format!("{DEFAULT_VOCABULARY}{entity_type}");
+    Ok(EntitySelector::new(SelectorTypeBuilder::from(expanded.as_str()).build()?))
 }
 
 /// The one copy for `entity_type` the source, beneath its root path `prefix`, received, waiting for it up to the
