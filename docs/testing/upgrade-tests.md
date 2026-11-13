@@ -12,10 +12,13 @@ The crate's one test target, `upgrade`, has two groups of tests.
 
 `seal` covers the conversion of data-integrity seals (see [Data-integrity seals](../data-integrity-seals.md)), which migrations 0032, 0033 and 0034 perform.
 
-- A complete seal in current state becomes a typed seal of value kind 12, with its two seals in fields of their own and its proof typed.
+- A complete seal in current state becomes a typed seal of value kind 12, with its two seals in fields of their own and its proof typed. The broker's own decoder reads it back with every member as written.
+- A seal naming a type no Entity carries adds it to the type dictionary, and a type named twice is sealed once, at its first position.
 - A seal naming a type and a value that is no reference is dropped with its own sub-attributes.
 - A seal missing a proof member is dropped with its children, and the sibling behind it is kept with its parent renumbered.
-- Seals at the edges of what the broker accepts are kept: a URL port of 65535, leading zeros included, a `created` on the leap day of year 0000, and an IRI made of the first and last characters of the first three `ucschar` ranges. A port of 65536 and a noncharacter between two `ucschar` ranges drop their seal.
+- A seal no write admits is dropped beside a complete one that is kept. The cases are a `created` that clause 4.6.3 doesn't spell (a seventh fractional digit, an offset, lowercase designators, a day its month lacks, hour 24, second 60, no seconds, no datatype), an empty `cryptosuite`, a value of two proofs, a missing or empty subproperty, the NGSI-LD Null as the entity or a type, an entity that is no URI, is named by reference or is 1024 bytes long, and a seal that is a Relationship.
+- Seals at the edges of what the broker accepts are kept and read back through the broker's own decoder: a URL port of 65535, leading zeros included, a `created` on the leap day of year 0000, a `created` with a comma before its fraction, an IRI made of the first and last characters of the first three `ucschar` ranges, and a URL with no path one byte below the identifier bound. A port of 65536, a noncharacter between two `ucschar` ranges and a URL at the identifier bound drop their seal.
+- Every URI the conversion admits is one the broker reads. A corpus of some 46,000 candidates crosses the hosts, ports, paths, queries and fragments of a URL and the opaque paths of other schemes, and each one the conversion's own test admits is parsed by the broker, is at most one byte longer in the spelling the broker stores, and is an identifier when it is within the bound.
 - A top-level `ngsildproof` leaves current state and the search row, nets out of the census ledgers, and takes its history streams, rows and instance claims with it. The instances behind it in current state close up their ordinals, as a write removing it would.
 - The streams of a top-level `ngsildproof` are counted out of the stream census under every type the Entity's identity row records for its Evolution, the types the broker counts a stream under, and no type membership row is read for them.
 - A seal in a history row, a pending change snapshot, a notification event snapshot and an append intent entry is converted, and a top-level seal entry of an intent is dropped.
@@ -23,7 +26,7 @@ The crate's one test target, `upgrade`, has two groups of tests.
 - A top-level seal a pending change or a notification event touched leaves the change's three aligned arrays, its transition, attribute name and `datasetId` together, even when neither state holds it any longer.
 - In a database that names `ngsildproof`, a pending change, a notification event and an append intent that hold no seal keep the row versions v1.0.0 wrote, so the upgrade rewrites no queued row it does not convert.
 - Seals in history the columnstore holds are converted, and a top-level seal's stream leaves it, while the session lets one statement decompress a single row. The columnstore is turned on with the layout the broker gives it and every chunk is converted, as the broker does at runtime, since no migration does.
-- The upgrade leaves in `public` only the `seal_conversion_` functions a Snapshot branch created later calls again. The two that convert the queues are temporary and never reach the schema.
+- The upgrade leaves no `seal_conversion_` function in `public`. Migration 0034 drops them once every branch is converted, and the two that convert the queues are temporary and never reach the schema.
 - A database that never stored a seal upgrades with nothing changed.
 
 `lockstep` covers how every schema of a tenant database moves through the migrations together, as [Schema](../database/schema.md#migrations) describes.
@@ -34,7 +37,7 @@ The crate's one test target, `upgrade`, has two groups of tests.
 - A Snapshot branch whose seal conversion fails stops the upgrade with an error naming the Snapshot, its branch and the migration. `public` and the Snapshot branch migrated before it stay at the conversion, and the failing branch keeps its seal as v1.0.0 stored it. Once the branch can take the conversion, the next upgrade brings every schema through the last migration and converts the seals the failing branch kept.
 - A Snapshot branch whose ledger cannot be read stops the upgrade before any migration runs, with an error naming the branch.
 - A branch schema no control record names, which the expiry sweep drops, is never migrated, so it keeps no tenant from opening even when it could not take a migration.
-- A Snapshot created through the broker's own creation path after the upgrade builds its branch through every branch migration, against the types the later tenant migrations changed.
+- A Snapshot created through the broker's own creation path after the upgrade builds its branch through every branch migration, against the types the later tenant migrations changed and without the conversion functions the upgrade dropped.
 - A database no migration has reached takes the whole tenant set.
 - A database whose ledger records an applied branch migration other than the one this build embeds is refused, even when nothing is left to apply.
 - The platform database runs the platform set and then converts the seals of its live branch and its Snapshot branch, with every ledger at the last migration of its set.

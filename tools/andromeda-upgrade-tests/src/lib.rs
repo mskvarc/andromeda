@@ -30,6 +30,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dev_dependencies: [
         "andromeda-json-literal",
         "andromeda-ngsi-ld-model",
+        "andromeda-postgresql-attribute-instance",
         "andromeda-postgresql-seaquery",
         "andromeda-postgresql-temporal-store",
         "andromeda-snapshot",

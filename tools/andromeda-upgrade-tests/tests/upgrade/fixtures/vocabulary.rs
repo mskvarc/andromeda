@@ -17,10 +17,10 @@ pub(crate) const SEALED_ENTITY_ID: &str = "urn:ngsi-ld:Store:002";
 pub(crate) const PROOF_CREATED: &str = "2025-01-27T21:02:24.500Z";
 
 /// The expanded `entityIdSealed` member name.
-const ENTITY_ID_SEALED: &str = "https://uri.etsi.org/ngsi-ld/entityIdSealed";
+pub(crate) const ENTITY_ID_SEALED: &str = "https://uri.etsi.org/ngsi-ld/entityIdSealed";
 
 /// The expanded `entityTypeSealed` member name.
-const ENTITY_TYPE_SEALED: &str = "https://uri.etsi.org/ngsi-ld/entityTypeSealed";
+pub(crate) const ENTITY_TYPE_SEALED: &str = "https://uri.etsi.org/ngsi-ld/entityTypeSealed";
 
 /// The proof's one member beside the six it must hold.
 pub(crate) const FURTHER_MEMBER: &str = "https://w3id.org/security#challenge";

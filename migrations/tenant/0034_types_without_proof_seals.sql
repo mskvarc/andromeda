@@ -5,10 +5,14 @@
 --
 -- No top-level instance, temporal entry or row is a data-integrity seal, and
 -- a seal element holds its non-reified subproperties in fields of their own,
--- so no type keeps `proof_seals`. The view of the queued temporal entries
--- names every field of an entry, so it is dropped before the types change
--- and created again after them.
+-- so no type keeps `proof_seals`. Every branch is converted, so nothing
+-- calls a `seal_conversion_` function again, and they are dropped in one
+-- statement, as some of them call others. The view of the queued temporal
+-- entries names every field of an entry, so it is dropped before the types
+-- change and created again after them.
 -- ============================================================================
+drop function seal_conversion_typed_state, seal_conversion_typed_tree, seal_conversion_state_holds_seal, seal_conversion_kept_changes, seal_conversion_intern_entity_types, seal_conversion_entity_type_names, seal_conversion_entity_id, seal_conversion_proof, seal_conversion_reference, seal_conversion_plain_string, seal_conversion_typed_string, seal_conversion_admits_uri, seal_conversion_attribute_key;
+
 drop view temporal_append_entries;
 
 alter type temporal_entry

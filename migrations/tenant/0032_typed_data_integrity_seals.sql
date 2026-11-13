@@ -35,9 +35,8 @@
 -- branch set's, and nothing else calls one: `seal_conversion_admits_uri`
 -- admits fewer URIs than the broker, so a seal it refuses is dropped. The
 -- two that convert the queues are temporary, so they end with the session
--- the migrations run in. The others stay, since every Snapshot branch
--- created later runs the branch set again, over relations that are still
--- empty.
+-- the migrations run in. The others last until every branch is converted:
+-- the tenant set drops them with `proof_seals`.
 -- ============================================================================
 -- The W3C Data Integrity proof of a seal beside its `type`, which is always
 -- `DataIntegrityProof`:
@@ -336,13 +335,10 @@ create function seal_conversion_intern_entity_types (type_names text[])
 -- typed when its value is a proof and its subproperties name an entity,
 -- dropped with every element below it otherwise. A kept element's `parent`
 -- is renumbered to its parent's new position, and no element left is no
--- array. The subproperties are read from the element's JSON image rather
--- than from a field, so the function outlives the field: once the types drop
--- `proof_seals`, a call reads none instead of failing. The elements travel in
--- a `sub_attribute_tree` because the PL/pgSQL parser the migrations are
--- linted with has no catalog: it reads a type it doesn't know as `record`
--- and an array of one as `record[]`, which no PL/pgSQL parameter, result or
--- variable may be.
+-- array. The elements travel in a `sub_attribute_tree` because the PL/pgSQL
+-- parser the migrations are linted with has no catalog: it reads a type it
+-- doesn't know as `record` and an array of one as `record[]`, which no
+-- PL/pgSQL parameter, result or variable may be.
 create function seal_conversion_typed_tree (tree sub_attribute_tree, seal_key integer)
     returns sub_attribute_tree
     language plpgsql
@@ -367,7 +363,7 @@ begin
             continue;
         end if;
         if element.attribute_name_key = seal_key then
-            subproperties := to_jsonb(element) -> 'proof_seals';
+            subproperties := element.proof_seals;
             proof := case when element.attribute_kind = 1 and element.value_kind = 5 then seal_conversion_proof(element.value_object) end;
             entity_id := seal_conversion_entity_id(subproperties);
             type_names := seal_conversion_entity_type_names(subproperties);
