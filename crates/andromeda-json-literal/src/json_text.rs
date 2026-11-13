@@ -5,38 +5,17 @@
 //! one of its members) needs no tree: each piece is already canonical JSON
 //! text, and only the strings the broker supplies itself have to be quoted.
 
+use jstrict::print::string_literal;
+use std::fmt;
+
 /// `text` as a JSON string, quoted and escaped as IETF RFC 8259 section 7
 /// requires: the quotation mark, the reverse solidus and every control
-/// character are escaped, the short forms used where the grammar has one.
+/// character are escaped, the short forms used where the grammar has one and
+/// a lowercase `\u00xx` otherwise, as IETF RFC 8785 section 3.2.2.2 spells
+/// them.
 #[must_use]
 pub fn quoted(text: &str) -> String {
-    /// The hexadecimal digits a `\u` escape spells a control character with.
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut written = String::with_capacity(text.len() + 2);
-    written.push('"');
-    for character in text.chars() {
-        match character {
-            '"' => written.push_str("\\\""),
-            '\\' => written.push_str("\\\\"),
-            '\n' => written.push_str("\\n"),
-            '\r' => written.push_str("\\r"),
-            '\t' => written.push_str("\\t"),
-            '\u{08}' => written.push_str("\\b"),
-            '\u{0C}' => written.push_str("\\f"),
-            control @ '\u{00}'..='\u{1F}' => {
-                let code = u32::from(control);
-                written.push_str("\\u00");
-                written.extend(
-                    [code >> 4, code & 0xF]
-                        .into_iter()
-                        .filter_map(|nibble| usize::try_from(nibble).ok().and_then(|index| HEX.get(index)).map(|digit| char::from(*digit))),
-                );
-            }
-            other => written.push(other),
-        }
-    }
-    written.push('"');
-    written
+    fmt::from_fn(|formatter| string_literal(text, formatter)).to_string()
 }
 
 #[cfg(test)]
@@ -53,6 +32,32 @@ mod tests {
     #[test]
     fn the_characters_the_grammar_reserves_are_escaped() {
         pretty_assertions::assert_eq!(quoted("a\"b\\c\nd\te\u{01}f\u{1F}"), r#""a\"b\\c\nd\te\u0001f\u001f""#);
+    }
+
+    #[test]
+    fn each_control_character_with_a_short_form_is_written_in_it() {
+        pretty_assertions::assert_eq!(quoted("\u{08}\u{0C}\r\n\t"), r#""\b\f\r\n\t""#);
+    }
+
+    #[test]
+    fn every_control_character_is_escaped_and_reads_back() {
+        let text: String = (0x00_u8..0x20).map(char::from).collect();
+        let written = quoted(&text);
+        assert!(written.bytes().all(|byte| byte >= 0x20), "{written}");
+        let read: String = serde_json::from_str(&written).expect("the quoted text is a JSON string");
+        pretty_assertions::assert_eq!(read, text);
+    }
+
+    /// A text of 64 bytes or more takes another encoder than a short one, and
+    /// is spelled the same.
+    #[test]
+    fn a_long_text_is_escaped_as_its_short_pieces_are() {
+        let piece = "a\u{01}\u{08}\"\\\u{1F}é\n";
+        let short = quoted(piece);
+        let inner = short.trim_start_matches('"').trim_end_matches('"');
+        let long = piece.repeat(16);
+        assert!(long.len() >= 64);
+        pretty_assertions::assert_eq!(quoted(&long), format!("\"{}\"", inner.repeat(16)));
     }
 
     #[test]
