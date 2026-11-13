@@ -3,8 +3,8 @@
 //! Every test runs in a process of its own under `cargo nextest`, against a stack of brokers it reaches over the
 //! network. Each test draws a [`namespace::Namespace`], speaks to a broker through a client of the `ngsi-ld` crate
 //! ([`broker`]), receives notifications and forwarded requests in servers of its own ([`notification_sink`],
-//! [`context_source`], [`mqtt_observer`]), and compares what it reads with the matchers of [`comparison`],
-//! [`problem`] and [`wire`].
+//! [`context_source`], [`mqtt_observer`], [`mqtt_server`]), and compares what it reads with the matchers of
+//! [`comparison`], [`problem`] and [`wire`].
 
 pub mod aggregated_answer;
 pub mod aggregation_matcher;
@@ -107,6 +107,7 @@ pub mod many_entries;
 pub mod minted_context_url;
 pub mod minted_wrapper;
 pub mod mqtt_observer;
+pub mod mqtt_server;
 pub mod mqtt_settings;
 pub mod namespace;
 pub mod nesting;

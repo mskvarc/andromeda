@@ -22,6 +22,13 @@ use std::sync::Arc;
 /// Reports per-connection health and whatever broker metadata arrived over
 /// `$SYS`. The probe is a read of state the event loops already maintain, so
 /// calling `/health` does not touch a broker.
+///
+/// A quiet or failed connection makes the component `Degraded` and never
+/// `Down`, so no MQTT server decides readiness. Each server is the notification
+/// endpoint of a Subscription, chosen by whoever creates it and outside the
+/// operator's control, and deliveries to a failed server back off and retry on
+/// their own, so taking the broker out of service would recover nothing. The
+/// failed connection stays listed in the details.
 pub struct MqttHealthIndicator {
     /// The pool being reported on.
     pool: Arc<MqttTransportPool>,
@@ -42,25 +49,30 @@ impl HealthIndicator for MqttHealthIndicator {
     }
 
     async fn check(&self) -> ComponentDetail {
-        let summaries = self.pool.connection_health_summaries().await;
-        let total = summaries.len();
-        let unhealthy = summaries.iter().filter(|summary| summary.health == ConnectionHealth::Unhealthy).count();
-        let degraded = summaries.iter().filter(|summary| summary.health == ConnectionHealth::Degraded).count();
-        let status = match (unhealthy, degraded) {
-            (0, 0) => HealthStatus::Up,
-            (0, _) => HealthStatus::Degraded,
-            (_, _) => HealthStatus::Down,
-        };
+        report(self.pool.connection_health_summaries().await)
+    }
+}
 
-        ComponentDetail {
-            status,
-            details: Some(ComponentDetails::Mqtt(MqttDetails {
-                active_connections: total,
-                connections: summaries.into_iter().map(describe).collect(),
-                degraded_connections: degraded,
-                unhealthy_connections: unhealthy,
-            })),
-        }
+/// What the component reports for the pooled connections `summaries`
+/// describes: `Up` while every one is healthy, `Degraded` otherwise, and each
+/// connection listed whatever its health.
+fn report(summaries: Vec<MqttConnectionHealthSummary>) -> ComponentDetail {
+    let total = summaries.len();
+    let unhealthy = summaries.iter().filter(|summary| summary.health == ConnectionHealth::Unhealthy).count();
+    let degraded = summaries.iter().filter(|summary| summary.health == ConnectionHealth::Degraded).count();
+    let status = match unhealthy + degraded {
+        0 => HealthStatus::Up,
+        _impaired => HealthStatus::Degraded,
+    };
+
+    ComponentDetail {
+        status,
+        details: Some(ComponentDetails::Mqtt(MqttDetails {
+            active_connections: total,
+            connections: summaries.into_iter().map(describe).collect(),
+            degraded_connections: degraded,
+            unhealthy_connections: unhealthy,
+        })),
     }
 }
 
@@ -95,11 +107,17 @@ mod tests {
             config::MqttPoolConfig,
             dial::RumqttcDialer,
             health::{ConnectionHealth, MqttConnectionHealthSummary},
-            indicator::{MqttHealthIndicator, describe},
+            indicator::{MqttHealthIndicator, describe, report},
             pool::MqttTransportPool,
         },
     };
-    use andromeda_health::{component::ComponentName, details::ComponentDetails, indicator::HealthIndicator, mqtt_details::MqttDetails, status::HealthStatus};
+    use andromeda_health::{
+        component::{ComponentDetail, ComponentName},
+        details::ComponentDetails,
+        indicator::HealthIndicator,
+        mqtt_details::{MqttConnectionDetail, MqttConnectionState, MqttDetails, MqttProtocolVersion},
+        status::HealthStatus,
+    };
     use serde_json::json;
     use std::{str::FromStr, sync::Arc};
 
@@ -110,6 +128,98 @@ mod tests {
                 mqtt_client_tls().expect("the system trust store yields a TLS client configuration"),
             )),
         )))
+    }
+
+    /// A pooled MQTT 5 connection to port `port` of `broker`, in `health`.
+    fn pooled(port: u16, health: ConnectionHealth) -> MqttConnectionHealthSummary {
+        MqttConnectionHealthSummary {
+            authority: HostPort::from_str(&format!("broker:{port}")).expect("a valid authority"),
+            version: MqttVersion::V5,
+            health,
+            seconds_since_healthy: 90,
+            broker_uptime: None,
+            broker_version: None,
+            clients_connected: None,
+        }
+    }
+
+    /// The connection [`pooled`] builds, as the health response lists it.
+    fn listed(port: u16, health: MqttConnectionState) -> MqttConnectionDetail {
+        MqttConnectionDetail {
+            broker_clients_connected: None,
+            broker_uptime: None,
+            broker_version: None,
+            health,
+            host: "broker".to_owned(),
+            port,
+            seconds_since_healthy: 90,
+            version: MqttProtocolVersion::V5,
+        }
+    }
+
+    /// The component in `status`, holding `connections` of which `degraded` are quiet and `unhealthy` have failed.
+    fn component(status: HealthStatus, connections: Vec<MqttConnectionDetail>, degraded: usize, unhealthy: usize) -> ComponentDetail {
+        ComponentDetail {
+            status,
+            details: Some(ComponentDetails::Mqtt(MqttDetails {
+                active_connections: connections.len(),
+                connections,
+                degraded_connections: degraded,
+                unhealthy_connections: unhealthy,
+            })),
+        }
+    }
+
+    #[test]
+    fn healthy_connections_report_up_and_are_each_listed() {
+        pretty_assertions::assert_eq!(
+            report(vec![pooled(1883, ConnectionHealth::Healthy), pooled(1884, ConnectionHealth::Healthy)]),
+            component(
+                HealthStatus::Up,
+                vec![listed(1883, MqttConnectionState::Healthy), listed(1884, MqttConnectionState::Healthy)],
+                0,
+                0
+            )
+        );
+    }
+
+    #[test]
+    fn a_quiet_connection_reports_the_component_degraded_and_is_listed_as_degraded() {
+        pretty_assertions::assert_eq!(
+            report(vec![pooled(1883, ConnectionHealth::Healthy), pooled(1884, ConnectionHealth::Degraded)]),
+            component(
+                HealthStatus::Degraded,
+                vec![listed(1883, MqttConnectionState::Healthy), listed(1884, MqttConnectionState::Degraded)],
+                1,
+                0
+            )
+        );
+    }
+
+    #[test]
+    fn a_failed_connection_reports_the_component_degraded_rather_than_down_and_is_listed_as_unhealthy() {
+        pretty_assertions::assert_eq!(
+            report(vec![pooled(1883, ConnectionHealth::Healthy), pooled(1884, ConnectionHealth::Unhealthy)]),
+            component(
+                HealthStatus::Degraded,
+                vec![listed(1883, MqttConnectionState::Healthy), listed(1884, MqttConnectionState::Unhealthy)],
+                0,
+                1
+            )
+        );
+    }
+
+    #[test]
+    fn a_pool_whose_every_connection_failed_still_reports_the_component_degraded() {
+        pretty_assertions::assert_eq!(
+            report(vec![pooled(1883, ConnectionHealth::Unhealthy), pooled(1884, ConnectionHealth::Unhealthy)]),
+            component(
+                HealthStatus::Degraded,
+                vec![listed(1883, MqttConnectionState::Unhealthy), listed(1884, MqttConnectionState::Unhealthy)],
+                0,
+                2
+            )
+        );
     }
 
     #[test]
