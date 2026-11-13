@@ -6,6 +6,7 @@
 
 use crate::compiled::CompiledSubscription;
 use andromeda_context_commit::change_event::ChangeEvent;
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::notification::ChangeOrigin;
 use andromeda_ngsi_ld_query::{
     filter::eval::evaluate,
@@ -55,7 +56,7 @@ pub fn selects_change(sub: &CompiledSubscription, event: &ChangeEvent) -> bool {
         return false;
     }
 
-    if !sub.selectors.is_empty() && !sub.selectors.iter().any(|selector| selector.selects(&event.entity_types, &event.entity_id)) {
+    if !selects_entity(sub, &event.entity_types, &event.entity_id) {
         debug!(
             "Subscription {} skipped: no selector selects event {} typed {:?}",
             sub.id, event.entity_id, event.entity_types
@@ -72,6 +73,13 @@ pub fn selects_change(sub: &CompiledSubscription, event: &ChangeEvent) -> bool {
         event.change.attributes()
     );
     true
+}
+
+/// Whether the entity selectors of `sub` select the entity typed `types` and
+/// identified by `id`; a subscription naming no selector selects every entity.
+#[must_use]
+pub fn selects_entity(sub: &CompiledSubscription, types: &[EntityTypeName], id: &Identifier) -> bool {
+    sub.selectors.is_empty() || sub.selectors.iter().any(|selector| selector.selects(types, id))
 }
 
 /// Evaluate q (clause 4.9), geoQ (clause 4.10), scopeQ (clause 4.19) and csf

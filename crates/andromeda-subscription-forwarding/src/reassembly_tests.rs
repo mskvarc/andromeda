@@ -376,6 +376,26 @@ async fn filters_run_on_the_merged_state() {
     }
 }
 
+/// Clause 5.12 takes a local `idPattern` and a registered one as matching, and
+/// the copy then carries the registered pattern alone, so the local selectors
+/// decide each relayed entity as they decide a local change.
+#[tokio::test]
+async fn a_relayed_entity_the_local_selectors_do_not_select_leaves_the_copy() {
+    let mut scene = ReassemblyScene::start(SceneSpec {
+        subscription_members: json!({"entities": [{"type": default_iri("Vehicle"), "idPattern": "^urn:ngsi-ld:Vehicle:1$"}]}),
+        ..SceneSpec::default()
+    })
+    .await;
+    let data = json!([
+        compact_vehicle("urn:ngsi-ld:Vehicle:1", &[("speed", property(&json!(40)))]),
+        compact_vehicle("urn:ngsi-ld:Vehicle:2", &[("speed", property(&json!(41)))])
+    ]);
+
+    scene.post(&notification(&data)).await.expect("the notification is handled");
+
+    pretty_assertions::assert_eq!(ids(&relayed(&mut scene).await), vec!["urn:ngsi-ld:Vehicle:1"]);
+}
+
 /// Clauses 4.21 and 5.8.6: `pick` narrows a relayed entity as it narrows a
 /// local one, so `type` is gone and `id` stays, whatever the list says.
 #[tokio::test]

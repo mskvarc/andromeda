@@ -49,7 +49,7 @@ use andromeda_ngsi_ld_request::entity::GetEntityParams;
 use andromeda_subscription::{
     compilation::compile_subscription,
     compiled::CompiledSubscription,
-    matching::matches_entity_filters,
+    matching::{matches_entity_filters, selects_entity},
     notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate},
     outcome_tally::OutcomeTally,
 };
@@ -119,9 +119,19 @@ impl SubscriptionForwardingService {
         Ok(Some(NotifiedPart::completed(merged, deletions, previous)))
     }
 
-    /// Whether the local subscription's filters admit `document`, the entities
-    /// a `rel{…}` hop crosses into read from this broker's store (clause 4.9).
+    /// Whether the local subscription's selectors and filters admit `document`,
+    /// the entities a `rel{…}` hop crosses into read from this broker's store
+    /// (clause 4.9).
+    ///
+    /// The selectors decide as they do for a local change: where a local
+    /// `idPattern` and the registration's overlap, the copy carries the
+    /// registration's pattern alone (clause 5.12 takes two patterns as
+    /// matching), so the source may notify an entity the local pattern does not
+    /// select.
     async fn admits(&self, compiled: &CompiledSubscription, document: &EntityDocument) -> Result<bool, SubscriptionForwardingError> {
+        if !document.id().is_some_and(|id| selects_entity(compiled, document.types(), id)) {
+            return Ok(false);
+        }
         let filters: Vec<_> = compiled.hopping_filters().collect();
         let linked = if filters.is_empty() {
             LinkedStates::new()

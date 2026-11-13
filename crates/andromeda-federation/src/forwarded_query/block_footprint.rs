@@ -237,18 +237,7 @@ pub(super) async fn covered_type(
             covered.push(TypeExprRaw::Type(names.entity_type(name).await?));
         }
     }
-    Ok(alternation(covered))
-}
-
-/// One selector for `leaves`: none for no leaf, the leaf itself for one, and
-/// their alternation (clause 4.17) for several.
-fn alternation(leaves: Vec<TypeExprRaw>) -> Option<TypeExprRaw> {
-    let mut leaves = leaves.into_iter();
-    match (leaves.next(), leaves.next()) {
-        (None, None | Some(_)) => None,
-        (Some(only), None) => Some(only),
-        (Some(first), Some(second)) => Some(TypeExprRaw::Or([first, second].into_iter().chain(leaves).collect())),
-    }
+    Ok(TypeExprRaw::any_of(covered))
 }
 
 /// The block's explicitly named identifiers, or, when it names none, the
@@ -289,7 +278,7 @@ fn block_types(block: &RegistrationInfo, names: &ForwardedNames<'_>) -> Result<O
             }
         }
     }
-    Ok(alternation(spelled.into_iter().map(TypeExprRaw::Type).collect()))
+    Ok(TypeExprRaw::any_of(spelled.into_iter().map(TypeExprRaw::Type).collect()))
 }
 
 #[cfg(test)]

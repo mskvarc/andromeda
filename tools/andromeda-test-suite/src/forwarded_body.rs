@@ -2,7 +2,8 @@
 //! carries: an entity (Create Entity, Replace Entity), the entities of a batch, a fragment of attributes (Update
 //! Attributes, Append Attributes, Merge Entity), one attribute (Partial Attribute Update), a temporal entity (Create or
 //! Update Temporal Evolution), a fragment of evolutions (Add Attributes to Temporal Evolution), clause 5.6 forwarded
-//! as clause 5.7.1.4 describes, or the copy of a subscription a broker places on a source (clause 5.8.1.4).
+//! as clause 5.7.1.4 describes, or the copy of a subscription a broker places on a source (clause 5.8.1.4) and the
+//! updates it sends that copy.
 //!
 //! The entities are read as a broker would answer them, so the entity and attribute matchers check them. A fragment
 //! names no entity, so it is read as the attributes of an entity whose id and type are placeholders, and one attribute
@@ -12,7 +13,7 @@
 use iri_rs::{Iri, iri};
 use ngsi_ld::{
     model::{DocumentError, Entity, Input, Lossless, Output, evolution::TemporalEntity},
-    subscription::{Problem, ReadErrorKind, Subscription},
+    subscription::{Problem, ReadErrorKind, Subscription, SubscriptionFragment},
 };
 use serde_json::{Map, Value};
 use std::str;
@@ -48,6 +49,9 @@ pub enum ForwardedBodyError {
     /// The model does not read the subscription.
     #[error("the forwarded document is not a subscription the model reads: {0}")]
     Subscription(#[source] DocumentError<ReadErrorKind<Problem>>),
+    /// The model does not read the subscription fragment.
+    #[error("the forwarded document is not a subscription fragment the model reads: {0}")]
+    SubscriptionFragment(#[source] DocumentError<ReadErrorKind<Problem>>),
 }
 
 /// The JSON shape a forwarded body has.
@@ -152,6 +156,16 @@ pub fn evolution_fragment(request: &Request) -> Result<TemporalEntity<Output>, F
 /// Returns [`ForwardedBodyError`] when the body is not a subscription the model reads.
 pub fn subscription(request: &Request) -> Result<Subscription<Input>, ForwardedBodyError> {
     Subscription::<Input>::parse(text(request)?).map_err(ForwardedBodyError::Subscription)
+}
+
+/// The update of a subscription copy `request` carries: an Update Subscription request (clause 5.8.2.4), read as the
+/// fragment it is.
+///
+/// # Errors
+///
+/// Returns [`ForwardedBodyError`] when the body is not a subscription fragment the model reads.
+pub fn subscription_fragment(request: &Request) -> Result<SubscriptionFragment, ForwardedBodyError> {
+    SubscriptionFragment::parse(text(request)?).map_err(ForwardedBodyError::SubscriptionFragment)
 }
 
 /// The placeholder entity holding `attributes`.
