@@ -716,6 +716,84 @@ mod tests {
         Ok(())
     }
 
+    /// Every route of the families outside the Core and Temporal APIs.
+    const SNAPSHOT_REFUSING_OPERATIONS: [(Method, &str); 32] = [
+        (Method::POST, "/ngsi-ld/v1/jsonldContexts"),
+        (Method::GET, "/ngsi-ld/v1/jsonldContexts"),
+        (Method::GET, "/ngsi-ld/v1/jsonldContexts/context-1"),
+        (Method::DELETE, "/ngsi-ld/v1/jsonldContexts/context-1"),
+        (Method::POST, "/ngsi-ld/v1/csourceRegistrations"),
+        (Method::GET, "/ngsi-ld/v1/csourceRegistrations"),
+        (Method::GET, "/ngsi-ld/v1/csourceRegistrations/urn:ngsi-ld:ContextSourceRegistration:1"),
+        (Method::PATCH, "/ngsi-ld/v1/csourceRegistrations/urn:ngsi-ld:ContextSourceRegistration:1"),
+        (Method::DELETE, "/ngsi-ld/v1/csourceRegistrations/urn:ngsi-ld:ContextSourceRegistration:1"),
+        (Method::POST, "/ngsi-ld/v1/csourceSubscriptions"),
+        (Method::GET, "/ngsi-ld/v1/csourceSubscriptions"),
+        (Method::GET, "/ngsi-ld/v1/csourceSubscriptions/urn:ngsi-ld:Subscription:2"),
+        (Method::PATCH, "/ngsi-ld/v1/csourceSubscriptions/urn:ngsi-ld:Subscription:2"),
+        (Method::DELETE, "/ngsi-ld/v1/csourceSubscriptions/urn:ngsi-ld:Subscription:2"),
+        (Method::GET, "/ngsi-ld/v1/entityMaps"),
+        (Method::POST, "/ngsi-ld/v1/entityMaps"),
+        (Method::GET, "/ngsi-ld/v1/entityMaps/urn:ngsi-ld:EntityMap:1"),
+        (Method::PATCH, "/ngsi-ld/v1/entityMaps/urn:ngsi-ld:EntityMap:1"),
+        (Method::DELETE, "/ngsi-ld/v1/entityMaps/urn:ngsi-ld:EntityMap:1"),
+        (Method::GET, "/ngsi-ld/v1/temporal/entityMaps"),
+        (Method::POST, "/ngsi-ld/v1/temporal/entityMaps"),
+        (Method::POST, "/ngsi-ld/v1/snapshots"),
+        (Method::DELETE, "/ngsi-ld/v1/snapshots"),
+        (Method::GET, "/ngsi-ld/v1/snapshots/urn:ngsi-ld:Snapshot:1"),
+        (Method::PATCH, "/ngsi-ld/v1/snapshots/urn:ngsi-ld:Snapshot:1"),
+        (Method::DELETE, "/ngsi-ld/v1/snapshots/urn:ngsi-ld:Snapshot:1"),
+        (Method::POST, "/ngsi-ld/v1/snapshots/urn:ngsi-ld:Snapshot:1/clone"),
+        (Method::GET, "/ngsi-ld/v1/info/sourceIdentity"),
+        (Method::GET, "/ngsi-ld/andromeda/v1/tenants"),
+        (Method::GET, "/ngsi-ld/andromeda/v1/tenants/acme"),
+        (Method::PATCH, "/ngsi-ld/andromeda/v1/tenants/acme"),
+        (Method::GET, "/ngsi-ld/andromeda/v1/version"),
+    ];
+
+    /// Clauses 5.5.15 and 6.3.22: only the Core and Temporal APIs run on a
+    /// Snapshot, so every other route refuses a request naming one before its
+    /// handler runs, and the refusal carries the header the request did.
+    #[tokio::test]
+    async fn every_route_outside_the_core_and_temporal_apis_refuses_a_snapshot() -> Result<(), Box<dyn Error>> {
+        let service = test_api()?.into_service();
+        let snapshot = [("ngsild-snapshot", "urn:ngsi-ld:Snapshot:1")];
+        for (method, path) in SNAPSHOT_REFUSING_OPERATIONS {
+            let response = service.clone().oneshot(ngsi_request(&method, path, &snapshot)?).await?;
+            pretty_assertions::assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY, "{method} {path}");
+            let echoed = response.headers().get("ngsild-snapshot").map(|value| value.to_str()).transpose()?;
+            pretty_assertions::assert_eq!(echoed, Some("urn:ngsi-ld:Snapshot:1"), "{method} {path}");
+            pretty_assertions::assert_eq!(problem_type(response).await?, "OperationNotSupported", "{method} {path}");
+        }
+        Ok(())
+    }
+
+    /// Clause 5.5.15: the Core and Temporal APIs, entity subscriptions
+    /// included, run on a Snapshot, and a notification of a subscription made
+    /// on one carries the header (clause 6.3.22), so none of them refuses it.
+    #[tokio::test]
+    async fn the_core_and_temporal_apis_and_the_notification_receiver_take_a_snapshot() -> Result<(), Box<dyn Error>> {
+        let service = test_api()?.into_service();
+        let snapshot = [("ngsild-snapshot", "urn:ngsi-ld:Snapshot:1")];
+        for (method, path) in [
+            (Method::POST, "/ngsi-ld/v1/entities"),
+            (Method::GET, "/ngsi-ld/v1/entities/urn:ngsi-ld:Entity:1"),
+            (Method::POST, "/ngsi-ld/v1/entityOperations/create"),
+            (Method::GET, "/ngsi-ld/v1/types"),
+            (Method::GET, "/ngsi-ld/v1/attributes"),
+            (Method::POST, "/ngsi-ld/v1/temporal/entities"),
+            (Method::POST, "/ngsi-ld/v1/temporal/entityOperations/query"),
+            (Method::POST, "/ngsi-ld/v1/subscriptions"),
+            (Method::GET, "/ngsi-ld/v1/subscriptions/urn:ngsi-ld:Subscription:1"),
+            (Method::POST, "/ngsi-ld/andromeda/v1/notifications"),
+        ] {
+            let response = service.clone().oneshot(ngsi_request(&method, path, &snapshot)?).await?;
+            assert_ne!(response.status(), StatusCode::UNPROCESSABLE_ENTITY, "{method} {path}");
+        }
+        Ok(())
+    }
+
     /// Clause 6.2: a configured `apiRoot` is what every NGSI-LD route reads,
     /// its path prefix included, whatever authority the request named.
     #[tokio::test]

@@ -178,6 +178,7 @@ pub mod simplified_pairs;
 pub mod slow_clone_source;
 pub mod snapshot_capture;
 pub mod snapshot_lock;
+pub mod snapshot_refusal;
 pub mod source_answer;
 pub mod source_discovery;
 pub mod source_discovery_details;

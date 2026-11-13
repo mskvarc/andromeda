@@ -21,6 +21,7 @@ use http::{
 };
 use ngsi_ld::{
     client::{ClientError, ReqwestError},
+    http::UncheckedRequest,
     model::Tenant,
 };
 use serde::Serialize;
@@ -133,14 +134,22 @@ pub async fn set_activity(
     tenant: &Tenant,
     activity: Activity,
 ) -> Result<Result<Response<Bytes>, ClientError<ReqwestError>>, TenantManagementError> {
+    Ok(client.send_unchecked(activity_request(client, tenant, activity)?).await)
+}
+
+/// The request setting `tenant`'s `isActive` to `activity`, for a test that adds to it before sending it.
+///
+/// # Errors
+///
+/// Returns [`TenantManagementError`] when the request cannot be written.
+pub fn activity_request(client: &BrokerClient, tenant: &Tenant, activity: Activity) -> Result<UncheckedRequest, TenantManagementError> {
     let body = serde_json::to_vec(&ActivityPatch {
         is_active: activity == Activity::Active,
     })
     .map_err(TenantManagementError::Patch)?;
-    let request = andromeda_request_to(client, Method::PATCH, &target(&format!("tenants/{tenant}"), &[]))?
+    Ok(andromeda_request_to(client, Method::PATCH, &target(&format!("tenants/{tenant}"), &[]))?
         .append_header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .body(Bytes::from(body));
-    Ok(client.send_unchecked(request).await)
+        .body(Bytes::from(body)))
 }
 
 /// Waits until `tenant` reads `status`, polling its plain resource for at most `bound`.

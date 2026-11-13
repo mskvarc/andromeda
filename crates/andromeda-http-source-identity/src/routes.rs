@@ -1,7 +1,8 @@
 //! Typed, state-complete source-identity route inventory.
 
 use crate::{handler, state::SourceIdentityState};
-use axum::{Router, routing::get};
+use andromeda_http_extraction::snapshot_scope_guard::reject_snapshot_scope;
+use axum::{Router, middleware::from_fn, routing::get};
 
 /// The complete source-identity route fragment.
 pub struct SourceIdentityRoutes {
@@ -10,11 +11,13 @@ pub struct SourceIdentityRoutes {
 }
 
 impl SourceIdentityRoutes {
-    /// Construct `GET /info/sourceIdentity` with focused immutable state.
+    /// Construct `GET /info/sourceIdentity` with focused immutable state. It
+    /// is a Distributed API operation, which takes no Snapshot
+    /// (clause 5.5.15), so the route refuses one.
     pub fn new(state: SourceIdentityState) -> SourceIdentityRoutes {
         let router = Router::new().route("/sourceIdentity", get(handler::get)).with_state(state);
         SourceIdentityRoutes {
-            router: Router::new().nest("/info", router),
+            router: Router::new().nest("/info", router).layer(from_fn(reject_snapshot_scope)),
         }
     }
 

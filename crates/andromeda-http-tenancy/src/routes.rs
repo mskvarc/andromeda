@@ -1,8 +1,9 @@
 //! Typed, state-complete tenant-management route inventory.
 
 use crate::{handler, state::TenancyRouteState};
+use andromeda_http_extraction::snapshot_scope_guard::reject_snapshot_scope;
 use andromeda_tenancy::{administration::TenantAdministration, usage_probe::TenantUsageProbe};
-use axum::{Router, routing::get};
+use axum::{Router, middleware::from_fn, routing::get};
 use std::sync::Arc;
 
 /// Whether the tenant-management surface is routed.
@@ -32,7 +33,8 @@ impl TenancyRoutes {
     ///
     /// When it is off the nest carries no routes, so every method on `/tenants`
     /// answers `404` exactly like a broker that never implemented the surface. No
-    /// route drops a tenant's physical database under any setting.
+    /// route drops a tenant's physical database under any setting. A Snapshot
+    /// lives inside one tenant (clause 5.5.15), so no route here takes one.
     pub fn new(administration: Arc<dyn TenantAdministration>, usage: Arc<dyn TenantUsageProbe>, management: TenantManagement) -> TenancyRoutes {
         let mut router = Router::new();
         if matches!(management, TenantManagement::Enabled) {
@@ -42,7 +44,7 @@ impl TenancyRoutes {
         }
         let router = router.with_state(TenancyRouteState::new(administration, usage));
         TenancyRoutes {
-            router: Router::new().nest("/tenants", router),
+            router: Router::new().nest("/tenants", router).layer(from_fn(reject_snapshot_scope)),
         }
     }
 

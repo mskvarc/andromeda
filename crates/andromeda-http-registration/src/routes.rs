@@ -4,9 +4,10 @@ use crate::{
     handler,
     state::{RegistrationRouteState, RegistrationStateResolver},
 };
-use andromeda_http_extraction::accept_language::AcceptLanguageReading;
+use andromeda_http_extraction::{accept_language::AcceptLanguageReading, snapshot_scope_guard::reject_snapshot_scope};
 use axum::{
     Router,
+    middleware::from_fn,
     routing::{get, post},
 };
 use std::sync::Arc;
@@ -20,7 +21,8 @@ pub struct RegistrationRoutes {
 impl RegistrationRoutes {
     /// Construct every registration route with its focused resolver, Query
     /// Context Source Registrations reading `Accept-Language` as
-    /// `accept_language` says.
+    /// `accept_language` says. The Registry API takes no Snapshot
+    /// (clause 5.5.15), so each route refuses one.
     pub fn new(resolver: Arc<dyn RegistrationStateResolver>, accept_language: AcceptLanguageReading) -> RegistrationRoutes {
         let registration_routes = Router::new()
             .route("/", post(handler::create))
@@ -28,7 +30,8 @@ impl RegistrationRoutes {
             .route("/{registration_id}", get(handler::get).patch(handler::update).delete(handler::delete));
         let router = Router::new()
             .nest("/csourceRegistrations", registration_routes)
-            .with_state(RegistrationRouteState::new(resolver));
+            .with_state(RegistrationRouteState::new(resolver))
+            .layer(from_fn(reject_snapshot_scope));
         RegistrationRoutes { router }
     }
 

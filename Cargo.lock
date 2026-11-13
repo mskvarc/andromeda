@@ -571,6 +571,7 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-component-report",
  "andromeda-failure-classification",
+ "andromeda-http-extraction",
  "andromeda-http-response",
  "andromeda-ngsi-ld-lexicon",
  "axum",

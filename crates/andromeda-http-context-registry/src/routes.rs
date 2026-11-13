@@ -5,10 +5,11 @@ use crate::{
     served_document::vary_on_tenant,
     state::{ContextRegistryRouteState, ContextRegistryStateResolver},
 };
+use andromeda_http_extraction::snapshot_scope_guard::reject_snapshot_scope;
 use axum::{
     Router,
     handler::Handler,
-    middleware::map_response,
+    middleware::{from_fn, map_response},
     routing::{get, post},
 };
 use std::sync::Arc;
@@ -20,14 +21,17 @@ pub struct ContextRegistryRoutes {
 }
 
 impl ContextRegistryRoutes {
-    /// Construct all `/jsonldContexts` routes with focused state.
+    /// Construct all `/jsonldContexts` routes with focused state. The
+    /// `@context` API takes no Snapshot (clause 5.5.15), so each route
+    /// refuses one.
     pub fn new(resolver: Arc<dyn ContextRegistryStateResolver>) -> ContextRegistryRoutes {
         let context_routes = Router::new()
             .route("/", post(handler::create).get(handler::query))
             .route("/{context_id}", get(handler::get.layer(map_response(vary_on_tenant))).delete(handler::delete));
         let router = Router::new()
             .nest("/jsonldContexts", context_routes)
-            .with_state(ContextRegistryRouteState::new(resolver));
+            .with_state(ContextRegistryRouteState::new(resolver))
+            .layer(from_fn(reject_snapshot_scope));
         ContextRegistryRoutes { router }
     }
 

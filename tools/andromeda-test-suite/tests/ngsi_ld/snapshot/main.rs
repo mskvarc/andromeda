@@ -7,5 +7,6 @@ mod delete;
 mod notification;
 mod purge;
 mod query;
+mod scope;
 mod status;
 mod update;

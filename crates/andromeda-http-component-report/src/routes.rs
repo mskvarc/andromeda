@@ -2,7 +2,8 @@
 
 use crate::{handler, state::ComponentReportState};
 use andromeda_component_report::ComponentReport;
-use axum::{Router, routing::get};
+use andromeda_http_extraction::snapshot_scope_guard::reject_snapshot_scope;
+use axum::{Router, middleware::from_fn, routing::get};
 
 /// The complete active-component report route fragment.
 pub struct ComponentReportRoutes {
@@ -11,11 +12,13 @@ pub struct ComponentReportRoutes {
 }
 
 impl ComponentReportRoutes {
-    /// Construct `GET /version` from the active component inventory.
+    /// Construct `GET /version` from the active component inventory. The
+    /// report describes the broker, not a Snapshot, so the route refuses one.
     pub fn new(components: Vec<ComponentReport>) -> ComponentReportRoutes {
         let router = Router::new()
             .route("/version", get(handler::get))
-            .with_state(ComponentReportState::new(components));
+            .with_state(ComponentReportState::new(components))
+            .layer(from_fn(reject_snapshot_scope));
         ComponentReportRoutes { router }
     }
 

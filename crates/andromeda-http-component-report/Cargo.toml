@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 andromeda-component-report.workspace = true
 andromeda-failure-classification.workspace = true
+andromeda-http-extraction.workspace = true
 andromeda-http-response.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 axum = "0.8.9"
