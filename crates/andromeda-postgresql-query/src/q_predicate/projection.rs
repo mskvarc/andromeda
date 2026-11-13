@@ -22,7 +22,7 @@ use crate::{
         local_target::{LocalTarget, local_target},
         ordering_term::ordering_value,
         pattern_term::pattern_value,
-        sub_attribute::element_path::ElementPath,
+        sub_attribute::{element_path::ElementPath, member_field::member_condition},
         traversal::LinkedHop,
         value_object_member::member_term,
     },
@@ -169,8 +169,8 @@ fn compile_local(pred: &Predicate, path: &AttrPath, scan: &InstanceScan<'_>, nam
         return unsatisfiable_term();
     };
     let holder = element.holder();
-    let value = if let Some(field) = element.field {
-        field.condition(&field.of_instance(holder), pred)
+    let value = if let Some(member) = element.field {
+        member_condition(member, holder, pred)
     } else {
         match local_target(path) {
             LocalTarget::OwnValue => own_value(pred, holder),

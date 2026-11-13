@@ -10,7 +10,7 @@
 //! value are navigated inside a `value_object` and have no dictionary row to
 //! look up.
 
-use crate::q_predicate::{attribute_names::referenced_attribute_names, sub_attribute::member_field::MemberField};
+use crate::q_predicate::attribute_names::referenced_attribute_names;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     filter::expression::Expr,
@@ -51,7 +51,7 @@ pub fn projected_attribute_names<'a>(
             OrderTarget::Attribute(path) => {
                 // clone: the caller owns the resolved list, which outlives the query
                 names.push(path.attr.clone());
-                names.extend(path.sub_attrs.iter().filter(|name| MemberField::of(name).is_none()).cloned());
+                names.extend(path.ending_member().map_or(path.sub_attrs.as_slice(), |(_, above)| above).iter().cloned());
             }
             // None of the clause 4.23 keywords names an attribute, so none of
             // them has a dictionary row.

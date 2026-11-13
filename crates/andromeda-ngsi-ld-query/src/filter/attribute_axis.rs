@@ -30,7 +30,6 @@ use crate::{
     },
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
-use std::borrow::Cow;
 
 /// Resolve every value an attribute axis addresses, descending each
 /// linked-entity hop into the entity it names in `linked`.
@@ -240,17 +239,17 @@ fn language_target<'a, I: QueriedInstance<'a>>(instance: I, language: LanguageSe
 ///
 /// A `.` segment names a sub-attribute, and the walk stands on each of its
 /// instances. It may instead name a member the instance carries as data of its
-/// own: an [`InstanceMetadata`] member, which ends the walk on its lexical
-/// form, or the family's value member itself (`speed.value`), which lands on
-/// the first value. From a structured value the walk continues into its
+/// own: an [`InstanceMetadata`] member, which ends the walk on the target value
+/// it holds, or the family's value member itself (`speed.value`), which lands
+/// on the first value. From a structured value the walk continues into its
 /// members.
 enum AxisPosition<'a, I: QueriedInstance<'a>> {
     /// An attribute or sub-attribute instance.
     Instance(I),
     /// One value of a family member or of a structured value's member.
     Value(ValueItem<'a, I::Node>),
-    /// An instance member that is not a sub-attribute, and its lexical form.
-    Metadata(InstanceMetadata, Cow<'a, str>),
+    /// The target value an instance member that is not a sub-attribute holds.
+    Metadata(TargetValue<'a>),
 }
 
 impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
@@ -261,7 +260,7 @@ impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
         let (member, sub_attribute) = match self {
             AxisPosition::Instance(instance) => {
                 if let Some(member) = InstanceMetadata::named(name) {
-                    (instance.metadata(member).map(|text| AxisPosition::Metadata(member, text)), None)
+                    (member.target_value(instance.metadata(member)).map(AxisPosition::Metadata), None)
                 } else if instance.family().value_key().as_str() == name.as_str() {
                     (first_family_value(instance).map(AxisPosition::Value), None)
                 } else {
@@ -303,7 +302,7 @@ impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
         let value = match self {
             AxisPosition::Instance(instance) => return family_target(instance),
             AxisPosition::Value(item) => TerminalKeyword::Identifier.read(item)?,
-            AxisPosition::Metadata(member, text) => member.target_value(text),
+            AxisPosition::Metadata(value) => value,
         };
         Some(ResolvedTarget {
             value,

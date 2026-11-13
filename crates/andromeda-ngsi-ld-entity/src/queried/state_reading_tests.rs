@@ -118,6 +118,21 @@ fn instance_members() -> Value {
         "https://uri.etsi.org/ngsi-ld/location": [{
             "@type": [GEO_PROPERTY],
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "{\"type\":\"Point\",\"coordinates\":[13.4,52.5]}"}]
+        }],
+        "https://example.com/reading": [{
+            "@type": [PROPERTY],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "5"}],
+            "https://uri.etsi.org/ngsi-ld/hasValueType": [{"@id": "https://example.com/String"}]
+        }],
+        "https://example.com/feeds": [{
+            "@type": [RELATIONSHIP],
+            "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:Device:1"}],
+            "https://uri.etsi.org/ngsi-ld/hasObjectType": [{"@id": "https://example.com/Device"}]
+        }],
+        "https://example.com/serves": [{
+            "@type": [RELATIONSHIP],
+            "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:Device:2"}],
+            "https://uri.etsi.org/ngsi-ld/hasObjectType": [{"@id": "https://example.com/Device"}, {"@id": "https://example.com/Gauge"}]
         }]
     }])
 }
@@ -225,6 +240,32 @@ fn instance_members_cases() -> Vec<(&'static str, bool)> {
         (
             "\"https://uri.etsi.org/ngsi-ld/location\"==\"{\\\"type\\\":\\\"Point\\\",\\\"coordinates\\\":[13.4,52.5]}\"",
             true,
+        ),
+        ("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/instanceId\"", false),
+        ("\"https://example.com/address\".\"https://uri.etsi.org/ngsi-ld/datasetId\"", false),
+        (
+            "\"https://example.com/reading\".\"https://uri.etsi.org/ngsi-ld/hasValueType\"==\"https://example.com/String\"",
+            true,
+        ),
+        (
+            "\"https://example.com/reading\".\"https://uri.etsi.org/ngsi-ld/hasValueType\"!=\"https://example.com/String\"",
+            false,
+        ),
+        (
+            "\"https://example.com/feeds\".\"https://uri.etsi.org/ngsi-ld/hasObjectType\"==\"https://example.com/Device\"",
+            true,
+        ),
+        (
+            "\"https://example.com/serves\".\"https://uri.etsi.org/ngsi-ld/hasObjectType\"==\"https://example.com/Gauge\"",
+            true,
+        ),
+        (
+            "\"https://example.com/serves\".\"https://uri.etsi.org/ngsi-ld/hasObjectType\"!=\"https://example.com/Device\"",
+            false,
+        ),
+        (
+            "\"https://example.com/serves\".\"https://uri.etsi.org/ngsi-ld/hasObjectType\"~=\"Gauge\"",
+            false,
         ),
     ]
 }

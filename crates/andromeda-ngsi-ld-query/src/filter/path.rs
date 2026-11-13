@@ -6,6 +6,7 @@ use crate::{
         target_language::LanguageSelector,
         trailing_path::{MemberPath, TrailingPath},
     },
+    queried_entity::instance_metadata::InstanceMetadata,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use iri_rs::IriBuf;
@@ -58,6 +59,20 @@ impl AttrPath {
             sub_attrs: Vec::new(),
             trailing: None,
         }
+    }
+
+    /// The instance member the last `.` segment names, with the sub-attributes
+    /// above it, or `None` when the path ends on an attribute or a
+    /// sub-attribute.
+    ///
+    /// Clause 4.9 makes the last name of the path the target element, and the
+    /// members [`InstanceMetadata`] lists are non-reified Properties of the
+    /// instance before them (`temperature.observedAt`). The top-level name is
+    /// always an attribute.
+    #[must_use]
+    pub fn ending_member(&self) -> Option<(InstanceMetadata, &[AttributeName])> {
+        let (last, above) = self.sub_attrs.split_last()?;
+        Some((InstanceMetadata::named(last)?, above))
     }
 
     /// The compound-value members the trailing group addresses, `None` when

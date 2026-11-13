@@ -1,148 +1,253 @@
-//! The members of an attribute instance a `q` path names as if they were
-//! sub-attributes.
+//! The members of an attribute instance a `q` path ends on.
 //!
-//! Clause 4.9 lets a path end on `observedAt`, `unitCode` or a clause 4.8
-//! timestamp of the attribute (or sub-attribute) before it: an expanded
-//! document writes each as a bare value node beside the sub-attributes. A row
-//! and an element hold them as typed fields instead, so a path ending on one
-//! compares the field of the instance it hangs off rather than unnesting a
-//! further level.
+//! Clause 4.9 lets the last name of a path address a non-reified member of
+//! the instance before it (`temperature.observedAt`), and a path is read the
+//! same way here as in the evaluator that matches a Subscription in memory:
+//! every member [`InstanceMetadata`] lists, each with the target value it
+//! gives there. An expanded document writes each member as a bare value node
+//! beside the sub-attributes. A row and an element hold them as typed fields
+//! instead, so a path ending on one compares the field of the instance it
+//! hangs off rather than unnesting a further level.
 
 use crate::{
-    operator::{compare, does_not_hold},
-    q_predicate::{history_aliases::HistoryAliases, instance_row::InstanceRow, projection_probe::projection_column},
+    operator::{PatternIndexes, compare, does_not_hold, pattern as pattern_test},
+    q_predicate::{instance_row::InstanceRow, string_ordering::ordered_string},
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::filter::{
-    predicate::{CmpOp, Predicate, SetMembership},
-    scalar::{CompareValue, Scalar},
-    string_order::string_order,
+use andromeda_ngsi_ld_query::{
+    filter::{
+        predicate::{CmpOp, PatternPolarity, Predicate, SetMembership},
+        scalar::{CompareValue, Scalar},
+        string_order::string_order,
+    },
+    pattern::Pattern,
+    queried_entity::instance_metadata::InstanceMetadata,
 };
-use andromeda_ngsi_ld_vocabulary::expanded::properties::{CREATED_AT, EXPIRES_AT, MODIFIED_AT, OBSERVED_AT, UNIT_CODE};
 use andromeda_postgresql_codes::stored_unit_code::stored_unit_code;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, SubAttribute},
+    name_dictionary::EntityTypeNames,
     temporal::AttributeHistory,
 };
 use andromeda_postgresql_seaquery::{
-    literal::false_literal,
-    pg_array::{array_subscript, is_any_of, is_none_of},
+    literal::{false_literal, int_literal},
+    pg_array::{any, array_element, array_subscript, cardinality, is_any_of, is_none_of},
+    scalar_subquery::scalar_subquery,
 };
 use cefact_units::UnitCode;
-use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
+use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Query, SimpleExpr};
+use std::slice;
 
-/// A member of an instance a path can end on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MemberField {
-    /// Clause 4.5.2 `observedAt`.
-    ObservedAt,
-    /// Clause 4.5.2 `unitCode`, held as the `cefact-units` identity of the code.
-    UnitCode,
-    /// Clause 4.8 `createdAt`.
-    CreatedAt,
-    /// Clause 4.8 `modifiedAt`.
-    ModifiedAt,
-    /// Clause 4.22 `expiresAt`.
-    ExpiresAt,
+/// The alias the dictionary row naming one type is read under.
+const NAMED_TYPE: &str = "mt";
+
+/// Whether `member` of the instance `holder` satisfies `pred`.
+///
+/// The elements of a history row record no `createdAt` or `modifiedAt`
+/// (clause 5.2.5 system times a sub-attribute is stored without), so a path
+/// ending on either below the top level matches nothing in history.
+#[must_use]
+pub fn member_condition(member: InstanceMetadata, holder: InstanceRow, pred: &Predicate) -> Condition {
+    StoredMember::of(member, holder).condition(pred)
 }
 
-impl MemberField {
-    /// The member an expanded name denotes, or `None` for the name of a
-    /// sub-attribute.
-    #[must_use]
-    pub fn of(name: &AttributeName) -> Option<MemberField> {
-        let name = name.as_str();
-        [
-            (OBSERVED_AT.as_str(), MemberField::ObservedAt),
-            (UNIT_CODE.as_str(), MemberField::UnitCode),
-            (CREATED_AT.as_str(), MemberField::CreatedAt),
-            (MODIFIED_AT.as_str(), MemberField::ModifiedAt),
-            (EXPIRES_AT.as_str(), MemberField::ExpiresAt),
-        ]
-        .into_iter()
-        .find_map(|(iri, field)| (iri == name).then_some(field))
-    }
+/// How a stored instance holds one member, as the expression reading it.
+enum StoredMember {
+    /// A clause 4.8 or clause 4.22 instant, a `DateTime` target value.
+    Instant(SimpleExpr),
+    /// The `cefact-units` identity of a `unitCode`, a String (clause 4.5.2)
+    /// compared as the text of the code.
+    UnitCode(SimpleExpr),
+    /// One String: a `datasetId`, or the expanded IRI of a `valueType`.
+    Text(SimpleExpr),
+    /// The dictionary keys of the types an `objectType` lists: one type is a
+    /// String target value, several the array clause 4.9 compares by
+    /// membership.
+    TypeKeys(SimpleExpr),
+    /// A member no stored instance holds: `instanceId`, which table 5.2.5-2
+    /// has only in the temporal representation.
+    Unheld,
+}
 
-    /// The field of `holder`, a current row, a history row or an element.
-    ///
-    /// The elements of a history row record no `createdAt` or `modifiedAt`
-    /// (clause 5.2.5 system times a sub-attribute is stored without), so a path
-    /// ending on either below the top level matches nothing in history.
-    #[must_use]
-    pub fn of_instance(self, holder: InstanceRow) -> SimpleExpr {
-        let (current, history, element) = match self {
-            MemberField::ObservedAt => (CurrentAttributes::ObservedAt, AttributeHistory::ObservedAt, SubAttribute::ObservedAt),
-            MemberField::UnitCode => (CurrentAttributes::UnitCodeId, AttributeHistory::UnitCodeId, SubAttribute::UnitCodeId),
-            MemberField::CreatedAt => (CurrentAttributes::CreatedAt, AttributeHistory::CreatedAt, SubAttribute::CreatedAt),
-            MemberField::ModifiedAt => (CurrentAttributes::ModifiedAt, AttributeHistory::ModifiedAt, SubAttribute::ModifiedAt),
-            MemberField::ExpiresAt => (CurrentAttributes::ExpiresAt, AttributeHistory::ExpiresAt, SubAttribute::ExpiresAt),
-        };
-        match holder {
-            InstanceRow::Current => projection_column(current),
-            InstanceRow::History => HistoryAliases::top_level().instance_column(history),
-            InstanceRow::Element(level) => level.field(element),
+impl StoredMember {
+    /// How the instance `holder` holds `member`.
+    fn of(member: InstanceMetadata, holder: InstanceRow) -> StoredMember {
+        match member {
+            InstanceMetadata::ObservedAt => {
+                StoredMember::Instant(holder.field(CurrentAttributes::ObservedAt, AttributeHistory::ObservedAt, SubAttribute::ObservedAt))
+            }
+            InstanceMetadata::CreatedAt => {
+                StoredMember::Instant(holder.field(CurrentAttributes::CreatedAt, AttributeHistory::CreatedAt, SubAttribute::CreatedAt))
+            }
+            InstanceMetadata::ModifiedAt => {
+                StoredMember::Instant(holder.field(CurrentAttributes::ModifiedAt, AttributeHistory::ModifiedAt, SubAttribute::ModifiedAt))
+            }
+            InstanceMetadata::ExpiresAt => {
+                StoredMember::Instant(holder.field(CurrentAttributes::ExpiresAt, AttributeHistory::ExpiresAt, SubAttribute::ExpiresAt))
+            }
+            InstanceMetadata::UnitCode => {
+                StoredMember::UnitCode(holder.field(CurrentAttributes::UnitCodeId, AttributeHistory::UnitCodeId, SubAttribute::UnitCodeId))
+            }
+            InstanceMetadata::DatasetId => StoredMember::Text(holder.dataset_id()),
+            InstanceMetadata::ValueType => StoredMember::Text(type_name(holder.value_type_key())),
+            InstanceMetadata::ObjectType => StoredMember::TypeKeys(holder.field(
+                CurrentAttributes::ObjectTypeKeys,
+                AttributeHistory::ObjectTypeKeys,
+                SubAttribute::ObjectTypeKeys,
+            )),
+            InstanceMetadata::InstanceId => StoredMember::Unheld,
         }
     }
 
-    /// Whether the member of `field` satisfies `pred`.
+    /// Whether the member satisfies `pred`.
     ///
-    /// The four instants compare with a `DateTime` operand and `unitCode`, a
-    /// String (clause 4.5.2), with a String operand and a pattern; an operand
-    /// of any other kind is of another datatype, which clause 4.9 makes
-    /// non-matching and, under `unequal`, unequal. A stored instant keeps no
-    /// written text, so a pattern matches none of them.
-    #[must_use]
-    pub fn condition(self, field: &SimpleExpr, pred: &Predicate) -> Condition {
-        let present = || field.clone().is_not_null(); // clone: the field is read by every comparison
+    /// An operand of a kind the member is not compares with no member: clause
+    /// 4.9 makes it non-matching and, under `unequal`, unequal. A stored
+    /// instant keeps no written text, so a pattern matches none of them.
+    fn condition(&self, pred: &Predicate) -> Condition {
+        if matches!(self, StoredMember::Unheld) {
+            return Condition::all().add(false_literal());
+        }
         match pred {
-            Predicate::Exists(_) => Condition::all().add(present()),
+            Predicate::Exists(_) => Condition::all().add(self.present()),
             Predicate::Equality { membership, rhs, .. } => {
-                let equal = match rhs {
-                    CompareValue::Scalar(scalar) => Condition::all().add(self.compared(field, CmpOp::Equal, scalar)),
-                    CompareValue::ValueList(values) => values
-                        .iter()
-                        .fold(Condition::any(), |any, value| any.add(self.compared(field, CmpOp::Equal, value))),
-                    CompareValue::Range { min, max } => {
-                        Condition::all()
-                            .add(self.compared(field, CmpOp::GreaterEq, min))
-                            .add(self.compared(field, CmpOp::LessEq, max))
-                    }
-                };
+                let equal = self.equal(rhs);
                 match membership {
                     SetMembership::Within => equal,
-                    SetMembership::Outside => Condition::all().add(present()).add(does_not_hold(equal)),
+                    SetMembership::Outside => Condition::all().add(self.present()).add(does_not_hold(equal)),
                 }
             }
-            Predicate::Ordering { op, rhs, .. } => Condition::all().add(self.compared(field, op.as_cmp_op(), rhs)),
-            Predicate::MatchPattern { pattern, .. } => Condition::all().add(self.matched(field, |text| pattern.is_match(text))),
-            Predicate::NotMatchPattern { pattern, .. } => Condition::all().add(self.matched(field, |text| !pattern.is_match(text))),
+            Predicate::Ordering { op, rhs, .. } => Condition::all().add(self.compared(op.as_cmp_op(), rhs)),
+            Predicate::MatchPattern { pattern, .. } => Condition::all().add(self.matched(pattern, PatternPolarity::Match)),
+            Predicate::NotMatchPattern { pattern, .. } => Condition::all().add(self.matched(pattern, PatternPolarity::NotMatch)),
         }
     }
 
-    /// A pattern term on the field, `holds` deciding the written text it is
-    /// tested against.
-    fn matched(self, field: &SimpleExpr, holds: impl Fn(&str) -> bool) -> SimpleExpr {
+    /// Whether the instance holds the member.
+    fn present(&self) -> SimpleExpr {
         match self {
-            MemberField::UnitCode => listed_code_where(field, holds),
-            MemberField::ObservedAt | MemberField::CreatedAt | MemberField::ModifiedAt | MemberField::ExpiresAt => false_literal(),
+            StoredMember::Instant(field) | StoredMember::UnitCode(field) | StoredMember::Text(field) | StoredMember::TypeKeys(field) => {
+                field.clone().is_not_null() // clone: the field is read by every comparison of the term
+            }
+            StoredMember::Unheld => false_literal(),
         }
     }
 
-    /// One comparison of the field with an operand, constant `FALSE` when the
-    /// operand is of another datatype.
-    fn compared(self, field: &SimpleExpr, op: CmpOp, scalar: &Scalar) -> SimpleExpr {
-        // clone: the field is compared with every operand of the term
-        match (self, scalar) {
-            (MemberField::ObservedAt | MemberField::CreatedAt | MemberField::ModifiedAt | MemberField::ExpiresAt, Scalar::DateTime(instant)) => {
-                compare(field.clone(), op, SeaExpr::val(*instant))
+    /// Whether the member equals the operand of an equality, within its
+    /// range, or one of its values.
+    ///
+    /// Clause 4.9: an operand "Is included in the target value, if the latter
+    /// is an array", so an `objectType` is equal to any type it lists.
+    fn equal(&self, rhs: &CompareValue) -> Condition {
+        match (self, rhs) {
+            (StoredMember::TypeKeys(keys), CompareValue::Scalar(scalar)) => Condition::all().add(some_type_named(keys, slice::from_ref(scalar))),
+            (StoredMember::TypeKeys(keys), CompareValue::ValueList(values)) => Condition::all().add(some_type_named(keys, values)),
+            (StoredMember::Instant(_) | StoredMember::UnitCode(_) | StoredMember::Text(_) | StoredMember::Unheld, CompareValue::Scalar(scalar)) => {
+                Condition::all().add(self.compared(CmpOp::Equal, scalar))
             }
-            (MemberField::UnitCode, Scalar::Str(operand)) => listed_code_where(field, |code| op.holds(string_order(code, operand, op))),
+            (StoredMember::Instant(_) | StoredMember::UnitCode(_) | StoredMember::Text(_) | StoredMember::Unheld, CompareValue::ValueList(values)) => {
+                values.iter().fold(Condition::any(), |any, value| any.add(self.compared(CmpOp::Equal, value)))
+            }
             (
-                MemberField::ObservedAt | MemberField::CreatedAt | MemberField::ModifiedAt | MemberField::ExpiresAt | MemberField::UnitCode,
+                StoredMember::Instant(_) | StoredMember::UnitCode(_) | StoredMember::Text(_) | StoredMember::TypeKeys(_) | StoredMember::Unheld,
+                CompareValue::Range { min, max },
+            ) => Condition::all()
+                .add(self.compared(CmpOp::GreaterEq, min))
+                .add(self.compared(CmpOp::LessEq, max)),
+        }
+    }
+
+    /// One comparison of the member with an operand, constant `FALSE` when the
+    /// operand is of another datatype.
+    ///
+    /// An `objectType` listing several types is an array, which no ordering
+    /// holds for, so only a single type compares.
+    fn compared(&self, op: CmpOp, scalar: &Scalar) -> SimpleExpr {
+        match (self, scalar) {
+            (StoredMember::Instant(field), Scalar::DateTime(instant)) => compare(field.clone(), op, SeaExpr::val(*instant)),
+            (StoredMember::UnitCode(field), Scalar::Str(operand)) => listed_code_where(field, |code| op.holds(string_order(code, operand, op))),
+            (StoredMember::Text(text), Scalar::Str(operand) | Scalar::Uri(operand)) => text_compared(text.clone(), op, scalar, operand),
+            (StoredMember::TypeKeys(keys), Scalar::Str(operand) | Scalar::Uri(operand)) => text_compared(single_type_name(keys), op, scalar, operand),
+            (StoredMember::Instant(_), Scalar::Number(_) | Scalar::Bool(_) | Scalar::Str(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_))
+            | (StoredMember::UnitCode(_), Scalar::Number(_) | Scalar::Bool(_) | Scalar::Uri(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_))
+            | (
+                StoredMember::Text(_) | StoredMember::TypeKeys(_),
+                Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_),
+            )
+            | (
+                StoredMember::Unheld,
                 Scalar::Number(_) | Scalar::Bool(_) | Scalar::Str(_) | Scalar::Uri(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_),
             ) => false_literal(),
         }
     }
+
+    /// A pattern term of `polarity` on the member.
+    ///
+    /// Clause 4.9 tests a pattern against a String only, so an instant and an
+    /// `objectType` listing several types match no pattern either way.
+    fn matched(&self, pattern: &Pattern, polarity: PatternPolarity) -> SimpleExpr {
+        match self {
+            StoredMember::UnitCode(field) => listed_code_where(field, |code| match polarity {
+                PatternPolarity::Match => pattern.is_match(code),
+                PatternPolarity::NotMatch => !pattern.is_match(code),
+            }),
+            StoredMember::Text(text) => pattern_test(text.clone(), polarity, pattern, PatternIndexes::None),
+            StoredMember::TypeKeys(keys) => pattern_test(single_type_name(keys), polarity, pattern, PatternIndexes::None),
+            StoredMember::Instant(_) | StoredMember::Unheld => false_literal(),
+        }
+    }
+}
+
+/// `text` compared with the String or `URI` operand `operand` spells, a String
+/// ordering collating as a stored String value's does.
+fn text_compared(text: SimpleExpr, op: CmpOp, scalar: &Scalar, operand: &str) -> SimpleExpr {
+    compare(ordered_string(text, scalar, op), op, SeaExpr::val(operand))
+}
+
+/// The expanded IRI the `entity_type_names` key `key` names, NULL for a NULL
+/// key: the String a `valueType` held as `key` is.
+#[must_use]
+pub fn type_name(key: SimpleExpr) -> SimpleExpr {
+    let alias = Alias::new(NAMED_TYPE);
+    scalar_subquery(
+        Query::select()
+            .column((alias.clone(), EntityTypeNames::Name))
+            .from_as(EntityTypeNames::Table, alias.clone())
+            .and_where(SeaExpr::col((alias, EntityTypeNames::EntityTypeNameKey)).eq(key))
+            .to_owned(),
+    )
+}
+
+/// The expanded IRI of the one type `keys` lists, NULL when it lists none or
+/// several: the String an `objectType` held as `keys` is, when it is one.
+#[must_use]
+pub fn single_type_name(keys: &SimpleExpr) -> SimpleExpr {
+    // clone: the keys are read by the count and by the subscript
+    CaseStatement::new()
+        .case(cardinality(keys.clone()).eq(int_literal(1)), type_name(array_element(keys.clone(), 1)))
+        .into()
+}
+
+/// Whether some type `keys` lists is spelled by one of `operands`; a number,
+/// a boolean or a time spells no type.
+fn some_type_named(keys: &SimpleExpr, operands: &[Scalar]) -> SimpleExpr {
+    // clone: the bound array owns its elements
+    let spellings: Vec<String> = operands
+        .iter()
+        .filter_map(|scalar| match scalar {
+            Scalar::Str(operand) | Scalar::Uri(operand) => Some(operand.clone()),
+            Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_) => None,
+        })
+        .collect();
+    if spellings.is_empty() {
+        return false_literal();
+    }
+    let alias = Alias::new(NAMED_TYPE);
+    let mut scan = Query::select();
+    scan.expr(int_literal(1))
+        .from_as(EntityTypeNames::Table, alias.clone())
+        .and_where(SeaExpr::col((alias.clone(), EntityTypeNames::EntityTypeNameKey)).eq(any(keys.clone()))) // clone: sea-query owns every operand
+        .and_where(is_any_of(SeaExpr::col((alias, EntityTypeNames::Name)), spellings));
+    SeaExpr::exists(scan)
 }
 
 /// Whether `field`, the stored identity of a `unitCode`, names a listed code
@@ -183,36 +288,112 @@ pub fn unit_code_text(field: SimpleExpr) -> SimpleExpr {
 mod tests {
     use crate::q_predicate::{
         instance_row::{ElementLevel, InstanceRow},
-        sub_attribute::member_field::{MemberField, unit_code_text},
+        sub_attribute::member_field::{member_condition, unit_code_text},
     };
     use andromeda_ngsi_ld_lexicon::unit_code_resolution::resolve_unit_code;
-    use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse};
-    use andromeda_ngsi_ld_vocabulary::expanded::properties::OBSERVED_AT;
+    use andromeda_ngsi_ld_query::{
+        filter::{expression::Expr, parser::parse},
+        queried_entity::instance_metadata::InstanceMetadata,
+    };
     use andromeda_postgresql_codes::stored_unit_code::stored_unit_code;
+    use andromeda_postgresql_schema::{
+        current::{CurrentAttributes, SubAttribute},
+        temporal::AttributeHistory,
+    };
     use cefact_units::UnitCode;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query, Value};
 
-    #[test]
-    fn a_member_name_is_recognised_by_its_expanded_iri() {
-        assert_eq!(
-            MemberField::of(&OBSERVED_AT.as_str().parse().expect("valid name")),
-            Some(MemberField::ObservedAt)
-        );
-        assert_eq!(MemberField::of(&"https://example.com/accuracy".parse().expect("valid name")), None);
+    /// The SQL of the `q` term `"https://example.com/t".<member><term>` over
+    /// `holder`.
+    fn member_sql(member: InstanceMetadata, term: &str, holder: InstanceRow) -> String {
+        let Expr::Pred(pred) = parse(&format!("\"https://example.com/t\".\"{}\"{term}", member.iri().as_str())).expect("parse q") else {
+            panic!("a single predicate");
+        };
+        Query::select()
+            .cond_where(member_condition(member, holder, &pred))
+            .to_owned()
+            .to_string(PostgresQueryBuilder)
     }
 
     #[test]
     fn an_instant_member_compares_its_field_with_a_date_time() {
-        let Expr::Pred(pred) = parse("\"https://example.com/t\".\"https://uri.etsi.org/ngsi-ld/observedAt\">2024-01-01T00:00:00Z").expect("parse q") else {
-            panic!("a single predicate");
-        };
-        let field = MemberField::ObservedAt.of_instance(InstanceRow::Element(ElementLevel::at(1)));
-        let sql = Query::select()
-            .cond_where(MemberField::ObservedAt.condition(&field, &pred))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
+        let sql = member_sql(InstanceMetadata::ObservedAt, ">2024-01-01T00:00:00Z", InstanceRow::Element(ElementLevel::at(1)));
         assert!(sql.contains(r#""l1"."observed_at" > '2024-01-01 00:00:00.000000 +00:00'"#), "{sql}");
+    }
+
+    /// Clause 4.5.5: the default instance has no `datasetId`, which a row
+    /// keys by the empty string and an element records as NULL.
+    #[test]
+    fn a_dataset_id_reads_the_grain_key_of_a_row_and_the_field_of_an_element() {
+        let operand = "==\"urn:ngsi-ld:Dataset:d1\"";
+        let current = member_sql(InstanceMetadata::DatasetId, operand, InstanceRow::Current);
+        assert!(current.contains(r#"nullif("ca"."dataset_key", '') = 'urn:ngsi-ld:Dataset:d1'"#), "{current}");
+        let history = member_sql(InstanceMetadata::DatasetId, operand, InstanceRow::History);
+        assert!(history.contains(r#"nullif("qh"."dataset_key", '') = 'urn:ngsi-ld:Dataset:d1'"#), "{history}");
+        let element = member_sql(InstanceMetadata::DatasetId, operand, InstanceRow::Element(ElementLevel::at(0)));
+        assert!(element.contains(r#""l0"."dataset_id" = 'urn:ngsi-ld:Dataset:d1'"#), "{element}");
+    }
+
+    /// Clause 4.9 `unequal` asks for the target element, so the default
+    /// instance, which has no `datasetId`, is no match.
+    #[test]
+    fn an_unequal_dataset_id_requires_one() {
+        let sql = member_sql(InstanceMetadata::DatasetId, "!=\"urn:ngsi-ld:Dataset:d1\"", InstanceRow::Current);
+        assert!(sql.contains(r#"nullif("ca"."dataset_key", '') IS NOT NULL"#), "{sql}");
+    }
+
+    /// A `valueType` is held as a dictionary key and compared as the expanded
+    /// IRI the key names.
+    #[test]
+    fn a_value_type_compares_the_iri_its_key_names() {
+        let sql = member_sql(InstanceMetadata::ValueType, "==\"https://example.com/String\"", InstanceRow::Current);
+        assert!(
+            sql.contains(r#"(SELECT "mt"."name" FROM "entity_type_names" AS "mt" WHERE "mt"."entity_type_name_key" = "ca"."value_type_key") = 'https://example.com/String'"#),
+            "{sql}"
+        );
+    }
+
+    /// Clause 4.9: an operand "Is included in the target value, if the latter
+    /// is an array", so an `objectType` equals any type it lists.
+    #[test]
+    fn an_object_type_equality_tests_every_listed_type() {
+        let sql = member_sql(
+            InstanceMetadata::ObjectType,
+            "==\"https://example.com/Device\",\"https://example.com/Gauge\"",
+            InstanceRow::Current,
+        );
+        assert!(
+            sql.contains(
+                r#"EXISTS(SELECT 1 FROM "entity_type_names" AS "mt" WHERE "mt"."entity_type_name_key" = ANY("ca"."object_type_keys") AND "mt"."name" = ANY("#
+            ),
+            "{sql}"
+        );
+        let unequal = member_sql(InstanceMetadata::ObjectType, "!=\"https://example.com/Device\"", InstanceRow::Current);
+        assert!(
+            unequal.contains(r#""ca"."object_type_keys" IS NOT NULL"#) && unequal.contains("NOT"),
+            "{unequal}"
+        );
+    }
+
+    /// An array is no String, so an ordering or a pattern reads an
+    /// `objectType` only when it lists one type.
+    #[test]
+    fn an_object_type_ordering_or_pattern_reads_a_single_type() {
+        for term in [">\"https://example.com/A\"", "~=\"Dev\"", "!~=\"Dev\""] {
+            let sql = member_sql(InstanceMetadata::ObjectType, term, InstanceRow::Current);
+            assert!(sql.contains(r#"CASE WHEN (cardinality("ca"."object_type_keys") = (1)) THEN"#), "{term}: {sql}");
+        }
+    }
+
+    /// Table 5.2.5-2 has `instanceId` only in the temporal representation, so
+    /// no stored instance holds one, and no term on it matches either way.
+    #[test]
+    fn an_instance_id_term_matches_nothing() {
+        for term in ["", "==\"urn:ngsi-ld:Instance:1\"", "!=\"urn:ngsi-ld:Instance:1\""] {
+            let sql = member_sql(InstanceMetadata::InstanceId, term, InstanceRow::Current);
+            assert!(sql.ends_with("WHERE FALSE"), "{term}: {sql}");
+        }
     }
 
     /// The SQL and the bound identities of `q`
@@ -221,9 +402,8 @@ mod tests {
         let Expr::Pred(pred) = parse(&format!("\"https://example.com/t\".\"https://uri.etsi.org/ngsi-ld/unitCode\"{term}")).expect("parse q") else {
             panic!("a single predicate");
         };
-        let field = MemberField::UnitCode.of_instance(InstanceRow::Current);
         let (sql, values) = Query::select()
-            .cond_where(MemberField::UnitCode.condition(&field, &pred))
+            .cond_where(member_condition(InstanceMetadata::UnitCode, InstanceRow::Current, &pred))
             .to_owned()
             .build(PostgresQueryBuilder);
         let mut bound: Vec<i16> = values
@@ -334,7 +514,11 @@ mod tests {
     #[test]
     fn a_unit_code_text_is_read_at_the_position_of_its_stored_identity() {
         let (sql, values) = Query::select()
-            .expr(unit_code_text(MemberField::UnitCode.of_instance(InstanceRow::Current)))
+            .expr(unit_code_text(InstanceRow::Current.field(
+                CurrentAttributes::UnitCodeId,
+                AttributeHistory::UnitCodeId,
+                SubAttribute::UnitCodeId,
+            )))
             .to_owned()
             .build(PostgresQueryBuilder);
         assert_eq!(sql, r#"SELECT ( $1 )[ "ca"."unit_code_id" ]"#);
@@ -351,14 +535,7 @@ mod tests {
     /// A stored instant keeps no written text to match.
     #[test]
     fn an_instant_member_matches_no_pattern() {
-        let Expr::Pred(pred) = parse("\"https://example.com/t\".\"https://uri.etsi.org/ngsi-ld/observedAt\"~=\"2024\"").expect("parse q") else {
-            panic!("a single predicate");
-        };
-        let field = MemberField::ObservedAt.of_instance(InstanceRow::Current);
-        let sql = Query::select()
-            .cond_where(MemberField::ObservedAt.condition(&field, &pred))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
+        let sql = member_sql(InstanceMetadata::ObservedAt, "~=\"2024\"", InstanceRow::Current);
         assert!(sql.ends_with("WHERE FALSE"), "{sql}");
     }
 }

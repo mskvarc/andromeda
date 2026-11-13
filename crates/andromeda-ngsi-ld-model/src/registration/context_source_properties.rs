@@ -167,8 +167,8 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
         self.member(name.as_str()).into_iter()
     }
 
-    fn metadata(self, member: InstanceMetadata) -> Option<Cow<'a, str>> {
-        self.member(member.iri().as_str())?.held().as_str()
+    fn metadata(self, member: InstanceMetadata) -> impl Iterator<Item = Cow<'a, str>> {
+        self.member(member.iri().as_str()).and_then(|held| held.held().as_str()).into_iter()
     }
 }
 

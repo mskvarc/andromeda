@@ -19,14 +19,11 @@ use crate::{
     attribute_name_key::AttributeNameKey,
     dictionary::resolved_names::ResolvedNames,
     expiry::unexpired,
-    q_predicate::{
-        instance_row::{ElementLevel, InstanceRow, ProbedRow},
-        sub_attribute::member_field::MemberField,
-    },
+    q_predicate::instance_row::{ElementLevel, InstanceRow, ProbedRow},
     sub_attribute_key::path_hash::PathHash,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::filter::path::AttrPath;
+use andromeda_ngsi_ld_query::{filter::path::AttrPath, queried_entity::instance_metadata::InstanceMetadata};
 use andromeda_postgresql_schema::current::SubAttribute;
 use andromeda_postgresql_seaquery::unnest::{exists_in_positional_tree, first_in_positional_tree};
 use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
@@ -45,7 +42,7 @@ pub struct ElementPath {
     /// first; empty for the top-level instance itself.
     pub chain: Vec<AttributeNameKey>,
     /// The member of the last instance the path ends on, if it ends on one.
-    pub field: Option<MemberField>,
+    pub field: Option<InstanceMetadata>,
 }
 
 impl ElementPath {
@@ -54,11 +51,8 @@ impl ElementPath {
     #[must_use]
     pub fn resolve(path: &AttrPath, row: ProbedRow, attributes: &ResolvedNames<AttributeName>) -> Option<ElementPath> {
         let attribute = attributes.get(&path.attr)?;
-        let (names, field) = match path.sub_attrs.split_last() {
-            Some((last, above)) => match MemberField::of(last) {
-                Some(field) => (above, Some(field)),
-                None => (path.sub_attrs.as_slice(), None),
-            },
+        let (names, field) = match path.ending_member() {
+            Some((member, above)) => (above, Some(member)),
             None => (path.sub_attrs.as_slice(), None),
         };
         let chain = names.iter().map(|name| attributes.get(name)).collect::<Option<Vec<_>>>()?;
@@ -148,7 +142,7 @@ mod tests {
             instance_row::{ElementLevel, InstanceRow, ProbedRow},
             instance_scan::InstanceScan,
             projection::compile,
-            sub_attribute::{element_path::ElementPath, member_field::MemberField},
+            sub_attribute::element_path::ElementPath,
         },
         sub_attribute_key::path_hash::PathHash,
         window_reach::WindowReach,
@@ -156,6 +150,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         filter::{expression::Expr, language_matching::LanguageMatching, parser::parse, path::QueryPath},
+        queried_entity::instance_metadata::InstanceMetadata,
         temporal::window::TimeInterval,
     };
     use pretty_assertions::assert_eq;
@@ -219,7 +214,24 @@ mod tests {
         let path = element_path("\"https://example.com/a\".\"https://uri.etsi.org/ngsi-ld/observedAt\">\"2024-01-01T00:00:00Z\"").expect("resolved");
         assert_eq!(path.chain, Vec::new());
         assert_eq!(path.holder(), InstanceRow::Current);
-        assert_eq!(path.field, Some(MemberField::ObservedAt));
+        assert_eq!(path.field, Some(InstanceMetadata::ObservedAt));
+    }
+
+    /// Every member the in-memory evaluator reads ends a path here too, so
+    /// none of them is looked up as a sub-attribute name.
+    #[test]
+    fn every_instance_member_ends_a_path_on_the_instance_above_it() {
+        for member in [
+            InstanceMetadata::DatasetId,
+            InstanceMetadata::ValueType,
+            InstanceMetadata::ObjectType,
+            InstanceMetadata::InstanceId,
+        ] {
+            let q = format!("\"https://example.com/a\".\"https://example.com/b\".\"{}\"", member.iri().as_str());
+            let path = element_path(&q).expect("resolved");
+            assert_eq!(path.field, Some(member), "{q}");
+            assert_eq!(path.holder(), InstanceRow::Element(ElementLevel::at(0)), "{q}");
+        }
     }
 
     #[test]

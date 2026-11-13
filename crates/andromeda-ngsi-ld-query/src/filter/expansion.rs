@@ -17,9 +17,9 @@ use crate::{
     filter::{
         expression::Expr,
         json_key_attributes::JsonKeyAttributes,
+        operand_coercion::OperandCoercion,
         path::{AttrPath, QueryPath, expanded_attribute_name},
         predicate::Predicate,
-        scalar::{CompareValue, Scalar},
         trailing_members::TrailingMembers,
         trailing_path::TrailingPath,
     },
@@ -52,7 +52,9 @@ pub(crate) async fn expand_q_expression(q: Option<&str>, json_keys: &JsonKeyAttr
 ///
 /// Every attribute path (main attribute plus sub-attributes) in the expression
 /// is expanded to its full IRI form, and so are the compound-value member names
-/// of every attribute `json_keys` did not declare to hold raw JSON.
+/// of every attribute `json_keys` did not declare to hold raw JSON. The
+/// operands of a term whose path ends on `valueType` or `objectType` expand
+/// too (see [`OperandCoercion::Vocabulary`]).
 ///
 /// # Errors
 ///
@@ -61,7 +63,17 @@ pub(crate) async fn expand_q_expression(q: Option<&str>, json_keys: &JsonKeyAttr
 /// attribute name.
 pub async fn expand_q_expr(expr: Expr, json_keys: &JsonKeyAttributes, expander: &impl TermExpander) -> Result<Expr, QueryError> {
     let members = TrailingMembers::Terms(json_keys);
-    walk_predicates(expr, &|pred| expand_pred_terms(pred, members, expander)).await
+    walk_predicates(expr, &|pred| expand_q_pred(pred, members, expander)).await
+}
+
+/// Expand the attribute path of one `q` predicate, then the operands of one
+/// whose path ends on a member holding a vocabulary term.
+async fn expand_q_pred(pred: Predicate, members: TrailingMembers<'_>, expander: &impl TermExpander) -> Result<Predicate, QueryError> {
+    let pred = expand_pred_terms(pred, members, expander).await?;
+    match pred.path().terminal().ending_member() {
+        Some((member, _)) if member.holds_vocabulary_term() => OperandCoercion::Vocabulary.expand_operands(pred, expander).await,
+        Some(_) | None => Ok(pred),
+    }
 }
 
 /// Recursively expand the property terms of a `csf` expression.
@@ -269,72 +281,44 @@ pub async fn expand_json_keys(declared: Option<&[AttributeName]>, expander: &imp
     })
 }
 
-/// Expand the right-hand side of a comparison when its attribute opted in via
+/// Expand the operands of a comparison when its attribute opted in via
 /// `expandValues`.
 async fn expand_compare_values<S: BuildHasher + Sync>(
     pred: Predicate,
     expand_attrs: &HashSet<AttributeName, S>,
     expander: &impl TermExpander,
 ) -> Result<Predicate, QueryError> {
-    match pred {
-        Predicate::Equality { path, membership, rhs } if expand_attrs.contains(path.terminal().attr.as_str()) => Ok(Predicate::Equality {
-            path,
-            membership,
-            rhs: expand_rhs_values(rhs, expander).await?,
-        }),
-        Predicate::Ordering { path, op, rhs } if expand_attrs.contains(path.terminal().attr.as_str()) => Ok(Predicate::Ordering {
-            path,
-            op,
-            rhs: expand_scalar(rhs, expander).await?,
-        }),
-        Predicate::Exists(_) | Predicate::Equality { .. } | Predicate::Ordering { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. } => {
-            Ok(pred)
-        }
+    if expand_attrs.contains(pred.path().terminal().attr.as_str()) {
+        return OperandCoercion::ExpandValues.expand_operands(pred, expander).await;
     }
-}
-
-/// Expand a single scalar operand: a string or a `URI` is a term to expand,
-/// every other scalar kind is already a value.
-async fn expand_scalar(scalar: Scalar, expander: &impl TermExpander) -> Result<Scalar, QueryError> {
-    match scalar {
-        Scalar::Str(s) => Ok(Scalar::Str(expander.expand_term(&s).await?.to_string())),
-        Scalar::Uri(s) => Ok(Scalar::Uri(expander.expand_term(&s).await?.to_string())),
-        other @ (Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) => Ok(other),
-    }
-}
-
-/// Expand the string operands of an equality comparison; every other scalar
-/// kind is already a value, not a term.
-async fn expand_rhs_values(rhs: CompareValue, expander: &impl TermExpander) -> Result<CompareValue, QueryError> {
-    match rhs {
-        CompareValue::Scalar(scalar) => Ok(CompareValue::Scalar(expand_scalar(scalar, expander).await?)),
-        CompareValue::ValueList(values) => {
-            let mut expanded_values = Vec::with_capacity(values.len());
-            for value in values {
-                expanded_values.push(expand_scalar(value, expander).await?);
-            }
-            Ok(CompareValue::ValueList(expanded_values))
-        }
-        // A range is bounded by two ordered values; neither can be a term.
-        CompareValue::Range { .. } => Ok(rhs),
-    }
+    Ok(pred)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filter::{predicate::OrderingOp, serialize::serialize};
+    use crate::filter::{
+        predicate::OrderingOp,
+        scalar::{CompareValue, Scalar},
+        serialize::serialize,
+    };
+    use andromeda_ngsi_ld_vocabulary::expanded::properties::{DATASET_ID, OBJECT_TYPE, VALUE_TYPE};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use std::future::ready;
 
-    /// An expander that prefixes every term, so a test can see exactly which
-    /// positions were rewritten without standing up a JSON-LD engine.
+    /// An expander that prefixes every term but the three core members a path
+    /// can end on, so a test can see exactly which positions were rewritten
+    /// without standing up a JSON-LD engine.
     struct PrefixExpander;
 
     impl TermExpander for PrefixExpander {
         fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            ready(Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI")))
+            let core = [("valueType", VALUE_TYPE), ("objectType", OBJECT_TYPE), ("datasetId", DATASET_ID)]
+                .into_iter()
+                .find(|(core_term, _)| *core_term == term);
+            let iri = core.map_or_else(|| format!("https://example.com/{term}"), |(_, iri)| iri.as_str().to_owned());
+            ready(Ok(IriBuf::new(iri).expect("valid IRI")))
         }
 
         fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
@@ -743,6 +727,76 @@ mod tests {
             }
             other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => panic!("expected a pattern predicate, got {other:?}"),
         }
+    }
+
+    /// Clauses 4.5.2 and 4.5.3: the core `@context` coerces `valueType` and
+    /// `objectType` with `@vocab`, so an instance holds each expanded and an
+    /// operand compared with it expands as a vocabulary term, alone, in a
+    /// value list and under an ordering.
+    #[tokio::test]
+    async fn an_operand_on_a_value_type_or_object_type_expands_as_a_vocabulary_term() {
+        for (q, expected) in [
+            ("reading.valueType==\"String\"", "https://example.com/types/String"),
+            ("reading.objectType==\"Device\"", "https://example.com/types/Device"),
+            ("reading.valueType>\"S\"", "https://example.com/types/S"),
+        ] {
+            let expanded = expand_q_expression(Some(q), &JsonKeyAttributes::default(), &PrefixExpander)
+                .await
+                .expect("expands")
+                .expect("present");
+            let operand = match &expanded {
+                Expr::Pred(
+                    Predicate::Equality {
+                        rhs: CompareValue::Scalar(scalar),
+                        ..
+                    }
+                    | Predicate::Ordering { rhs: scalar, .. },
+                ) => scalar,
+                other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => panic!("expected one comparison, got {other:?}"),
+            };
+            assert_eq!(operand, &Scalar::Str(expected.to_owned()), "{q}");
+        }
+        let list = expand_q_expression(
+            Some("reading.objectType==\"Device\",\"Sensor\""),
+            &JsonKeyAttributes::default(),
+            &PrefixExpander,
+        )
+        .await
+        .expect("expands")
+        .expect("present");
+        assert_eq!(
+            equality_rhs(&list),
+            &CompareValue::ValueList(vec![
+                Scalar::Str("https://example.com/types/Device".to_owned()),
+                Scalar::Str("https://example.com/types/Sensor".to_owned()),
+            ])
+        );
+    }
+
+    /// A `datasetId` is no vocabulary term, and a sub-attribute that only
+    /// spells like a member is no member.
+    #[tokio::test]
+    async fn an_operand_on_any_other_target_stays_a_literal() {
+        for q in ["reading.datasetId==\"urn:ngsi-ld:Dataset:d1\"", "reading.kind==\"String\""] {
+            let expanded = expand_q_expression(Some(q), &JsonKeyAttributes::default(), &PrefixExpander)
+                .await
+                .expect("expands")
+                .expect("present");
+            assert_eq!(equality_rhs(&expanded), equality_rhs(&parser::parse(q).expect("parses")), "{q}");
+        }
+    }
+
+    /// A pattern is a regular expression, never a term.
+    #[tokio::test]
+    async fn a_pattern_on_a_value_type_stays_as_written() {
+        let expanded = expand_q_expression(Some("reading.valueType~=\"Str\""), &JsonKeyAttributes::default(), &PrefixExpander)
+            .await
+            .expect("expands")
+            .expect("present");
+        let Expr::Pred(Predicate::MatchPattern { pattern, .. }) = expanded else {
+            panic!("a pattern term");
+        };
+        assert_eq!(pattern.as_str(), "Str");
     }
 
     #[tokio::test]

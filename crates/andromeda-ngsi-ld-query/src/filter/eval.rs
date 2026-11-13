@@ -1462,6 +1462,73 @@ mod tests {
         assert!(!holds(&dataset("urn:ngsi-ld:Dataset:c"), &entity));
     }
 
+    /// A Property declaring a `valueType` and a Relationship declaring one
+    /// `objectType`, beside one declaring two.
+    fn declared_types_entity() -> Value {
+        serde_json::json!([{
+            "@id": "urn:ngsi-ld:Sensor:2",
+            "@type": ["https://example.com/Sensor"],
+            "https://example.com/reading": [{
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "5"}],
+                "https://uri.etsi.org/ngsi-ld/hasValueType": [{"@id": "https://example.com/String"}]
+            }],
+            "https://example.com/feeds": [{
+                "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:Device:1"}],
+                "https://uri.etsi.org/ngsi-ld/hasObjectType": [{"@id": "https://example.com/Device"}]
+            }],
+            "https://example.com/serves": [{
+                "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:Device:2"}],
+                "https://uri.etsi.org/ngsi-ld/hasObjectType": [{"@id": "https://example.com/Device"}, {"@id": "https://example.com/Gauge"}]
+            }]
+        }])
+    }
+
+    /// Clause 4.9 reads `valueType` and `objectType` with `.` like a
+    /// sub-attribute, each as the expanded IRI the instance holds.
+    #[test]
+    fn a_declared_value_type_and_object_type_are_addressable() {
+        let entity = declared_types_entity();
+        let holds_q = |q: &str| holds(&parse(q).expect("parses"), &entity);
+        assert!(holds_q(
+            "\"https://example.com/reading\".\"https://uri.etsi.org/ngsi-ld/hasValueType\"==\"https://example.com/String\""
+        ));
+        assert!(!holds_q(
+            "\"https://example.com/reading\".\"https://uri.etsi.org/ngsi-ld/hasValueType\"==\"https://example.com/Integer\""
+        ));
+        assert!(holds_q(
+            "\"https://example.com/feeds\".\"https://uri.etsi.org/ngsi-ld/hasObjectType\"==\"https://example.com/Device\""
+        ));
+        assert!(holds_q("\"https://example.com/feeds\".\"https://uri.etsi.org/ngsi-ld/hasObjectType\"~=\"Dev\""));
+        assert!(!holds_q("\"https://example.com/reading\".\"https://uri.etsi.org/ngsi-ld/hasObjectType\""));
+    }
+
+    /// Clause 4.9 compares an array target by membership ("Is included in the
+    /// target value, if the latter is an array"), so either declared type
+    /// matches, `!=` holds only for a type neither is, and a pattern, defined
+    /// over a String, matches no array.
+    #[test]
+    fn several_object_types_are_compared_by_membership() {
+        let entity = declared_types_entity();
+        let holds_q = |q: &str| holds(&parse(q).expect("parses"), &entity);
+        let serves = "\"https://example.com/serves\".\"https://uri.etsi.org/ngsi-ld/hasObjectType\"";
+        assert!(holds_q(&format!("{serves}==\"https://example.com/Gauge\"")));
+        assert!(holds_q(&format!("{serves}==\"https://example.com/Device\"")));
+        assert!(!holds_q(&format!("{serves}!=\"https://example.com/Gauge\"")));
+        assert!(holds_q(&format!("{serves}!=\"https://example.com/Valve\"")));
+        assert!(!holds_q(&format!("{serves}~=\"Gauge\"")));
+    }
+
+    /// A held instance carries no `instanceId` (table 5.2.5-2 has it only in
+    /// the temporal representation), so a term on it selects nothing.
+    #[test]
+    fn a_held_instance_has_no_instance_id_to_match() {
+        let entity = instance_members_entity();
+        assert!(!holds(
+            &parse("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/instanceId\"").expect("parses"),
+            &entity
+        ));
+    }
+
     /// A unit code and a system time are compared like any other String, the
     /// time in its temporal domain when the operand is a `DateTime`.
     #[test]

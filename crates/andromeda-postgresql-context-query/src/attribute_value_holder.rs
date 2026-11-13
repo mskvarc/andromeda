@@ -7,10 +7,13 @@ use crate::{
     attribute_value_datatype::{NULL_TYPE, OrderedValue},
     attribute_value_order::ELEMENT_COLUMN,
 };
-use andromeda_ngsi_ld_query::filter::{
-    path::AttrPath,
-    target_language::LanguageSelector,
-    trailing_path::{MemberPath, TrailingPath},
+use andromeda_ngsi_ld_query::{
+    filter::{
+        path::AttrPath,
+        target_language::LanguageSelector,
+        trailing_path::{MemberPath, TrailingPath},
+    },
+    queried_entity::instance_metadata::InstanceMetadata,
 };
 use andromeda_ngsi_ld_vocabulary::{
     expanded::classes::{DATE, TIME},
@@ -21,7 +24,7 @@ use andromeda_postgresql_query::q_predicate::{
     extended_filter_pattern::{CaseFolding, exact_tag_pattern, extended_filter_pattern},
     sub_attribute::{
         element_path::ElementPath,
-        member_field::{MemberField, unit_code_text},
+        member_field::{single_type_name, type_name, unit_code_text},
     },
     value_object_member::{expanded_jsonpath, is_json_property, literal_jsonpath},
 };
@@ -31,6 +34,7 @@ use andromeda_postgresql_seaquery::{
     json_type::{JsonType, jsonb_type_is, jsonb_typed_reading, jsonb_whole_text},
     jsonb::{jsonb_build_object, jsonb_path_query_first, jsonb_typeof},
     literal::{false_literal, int_literal, text_literal},
+    operator::null_if,
     pg_type::PostgresType,
     structured_value::sub_attribute_value_object,
     unnest::composite_field,
@@ -66,6 +70,16 @@ impl Holder {
         match self {
             Holder::Row(alias) => SeaExpr::col((alias.clone(), row)),
             Holder::Element(value) => composite_field(value.clone(), &element),
+        }
+    }
+
+    /// The holder's `datasetId` (clause 4.5.5), NULL for the default
+    /// instance, which a row keys by the empty string and an element records
+    /// as NULL.
+    fn dataset_id(&self) -> SimpleExpr {
+        match self {
+            Holder::Row(alias) => null_if(SeaExpr::col((alias.clone(), CurrentAttributes::DatasetKey)), text_literal("")),
+            Holder::Element(value) => composite_field(value.clone(), &SubAttribute::DatasetId),
         }
     }
 
@@ -130,31 +144,43 @@ impl Holder {
             .into()
     }
 
-    /// A member of the holder the path ends on: an instant compares as one,
-    /// and a `unitCode`, a String (clause 4.5.2) held as the `cefact-units`
-    /// identity of the code, as the code's text, the text a `q` term compares.
-    fn member(&self, field: MemberField) -> OrderedValue {
-        let (date_time, text) = match field {
-            MemberField::ObservedAt => (
+    /// A member of the holder the path ends on, read as a `q` term reads it:
+    /// an instant compares as one, and every other member as the String it
+    /// is, a `unitCode` (clause 4.5.2) held as the `cefact-units` identity of
+    /// the code as the code's text, a `valueType` and an `objectType` held as
+    /// dictionary keys as the IRIs they name. An `objectType` listing several
+    /// types is an array with no String to order by, and no stored instance
+    /// holds an `instanceId`.
+    fn member(&self, member: InstanceMetadata) -> OrderedValue {
+        let no_instant = || typed_null(PostgresType::Timestamptz);
+        let (date_time, text) = match member {
+            InstanceMetadata::ObservedAt => (
                 self.field(CurrentAttributes::ObservedAt, SubAttribute::ObservedAt),
                 typed_null(PostgresType::Text),
             ),
-            MemberField::CreatedAt => (
+            InstanceMetadata::CreatedAt => (
                 self.field(CurrentAttributes::CreatedAt, SubAttribute::CreatedAt),
                 typed_null(PostgresType::Text),
             ),
-            MemberField::ModifiedAt => (
+            InstanceMetadata::ModifiedAt => (
                 self.field(CurrentAttributes::ModifiedAt, SubAttribute::ModifiedAt),
                 typed_null(PostgresType::Text),
             ),
-            MemberField::ExpiresAt => (
+            InstanceMetadata::ExpiresAt => (
                 self.field(CurrentAttributes::ExpiresAt, SubAttribute::ExpiresAt),
                 typed_null(PostgresType::Text),
             ),
-            MemberField::UnitCode => (
-                typed_null(PostgresType::Timestamptz),
+            InstanceMetadata::UnitCode => (
+                no_instant(),
                 unit_code_text(self.field(CurrentAttributes::UnitCodeId, SubAttribute::UnitCodeId)),
             ),
+            InstanceMetadata::DatasetId => (no_instant(), self.dataset_id()),
+            InstanceMetadata::ValueType => (no_instant(), type_name(self.field(CurrentAttributes::ValueTypeKey, SubAttribute::ValueTypeKey))),
+            InstanceMetadata::ObjectType => (
+                no_instant(),
+                single_type_name(&self.field(CurrentAttributes::ObjectTypeKeys, SubAttribute::ObjectTypeKeys)),
+            ),
+            InstanceMetadata::InstanceId => (no_instant(), typed_null(PostgresType::Text)),
         };
         OrderedValue {
             number: typed_null(PostgresType::Numeric),
