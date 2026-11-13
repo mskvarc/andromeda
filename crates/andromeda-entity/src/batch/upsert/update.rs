@@ -15,6 +15,7 @@ use crate::{
     entity_snapshot::EntitySnapshot,
     error::EntityError,
     side_effect::SideEffectPlacement,
+    write_admission::EntityWrite,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState};
@@ -84,9 +85,13 @@ impl ChunkRewrite for UpdateRewrite<'_> {
             // Clause 5.6.8.4 routes an absent Entity to "the behaviour defined
             // by clause 5.6.1", which supports no NGSI-LD Null: clause 5.2.1
             // admits one only in a partial update or merge and answers
-            // BadRequestData "in all other cases". The state conversion refuses
-            // every Null the update branch admitted, at any level.
+            // BadRequestData "in all other cases". The document is held to the
+            // Null admission of a create, which the screening relaxed for the
+            // update branch.
             (UpsertFragment::Requested(prepared), None) => {
+                if let Err(refusal) = prepared.document.admit_null_placements(EntityWrite::Create.null_sentinel_admission()) {
+                    return Err(Box::new((prepared.id, EntityError::from(refusal))));
+                }
                 let (id, state) = prepared.into_state()?;
                 inserted(service.chunk_insert(target, id, state, now)?)
             }
@@ -183,5 +188,48 @@ impl EntityService {
             return Err(Box::new((id, EntityError::from(error))));
         }
         self.chunk_update(target, id, UpdatedStates { previous, current: updated }, now)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        admission_fixture::admitted_batch,
+        batch::UpsertPolicy,
+        compare_and_set_fixture::{Watchers, building_id, contended_service},
+        entity_validation_reason::EntityValidationReason,
+        error::EntityError,
+        side_effect::SideEffectPlacement,
+        write_kind::BatchUpsert,
+    };
+    use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_ngsi_ld_entity::refusal::EntityRefusal;
+    use serde_json::json;
+
+    /// Clause 5.6.8.4 creates an absent Entity by clause 5.6.1, which admits
+    /// no NGSI-LD Null, although the update branch's screening admits the Null
+    /// as a first-level member.
+    #[tokio::test]
+    async fn an_update_mode_upsert_creates_no_entity_typed_as_the_null() {
+        let contended = contended_service(Watchers::None).await;
+        let id = building_id("null-typed");
+        let entity = serde_json::from_value(json!({"id": id.as_str(), "type": ["Building", "urn:ngsi-ld:null"]})).expect("the compact model reads it");
+        let admitted = admitted_batch(&contended.service, BatchUpsert(UpsertPolicy::Update), vec![entity], &ContextSpec::core_only()).await;
+        let (result, created) = contended
+            .service
+            .batch_upsert(SideEffectPlacement::Inline(&ContextTarget::Live), admitted)
+            .await
+            .expect("the batch completes");
+        assert!(created.is_empty() && result.success.is_empty(), "{created:?} {:?}", result.success);
+        assert!(
+            matches!(
+                result.errors.as_slice(),
+                [(refused, EntityError::Validation(EntityValidationReason::Refused(refusal)))] if *refused == id && matches!(**refusal, EntityRefusal::TypeNull)
+            ),
+            "{:?}",
+            result.errors
+        );
+        assert!(contended.store.stored(&id).is_none(), "nothing is stored");
     }
 }

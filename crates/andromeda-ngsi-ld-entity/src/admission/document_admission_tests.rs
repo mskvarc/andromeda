@@ -626,6 +626,25 @@ fn the_null_scope_is_refused_outside_a_fragment_and_admitted_inside_one() {
     }
 }
 
+/// Clause 5.5.4: `type` is a first-level member, so a whole entity naming the
+/// Null among its types is refused, alone or beside another type.
+#[test]
+fn the_null_type_is_refused_outside_a_fragment() {
+    for types in [json!(["urn:ngsi-ld:null"]), json!(["https://example.org/Device", "urn:ngsi-ld:null"])] {
+        let document = json!([{"@id": "urn:ngsi-ld:Device:1", "@type": types}]);
+        let error = admit(&document, NullSentinelAdmission::Refused).expect_err("clause 5.5.4 forbids a first level null here");
+        assert!(matches!(error, EntityRefusal::TypeNull), "{types}: {error:?}");
+    }
+}
+
+/// Clause 3.1 names one spelling of the Null, so the IRI the core context's
+/// `ngsi-ld` prefix expands `ngsi-ld:null` to is an ordinary type.
+#[test]
+fn a_type_resembling_the_null_is_an_ordinary_type() {
+    let document = json!([{"@id": "urn:ngsi-ld:Device:1", "@type": ["https://uri.etsi.org/ngsi-ld/null"]}]);
+    admit(&document, NullSentinelAdmission::Refused).expect("only urn:ngsi-ld:null is the Null");
+}
+
 /// Clause 4.18 admits the sentinel only "in case of deleted scopes".
 #[test]
 fn a_null_beside_a_scope_path_is_refused_under_every_admission() {

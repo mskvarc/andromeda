@@ -98,6 +98,8 @@ mod n_ent_cre_9063;
 mod n_ent_cre_9064;
 mod n_ent_cre_9065;
 mod n_ent_cre_9066;
+mod n_ent_cre_9067;
+mod n_ent_cre_9068;
 mod o_ent_cre_2305;
 mod o_ent_cre_2306;
 mod o_ent_cre_2700;

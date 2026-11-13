@@ -70,6 +70,12 @@ pub enum EntityRefusal {
     /// The entity carries no type (clause 4.5.1).
     #[error("the entity carries no type")]
     MissingType,
+    /// An entity type is the NGSI-LD Null outside a partial-update or merge
+    /// fragment (clause 5.5.4).
+    #[error(
+        "the type member carries the NGSI-LD Null, which is admitted as a first-level member value only in the fragment of a partial update or merge operation"
+    )]
+    TypeNull,
     /// A member key is not an attribute name.
     #[error("invalid expanded attribute name: {0}")]
     ExpandedAttributeName(#[source] NgsiLdReferenceError),
@@ -381,16 +387,6 @@ impl EntityRefusal {
                 member,
             },
             Err(source) => EntityRefusal::ExpandedAttributeName(source),
-        }
-    }
-
-    /// The refusal for a JSON text the reader could not read.
-    #[must_use]
-    pub fn syntax(error: &serde_json::Error) -> EntityRefusal {
-        EntityRefusal::Syntax {
-            category: SyntaxCategory::from(error.classify()),
-            line: error.line(),
-            column: error.column(),
         }
     }
 }

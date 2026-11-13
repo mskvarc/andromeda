@@ -1,5 +1,7 @@
-//! What kind of failure a JSON reader met in a document that is no JSON.
+//! What kind of failure a JSON reader met in a document that is no JSON, and
+//! the refusal naming it.
 
+use crate::refusal::EntityRefusal;
 use serde_json::error::Category;
 use strum::Display;
 
@@ -29,6 +31,18 @@ impl From<Category> for SyntaxCategory {
             Category::Syntax => SyntaxCategory::Syntax,
             Category::Data => SyntaxCategory::Data,
             Category::Eof => SyntaxCategory::EndOfInput,
+        }
+    }
+}
+
+impl EntityRefusal {
+    /// The refusal for a JSON text the reader could not read.
+    #[must_use]
+    pub fn syntax(error: &serde_json::Error) -> EntityRefusal {
+        EntityRefusal::Syntax {
+            category: SyntaxCategory::from(error.classify()),
+            line: error.line(),
+            column: error.column(),
         }
     }
 }

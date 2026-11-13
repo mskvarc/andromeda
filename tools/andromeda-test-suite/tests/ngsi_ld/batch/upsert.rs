@@ -40,6 +40,8 @@ mod n_bat_ups_9017;
 mod n_bat_ups_9019;
 mod n_bat_ups_9020;
 mod n_bat_ups_9021;
+mod n_bat_ups_9022;
+mod n_bat_ups_9023;
 mod o_bat_ups_2302;
 mod o_bat_ups_2700;
 mod o_bat_ups_9002;
