@@ -2424,6 +2424,7 @@ name = "andromeda-upgrade-tests"
 version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-configuration",
  "andromeda-context-space",
  "andromeda-json-literal",
  "andromeda-ngsi-ld-lexicon",
@@ -2436,6 +2437,7 @@ dependencies = [
  "andromeda-postgresql-temporal-store",
  "andromeda-retry",
  "andromeda-snapshot",
+ "andromeda-tenancy",
  "chrono",
  "pretty_assertions",
  "sea-query",

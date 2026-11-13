@@ -17,7 +17,7 @@ pub struct TenantDatabasesConfig {
     /// The prefix of every per-tenant database name the broker provisions.
     #[schemars(
         title = "SQL identifier prefix",
-        description = "The prefix every tenant database name starts with. Maintenance also uses it to recognise databases on the server that look like a tenant's but belong to none. Must match `[A-Za-z_][A-Za-z0-9_]*`, so the database names need no quoting."
+        description = "The prefix every tenant database name starts with. Maintenance also uses it to recognise databases on the server that look like a tenant's but belong to none. Must match `[A-Za-z_][A-Za-z0-9_]*`, so the database names need no quoting, and be at most 44 bytes long, so a database name keeps room for the tenant's label and digest within PostgreSQL's 63 bytes."
     )]
     pub name_prefix: DbNamePrefix,
     /// The most connections one tenant's pool opens.

@@ -6,16 +6,27 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use thiserror::Error;
 
+/// The longest prefix, in bytes.
+///
+/// A tenant database name is the prefix, an underscore, at least one byte of
+/// the tenant's label, an underscore and a 16-character digest suffix, and
+/// PostgreSQL keeps 63 bytes of a database name. This is what those 63 bytes
+/// leave for the prefix.
+pub const DB_NAME_PREFIX_BYTE_LIMIT: usize = 44;
+
 /// A validated PostgreSQL identifier fragment prefixing every tenant database
 /// name.
 ///
 /// A tenant database name is this prefix joined to a per-tenant suffix, so the
 /// prefix must already be a legal unquoted SQL identifier fragment
 /// (`[A-Za-z_][A-Za-z0-9_]*`) or the joined name cannot be used without
-/// quoting. Validating it here rejects an unusable prefix at startup rather
-/// than at the first tenant provision.
+/// quoting, and it must leave the suffix room within PostgreSQL's identifier
+/// limit ([`DB_NAME_PREFIX_BYTE_LIMIT`]). Validating it here rejects an
+/// unusable prefix at startup rather than at the first tenant provision.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, AsRef, Into, JsonSchema)]
-#[schemars(description = "The prefix every tenant database name starts with: an unquoted SQL identifier fragment matching `[A-Za-z_][A-Za-z0-9_]*`.")]
+#[schemars(
+    description = "The prefix every tenant database name starts with: an unquoted SQL identifier fragment matching `[A-Za-z_][A-Za-z0-9_]*`, at most 44 bytes long."
+)]
 #[serde(try_from = "String", into = "String")]
 #[as_ref(str)]
 pub struct DbNamePrefix(String);
@@ -26,6 +37,12 @@ pub enum DbNamePrefixError {
     /// The value was empty.
     #[error("database name prefix must not be empty")]
     Empty,
+    /// The value is longer than [`DB_NAME_PREFIX_BYTE_LIMIT`].
+    #[error("a database name prefix of {length} bytes exceeds the {DB_NAME_PREFIX_BYTE_LIMIT} bytes a prefix may occupy")]
+    TooLong {
+        /// The length of the refused prefix, in bytes.
+        length: usize,
+    },
     /// The value held a character outside `[A-Za-z0-9_]`, or began with a digit.
     #[error("database name prefix must match [A-Za-z_][A-Za-z0-9_]*, but holds '{}'", .offending.escape_default())]
     Invalid {
@@ -60,6 +77,10 @@ impl TryFrom<String> for DbNamePrefix {
         if value.is_empty() {
             return Err(DbNamePrefixError::Empty);
         }
+        let length = value.len();
+        if length > DB_NAME_PREFIX_BYTE_LIMIT {
+            return Err(DbNamePrefixError::TooLong { length });
+        }
         // A leading digit is illegal for an unquoted identifier; every later
         // position also admits digits.
         let offending = value.chars().enumerate().find_map(|(index, character)| match character {
@@ -92,7 +113,7 @@ impl FromStr for DbNamePrefix {
 
 #[cfg(test)]
 mod tests {
-    use crate::schema::db_name_prefix::{DbNamePrefix, DbNamePrefixError};
+    use crate::schema::db_name_prefix::{DB_NAME_PREFIX_BYTE_LIMIT, DbNamePrefix, DbNamePrefixError};
 
     #[test]
     fn a_valid_prefix_round_trips() {
@@ -122,6 +143,22 @@ mod tests {
         );
         let spaced = DbNamePrefix::try_from("tenant db".to_string()).expect_err("a space is not an identifier character");
         pretty_assertions::assert_eq!(spaced.to_string(), "database name prefix must match [A-Za-z_][A-Za-z0-9_]*, but holds ' '");
+    }
+
+    #[test]
+    fn a_prefix_at_the_limit_is_accepted() {
+        let at_limit = "p".repeat(DB_NAME_PREFIX_BYTE_LIMIT);
+        pretty_assertions::assert_eq!(DbNamePrefix::try_from(at_limit.as_str()).map(|prefix| prefix.as_str().len()), Ok(44));
+    }
+
+    #[test]
+    fn a_prefix_one_byte_past_the_limit_is_too_long_and_the_refusal_states_the_limit() {
+        let refused = DbNamePrefix::try_from("p".repeat(DB_NAME_PREFIX_BYTE_LIMIT + 1));
+        pretty_assertions::assert_eq!(refused, Err(DbNamePrefixError::TooLong { length: 45 }));
+        pretty_assertions::assert_eq!(
+            refused.err().map(|error| error.to_string()),
+            Some("a database name prefix of 45 bytes exceeds the 44 bytes a prefix may occupy".to_owned())
+        );
     }
 
     #[test]

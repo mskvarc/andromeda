@@ -1,9 +1,12 @@
 //! The failures a rehearsal test propagates instead of unwrapping.
 
+use andromeda_configuration::schema::db_name_prefix::DbNamePrefixError;
 use andromeda_context_space::snapshot_key::SnapshotKeyError;
-use andromeda_ngsi_ld_lexicon::identifier::IdentifierParseError;
+use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, tenant::InvalidTenantName};
 use andromeda_postgresql_attribute_instance::stored_members::StoredInstanceError;
+use andromeda_postgresql_context_store::error::ContextStoreError;
 use andromeda_snapshot::error::SnapshotError;
+use andromeda_tenancy::error::TenancyError;
 use andromeda_upgrade_tests::upgrade_database_error::{UpgradeDatabaseError, UpgradeServerError};
 use sea_query::error::Error as StatementError;
 use sqlx::migrate::MigrateError;
@@ -39,6 +42,18 @@ pub(crate) enum UpgradeTestError {
     /// The broker's decoder refused an element the upgrade left.
     #[error("the broker cannot read a stored sub-attribute")]
     Stored(#[from] StoredInstanceError),
+    /// The broker's tenant registry could not be opened.
+    #[error("the tenant registry could not be opened")]
+    Registry(#[from] ContextStoreError),
+    /// The broker's tenant registry refused a step.
+    #[error("the tenant registry failed")]
+    Tenancy(#[from] TenancyError),
+    /// A tenant name the test names is not one.
+    #[error("a tenant name could not be read")]
+    TenantName(#[from] InvalidTenantName),
+    /// A database name prefix the test builds is not one.
+    #[error("a database name prefix could not be read")]
+    Prefix(#[from] DbNamePrefixError),
     /// A row the test needs is missing.
     #[error("the row for {what} is missing")]
     Missing {

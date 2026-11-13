@@ -88,8 +88,10 @@ pub mod subscription;
 pub mod subscription_forwarding;
 /// Shared subscription persistence layer.
 pub mod subscription_store;
-/// Reaching and creating a tenant's database.
+/// Creating and dropping a tenant's database.
 pub mod tenant_database;
+/// The name a newly registered tenant's database gets.
+pub mod tenant_database_naming;
 /// The tracked extensions each tenant database held after its last open,
 /// behind the tenancy crate's catch-up port.
 pub mod tenant_extension_versions;

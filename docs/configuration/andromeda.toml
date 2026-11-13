@@ -733,7 +733,8 @@ max_connections = 32
 # The prefix every tenant database name starts with. Maintenance also uses it to
 # recognise databases on the server that look like a tenant's but belong to
 # none. Must match `[A-Za-z_][A-Za-z0-9_]*`, so the database names need no
-# quoting.
+# quoting, and be at most 44 bytes long, so a database name keeps room for the
+# tenant's label and digest within PostgreSQL's 63 bytes.
 name_prefix = "andromeda_tenant"
 
 # The most connections each named tenant's pool opens, in each broker process.
