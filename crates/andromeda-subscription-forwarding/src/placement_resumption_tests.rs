@@ -254,6 +254,29 @@ async fn a_copy_sent_again_and_refused_is_released() {
     pretty_assertions::assert_eq!(scene.router().unregistered(), vec![claimed]);
 }
 
+/// The source may hold the copy of a claim taken over from the send that got
+/// no answer in time, and a 503 to the copy sent again (RFC 9110 section
+/// 15.6.4) depends on the moment it came, so it says nothing of what the
+/// source holds. The claim and the route stay under a new lease and nothing is
+/// removed, so a pass once the lease has run out sends the copy once more.
+#[tokio::test]
+async fn a_copy_sent_again_that_its_unavailable_source_did_not_rule_on_stays_claimed() {
+    let source = SubscribingSource::start_answering(&identifier(SOURCE), InTurn::new(late_acceptance(), ResponseTemplate::new(503))).await;
+    let registration = source.stored_timing_out_after(FORWARDING_TIMEOUT);
+    let scene = scene_keeping(vec![registration.clone()]).await;
+
+    scene.place_as_at_creation(&registration).await.expect("the placement is settled");
+    let claimed = first_claimed(&scene);
+    scene.maps().end_claim_leases();
+    scene.resume_stale_placements().await.expect("the pass runs");
+
+    pretty_assertions::assert_eq!(placed_ids(&source).await, vec![claimed.clone(), claimed.clone()]);
+    assert!(leased(&scene), "the claim taken over stays under a lease");
+    pretty_assertions::assert_eq!(scene.router().registered(), vec![claimed.clone(), claimed]);
+    pretty_assertions::assert_eq!(scene.router().unregistered(), Vec::<Identifier>::new());
+    pretty_assertions::assert_eq!(scene.removed_mappings(), Vec::<Identifier>::new());
+}
+
 /// An expired subscription takes part in no distributed operation (clause
 /// 5.8.1.4) and its expiry withdraws its copies, so its abandoned claim is
 /// not placed again.

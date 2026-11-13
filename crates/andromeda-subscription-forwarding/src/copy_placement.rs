@@ -10,6 +10,7 @@ use crate::{
     service::SubscriptionForwardingService,
 };
 use andromeda_federation::{
+    answer_verdict::AnswerVerdict,
     remote_effect::RemoteEffect,
     subscription::{SubscriptionForward, SubscriptionForwardAdmission},
     subscription_forward_failure::SubscriptionForwardFailure,
@@ -33,21 +34,26 @@ enum UntouchedClaim {
 /// What `failure`, which left nothing at the source, does to a claim of
 /// `origin`.
 ///
-/// A source that answered with an error status holds nothing, since one
-/// holding the copy answers `AlreadyExists`, so the claim is released either
-/// way. A forward that never reached the source (a cooldown, a refused
-/// connection, a request that could not be prepared, a loop) leaves nothing
-/// of its own there, which releases a claim recorded with the copy. A claim
-/// taken over may name a copy an earlier send left at the source, and such a
-/// forward learned nothing of it, so the claim stays.
-const fn untouched_claim(origin: ClaimOrigin, failure: &SubscriptionForwardFailure) -> UntouchedClaim {
+/// A claim recorded with its copy had nothing sent before it, so the source
+/// holds nothing and the claim is released. A claim taken over may name a copy
+/// an earlier send left at the source. A source that refuses the copy as sent
+/// refused that earlier send too, since one holding the copy answers
+/// `AlreadyExists`, so the claim is released. An answer that depends on the
+/// moment it came (an unavailable source, a rate limit) and a forward that
+/// never reached the source (a cooldown, a refused connection, a request that
+/// could not be prepared, a loop) learned nothing of the earlier send, so the
+/// claim stays.
+fn untouched_claim(origin: ClaimOrigin, failure: &SubscriptionForwardFailure) -> UntouchedClaim {
     match (origin, failure) {
+        (ClaimOrigin::TakenOver, SubscriptionForwardFailure::Answered(answer)) => match answer.verdict() {
+            AnswerVerdict::Refused => UntouchedClaim::Release,
+            AnswerVerdict::Withheld => UntouchedClaim::KeepToLease,
+        },
         (
             ClaimOrigin::TakenOver,
             SubscriptionForwardFailure::Transport(_) | SubscriptionForwardFailure::LoopDetected | SubscriptionForwardFailure::NotAdvertised,
         ) => UntouchedClaim::KeepToLease,
-        (ClaimOrigin::TakenOver, SubscriptionForwardFailure::Answered(_))
-        | (
+        (
             ClaimOrigin::Recorded,
             SubscriptionForwardFailure::Answered(_)
             | SubscriptionForwardFailure::Transport(_)
@@ -66,13 +72,15 @@ impl SubscriptionForwardingService {
     /// finds both. A claim that took over an abandoned one sends the copy under
     /// the identifier recorded. An answer saying the source holds the copy
     /// settles the claim, under an identifier the source assigned when it
-    /// assigned one. An error status from the source releases the claim and
-    /// the route. A forward that never reached the source releases them too
-    /// when the claim was recorded with the copy, and leaves them to the lease
-    /// when the claim was taken over, since an earlier send may have left the
-    /// copy there. A forward that got no answer keeps both under the lease,
-    /// since the source may hold the copy and notify under it, and the copy is
-    /// sent again once the lease runs out. A route that cannot be written
+    /// assigned one. A source refusing the copy as sent releases the claim and
+    /// the route. An error status that depends on the moment it came, and a
+    /// forward that never reached the source, release them too when the claim
+    /// was recorded with the copy, and leave them to the lease when the claim
+    /// was taken over, since an earlier send may have left the copy there. A
+    /// forward that got no answer, or only a gateway's saying the source gave
+    /// none in time, keeps both under the lease, since the source may hold the
+    /// copy and notify under it, and the copy is sent again once the lease runs
+    /// out. A route that cannot be written
     /// leaves the claim to its lease too, as a placement cut off there would.
     ///
     /// # Errors
@@ -127,7 +135,7 @@ impl SubscriptionForwardingService {
                     self.mappings.remove_forwarded(&subscription.id, &registration.id).await
                 }
                 UntouchedClaim::KeepToLease => {
-                    warn!(subscription = %subscription.id, registration = %registration.id, %failure, "reduced subscription copy sent again did not reach the source and stays claimed, since an earlier send may have left it there; it is sent again once its lease runs out");
+                    warn!(subscription = %subscription.id, registration = %registration.id, %failure, "reduced subscription copy sent again got no verdict from the source and stays claimed, since an earlier send may have left it there; it is sent again once its lease runs out");
                     Ok(())
                 }
             },

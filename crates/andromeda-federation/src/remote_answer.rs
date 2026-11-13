@@ -1,6 +1,8 @@
 //! What a context source answered a forwarded request with when it failed it.
 
+use crate::answer_verdict::AnswerVerdict;
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchProblemDetail;
+use http::StatusCode;
 use std::fmt;
 use thiserror::Error;
 
@@ -19,6 +21,25 @@ pub struct RemoteAnswer {
     pub problem: Option<BatchProblemDetail>,
 }
 
+impl RemoteAnswer {
+    /// Whether the answer is the source's verdict on the request as sent,
+    /// which it is unless its status depends on the moment the request came.
+    #[must_use]
+    pub fn verdict(&self) -> AnswerVerdict {
+        match StatusCode::from_u16(self.status) {
+            Ok(
+                StatusCode::REQUEST_TIMEOUT
+                | StatusCode::TOO_MANY_REQUESTS
+                | StatusCode::INTERNAL_SERVER_ERROR
+                | StatusCode::BAD_GATEWAY
+                | StatusCode::SERVICE_UNAVAILABLE
+                | StatusCode::GATEWAY_TIMEOUT,
+            ) => AnswerVerdict::Withheld,
+            Ok(_) | Err(_) => AnswerVerdict::Refused,
+        }
+    }
+}
+
 /// The `: detail` an answer's problem document adds to the status, nothing when
 /// it sent none or its detail is empty.
 struct ProblemDetailSuffix<'a>(Option<&'a BatchProblemDetail>);
@@ -35,10 +56,33 @@ impl fmt::Display for ProblemDetailSuffix<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::remote_answer::RemoteAnswer;
+    use crate::{answer_verdict::AnswerVerdict, remote_answer::RemoteAnswer};
     use andromeda_ngsi_ld_problem_details::batch_operation::BatchProblemDetail;
     use pretty_assertions::assert_eq;
     use serde_json::json;
+
+    fn verdict_of(status: u16) -> AnswerVerdict {
+        RemoteAnswer { status, problem: None }.verdict()
+    }
+
+    /// RFC 9110 section 15.5.9, RFC 6585 section 4 and RFC 9110 sections
+    /// 15.6.1 and 15.6.3 to 15.6.5.
+    #[test]
+    fn a_timeout_a_rate_limit_and_a_server_or_gateway_failure_withhold_a_verdict() {
+        for status in [408, 429, 500, 502, 503, 504] {
+            assert_eq!(verdict_of(status), AnswerVerdict::Withheld, "HTTP {status}");
+        }
+    }
+
+    /// A redirection is not followed, a client error refuses the request as
+    /// sent, and a source that does not implement the operation or detects a
+    /// loop answers the same request the same way every time.
+    #[test]
+    fn a_redirection_a_client_error_and_a_lasting_server_refusal_are_verdicts() {
+        for status in [307, 400, 401, 403, 404, 409, 413, 415, 422, 501, 508] {
+            assert_eq!(verdict_of(status), AnswerVerdict::Refused, "HTTP {status}");
+        }
+    }
 
     fn problem(body: &serde_json::Value) -> BatchProblemDetail {
         serde_json::from_value(body.clone()).expect("a problem detail")
