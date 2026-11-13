@@ -86,6 +86,16 @@ package(andromeda-test-suite) & binary(~ngsi_ld_)
   & test(/(^|::)(n_css_ntf_9013|n_ntf_trg_9029|n_ntf_trg_9030|n_ntf_trg_9034|n_snp_cre_8126)_/)'''
 threads-required = "num-test-threads"
 
+# A test that keeps more writes in flight in its tenant than the tenant's pool holds connections queues every write on
+# the pool. Another test bringing a tenant up runs CREATE DATABASE, whose copy of the template goes through the one WAL
+# every commit of the server flushes, so on a slow disk each commit waits seconds for it and a queued write outlasts
+# the pool's acquire timeout and is answered 503. It runs alone.
+[[profile.suite.overrides]]
+filter = '''
+package(andromeda-test-suite) & binary(~ngsi_ld_)
+  & test(/(^|::)(n_ctx_lst_3002|n_ctx_lst_3003|n_snp_qry_8124)_/)'''
+threads-required = "num-test-threads"
+
 # A pgbouncer test evicts a tenant under the pressure of 40 others and waits up to 150 s to see it dormant, then a
 # retry interval that has grown with the eviction, or drives load runs of a minute each over a hundred tenants it
 # brings up first; one still running after ten minutes hangs.
