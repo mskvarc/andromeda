@@ -7,7 +7,7 @@ use andromeda_postgresql_query::{
     attribute_name_key::AttributeNameKey,
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
-    instance_expiry::instance_stands,
+    expiry::unexpired,
 };
 use andromeda_postgresql_schema::current::EntitySearch;
 use andromeda_postgresql_seaquery::{postgis::validated_geom_from_ewkb, spherical_distance::st_distance_sphere};
@@ -55,7 +55,7 @@ pub fn geo_order_distance(
         OrderSubject::LocationColumn => Some(
             CaseStatement::new()
                 .case(
-                    instance_stands(outer.search_column(EntitySearch::LocationExpiresAt)),
+                    unexpired(outer.search_column(EntitySearch::LocationExpiresAt)),
                     st_distance_sphere(outer.search_column(EntitySearch::Location), reference_geometry()),
                 )
                 .finally(Keyword::Null)

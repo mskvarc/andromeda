@@ -430,7 +430,7 @@ mod tests {
             concat!(
                 r#"SELECT "stored"."entity_key", "stored"."id", "stored"."entity_created_at", "stored"."entity_modified_at", "stored"."entity_write_count", "stored"."entity_expires_at", "#,
                 r#""stored"."entity_type_name_keys", "stored"."verbatim_scope_paths" "#,
-                r#"FROM (SELECT "entities"."entity_key", "entities"."id" AS "sort_0" FROM "entities" WHERE "entities"."created_at" IS NOT NULL "#,
+                r#"FROM (SELECT "entities"."entity_key", "entities"."id" AS "sort_0" FROM "entities" WHERE "entities"."created_at" IS NOT NULL AND ("entities"."expires_at" IS NULL OR "entities"."expires_at" > NOW()) "#,
                 r#"ORDER BY "sort_0" ASC LIMIT $1 OFFSET $2) AS "page" "#,
                 r#"INNER JOIN LATERAL (SELECT "e"."entity_key" AS "entity_key", "e"."id" AS "id", "e"."created_at" AS "entity_created_at", "#,
                 r#""e"."modified_at" AS "entity_modified_at", "e"."write_count" AS "entity_write_count", "e"."expires_at" AS "entity_expires_at", "#,
@@ -453,7 +453,7 @@ mod tests {
         assert!(
             built
                 .sql
-                .contains(r#"FROM "entities" WHERE "entities"."created_at" IS NOT NULL AND EXISTS(SELECT 1 FROM "current_attributes" AS "ca""#),
+                .contains(r#"FROM "entities" WHERE "entities"."created_at" IS NOT NULL AND ("entities"."expires_at" IS NULL OR "entities"."expires_at" > NOW()) AND EXISTS(SELECT 1 FROM "current_attributes" AS "ca""#),
             "{}",
             built.sql
         );
@@ -715,7 +715,7 @@ mod tests {
             built.sql.contains(concat!(
                 r#"FROM (SELECT "selected"."entity_key", "selected"."id" AS "sort_0" "#,
                 r#"FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_current_member") AS "selected" "#,
-                r#"WHERE TRUE ORDER BY "sort_0" ASC LIMIT"#
+                r#"WHERE "selected"."entity_key" NOT IN (SELECT "entity_key" FROM "entities" WHERE "expires_at" <= NOW()) ORDER BY "sort_0" ASC LIMIT"#
             )),
             "{}",
             built.sql
@@ -760,7 +760,7 @@ mod tests {
         let count = build_counted(&q, &known_types()).count_sql.expect("count requested");
         assert_eq!(
             count,
-            r#"SELECT COUNT(*) FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_current_member") AS "selected" WHERE TRUE"#
+            r#"SELECT COUNT(*) FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_current_member") AS "selected" WHERE "selected"."entity_key" NOT IN (SELECT "entity_key" FROM "entities" WHERE "expires_at" <= NOW())"#
         );
     }
 

@@ -66,8 +66,12 @@ impl EntityQueryService {
             unread.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
             unread.dedup();
             if !unread.is_empty() {
+                // Clause 4.22: an Entity past its `expiresAt` is invalid, so no
+                // hop lands on it.
                 for (_, retrieved) in self.reader.get_batch(target, &unread).await? {
-                    linked.insert(standing(retrieved.state, at));
+                    if !retrieved.state.expired_at(at) {
+                        linked.insert(standing(retrieved.state, at));
+                    }
                 }
             }
             pending = pending

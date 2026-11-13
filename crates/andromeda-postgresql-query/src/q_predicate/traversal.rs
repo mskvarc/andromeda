@@ -32,9 +32,9 @@ use crate::{
     attribute_name_key::AttributeNameKey,
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
-    entity_sides::holds_current_state,
+    entity_sides::holds_standing_state,
+    expiry::unexpired,
     history_source::HistoryOf,
-    instance_expiry::instance_stands,
     q_predicate::{
         history_aliases::HistoryAliases,
         history_window::{HistoryWindow, WindowProbes},
@@ -188,7 +188,7 @@ impl LinkedHop {
                     .add(names_linked),
             )
             .and_where(SeaExpr::col((hop(), CurrentAttributes::AttributeKind)).is_in(relationship_kinds()))
-            .and_where(instance_stands(SeaExpr::col((hop(), CurrentAttributes::ExpiresAt))));
+            .and_where(unexpired(SeaExpr::col((hop(), CurrentAttributes::ExpiresAt))));
         self.completed(branch, guard_types, types, GuardedRow::Search(outer.schema()), inner)
     }
 
@@ -205,12 +205,12 @@ impl LinkedHop {
     ) -> SelectStatement {
         let linked = || Alias::new(self.linked_entity.as_str());
         // One identity row serves both APIs, so a hop over current state keeps
-        // the linked entity only where it holds a current state; a hop over a
-        // window lands on the Evolutions the history source reads, which hold
-        // one already.
+        // the linked entity only where it holds a current state that has not
+        // expired (clause 4.22); a hop over a window lands on the Evolutions
+        // the history source reads, which hold one already.
         match guarded {
             GuardedRow::Search(_) => {
-                probe.and_where(holds_current_state(linked()));
+                probe.and_where(holds_standing_state(linked()));
             }
             GuardedRow::Catalogue => {}
         }
@@ -268,7 +268,7 @@ impl LinkedHop {
             .and_where(SeaExpr::col((hop(), CurrentAttributes::AttributeNameKey)).eq(relationship_id.get()))
             .and_where(SeaExpr::col((hop(), CurrentAttributes::AttributeKind)).is_in(relationship_kinds()))
             // Clause 4.22: a past-due Relationship instance links nothing.
-            .and_where(instance_stands(SeaExpr::col((hop(), CurrentAttributes::ExpiresAt))));
+            .and_where(unexpired(SeaExpr::col((hop(), CurrentAttributes::ExpiresAt))));
         probe
     }
 

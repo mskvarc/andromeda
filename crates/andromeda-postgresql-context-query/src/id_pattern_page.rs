@@ -32,7 +32,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_postgresql_query::{
     entity_row_refs::EntityRowRefs,
-    entity_sides::holds_current_state,
+    entity_sides::holds_standing_state,
     error::RenderError,
     id_pattern_trigrams::{ID_PATTERN_CANDIDATE_BOUND, ID_PATTERN_SHORT_WALK, trigram_pattern},
     one_time_gate::CandidateBound,
@@ -46,7 +46,7 @@ pub(crate) struct PatternMatches<'q> {
     /// The selector's pattern.
     pub(crate) pattern: &'q Pattern,
     /// `SELECT "entity_key" FROM "entities" WHERE ("id") COLLATE "default" ~ <pattern> AND
-    /// "created_at" IS NOT NULL`.
+    /// "created_at" IS NOT NULL AND ("expires_at" IS NULL OR "expires_at" > NOW())`.
     pub(crate) select: SelectStatement,
 }
 
@@ -87,7 +87,7 @@ pub(crate) fn pattern_matches<'q>(query: &'q CompiledEntityQuery, relations: &En
             pattern,
             PatternIndexes::TrigramsAndByteOrder,
         ))
-        .and_where(holds_current_state(Entities::Table));
+        .and_where(holds_standing_state(Entities::Table));
     Some(PatternMatches {
         pattern,
         select: matches.take(),
@@ -201,7 +201,7 @@ mod tests {
             .unwrap_or_else(|| panic!("the index path: {sql}"));
         assert_eq!(
             candidates,
-            r#"SELECT "entities"."entity_key" FROM "entities" WHERE ((("entities"."id") COLLATE "default") ~ $5) AND "entities"."created_at" IS NOT NULL"#
+            r#"SELECT "entities"."entity_key" FROM "entities" WHERE ((("entities"."id") COLLATE "default") ~ $5) AND ("entities"."created_at" IS NOT NULL AND ("entities"."expires_at" IS NULL OR "entities"."expires_at" > NOW()))"#
         );
         assert!(
             values.0.contains(&Value::BigUnsigned(Some(5_000))),
@@ -217,7 +217,7 @@ mod tests {
         let (sql, _) = page_sql(&by_pattern(".*_1196287$"));
         let (short, _) = sql.split_once(r#", "candidates" AS "#).unwrap_or_else(|| panic!("a gated page: {sql}"));
         assert!(
-            short.contains(r#"FROM "entity_type_members" WHERE "entity_type_name_key" = (18) AND "is_current_member") AS "selected" WHERE TRUE"#),
+            short.contains(r#"FROM "entity_type_members" WHERE "entity_type_name_key" = (18) AND "is_current_member") AS "selected" WHERE "selected"."entity_key" NOT IN (SELECT "entity_key" FROM "entities" WHERE "expires_at" <= NOW())"#),
             "{short}"
         );
         assert!(
@@ -300,7 +300,7 @@ mod tests {
         );
         let (sql, values) = uncounted.count.build(PostgresQueryBuilder);
         assert!(
-            sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (SELECT "entities"."entity_key" FROM "entities" WHERE ((("entities"."id") COLLATE "default") ~ $1) AND "entities"."created_at" IS NOT NULL LIMIT $2)"#),
+            sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (SELECT "entities"."entity_key" FROM "entities" WHERE ((("entities"."id") COLLATE "default") ~ $1) AND ("entities"."created_at" IS NOT NULL AND ("entities"."expires_at" IS NULL OR "entities"."expires_at" > NOW())) LIMIT $2)"#),
             "{sql}"
         );
         let (_, arms) = sql.split_once(" THEN ").unwrap_or_else(|| panic!("a gated count: {sql}"));

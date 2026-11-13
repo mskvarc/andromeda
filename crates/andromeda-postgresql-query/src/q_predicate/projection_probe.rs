@@ -9,7 +9,7 @@
 use crate::{
     attribute_name_key::AttributeNameKey,
     entity_row_refs::EntityRowRefs,
-    instance_expiry::instance_stands,
+    expiry::unexpired,
     q_predicate::instance_test::{InstanceTest, non_empty},
 };
 use andromeda_postgresql_schema::current::CurrentAttributes;
@@ -100,7 +100,7 @@ pub fn of_attribute(id: AttributeNameKey) -> SimpleExpr {
 /// value, whether or not the sweep has deleted it yet.
 #[must_use]
 pub fn standing() -> SimpleExpr {
-    instance_stands(projection_column(CurrentAttributes::ExpiresAt))
+    unexpired(projection_column(CurrentAttributes::ExpiresAt))
 }
 
 /// The select over the instance rows that pass `filter`, correlated last on
