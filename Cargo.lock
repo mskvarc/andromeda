@@ -2431,6 +2431,7 @@ dependencies = [
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-pool",
  "andromeda-postgresql-seaquery",
+ "andromeda-postgresql-temporal-store",
  "andromeda-retry",
  "andromeda-snapshot",
  "chrono",

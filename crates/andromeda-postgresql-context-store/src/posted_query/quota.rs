@@ -5,7 +5,7 @@
 //! that order, is deleted, never the query just held. Expired queries are left
 //! to the sweep: no read serves them, so they take no place in the quota.
 
-use crate::posted_query::lifecycle::live;
+use crate::posted_query::{lifecycle::live, mapper::stored_digest};
 use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
 use andromeda_posted_query::retention::PostedQueryQuota;
 use andromeda_postgresql_schema::posted_query::PostedQueries;
@@ -54,7 +54,7 @@ pub(crate) fn eviction_statement(held: &PageQuery, quota: PostedQueryQuota) -> O
     let victims = Query::select()
         .column((Ranked::Table, PostedQueries::Digest))
         .from_subquery(ranked, Ranked::Table)
-        .and_where(Expr::col((Ranked::Table, PostedQueries::Digest)).ne(held.encode()))
+        .and_where(Expr::col((Ranked::Table, PostedQueries::Digest)).ne(stored_digest(held)))
         .cond_where(past_a_ceiling)
         .to_owned();
     Some(
@@ -106,8 +106,8 @@ mod tests {
         assert_eq!(
             sql,
             format!(
-                r#"DELETE FROM "posted_queries" WHERE "digest" IN (SELECT "ranked"."digest" FROM (SELECT "digest", ROW_NUMBER() OVER (  ORDER BY "expires_at" DESC, "digest" DESC ) AS "position", SUM(pg_column_size("posted_queries")) OVER (  ORDER BY "expires_at" DESC, "digest" DESC ) AS "footprint" FROM "posted_queries" WHERE "expires_at" > NOW()) AS "ranked" WHERE "ranked"."digest" <> '{}' AND ("ranked"."position" > 3 OR "ranked"."footprint" > 1024))"#,
-                held().encode()
+                r#"DELETE FROM "posted_queries" WHERE "digest" IN (SELECT "ranked"."digest" FROM (SELECT "digest", ROW_NUMBER() OVER (  ORDER BY "expires_at" DESC, "digest" DESC ) AS "position", SUM(pg_column_size("posted_queries")) OVER (  ORDER BY "expires_at" DESC, "digest" DESC ) AS "footprint" FROM "posted_queries" WHERE "expires_at" > NOW()) AS "ranked" WHERE "ranked"."digest" <> '\x{}' AND ("ranked"."position" > 3 OR "ranked"."footprint" > 1024))"#,
+                hex::encode_upper(held().as_bytes())
             )
         );
     }

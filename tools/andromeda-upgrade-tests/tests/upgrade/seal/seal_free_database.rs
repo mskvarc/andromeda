@@ -3,9 +3,9 @@
 
 use crate::fixtures::{
     census_ledger::{count_instance, count_stream, instances_by_attribute, instances_by_type_and_attribute, streams_by_type_and_attribute},
-    current_state::{insert_entity, insert_entity_search, insert_number_attribute, insert_type_member, intern_attribute},
+    current_state::{insert_entity_search, insert_evolving_entity, insert_number_attribute, insert_type_member, intern_attribute},
     history::{InstanceIdentity, insert_history_row, insert_stream},
-    queues::{entity_state, insert_append_intent, insert_notification_event, insert_pending_change, temporal_entry},
+    queues::{QueuedChange, entity_state, insert_append_intent, insert_notification_event, insert_pending_change, temporal_entry},
     rehearsal::at_v1_0_0,
     statements::{count_rows, read_column, read_documents},
     test_error::UpgradeTestError,
@@ -124,7 +124,7 @@ async fn observe(pool: &PgPool) -> Result<Observation, UpgradeTestError> {
 async fn a_database_holding_no_seal_upgrades_with_nothing_changed() -> Result<(), UpgradeTestError> {
     let (mut database, keys) = at_v1_0_0().await?;
     let note_key = intern_attribute(database.pool(), "https://example.org/note").await?;
-    let entity_key = insert_entity(database.pool(), "urn:ngsi-ld:Store:001").await?;
+    let entity_key = insert_evolving_entity(database.pool(), "urn:ngsi-ld:Store:001", &[keys.store]).await?;
     insert_type_member(database.pool(), entity_key, keys.store, "urn:ngsi-ld:Store:001").await?;
     insert_entity_search(database.pool(), entity_key, &[keys.store], &[keys.temperature]).await?;
     let elements = [string_element(0, note_key, "plain")];
@@ -140,8 +140,8 @@ async fn a_database_holding_no_seal_upgrades_with_nothing_changed() -> Result<()
     )
     .await?;
     let state = entity_state(keys.store, keys.temperature, &elements);
-    insert_pending_change(database.pool(), keys.store, &state).await?;
-    insert_notification_event(database.pool(), &state).await?;
+    insert_pending_change(database.pool(), keys.store, &QueuedChange::creating(&state)).await?;
+    insert_notification_event(database.pool(), &QueuedChange::creating(&state)).await?;
     insert_append_intent(database.pool(), keys.store, &[temporal_entry(keys.temperature, &elements)]).await?;
     let before = observe(database.pool()).await?;
 

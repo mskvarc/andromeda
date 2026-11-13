@@ -1,16 +1,23 @@
 -- ============================================================================
--- 0034: Seal-free types
+-- 0034: Types without proof_seals
 -- ============================================================================
 -- Spec: ETSI GS CIM 009 v1.9.1 clause 4.5.2.2
 --
--- No top-level instance, temporal entry or row holds a data-integrity seal,
--- and a seal element holds its seals in fields of their own, so no type keeps
--- `proof_seals`. The view of the queued temporal entries names every field
--- of an entry, so it is rebuilt around the change.
+-- No top-level instance, temporal entry or row is a data-integrity seal, and
+-- a seal element holds its non-reified subproperties in fields of their own,
+-- so no type keeps `proof_seals`. The view of the queued temporal entries
+-- names every field of an entry, so it is dropped before the types change
+-- and created again after them.
 -- ============================================================================
 drop view temporal_append_entries;
 
 alter type temporal_entry
+    drop attribute proof_seals;
+
+alter type attribute_instance_record
+    drop attribute proof_seals;
+
+alter type sub_attribute
     drop attribute proof_seals;
 
 -- Every entry of every intent beside the write identity its history row will
@@ -58,9 +65,3 @@ from
     temporal_append_intents i
     cross join lateral unnest(i.entries)
     with ordinality as e;
-
-alter type attribute_instance_record
-    drop attribute proof_seals;
-
-alter type sub_attribute
-    drop attribute proof_seals;

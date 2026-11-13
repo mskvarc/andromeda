@@ -58,9 +58,12 @@ pub(crate) fn smallints(values: &[i16]) -> SimpleExpr {
     cast(array_literal(values.iter().map(|value| Expr::val(*value))), PostgresType::SmallintArray)
 }
 
-/// A `text[]`, empty when no value is given.
-pub(crate) fn texts(values: &[&str]) -> SimpleExpr {
-    cast(array_literal(values.iter().map(|value| Expr::val(*value))), PostgresType::TextArray)
+/// A `text[]`, a `None` value written as NULL, empty when no value is given.
+pub(crate) fn texts(values: &[Option<&str>]) -> SimpleExpr {
+    cast(
+        array_literal(values.iter().map(|value| Expr::val(value.map(str::to_owned)))),
+        PostgresType::TextArray,
+    )
 }
 
 /// An array of composites of `composite`, one per document.
@@ -129,6 +132,19 @@ where
         .order_by(name(column), Order::Asc)
         .to_owned();
     Ok(select.to_query_scalar::<Cell>().fetch_all(pool).await?)
+}
+
+/// The `xmin` of every row of `table` as text, in ascending text order: the
+/// transaction that wrote the row's current version, which an update
+/// replaces.
+pub(crate) async fn read_row_versions(pool: &PgPool, table: &str) -> Result<Vec<String>, UpgradeTestError> {
+    let version = || cast(Expr::col(name("xmin")), PostgresType::Text);
+    let select = Query::select()
+        .expr(version())
+        .from(name(table))
+        .order_by_expr(version(), Order::Asc)
+        .to_owned();
+    Ok(select.to_query_scalar::<String>().fetch_all(pool).await?)
 }
 
 /// How many rows `table` holds.

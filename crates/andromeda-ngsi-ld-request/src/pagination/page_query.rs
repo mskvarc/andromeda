@@ -24,17 +24,13 @@ use thiserror::Error;
 /// in.
 pub const PAGE_QUERY_PARAMETER: &str = "pageQuery";
 
-/// How many leading bytes of the SHA-256 digest the token keeps: enough that
-/// two different queries never meet by accident, short enough for a URL.
-const DIGEST_BYTES: usize = 16;
-
-/// How many bytes the token spelling a digest takes: unpadded base64url
-/// spends one character on every six bits.
-pub const PAGE_QUERY_TOKEN_BYTES: usize = (DIGEST_BYTES * 8).div_ceil(6);
+/// How many leading bytes of the SHA-256 digest a [`PageQuery`] keeps: enough
+/// that two different queries never meet by accident, short enough for a URL.
+pub const PAGE_QUERY_DIGEST_BYTES: usize = 16;
 
 /// The digest of the parameters that decide which elements a walk passes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PageQuery([u8; DIGEST_BYTES]);
+pub struct PageQuery([u8; PAGE_QUERY_DIGEST_BYTES]);
 
 /// What a query parameter decides about a paged walk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,8 +81,8 @@ impl PageQuery {
             hasher.update(part);
         }
         let digest = hasher.finalize();
-        let mut kept = [0; DIGEST_BYTES];
-        kept.copy_from_slice(&digest[..DIGEST_BYTES]);
+        let mut kept = [0; PAGE_QUERY_DIGEST_BYTES];
+        kept.copy_from_slice(&digest[..PAGE_QUERY_DIGEST_BYTES]);
         PageQuery(kept)
     }
 
@@ -94,6 +90,12 @@ impl PageQuery {
     #[must_use]
     pub fn encode(&self) -> String {
         URL_SAFE_NO_PAD.encode(self.0)
+    }
+
+    /// The digest itself, the bytes [`PageQuery::encode`] spells.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; PAGE_QUERY_DIGEST_BYTES] {
+        &self.0
     }
 }
 
@@ -169,13 +171,15 @@ impl TryFrom<&str> for PageQuery {
 
     fn try_from(text: &str) -> Result<PageQuery, PageQueryError> {
         let bytes = URL_SAFE_NO_PAD.decode(text).map_err(|_| PageQueryError)?;
-        <[u8; DIGEST_BYTES]>::try_from(bytes.as_slice()).map(PageQuery).map_err(|_| PageQueryError)
+        <[u8; PAGE_QUERY_DIGEST_BYTES]>::try_from(bytes.as_slice())
+            .map(PageQuery)
+            .map_err(|_| PageQueryError)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::pagination::page_query::{PAGE_QUERY_TOKEN_BYTES, PageQuery, PageQueryError};
+    use crate::pagination::page_query::{PageQuery, PageQueryError};
     use pretty_assertions::{assert_eq, assert_ne};
 
     fn of(query: &str) -> PageQuery {
@@ -247,12 +251,15 @@ mod tests {
         assert_eq!(PageQuery::of(None), of("limit=5&offset=0"));
     }
 
+    /// Unpadded base64url spends one character on every six bits, so the 16
+    /// digest bytes take 22.
     #[test]
-    fn every_token_takes_the_bytes_the_spelling_states() {
+    fn every_token_spells_the_digest_bytes_in_22_characters() {
         for query in [None, Some("type=Vehicle"), Some("q=speed%3E10&type=Vehicle")] {
-            assert_eq!(PageQuery::of(query).encode().len(), PAGE_QUERY_TOKEN_BYTES);
+            let digest = PageQuery::of(query);
+            assert_eq!(digest.encode().len(), 22);
+            assert_eq!(digest.as_bytes().len(), 16);
         }
-        assert_eq!(PAGE_QUERY_TOKEN_BYTES, 22);
     }
 
     #[test]
