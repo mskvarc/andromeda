@@ -11,8 +11,8 @@ compact_code_registry! {
     /// differs; the entry carries its kind because one intent holds them all,
     /// in the order the write recorded them.
     TemporalEntryKind {
-        frozen_prefix: 3,
-        frozen_digest: 0xcd48_7b0f_6088_ecd4,
+        frozen_prefix: 4,
+        frozen_digest: 0x37fa_ad2d_c04d_a049,
         codes: {
             /// One attribute instance a write adds to the Temporal
             /// Evolution (clause 4.5.7): an observation, or a deletion a
