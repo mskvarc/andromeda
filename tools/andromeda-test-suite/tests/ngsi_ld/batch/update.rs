@@ -24,6 +24,7 @@ mod n_bat_upd_9012;
 mod n_bat_upd_9013;
 mod n_bat_upd_9014;
 mod n_bat_upd_9015;
+mod n_bat_upd_9016;
 mod o_bat_upd_0004;
 mod o_bat_upd_0006;
 mod o_bat_upd_0007;

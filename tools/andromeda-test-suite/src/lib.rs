@@ -26,6 +26,7 @@ pub mod broker_process;
 pub mod budget;
 pub mod callback_server;
 pub mod change_clock_lock;
+pub mod claimed_deletion;
 pub mod cleanup;
 pub mod clock_wait;
 pub mod comparison;
