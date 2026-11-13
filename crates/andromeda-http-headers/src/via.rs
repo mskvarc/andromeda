@@ -1,13 +1,22 @@
-//! Typed `Via` header per RFC 9110 clause 7.6.3 (ETSI GS CIM 009 clause 6.3.18).
+//! Typed `Via` header per RFC 9110 section 7.6.3 (ETSI GS CIM 009 clause 6.3.18).
 //!
 //! The Via header field indicates the presence of intermediate protocols
 //! and recipients between the user agent and the server. Used for loop
 //! detection in distributed NGSI-LD forwarding.
+//!
+//! A field value is read as octets, because the comment that may close each
+//! element admits `obs-text`. The list is split on the commas that stand
+//! outside a comment, and each element is read on its own: one that names no
+//! intermediary is dropped, and the hops beside it, on its line and on every
+//! other `Via` line, still list the sources the request passed.
 
-use crate::received_protocol::ReceivedProtocol;
+use crate::{
+    received_protocol::ReceivedProtocol,
+    via_comment::{ViaComment, comment_len},
+};
 use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
 use http::{HeaderName, HeaderValue};
-use std::iter;
+use std::{iter, str};
 use thiserror::Error;
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
@@ -15,9 +24,8 @@ static VIA: HeaderName = HeaderName::from_static("via");
 
 /// Why a single `Via` element could not be read.
 ///
-/// Loop detection depends on every hop's pseudonym reaching
-/// [`Via::contains_pseudonym`], so a parse that cannot recover a pseudonym is a
-/// hard failure the header decode refuses rather than silently drops.
+/// The decode drops such an element alone: loop detection reads the pseudonym
+/// of every other hop, so one unreadable element must not cost the chain.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ViaParseError {
     /// The element was empty.
@@ -42,12 +50,106 @@ pub struct ViaEntry {
     pub protocol: Option<ReceivedProtocol>,
     /// The pseudonym/identity of the intermediary.
     pub pseudonym: ContextSourcePseudonym,
-    /// Optional comment enclosed in parentheses. Free-form per RFC 9110, so it
-    /// stays unstructured text.
-    pub comment: Option<String>,
+    /// The comment the element closed with, absent when it carried none or one
+    /// that is not a balanced comment.
+    pub comment: Option<ViaComment>,
 }
 
-/// Typed `Via` header (RFC 9110 clause 7.6.3, ETSI GS CIM 009 clause 6.3.18).
+impl ViaEntry {
+    /// Read one element like `"1.1 broker-a"` or `"HTTP/1.1 proxy (Apache)"`.
+    ///
+    /// Recovers the pseudonym as robustly as the loop-detection purpose demands:
+    /// a malformed comment costs only the comment, since the pseudonym stands
+    /// before it, and a lone token with no protocol version is kept as the
+    /// pseudonym rather than dropped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViaParseError::Empty`] for an element of whitespace only, and
+    /// [`ViaParseError::MissingPseudonym`] when no usable pseudonym precedes
+    /// the comment.
+    fn parse(element: &[u8]) -> Result<ViaEntry, ViaParseError> {
+        let element = element.trim_ascii();
+        if element.is_empty() {
+            return Err(ViaParseError::Empty);
+        }
+        // Neither a received-protocol nor a pseudonym admits `(`, so the first
+        // one opens the comment.
+        let (head, comment) = match element.iter().position(|octet| *octet == b'(') {
+            Some(start) => {
+                let (head, comment) = element.split_at(start);
+                (head, ViaComment::new(comment).ok())
+            }
+            None => (element, None),
+        };
+        let head = str::from_utf8(head).map_err(|_| ViaParseError::MissingPseudonym)?;
+
+        // received-protocol RWS received-by: the pseudonym is the second
+        // whitespace-separated token. A single token has no protocol version, which
+        // is non-conformant but still names an intermediary, so it is taken as the
+        // pseudonym rather than discarded (fail closed for loop detection).
+        let mut tokens = head.split_whitespace();
+        let first = tokens.next().ok_or(ViaParseError::MissingPseudonym)?;
+        let (protocol, pseudonym) = match tokens.next() {
+            // A first token that does not parse as a received-protocol is dropped
+            // rather than costing the hop; only the pseudonym is load-bearing.
+            Some(second) => (
+                ReceivedProtocol::new(first).ok(),
+                ContextSourcePseudonym::new(second).map_err(|_| ViaParseError::MissingPseudonym)?,
+            ),
+            None => (None, ContextSourcePseudonym::new(first).map_err(|_| ViaParseError::MissingPseudonym)?),
+        };
+
+        Ok(ViaEntry { protocol, pseudonym, comment })
+    }
+
+    /// The element as it is written into the list.
+    fn written(&self) -> Vec<u8> {
+        let mut written = Vec::new();
+        if let Some(protocol) = &self.protocol {
+            written.extend_from_slice(protocol.as_str().as_bytes());
+            written.push(b' ');
+        }
+        written.extend_from_slice(self.pseudonym.as_str().as_bytes());
+        if let Some(comment) = &self.comment {
+            written.push(b' ');
+            written.extend_from_slice(comment.as_bytes());
+        }
+        written
+    }
+}
+
+/// The elements of one `Via` field line (RFC 9110 section 5.6.1), split on
+/// the commas that stand outside a comment.
+struct ViaElements<'a> {
+    /// What is left of the line, `None` once its last element is out.
+    rest: Option<&'a [u8]>,
+}
+
+impl<'a> Iterator for ViaElements<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<&'a [u8]> {
+        let line = self.rest.take()?;
+        let mut position = 0;
+        while let Some(octet) = line.get(position) {
+            match octet {
+                b',' => {
+                    let (element, rest) = line.split_at(position);
+                    self.rest = rest.get(1..);
+                    return Some(element);
+                }
+                // A comment that never closes runs to the end of the line, so
+                // no comma inside it ends the element.
+                b'(' => position += line.get(position..).and_then(comment_len).unwrap_or(line.len() - position),
+                _other => position += 1,
+            }
+        }
+        Some(line)
+    }
+}
+
+/// Typed `Via` header (RFC 9110 section 7.6.3, ETSI GS CIM 009 clause 6.3.18).
 ///
 /// Contains a chain of intermediary pseudonyms used for forwarding loop
 /// detection in distributed NGSI-LD operations.
@@ -95,47 +197,18 @@ impl Via {
     }
 }
 
-/// Parse a single Via element like `"1.1 broker-a"` or `"HTTP/1.1 proxy (Apache)"`.
-///
-/// Recovers the pseudonym as robustly as the loop-detection purpose demands: an
-/// unterminated comment does not discard the element (the pseudonym before `(`
-/// is still read), and a lone token with no protocol version is kept as the
-/// pseudonym rather than dropped. An element that yields no pseudonym at all is
-/// the only hard failure, so a hop naming this broker can never be silently
-/// lost the way `Option`-dropping an unparseable element allowed.
-fn parse_via_entry(s: &str) -> Result<ViaEntry, ViaParseError> {
-    let trimmed = s.trim();
-    if trimmed.is_empty() {
-        return Err(ViaParseError::Empty);
-    }
-
-    // Separate an optional trailing comment. A missing `)` is tolerated: the
-    // pseudonym sits before the `(`, so a malformed comment must not cost the hop.
-    let (head, comment) = match trimmed.split_once('(') {
-        Some((head, tail)) => {
-            let comment = tail.strip_suffix(')').unwrap_or(tail).trim();
-            (head.trim(), (!comment.is_empty()).then(|| comment.to_string()))
+/// The hop `element` reads as, or `None` when it names no intermediary.
+fn readable_hop(element: &[u8]) -> Option<ViaEntry> {
+    match ViaEntry::parse(element) {
+        Ok(entry) => Some(entry),
+        // An empty element between commas is a benign artefact of the RFC 9110
+        // `#`-list production.
+        Err(ViaParseError::Empty) => None,
+        Err(error) => {
+            tracing::debug!(%error, "a Via element is dropped, and the hops beside it are kept");
+            None
         }
-        None => (trimmed, None),
-    };
-
-    // received-protocol RWS received-by: the pseudonym is the second
-    // whitespace-separated token. A single token has no protocol version, which
-    // is non-conformant but still names an intermediary, so it is taken as the
-    // pseudonym rather than discarded (fail closed for loop detection).
-    let mut tokens = head.split_whitespace();
-    let first = tokens.next().ok_or(ViaParseError::MissingPseudonym)?;
-    let (protocol, pseudonym) = match tokens.next() {
-        // A first token that does not parse as a received-protocol is dropped
-        // rather than costing the hop; only the pseudonym is load-bearing.
-        Some(second) => (
-            ReceivedProtocol::new(first).ok(),
-            ContextSourcePseudonym::new(second).map_err(|_| ViaParseError::MissingPseudonym)?,
-        ),
-        None => (None, ContextSourcePseudonym::new(first).map_err(|_| ViaParseError::MissingPseudonym)?),
-    };
-
-    Ok(ViaEntry { protocol, pseudonym, comment })
+    }
 }
 
 impl headers::Header for Via {
@@ -147,20 +220,10 @@ impl headers::Header for Via {
     where
         I: Iterator<Item = &'i HeaderValue>,
     {
-        let mut entries = Vec::new();
-        for value in values {
-            let s = value.to_str().map_err(|_| headers::Error::invalid())?;
-            for part in s.split(',') {
-                // An empty element between commas is a benign artefact of the
-                // RFC 9110 `#`-list production and is skipped; every other
-                // element must parse, so a malformed hop fails the decode rather
-                // than being silently dropped.
-                if part.trim().is_empty() {
-                    continue;
-                }
-                entries.push(parse_via_entry(part).map_err(|_| headers::Error::invalid())?);
-            }
-        }
+        let entries: Vec<ViaEntry> = values
+            .flat_map(|value| ViaElements { rest: Some(value.as_bytes()) })
+            .filter_map(readable_hop)
+            .collect();
         if entries.is_empty() {
             return Err(headers::Error::invalid());
         }
@@ -168,22 +231,8 @@ impl headers::Header for Via {
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        let s: String = self
-            .0
-            .iter()
-            .map(|entry| {
-                let received = match &entry.protocol {
-                    Some(protocol) => format!("{protocol} {}", entry.pseudonym),
-                    None => entry.pseudonym.to_string(),
-                };
-                match &entry.comment {
-                    Some(comment) => format!("{received} ({comment})"),
-                    None => received,
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        match HeaderValue::from_str(&s) {
+        let line = self.0.iter().map(ViaEntry::written).collect::<Vec<_>>().join(b", ".as_slice());
+        match HeaderValue::from_bytes(&line) {
             Ok(val) => values.extend(iter::once(val)),
             Err(err) => tracing::warn!(error = %err, "failed to encode Via header"),
         }
@@ -192,7 +241,7 @@ impl headers::Header for Via {
 
 #[cfg(test)]
 mod tests {
-    use crate::{received_protocol::ReceivedProtocol, via::Via};
+    use crate::{received_protocol::ReceivedProtocol, via::Via, via_comment::ViaComment};
     use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
     use headers::Header;
     use http::HeaderValue;
@@ -212,6 +261,22 @@ mod tests {
         let val = HeaderValue::from_str(raw).expect("valid header value");
         let mut iter = iter::once(&val);
         Via::decode(&mut iter)
+    }
+
+    /// Decode the `Via` field lines `lines`, each given as octets.
+    fn decode_lines(lines: &[&[u8]]) -> Result<Via, headers::Error> {
+        let values: Vec<HeaderValue> = lines.iter().map(|line| HeaderValue::from_bytes(line).expect("valid field value")).collect();
+        Via::decode(&mut values.iter())
+    }
+
+    /// The pseudonyms of `via`, in order.
+    fn pseudonyms_of(via: &Via) -> Vec<&str> {
+        via.pseudonyms().map(ContextSourcePseudonym::as_str).collect()
+    }
+
+    /// The comment of each hop of `via`, as written.
+    fn comments_of(via: &Via) -> Vec<Option<&[u8]>> {
+        via.0.iter().map(|entry| entry.comment.as_ref().map(ViaComment::as_bytes)).collect()
     }
 
     #[test]
@@ -242,12 +307,60 @@ mod tests {
     fn decode_with_comment() {
         let via = decode_from("1.1 proxy (Apache)").expect("should decode");
         pretty_assertions::assert_eq!(via.0[0].pseudonym.as_str(), "proxy");
-        pretty_assertions::assert_eq!(via.0[0].comment, Some("Apache".to_string()));
+        pretty_assertions::assert_eq!(comments_of(&via), vec![Some(b"(Apache)".as_slice())]);
     }
 
     #[test]
     fn decode_empty_rejects() {
         assert!(decode_from("").is_err());
+    }
+
+    /// RFC 9110 section 5.6.5 lets a comment hold a comma and a nested comment,
+    /// so neither ends the hop.
+    #[test]
+    fn a_comma_or_a_nested_comment_inside_a_comment_keeps_the_hop_whole() {
+        let via = decode_from("1.1 broker-a (proxy, (zone 2)), 1.1 broker-b").expect("should decode");
+        pretty_assertions::assert_eq!(pseudonyms_of(&via), vec!["broker-a", "broker-b"]);
+        pretty_assertions::assert_eq!(comments_of(&via), vec![Some(b"(proxy, (zone 2))".as_slice()), None]);
+    }
+
+    /// `ctext` admits `obs-text`, so octets beyond ASCII in a comment cost
+    /// neither the hop nor the header.
+    #[test]
+    fn a_comment_holding_octets_beyond_ascii_is_read() {
+        let via = decode_lines(&[b"1.1 broker-a (Z\xc3\xbcrich proxy), 1.1 broker-b (\xff)"]).expect("should decode");
+        pretty_assertions::assert_eq!(pseudonyms_of(&via), vec!["broker-a", "broker-b"]);
+        pretty_assertions::assert_eq!(comments_of(&via), vec![Some(b"(Z\xc3\xbcrich proxy)".as_slice()), Some(b"(\xff)".as_slice())]);
+    }
+
+    /// A quoted pair's second octet is data, so `\)` does not close the
+    /// comment and the comma after it stays inside.
+    #[test]
+    fn a_comment_holding_a_quoted_pair_is_one_comment() {
+        let via = decode_from(r"1.1 broker-a (a \), b), 1.1 broker-b").expect("should decode");
+        pretty_assertions::assert_eq!(pseudonyms_of(&via), vec!["broker-a", "broker-b"]);
+        pretty_assertions::assert_eq!(comments_of(&via), vec![Some(br"(a \), b)".as_slice()), None]);
+    }
+
+    #[test]
+    fn a_hop_naming_no_intermediary_is_dropped_alone() {
+        let via = decode_lines(&[b"1.1 broker-a, (no pseudonym), \xff\xfe broker-x", b"(only a comment)", b"1.1 broker-b"]).expect("should decode");
+        pretty_assertions::assert_eq!(pseudonyms_of(&via), vec!["broker-a", "broker-b"]);
+    }
+
+    #[test]
+    fn a_header_naming_no_intermediary_at_all_does_not_decode() {
+        assert!(decode_lines(&[b"(only a comment)", b" , "]).is_err());
+    }
+
+    /// Commas inside a comment that never closes split nothing, so what
+    /// follows belongs to the comment, and the malformed comment costs only
+    /// itself.
+    #[test]
+    fn a_comment_that_never_closes_runs_to_the_end_of_its_line() {
+        let via = decode_lines(&[b"1.1 broker-a (open, 1.1 broker-x", b"1.1 broker-b"]).expect("should decode");
+        pretty_assertions::assert_eq!(pseudonyms_of(&via), vec!["broker-a", "broker-b"]);
+        pretty_assertions::assert_eq!(comments_of(&via), vec![None, None]);
     }
 
     #[test]
@@ -284,8 +397,7 @@ mod tests {
     #[test]
     fn pseudonyms_extracts_all() {
         let via = decode_from("1.1 a, 1.1 b, 1.1 c").expect("should decode");
-        let pseudonyms: Vec<&str> = via.pseudonyms().map(ContextSourcePseudonym::as_str).collect();
-        pretty_assertions::assert_eq!(pseudonyms, vec!["a", "b", "c"]);
+        pretty_assertions::assert_eq!(pseudonyms_of(&via), vec!["a", "b", "c"]);
     }
 
     #[test]
@@ -330,6 +442,19 @@ mod tests {
         let mut iter = encoded.iter();
         let decoded = Via::decode(&mut iter).expect("roundtrip decode");
         pretty_assertions::assert_eq!(original, decoded);
+    }
+
+    /// The chain a forward carries keeps every received hop as written, its
+    /// comment included, and the hop this broker adds carries none.
+    #[test]
+    fn an_extended_chain_keeps_received_comments_and_adds_a_bare_hop() {
+        let received = decode_lines(&[b"1.1 broker-a (Z\xc3\xbcrich proxy, (zone 2))"]).expect("should decode");
+        let mut encoded = Vec::new();
+        received.append(protocol("1.1"), pseudonym("broker-b")).encode(&mut encoded);
+        pretty_assertions::assert_eq!(
+            encoded.iter().map(HeaderValue::as_bytes).collect::<Vec<_>>(),
+            vec![b"1.1 broker-a (Z\xc3\xbcrich proxy, (zone 2)), 1.1 broker-b".as_slice()]
+        );
     }
 
     #[test]
