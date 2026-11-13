@@ -5,10 +5,11 @@
 //! only the members its family defines, and no NGSI-LD Null anywhere. A
 //! written instance that declares no family is read as its value member names
 //! it, and as a Property when it names none (clause 4.5.2). The written
-//! members are moved, never copied. A written `instanceId` is dropped: Table
-//! 5.2.5-2 makes it output-only, and clause 5.2.5 has the broker ignore one a
-//! producer provides, so the Temporal Evolution instance the write adds is
-//! given an identity of the broker's own (clause 4.5.7).
+//! members are moved, never copied. A written `instanceId` or `deletedAt` is
+//! dropped: Table 5.2.5-2 makes both output-only, and clause 5.2.5 has the
+//! broker ignore one a producer provides "in update or create operations".
+//! The Temporal Evolution instance the write adds is given an identity of the
+//! broker's own (clause 4.5.7), and a stored instance records no deletion.
 
 use crate::{
     attribute_instances::AttributeInstances,
@@ -70,9 +71,6 @@ impl Instance {
         }
         if !envelope.object_types.is_empty() && !family.defines_member(compact_properties::OBJECT_TYPE) {
             return Err(EntityRefusal::member_forbidden(Some(attribute), Some(family), properties::OBJECT_TYPE));
-        }
-        if parts.deleted_at.is_some() {
-            return Err(EntityRefusal::member_forbidden(Some(attribute), Some(family), properties::DELETED_AT));
         }
         let sealing = names_a_seal(attribute);
         if !parts.proof_seals.is_empty() && !sealing {
@@ -234,7 +232,11 @@ mod tests {
         instance::Instance,
         operation::speed_entity::{ACCURACY, SPEED, name, number},
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, time::system_instant::SystemInstant};
+    use andromeda_ngsi_ld_lexicon::{
+        attribute_name::AttributeName,
+        attribute_type::AttributeType,
+        time::{date_time::NgsiLdDateTime, system_instant::SystemInstant},
+    };
     use indexmap::IndexMap;
 
     /// The instant every written instance below claims.
@@ -296,6 +298,30 @@ mod tests {
             document
         };
         let with = identified(sub_attribute(ACCURACY, identified(IndexMap::new())));
+        let without = stamped(sub_attribute(ACCURACY, stamped(IndexMap::new())));
+
+        pretty_assertions::assert_eq!(
+            Instance::try_from_document(&name(SPEED), with).expect("a valid instance"),
+            Instance::try_from_document(&name(SPEED), without).expect("a valid instance")
+        );
+    }
+
+    /// Table 5.2.5-2 makes `deletedAt` output-only and clause 5.2.5 has the
+    /// broker ignore one a producer writes in a create or an update, so an
+    /// instance written with one at any depth is stored as if written without.
+    #[test]
+    fn a_written_deleted_at_is_ignored_at_every_depth() {
+        let deleted = |sub_attributes| {
+            InstanceDocument::builder()
+                .family(Some(AttributeType::Property))
+                .value(ValueSlot::Set(WrittenValue::Value(vec![number(1)])))
+                .created_at(Some(at()))
+                .modified_at(Some(at()))
+                .deleted_at(Some("1900-01-02T00:00:00Z".parse::<NgsiLdDateTime>().expect("a DateTime")))
+                .sub_attributes(sub_attributes)
+                .build()
+        };
+        let with = deleted(sub_attribute(ACCURACY, deleted(IndexMap::new())));
         let without = stamped(sub_attribute(ACCURACY, stamped(IndexMap::new())));
 
         pretty_assertions::assert_eq!(

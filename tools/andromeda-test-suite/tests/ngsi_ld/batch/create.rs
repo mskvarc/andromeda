@@ -17,6 +17,7 @@ mod n_bat_cre_9006;
 mod n_bat_cre_9007;
 mod n_bat_cre_9008;
 mod n_bat_cre_9010;
+mod n_bat_cre_9011;
 mod n_bat_cre_9337;
 mod n_bat_cre_9338;
 mod o_bat_cre_0005;

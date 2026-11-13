@@ -26,6 +26,7 @@ mod n_att_upd_9006;
 mod n_att_upd_9007;
 mod n_att_upd_9008;
 mod n_att_upd_9011;
+mod n_att_upd_9012;
 mod o_att_upd_0002;
 mod o_att_upd_0011;
 mod o_att_upd_0016;
