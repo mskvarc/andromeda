@@ -104,7 +104,7 @@ start_broker() {
 	port="$(docker port "$broker" 1056/tcp)"
 	base="http://${port}/ngsi-ld/v1"
 	for _ in $(seq 1 120); do
-		if curl -fsS -o /dev/null "$base/health" 2> /dev/null; then
+		if docker exec "$broker" andromeda health > /dev/null 2>&1; then
 			return 0
 		fi
 		if [ "$(docker inspect -f '{{.State.Running}}' "$broker")" != true ]; then

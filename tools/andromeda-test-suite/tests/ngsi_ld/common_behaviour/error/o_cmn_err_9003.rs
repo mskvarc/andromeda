@@ -31,8 +31,10 @@ use ngsi_ld::model::ErrorType;
 async fn o_cmn_err_9003_a_method_a_resource_does_not_serve_gets_a_405_problem_document() -> Result<()> {
     let broker = broker::front()?;
     let method_not_allowed = "https://uri.etsi.org/ngsi-ld/errors/MethodNotAllowed".parse::<ErrorType>()?;
-    // No typed operation posts to the tenant resource, which serves other methods.
-    let answer = broker.send_unchecked(request_to(&broker, Method::POST, "tenants/acme")?).await;
+    // No typed operation posts to a Subscription, which serves other methods (Table 6.2-1).
+    let answer = broker
+        .send_unchecked(request_to(&broker, Method::POST, "subscriptions/urn:ngsi-ld:Subscription:o-cmn-err-9003")?)
+        .await;
     expect_that!(
         &answer,
         problem(StatusCode::METHOD_NOT_ALLOWED, method_not_allowed)
@@ -46,7 +48,10 @@ async fn o_cmn_err_9003_a_method_a_resource_does_not_serve_gets_a_405_problem_do
     let details = answer.answered_problem();
     expect_that!(details.and_then(|details| details.title.as_deref()), some(eq("Method not allowed")));
     expect_that!(details.and_then(|details| details.status), some(eq(405)));
-    expect_that!(instance_of(&answer), some(eq("/ngsi-ld/v1/tenants/acme")));
+    expect_that!(
+        instance_of(&answer),
+        some(eq("/ngsi-ld/v1/subscriptions/urn:ngsi-ld:Subscription:o-cmn-err-9003"))
+    );
     // No typed operation sends a HEAD.
     let answer_2 = broker.send_unchecked(request_to(&broker, Method::HEAD, "entityOperations/create")?).await;
     expect_that!(

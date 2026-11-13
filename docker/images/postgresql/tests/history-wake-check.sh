@@ -102,7 +102,7 @@ run_case() {
 	local base
 	base="http://$(docker port "$broker" 1056/tcp)/ngsi-ld/v1"
 	for _ in $(seq 1 120); do
-		if curl -fsS -o /dev/null "$base/health" 2> /dev/null; then
+		if docker exec "$broker" andromeda health > /dev/null 2>&1; then
 			break
 		fi
 		sleep 0.5

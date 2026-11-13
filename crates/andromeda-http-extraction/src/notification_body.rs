@@ -55,7 +55,7 @@ mod tests {
     fn request(content_type: &str, body: &'static str, link: Option<&str>) -> Request {
         let mut builder = Request::builder()
             .method("POST")
-            .uri("/ngsi-ld/v1/notifications")
+            .uri("/ngsi-ld/andromeda/v1/notifications")
             .header(header::CONTENT_TYPE, content_type)
             .header(header::CONTENT_LENGTH, body.len());
         if let Some(link) = link {
@@ -127,7 +127,7 @@ mod tests {
     async fn a_missing_content_length_is_411() {
         let request = Request::builder()
             .method("POST")
-            .uri("/ngsi-ld/v1/notifications")
+            .uri("/ngsi-ld/andromeda/v1/notifications")
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(NOTIFICATION))
             .expect("a request");

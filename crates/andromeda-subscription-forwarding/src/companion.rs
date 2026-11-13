@@ -450,7 +450,7 @@ mod tests {
                 "watchedAttributes": ["https://example.org/speed"],
                 "notification": {
                     "attributes": ["https://example.org/speed"],
-                    "endpoint": {"uri": "http://broker-a:1056/ngsi-ld/v1/notifications", "accept": "application/json"}
+                    "endpoint": {"uri": "http://broker-a:1056/ngsi-ld/andromeda/v1/notifications", "accept": "application/json"}
                 }
             })
         );

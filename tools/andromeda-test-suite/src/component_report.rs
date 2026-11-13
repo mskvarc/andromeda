@@ -1,4 +1,4 @@
-//! The `ComponentReportList` that `GET /ngsi-ld/v1/version` answers: an Andromeda extension no NGSI-LD model
+//! The `ComponentReportList` that `GET /ngsi-ld/andromeda/v1/version` answers: an Andromeda extension no NGSI-LD model
 //! covers, read into a type so a test states members, not paths.
 
 use serde::Deserialize;

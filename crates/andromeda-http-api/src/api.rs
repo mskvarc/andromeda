@@ -11,12 +11,19 @@ use tower_http::normalize_path::NormalizePath;
 /// Path prefix every NGSI-LD route is served under.
 pub const API_ROOT_PATH: &str = "/ngsi-ld/v1";
 
+/// Path prefix of the routes no NGSI-LD clause defines: Andromeda's own
+/// namespace beside the NGSI-LD API root, versioned by its own segment, so
+/// the standard tree carries only the resources of Table 6.2-1.
+pub const ANDROMEDA_API_ROOT_PATH: &str = "/ngsi-ld/andromeda/v1";
+
 /// Fully assembled, state-complete public HTTP API.
 ///
-/// The NGSI-LD families live under `/ngsi-ld/v1`; metrics are served on the
-/// management plane, not the data plane. In merged mode the management probes
-/// (`/livez`, `/readyz`) and the optional scrape (`/metrics`) sit at the root as
-/// siblings of the `/ngsi-ld/v1` nest, behind the full process stack: the
+/// The NGSI-LD families live under `/ngsi-ld/v1`; the inbound notification
+/// receiver, tenant administration and the component report live under
+/// `/ngsi-ld/andromeda/v1`, behind the same request layers. Metrics are served
+/// on the management plane, not the data plane. In merged mode the management
+/// probes (`/livez`, `/readyz`) and the optional scrape (`/metrics`) sit at the
+/// root as siblings of both nests, behind the full process stack: the
 /// documented cost of collapsing both planes onto one port.
 pub struct HttpApi {
     /// Process-stacked service with path normalization outside Axum routing.
@@ -24,11 +31,12 @@ pub struct HttpApi {
 }
 
 impl HttpApi {
-    /// Merge every required route family under `/ngsi-ld/v1` and apply the configured stack.
+    /// Merge the standard route families under `/ngsi-ld/v1` and Andromeda's
+    /// own under `/ngsi-ld/andromeda/v1`, and apply the configured stack.
     ///
     /// When `merged_management` is `Some`, the management endpoints are mounted at
     /// the root of the assembled service, sharing the data-plane listener and its
-    /// full middleware stack; when `None`, only the NGSI-LD data plane is served.
+    /// full middleware stack; when `None`, only the data plane is served.
     #[must_use]
     pub fn assemble(routes: ApiRoutes, merged_management: Option<ManagementRoutes>, stack: &HttpStack) -> HttpApi {
         let ngsi = Router::new()
@@ -39,18 +47,22 @@ impl HttpApi {
             .merge(routes.subscription.into_router())
             .merge(routes.entity_map.into_router())
             .merge(routes.snapshot.into_router())
-            .merge(routes.source_identity.into_router())
+            .merge(routes.source_identity.into_router());
+        let andromeda = Router::new()
             .merge(routes.notification_receiver.into_router())
             .merge(routes.tenancy.into_router())
-            .merge(routes.health.into_router())
             .merge(routes.component_report.into_router());
-        let ngsi = registered_on(ngsi);
-        let mut api_root = Router::new().nest(
-            API_ROOT_PATH,
-            stack.apply_api(ngsi_request_layers(ngsi, routes.configured_api_root, routes.pagination)),
-        );
+        let mut api_root = Router::new()
+            .nest(
+                API_ROOT_PATH,
+                stack.apply_api(ngsi_request_layers(registered_on(ngsi), routes.configured_api_root.clone(), routes.pagination)),
+            )
+            .nest(
+                ANDROMEDA_API_ROOT_PATH,
+                stack.apply_api(ngsi_request_layers(registered_on(andromeda), routes.configured_api_root, routes.pagination)),
+            );
         // Merged mode mounts the management endpoints as root siblings of the
-        // NGSI-LD nest, outside the operation-hit scope, so a metrics scrape is
+        // API nests, outside the operation-hit scope, so a metrics scrape is
         // never counted as an NGSI-LD operation.
         if let Some(management) = merged_management {
             api_root = api_root.merge(management.into_root_router());
@@ -83,7 +95,7 @@ impl HttpApi {
     }
 }
 
-/// The layers every NGSI-LD request passes before any route.
+/// The layers every request to either API nest passes before any route.
 fn ngsi_request_layers(ngsi: Router, configured_api_root: Option<ConfiguredApiRoot>, pagination: PaginationPolicy) -> Router {
     // Clause 5.13.3.5: one NGSI-LD request resolves the same `@context`
     // several times internally (write screening, then the write itself);
@@ -328,7 +340,6 @@ mod tests {
             )?))
             .notification_receiver(NotificationReceiverRoutes::new(Arc::new(RejectReceiver)))
             .tenancy(TenancyRoutes::new(administration, usage, TenantManagement::Enabled))
-            .health(HealthRoutes::new(Health::builder().build()))
             .component_report(ComponentReportRoutes::new(vec![ComponentReport::PostgreSql {
                 version: ComponentVersion::from("16.2".to_owned()),
                 connections: ConnectionCapacity::new(200, 3, 150),
@@ -398,7 +409,6 @@ mod tests {
             (Method::PATCH, "/ngsi-ld/v1/entities/urn:ngsi-ld:Entity:1/attrs/speed"),
             (Method::DELETE, "/ngsi-ld/v1/entities/urn:ngsi-ld:Entity:1/attrs/speed"),
             (Method::PUT, "/ngsi-ld/v1/entities/urn:ngsi-ld:Entity:1/attrs/speed"),
-            (Method::POST, "/ngsi-ld/v1/notifications"),
             (Method::POST, "/ngsi-ld/v1/entityOperations/create"),
             (Method::POST, "/ngsi-ld/v1/entityOperations/upsert"),
             (Method::POST, "/ngsi-ld/v1/entityOperations/update"),
@@ -457,17 +467,38 @@ mod tests {
             (Method::DELETE, "/ngsi-ld/v1/snapshots/urn:ngsi-ld:Snapshot:1"),
             (Method::POST, "/ngsi-ld/v1/snapshots/urn:ngsi-ld:Snapshot:1/clone"),
             (Method::GET, "/ngsi-ld/v1/info/sourceIdentity"),
-            (Method::GET, "/ngsi-ld/v1/tenants"),
-            (Method::GET, "/ngsi-ld/v1/tenants/acme"),
-            (Method::PATCH, "/ngsi-ld/v1/tenants/acme"),
-            (Method::GET, "/ngsi-ld/v1/health"),
-            (Method::GET, "/ngsi-ld/v1/ready"),
-            (Method::GET, "/ngsi-ld/v1/live"),
-            (Method::GET, "/ngsi-ld/v1/version"),
+            (Method::POST, "/ngsi-ld/andromeda/v1/notifications"),
+            (Method::GET, "/ngsi-ld/andromeda/v1/tenants"),
+            (Method::GET, "/ngsi-ld/andromeda/v1/tenants/acme"),
+            (Method::PATCH, "/ngsi-ld/andromeda/v1/tenants/acme"),
+            (Method::GET, "/ngsi-ld/andromeda/v1/version"),
         ] {
             let response = service.clone().oneshot(request(method.clone(), path)?).await?;
             assert_ne!(response.status(), StatusCode::NOT_FOUND, "{method} {path} was not routed");
             assert_ne!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{method} {path} lost its method");
+        }
+        Ok(())
+    }
+
+    /// Table 6.2-1 lists every resource of the NGSI-LD API root, so a route no
+    /// clause defines is absent from it and a standard resource is absent from
+    /// Andromeda's own namespace.
+    #[tokio::test]
+    async fn each_api_nest_serves_only_its_own_resources() -> Result<(), Box<dyn Error>> {
+        let service = test_api()?.into_service();
+        for (method, path) in [
+            (Method::POST, "/ngsi-ld/v1/notifications"),
+            (Method::GET, "/ngsi-ld/v1/tenants"),
+            (Method::GET, "/ngsi-ld/v1/tenants/acme"),
+            (Method::GET, "/ngsi-ld/v1/version"),
+            (Method::GET, "/ngsi-ld/v1/health"),
+            (Method::GET, "/ngsi-ld/v1/ready"),
+            (Method::GET, "/ngsi-ld/v1/live"),
+            (Method::GET, "/ngsi-ld/andromeda/v1/entities"),
+            (Method::GET, "/ngsi-ld/andromeda/v1/health"),
+        ] {
+            let response = service.clone().oneshot(request(method.clone(), path)?).await?;
+            pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
         }
         Ok(())
     }
@@ -479,7 +510,7 @@ mod tests {
     #[tokio::test]
     async fn the_retired_evict_orphans_route_is_absent() -> Result<(), Box<dyn Error>> {
         let service = test_api()?.into_service();
-        let response = service.oneshot(request(Method::POST, "/ngsi-ld/v1/tenants/evictOrphans")?).await?;
+        let response = service.oneshot(request(Method::POST, "/ngsi-ld/andromeda/v1/tenants/evictOrphans")?).await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
         Ok(())
     }
@@ -491,7 +522,7 @@ mod tests {
     #[tokio::test]
     async fn a_wrong_method_request_gets_a_problem_document_and_the_allow_header() -> Result<(), Box<dyn Error>> {
         let service = test_api()?.into_service();
-        let response = service.oneshot(request(Method::POST, "/ngsi-ld/v1/tenants/acme")?).await?;
+        let response = service.oneshot(request(Method::POST, "/ngsi-ld/andromeda/v1/tenants/acme")?).await?;
         pretty_assertions::assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
         let allow = response.headers().get("allow").and_then(|value| value.to_str().ok());
         assert!(
@@ -508,7 +539,7 @@ mod tests {
             "{}",
             document["detail"]
         );
-        pretty_assertions::assert_eq!(document["instance"], "/ngsi-ld/v1/tenants/acme");
+        pretty_assertions::assert_eq!(document["instance"], "/ngsi-ld/andromeda/v1/tenants/acme");
         Ok(())
     }
 
@@ -613,7 +644,7 @@ mod tests {
     #[tokio::test]
     async fn the_http3_router_normalizes_a_trailing_slash_before_routing() -> Result<(), Box<dyn Error>> {
         let router = test_api()?.h3_router();
-        let response = router.oneshot(request(Method::GET, "/ngsi-ld/v1/health/")?).await?;
+        let response = router.oneshot(request(Method::GET, "/ngsi-ld/andromeda/v1/version/")?).await?;
         assert_ne!(response.status(), StatusCode::NOT_FOUND, "trailing slash was not trimmed for HTTP/3");
         Ok(())
     }

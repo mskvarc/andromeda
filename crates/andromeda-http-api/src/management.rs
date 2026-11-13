@@ -30,7 +30,7 @@ impl ManagementRoutes {
     /// Shared by both the standalone management listener and the merged data
     /// plane, so neither reimplements the probe-plus-optional-metrics layout.
     pub(crate) fn into_root_router(self) -> Router {
-        let router = self.health.into_management_router();
+        let router = self.health.into_router();
         let router = match self.metrics {
             Some(metrics) => router.merge(metrics.into_router()),
             None => router,

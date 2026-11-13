@@ -17,9 +17,8 @@ use andromeda_http_telemetry::routes::TelemetryRoutes;
 ///
 /// `separate-port` isolates the observability endpoints behind their own
 /// listener; `merged` mounts them at the root of the data-plane listener;
-/// `disabled` serves no management plane, and validation has already forced
-/// metrics off in that case. The management probes are backed by the same
-/// registered indicators as the data-plane probes, over one shared `Arc`.
+/// `disabled` serves no management plane and so no probe, and validation has
+/// already forced metrics off in that case.
 pub(crate) fn assemble_planes(
     mode: ManagementMode,
     routes: ApiRoutes,

@@ -17,7 +17,7 @@ pub const TENANT_PAGE_SIZE: PageSizeBounds = PageSizeBounds {
     cap: BROKER_PAGE_SIZE_CAP,
 };
 
-/// Query parameters for `GET /ngsi-ld/v1/tenants` (list tenants).
+/// Query parameters for `GET /ngsi-ld/andromeda/v1/tenants` (list tenants).
 ///
 /// `deny_unknown_fields` is the point of the type: a parameter the endpoint does
 /// not define is rejected (clause 6.3.20) rather than ignored.
@@ -34,7 +34,7 @@ pub struct TenantListParams {
 
 query_parameter_set!(TenantListParams { Options } + PageParameters);
 
-/// Query parameters for `GET /ngsi-ld/v1/tenants/{tenantName}` (one tenant).
+/// Query parameters for `GET /ngsi-ld/andromeda/v1/tenants/{tenantName}` (one tenant).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TenantIntrospectionParams {

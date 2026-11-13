@@ -6,7 +6,7 @@ use andromeda_test_suite::{
     identity_matcher::has_id,
     namespace::Namespace,
     notification_sink::NotificationSink,
-    raw_call::call,
+    raw_call::andromeda_call,
     snapshot_capture::await_status,
 };
 use googletest::prelude::*;
@@ -54,7 +54,7 @@ async fn a_snp_qry_8143_a_snapshot_scoped_subscription_is_still_notified_after_i
     let tenant_path = format!("tenants/{namespace}");
     for active in ["false", "true"] {
         let body = format!(r#"{{"isActive":{active}}}"#);
-        let answer = call(
+        let answer = andromeda_call(
             &front,
             Method::PATCH,
             &tenant_path,

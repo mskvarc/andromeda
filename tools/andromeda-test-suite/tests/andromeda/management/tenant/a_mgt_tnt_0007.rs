@@ -7,7 +7,7 @@ use andromeda_test_suite::{
     problem::answered,
     raw_call::target,
     tenant_resource::{TenantResource, TenantType},
-    wire::request_to,
+    wire::andromeda_request_to,
 };
 use googletest::prelude::*;
 use http::{HeaderValue, Method, StatusCode, header::ACCEPT};
@@ -34,8 +34,8 @@ async fn a_mgt_tnt_0007_a_tenant_reads_back_as_a_tenant_resource() -> Result<()>
     implicit.entities().create(&device).send().await?.done()?;
     // The Tenant resource is an Andromeda extension no NGSI-LD operation covers, so its requests are sent as written.
     for name in [namespace.to_string(), format!("{namespace}-b")] {
-        let request =
-            request_to(&front, Method::GET, &target(&format!("tenants/{name}"), &[]))?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
+        let request = andromeda_request_to(&front, Method::GET, &target(&format!("tenants/{name}"), &[]))?
+            .append_header(ACCEPT, HeaderValue::from_static("application/json"));
         let answer = front.send_unchecked(request).await;
         expect_that!(&answer, answered(StatusCode::OK));
         let resource = TenantResource::read(&answer?)?;
@@ -43,7 +43,7 @@ async fn a_mgt_tnt_0007_a_tenant_reads_back_as_a_tenant_resource() -> Result<()>
         expect_that!(resource.id, eq(&format!("urn:ngsi-ld:Tenant:{name}")));
         expect_that!(resource.tenant_name.to_string(), eq(name.as_str()));
     }
-    let request = request_to(&front, Method::GET, "tenants")?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
+    let request = andromeda_request_to(&front, Method::GET, "tenants")?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
     let answer = front.send_unchecked(request).await;
     expect_that!(&answer, answered(StatusCode::OK));
     let listing = answer?;

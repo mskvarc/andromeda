@@ -63,7 +63,7 @@ docker run -d --name "$broker" --network "$network" -p 127.0.0.1::1056 \
 	"$broker_image" > /dev/null
 base="http://$(docker port "$broker" 1056/tcp)/ngsi-ld/v1"
 for _ in $(seq 1 120); do
-	if curl -fsS -o /dev/null "$base/health" 2> /dev/null; then
+	if docker exec "$broker" andromeda health > /dev/null 2>&1; then
 		break
 	fi
 	sleep 0.5
@@ -133,7 +133,7 @@ expect "a tenant session runs under the installed defaults" "on 35s" "$(sql "$db
 docker restart "$broker" > /dev/null
 base="http://$(docker port "$broker" 1056/tcp)/ngsi-ld/v1"
 for _ in $(seq 1 120); do
-	if curl -fsS -o /dev/null "$base/health" 2> /dev/null; then
+	if docker exec "$broker" andromeda health > /dev/null 2>&1; then
 		break
 	fi
 	sleep 0.5

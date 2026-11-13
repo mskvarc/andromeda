@@ -9,7 +9,7 @@ use andromeda_test_suite::{
     raw_call::target,
     tenant_resource::TenantResource,
     unchecked_page::follow,
-    wire::request_to,
+    wire::andromeda_request_to,
 };
 use googletest::prelude::*;
 use http::{HeaderValue, Method, StatusCode, header::ACCEPT};
@@ -40,7 +40,8 @@ async fn a_mgt_tnt_0003_the_collection_pages_by_cursor() -> Result<()> {
         tenant.entities().create(&device).send().await?.done()?;
     }
     // The tenant collection is an Andromeda extension no NGSI-LD operation covers, so the request is sent as written.
-    let request = request_to(&front, Method::GET, &target("tenants", &[("limit", "1")]))?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
+    let request =
+        andromeda_request_to(&front, Method::GET, &target("tenants", &[("limit", "1")]))?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
     let answer = front.send_unchecked(request).await;
     expect_that!(&answer, answered(StatusCode::OK));
     let first_page = answer?;

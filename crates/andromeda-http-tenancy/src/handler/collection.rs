@@ -1,4 +1,4 @@
-//! `GET /ngsi-ld/v1/tenants`: the paginated tenant collection.
+//! `GET /ngsi-ld/andromeda/v1/tenants`: the paginated tenant collection.
 
 use crate::{
     error::{TenancyHttpError, classify},

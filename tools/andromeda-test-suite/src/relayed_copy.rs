@@ -11,7 +11,7 @@ use crate::{
     namespace::Namespace,
     source_answer,
     source_request::SourceRequest,
-    wire::{content_type, request_to},
+    wire::{andromeda_request_to, content_type},
 };
 use bytes::Bytes;
 use googletest::prelude::*;
@@ -188,7 +188,7 @@ fn assemble(notification_id: &str, copy_id: &SubscriptionId, data: &str, context
 ///
 /// Returns the failure when the request cannot be built; the broker's refusal is the answer.
 pub async fn relay(broker: &BrokerClient, media_type: &MediaType<'_>, body: &str) -> Result<StdResult<Response<Bytes>, ClientError<ReqwestError>>> {
-    let request = content_type(request_to(broker, Method::POST, "notifications")?, media_type)?.body(Bytes::copy_from_slice(body.as_bytes()));
+    let request = content_type(andromeda_request_to(broker, Method::POST, "notifications")?, media_type)?.body(Bytes::copy_from_slice(body.as_bytes()));
     Ok(broker.send_unchecked(request).await)
 }
 

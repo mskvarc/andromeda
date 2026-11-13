@@ -7,10 +7,11 @@ use crate::{
     broker::BrokerClient,
     raw_answer::{RawAnswerError, send_raw},
     request_fields::{FieldError, with_fields},
-    wire::{WireError, request_to},
+    wire::{WireError, andromeda_request_to, request_to},
 };
 use bytes::Bytes;
 use http::{Method, Response, header::CONTENT_TYPE};
+use ngsi_ld::http::UncheckedRequest;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
 /// The characters of a query name or value that go out as they are: the unreserved set of IETF RFC 3986 section 2.3.
@@ -53,7 +54,29 @@ pub fn target(path: &str, parameters: &[(&str, &str)]) -> String {
 ///
 /// Returns [`RawCallError`] when the request cannot be written, sent or answered.
 pub async fn call(client: &BrokerClient, method: Method, target: &str, headers: &[(&str, &str)], body: Option<&str>) -> Result<Response<Bytes>, RawCallError> {
-    let request = with_fields(request_to(client, method, target)?, headers)?;
+    send_written(request_to(client, method, target)?, headers, body).await
+}
+
+/// Sends `method` to `target` (relative to Andromeda's own API root `/ngsi-ld/andromeda/v1/`, with its query, as
+/// written) on the broker `client` speaks to, with `headers` in order and `body` byte for byte, as [`call`] does.
+///
+/// # Errors
+///
+/// Returns [`RawCallError`] when the request cannot be written, sent or answered.
+pub async fn andromeda_call(
+    client: &BrokerClient,
+    method: Method,
+    target: &str,
+    headers: &[(&str, &str)],
+    body: Option<&str>,
+) -> Result<Response<Bytes>, RawCallError> {
+    send_written(andromeda_request_to(client, method, target)?, headers, body).await
+}
+
+/// Sends `request` with `headers` in order and `body` byte for byte, under `application/json` unless `headers` name a
+/// `Content-Type`.
+async fn send_written(request: UncheckedRequest, headers: &[(&str, &str)], body: Option<&str>) -> Result<Response<Bytes>, RawCallError> {
+    let request = with_fields(request, headers)?;
     let names_content_type = headers.iter().any(|(name, _)| name.eq_ignore_ascii_case(CONTENT_TYPE.as_str()));
     let request = match body {
         Some(text) if names_content_type => request.body(Bytes::copy_from_slice(text.as_bytes())),

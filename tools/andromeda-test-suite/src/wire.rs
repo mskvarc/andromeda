@@ -22,7 +22,11 @@ use ngsi_ld::{
     },
 };
 use serde_json::Value;
-use url::Url;
+use url::{ParseError, Url};
+
+/// Andromeda's own API root (`/ngsi-ld/andromeda/v1/`), relative to the NGSI-LD API root (`/ngsi-ld/v1/`) a client
+/// speaks to: a sibling namespace under the same `/ngsi-ld/` prefix, whatever path prefix the apiRoot carries.
+const ANDROMEDA_ROOT_FROM_API_ROOT: &str = "../andromeda/v1/";
 
 /// Why a wire value could not be built.
 #[derive(Debug, thiserror::Error)]
@@ -30,6 +34,9 @@ pub enum WireError {
     /// A path on the API root is not a URI.
     #[error("a path on {0} is not a request target")]
     Target(Url, #[source] InvalidUri),
+    /// Andromeda's own API root cannot be resolved against the client's API root.
+    #[error("andromeda's own api root cannot be resolved against {0}")]
+    AndromedaRoot(Url, #[source] ParseError),
     /// The client refused to build the request it starts from.
     #[error("the request could not be built")]
     Request(#[source] RequestError),
@@ -50,6 +57,22 @@ pub fn api_uri<T: Transport, M: Answering>(client: &Client<T, M>, path: &str) ->
     format!("{base}{path}").parse().map_err(|error| WireError::Target(base.clone(), error))
 }
 
+/// The URI of `path` (a path with its query, relative to Andromeda's own API root `/ngsi-ld/andromeda/v1/`) on the
+/// broker `client` speaks to, written exactly as given.
+///
+/// # Errors
+///
+/// Returns [`WireError::AndromedaRoot`] when the root cannot be resolved and [`WireError::Target`] when the joined text
+/// is not a URI.
+pub fn andromeda_uri<T: Transport, M: Answering>(client: &Client<T, M>, path: &str) -> Result<Uri, WireError> {
+    let base = client.endpoint().base_url();
+    // clone: the error must own the API root it reports
+    let root = base
+        .join(ANDROMEDA_ROOT_FROM_API_ROOT)
+        .map_err(|error| WireError::AndromedaRoot(base.clone(), error))?;
+    format!("{root}{path}").parse().map_err(|error| WireError::Target(root, error))
+}
+
 /// A request with `method` to `path` (relative to the API root, with its query) on the broker `client` speaks to,
 /// carrying the client's tenant and no body, `Accept` or `Content-Type`: the start of a request whose target no
 /// operation writes, such as one with a parameter the specification does not define.
@@ -58,12 +81,25 @@ pub fn api_uri<T: Transport, M: Answering>(client: &Client<T, M>, path: &str) ->
 ///
 /// Returns [`WireError`] when the target is not a URI.
 pub fn request_to<T: Transport, M: Answering>(client: &Client<T, M>, method: Method, path: &str) -> Result<UncheckedRequest, WireError> {
+    Ok(bare_request(client, method)?.uri(api_uri(client, path)?))
+}
+
+/// A request with `method` to `path` (relative to Andromeda's own API root `/ngsi-ld/andromeda/v1/`, with its query)
+/// on the broker `client` speaks to, carrying the client's tenant and no body, `Accept` or `Content-Type`: the start
+/// of a request to a route no NGSI-LD clause defines, which no typed operation writes.
+///
+/// # Errors
+///
+/// Returns [`WireError`] when the target is not a URI.
+pub fn andromeda_request_to<T: Transport, M: Answering>(client: &Client<T, M>, method: Method, path: &str) -> Result<UncheckedRequest, WireError> {
+    Ok(bare_request(client, method)?.uri(andromeda_uri(client, path)?))
+}
+
+/// A request with `method` to the API root of the broker `client` speaks to, carrying the client's tenant and no
+/// body, `Accept` or `Content-Type`, for the caller to point at its target.
+fn bare_request<T: Transport, M: Answering>(client: &Client<T, M>, method: Method) -> Result<UncheckedRequest, WireError> {
     let start = UncheckedRequest::try_from_operation(&RetrieveEntityTypes::builder().build(), client.endpoint()).map_err(WireError::Request)?;
-    Ok(start
-        .method(method)
-        .uri(api_uri(client, path)?)
-        .remove_header(&ACCEPT)
-        .remove_header(&CONTENT_TYPE))
+    Ok(start.method(method).remove_header(&ACCEPT).remove_header(&CONTENT_TYPE))
 }
 
 /// Sends `operation` to `path` (relative to the API root) instead of the target the operation writes, for a target
@@ -144,7 +180,7 @@ pub fn vary(headers: &HeaderMap) -> Vec<HeaderName> {
 mod tests {
     use crate::{
         broker::client_at,
-        wire::{accept, header_value, header_values, vary},
+        wire::{accept, andromeda_uri, header_value, header_values, vary},
     };
     use googletest::prelude::*;
     use http::{
@@ -160,6 +196,21 @@ mod tests {
         let client = client_at(Url::parse("http://broker.test/ngsi-ld/v1/")?)?;
         let request = accept(client.unchecked(&RetrieveEntityTypes::builder().build())?, "text/*");
         verify_that!(header_values(request.as_request().headers(), &ACCEPT), elements_are![eq(&"text/*")])
+    }
+
+    #[gtest]
+    fn andromeda_paths_sit_beside_the_api_root_under_any_prefix() -> Result<()> {
+        for (api_root, expected) in [
+            ("http://broker.test/ngsi-ld/v1/", "http://broker.test/ngsi-ld/andromeda/v1/tenants?limit=1"),
+            (
+                "http://broker.test/broker/ngsi-ld/v1/",
+                "http://broker.test/broker/ngsi-ld/andromeda/v1/tenants?limit=1",
+            ),
+        ] {
+            let client = client_at(Url::parse(api_root)?)?;
+            expect_that!(andromeda_uri(&client, "tenants?limit=1")?.to_string(), eq(expected));
+        }
+        Ok(())
     }
 
     #[gtest]

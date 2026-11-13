@@ -3,9 +3,10 @@
 //!
 //! In `separate-port` management mode that is `/readyz` on the management
 //! listener, which keeps answering while the API is saturated or draining; in
-//! `shared-port` mode it is `/readyz` at the root of the API listener; with the
-//! management plane disabled it is the API's own health report. All three weigh
-//! the same indicators and answer 503 when one is down.
+//! `shared-port` mode it is `/readyz` at the root of the API listener. Both
+//! weigh the same indicators and answer 503 when one is down. With the
+//! management plane disabled the broker serves no probe, so the command
+//! refuses to run.
 //!
 //! The probe dials the address the listener binds, which a certificate rarely
 //! names, so it does not verify the certificate of a TLS listener. It carries no
@@ -18,9 +19,8 @@ use andromeda_configuration::schema::{
     management::{ManagementConfig, ManagementMode},
     server::ServerConfig,
 };
-use andromeda_http_api::api::API_ROOT_PATH;
 use andromeda_http_extraction::api_root_scheme::ApiRootScheme;
-use andromeda_http_health::routes::{HEALTH_PATH, READINESS_PATH};
+use andromeda_http_health::routes::READINESS_PATH;
 use reqwest::{Client, StatusCode, redirect::Policy};
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -35,6 +35,10 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Why the broker could not be confirmed ready.
 #[derive(Debug, Error)]
 enum ReadinessProbeError {
+    /// The configuration disables the management plane, so no listener
+    /// answers readiness.
+    #[error("the management plane is disabled, so the broker serves no readiness probe")]
+    ManagementDisabled,
     /// The configured listener address does not form a URL.
     #[error("the readiness probe address is not a valid url: {0}")]
     Url(#[from] ParseError),
@@ -75,8 +79,9 @@ pub(crate) async fn probe_reported(server: &ServerConfig, management: &Managemen
 ///
 /// # Errors
 ///
-/// Returns a [`ReadinessProbeError`] when no URL or client can be built, when
-/// no answer arrives, or when the answer is not a success.
+/// Returns a [`ReadinessProbeError`] when the management plane is disabled,
+/// when no URL or client can be built, when no answer arrives, or when the
+/// answer is not a success.
 async fn probe(server: &ServerConfig, management: &ManagementConfig) -> Result<Url, ReadinessProbeError> {
     let url = readiness_url(server, management)?;
     // A proxy from the environment would carry a loopback request off the host,
@@ -98,11 +103,17 @@ async fn probe(server: &ServerConfig, management: &ManagementConfig) -> Result<U
 
 /// The URL of the endpoint that answers readiness under the configured
 /// management topology.
-fn readiness_url(server: &ServerConfig, management: &ManagementConfig) -> Result<Url, ParseError> {
+///
+/// # Errors
+///
+/// Returns [`ReadinessProbeError::ManagementDisabled`] when no listener
+/// answers readiness, and [`ReadinessProbeError::Url`] when the listener
+/// address does not form a URL.
+fn readiness_url(server: &ServerConfig, management: &ManagementConfig) -> Result<Url, ReadinessProbeError> {
     match management.mode {
-        ManagementMode::SeparatePort => listener_url(management.host, management.port, management.transport, READINESS_PATH),
-        ManagementMode::SharedPort => listener_url(server.host, server.port, server.transport, READINESS_PATH),
-        ManagementMode::Disabled => listener_url(server.host, server.port, server.transport, &format!("{API_ROOT_PATH}{HEALTH_PATH}")),
+        ManagementMode::SeparatePort => Ok(listener_url(management.host, management.port, management.transport, READINESS_PATH)?),
+        ManagementMode::SharedPort => Ok(listener_url(server.host, server.port, server.transport, READINESS_PATH)?),
+        ManagementMode::Disabled => Err(ReadinessProbeError::ManagementDisabled),
     }
 }
 
@@ -181,7 +192,7 @@ mod tests {
     async fn serve_management_probes(status: HealthStatus) -> Result<u16, Box<dyn Error>> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
         let port = listener.local_addr()?.port();
-        let router = HealthRoutes::new(Health::builder().with_indicator(FixedIndicator { status }).build()).into_management_router();
+        let router = HealthRoutes::new(Health::builder().with_indicator(FixedIndicator { status }).build()).into_router();
         tokio::spawn(async move { axum::serve(listener, router).await });
         Ok(port)
     }
@@ -209,19 +220,20 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn disabled_management_probes_the_api_health_report_on_the_bound_address() -> Result<(), Box<dyn Error>> {
-        let server = ServerConfig {
-            host: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)),
-            port: 2000,
-            ..ServerConfig::default()
-        };
+    #[tokio::test]
+    async fn disabled_management_has_no_readiness_probe_to_ask() {
         let management = ManagementConfig {
             mode: ManagementMode::Disabled,
             ..ManagementConfig::default()
         };
-        pretty_assertions::assert_eq!(readiness_url(&server, &management)?.as_str(), "http://10.0.0.5:2000/ngsi-ld/v1/health");
-        Ok(())
+        assert!(matches!(
+            readiness_url(&ServerConfig::default(), &management),
+            Err(ReadinessProbeError::ManagementDisabled)
+        ));
+        assert!(matches!(
+            probe(&ServerConfig::default(), &management).await,
+            Err(ReadinessProbeError::ManagementDisabled)
+        ));
     }
 
     #[tokio::test]

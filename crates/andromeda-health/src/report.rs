@@ -1,4 +1,4 @@
-//! The `GET /health` response body.
+//! The `GET /readyz` response body.
 //!
 //! A broker extension, not an NGSI-LD resource: it is always this JSON shape,
 //! with no `keyValues` or `concise` rendering and no `@context`. It borrows the
@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 
 constant_string!(pub HealthCheckType, "HealthCheck");
 
-/// Top-level health check response for `GET /ngsi-ld/v1/health`.
+/// Top-level health check response for `GET /readyz` on the management plane.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthCheckResponse {

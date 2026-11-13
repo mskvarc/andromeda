@@ -3,7 +3,7 @@
 use andromeda_test_suite::{
     broker,
     problem::{answered, problem},
-    wire::request_to,
+    wire::andromeda_request_to,
 };
 use googletest::prelude::*;
 use http::{Method, StatusCode};
@@ -20,11 +20,11 @@ use ngsi_ld::model::ErrorType;
 async fn a_lim_pgp_0007_list_tenants_serves_a_limit_of_the_cap_and_refuses_one_above_it() -> Result<()> {
     let broker = broker::front()?;
     // The tenant collection is an Andromeda extension no NGSI-LD operation covers, so the request is sent as written.
-    let request = request_to(&broker, Method::GET, "tenants?limit=1000")?;
+    let request = andromeda_request_to(&broker, Method::GET, "tenants?limit=1000")?;
     let answer = broker.send_unchecked(request).await;
     expect_that!(&answer, answered(StatusCode::OK));
     // The tenant collection is an Andromeda extension no NGSI-LD operation covers, so the request is sent as written.
-    let request_2 = request_to(&broker, Method::GET, "tenants?limit=1001")?;
+    let request_2 = andromeda_request_to(&broker, Method::GET, "tenants?limit=1001")?;
     let answer_2 = broker.send_unchecked(request_2).await;
     expect_that!(
         &answer_2,

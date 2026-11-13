@@ -273,7 +273,7 @@ mod tests {
         pretty_assertions::assert_eq!(document["q"], json!("speed>10"));
         pretty_assertions::assert_eq!(
             document["notification"]["endpoint"]["uri"],
-            json!("http://broker-a:1056/ngsi-ld/v1/notifications")
+            json!("http://broker-a:1056/ngsi-ld/andromeda/v1/notifications")
         );
         pretty_assertions::assert_eq!(document["notification"]["format"], json!("normalized"));
         assert!(document.get("@context").is_none());

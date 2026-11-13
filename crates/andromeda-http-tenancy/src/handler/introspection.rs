@@ -1,4 +1,4 @@
-//! `GET /ngsi-ld/v1/tenants/{tenantName}`: the per-tenant introspection resource.
+//! `GET /ngsi-ld/andromeda/v1/tenants/{tenantName}`: the per-tenant introspection resource.
 
 use crate::{
     error::{TenancyHttpError, classify},

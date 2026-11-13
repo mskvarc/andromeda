@@ -1,4 +1,4 @@
-//! `PATCH /ngsi-ld/v1/tenants/{tenantName}`: suspend and resume a tenant.
+//! `PATCH /ngsi-ld/andromeda/v1/tenants/{tenantName}`: suspend and resume a tenant.
 
 use crate::{
     error::{TenancyHttpError, classify},

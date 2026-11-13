@@ -28,7 +28,7 @@ pub struct LivenessReport {
 /// Report that the process is up, without probing any dependency.
 ///
 /// Liveness answers only "is the process running and able to serve"; readiness
-/// (`/ready`, which reuses [`check`]) is the signal that weighs dependencies.
+/// (`/readyz`, served by [`check`]) is the signal that weighs dependencies.
 pub async fn live() -> impl IntoResponse {
     (StatusCode::OK, Json(LivenessReport { status: HealthStatus::Up }))
 }

@@ -1,5 +1,5 @@
 //! Reading and suspending a tenant through the broker's tenant-management extension, the Andromeda resources at
-//! `/tenants/{name}` no NGSI-LD operation covers, so their requests are sent as written.
+//! `/ngsi-ld/andromeda/v1/tenants/{name}` no NGSI-LD operation covers, so their requests are sent as written.
 //!
 //! A plain read of a tenant never touches its database, so watching a tenant's `status` never loads it: a test sees
 //! a tenant go `dormant`, or stay so, without disturbing it. `options=usage` does query the tenant's database.
@@ -10,7 +10,7 @@ use crate::{
     eventually::{Poll, TimedOut, eventually},
     raw_call::target,
     tenant_resource::{TenantResource, TenantResourceError, TenantStatus},
-    wire::{WireError, request_to},
+    wire::{WireError, andromeda_request_to},
 };
 use bytes::Bytes;
 use http::{
@@ -89,8 +89,8 @@ pub async fn read_tenant(client: &BrokerClient, tenant: &Tenant, view: TenantVie
         TenantView::Plain => &[],
         TenantView::Usage => &[("options", "usage")],
     };
-    let request =
-        request_to(client, Method::GET, &target(&format!("tenants/{tenant}"), parameters))?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
+    let request = andromeda_request_to(client, Method::GET, &target(&format!("tenants/{tenant}"), parameters))?
+        .append_header(ACCEPT, HeaderValue::from_static("application/json"));
     let answer = client
         .send_unchecked(request)
         .await
@@ -137,7 +137,7 @@ pub async fn set_activity(
         is_active: activity == Activity::Active,
     })
     .map_err(TenantManagementError::Patch)?;
-    let request = request_to(client, Method::PATCH, &target(&format!("tenants/{tenant}"), &[]))?
+    let request = andromeda_request_to(client, Method::PATCH, &target(&format!("tenants/{tenant}"), &[]))?
         .append_header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
         .body(Bytes::from(body));
     Ok(client.send_unchecked(request).await)
@@ -208,7 +208,7 @@ mod tests {
     async fn a_usage_read_asks_for_the_usage_and_reads_the_database() -> Result<()> {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/ngsi-ld/v1/tenants/acme"))
+            .and(path("/ngsi-ld/andromeda/v1/tenants/acme"))
             .and(query_param("options", "usage"))
             .respond_with(ResponseTemplate::new(200).set_body_string(
                 r#"{"id":"urn:ngsi-ld:Tenant:acme","type":"Tenant","tenantName":"acme","status":"active","databaseName":"andromeda_tenant_acme_1"}"#,
@@ -227,7 +227,7 @@ mod tests {
     async fn a_suspension_patches_is_active_false() -> Result<()> {
         let server = MockServer::start().await;
         Mock::given(method("PATCH"))
-            .and(path("/ngsi-ld/v1/tenants/acme"))
+            .and(path("/ngsi-ld/andromeda/v1/tenants/acme"))
             .and(body_string(r#"{"isActive":false}"#))
             .respond_with(ResponseTemplate::new(204))
             .mount(&server)

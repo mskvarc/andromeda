@@ -800,7 +800,7 @@
       "choices": [
         {
           "value": "\"disabled\"",
-          "description": "Serves no management endpoints. The health paths under `/ngsi-ld/v1` on the API port remain."
+          "description": "Serves no management endpoints, so the broker answers no liveness or readiness probe and the `health` command refuses to run."
         },
         {
           "value": "\"shared-port\"",

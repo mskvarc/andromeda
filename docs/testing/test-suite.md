@@ -34,7 +34,7 @@ Every broker in every stack runs over a PostgreSQL server of its own. Replicas a
 
 | Service | Role | Settings |
 |---|---|---|
-| `broker` | `FRONT` | every extension but `q_target_languages` enabled, a fresh query walking by cursor, small delete-by-query and grouping bounds, 100,000 geometry positions, an 8 MiB page limit |
+| `broker` | `FRONT`, `FRONT_MANAGEMENT` | every extension but `q_target_languages` enabled, a fresh query walking by cursor, small delete-by-query and grouping bounds, 100,000 geometry positions, an 8 MiB page limit; `FRONT_MANAGEMENT` addresses its management listener |
 | `broker-conformance` | `CONFORMANCE` | conformance mode, with five extension flags still set to show that the mode overrides them |
 | `broker-not-recorded` | `NOT_RECORDED` | Core writes not recorded, no advertised URL, forwarded fields believed only from a range the runner is never in, every other setting at its default |
 | `broker-tls` | `TLS`, `TLS_MANAGEMENT`, `TLS_PLAINTEXT`, `TLS_MANAGEMENT_PLAINTEXT` | TLS and HTTP/3 on the API listener, TLS on the management listener, optional client certificates, with the identities in `stacks/andromeda/tls`; the two plaintext roles address its TLS ports without TLS |

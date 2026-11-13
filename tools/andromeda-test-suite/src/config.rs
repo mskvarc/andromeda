@@ -35,6 +35,8 @@ pub(crate) const PREFIX: &str = "ANDROMEDA_TEST_SUITE__";
 pub enum BrokerRole {
     /// The broker every test talks to unless it names another: broker A of the multi-broker stacks.
     Front,
+    /// The management listener of the front broker, which serves the liveness and readiness probes.
+    FrontManagement,
     /// Broker B of the multi-broker stacks.
     B,
     /// Broker C of the multi-broker stacks.

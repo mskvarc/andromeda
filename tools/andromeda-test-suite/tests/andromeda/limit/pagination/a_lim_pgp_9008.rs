@@ -8,7 +8,7 @@ use andromeda_test_suite::{
     outcome::Done,
     problem::answered,
     raw_call::target,
-    wire::request_to,
+    wire::andromeda_request_to,
 };
 use googletest::prelude::*;
 use http::{HeaderValue, Method, StatusCode, header::ACCEPT};
@@ -18,7 +18,7 @@ use ngsi_ld::{
 };
 
 /// Pins: On a broker whose configured apiRoot carries the path prefix /broker, listing tenants with limit 1 over at
-/// least the two tenants this file created answers a next pointer starting with /broker/ngsi-ld/v1/tenants?
+/// least the two tenants this file created answers a next pointer starting with /broker/ngsi-ld/andromeda/v1/tenants?
 /// Clause: 5.5.9, 6.2, 6.3.10
 /// Tenant: private (the subject is the tenant collection, which only tenants the file creates can populate)
 /// Recorded: Andromeda extension, not v1.9.1: tenant management (the /tenants resources), and `server.public_url` as
@@ -38,14 +38,14 @@ async fn a_lim_pgp_9008_with_a_configured_api_root_prefix_every_pointer_of_the_t
         .build()?;
     tenant.entities().create(&device).send().await?.done()?;
     // The tenant collection is an Andromeda extension no NGSI-LD operation covers, so the request is sent as written.
-    let request =
-        request_to(&broker_prefixed, Method::GET, &target("tenants", &[("limit", "1")]))?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
+    let request = andromeda_request_to(&broker_prefixed, Method::GET, &target("tenants", &[("limit", "1")]))?
+        .append_header(ACCEPT, HeaderValue::from_static("application/json"));
     let answer = broker_prefixed.send_unchecked(request).await;
     expect_that!(&answer, answered(StatusCode::OK));
     let tenants = answer?;
     expect_that!(
         link_target(tenants.headers(), &RelationType::Next)?,
-        some(starts_with("/broker/ngsi-ld/v1/tenants?"))
+        some(starts_with("/broker/ngsi-ld/andromeda/v1/tenants?"))
     );
     Ok(())
 }

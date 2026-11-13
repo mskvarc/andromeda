@@ -1,4 +1,4 @@
-//! `POST /ngsi-ld/v1/notifications`.
+//! `POST /ngsi-ld/andromeda/v1/notifications`.
 //!
 //! Two kinds of document arrive here, told apart by their `type`: a
 //! `ContextSourceNotification` of a companion registration subscription, which

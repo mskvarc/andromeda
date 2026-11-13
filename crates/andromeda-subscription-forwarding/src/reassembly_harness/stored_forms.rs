@@ -11,7 +11,7 @@ pub(crate) fn stored_companion() -> Value {
         "id": companion_subscription().as_str(),
         "type": "Subscription",
         "entities": [{"type": default_iri("Vehicle")}],
-        "notification": {"endpoint": {"uri": "http://broker.example:1056/ngsi-ld/v1/notifications"}},
+        "notification": {"endpoint": {"uri": "http://broker.example:1056/ngsi-ld/andromeda/v1/notifications"}},
         "status": "active",
         "createdAt": "2020-01-01T00:00:00Z",
         "modifiedAt": "2020-01-01T00:00:00Z"

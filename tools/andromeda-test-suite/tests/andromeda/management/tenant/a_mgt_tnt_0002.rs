@@ -5,9 +5,9 @@ use andromeda_test_suite::{
     namespace::Namespace,
     outcome::Done,
     problem::problem,
-    raw_call::{call, target},
+    raw_call::{andromeda_call, target},
     tenant_resource::TenantResource,
-    wire::request_to,
+    wire::andromeda_request_to,
 };
 use googletest::prelude::*;
 use http::{HeaderValue, Method, StatusCode, header::ACCEPT};
@@ -38,7 +38,7 @@ async fn a_mgt_tnt_0002_options_add_system_attributes_and_usage() -> Result<()> 
     // The Tenant resource and its `options` are an Andromeda extension no NGSI-LD operation covers, so the requests are
     // sent as written.
     let tenant_path = format!("tenants/{namespace}");
-    let plain = call(&front, Method::GET, &tenant_path, &accept, None).await?;
+    let plain = andromeda_call(&front, Method::GET, &tenant_path, &accept, None).await?;
     expect_that!(plain.status(), eq(StatusCode::OK));
     let plain_resource = TenantResource::read(&plain)?;
     expect_that!(plain_resource.tenant_name.to_string(), eq(&namespace.to_string()));
@@ -46,13 +46,13 @@ async fn a_mgt_tnt_0002_options_add_system_attributes_and_usage() -> Result<()> 
     expect_that!(plain_resource.modified_at, none());
     expect_that!(plain_resource.database_size, none());
     expect_that!(plain_resource.entity_count, none());
-    let with_system_attributes = call(&front, Method::GET, &target(&tenant_path, &[("options", "sysAttrs")]), &accept, None).await?;
+    let with_system_attributes = andromeda_call(&front, Method::GET, &target(&tenant_path, &[("options", "sysAttrs")]), &accept, None).await?;
     expect_that!(with_system_attributes.status(), eq(StatusCode::OK));
     let system_resource = TenantResource::read(&with_system_attributes)?;
     expect_that!(system_resource.tenant_name.to_string(), eq(&namespace.to_string()));
     expect_that!(system_resource.created_at, some(anything()));
     expect_that!(system_resource.modified_at, some(anything()));
-    let with_usage = call(&front, Method::GET, &target(&tenant_path, &[("options", "usage")]), &accept, None).await?;
+    let with_usage = andromeda_call(&front, Method::GET, &target(&tenant_path, &[("options", "usage")]), &accept, None).await?;
     expect_that!(with_usage.status(), eq(StatusCode::OK));
     let usage = TenantResource::read(&with_usage)?;
     expect_that!(usage.tenant_name.to_string(), eq(&namespace.to_string()));
@@ -60,8 +60,8 @@ async fn a_mgt_tnt_0002_options_add_system_attributes_and_usage() -> Result<()> 
     expect_that!(usage.pool_connections, some(anything()));
     expect_that!(usage.database_size, some(gt(0)));
     expect_that!(usage.snapshot_count, some(anything()));
-    let unknown_request =
-        request_to(&front, Method::GET, &target(&tenant_path, &[("options", "bogus")]))?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
+    let unknown_request = andromeda_request_to(&front, Method::GET, &target(&tenant_path, &[("options", "bogus")]))?
+        .append_header(ACCEPT, HeaderValue::from_static("application/json"));
     let unknown = front.send_unchecked(unknown_request).await;
     expect_that!(&unknown, problem(StatusCode::BAD_REQUEST, ErrorType::InvalidRequest));
     Ok(())

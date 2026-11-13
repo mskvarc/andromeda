@@ -8,7 +8,7 @@ use andromeda_test_suite::{
     problem::answered,
     raw_call::target,
     tenant_resource::{TenantResource, TenantType},
-    wire::request_to,
+    wire::andromeda_request_to,
 };
 use googletest::prelude::*;
 use http::{HeaderValue, Method, StatusCode, header::ACCEPT};
@@ -36,7 +36,7 @@ async fn a_mgt_tnt_0004_the_collection_pages_by_offset() -> Result<()> {
         tenant.entities().create(&device).send().await?.done()?;
     }
     // The tenant collection is an Andromeda extension no NGSI-LD operation covers, so the request is sent as written.
-    let request = request_to(&front, Method::GET, &target("tenants", &[("offset", "1"), ("limit", "1")]))?
+    let request = andromeda_request_to(&front, Method::GET, &target("tenants", &[("offset", "1"), ("limit", "1")]))?
         .append_header(ACCEPT, HeaderValue::from_static("application/json"));
     let answer = front.send_unchecked(request).await;
     expect_that!(&answer, answered(StatusCode::OK));
