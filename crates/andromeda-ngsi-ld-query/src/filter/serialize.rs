@@ -11,7 +11,7 @@ use crate::{
     },
     pattern::Pattern,
 };
-use std::fmt::Write;
+use andromeda_json_literal::json_text::quoted;
 
 /// Which spelling of a trailing `[…]` member a rendering writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,7 +214,7 @@ fn write_guard_type(buf: &mut String, s: &str) {
 /// Write an identifier, quoting it when the tokeniser would otherwise split it.
 fn write_ident(buf: &mut String, s: &str) {
     if needs_quoting(s) {
-        let _ = write!(buf, "\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
+        write_quoted(buf, s);
     } else {
         buf.push_str(s);
     }
@@ -275,9 +275,16 @@ fn write_pattern(buf: &mut String, pattern: &Pattern) {
     buf.push('"');
 }
 
-/// Write a double-quoted, escaped string literal.
+/// Write a double-quoted string literal, escaped as IETF RFC 8259 section 7
+/// requires.
+///
+/// Clause 4.9 makes `quotedStr` the RFC 8259 `String`, whose `unescaped`
+/// production starts at U+0020, so the parser refuses a raw control
+/// character. A String decoded from `"a\nb"` holds one, and is written back
+/// with it escaped, or the stored, echoed and forwarded text of an accepted
+/// filter would no longer parse.
 fn write_quoted(buf: &mut String, s: &str) {
-    let _ = write!(buf, "\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
+    buf.push_str(&quoted(s));
 }
 
 #[cfg(test)]
@@ -536,6 +543,57 @@ mod tests {
             pretty_assertions::assert_eq!(serialize(&expr), written);
             pretty_assertions::assert_eq!(parse(&serialize(&expr)).unwrap(), expr, "{written}");
             pretty_assertions::assert_eq!(serialize_written_members(&expr), written);
+        }
+    }
+
+    /// IETF RFC 8259 section 7 escapes a control character in its short form
+    /// where the grammar has one and as a `\u` escape otherwise, so an escape
+    /// spelled another way reads back in that spelling.
+    #[test]
+    fn a_string_holding_a_control_character_is_written_with_it_escaped() {
+        for (written, rendered) in [
+            (r#"name=="a\nb""#, r#"name=="a\nb""#),
+            (r#"name=="a\tb""#, r#"name=="a\tb""#),
+            (r#"name=="a\bb""#, r#"name=="a\bb""#),
+            (r#"name=="a\fb""#, r#"name=="a\fb""#),
+            (r#"name=="a\rb""#, r#"name=="a\rb""#),
+            (r#"name=="a\u0001b""#, r#"name=="a\u0001b""#),
+            (r#"name=="a\u001Fb""#, r#"name=="a\u001fb""#),
+            (r#"name=="a\u000Ab""#, r#"name=="a\nb""#),
+            (r#"name=="a\nb","c\td""#, r#"name=="a\nb","c\td""#),
+            (r#"name=="a\nb".."c\td""#, r#"name=="a\nb".."c\td""#),
+            (r#"name>"a\u0007b""#, r#"name>"a\u0007b""#),
+        ] {
+            let parsed = parse(written).unwrap_or_else(|error| panic!("{written} must parse: {error}"));
+            let serialised = serialize(&parsed);
+            pretty_assertions::assert_eq!(serialised, rendered, "serialisation of {written}");
+            let reparsed = parse(&serialised).unwrap_or_else(|error| panic!("{serialised} must reparse: {error}"));
+            pretty_assertions::assert_eq!(reparsed, parsed, "round trip of {written}");
+        }
+    }
+
+    /// U+0000 is left out: no stored value can hold it, so no String carries
+    /// it to the renderer.
+    #[test]
+    fn every_control_character_a_string_can_hold_reads_back_through_its_rendering() {
+        let Expr::Pred(Predicate::Equality { path, membership, .. }) = parse("name==\"x\"").unwrap() else {
+            panic!("expected an equality");
+        };
+        for code_point in 0x01_u32..0x20 {
+            let control = char::from_u32(code_point).unwrap();
+            let expr = Expr::Pred(Predicate::Equality {
+                path: path.clone(),
+                membership,
+                rhs: CompareValue::Scalar(Scalar::Str(format!("a{control}b"))),
+            });
+            let rendered = serialize(&expr);
+            assert!(
+                rendered.chars().all(|character| u32::from(character) >= 0x20),
+                "U+{code_point:04X} must be written as an escape, got {rendered:?}"
+            );
+            let reparsed = parse(&rendered).unwrap_or_else(|error| panic!("{rendered:?} must reparse: {error}"));
+            pretty_assertions::assert_eq!(reparsed, expr, "round trip of U+{code_point:04X}");
+            pretty_assertions::assert_eq!(serialize_written_members(&expr), rendered, "written members of U+{code_point:04X}");
         }
     }
 }
