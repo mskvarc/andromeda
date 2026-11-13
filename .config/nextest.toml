@@ -162,10 +162,10 @@ test-group = 'private-tenants'
 filter = '''
 package(andromeda-test-suite) & binary(~distributed_) & (
     test(/(^|::)(n_csr_cre_6402|n_csr_mat_6600|n_fed_qry_6419|n_fed_qry_7608|n_fed_qry_8007|n_fed_wrt_9312|n_fed_wrt_9313|n_fed_wrt_9314)_/)
-  | test(/(^|::)(n_fed_wrt_9315|n_fed_wrt_9316|n_inf_ret_6004|n_inf_ret_7000|n_map_qen_9312|n_map_qen_9313|n_map_qen_9314|n_map_qen_9315)_/)
-  | test(/(^|::)(n_map_qen_9316|n_map_qen_9317|n_map_qen_9397|n_map_qte_9312|n_map_qte_9313|n_map_qte_9314|n_map_qte_9315|n_map_qte_9397)_/)
-  | test(/(^|::)(n_ntf_dlv_7600|n_ntf_trg_6800|n_snp_qry_6402|n_ten_hdr_7200|n_ten_iso_6001|o_fed_dsc_7400|o_fed_dsc_7401|o_fed_dsc_7402)_/)
-  | test(/(^|::)(o_fed_dsc_7403|o_snp_qry_6403)_/)
+  | test(/(^|::)(n_fed_wrt_9315|n_fed_wrt_9316|n_inf_ret_6004|n_inf_ret_7000|n_inf_ret_7004|n_map_qen_9312|n_map_qen_9313|n_map_qen_9314)_/)
+  | test(/(^|::)(n_map_qen_9315|n_map_qen_9316|n_map_qen_9317|n_map_qen_9397|n_map_qte_9312|n_map_qte_9313|n_map_qte_9314|n_map_qte_9315)_/)
+  | test(/(^|::)(n_map_qte_9397|n_ntf_dlv_7600|n_ntf_trg_6800|n_snp_qry_6402|n_sub_cre_6814|n_ten_hdr_7200|n_ten_iso_6001|o_fed_dsc_7400)_/)
+  | test(/(^|::)(o_fed_dsc_7401|o_fed_dsc_7402|o_fed_dsc_7403|o_snp_qry_6403)_/)
 )'''
 test-group = 'private-tenants'
 
