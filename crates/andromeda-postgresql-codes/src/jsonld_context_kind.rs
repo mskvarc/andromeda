@@ -8,6 +8,7 @@ compact_code_registry! {
     /// The labels are the specification's own `kind` tokens, which is the spelling
     /// a context's metadata carries on the wire.
     JsonldContextKindCode {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 3,
         frozen_digest: 0x53d0_5426_f333_273c,
         codes: {

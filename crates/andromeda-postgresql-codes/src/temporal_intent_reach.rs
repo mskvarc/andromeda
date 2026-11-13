@@ -11,6 +11,7 @@ compact_code_registry! {
     /// learns which statements its claimed intents reach from that column
     /// alone and skips the rest without reading any entry.
     TemporalIntentReach {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 6,
         frozen_digest: 0x231c_e7eb_1f1b_0f9c,
         codes: {

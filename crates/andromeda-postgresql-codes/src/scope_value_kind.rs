@@ -17,6 +17,7 @@ compact_code_registry! {
     /// carrying a deletion timestamp and no path, not an invented sentinel
     /// path.
     ScopeValueKind {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 2,
         frozen_digest: 0x7acb_158d_0fc0_c6e5,
         codes: {

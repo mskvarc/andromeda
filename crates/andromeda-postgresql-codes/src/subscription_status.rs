@@ -7,6 +7,7 @@ compact_code_registry! {
     ///
     /// The labels are the specification's own status tokens.
     SubscriptionStatusCode {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 3,
         frozen_digest: 0x8cdf_9287_4e6c_635c,
         codes: {

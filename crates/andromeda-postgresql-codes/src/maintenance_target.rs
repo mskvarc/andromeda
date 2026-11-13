@@ -15,6 +15,7 @@ compact_code_registry! {
     /// is a target of its own too, labelled with the heap's name and a
     /// `_repack` suffix.
     MaintenanceTargetCode {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 55,
         frozen_digest: 0x3fa9_82f9_158a_fe4d,
         codes: {

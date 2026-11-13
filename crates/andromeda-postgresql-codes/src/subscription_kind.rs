@@ -10,6 +10,7 @@ compact_code_registry! {
     /// Andromeda storage concept, not a specification token, so the labels are
     /// kebab-case.
     SubscriptionKindCode {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 2,
         frozen_digest: 0xb020_f362_0255_f915,
         codes: {

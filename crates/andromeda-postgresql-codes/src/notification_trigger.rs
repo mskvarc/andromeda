@@ -12,6 +12,7 @@ compact_code_registry! {
     /// The labels are the specification's camel-case tokens, since these are
     /// the values a subscription document carries on the wire.
     NotificationTriggerCode {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 6,
         frozen_digest: 0xfefb_9c99_f6cf_15f9,
         codes: {

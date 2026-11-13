@@ -9,6 +9,7 @@ compact_code_registry! {
     /// `entityCreated`, a deletion `entityDeleted`, and a modification raises
     /// only the attribute-level triggers of the instances it changed.
     EntityLifecycleCode {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 3,
         frozen_digest: 0x685c_8194_3bd1_b6a1,
         codes: {

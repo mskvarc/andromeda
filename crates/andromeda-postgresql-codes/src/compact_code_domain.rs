@@ -6,16 +6,14 @@
 //! closed, and each one appears here exactly once, under the name of the type
 //! that decodes it.
 
-use strum::{Display, IntoStaticStr};
+use strum::{Display, EnumIter, IntoStaticStr};
 
 /// One compact code domain, named after the type that decodes it.
 ///
 /// The variants mirror the registries declared with
-/// [`compact_code_registry`](crate::compact_code_registry), which names its own
-/// variant when it reports an unassigned number, plus the decoders declared
-/// outside this crate that report through the same
-/// [`UnknownCompactCode`](crate::registry::UnknownCompactCode).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, IntoStaticStr)]
+/// [`compact_code_registry`](crate::compact_code_registry) one to one, and a
+/// registry names its own variant when it reports an unassigned number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumIter, IntoStaticStr)]
 #[strum(serialize_all = "kebab-case")]
 pub enum CompactCodeDomain {
     /// [`AttributeChangeKindCode`](crate::attribute_change_kind::AttributeChangeKindCode).

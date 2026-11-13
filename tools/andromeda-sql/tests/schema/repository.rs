@@ -13,8 +13,15 @@ use andromeda_sql::{
         trigger::DeclaredTrigger,
     },
     migration_tree::{MigrationTree, MigrationTreeError},
+    seal_ledger::SealLedgerError,
 };
-use std::{fs, io, ops::Range, path::Path, sync::Arc};
+use std::{
+    fs,
+    io,
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 /// Why a pin test could not find what it pins.
 #[derive(Debug, thiserror::Error)]
@@ -31,12 +38,22 @@ pub(crate) enum PinError {
     /// No migration declares the object a test pins.
     #[error("no migration declares {0}")]
     Missing(String),
+    /// The seal ledger could not be read.
+    #[error(transparent)]
+    Ledger(#[from] SealLedgerError),
+    /// The seal ledger holds no release.
+    #[error("the seal ledger holds no release")]
+    NothingSealed,
+}
+
+/// The root of the repository the package is built from.
+pub(crate) fn repository_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
 /// The schema the committed migrations declare.
 pub(crate) fn schema() -> Result<DeclaredSchema, PinError> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let migrations = MigrationTree::read(&root)?
+    let migrations = MigrationTree::read(&repository_root())?
         .into_files()
         .map(|file| {
             let text = fs::read_to_string(file.path())?;

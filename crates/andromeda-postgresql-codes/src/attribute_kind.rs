@@ -18,6 +18,7 @@ compact_code_registry! {
     /// clause 5.2.4 mandates on the wire and therefore the only spelling that
     /// stays meaningful in a stored registry.
     AttributeKind {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 8,
         frozen_digest: 0x7bfe_1036_5abf_8069,
         codes: {

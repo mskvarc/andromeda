@@ -9,6 +9,7 @@ compact_code_registry! {
     /// that stops past `setup` leaves objects in the tenant database, which
     /// recovery removes; the phase says how far the run got.
     MaintenanceRepackPhaseCode {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 6,
         frozen_digest: 0x0ff7_f970_9cc4_c834,
         codes: {

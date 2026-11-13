@@ -7,6 +7,7 @@ compact_code_registry! {
     ///
     /// The labels are the specification's own status tokens.
     SnapshotStatusCode {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 5,
         frozen_digest: 0x00b7_ddb9_0187_109f,
         codes: {

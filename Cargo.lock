@@ -1717,6 +1717,7 @@ dependencies = [
  "cefact-units",
  "derive_more",
  "pretty_assertions",
+ "semver",
  "strum",
  "thiserror 2.0.21",
 ]

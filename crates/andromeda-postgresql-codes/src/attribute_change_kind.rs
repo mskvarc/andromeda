@@ -9,6 +9,7 @@ compact_code_registry! {
     /// Each transition raises the clause 5.2.12 attribute-level trigger of the
     /// same name.
     AttributeChangeKindCode {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 3,
         frozen_digest: 0xde2a_88d2_e98d_4485,
         codes: {
