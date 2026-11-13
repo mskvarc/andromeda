@@ -40,9 +40,11 @@
 -- No row is a sub-attribute, so no row keeps `proof_seals`. The check that a
 -- tombstone holds nothing beside its deletion names the column, so dropping
 -- the column drops the check with it. The check is added again without the
--- column and validated as it is added: TimescaleDB refuses to validate a
--- constraint of a hypertable whose columnstore is enabled. Every row already
--- meets it, as it is implied by the check it replaces.
+-- column and `not valid`, so no row is read to add it: every row already
+-- meets it, as it is implied by the check it replaces, and every row written
+-- later is tested against it. It is never validated, which would read every
+-- row to learn nothing, and which TimescaleDB refuses on a hypertable whose
+-- columnstore is enabled.
 -- ============================================================================
 select
     set_config('timescaledb.max_tuples_decompressed_per_dml_transaction', '0', true);
@@ -267,4 +269,4 @@ alter table current_attributes
 
 alter table attribute_history
     drop column proof_seals,
-    add constraint chk_attribute_history_tombstone_members check (value_kind <> 0 or num_nonnulls(value_type_key, object_type_keys, unit_code_id, expires_at, sub_attributes) = 0);
+    add constraint chk_attribute_history_tombstone_members check (value_kind <> 0 or num_nonnulls(value_type_key, object_type_keys, unit_code_id, expires_at, sub_attributes) = 0) not valid;

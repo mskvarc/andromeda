@@ -5,6 +5,7 @@ mod admitted_uris;
 mod columnstore_history;
 mod conversion_functions;
 mod edge_seals;
+mod history_tombstone_check;
 mod queued_seals;
 mod refused_seals;
 mod seal_free_database;
