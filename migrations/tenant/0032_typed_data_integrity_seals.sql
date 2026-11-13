@@ -135,19 +135,21 @@ create function seal_conversion_attribute_key ()
 -- bound for. Each escaped apostrophe adds two bytes, which could take an
 -- identifier past its bound, so no apostrophe is admitted. The parser
 -- refuses some IRIs the grammar admits, so the test admits fewer than the
--- broker does and none it refuses.
+-- broker does and none it refuses. A pattern holding a backslash is an
+-- escape string constant, which reads the same whatever
+-- `standard_conforming_strings` is set to.
 create function seal_conversion_admits_uri (uri text)
     returns boolean
     language sql
     immutable
     parallel safe
     return uri ~ '^[a-z][a-z0-9+.-]*:'
-    and uri !~ '[^A-Za-z0-9._~!$&''()*+,;=:@/?#%\u00a0-\ud7ff\uf900-\ufdcf\ufdf0-\uffef\U00010000-\U0001fffd\U00020000-\U0002fffd\U00030000-\U0003fffd\U00040000-\U0004fffd\U00050000-\U0005fffd\U00060000-\U0006fffd\U00070000-\U0007fffd\U00080000-\U0008fffd\U00090000-\U0009fffd\U000a0000-\U000afffd\U000b0000-\U000bfffd\U000c0000-\U000cfffd\U000d0000-\U000dfffd\U000e1000-\U000efffd-]'
+    and uri !~ e'[^A-Za-z0-9._~!$&''()*+,;=:@/?#%\\u00a0-\\ud7ff\\uf900-\\ufdcf\\ufdf0-\\uffef\\U00010000-\\U0001fffd\\U00020000-\\U0002fffd\\U00030000-\\U0003fffd\\U00040000-\\U0004fffd\\U00050000-\\U0005fffd\\U00060000-\\U0006fffd\\U00070000-\\U0007fffd\\U00080000-\\U0008fffd\\U00090000-\\U0009fffd\\U000a0000-\\U000afffd\\U000b0000-\\U000bfffd\\U000c0000-\\U000cfffd\\U000d0000-\\U000dfffd\\U000e1000-\\U000efffd-]'
     and uri !~ '%(?![0-9A-Fa-f]{2})'
     and uri !~ '#.*#'
     and case when split_part(uri, ':', 1) in ('http', 'https') then
-        uri ~ '^https?://(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)*[a-z](?:[a-z0-9-]*[a-z0-9])?(?::0*(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#]|$)'
-        and uri !~ '^https?://(?:[^/?#]*\.)?xn--'
+        uri ~ e'^https?://(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)*[a-z](?:[a-z0-9-]*[a-z0-9])?(?::0*(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#]|$)'
+        and uri !~ e'^https?://(?:[^/?#]*\\.)?xn--'
         and strpos(uri, '''') = 0
     when split_part(uri, ':', 1) in ('file', 'ftp', 'ws', 'wss') then
         false
