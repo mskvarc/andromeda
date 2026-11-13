@@ -16,6 +16,7 @@ use ngsi_ld::{
         operation::{CreateEntityMap, DeleteEntityMap},
     },
     model::{Entity, NgsiLdMediaType},
+    query::builders::SelectorTypeBuilder,
     snapshot::{QueryDocument, Snapshot, SnapshotId},
 };
 
@@ -56,10 +57,10 @@ async fn o_snp_scp_8104_an_entity_map_operation_naming_a_snapshot_is_refused_and
         .await?
         .expecting(StatusCode::CREATED)?;
     let map_id = &created.body().id;
-    let ids = [vehicle_id.clone()];
+    let selector = SelectorTypeBuilder::from(&vehicle_type).build()?;
     let on_snapshot = broker.on_snapshot(&snapshot_id);
     let mapped = broker
-        .send_unchecked(on_snapshot.unchecked(&CreateEntityMap::builder().ids(&ids).build())?)
+        .send_unchecked(on_snapshot.unchecked(&CreateEntityMap::builder().entity_type(&selector).build())?)
         .await;
     expect_that!(&mapped, refused_on_snapshot(&snapshot_id).without_header(LOCATION));
     let deleted = broker.send_unchecked(on_snapshot.unchecked(&DeleteEntityMap { id: map_id })?).await;
