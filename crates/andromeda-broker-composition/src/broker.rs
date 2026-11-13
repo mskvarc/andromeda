@@ -316,7 +316,7 @@ async fn construct(
     )
     .await?;
 
-    let health = broker_health(&registry, &factory, &process_tasks, &tenants);
+    let health = broker_health(&registry, &factory, &process_tasks, &tenants)?;
     let component_reports = collect_component_reports(registry.main_pool(), &config).await?;
 
     let enabled_extensions = EnabledExtensions::from(&config.extensions);

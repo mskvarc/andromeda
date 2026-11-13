@@ -59,6 +59,8 @@ pub enum ConfigKey {
     StackDir,
     /// The service signalling a broker's process.
     Signaller,
+    /// The proxy between the outage broker and its PostgreSQL server.
+    DatabaseProxy,
 }
 
 // Hand-written: an entry is spelled from its section and name, behind the shared prefix.
@@ -68,6 +70,7 @@ impl fmt::Display for ConfigKey {
             ConfigKey::Entry { section, name } => write!(formatter, "{PREFIX}{section}__{name}"),
             ConfigKey::Mqtt => write!(formatter, "{PREFIX}MQTT__*"),
             ConfigKey::Signaller => write!(formatter, "{PREFIX}SIGNALLER"),
+            ConfigKey::DatabaseProxy => write!(formatter, "{PREFIX}DATABASE_PROXY"),
             ConfigKey::CappedMqttHost => write!(formatter, "{PREFIX}CAPPED_MQTT_HOST"),
             ConfigKey::Pooling => write!(formatter, "{PREFIX}POOLING__*"),
             ConfigKey::ApiRootPrefixed => write!(formatter, "{PREFIX}API_ROOT_PREFIXED"),

@@ -55,6 +55,7 @@ use sqlx::{
     postgres::{PgPoolOptions, PgRow},
 };
 use std::time::Duration;
+use url::Url;
 
 /// The tenant registry, backed by the platform database's `tenants` table.
 ///
@@ -142,6 +143,13 @@ impl PostgresTenantRegistry {
     #[must_use]
     pub const fn main_pool(&self) -> &PgPool {
         &self.main_pool
+    }
+
+    /// The platform database, reached straight at PostgreSQL, for a component
+    /// that opens connections of its own beside the platform pool.
+    #[must_use]
+    pub fn platform_url(&self) -> Url {
+        self.direct_url.with_database_name(&self.default_database)
     }
 
     /// Record the unnamed default tenant, so it appears in the registry like

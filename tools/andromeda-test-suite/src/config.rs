@@ -13,6 +13,7 @@ use crate::{
     mqtt_settings::MqttSettings,
     pooling_settings::PoolingSettings,
     server_settings::ServerSettings,
+    stack_controls::StackControls,
 };
 use figment2::{Figment, providers::Env};
 use serde::Deserialize;
@@ -111,6 +112,16 @@ pub enum BrokerRole {
     /// connections that carry no request use, since the short idle bound would close the pooled connections of any
     /// other test under it.
     Timed,
+    /// The andromeda stack broker with a platform pool of two connections, only the test of a saturated platform pool
+    /// uses, since it holds every one of them.
+    PlatformPool,
+    /// The management listener of the broker with a platform pool of two connections.
+    PlatformPoolManagement,
+    /// The andromeda stack broker reaching its PostgreSQL server through a proxy, only the test of a database that
+    /// stops answering uses, since it cuts the proxy.
+    Outage,
+    /// The management listener of the broker reaching its PostgreSQL server through a proxy.
+    OutageManagement,
     /// The pgbouncer stack broker keeping at most 32 tenants resident and delivering notifications durably, whose
     /// evicted tenants the dormant tests watch.
     Dormant,
@@ -183,8 +194,9 @@ pub struct SuiteConfig {
     /// The anonymous Mosquitto broker announcing a maximum packet size below the brokers' `max_mqtt_packet`, on the
     /// andromeda stack.
     capped_mqtt_host: Option<HostName>,
-    /// The service that signals a broker's process, on the pgbouncer stack.
-    signaller: Option<Url>,
+    /// The services of the stack a test drives, read from keys at the top level.
+    #[serde(flatten)]
+    controls: StackControls,
     /// The poolers behind the brokers and the size of the scale tests, on the pgbouncer stack.
     pooling: Option<PoolingSettings>,
     /// The PostgreSQL server each broker a test reaches the database of owns.
@@ -301,13 +313,10 @@ impl SuiteConfig {
             .ok_or(ConfigError::Missing(ConfigKey::CappedMqttHost))
     }
 
-    /// The service that signals a broker's process.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError::Missing`] on a stack that runs none.
-    pub fn signaller(&self) -> Result<&Url, ConfigError> {
-        self.signaller.as_ref().ok_or(ConfigError::Missing(ConfigKey::Signaller))
+    /// The services of the stack a test drives.
+    #[must_use]
+    pub const fn controls(&self) -> &StackControls {
+        &self.controls
     }
 
     /// The poolers behind the brokers and the size of the scale tests.
@@ -477,6 +486,24 @@ mod tests {
         pairs.push(("CALLBACK_HOST", "runner"));
         let config = SuiteConfig::read(&figment(&pairs))?;
         verify_that!(callback_host(&config)?, eq(&Host::Domain("runner".to_owned())))
+    }
+
+    #[gtest]
+    fn the_stack_controls_are_read_from_their_keys_at_the_top_level() -> Result<()> {
+        let absent = SuiteConfig::read(&figment(&REQUIRED))?;
+        expect_that!(absent.controls().signaller(), err(anything()));
+        expect_that!(absent.controls().database_proxy(), err(anything()));
+        let mut pairs = REQUIRED.to_vec();
+        pairs.extend([
+            ("SIGNALLER", "http://signaller:8080/"),
+            ("DATABASE_PROXY", "http://database-proxy:8474/proxies/outage"),
+        ]);
+        let config = SuiteConfig::read(&figment(&pairs))?;
+        expect_that!(config.controls().signaller().map(Url::as_str), ok(eq(&"http://signaller:8080/")));
+        verify_that!(
+            config.controls().database_proxy().map(Url::as_str),
+            ok(eq(&"http://database-proxy:8474/proxies/outage"))
+        )
     }
 
     #[gtest]

@@ -14,17 +14,26 @@ use std::sync::Arc;
 /// The health the probes report: the main database, the background tasks of
 /// the broker and of its loaded tenants and, when the default tenant delivers
 /// over MQTT, its MQTT pool.
+///
+/// The database is pinged over a connection of the indicator's own, never one
+/// of the platform pool, so a platform pool with none to spare leaves the
+/// broker ready.
+///
+/// # Errors
+///
+/// Returns [`sqlx::Error`] when the platform database's URL is not a
+/// PostgreSQL connection URL.
 pub(crate) fn broker_health(
     registry: &PostgresTenantRegistry,
     factory: &BrokerTenantFactory,
     process_tasks: &TaskSupervisor,
     tenants: &Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
-) -> Health {
-    let database_indicator = DatabaseHealthIndicator::new(registry.main_pool().clone());
+) -> Result<Health, sqlx::Error> {
+    let database_indicator = DatabaseHealthIndicator::new(&registry.platform_url(), registry.main_pool().clone())?;
     let task_indicator = BackgroundTaskHealthIndicator::new(process_tasks.clone(), Arc::clone(tenants) as Arc<dyn LoadedTenantSupervisors>);
     let mut health = Health::builder().with_indicator(database_indicator).with_indicator(task_indicator);
     if let Some(mqtt_pool) = factory.default_mqtt_pool() {
         health = health.with_indicator(MqttHealthIndicator::new(mqtt_pool));
     }
-    health.build()
+    Ok(health.build())
 }

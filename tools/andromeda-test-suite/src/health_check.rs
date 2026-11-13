@@ -21,6 +21,8 @@ pub enum AggregateStatus {
     Up,
     /// The broker serves with a component impaired.
     Degraded,
+    /// A component is down, and the probe answers 503.
+    Down,
 }
 
 /// A component with a health indicator.
@@ -35,16 +37,34 @@ pub enum IndicatorName {
     Postgresql,
 }
 
-/// The numbers the database indicator reports; no other member is allowed.
+/// The numbers the database indicator reports once the database answered; no other member is allowed.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PostgresqlDetails {
-    /// `poolSize`.
+    /// `poolSize`: the connections open in the platform pool.
     pub pool_size: Number,
-    /// `idleConnections`.
+    /// `idleConnections`: the idle connections of the platform pool.
     pub idle_connections: Number,
+    /// `maxConnections`: the most connections the platform pool opens.
+    pub max_connections: Number,
     /// `pingLatencyMs`.
     pub ping_latency_ms: Number,
+}
+
+impl PostgresqlDetails {
+    /// Whether every connection the platform pool may open is open and in use.
+    #[must_use]
+    pub fn platform_pool_saturated(&self) -> bool {
+        self.pool_size == self.max_connections && self.idle_connections.as_u64() == Some(0)
+    }
+}
+
+/// What the database indicator reports once the database did not answer; no other member is allowed.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PostgresqlFailure {
+    /// `error`: why the ping failed.
+    pub error: String,
 }
 
 /// A background task that stopped for good, as the background tasks indicator lists it.
@@ -179,9 +199,18 @@ impl Indicator {
     ///
     /// # Errors
     ///
-    /// Returns [`serde_json::Error`] when a member is missing, is not a number or is not one of the three.
+    /// Returns [`serde_json::Error`] when a member is missing, is not a number or is not one of the four.
     pub fn postgresql_details(&self) -> Result<PostgresqlDetails, serde_json::Error> {
         PostgresqlDetails::deserialize(Value::Object(self.details.clone()))
+    }
+
+    /// The details read as the database indicator's once the database did not answer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`serde_json::Error`] when `error` is missing or another member is present.
+    pub fn postgresql_failure(&self) -> Result<PostgresqlFailure, serde_json::Error> {
+        PostgresqlFailure::deserialize(Value::Object(self.details.clone()))
     }
 }
 
@@ -214,7 +243,7 @@ mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
     use url::Host;
 
-    const DOCUMENT: &str = r#"{"id":"urn:ngsi-ld:HealthCheck:1","type":"HealthCheck","healthCheck":{"status":"up","components":{"backgroundTasks":{"status":"up","details":{"stoppedTasks":[]}},"mqtt":{"status":"up","details":{"activeConnections":0}},"postgresql":{"status":"up","details":{"idleConnections":6,"pingLatencyMs":0,"poolSize":7}}}}}"#;
+    const DOCUMENT: &str = r#"{"id":"urn:ngsi-ld:HealthCheck:1","type":"HealthCheck","healthCheck":{"status":"up","components":{"backgroundTasks":{"status":"up","details":{"stoppedTasks":[]}},"mqtt":{"status":"up","details":{"activeConnections":0}},"postgresql":{"status":"up","details":{"idleConnections":6,"maxConnections":32,"pingLatencyMs":0,"poolSize":7}}}}}"#;
 
     #[gtest]
     fn a_document_reads_its_aggregate_and_its_indicators() -> Result<()> {
@@ -277,6 +306,40 @@ mod tests {
         let document: HealthDocument = serde_json::from_str(&text)?;
         let details = document.health_check.components.get(&IndicatorName::Mqtt).or_fail()?.mqtt_details()?;
         verify_that!(details.connections, is_empty())
+    }
+
+    #[gtest]
+    fn a_platform_pool_with_every_connection_open_and_none_idle_reads_saturated() -> Result<()> {
+        let idle: HealthDocument = serde_json::from_str(DOCUMENT)?;
+        let database = idle.health_check.components.get(&IndicatorName::Postgresql).or_fail()?;
+        expect_that!(database.postgresql_details()?.platform_pool_saturated(), eq(false));
+        let text = DOCUMENT.replacen(
+            r#""idleConnections":6,"maxConnections":32,"pingLatencyMs":0,"poolSize":7"#,
+            r#""idleConnections":0,"maxConnections":2,"pingLatencyMs":0,"poolSize":2"#,
+            1,
+        );
+        let saturated: HealthDocument = serde_json::from_str(&text)?;
+        let database = saturated.health_check.components.get(&IndicatorName::Postgresql).or_fail()?;
+        verify_that!(database.postgresql_details()?.platform_pool_saturated(), eq(true))
+    }
+
+    #[gtest]
+    fn a_document_with_the_database_down_reads_why() -> Result<()> {
+        let text = DOCUMENT
+            .replacen(r#""healthCheck":{"status":"up""#, r#""healthCheck":{"status":"down""#, 1)
+            .replacen(
+                r#""postgresql":{"status":"up","details":{"idleConnections":6,"maxConnections":32,"pingLatencyMs":0,"poolSize":7}}"#,
+                r#""postgresql":{"status":"down","details":{"error":"the database did not answer within 1000 ms"}}"#,
+                1,
+            );
+        let document: HealthDocument = serde_json::from_str(&text)?;
+        expect_that!(document.health_check.status, eq(AggregateStatus::Down));
+        let database = document.health_check.components.get(&IndicatorName::Postgresql).or_fail()?;
+        expect_that!(database.postgresql_details(), err(anything()));
+        verify_that!(
+            database.postgresql_failure().map(|failure| failure.error),
+            ok(eq("the database did not answer within 1000 ms"))
+        )
     }
 
     #[gtest]

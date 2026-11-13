@@ -1,0 +1,8 @@
+[
+  {
+    "name": "outage",
+    "listen": "0.0.0.0:5432",
+    "upstream": "postgres-outage:5432",
+    "enabled": true
+  }
+]
