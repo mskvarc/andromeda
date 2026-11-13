@@ -9,7 +9,7 @@ use andromeda_test_suite::{
     namespace::Namespace,
     outcome::Done,
     problem::problem,
-    raw_call::call,
+    raw_call::andromeda_call,
     source_answer,
     wire::header_value,
 };
@@ -83,7 +83,7 @@ async fn a_mgt_tnt_0010_a_suspension_refuses_the_tenant_while_a_request_admitted
     };
     let suspension = async {
         source.wait_for_on(Method::GET, &remote_path, 1).await?;
-        let suspend = call(
+        let suspend = andromeda_call(
             &front,
             Method::PATCH,
             &tenant_path,
@@ -108,7 +108,7 @@ async fn a_mgt_tnt_0010_a_suspension_refuses_the_tenant_while_a_request_admitted
         &still_refused,
         problem(StatusCode::NOT_FOUND, ErrorType::NonexistentTenant).with_header(tenant_header.clone(), &namespace.to_string())
     );
-    let resume = call(
+    let resume = andromeda_call(
         &front,
         Method::PATCH,
         &tenant_path,

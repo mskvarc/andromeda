@@ -8,7 +8,7 @@ use andromeda_test_suite::{
     namespace::Namespace,
     outcome::Done,
     problem::problem,
-    raw_call::call,
+    raw_call::andromeda_call,
 };
 use googletest::prelude::*;
 use http::{Method, StatusCode};
@@ -40,7 +40,7 @@ async fn a_mgt_tnt_0006_suspending_one_tenant_leaves_another_serving() -> Result
         client.entities().create(&device).send().await?.done()?;
     }
     // The Tenant resource is an Andromeda extension no NGSI-LD operation covers, so the request is sent as written.
-    let suspend = call(
+    let suspend = andromeda_call(
         &front,
         Method::PATCH,
         &format!("tenants/{namespace}-b"),

@@ -1,5 +1,5 @@
-//! The tenant resource the broker exposes at `GET /ngsi-ld/v1/tenants` and
-//! `GET /ngsi-ld/v1/tenants/{tenantName}`.
+//! The tenant resource the broker exposes at `GET /ngsi-ld/andromeda/v1/tenants` and
+//! `GET /ngsi-ld/andromeda/v1/tenants/{tenantName}`.
 //!
 //! Tenant management is not defined by ETSI GS CIM 009 v1.9.1, which leaves it
 //! implementation-specific (clause 5.5.10) beyond the `NGSILD-Tenant` header

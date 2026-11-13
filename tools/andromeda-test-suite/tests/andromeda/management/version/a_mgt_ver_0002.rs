@@ -3,12 +3,12 @@
 use andromeda_test_suite::{
     broker,
     component_report::{ComponentName, ComponentReportList, ReportType},
-    raw_call::call,
+    raw_call::andromeda_call,
 };
 use googletest::prelude::*;
 use http::{Method, StatusCode, header::CONTENT_TYPE};
 
-/// Pins: GET /ngsi-ld/v1/version answers a plain JSON `ComponentReportList` with no @context, whose andromeda
+/// Pins: GET /ngsi-ld/andromeda/v1/version answers a plain JSON `ComponentReportList` with no @context, whose andromeda
 /// component carries its version and toolchain and no member naming the repository or the time of the build, and
 /// which names andromeda and postgresql once each
 /// Clause: -
@@ -18,7 +18,7 @@ use http::{Method, StatusCode, header::CONTENT_TYPE};
 async fn a_mgt_ver_0002_the_component_report_names_the_build_and_the_storage() -> Result<()> {
     let front = broker::front()?;
     // The component report is an Andromeda extension no NGSI-LD operation covers, so the request is sent as written.
-    let answer = call(&front, Method::GET, "version", &[], None).await?;
+    let answer = andromeda_call(&front, Method::GET, "version", &[], None).await?;
     expect_that!(answer.status(), eq(StatusCode::OK));
     expect_that!(
         answer.headers().get(CONTENT_TYPE).and_then(|value| value.to_str().ok()),

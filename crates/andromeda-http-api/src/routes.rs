@@ -5,7 +5,6 @@ use andromeda_http_context_registry::routes::ContextRegistryRoutes;
 use andromeda_http_entity::routes::EntityRoutes;
 use andromeda_http_entity_map::routes::EntityMapRoutes;
 use andromeda_http_extraction::api_root::ConfiguredApiRoot;
-use andromeda_http_health::routes::HealthRoutes;
 use andromeda_http_notification_receiver::routes::NotificationReceiverRoutes;
 use andromeda_http_registration::routes::RegistrationRoutes;
 use andromeda_http_snapshot::routes::SnapshotRoutes;
@@ -46,8 +45,6 @@ pub struct ApiRoutes {
     pub(crate) notification_receiver: NotificationReceiverRoutes,
     /// Tenant administration routes.
     pub(crate) tenancy: TenancyRoutes,
-    /// Aggregate health route.
-    pub(crate) health: HealthRoutes,
     /// Active-component report route.
     pub(crate) component_report: ComponentReportRoutes,
     /// The configured `apiRoot` minted URLs are built on, when one is

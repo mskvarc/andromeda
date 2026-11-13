@@ -223,7 +223,7 @@ impl SubscriptionStore for RecordingSubscriptions {
             "id": id.as_str(),
             "type": "Subscription",
             "entities": fields.entities,
-            "notification": {"endpoint": {"uri": "http://broker.example:1056/ngsi-ld/v1/notifications"}},
+            "notification": {"endpoint": {"uri": "http://broker.example:1056/ngsi-ld/andromeda/v1/notifications"}},
             "status": "active",
             "createdAt": WRITTEN_AT,
             "modifiedAt": WRITTEN_AT

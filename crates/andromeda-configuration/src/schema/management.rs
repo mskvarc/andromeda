@@ -20,9 +20,9 @@ use strum::{Display, EnumString};
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
 #[schemars(description = "Whether, and where, the broker serves its management endpoints: `/livez`, `/readyz` and `/metrics`.")]
 pub enum ManagementMode {
-    /// No management plane is served; the data-plane probes remain and metrics
-    /// cannot be enabled.
-    #[schemars(description = "Serves no management endpoints. The health paths under `/ngsi-ld/v1` on the API port remain.")]
+    /// No management plane is served: the broker answers no probe, the `health`
+    /// command has nothing to ask, and metrics cannot be enabled.
+    #[schemars(description = "Serves no management endpoints, so the broker answers no liveness or readiness probe and the `health` command refuses to run.")]
     Disabled,
     /// The management endpoints are mounted at the root of the data-plane port,
     /// behind the full inbound stack.

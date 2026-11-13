@@ -98,7 +98,7 @@ pub(crate) struct BrokerTenantFactory {
     direct_url: DatabaseUrl,
     /// The MQTT pool the unnamed default tenant opened.
     ///
-    /// Recorded here because `/health` reports on MQTT delivery and the pool
+    /// Recorded here because `/readyz` reports on MQTT delivery and the pool
     /// belongs to a runtime the health router has no handle on. Written once:
     /// the unnamed default is the one tenant that is never evicted.
     default_mqtt_pool: OnceLock<Arc<MqttTransportPool>>,
@@ -221,7 +221,7 @@ impl TenantStateFactory for BrokerTenantFactory {
         .map_err(|error| error.into_tenancy_error(tenant))?;
 
         if tenant.is_unnamed_default() && self.default_mqtt_pool.set(Arc::clone(runtime.mqtt_pool())).is_err() {
-            debug!("the default tenant's MQTT pool was already recorded; /health keeps reporting on the first");
+            debug!("the default tenant's MQTT pool was already recorded; /readyz keeps reporting on the first");
         }
         // The record only steers which dormant tenants a wake pass brings up to
         // date, so a failed write costs at most one more load and never the open.

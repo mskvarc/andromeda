@@ -2,22 +2,27 @@
 
 use andromeda_test_suite::{
     broker,
+    config::{BrokerRole, SuiteConfig},
     health_check::{AggregateStatus, HealthDocument, HealthType, IndicatorName},
-    raw_call::call,
+    wire::request_to,
 };
 use googletest::prelude::*;
 use http::{Method, StatusCode, header::CONTENT_TYPE};
 
-/// Pins: GET /ngsi-ld/v1/health answers a plain JSON `HealthCheck` with no @context, an aggregate status of up or
-/// degraded, and only the active indicators, the `PostgreSQL` one up with numeric pool details and the background tasks one up with no stopped task
+/// Pins: GET /readyz on the management listener answers a plain JSON `HealthCheck` with no @context, an aggregate
+/// status of up or degraded, and only the active indicators, the `PostgreSQL` one up with numeric pool details and the
+/// background tasks one up with no stopped task
 /// Clause: -
-/// Recorded: Andromeda extension, not v1.9.1: the health endpoint and its `HealthCheck` body
+/// Recorded: Andromeda extension, not v1.9.1: the readiness probe and its `HealthCheck` body
 #[gtest]
 #[tokio::test]
 async fn a_obs_rdy_0001_health_reports_the_aggregate_and_each_active_component() -> Result<()> {
-    let front = broker::front()?;
-    // The health report is an Andromeda extension no NGSI-LD operation covers, so the request is sent as written.
-    let answer = call(&front, Method::GET, "health", &[], None).await?;
+    let management = broker::client(BrokerRole::FrontManagement)?;
+    // The readiness probe sits at the root of the management listener, outside the API root.
+    let probe = SuiteConfig::get()?.broker(BrokerRole::FrontManagement)?.join("readyz")?;
+    let answer = management
+        .send_unchecked(request_to(&management, Method::GET, "")?.uri(probe.as_str().parse()?))
+        .await?;
     expect_that!(answer.status(), eq(StatusCode::OK));
     expect_that!(
         answer.headers().get(CONTENT_TYPE).and_then(|value| value.to_str().ok()),

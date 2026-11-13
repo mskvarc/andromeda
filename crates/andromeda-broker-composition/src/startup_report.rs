@@ -60,7 +60,7 @@ fn report_management_plane(config: &BrokerConfig) {
         ),
         ManagementMode::Disabled => info!(
             data_plane = %data_plane,
-            "Management plane disabled; data-plane probes remain at /ngsi-ld/v1/health, /ready and /live"
+            "Management plane disabled; no liveness or readiness probe is served"
         ),
     }
 }

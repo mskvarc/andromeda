@@ -26,7 +26,7 @@ impl Health {
     ///
     /// Sequential rather than concurrent: a broker runs a handful of
     /// indicators, each of which is a round trip to a pool it already holds,
-    /// and a `/health` call that fans out is a `/health` call that can be used
+    /// and a `/readyz` call that fans out is a `/readyz` call that can be used
     /// to fan out. With no indicators registered the answer is
     /// [`HealthStatus::Up`] and an empty map. Nothing to ask is not the same
     /// as nothing answering, but it is the only thing a broker with no

@@ -7,7 +7,7 @@ use andromeda_test_suite::{
     namespace::Namespace,
     outcome::Done,
     problem::problem,
-    raw_call::call,
+    raw_call::andromeda_call,
     tenant_resource::{TenantResource, TenantStatus, TenantType},
     wire::header_value,
 };
@@ -41,7 +41,7 @@ async fn a_mgt_tnt_0001_suspend_refuses_the_data_path_and_resume_serves_it_again
     private.entities().create(&device).send().await?.done()?;
     // The Tenant resource is an Andromeda extension no NGSI-LD operation covers, so its requests are sent as written.
     let tenant_path = format!("tenants/{namespace}");
-    let active = call(&front, Method::GET, &tenant_path, &[("Accept", "application/json")], None).await?;
+    let active = andromeda_call(&front, Method::GET, &tenant_path, &[("Accept", "application/json")], None).await?;
     expect_that!(active.status(), eq(StatusCode::OK));
     let active_resource = TenantResource::read(&active)?;
     expect_that!(active_resource.id, eq(&format!("urn:ngsi-ld:Tenant:{namespace}")));
@@ -49,7 +49,7 @@ async fn a_mgt_tnt_0001_suspend_refuses_the_data_path_and_resume_serves_it_again
     expect_that!(active_resource.tenant_name.to_string(), eq(&namespace.to_string()));
     expect_that!(active_resource.is_active, some(eq(true)));
     expect_that!(active_resource.status, some(any!(eq(TenantStatus::Active), eq(TenantStatus::Dormant))));
-    let suspend = call(
+    let suspend = andromeda_call(
         &front,
         Method::PATCH,
         &tenant_path,
@@ -69,13 +69,13 @@ async fn a_mgt_tnt_0001_suspend_refuses_the_data_path_and_resume_serves_it_again
         &refused,
         problem(StatusCode::NOT_FOUND, ErrorType::NonexistentTenant).with_header(tenant_header.clone(), &namespace.to_string())
     );
-    let suspended = call(&front, Method::GET, &tenant_path, &[("Accept", "application/json")], None).await?;
+    let suspended = andromeda_call(&front, Method::GET, &tenant_path, &[("Accept", "application/json")], None).await?;
     expect_that!(suspended.status(), eq(StatusCode::OK));
     let suspended_resource = TenantResource::read(&suspended)?;
     expect_that!(suspended_resource.tenant_name.to_string(), eq(&namespace.to_string()));
     expect_that!(suspended_resource.is_active, some(eq(false)));
     expect_that!(suspended_resource.status, some(eq(TenantStatus::Suspended)));
-    let resume = call(
+    let resume = andromeda_call(
         &front,
         Method::PATCH,
         &tenant_path,

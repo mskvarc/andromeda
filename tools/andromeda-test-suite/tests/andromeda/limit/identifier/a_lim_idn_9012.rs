@@ -9,7 +9,7 @@ use andromeda_test_suite::{
     outcome::Done,
     problem::{answered, problem},
     tenant_resource::{TenantResource, TenantType},
-    wire::{header_value, request_to},
+    wire::{andromeda_request_to, header_value},
 };
 use googletest::prelude::*;
 use http::{HeaderName, HeaderValue, Method, StatusCode, header::ACCEPT};
@@ -75,7 +75,8 @@ async fn a_lim_idn_9012_a_tenant_name_at_the_bound_is_served_and_one_octet_past_
     );
     expect_that!(read_back.outcome.body(), has_attribute("speed", any_attribute().value(55)));
     // The Tenant resource is an Andromeda extension no NGSI-LD operation covers, so the request is sent as written.
-    let request = request_to(&front, Method::GET, &format!("tenants/{long_tenant}"))?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
+    let request =
+        andromeda_request_to(&front, Method::GET, &format!("tenants/{long_tenant}"))?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
     let answer = front.send_unchecked(request).await;
     expect_that!(&answer, answered(StatusCode::OK));
     let resource = TenantResource::read(answer.as_ref().or_fail()?)?;
@@ -101,7 +102,8 @@ async fn a_lim_idn_9012_a_tenant_name_at_the_bound_is_served_and_one_octet_past_
         .await;
     expect_that!(&refused_2, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData).with_detail(detail));
     // The Tenant resource is an Andromeda extension no NGSI-LD operation covers, so the request is sent as written.
-    let request_2 = request_to(&front, Method::GET, &format!("tenants/{long_tenant}a"))?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
+    let request_2 =
+        andromeda_request_to(&front, Method::GET, &format!("tenants/{long_tenant}a"))?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
     let answer_2 = front.send_unchecked(request_2).await;
     expect_that!(
         &answer_2,

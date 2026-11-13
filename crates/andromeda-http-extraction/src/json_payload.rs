@@ -108,7 +108,7 @@ mod tests {
 
     /// A request carrying `body` under `content_type`, declaring its length.
     fn request(content_type: &str, body: &'static str) -> Request<Body> {
-        Request::patch("/ngsi-ld/v1/tenants/acme")
+        Request::patch("/ngsi-ld/andromeda/v1/tenants/acme")
             .header(CONTENT_TYPE, content_type)
             .header(CONTENT_LENGTH, body.len())
             .body(Body::from(body))
@@ -165,7 +165,7 @@ mod tests {
     /// Clause 6.3.4: an absent `Content-Length` is just a 411, checked first.
     #[tokio::test]
     async fn a_body_declaring_no_length_is_the_bare_411() {
-        let request = Request::patch("/ngsi-ld/v1/tenants/acme")
+        let request = Request::patch("/ngsi-ld/andromeda/v1/tenants/acme")
             .header(CONTENT_TYPE, "text/plain")
             .body(Body::from("{}"))
             .expect("a valid request");

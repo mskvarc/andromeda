@@ -1,4 +1,4 @@
-//! The `HealthCheck` that `GET /ngsi-ld/v1/health` answers: an Andromeda extension no NGSI-LD model covers, read into
+//! The `HealthCheck` that `GET /readyz` on the management listener answers: an Andromeda extension no NGSI-LD model covers, read into
 //! a type so a test states members, not paths.
 
 use serde::Deserialize;

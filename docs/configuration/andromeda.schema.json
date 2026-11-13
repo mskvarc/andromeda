@@ -1875,7 +1875,7 @@
           "description": "Where the management endpoints are served: on a port of their own, on the API port, or not at all. A port of their own by default, so probes and metrics keep answering while the API is saturated or draining.",
           "oneOf": [
             {
-              "description": "Serves no management endpoints. The health paths under `/ngsi-ld/v1` on the API port remain.",
+              "description": "Serves no management endpoints, so the broker answers no liveness or readiness probe and the `health` command refuses to run.",
               "type": "string",
               "const": "disabled"
             },

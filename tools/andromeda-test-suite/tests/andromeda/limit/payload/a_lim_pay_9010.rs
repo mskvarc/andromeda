@@ -7,6 +7,7 @@ use andromeda_test_suite::{
     generated_payload::spaces,
     namespace::Namespace,
     problem::{problem, problem_status, request_entity_too_large},
+    wire::{andromeda_uri, api_uri},
     written_json::json_request_to,
 };
 use googletest::prelude::*;
@@ -31,13 +32,16 @@ async fn a_lim_pay_9010_every_payload_reader_refuses_a_body_over_the_limit_and_c
     // refuse it.
     let body = spaces(limit + 1)?;
     for (method, target) in [
-        (Method::POST, "entities".to_owned()),
-        (Method::POST, "entityOperations/upsert".to_owned()),
-        (Method::POST, "jsonldContexts".to_owned()),
-        (Method::PATCH, format!("entityMaps/urn:ngsi-ld:EntityMap:{namespace}-too-large")),
-        (Method::PATCH, format!("tenants/{namespace}")),
+        (Method::POST, api_uri(&broker, "entities")?),
+        (Method::POST, api_uri(&broker, "entityOperations/upsert")?),
+        (Method::POST, api_uri(&broker, "jsonldContexts")?),
+        (
+            Method::PATCH,
+            api_uri(&broker, &format!("entityMaps/urn:ngsi-ld:EntityMap:{namespace}-too-large"))?,
+        ),
+        (Method::PATCH, andromeda_uri(&broker, &format!("tenants/{namespace}"))?),
     ] {
-        let refused = broker.send_unchecked(json_request_to(&broker, method, &target, &body)?).await;
+        let refused = broker.send_unchecked(json_request_to(&broker, method, "", &body)?.uri(target)).await;
         expect_that!(
             &refused,
             problem(StatusCode::PAYLOAD_TOO_LARGE, request_entity_too_large())

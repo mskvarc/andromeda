@@ -38,7 +38,6 @@ use andromeda_http_context_registry::routes::ContextRegistryRoutes;
 use andromeda_http_entity::routes::EntityRoutes;
 use andromeda_http_entity_map::routes::EntityMapRoutes;
 use andromeda_http_extraction::api_root::ConfiguredApiRoot;
-use andromeda_http_health::routes::HealthRoutes;
 use andromeda_http_notification_receiver::routes::NotificationReceiverRoutes;
 use andromeda_http_registration::routes::RegistrationRoutes;
 use andromeda_http_snapshot::routes::SnapshotRoutes;
@@ -357,7 +356,6 @@ async fn construct(
             forwarded_subscription_router,
         ))))
         .tenancy(TenancyRoutes::new(tenant_administration, tenant_usage_probe, tenant_management))
-        .health(HealthRoutes::new(health.clone()))
         .component_report(ComponentReportRoutes::new(component_reports))
         .configured_api_root(config.server.public_url.clone().map(ConfiguredApiRoot::new))
         .pagination(pagination)
