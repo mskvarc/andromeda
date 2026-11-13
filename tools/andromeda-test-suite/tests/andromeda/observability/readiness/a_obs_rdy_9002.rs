@@ -1,30 +1,21 @@
 //! A failed connection to a Subscription's MQTT server leaves the broker ready.
 
 use andromeda_test_suite::{
-    broker::{self, BrokerClient},
-    config::{BrokerRole, SuiteConfig},
+    broker,
+    config::BrokerRole,
     eventually::{Poll, delivery_deadline, eventually},
     health_check::{AggregateStatus, HealthDocument, IndicatorName, MqttConnection, MqttConnectionHealth},
     mqtt_server::MqttServer,
     namespace::Namespace,
     outcome::Done,
-    wire::request_to,
+    readiness_probe::ReadinessProbe,
 };
 use googletest::prelude::*;
-use http::{Method, StatusCode};
+use http::StatusCode;
 use ngsi_ld::{
     model::{Entity, NgsiLdMediaType},
     subscription::{Endpoint, NotificationParams, NotificationTrigger, Subscription},
 };
-use url::Url;
-
-/// The status GET `readyz` answers and the document it carries.
-async fn readiness(management: &BrokerClient, readyz: &Url) -> Result<(StatusCode, HealthDocument)> {
-    let answer = management
-        .send_unchecked(request_to(management, Method::GET, "")?.uri(readyz.as_str().parse()?))
-        .await?;
-    Ok((answer.status(), serde_json::from_slice(answer.body())?))
-}
 
 /// The connection to `server` that the `mqtt` component of `document` lists.
 fn connection_to(document: &HealthDocument, server: &MqttServer) -> Option<MqttConnection> {
@@ -68,15 +59,16 @@ async fn a_obs_rdy_9002_a_failed_connection_to_a_subscriptions_mqtt_server_leave
     // Deleted before the server stops, so no later delivery dials the server again and replaces the failed connection.
     broker.subscriptions().delete(&subscription_id).send().await?;
     server.stop();
-    let management = broker::client(BrokerRole::FrontManagement)?;
-    // The readiness probe sits at the root of the management listener, outside the API root.
-    let readyz = SuiteConfig::get()?.broker(BrokerRole::FrontManagement)?.join("readyz")?;
-    let (management, readyz, server) = (&management, &readyz, &server);
+    let probe = ReadinessProbe::of(BrokerRole::FrontManagement)?;
+    let (probe, server) = (&probe, &server);
     let (status, document) = eventually(delivery_deadline(), || async move {
-        match readiness(management, readyz).await {
-            Ok((status, document)) => match connection_to(&document, server).map(|connection| connection.health) {
-                Some(MqttConnectionHealth::Unhealthy) => Poll::Ready((status, document)),
-                seen => Poll::Pending(format!("/readyz answered {status} listing the connection to the stopped server as {seen:?}")),
+        match probe.ask().await {
+            Ok(reading) => match connection_to(&reading.document, server).map(|connection| connection.health) {
+                Some(MqttConnectionHealth::Unhealthy) => Poll::Ready((reading.status, reading.document)),
+                seen => Poll::Pending(format!(
+                    "/readyz answered {} listing the connection to the stopped server as {seen:?}",
+                    reading.status
+                )),
             },
             Err(failure) => Poll::Pending(format!("{failure:?}")),
         }

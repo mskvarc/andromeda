@@ -64,6 +64,7 @@ mod tests {
                 status: HealthStatus::Up,
                 details: Some(ComponentDetails::PostgreSql(PostgreSqlDetails::Reachable {
                     idle_connections: 3,
+                    max_connections: 8,
                     ping_latency_ms: 2,
                     pool_size: 5,
                 })),
@@ -115,6 +116,7 @@ mod tests {
                         "details": {
                             "poolSize": 5,
                             "idleConnections": 3,
+                            "maxConnections": 8,
                             "pingLatencyMs": 2
                         }
                     }

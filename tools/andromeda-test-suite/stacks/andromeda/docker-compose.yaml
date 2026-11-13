@@ -11,7 +11,7 @@ name: test-suite-andromeda
 x-template: &template
   file: ../templates/docker-compose.yaml
 
-# Seventeen servers share one host. A server sizes its buffers and its work memory from the memory it sees, so each
+# Nineteen servers share one host. A server sizes its buffers and its work memory from the memory it sees, so each
 # would size itself for the whole host and together they would outgrow it; tuned for 512 MB, they fit beside the
 # brokers on a host of 8 GB.
 x-postgres: &postgres
@@ -526,6 +526,57 @@ services:
       ANDROMEDA__SERVER__REQUEST_HEAD_TIMEOUT: "2s"
       ANDROMEDA__SERVER__IDLE_TIMEOUT: "6s"
 
+  postgres-platform-pool:
+    <<: *postgres
+
+  # A platform pool of two connections, which the test of a saturated platform pool fills by holding the tenant
+  # registry; every tenant load of another test on this broker would wait on that hold.
+  broker-platform-pool:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      postgres-platform-pool:
+        condition: service_healthy
+    environment:
+      ANDROMEDA__SERVER__PORT: "1090"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@postgres-platform-pool:5432/andromeda"
+      ANDROMEDA__DATABASE__PLATFORM_MAX_CONNECTIONS: "2"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-platform-pool"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-platform-pool"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-platform-pool:1090"
+
+  postgres-outage:
+    <<: *postgres
+
+  # Carries broker-outage's connections to postgres-outage. The test of a database that stops answering cuts it
+  # through its control API on port 8474: it closes every connection and refuses new ones until restored. The image
+  # has no shell, so no healthcheck; the broker restarts until the proxy carries its first connection.
+  database-proxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    command: ["-host=0.0.0.0", "-config=/etc/toxiproxy/database-proxy.json"]
+    volumes:
+      - ./database-proxy.json:/etc/toxiproxy/database-proxy.json:ro
+    depends_on:
+      postgres-outage:
+        condition: service_healthy
+
+  # Reaches its server through database-proxy, which the test of a database that stops answering cuts; every other
+  # test on this broker would lose its database with it.
+  broker-outage:
+    extends:
+      <<: *template
+      service: broker
+    depends_on:
+      database-proxy:
+        condition: service_started
+    environment:
+      ANDROMEDA__SERVER__PORT: "1091"
+      ANDROMEDA__DATABASE__CONNECTION: "postgres://andromeda:andromeda@database-proxy:5432/andromeda"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-outage"
+      ANDROMEDA__FEDERATION__IDENTITY__SOURCE_ALIAS: "broker-outage"
+      ANDROMEDA__SERVER__PUBLIC_URL: "http://broker-outage:1091"
+
   runner:
     extends:
       <<: *template
@@ -566,6 +617,10 @@ services:
       broker-oversized:
         condition: service_healthy
       broker-timed:
+        condition: service_healthy
+      broker-platform-pool:
+        condition: service_healthy
+      broker-outage:
         condition: service_healthy
       mosquitto-capped:
         condition: service_healthy

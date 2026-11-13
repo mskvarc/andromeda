@@ -15,7 +15,7 @@ use andromeda_configuration::{
     broker_config::BrokerConfig,
     schema::{feature_mode::FeatureMode, tenancy::TenancyConfig},
 };
-use andromeda_postgresql_context_store::component_report;
+use andromeda_postgresql_context_store::{component_report, health::PROBE_CONNECTIONS};
 use andromeda_postgresql_maintenance::repack_task::RUN_SESSIONS;
 use sqlx::PgPool;
 use thiserror::Error;
@@ -67,10 +67,11 @@ pub(crate) async fn collect(pool: &PgPool, config: &BrokerConfig) -> Result<Vec<
 /// The connections the broker holds against PostgreSQL when every pool it
 /// may open is full at once.
 ///
-/// Straight to PostgreSQL, always: the platform pool and the maintenance
-/// controller's platform pool, its pass's connection into the tenant it
-/// visits, the repack task's sessions into the tenant whose table it
-/// repacks, and the peak of every cold build that may run at once. On the request path,
+/// Straight to PostgreSQL, always: the platform pool, the database health
+/// indicator's own connection and the maintenance controller's platform pool,
+/// its pass's connection into the tenant it visits, the repack task's sessions
+/// into the tenant whose table it repacks, and the peak of every cold build
+/// that may run at once. On the request path,
 /// unless a transaction pooler fronts it: the default tenant's serving pool,
 /// one serving pool per tenant the runtime cache holds while named tenancy is
 /// on, and the dormant-tenant probes, which the broker builds whether or not
@@ -83,6 +84,7 @@ fn broker_connection_ceiling(config: &BrokerConfig) -> u32 {
     let direct = database
         .platform_max_connections
         .get()
+        .saturating_add(PROBE_CONNECTIONS)
         .saturating_add(MAINTENANCE_PLATFORM_POOL_CONNECTIONS)
         .saturating_add(MAINTENANCE_TENANT_CONNECTIONS)
         .saturating_add(RUN_SESSIONS)
@@ -145,14 +147,14 @@ mod tests {
         config
     }
 
-    /// Direct: platform 10, maintenance 3 plus its pass's tenant connection
-    /// 1 and its repack's 2, builds 4 x 2; request path: default tenant 7,
-    /// cached tenants 20 x 3, probes 2.
+    /// Direct: platform 10, the health indicator's 1, maintenance 3 plus its
+    /// pass's tenant connection 1 and its repack's 2, builds 4 x 2; request
+    /// path: default tenant 7, cached tenants 20 x 3, probes 2.
     #[test]
     fn a_direct_broker_counts_every_pool_it_opens_against_postgresql() {
         let mut config = sized();
         config.tenancy.mode = FeatureMode::Enabled;
-        assert_eq!(broker_connection_ceiling(&config), 10 + 3 + 1 + 2 + 8 + 7 + 60 + 2);
+        assert_eq!(broker_connection_ceiling(&config), 10 + 1 + 3 + 1 + 2 + 8 + 7 + 60 + 2);
     }
 
     /// With named tenancy off only the default tenant's pool serves requests,
@@ -161,7 +163,7 @@ mod tests {
     fn with_named_tenancy_disabled_no_named_tenant_pool_counts() {
         let mut config = sized();
         config.tenancy.mode = FeatureMode::Disabled;
-        assert_eq!(broker_connection_ceiling(&config), 10 + 3 + 1 + 2 + 8 + 7 + 2);
+        assert_eq!(broker_connection_ceiling(&config), 10 + 1 + 3 + 1 + 2 + 8 + 7 + 2);
     }
 
     /// Behind a pooler the request path reaches the pooler, so only the
@@ -173,7 +175,7 @@ mod tests {
             connection: PostgresConnection::new(url!("postgres://andromeda@localhost:6432/andromeda")),
             max_connections_per_tenant: NonZeroU32::MIN.saturating_add(1),
         });
-        assert_eq!(broker_connection_ceiling(&config), 10 + 3 + 1 + 2 + 8);
+        assert_eq!(broker_connection_ceiling(&config), 10 + 1 + 3 + 1 + 2 + 8);
     }
 
     #[test]
