@@ -4,8 +4,10 @@ use crate::{
     handler,
     state::{SnapshotRouteState, SnapshotStateResolver},
 };
+use andromeda_http_extraction::snapshot_scope_guard::reject_snapshot_scope;
 use axum::{
     Router,
+    middleware::from_fn,
     routing::{get, post},
 };
 use std::sync::Arc;
@@ -17,13 +19,18 @@ pub struct SnapshotRoutes {
 }
 
 impl SnapshotRoutes {
-    /// Construct every snapshot route with only its focused resolver.
+    /// Construct every snapshot route with only its focused resolver. The
+    /// Snapshot API itself takes no Snapshot (clause 5.5.15), so each route
+    /// refuses one.
     pub fn new(resolver: Arc<dyn SnapshotStateResolver>) -> SnapshotRoutes {
         let snapshot_routes = Router::new()
             .route("/", post(handler::create).delete(handler::purge))
             .route("/{snapshot_id}", get(handler::get).patch(handler::update).delete(handler::delete))
             .route("/{snapshot_id}/clone", post(handler::clone));
-        let router = Router::new().nest("/snapshots", snapshot_routes).with_state(SnapshotRouteState::new(resolver));
+        let router = Router::new()
+            .nest("/snapshots", snapshot_routes)
+            .with_state(SnapshotRouteState::new(resolver))
+            .layer(from_fn(reject_snapshot_scope));
         SnapshotRoutes { router }
     }
 

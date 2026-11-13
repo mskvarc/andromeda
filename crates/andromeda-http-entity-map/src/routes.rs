@@ -5,8 +5,9 @@ use crate::{
     state::{EntityMapRouteState, EntityMapStateResolver},
 };
 use andromeda_extensions::enabled::EnabledExtensions;
+use andromeda_http_extraction::snapshot_scope_guard::reject_snapshot_scope;
 use andromeda_http_temporal::extension_gate::TemporalExtensionGate;
-use axum::{Extension, Router, routing::get};
+use axum::{Extension, Router, middleware::from_fn, routing::get};
 use std::sync::Arc;
 
 /// Current and temporal Entity Map route fragments.
@@ -18,7 +19,9 @@ pub struct EntityMapRoutes {
 impl EntityMapRoutes {
     /// Construct all Entity Map routes with focused state, the temporal ones
     /// admitting their query by the `enabled` extensions as the temporal query
-    /// routes do (clause 5.14.5.4).
+    /// routes do (clause 5.14.5.4). An entity map serves only distributed
+    /// operations and an operation on a Snapshot is always local
+    /// (clause 5.5.15), so each route refuses a Snapshot.
     pub fn new(resolver: Arc<dyn EntityMapStateResolver>, enabled: EnabledExtensions) -> EntityMapRoutes {
         let state = EntityMapRouteState::new(resolver);
         let current_routes = Router::new()
@@ -30,7 +33,8 @@ impl EntityMapRoutes {
         let router = Router::new()
             .nest("/entityMaps", current_routes)
             .nest("/temporal/entityMaps", temporal_routes)
-            .with_state(state);
+            .with_state(state)
+            .layer(from_fn(reject_snapshot_scope));
         EntityMapRoutes { router }
     }
 

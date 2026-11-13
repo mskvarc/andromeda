@@ -6,4 +6,5 @@ mod clone;
 mod create;
 mod limit;
 mod query;
+mod scope;
 mod update;

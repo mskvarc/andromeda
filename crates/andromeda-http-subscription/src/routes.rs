@@ -20,7 +20,10 @@ pub struct SubscriptionRoutes {
 }
 
 impl SubscriptionRoutes {
-    /// Construct subscription lifecycle routes with focused state.
+    /// Construct subscription lifecycle routes with focused state. Entity
+    /// Subscriptions belong to the Core API and take a Snapshot; Context
+    /// Source Registration Subscriptions belong to the Registry API and
+    /// refuse one (clause 5.5.15).
     pub fn new(resolver: Arc<dyn SubscriptionStateResolver>) -> SubscriptionRoutes {
         let subscriptions = Router::new()
             .route("/", post(subscription::create).get(subscription::query))
