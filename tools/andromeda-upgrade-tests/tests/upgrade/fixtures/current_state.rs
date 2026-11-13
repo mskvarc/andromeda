@@ -26,13 +26,25 @@ pub(crate) async fn intern_type(pool: &PgPool, iri: &str) -> Result<i32, Upgrade
 
 /// Inserts an Entity identified by `id` and returns its key.
 pub(crate) async fn insert_entity(pool: &PgPool, id: &str) -> Result<i64, UpgradeTestError> {
-    insert_returning::<i64>(
-        pool,
-        "entities",
-        "entity_key",
-        vec![("created_at", instant(WRITTEN_AT)), ("modified_at", instant(WRITTEN_AT)), ("id", Expr::val(id))],
-    )
-    .await
+    insert_returning::<i64>(pool, "entities", "entity_key", entity_row(id)).await
+}
+
+/// Inserts an Entity identified by `id` whose Temporal Evolution its identity
+/// row records under `type_keys`, and returns its key.
+pub(crate) async fn insert_evolving_entity(pool: &PgPool, id: &str, type_keys: &[i32]) -> Result<i64, UpgradeTestError> {
+    let mut row = entity_row(id);
+    row.extend([
+        ("evolution_created_at", instant(WRITTEN_AT)),
+        ("evolution_modified_at", instant(WRITTEN_AT)),
+        ("evolution_type_name_keys", integers(type_keys)),
+    ]);
+    insert_returning::<i64>(pool, "entities", "entity_key", row).await
+}
+
+/// The identity row of an Entity identified by `id`, created and modified at
+/// [`WRITTEN_AT`].
+fn entity_row(id: &str) -> Vec<(&'static str, SimpleExpr)> {
+    vec![("created_at", instant(WRITTEN_AT)), ("modified_at", instant(WRITTEN_AT)), ("id", Expr::val(id))]
 }
 
 /// Inserts the search row of an Entity of `type_keys` holding one instance of

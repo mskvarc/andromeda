@@ -7,7 +7,10 @@
 //! while that one waits on its own.
 
 use crate::{
-    posted_query::{kind_code::stored_kind, mapper::held_row},
+    posted_query::{
+        kind_code::stored_kind,
+        mapper::{held_row, stored_digest},
+    },
     store_fault::persistence_error,
 };
 use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
@@ -61,7 +64,7 @@ pub(crate) fn live_statement(key: &PageQuery, kind: PostedQueryKind) -> SelectSt
     Query::select()
         .columns([PostedQueries::Query, PostedQueries::ContextLink, PostedQueries::ContextBody])
         .from(PostedQueries::Table)
-        .and_where(Expr::col(PostedQueries::Digest).eq(key.encode()))
+        .and_where(Expr::col(PostedQueries::Digest).eq(stored_digest(key)))
         .and_where(Expr::col(PostedQueries::Kind).eq(stored_kind(kind).code()))
         .and_where(live())
         .to_owned()

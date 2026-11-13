@@ -47,11 +47,26 @@ pub(crate) fn proof_node_without(member: &str) -> Value {
     proof
 }
 
+/// [`proof_node`] with `values` as the expanded values of `member`.
+pub(crate) fn proof_node_with(member: &str, values: Value) -> Value {
+    let mut proof = proof_node();
+    if let Some(members) = proof.as_object_mut() {
+        members.insert(member.to_owned(), values);
+    }
+    proof
+}
+
 /// The seals of an instance, with `type_values` as the expanded values of
 /// `entityTypeSealed`.
 pub(crate) fn seals(type_values: &Value) -> Value {
+    seals_naming(SEALED_ENTITY_ID, type_values)
+}
+
+/// The seals of an instance naming the entity `entity_id`, with
+/// `type_values` as the expanded values of `entityTypeSealed`.
+pub(crate) fn seals_naming(entity_id: &str, type_values: &Value) -> Value {
     json!({
-        ENTITY_ID_SEALED: [{"@value": SEALED_ENTITY_ID}],
+        ENTITY_ID_SEALED: [{"@value": entity_id}],
         ENTITY_TYPE_SEALED: type_values
     })
 }

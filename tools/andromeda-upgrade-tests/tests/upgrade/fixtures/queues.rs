@@ -20,35 +20,115 @@ const QUEUED_AT: &str = "2025-01-27T21:00:00Z";
 /// The state of an Entity of `type_key` holding one Property instance of
 /// `attribute_key` beside `sub_attributes`.
 pub(crate) fn entity_state(type_key: i32, attribute_key: i32, sub_attributes: &[Value]) -> Value {
+    entity_state_of(type_key, &[number_instance(attribute_key, 0, sub_attributes)])
+}
+
+/// The state of an Entity of `type_key` holding `instances`.
+pub(crate) fn entity_state_of(type_key: i32, instances: &[Value]) -> Value {
     json!({
         "entity_type_name_keys": [type_key],
         "scope_paths": [],
-        "instances": [{
-            "created_at": QUEUED_AT,
-            "modified_at": QUEUED_AT,
-            "attribute_name_key": attribute_key,
-            "ordinal": 0,
-            "attribute_kind": 1,
-            "value_kind": 1,
-            "value_number": 21,
-            "dataset_key": "",
-            "sub_attributes": sub_attributes
-        }]
+        "instances": instances
     })
 }
 
-/// Queues a change of the Entity to the state `state` for a respond-async job.
-pub(crate) async fn insert_pending_change(pool: &PgPool, type_key: i32, state: &Value) -> Result<(), UpgradeTestError> {
+/// A Property instance of `attribute_key` at `ordinal` holding the number 21
+/// beside `sub_attributes`.
+pub(crate) fn number_instance(attribute_key: i32, ordinal: i32, sub_attributes: &[Value]) -> Value {
+    json!({
+        "created_at": QUEUED_AT,
+        "modified_at": QUEUED_AT,
+        "attribute_name_key": attribute_key,
+        "ordinal": ordinal,
+        "attribute_kind": 1,
+        "value_kind": 1,
+        "value_number": 21,
+        "dataset_key": "",
+        "sub_attributes": sub_attributes
+    })
+}
+
+/// A top-level seal instance at `ordinal`, which signs no attribute of the
+/// Entity: an `ngsildproof` Property whose object value is `proof`, beside
+/// `subproperties`.
+pub(crate) fn seal_instance(seal_key: i32, ordinal: i32, proof: &Value, subproperties: &Value) -> Value {
+    json!({
+        "created_at": QUEUED_AT,
+        "modified_at": QUEUED_AT,
+        "attribute_name_key": seal_key,
+        "ordinal": ordinal,
+        "attribute_kind": 1,
+        "value_kind": 5,
+        "value_object": proof,
+        "dataset_key": "",
+        "proof_seals": subproperties
+    })
+}
+
+/// One Attribute instance a queued change touched.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ChangedInstance<'a> {
+    /// The transition: 1 created, 2 updated, 3 deleted.
+    pub(crate) kind: i16,
+    /// The `attribute_names` key of the instance's attribute.
+    pub(crate) attribute_key: i32,
+    /// The instance's `datasetId`, `None` for the default instance.
+    pub(crate) dataset_id: Option<&'a str>,
+}
+
+/// A change of the Entity as a queue holds it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct QueuedChange<'a> {
+    /// The Entity's transition: 1 created, 2 modified, 3 deleted.
+    pub(crate) lifecycle: i16,
+    /// The state the change left the Entity in.
+    pub(crate) state: &'a Value,
+    /// The state before the change, when the change left the Entity in place.
+    pub(crate) previous: Option<&'a Value>,
+    /// The instances the change touched, in recorded order.
+    pub(crate) instances: &'a [ChangedInstance<'a>],
+}
+
+impl<'a> QueuedChange<'a> {
+    /// The creation of the Entity in the state `state`, touching no instance.
+    pub(crate) const fn creating(state: &'a Value) -> QueuedChange<'a> {
+        QueuedChange {
+            lifecycle: 1,
+            state,
+            previous: None,
+            instances: &[],
+        }
+    }
+
+    /// The transitions of the instances the change touched.
+    fn kinds(&self) -> Vec<i16> {
+        self.instances.iter().map(|instance| instance.kind).collect()
+    }
+
+    /// The `attribute_names` keys of the instances the change touched.
+    fn attribute_keys(&self) -> Vec<i32> {
+        self.instances.iter().map(|instance| instance.attribute_key).collect()
+    }
+
+    /// The `datasetId`s of the instances the change touched.
+    fn dataset_ids(&self) -> Vec<Option<&'a str>> {
+        self.instances.iter().map(|instance| instance.dataset_id).collect()
+    }
+}
+
+/// Queues `change` of the Entity for a respond-async job.
+pub(crate) async fn insert_pending_change(pool: &PgPool, type_key: i32, change: &QueuedChange<'_>) -> Result<(), UpgradeTestError> {
     let event = json!({
-        "lifecycle": 1,
+        "lifecycle": change.lifecycle,
         "entity_id": ENTITY_ID,
         "entity_type_name_keys": [type_key],
-        "change_kinds": [],
-        "change_attribute_name_keys": [],
-        "change_dataset_ids": [],
+        "change_kinds": change.kinds(),
+        "change_attribute_name_keys": change.attribute_keys(),
+        "change_dataset_ids": change.dataset_ids(),
         "occurred_at": QUEUED_AT,
         "origin": 1,
-        "entity_snapshot": state,
+        "entity_snapshot": change.state,
+        "previous_snapshot": change.previous,
         "entity_created_at": QUEUED_AT,
         "entity_modified_at": QUEUED_AT
     });
@@ -66,26 +146,24 @@ pub(crate) async fn insert_pending_change(pool: &PgPool, type_key: i32, state: &
     .await
 }
 
-/// Records a notification event for a change of the Entity to the state
-/// `state`.
-pub(crate) async fn insert_notification_event(pool: &PgPool, state: &Value) -> Result<(), UpgradeTestError> {
-    insert(
-        pool,
-        "notification_events",
-        vec![
-            ("created_at", instant(QUEUED_AT)),
-            ("committed_at", instant(QUEUED_AT)),
-            ("event_ordinal", Expr::val(0_i32)),
-            ("lifecycle", smallint(1)),
-            ("write_id", uuid("00000000-0000-4000-8000-0000000000c1")),
-            ("entity_id", Expr::val(ENTITY_ID)),
-            ("change_kinds", smallints(&[])),
-            ("change_attribute_name_keys", integers(&[])),
-            ("change_dataset_ids", texts(&[])),
-            ("entity_snapshot", composite(PostgresType::EntityStateRecord, state)),
-        ],
-    )
-    .await
+/// Records a notification event for `change` of the Entity.
+pub(crate) async fn insert_notification_event(pool: &PgPool, change: &QueuedChange<'_>) -> Result<(), UpgradeTestError> {
+    let mut row = vec![
+        ("created_at", instant(QUEUED_AT)),
+        ("committed_at", instant(QUEUED_AT)),
+        ("event_ordinal", Expr::val(0_i32)),
+        ("lifecycle", smallint(change.lifecycle)),
+        ("write_id", uuid("00000000-0000-4000-8000-0000000000c1")),
+        ("entity_id", Expr::val(ENTITY_ID)),
+        ("change_kinds", smallints(&change.kinds())),
+        ("change_attribute_name_keys", integers(&change.attribute_keys())),
+        ("change_dataset_ids", texts(&change.dataset_ids())),
+        ("entity_snapshot", composite(PostgresType::EntityStateRecord, change.state)),
+    ];
+    if let Some(previous) = change.previous {
+        row.push(("previous_snapshot", composite(PostgresType::EntityStateRecord, previous)));
+    }
+    insert(pool, "notification_events", row).await
 }
 
 /// An observation of the number 21 of `attribute_key` beside `sub_attributes`,

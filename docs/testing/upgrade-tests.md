@@ -15,8 +15,15 @@ The crate's one test target, `upgrade`, has two groups of tests.
 - A complete seal in current state becomes a typed seal of value kind 12, with its two seals in fields of their own and its proof typed.
 - A seal naming a type and a value that is no reference is dropped with its own sub-attributes.
 - A seal missing a proof member is dropped with its children, and the sibling behind it is kept with its parent renumbered.
-- A top-level `ngsildproof` leaves current state and the search row, nets out of the census ledgers, and takes its history streams, rows and instance claims with it.
+- Seals at the edges of what the broker accepts are kept: a URL port of 65535, leading zeros included, a `created` on the leap day of year 0000, and an IRI made of the first and last characters of the first three `ucschar` ranges. A port of 65536 and a noncharacter between two `ucschar` ranges drop their seal.
+- A top-level `ngsildproof` leaves current state and the search row, nets out of the census ledgers, and takes its history streams, rows and instance claims with it. The instances behind it in current state close up their ordinals, as a write removing it would.
+- The streams of a top-level `ngsildproof` are counted out of the stream census under every type the Entity's identity row records for its Evolution, the types the broker counts a stream under, and no type membership row is read for them.
 - A seal in a history row, a pending change snapshot, a notification event snapshot and an append intent entry is converted, and a top-level seal entry of an intent is dropped.
+- A top-level seal held only in the previous state of a pending change or a notification event is dropped, and the instances behind it close up their ordinals.
+- A top-level seal a pending change or a notification event touched leaves the change's three aligned arrays, its transition, attribute name and `datasetId` together, even when neither state holds it any longer.
+- In a database that names `ngsildproof`, a pending change, a notification event and an append intent that hold no seal keep the row versions v1.0.0 wrote, so the upgrade rewrites no queued row it does not convert.
+- Seals in history the columnstore holds are converted, and a top-level seal's stream leaves it, while the session lets one statement decompress a single row. The columnstore is turned on with the layout the broker gives it and every chunk is converted, as the broker does at runtime, since no migration does.
+- The upgrade leaves in `public` only the `seal_conversion_` functions a Snapshot branch created later calls again. The two that convert the queues are temporary and never reach the schema.
 - A database that never stored a seal upgrades with nothing changed.
 
 `lockstep` covers how every schema of a tenant database moves through the migrations together, as [Schema](../database/schema.md#migrations) describes.

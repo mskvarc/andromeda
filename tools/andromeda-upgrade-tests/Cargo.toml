@@ -29,6 +29,7 @@ andromeda-architecture-checks.workspace = true
 andromeda-json-literal.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-postgresql-seaquery.workspace = true
+andromeda-postgresql-temporal-store.workspace = true
 andromeda-snapshot.workspace = true
 chrono = "0.4.45"
 pretty_assertions = "1.4.1"

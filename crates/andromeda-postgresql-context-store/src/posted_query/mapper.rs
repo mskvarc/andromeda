@@ -12,6 +12,7 @@ use crate::{
 };
 use andromeda_json_literal::{JsonLiteral, admission::JsonLiteralError};
 use andromeda_jsonld::request_context::RequestContext;
+use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
 use andromeda_posted_query::{
     error::PostedQueryError,
     posted_query::{PostedQuery, PostedQueryKind},
@@ -62,7 +63,7 @@ pub(crate) fn held_row(query: &PostedQuery, expires_at: DateTime<Utc>) -> Result
     Ok([
         (PostedQueries::Kind, Expr::val(stored_kind(query.kind()).code())),
         (PostedQueries::ExpiresAt, Expr::val(expires_at)),
-        (PostedQueries::Digest, Expr::val(query.key().encode())),
+        (PostedQueries::Digest, stored_digest(query.key())),
         (PostedQueries::Query, cast(Expr::val(document), PostgresType::Json)),
         (PostedQueries::ContextLink, Expr::val(context.link_context().map(IriBuf::as_str))),
         (
@@ -70,6 +71,12 @@ pub(crate) fn held_row(query: &PostedQuery, expires_at: DateTime<Utc>) -> Result
             cast(Expr::val(context.body_context().map(JsonLiteral::text)), PostgresType::Json),
         ),
     ])
+}
+
+/// The `digest` value of the query `key` names: the digest's own bytes, which
+/// a page link spells in base64url.
+pub(crate) fn stored_digest(key: &PageQuery) -> SimpleExpr {
+    Expr::val(key.as_bytes().to_vec())
 }
 
 /// The posted query a live row of `kind` holds, the row carrying the columns
@@ -114,10 +121,11 @@ fn request_context(link: Option<String>, body: Option<JsonText<'_>>) -> Result<R
 mod tests {
     use crate::{
         json_text::JsonText,
-        posted_query::mapper::{StoredPostedQueryError, held_row, request_context},
+        posted_query::mapper::{StoredPostedQueryError, held_row, request_context, stored_digest},
     };
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::request_context::RequestContext;
+    use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
     use andromeda_posted_query::posted_query::{PostedQuery, PostedQueryKind};
     use chrono::Utc;
     use iri_rs::IriBuf;
@@ -150,6 +158,15 @@ mod tests {
     fn a_link_context_that_is_not_an_iri_does_not_read_back() {
         let read = request_context(Some("not an iri".to_owned()), None);
         assert!(matches!(read, Err(StoredPostedQueryError::ContextLink(_))), "{read:?}");
+    }
+
+    /// The column holds the digest's bytes, never the base64url token a page
+    /// link spells them with.
+    #[test]
+    fn a_digest_is_stored_as_its_bytes() {
+        let key = PageQuery::of(Some("type=Vehicle"));
+        let sql = Query::select().expr(stored_digest(&key)).to_string(PostgresQueryBuilder);
+        assert_eq!(sql, format!(r"SELECT '\x{}'", hex::encode_upper(key.as_bytes())));
     }
 
     /// The query and a body context are bound as text and cast to `json`, so
