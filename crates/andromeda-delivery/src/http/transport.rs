@@ -12,7 +12,7 @@ use crate::{
 };
 use andromeda_configuration::schema::link_field_layout::LinkFieldLayout;
 use andromeda_http_headers::link::field_layout::apply_link_field_layout;
-use andromeda_ngsi_ld_model::http_header_field::HttpHeaderField;
+use andromeda_ngsi_ld_model::notification_header_field::notification_header_field;
 use andromeda_outbound_http::{client::OutboundHttpPolicy, endpoint_guard::PrivateIpGuard};
 use andromeda_telemetry::delivery_ops::DeliveryTimer;
 use async_trait::async_trait;
@@ -238,21 +238,22 @@ fn notification_headers(req: &DeliveryRequest, link_field: LinkFieldLayout) -> H
         header_map.typed_insert(snapshot.clone());
     }
     for pair in &req.receiver_info {
-        match HttpHeaderField::try_from(pair) {
+        match notification_header_field(pair) {
             Ok(field) => {
                 header_map.append(field.name, field.value);
             }
             // Admission refuses such an entry, so one only reaches delivery from
-            // a resource stored without that check. It is surfaced rather than
-            // dropped in silence: a discarded `Authorization` header would
-            // deliver the notification unauthenticated.
+            // a resource stored without that check. Sending it would break the
+            // message the broker writes, and it is surfaced rather than dropped
+            // in silence: a discarded `Authorization` header would deliver the
+            // notification unauthenticated.
             Err(error) => {
                 warn!(
                     subscription_id = %req.subscription_id,
                     endpoint = %req.endpoint_uri,
                     header_key = %pair.key,
                     %error,
-                    "dropping receiverInfo entry that is not a valid HTTP header"
+                    "dropping receiverInfo entry that cannot be a notification header"
                 );
             }
         }
@@ -286,7 +287,8 @@ mod tests {
     use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, notification_media_type::NotificationMediaType};
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use andromeda_outbound_http::address_policy::AddressPolicy;
-    use reqwest::header::LINK;
+    use headers::HeaderMapExt;
+    use reqwest::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HOST, HeaderMap, HeaderValue, LINK, TRANSFER_ENCODING};
     use serde_json::json;
     use std::{
         io::{Error, ErrorKind},
@@ -621,5 +623,49 @@ mod tests {
 
         pretty_assertions::assert_eq!(lines.len(), 2, "{lines:?}");
         pretty_assertions::assert_eq!(lines[1], receiver_link);
+    }
+
+    /// A Subscription stored before admission refused these keys still holds
+    /// them, and its notification carries only the fields the broker and its
+    /// client write, beside the custom header.
+    #[test]
+    fn a_stored_receiver_info_naming_a_reserved_header_is_left_out_of_the_notification() {
+        let endpoint = Url::parse("http://receiver.example/notify").expect("a well-formed endpoint URI");
+        let subscription = Identifier::from_str("urn:ngsi-ld:Subscription:1").expect("a well-formed subscription id");
+        let context = NotificationContext::core();
+        let pairs = [
+            ("Content-Type", "text/plain"),
+            ("content-length", "5"),
+            ("Transfer-Encoding", "chunked"),
+            ("HOST", "elsewhere.example"),
+            ("Authorization", "Bearer abc"),
+        ]
+        .map(|(key, value)| KeyValuePair {
+            key: key.into(),
+            value: value.into(),
+        })
+        .to_vec();
+        let request = NotificationDelivery::builder()
+            .endpoint_uri(&endpoint)
+            .accept(Some(NotificationMediaType::Json))
+            .receiver_info(Some(&pairs))
+            .context(&context)
+            .tenant(None)
+            .subscription_id(&subscription)
+            .build()
+            .assemble(notification(&json!({"id": "urn:ngsi-ld:Notification:1", "type": "Notification"})));
+        let mut own = HeaderMap::new();
+        own.typed_insert(request.content_type);
+
+        let headers = notification_headers(&request, HttpTransportConfig::default().link_field);
+
+        pretty_assertions::assert_eq!(
+            headers.get_all(CONTENT_TYPE).iter().collect::<Vec<_>>(),
+            own.get_all(CONTENT_TYPE).iter().collect::<Vec<_>>()
+        );
+        assert!(headers.get(CONTENT_LENGTH).is_none(), "{headers:?}");
+        assert!(headers.get(TRANSFER_ENCODING).is_none(), "{headers:?}");
+        assert!(headers.get(HOST).is_none(), "{headers:?}");
+        pretty_assertions::assert_eq!(headers.get(AUTHORIZATION), Some(&HeaderValue::from_static("Bearer abc")));
     }
 }

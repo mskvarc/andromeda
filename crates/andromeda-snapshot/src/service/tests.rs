@@ -241,6 +241,27 @@ async fn patching_a_bad_receiver_info_onto_a_stored_http_endpoint_is_refused() {
 }
 
 #[tokio::test]
+async fn creating_a_snapshot_whose_receiver_info_names_a_framing_header_on_an_http_endpoint_is_refused() {
+    let refused = create_with("http://example.com/s", r#"[{"key": "Content-Length", "value": "5"}]"#).await;
+    assert!(
+        matches!(refused, Err(SnapshotError::Validation(SnapshotValidationReason::ReceiverInfo(_)))),
+        "{refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn patching_a_receiver_info_naming_a_framing_header_onto_a_stored_http_endpoint_is_refused() {
+    let service = service_holding(stored_snapshot(Some("http://example.com/s"), None));
+    let refused = service
+        .update(&snapshot_id(), patch(r#"{"receiverInfo": [{"key": "transfer-encoding", "value": "chunked"}]}"#))
+        .await;
+    assert!(
+        matches!(refused, Err(SnapshotError::Validation(SnapshotValidationReason::ReceiverInfo(_)))),
+        "{refused:?}"
+    );
+}
+
+#[tokio::test]
 async fn patching_the_endpoint_to_http_while_a_bad_receiver_info_is_stored_is_refused() {
     let service = service_holding(stored_snapshot(Some("mqtt://broker:1883/status"), Some(vec![bad_pair()])));
     let refused = service.update(&snapshot_id(), patch(r#"{"endpoint": "http://example.com/s"}"#)).await;

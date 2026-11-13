@@ -1,6 +1,6 @@
 //! The concrete reasons a Snapshot request is rejected as `BadRequestData`.
 
-use andromeda_ngsi_ld_model::{http_header_field::HttpHeaderFieldError, snapshot::SnapshotStatus};
+use andromeda_ngsi_ld_model::{notification_header_field::NotificationHeaderFieldError, snapshot::SnapshotStatus};
 use andromeda_ngsi_ld_query::error::QueryError;
 use thiserror::Error;
 
@@ -50,7 +50,8 @@ pub enum SnapshotValidationReason {
         status: SnapshotStatus,
     },
     /// An `http` or `https` endpoint's `receiverInfo` holds an entry that is not
-    /// an HTTP header field (clause 5.16.6, Table 5.2.22-1).
+    /// an HTTP header field (clause 5.16.6, Table 5.2.22-1), or one that names a
+    /// field the broker writes on every notification itself.
     #[error("invalid receiverInfo: {0}")]
-    ReceiverInfo(#[source] HttpHeaderFieldError),
+    ReceiverInfo(#[source] NotificationHeaderFieldError),
 }

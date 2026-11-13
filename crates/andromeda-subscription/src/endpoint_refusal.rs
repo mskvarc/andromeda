@@ -1,5 +1,6 @@
 //! Why the delivery bindings refused a subscription's notification endpoint.
 
+use andromeda_ngsi_ld_model::notification_header_field::ReservedHeader;
 use thiserror::Error;
 
 /// Why no delivery binding this broker was built with can serve an endpoint.
@@ -32,4 +33,8 @@ pub enum EndpointRefusal {
     /// An `http` or `https` endpoint's `receiverInfo` value is not an HTTP header field value.
     #[error("receiverInfo value is not a valid HTTP header field value")]
     ReceiverInfoHeaderValue,
+    /// An `http` or `https` endpoint's `receiverInfo` key names a header field
+    /// the broker writes on every notification itself.
+    #[error("receiverInfo key names the {0} header, which the broker writes on every notification itself")]
+    ReceiverInfoReservedHeader(ReservedHeader),
 }
