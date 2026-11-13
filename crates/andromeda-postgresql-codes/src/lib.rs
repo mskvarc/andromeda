@@ -72,6 +72,9 @@ pub mod posted_query_kind;
 pub mod recorded_shape;
 /// The one pattern every migration-owned compact code domain is declared with.
 pub mod registry;
+/// The freeze every compact code registry declares, gathered for a check
+/// against the seal ledger.
+pub mod registry_freeze;
 /// The persisted value shape of one scope-history row.
 pub mod scope_value_kind;
 /// The persisted lifecycle state of one snapshot.

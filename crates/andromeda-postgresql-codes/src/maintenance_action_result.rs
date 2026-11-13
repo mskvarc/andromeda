@@ -7,6 +7,7 @@ compact_code_registry! {
     ///
     /// An Andromeda operational concept, so the labels are kebab-case.
     MaintenanceActionResultCode {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 7,
         frozen_digest: 0xb861_040e_5e11_ec46,
         codes: {

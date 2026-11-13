@@ -7,6 +7,7 @@ compact_code_registry! {
     ///
     /// The labels are the specification's own mode tokens.
     CsrModeCode {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 4,
         frozen_digest: 0xc3e8_b894_eb08_ceb5,
         codes: {

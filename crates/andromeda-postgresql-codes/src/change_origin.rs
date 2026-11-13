@@ -9,6 +9,7 @@ compact_code_registry! {
     /// the notification of a forwarded change is built from what the context
     /// source answered rather than from a local Entity.
     ChangeOriginCode {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 2,
         frozen_digest: 0x367f_2838_f6a4_8499,
         codes: {

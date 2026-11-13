@@ -20,6 +20,7 @@ compact_code_registry! {
     /// Andromeda owns this vocabulary rather than the specification, so the
     /// labels are kebab-case.
     RecordedShape {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 10,
         frozen_digest: 0x8a8f_bc94_b079_29bb,
         codes: {

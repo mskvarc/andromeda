@@ -17,6 +17,7 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-postgresql-schema.workspace = true
 cefact-units = "1.0.0"
 derive_more = { version = "2.1.1", features = ["display"] }
+semver = "1.0.28"
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
 

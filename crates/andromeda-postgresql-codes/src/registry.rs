@@ -20,6 +20,14 @@
 //! beyond them is silent while altering, reordering or removing any of them
 //! fails.
 //!
+//! The frozen prefix is only as good as the moment it was last brought up to
+//! date. A stable release ships every code its registries assign when it is
+//! sealed, so each registry names the release its prefix was last brought up
+//! to, and that name has to be the last release the seal ledger holds. A
+//! check against the ledger fails on the commit that seals a release until
+//! every registry names it, which is when its prefix and digest are brought up
+//! to every code the release ships.
+//!
 //! An unrecognised number fails. Decoding is a [`TryFrom<i16>`] whose error is
 //! [`UnknownCompactCode`]; nothing coerces an unknown number to a default,
 //! because a row written by a newer release must be reported as unreadable
@@ -95,8 +103,8 @@ const fn mix(hash: u64, byte: u8) -> u64 {
 ///
 /// Expands to the member enum with its numbers written as explicit `i16`
 /// discriminants, the `ALL` slice of members in registration order, the
-/// `REGISTRATIONS`, `FROZEN_PREFIX` and `FROZEN_DIGEST` constants that state
-/// the domain's on-disk contract, a `code` accessor, a stable `label`
+/// `REGISTRATIONS`, `FROZEN_AT`, `FROZEN_PREFIX` and `FROZEN_DIGEST` constants
+/// that state the domain's on-disk contract, a `code` accessor, a stable `label`
 /// accessor, a [`TryFrom<i16>`] whose error is
 /// [`UnknownCompactCode`], and a `#[cfg(test)]` module asserting the invariants
 /// that make the numbers safe to persist: ascending unique numbers, unique
@@ -108,17 +116,20 @@ const fn mix(hash: u64, byte: u8) -> u64 {
 /// be a [`CompactCodeDomain`] variant, and may declare only one registry, since
 /// the generated test module has a fixed name.
 ///
-/// `frozen_prefix` is how many leading registrations a released migration has
-/// already written to disk, and `frozen_digest` is
-/// [`frozen_prefix_digest`] over exactly those. Appending a member leaves both
-/// untouched; changing one of the frozen registrations fails the generated
-/// test, and the failure message carries the digest that would have to be
-/// blessed if the change is genuinely intended.
+/// `frozen_at` is the stable release `vMAJOR.MINOR.PATCH`, written as
+/// `(MAJOR, MINOR, PATCH)`, that the freeze was last brought up to, and is
+/// always the last sealed release. `frozen_prefix` is how many leading
+/// registrations the releases up to it shipped, and `frozen_digest` is
+/// [`frozen_prefix_digest`] over exactly those. Appending a member leaves all
+/// three untouched; changing one of the frozen registrations fails the
+/// generated test, and the failure message carries the digest that would have
+/// to be blessed if the change is genuinely intended.
 ///
 /// ```ignore
 /// compact_code_registry! {
 ///     /// What the domain means.
 ///     ExampleKind {
+///         frozen_at: (1, 0, 0),
 ///         frozen_prefix: 1,
 ///         frozen_digest: 0x0000_0000_0000_0000,
 ///         codes: {
@@ -133,6 +144,7 @@ macro_rules! compact_code_registry {
     (
         $(#[$registry_doc:meta])*
         $name:ident {
+            frozen_at: ($frozen_major:literal, $frozen_minor:literal, $frozen_patch:literal),
             frozen_prefix: $frozen_prefix:literal,
             frozen_digest: $frozen_digest:literal,
             codes: {
@@ -160,7 +172,12 @@ macro_rules! compact_code_registry {
             /// The persisted number and stable label of every member.
             pub const REGISTRATIONS: &'static [(i16, &'static str)] = &[$(($code, $label)),+];
 
-            /// How many leading registrations a released migration has written to disk.
+            /// The stable release the freeze was last brought up to, the last
+            /// one sealed.
+            pub const FROZEN_AT: semver::Version = semver::Version::new($frozen_major, $frozen_minor, $frozen_patch);
+
+            /// How many leading registrations the releases up to
+            /// [`FROZEN_AT`](Self::FROZEN_AT) shipped.
             pub const FROZEN_PREFIX: usize = $frozen_prefix;
 
             /// The digest those frozen registrations were released at.

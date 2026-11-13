@@ -11,6 +11,7 @@ compact_code_registry! {
     /// differs; the entry carries its kind because one intent holds them all,
     /// in the order the write recorded them.
     TemporalEntryKind {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 4,
         frozen_digest: 0x37fa_ad2d_c04d_a049,
         codes: {

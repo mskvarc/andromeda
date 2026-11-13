@@ -7,6 +7,7 @@ compact_code_registry! {
     /// name, or a JSON array of names (which may hold one), read back in the
     /// shape it was written in.
     EntityTypeShapeCode {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 2,
         frozen_digest: 0x2c4b_609e_ccbc_e9c0,
         codes: {

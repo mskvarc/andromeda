@@ -7,6 +7,7 @@ compact_code_registry! {
     ///
     /// The labels are the specification's own status tokens.
     CsrStatusCode {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 2,
         frozen_digest: 0xad70_9d61_3ed2_a231,
         codes: {

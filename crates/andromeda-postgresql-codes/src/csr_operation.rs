@@ -20,6 +20,7 @@ compact_code_registry! {
     /// The labels are the specification's camel-case tokens, which is what a
     /// registration document carries on the wire.
     CsrOperationCode {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 48,
         frozen_digest: 0x2f60_2bf1_0b69_3adc,
         codes: {

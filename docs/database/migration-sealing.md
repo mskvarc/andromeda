@@ -51,6 +51,12 @@ The canonical layout can still change after a seal, because sealed files are exe
 
 It then appends one section with every unsealed migration and prints each file it sealed. Sealing is part of cutting the release. Run it on the release commit, commit the ledger with it, and then tag.
 
+## Compact codes
+
+The broker also writes small numeric codes into `smallint` columns, such as the value shape of a history row or the status of a tenant. Each code domain is a registry in `andromeda-postgresql-codes`. Rows written with a code outlive the release that wrote them, so a code a release ships keeps its number and its label for good. A registry freezes its leading codes with three values, `frozen_at`, `frozen_prefix` and `frozen_digest`, and its own tests fail when a frozen code is renumbered, relabelled, reordered or removed. Codes after the frozen prefix haven't shipped yet and can still change.
+
+A release ships every code its registries assign when it is sealed. So `frozen_at` names the release the freeze was last brought up to, and it always has to be the last release in the ledger. The `compact_code_freeze` test of `andromeda-sql` reads the ledger and fails for every registry that names any other release. For each one, the failure gives the three values that freeze every code the registry assigns. The test runs in the `sql` job of `ci`, so the commit that seals a release fails until every registry is frozen at it, and the release workflow refuses a tag whose commit hasn't passed `ci`.
+
 ## Verifying
 
 `andromeda-sql verify` fails, naming the file and the broken rule, in these cases.

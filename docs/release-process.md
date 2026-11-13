@@ -5,11 +5,12 @@ A release is cut by pushing a tag, `vX.Y.Z` for a stable release or `vX.Y.Z-alph
 ## Stable release
 
 1. On the release commit, with every migration the release ships in place, run `cargo run -p andromeda-sql -- seal vX.Y.Z`. It writes the release's section into `migrations/seal-ledger.toml`, creating the file on the first seal.
-2. Write the release notes to a Markdown file outside the repository, here `../vX.Y.Z.md`. [Release notes](#release-notes) says what goes in it.
-3. Check that `git cliff --bumped-version` prints `vX.Y.Z`. It reads the commits since the last stable release and calls for a major release when one of them is breaking, a minor release when one adds a feature, and a patch release otherwise.
-4. Write the changelog with `GIT_CLIFF_TAG=vX.Y.Z git cliff --with-tag-message "$(cat ../vX.Y.Z.md)" -o CHANGELOG.md`. It rewrites the whole file. Never pass `--unreleased` or `--prepend`, which stop at the newest pre-release tag and leave out the commits before it.
-5. Commit the ledger and the changelog with a `chore(release):` header, which keeps the commit itself out of the changelog, and merge it to `main` the usual way, so `ci` checks the new section against the base.
-6. Once `ci` has passed on that commit, tag it with `git tag -a --cleanup=verbatim -F ../vX.Y.Z.md vX.Y.Z` and push the tag. Without `--cleanup=verbatim`, git deletes every line of the message that starts with `#`, so the headings would be lost.
+2. Freeze every compact code the release ships. Run `cargo nextest run -p andromeda-sql -E 'test(compact_code_freeze)'`, which fails once for each registry in `crates/andromeda-postgresql-codes/src/` and gives the `frozen_at`, `frozen_prefix` and `frozen_digest` that freeze every code the registry assigns. Set those three values in each registry it names and run it again until it passes. [Migration sealing](database/migration-sealing.md#compact-codes) explains why.
+3. Write the release notes to a Markdown file outside the repository, here `../vX.Y.Z.md`. [Release notes](#release-notes) says what goes in it.
+4. Check that `git cliff --bumped-version` prints `vX.Y.Z`. It reads the commits since the last stable release and calls for a major release when one of them is breaking, a minor release when one adds a feature, and a patch release otherwise.
+5. Write the changelog with `GIT_CLIFF_TAG=vX.Y.Z git cliff --with-tag-message "$(cat ../vX.Y.Z.md)" -o CHANGELOG.md`. It rewrites the whole file. Never pass `--unreleased` or `--prepend`, which stop at the newest pre-release tag and leave out the commits before it.
+6. Commit the ledger, the frozen registries and the changelog with a `chore(release):` header, which keeps the commit itself out of the changelog, and merge it to `main` the usual way, so `ci` checks the new section against the base.
+7. Once `ci` has passed on that commit, tag it with `git tag -a --cleanup=verbatim -F ../vX.Y.Z.md vX.Y.Z` and push the tag. Without `--cleanup=verbatim`, git deletes every line of the message that starts with `#`, so the headings would be lost.
 
 The seal always comes before the tag, so anything that changes between them, an edited migration or a new one, fails the release.
 

@@ -8,7 +8,7 @@ use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::str::FromStr;
 
 /// A stable release, ordered by its semantic version.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display, SerializeDisplay, DeserializeFromStr)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::AsRef, derive_more::Display, SerializeDisplay, DeserializeFromStr)]
 #[display("v{_0}")]
 pub struct ReleaseVersion(semver::Version);
 

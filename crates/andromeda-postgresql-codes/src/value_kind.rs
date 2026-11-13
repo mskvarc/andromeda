@@ -24,6 +24,7 @@ compact_code_registry! {
     /// Andromeda owns this vocabulary rather than the specification, so the
     /// labels are kebab-case.
     ValueKind {
+        frozen_at: (1, 0, 0),
         frozen_prefix: 12,
         frozen_digest: 0xe1d0_1f1b_808a_d8b1,
         codes: {
