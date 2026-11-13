@@ -43,12 +43,9 @@ use andromeda_postgresql_context_store::{
     entity_map::repo::EntityMapRepository,
     jsonld_context::repo::JsonLdContextRepository,
     posted_query::repo::PostedQueryRepository,
-    snapshot::{
-        branch_upgrade::{SnapshotBranchState, snapshot_branch_state},
-        repo::SnapshotRepository,
-    },
+    snapshot::repo::SnapshotRepository,
     subscription::repo::SubscriptionRepository,
-    tenant_migration::{TenantSchemaState, migrate_single_tenant_db, tenant_schema_state, upgrade_single_tenant_snapshot_branches},
+    tenant_migration::{TenantSchemaState, migrate_single_tenant_db, tenant_schema_state},
 };
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_pool::{pool_options::configure_pool_options, pool_share::PoolShare};
@@ -141,19 +138,14 @@ pub(super) struct EntityStoragePorts {
     pub(super) entity_types: Arc<dyn EntityTypeReader>,
 }
 
-/// Migrate a tenant whose schema is behind this binary, or upgrade its
-/// Snapshot branches when only they are.
+/// Migrate a tenant whose schema is behind this binary.
 ///
-/// A current schema can still hold Snapshot branches behind this binary: the
-/// tenant was migrated by a replica that has not upgraded them, or an earlier
-/// upgrade quarantined one. One `EXISTS` probe over the serving pool decides
-/// whether the direct connection is opened at all.
+/// The migration that stamps a tenant's contract brings every Snapshot branch
+/// schema through the same migrations first, so a current contract covers the
+/// whole database and only a tenant behind it opens the direct connection.
 async fn bring_schema_current(pool: &PgPool, migration_url: &Url, defaults: &DatabaseDefaults, acquire_timeout: Duration) -> Result<(), TenantAssemblyError> {
     match tenant_schema_state(pool).await? {
-        TenantSchemaState::Current => match snapshot_branch_state(pool).await? {
-            SnapshotBranchState::Current => {}
-            SnapshotBranchState::Behind => upgrade_single_tenant_snapshot_branches(migration_url, acquire_timeout).await?,
-        },
+        TenantSchemaState::Current => {}
         TenantSchemaState::NeedsMigration => migrate_single_tenant_db(migration_url, defaults, acquire_timeout).await?,
     }
     Ok(())

@@ -2,13 +2,16 @@
 //! released schema, seeded by the test, upgraded to this build's schema and
 //! dropped.
 
-use crate::{release_schema::v1_0_0_migrator, upgrade_database_error::UpgradeDatabaseError, upgrade_server::UpgradeServer};
+use crate::{release_schema::V1_0_0_LAST_MIGRATION, upgrade_database_error::UpgradeDatabaseError, upgrade_server::UpgradeServer};
+use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
 use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
+use andromeda_postgresql_branch::{snapshot_schema_name, snapshot_search_path};
 use andromeda_postgresql_context_store::{
+    migration_set::{branch::branch_migrator, migration_version::MigrationVersion, platform::platform_migrator, tenant::tenant_migrator},
     tenant_database::{DatabaseDrop, create_database_if_missing, drop_database_unless_in_use},
-    tenant_migration::{migrate_tenant_db, open_schema_change_pool},
+    tenant_migration::{migrate_platform_db, migrate_tenant_db, open_schema_change_pool},
 };
-use andromeda_postgresql_pool::database_url::DatabaseUrl;
+use andromeda_postgresql_pool::{database_url::DatabaseUrl, pool_options::configure_pool_options, schema_change_lock::schema_change_connect_options};
 use andromeda_retry::{retry_policy::RetryPolicy, schedule::BackoffSchedule, tokio_retry_delay::TokioRetryDelay};
 use sqlx::PgPool;
 use std::{num::NonZeroU32, time::Duration};
@@ -26,7 +29,8 @@ const DROP_RETRY: RetryPolicy = RetryPolicy {
 };
 
 /// A database created for one rehearsal, with the one connection its migrations
-/// and its test share.
+/// and its test share in `public`. A Snapshot branch schema is reached through
+/// a pool of its own.
 #[derive(Debug)]
 pub struct UpgradeDatabase {
     /// The server's URL, which creating and dropping the database go through.
@@ -59,16 +63,61 @@ impl UpgradeDatabase {
         })
     }
 
-    /// Applies the tenant migrations v1.0.0 sealed, leaving the database as a
-    /// v1.0.0 tenant is.
+    /// Applies the tenant migrations v1.0.0 sealed, leaving `public` as a
+    /// v1.0.0 tenant holds it.
     ///
     /// # Errors
     ///
     /// Returns [`UpgradeDatabaseError::ReleaseMigration`] when a migration
     /// fails.
     pub async fn migrate_to_v1_0_0(&self) -> Result<(), UpgradeDatabaseError> {
-        v1_0_0_migrator().run(&self.pool).await?;
+        self.migrate_public_through(V1_0_0_LAST_MIGRATION).await
+    }
+
+    /// Applies the tenant migrations through `through` in `public` alone,
+    /// leaving every Snapshot branch schema where it is, as an upgrade cut
+    /// short after `public` applied them leaves the database.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UpgradeDatabaseError::ReleaseMigration`] when a migration
+    /// fails.
+    pub async fn migrate_public_through(&self, through: MigrationVersion) -> Result<(), UpgradeDatabaseError> {
+        tenant_migrator().run_to(through.get(), &self.pool).await?;
         Ok(())
+    }
+
+    /// Creates the branch schema `branch` of the Snapshot `key` and applies
+    /// the branch migrations through `through` in it, as the broker's branch
+    /// migrator does: the schema first on the search path, recorded in the
+    /// schema's own ledger.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UpgradeDatabaseError::Connection`] when the schema cannot be
+    /// reached, and [`UpgradeDatabaseError::ReleaseMigration`] when a
+    /// migration fails.
+    pub async fn build_branch_schema(&self, key: SnapshotKey, branch: SnapshotBranch, through: MigrationVersion) -> Result<(), UpgradeDatabaseError> {
+        let pool = self.branch_pool(key, branch).await?;
+        let mut migrator = branch_migrator(key, branch);
+        migrator.create_schema(snapshot_schema_name(key, branch));
+        let built = migrator.run_to(through.get(), &pool).await;
+        pool.close().await;
+        Ok(built?)
+    }
+
+    /// A pool whose one connection resolves an unqualified relation in the
+    /// branch schema `branch` of the Snapshot `key` first, and a tenant-global
+    /// one in `public`, as the broker's statements on that branch do. The test
+    /// closes it before it drops the database.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UpgradeDatabaseError::Connection`] when the database cannot
+    /// be reached.
+    pub async fn branch_pool(&self, key: SnapshotKey, branch: SnapshotBranch) -> Result<PgPool, UpgradeDatabaseError> {
+        let options = schema_change_connect_options(self.url.as_str())?.options([("search_path", snapshot_search_path(key, branch))]);
+        Ok(configure_pool_options(1, ACQUIRE_TIMEOUT).connect_with(options).await?)
     }
 
     /// Applies every migration this build embeds that the database lacks, as
@@ -81,6 +130,37 @@ impl UpgradeDatabase {
     /// connection cannot be opened again.
     pub async fn migrate_to_current(&mut self) -> Result<(), UpgradeDatabaseError> {
         migrate_tenant_db(&self.pool).await?;
+        self.reconnect().await
+    }
+
+    /// Applies the platform migrations v1.0.0 sealed, then the tenant
+    /// migrations it sealed, leaving the database as v1.0.0 holds the platform
+    /// database, which is also the default tenant's.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UpgradeDatabaseError::ReleaseMigration`] when a migration
+    /// fails.
+    pub async fn migrate_platform_to_v1_0_0(&self) -> Result<(), UpgradeDatabaseError> {
+        platform_migrator().run_to(V1_0_0_LAST_MIGRATION.get(), &self.pool).await?;
+        self.migrate_to_v1_0_0().await
+    }
+
+    /// Applies every migration this build embeds that the platform database
+    /// lacks, as the broker does when it starts, then opens the connection
+    /// again so no statement prepared against the earlier schema is reused.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UpgradeDatabaseError`] when a migration fails or the
+    /// connection cannot be opened again.
+    pub async fn migrate_platform_to_current(&mut self) -> Result<(), UpgradeDatabaseError> {
+        migrate_platform_db(&self.pool).await?;
+        self.reconnect().await
+    }
+
+    /// Closes the connection and opens a new one.
+    async fn reconnect(&mut self) -> Result<(), UpgradeDatabaseError> {
         self.pool.close().await;
         self.pool = open_schema_change_pool(&self.url, ACQUIRE_TIMEOUT).await?;
         Ok(())

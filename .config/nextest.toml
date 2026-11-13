@@ -1,5 +1,5 @@
 # The default profile runs the workspace's unit tests, locally and in CI; `suite` and `suite-verdict` belong to
-# andromeda-test-suite, and `upgrade` to andromeda-upgrade-tests.
+# andromeda-test-suite, and `upgrade` and `upgrade-verdict` to andromeda-upgrade-tests.
 
 # An inheriting profile takes its parent's overrides from nextest 0.9.145 on; an older nextest would run `suite-verdict`
 # with no test group at all.
@@ -21,14 +21,15 @@ private-tenants = { max-threads = 4 }
 pgbouncer = { max-threads = 1 }
 
 # The test targets of andromeda-upgrade-tests rehearse upgrades on a PostgreSQL server, which a unit-test run has none
-# of, so every profile but `upgrade` leaves them out and keeps the crate's unit tests. A filterset given on the command
-# line narrows this set, never widens it.
+# of, so every profile but `upgrade` and `upgrade-verdict`, which inherits it, leaves them out and keeps the crate's
+# unit tests. A filterset given on the command line narrows this set, never widens it.
 [profile.default]
 default-filter = 'not (package(andromeda-upgrade-tests) & kind(test))'
 
 # The large geometry test bounds the ratio of two decode times measured in one process; the CPU load of tests running
 # beside it skews that ratio, so it runs alone. It is named by its test rather than its binary, because nextest checks
-# every binary a filter names against the binaries it knows, and a run from the suite's archive knows only the suite's.
+# every binary a filter names against the binaries it knows, and a run from the runner's archive knows only those of the
+# suite and the upgrade rehearsals.
 [[profile.default.overrides]]
 filter = 'package(andromeda-http-extraction) & test(=a_million_position_polygon_body_decodes_without_a_tree)'
 threads-required = "num-test-threads"
@@ -195,6 +196,18 @@ inherits = "suite"
 [profile.suite-verdict.junit]
 path = "junit.xml"
 
-# The upgrade rehearsals, on the server `ANDROMEDA_UPGRADE_TESTS__SERVER` names.
+# The upgrade rehearsals, on the server `ANDROMEDA_UPGRADE_TESTS__SERVER` names. A failure is never retried and stops
+# no other rehearsal, as in the suite. A rehearsal migrates a few databases in seconds; one still running after five
+# minutes waits on a lock it will never get.
 [profile.upgrade]
 default-filter = 'package(andromeda-upgrade-tests)'
+retries = 0
+fail-fast = false
+slow-timeout = { period = "60s", terminate-after = 5 }
+
+# The upgrade tree's run is the rehearsals plus a JUnit report.
+[profile.upgrade-verdict]
+inherits = "upgrade"
+
+[profile.upgrade-verdict.junit]
+path = "junit.xml"

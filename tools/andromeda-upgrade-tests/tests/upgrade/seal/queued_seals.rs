@@ -1,7 +1,7 @@
 //! Seals held in history rows and in the three queues are converted where
 //! they stand, and a top-level seal entry of an append intent is dropped.
 
-use crate::{
+use crate::fixtures::{
     current_state::insert_entity,
     history::{InstanceIdentity, insert_history_row, insert_stream},
     observed::{assert_typed_seal, single},

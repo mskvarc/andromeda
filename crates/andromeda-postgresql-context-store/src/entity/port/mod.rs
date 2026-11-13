@@ -51,7 +51,7 @@ fn classify(error: &ContextStoreError) -> EntityError {
         | ContextStoreError::ContextMapper(_)
         | ContextStoreError::Migration(_)
         | ContextStoreError::SchemaContract(_)
-        | ContextStoreError::BranchVersion(_)
+        | ContextStoreError::SnapshotMigration(_)
         | ContextStoreError::StatementBuild(_)
         | ContextStoreError::ChangeEventRecord(_)
         | ContextStoreError::StateRecord(_)

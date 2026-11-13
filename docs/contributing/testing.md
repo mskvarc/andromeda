@@ -20,13 +20,17 @@ Unit tests sit beside the code they test in `#[cfg(test)]` modules. [Getting sta
 | `pgbouncer` | Running behind PgBouncer |
 | `interoperability` | The ported ETSI interoperability cases, run across several brokers |
 
-Each tree runs against a Docker Compose stack. Run one with `tools/andromeda-test-suite/run-suite.sh <tree>`, which is what CI runs. [Test suite](../testing/test-suite.md) describes the stacks, how to run a tree by hand, and why two runs can't share a Docker host. The `pgbouncer` stack is very heavy, and needs a host with a lot of memory. It is very resource intensive. CI doesn't run it.
+Each tree runs against a Docker Compose stack. Run one with `tools/andromeda-test-suite/run-suite.sh <tree>`, which is what CI runs. The script also runs the `upgrade` tree, which holds the upgrade rehearsals described below rather than tests of the suite. [Test suite](../testing/test-suite.md) describes the stacks, how to run a tree by hand, and why two runs can't share a Docker host. The `pgbouncer` stack is very heavy, and needs a host with a lot of memory. It is very resource intensive. CI doesn't run it.
 
 The suite isn't a default workspace member, so a plain `cargo clippy` skips it. CI lints it with the rest of the workspace, and you can lint it on its own the same way.
 
 ```sh
 cargo clippy -p andromeda-test-suite --all-targets --all-features -- -D warnings
 ```
+
+## Upgrade rehearsals
+
+`tools/andromeda-upgrade-tests` builds databases at the schema an earlier release sealed, fills them with the rows that release stored, in the live branch and in Snapshot branches, and applies the migrations of the working tree, as the broker does when it opens a tenant. A migration that rewrites stored data, and a change to how the migrations reach the schemas of a tenant database, gets a rehearsal there. The rehearsals need a PostgreSQL server and no broker. CI runs them as the `upgrade` tree through `run-suite.sh`, and [Upgrade tests](../testing/upgrade-tests.md) describes how to run them on the host.
 
 ## The PostgreSQL image
 

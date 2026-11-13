@@ -19,7 +19,6 @@ use andromeda_ngsi_ld_model::{snapshot::SnapshotStatus, subscription::Subscripti
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
 use andromeda_postgresql_schema::{
-    branch_schema_version::BranchSchemaVersion,
     csr::Csr,
     current::Entities,
     entity_map::EntityMaps,
@@ -27,7 +26,7 @@ use andromeda_postgresql_schema::{
     notification::NotificationDeliveries,
     posted_query::PostedQueries,
     queue::{PendingSideEffects, TemporalAppendIntents},
-    snapshot::{SnapshotNotificationOutbox, SnapshotPreparation, Snapshots, branch_is_current},
+    snapshot::{SnapshotNotificationOutbox, SnapshotPreparation, Snapshots},
     subscription_forwarding::ForwardedSubscriptionClaims,
     subscriptions::Subscriptions,
 };
@@ -62,7 +61,7 @@ enum Unleased {
 /// `SELECT LEAST(...)` of the earliest due instant in each queue and expiry
 /// source of the live branch and the tenant, a single row whose one nullable
 /// column is the soonest, or NULL when nothing is due.
-pub(crate) fn least_due_select(current: BranchSchemaVersion) -> SelectStatement {
+pub(crate) fn least_due_select() -> SelectStatement {
     let sources = vec![
         claimable_min(
             NotificationDeliveries::Table,
@@ -88,7 +87,7 @@ pub(crate) fn least_due_select(current: BranchSchemaVersion) -> SelectStatement 
             TemporalAppendIntents::LeaseUntil,
             Cond::all(),
         ),
-        preparing_min(current),
+        preparing_min(),
         expiry_min(Entities::Table, Entities::ExpiresAt),
         expiry_min(Entities::Table, Entities::MinAttributeExpiresAt),
         subscription_expiry_min(),
@@ -190,16 +189,12 @@ fn heap_only_claimable_min(
 
 /// A scalar subquery of when the earliest still-preparing snapshot next needs a
 /// preparation tick: its lease expiry, or now when it holds no lease.
-///
-/// A quarantined snapshot is left out: the claim never takes one, so counting
-/// it would report the tenant due forever and wake it on every pass.
-fn preparing_min(current: BranchSchemaVersion) -> SimpleExpr {
+fn preparing_min() -> SimpleExpr {
     let mut select = Query::select();
     select
         .expr(Func::min(Func::coalesce([Expr::col(SnapshotPreparation::LeaseUntil), now()])))
         .from(SnapshotPreparation::Table)
-        .and_where(Expr::col(SnapshotPreparation::Status).eq(stored_snapshot_status(SnapshotStatus::Preparing).code()))
-        .and_where(branch_is_current(current));
+        .and_where(Expr::col(SnapshotPreparation::Status).eq(stored_snapshot_status(SnapshotStatus::Preparing).code()));
     scalar(select)
 }
 
@@ -286,11 +281,10 @@ mod tests {
     use crate::pending_work::due_sources::{branch_delivery_due_select, least_due_select};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
-    use andromeda_postgresql_schema::branch_schema_version::BranchSchemaVersion;
     use sea_query::PostgresQueryBuilder;
 
     fn least_sql() -> String {
-        least_due_select(BranchSchemaVersion::try_from(26_i64).expect("a positive version")).to_string(PostgresQueryBuilder)
+        least_due_select().to_string(PostgresQueryBuilder)
     }
 
     /// A delivery queued on a published Snapshot branch is an obligation of the
@@ -341,10 +335,6 @@ mod tests {
         let sql = least_sql();
         assert!(sql.contains("FROM \"snapshot_preparation\""), "{sql}");
         assert!(sql.contains("\"status\" = 1"), "only preparing snapshots, by code: {sql}");
-        assert!(
-            sql.contains("\"snapshot_preparation\".\"branch_schema_version\" >= 26"),
-            "a quarantined snapshot never keeps the tenant due: {sql}"
-        );
     }
 
     #[test]

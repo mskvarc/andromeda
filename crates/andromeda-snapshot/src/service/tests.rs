@@ -1,5 +1,4 @@
 use crate::{
-    branch_condition::BranchCondition,
     error::SnapshotError,
     preparation_start::PreparationStart,
     service::{SnapshotService, SnapshotServiceConfig},
@@ -30,8 +29,8 @@ fn snapshot_id() -> Identifier {
     SNAPSHOT_ID.parse().expect("valid snapshot identifier")
 }
 
-fn service(condition: BranchCondition) -> SnapshotService {
-    service_holding(stored_snapshot(None, None), condition)
+fn service() -> SnapshotService {
+    service_holding(stored_snapshot(None, None))
 }
 
 fn stored_snapshot(endpoint: Option<&str>, receiver_info: Option<Vec<KeyValuePair>>) -> Snapshot {
@@ -55,8 +54,8 @@ fn bad_pair() -> KeyValuePair {
     }
 }
 
-fn service_holding(snapshot: Snapshot, condition: BranchCondition) -> SnapshotService {
-    service_over(StoreDouble::new(snapshot, condition, ClaimHold::Held))
+fn service_holding(snapshot: Snapshot) -> SnapshotService {
+    service_over(StoreDouble::new(snapshot, ClaimHold::Held))
 }
 
 fn service_over(store: StoreDouble) -> SnapshotService {
@@ -87,7 +86,7 @@ impl PreparationStart for StartedPreparations {
 fn preparing_a_created_snapshot_starts_its_preparation_through_the_port() {
     let started = Arc::new(StartedPreparations::default());
     let service = SnapshotService::new(
-        Arc::new(StoreDouble::new(stored_snapshot(None, None), BranchCondition::Current, ClaimHold::Held)),
+        Arc::new(StoreDouble::new(stored_snapshot(None, None), ClaimHold::Held)),
         Some(Arc::clone(&started) as Arc<dyn PreparationStart>),
         None,
         service_config(),
@@ -98,22 +97,9 @@ fn preparing_a_created_snapshot_starts_its_preparation_through_the_port() {
     pretty_assertions::assert_eq!(*started.0.lock().expect("the record is not poisoned"), vec![snapshot_id()]);
 }
 
-/// A Snapshot whose branch is behind the binary is refused for scoping with
-/// an error naming it, not reported absent: it exists and is still reaped,
-/// it just cannot be served until its branch upgrade succeeds.
 #[tokio::test]
-async fn a_quarantined_snapshot_is_refused_for_scoping_by_name() {
-    let refused = service(BranchCondition::Quarantined).validate_for_scoping(&snapshot_id()).await;
-    match refused {
-        Err(SnapshotError::Quarantined { identifier }) => assert_eq!(identifier, snapshot_id()),
-        other => panic!("a quarantined snapshot must be refused as quarantined, got {other:?}"),
-    }
-}
-
-/// A current branch with a prepared status scopes the request.
-#[tokio::test]
-async fn a_current_prepared_snapshot_scopes_the_request() {
-    let scoped = service(BranchCondition::Current).validate_for_scoping(&snapshot_id()).await;
+async fn a_prepared_snapshot_scopes_the_request() {
+    let scoped = service().validate_for_scoping(&snapshot_id()).await;
     assert!(matches!(&scoped, Ok(snapshot) if snapshot.id == snapshot_id()), "{scoped:?}");
 }
 
@@ -126,7 +112,7 @@ fn is_whole_microseconds(instant: DateTime<Utc>) -> bool {
 /// read returns, at the microsecond the stored record keeps.
 #[tokio::test]
 async fn a_created_snapshot_answers_with_the_system_times_a_read_returns() {
-    let service = service(BranchCondition::Current);
+    let service = service();
     let created = service
         .create(
             serde_json::from_str::<SnapshotInput>(
@@ -148,7 +134,7 @@ async fn a_created_snapshot_answers_with_the_system_times_a_read_returns() {
 /// A clone is stamped like a created Snapshot.
 #[tokio::test]
 async fn a_cloned_snapshot_answers_with_the_system_times_a_read_returns() {
-    let service = service(BranchCondition::Current);
+    let service = service();
     let cloned = service
         .clone_snapshot(
             &snapshot_id(),
@@ -169,7 +155,7 @@ async fn a_cloned_snapshot_answers_with_the_system_times_a_read_returns() {
 /// creates a second Snapshot.
 #[tokio::test]
 async fn a_create_whose_quota_check_fails_answers_the_created_snapshot() {
-    let service = service_over(StoreDouble::new(stored_snapshot(None, None), BranchCondition::Current, ClaimHold::Held).with_quota_check(QuotaCheck::Fails));
+    let service = service_over(StoreDouble::new(stored_snapshot(None, None), ClaimHold::Held).with_quota_check(QuotaCheck::Fails));
     let created = service
         .create(
             serde_json::from_str::<SnapshotInput>(
@@ -185,7 +171,7 @@ async fn a_create_whose_quota_check_fails_answers_the_created_snapshot() {
 
 #[tokio::test]
 async fn a_clone_whose_quota_check_fails_answers_the_clone() {
-    let service = service_over(StoreDouble::new(stored_snapshot(None, None), BranchCondition::Current, ClaimHold::Held).with_quota_check(QuotaCheck::Fails));
+    let service = service_over(StoreDouble::new(stored_snapshot(None, None), ClaimHold::Held).with_quota_check(QuotaCheck::Fails));
     let cloned = service
         .clone_snapshot(
             &snapshot_id(),
@@ -200,7 +186,7 @@ async fn create_with(endpoint: &str, receiver_info: &str) -> Result<Snapshot, Sn
     let body = format!(
         r#"{{"type": "Snapshot", "snapshotQueries": [{{"type": "Query", "entities": [{{"type": "Vehicle"}}]}}], "endpoint": "{endpoint}", "receiverInfo": {receiver_info}}}"#
     );
-    service(BranchCondition::Current)
+    service()
         .create(
             serde_json::from_str::<SnapshotInput>(&body).expect("a Snapshot body"),
             AdmittedContext::core_only(),
@@ -244,7 +230,7 @@ async fn creating_a_snapshot_with_a_good_receiver_info_on_an_http_endpoint_is_ac
 
 #[tokio::test]
 async fn patching_a_bad_receiver_info_onto_a_stored_http_endpoint_is_refused() {
-    let service = service_holding(stored_snapshot(Some("http://example.com/s"), None), BranchCondition::Current);
+    let service = service_holding(stored_snapshot(Some("http://example.com/s"), None));
     let refused = service
         .update(&snapshot_id(), patch(r#"{"receiverInfo": [{"key": "Bad Name", "value": "x"}]}"#))
         .await;
@@ -256,10 +242,7 @@ async fn patching_a_bad_receiver_info_onto_a_stored_http_endpoint_is_refused() {
 
 #[tokio::test]
 async fn patching_the_endpoint_to_http_while_a_bad_receiver_info_is_stored_is_refused() {
-    let service = service_holding(
-        stored_snapshot(Some("mqtt://broker:1883/status"), Some(vec![bad_pair()])),
-        BranchCondition::Current,
-    );
+    let service = service_holding(stored_snapshot(Some("mqtt://broker:1883/status"), Some(vec![bad_pair()])));
     let refused = service.update(&snapshot_id(), patch(r#"{"endpoint": "http://example.com/s"}"#)).await;
     assert!(
         matches!(refused, Err(SnapshotError::Validation(SnapshotValidationReason::ReceiverInfo(_)))),

@@ -43,6 +43,7 @@ updates:
       - /tools/andromeda-test-suite/stacks/multi
       - /tools/andromeda-test-suite/stacks/pgbouncer
       - /tools/andromeda-test-suite/stacks/templates
+      - /tools/andromeda-test-suite/stacks/upgrade
     schedule:
       interval: monthly
     labels: [build]

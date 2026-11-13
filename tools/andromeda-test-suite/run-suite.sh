@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
-# Runs one tree of andromeda-test-suite against the stack it needs, and copies the tree's JUnit report to REPORT_DIR
-# (default target/suite-reports). The broker, database and runner images are rebuilt from the working tree, except each
-# one ANDROMEDA_IMAGE, ANDROMEDA_POSTGRES_IMAGE or ANDROMEDA_TEST_SUITE_RUNNER_IMAGE names, which is pulled instead. The stack is taken down
-# afterwards with its databases, keeping the shared test-suite-target and test-suite-cargo-registry volumes. Two runs on
-# one Docker host cannot overlap: every stack has a fixed project name and shares those volumes. A runner image that
-# ANDROMEDA_TEST_SUITE_RUNNER_IMAGE names carries the suite's nextest archive, as the one CI builds does, and the tree
-# runs from it and compiles nothing; one that lacks it fails the run. A runner built here compiles the tree from the
+# Runs one tree, a tree of andromeda-test-suite or the upgrade rehearsals of andromeda-upgrade-tests, against the stack
+# it needs, and copies the tree's JUnit report to REPORT_DIR (default target/suite-reports). The broker, database and
+# runner images are rebuilt from the working tree, except each one ANDROMEDA_IMAGE, ANDROMEDA_POSTGRES_IMAGE or
+# ANDROMEDA_TEST_SUITE_RUNNER_IMAGE names, which is pulled instead. The stack is taken down afterwards with its
+# databases, keeping the shared test-suite-target and test-suite-cargo-registry volumes. Two runs on one Docker host
+# cannot overlap: every stack has a fixed project name and shares those volumes. A runner image that
+# ANDROMEDA_TEST_SUITE_RUNNER_IMAGE names carries the nextest archive of every tree, as the one CI builds does, and the
+# tree runs from it and compiles nothing; one that lacks it fails the run. A runner built here compiles the tree from the
 # working tree.
 set -euo pipefail
 
 if [ "$#" -ne 1 ]; then
-    echo "usage: $0 <ngsi_ld|andromeda|etsi|annex_c|distributed|pgbouncer|interoperability>" >&2
+    echo "usage: $0 <ngsi_ld|andromeda|etsi|annex_c|distributed|pgbouncer|interoperability|upgrade>" >&2
     exit 2
 fi
 
 tree="$1"
+package=andromeda-test-suite
+profile=suite-verdict
 case "$tree" in
     ngsi_ld) stack=base; binaries='ngsi_ld_*' ;;
     andromeda) stack=andromeda; binaries='andromeda_*' ;;
@@ -23,6 +26,7 @@ case "$tree" in
     distributed) stack=multi; binaries='distributed_*' ;;
     pgbouncer) stack=pgbouncer; binaries='pgbouncer_*' ;;
     interoperability) stack=interoperability; binaries=interoperability ;;
+    upgrade) stack=upgrade; package=andromeda-upgrade-tests; binaries=upgrade; profile=upgrade-verdict ;;
     *) echo "unknown tree: ${tree}" >&2; exit 2 ;;
 esac
 archive=/andromeda-test-suite.tar.zst
@@ -47,14 +51,14 @@ else
 fi
 "${compose[@]}" up --detach --wait
 
-nextest=(cargo nextest run --tool-config-file runner:/andromeda/tools/andromeda-test-suite/stacks/runner/nextest.toml --profile suite-verdict)
+nextest=(cargo nextest run --tool-config-file runner:/andromeda/tools/andromeda-test-suite/stacks/runner/nextest.toml --profile "$profile")
 if "${compose[@]}" run --rm --no-deps runner test -f "$archive"; then
-    nextest+=(--archive-file "$archive" --workspace-remap /andromeda -E "binary_id(#andromeda-test-suite::${binaries})")
+    nextest+=(--archive-file "$archive" --workspace-remap /andromeda -E "binary_id(#${package}::${binaries})")
 elif [ -n "${ANDROMEDA_TEST_SUITE_RUNNER_IMAGE:-}" ]; then
     echo "${ANDROMEDA_TEST_SUITE_RUNNER_IMAGE} has no ${archive}, or its container did not start" >&2
     exit 1
 else
-    nextest+=(-p andromeda-test-suite --test "$binaries")
+    nextest+=(-p "$package" --test "$binaries")
 fi
 
 status=0
@@ -64,7 +68,7 @@ status=0
 
 mkdir -p "$report_dir"
 copy_status=0
-"${compose[@]}" run --rm --no-deps runner cat /target/nextest/suite-verdict/junit.xml > "${report_dir}/${tree}.junit.xml" || copy_status=$?
+"${compose[@]}" run --rm --no-deps runner cat "/target/nextest/${profile}/junit.xml" > "${report_dir}/${tree}.junit.xml" || copy_status=$?
 if [ "$status" -eq 0 ]; then
     status="$copy_status"
 fi

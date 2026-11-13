@@ -19,6 +19,7 @@ on:
           - annex_c
           - distributed
           - interoperability
+          - upgrade
       fresh:
         description: Run the trees in full, ignoring the passes runs on main recorded.
         type: boolean

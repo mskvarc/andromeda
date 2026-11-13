@@ -9,7 +9,6 @@
 use crate::{
     snapshot::{
         branch_schema::truncate_branch_schema,
-        branch_version::current_version,
         mapper::{row_query_context, row_to_snapshot},
         record::{snapshot_select, status_is_preparing},
     },
@@ -19,10 +18,7 @@ use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
-use andromeda_postgresql_schema::{
-    branch_schema_version::BranchSchemaVersion,
-    snapshot::{SnapshotPreparation, Snapshots, branch_is_current},
-};
+use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use andromeda_postgresql_seaquery::{clock::span_after_transaction_start, statement::Statement};
 use andromeda_snapshot::{error::SnapshotError, store::SnapshotPreparationJob};
 use sea_query::{Alias, Expr, ExprTrait, JoinType, Keyword, LockBehavior, LockType, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
@@ -55,19 +51,16 @@ fn clone_source_preparing() -> SelectStatement {
 /// Select every Snapshot eligible for preparation, carrying its surrogate key
 /// so the claim can reset the staging branch.
 ///
-/// A quarantined Snapshot is never claimed: its staging branch is behind this
-/// binary's branch relations, so a capture into it could not be trusted. A
-/// clone is not claimed while its source is still preparing: clause 5.16.2.4
+/// A clone is not claimed while its source is still preparing: clause 5.16.2.4
 /// copies all data of the Snapshot it clones, which does not exist before the
 /// source's preparation ends. The pass that ends the source claims again, so
 /// the clone waits on nothing but the source. A clone whose source is gone is
 /// claimed, and its copy fails.
-fn claimable_select(current: BranchSchemaVersion) -> SelectStatement {
+fn claimable_select() -> SelectStatement {
     let mut select = snapshot_select();
     select
         .column((Snapshots::Table, Snapshots::SnapshotKey))
         .and_where(status_is_preparing())
-        .and_where(branch_is_current(current))
         .and_where(Expr::exists(clone_source_preparing()).not())
         .and_where(
             Expr::col((SnapshotPreparation::Table, SnapshotPreparation::LeaseUntil))
@@ -80,8 +73,8 @@ fn claimable_select(current: BranchSchemaVersion) -> SelectStatement {
 /// Select and row-lock the highest-priority, oldest eligible Snapshot, passing
 /// over a row another transaction holds so concurrent workers each take a
 /// different one.
-fn next_preparing_statement(current: BranchSchemaVersion) -> SelectStatement {
-    let mut select = claimable_select(current);
+fn next_preparing_statement() -> SelectStatement {
+    let mut select = claimable_select();
     select
         .order_by((Snapshots::Table, Snapshots::SnapshotPriority), Order::Desc)
         .order_by((Snapshots::Table, Snapshots::CreatedAt), Order::Asc)
@@ -94,8 +87,8 @@ fn next_preparing_statement(current: BranchSchemaVersion) -> SelectStatement {
 /// transaction that holds its row. Only a brief hold is ever waited out: a
 /// read recording the last use, a metadata update, or a claim, after which the
 /// row is no longer eligible and is not returned.
-fn created_preparation_statement(current: BranchSchemaVersion, id: &Identifier) -> SelectStatement {
-    let mut select = claimable_select(current);
+fn created_preparation_statement(id: &Identifier) -> SelectStatement {
+    let mut select = claimable_select();
     select
         .and_where(Expr::col((Snapshots::Table, Snapshots::Id)).eq(id.as_str()))
         .lock_with_tables(LockType::Update, [SnapshotPreparation::Table]);
@@ -116,7 +109,7 @@ fn claim_statement(snapshot_key: SnapshotKey, claimed_by: LeaseHolder, lease: Du
 /// Claim the highest-priority, oldest eligible Snapshot in one locked
 /// transaction, resetting its staging branch before the worker re-runs it.
 pub(crate) async fn next_preparing_snapshot(pool: &PgPool, claimed_by: LeaseHolder, lease: Duration) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
-    claim_selected(pool, &next_preparing_statement(current_version()?), claimed_by, lease).await
+    claim_selected(pool, &next_preparing_statement(), claimed_by, lease).await
 }
 
 /// Claim the just-created Snapshot `id` in one locked transaction when it is
@@ -127,7 +120,7 @@ pub(crate) async fn claim_created_snapshot(
     claimed_by: LeaseHolder,
     lease: Duration,
 ) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
-    claim_selected(pool, &created_preparation_statement(current_version()?, id), claimed_by, lease).await
+    claim_selected(pool, &created_preparation_statement(id), claimed_by, lease).await
 }
 
 /// Claim the Snapshot `select` row-locks, if it finds one: stamp the claim and
@@ -354,7 +347,6 @@ mod tests {
     };
     use andromeda_context_commit::lease_holder::LeaseHolder;
     use andromeda_context_space::snapshot_key::SnapshotKey;
-    use andromeda_postgresql_schema::branch_schema_version::BranchSchemaVersion;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
     use std::time::Duration;
@@ -364,13 +356,8 @@ mod tests {
 
     #[test]
     fn the_preparing_selection_orders_by_priority_then_age_and_skips_leased_rows() {
-        let current = BranchSchemaVersion::try_from(21_i64).expect("a positive version");
-        let sql = next_preparing_statement(current).to_string(PostgresQueryBuilder);
+        let sql = next_preparing_statement().to_string(PostgresQueryBuilder);
         assert!(sql.contains("\"snapshot_preparation\".\"status\" = 1"), "{sql}");
-        assert!(
-            sql.contains("\"snapshot_preparation\".\"branch_schema_version\" >= 21"),
-            "a quarantined Snapshot is never claimed: {sql}"
-        );
         assert!(
             sql.contains("ORDER BY \"snapshots\".\"snapshot_priority\" DESC, \"snapshots\".\"created_at\" ASC LIMIT 1"),
             "{sql}"
@@ -383,12 +370,10 @@ mod tests {
     /// rather than passing over the row (clause 5.16.1.4).
     #[test]
     fn the_created_snapshot_claim_selects_it_by_identifier_and_waits_for_its_row() {
-        let current = BranchSchemaVersion::try_from(21_i64).expect("a positive version");
         let id = "urn:ngsi-ld:Snapshot:created".parse().expect("a valid identifier");
-        let sql = created_preparation_statement(current, &id).to_string(PostgresQueryBuilder);
+        let sql = created_preparation_statement(&id).to_string(PostgresQueryBuilder);
         assert!(sql.contains("\"snapshots\".\"id\" = 'urn:ngsi-ld:Snapshot:created'"), "{sql}");
         assert!(sql.contains("\"snapshot_preparation\".\"status\" = 1"), "{sql}");
-        assert!(sql.contains("\"snapshot_preparation\".\"branch_schema_version\" >= 21"), "{sql}");
         assert!(sql.contains("\"lease_until\" IS NULL OR"), "a leased preparation is not claimed: {sql}");
         assert!(sql.ends_with("FOR UPDATE OF \"snapshot_preparation\""), "{sql}");
         assert!(!sql.contains("SKIP LOCKED"), "{sql}");
@@ -396,8 +381,7 @@ mod tests {
 
     #[test]
     fn a_clone_is_not_claimed_while_its_source_is_preparing() {
-        let current = BranchSchemaVersion::try_from(21_i64).expect("a positive version");
-        let sql = next_preparing_statement(current).to_string(PostgresQueryBuilder);
+        let sql = next_preparing_statement().to_string(PostgresQueryBuilder);
         let waiting_on_source = concat!(
             r#"NOT EXISTS(SELECT 1 FROM "snapshots" AS "clone_source" JOIN "snapshot_preparation" AS "clone_source_preparation" "#,
             r#"ON "clone_source_preparation"."snapshot_key" = "clone_source"."snapshot_key" "#,

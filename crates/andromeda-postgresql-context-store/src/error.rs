@@ -6,6 +6,7 @@ use crate::{
     entity_map::mapper::StoredEntityMapError,
     entity_state_record::state_record::StateRecordError,
     jsonld_context::mapper::ContextMapperError,
+    lockstep_migration::snapshot_migration_error::SnapshotMigrationError,
     pending_side_effects::change_event_record::ChangeEventRecordError,
     schema_contract::error::SchemaContractError,
     snapshot::{stored_snapshot_error::StoredSnapshotError, unencodable_snapshot_error::UnencodableSnapshotError},
@@ -26,7 +27,6 @@ use andromeda_postgresql_pool::{
     transaction_rollback::is_transaction_rolled_back,
 };
 use andromeda_postgresql_query::error::RenderError;
-use andromeda_postgresql_schema::branch_schema_version::BranchVersionError;
 use sea_query::error::Error as SeaQueryError;
 use sqlx::migrate::MigrateError;
 
@@ -82,9 +82,13 @@ pub enum ContextStoreError {
     /// A tenant database is not the schema this binary was built against.
     #[error("context store schema contract: {0}")]
     SchemaContract(#[from] SchemaContractError),
-    /// The embedded branch migration set has no usable version.
-    #[error("context store branch schema version: {0}")]
-    BranchVersion(#[from] BranchVersionError),
+    /// A Snapshot branch schema could not follow the tenant's migrations.
+    ///
+    /// Boxed: the failure names its Snapshot branch beside the migration
+    /// failure, the widest member of this error, and inlining it would enlarge
+    /// every result of the store. The [`From`] impl below keeps `?` ergonomic.
+    #[error("context store snapshot migration: {0}")]
+    SnapshotMigration(Box<SnapshotMigrationError>),
     /// A statement could not be assembled, which a column/value arity mismatch
     /// between a builder's column list and its rows is the only cause of.
     #[error("context store statement could not be built: {0}")]
@@ -152,6 +156,16 @@ impl From<sqlx::Error> for ContextStoreError {
     }
 }
 
+/// Box the Snapshot migration failure, keeping `?` ergonomic while the
+/// store's results stay small. Written by hand because no derive boxes:
+/// `thiserror`'s `#[from]` on a boxed field converts from the box, not from
+/// the error inside it.
+impl From<SnapshotMigrationError> for ContextStoreError {
+    fn from(error: SnapshotMigrationError) -> ContextStoreError {
+        ContextStoreError::SnapshotMigration(Box::new(error))
+    }
+}
+
 // Written by hand because the variant depends on the error's content: a
 // dictionary lookup that timed out acquiring a connection is the same
 // backpressure as any other statement of this store, so it joins
@@ -190,7 +204,7 @@ impl ContextStoreError {
             ContextStoreError::Render(_) | ContextStoreError::StatementBuild(_) => PersistenceFailure::StatementUnbuildable,
             ContextStoreError::Migration(error) => classify_migration(error),
             ContextStoreError::SchemaContract(error) => error.failure_class(),
-            ContextStoreError::BranchVersion(_) => PersistenceFailure::SchemaMismatch,
+            ContextStoreError::SnapshotMigration(error) => error.failure_class(),
             ContextStoreError::Saturated => PersistenceFailure::Saturated,
             ContextStoreError::ContextMapper(_)
             | ContextStoreError::StoredRegistration(_)
@@ -230,7 +244,7 @@ impl ContextStoreError {
             | ContextStoreError::EntityTypes(_)
             | ContextStoreError::ContextMapper(_)
             | ContextStoreError::Migration(_)
-            | ContextStoreError::BranchVersion(_)
+            | ContextStoreError::SnapshotMigration(_)
             | ContextStoreError::StatementBuild(_)
             | ContextStoreError::ChangeEventRecord(_)
             | ContextStoreError::StateRecord(_)
@@ -271,7 +285,7 @@ impl ContextStoreError {
             | ContextStoreError::EntityTypes(_)
             | ContextStoreError::ContextMapper(_)
             | ContextStoreError::Migration(_)
-            | ContextStoreError::BranchVersion(_)
+            | ContextStoreError::SnapshotMigration(_)
             | ContextStoreError::StatementBuild(_)
             | ContextStoreError::ChangeEventRecord(_)
             | ContextStoreError::StateRecord(_)

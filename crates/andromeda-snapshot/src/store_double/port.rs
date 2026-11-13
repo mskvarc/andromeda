@@ -1,7 +1,6 @@
 //! The store double's answers to the snapshot store port.
 
 use crate::{
-    branch_condition::BranchCondition,
     error::SnapshotError,
     snapshot_invariant::SnapshotInvariant,
     store::{InsertSnapshotParams, SnapshotPreparationJob, SnapshotStore},
@@ -41,21 +40,6 @@ impl SnapshotStore for StoreDouble {
             }
         };
         Box::pin(async move { Ok(found) })
-    }
-
-    fn branch_condition<'life0, 'life1, 'async_trait>(
-        &'life0 self,
-        id: &'life1 Identifier,
-    ) -> BoxFuture<'async_trait, Result<Option<BranchCondition>, SnapshotError>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-    {
-        let condition = {
-            let entries = self.entries();
-            entries.iter().any(|entry| entry.snapshot.id == *id).then_some(self.condition)
-        };
-        Box::pin(async move { Ok(condition) })
     }
 
     fn touch_last_used<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<(), SnapshotError>>

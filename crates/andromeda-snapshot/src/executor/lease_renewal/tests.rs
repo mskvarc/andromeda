@@ -1,5 +1,4 @@
 use crate::{
-    branch_condition::BranchCondition,
     error::SnapshotError,
     executor::{attempts::PreparationEnd, lease_renewal::LeaseRenewal},
     store::SnapshotStore,
@@ -36,7 +35,7 @@ async fn store(renewal: Renewal) -> StoreDouble {
         .modified_at(now)
         .expires_at(now + ChronoDuration::hours(1))
         .build();
-    let store = StoreDouble::new(snapshot, BranchCondition::Current, ClaimHold::Held).with_renewal(renewal);
+    let store = StoreDouble::new(snapshot, ClaimHold::Held).with_renewal(renewal);
     let job = store.next_preparing(LeaseHolder::mint(), LEASE).await.expect("the double claims");
     assert!(job.is_some(), "the preparing Snapshot is claimed");
     store

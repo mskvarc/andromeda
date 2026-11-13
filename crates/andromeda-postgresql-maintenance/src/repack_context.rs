@@ -17,7 +17,6 @@ use andromeda_configuration::{
         database::maintenance::{MaintenanceMode, RepackPolicy},
     },
 };
-use andromeda_postgresql_schema::branch_schema_version::BranchSchemaVersion;
 use andromeda_postgresql_seaquery::{repack_catalog::triggered_tables, statement::Statement};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use sqlx::PgConnection;
@@ -36,8 +35,6 @@ pub(crate) struct RepackInputs {
     pub(crate) retained_wal_bytes: u64,
     /// The tenant database's freeze pressure.
     pub(crate) freeze: FreezePressure,
-    /// The highest branch migration the binary embeds.
-    pub(crate) branch_version: BranchSchemaVersion,
 }
 
 impl RepackInputs {
@@ -91,7 +88,7 @@ pub(crate) async fn repack_context(
     let snapshot_remaining = match row.branch() {
         Branch::Live => None,
         Branch::Snapshot(key) => Some(
-            branch_selection::snapshot_expiry(connection, key, inputs.branch_version)
+            branch_selection::snapshot_expiry(connection, key)
                 .await?
                 .map_or(ChronoDuration::zero(), |expires_at| expires_at.signed_duration_since(now)),
         ),

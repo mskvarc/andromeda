@@ -2,10 +2,9 @@
 //!
 //! The implementation dispatches to the statement modules by concern: creation,
 //! the control record and its preparation state, reaping, preparation claims,
-//! publication, quotas and the branch-version quarantine.
+//! publication and quotas.
 
 use crate::snapshot::{
-    branch_version::read_branch_condition,
     clone_context::{promote_context_clone, promote_staged_branch},
     creation::create_snapshot,
     metadata_change::MetadataChange,
@@ -34,7 +33,6 @@ use andromeda_ngsi_ld_model::{
     snapshot_filter::PurgeCandidate,
 };
 use andromeda_snapshot::{
-    branch_condition::BranchCondition,
     error::SnapshotError,
     store::{InsertSnapshotParams, SnapshotPreparationJob, SnapshotStore},
 };
@@ -157,9 +155,5 @@ impl SnapshotStore for SnapshotRepository {
 
     async fn touch_last_used(&self, id: &Identifier) -> Result<(), SnapshotError> {
         touch_last_used(self.pool(), id).await
-    }
-
-    async fn branch_condition(&self, id: &Identifier) -> Result<Option<BranchCondition>, SnapshotError> {
-        read_branch_condition(self.pool(), id).await
     }
 }

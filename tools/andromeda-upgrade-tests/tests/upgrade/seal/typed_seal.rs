@@ -1,6 +1,6 @@
 //! A complete seal held in current state becomes a typed seal.
 
-use crate::{
+use crate::fixtures::{
     current_state::{insert_entity, insert_number_attribute},
     observed::{assert_typed_seal, current_proofs_as_written, current_sub_attributes},
     rehearsal::{at_v1_0_0, intern_seal_attribute},

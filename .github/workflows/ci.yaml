@@ -359,7 +359,7 @@ jobs:
       packages: write
     uses: ./.github/workflows/suite-trees.yaml
     with:
-      trees: '["ngsi_ld", "etsi", "annex_c"]'
+      trees: '["ngsi_ld", "etsi", "annex_c", "upgrade"]'
       fresh: ${{ inputs.fresh == true }}
 
   pr-ok:

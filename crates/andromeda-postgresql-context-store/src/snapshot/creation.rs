@@ -4,7 +4,6 @@
 use crate::{
     snapshot::{
         branch_schema::create_branch_schema,
-        branch_version::current_version,
         json_value::optional_json,
         status_code::stored_status,
         unencodable_snapshot_error::UnencodableSnapshotError,
@@ -63,18 +62,16 @@ fn control_insert(params: &InsertSnapshotParams<'_>) -> Result<InsertStatement, 
 }
 
 /// The preparation-record insert of `params` for the Snapshot `snapshot_key`;
-/// the lease pair starts null, and the branch version is the binary's own,
-/// since the branch schemas are created by it. The two details documents are
-/// `json` columns bound as their JSON text.
-fn preparation_insert(params: &InsertSnapshotParams<'_>, snapshot_key: SnapshotKey, branch_version: i32) -> Result<InsertStatement, SnapshotError> {
-    let values: [SimpleExpr; 7] = [
+/// the lease pair starts null. The two details documents are `json` columns
+/// bound as their JSON text.
+fn preparation_insert(params: &InsertSnapshotParams<'_>, snapshot_key: SnapshotKey) -> Result<InsertStatement, SnapshotError> {
+    let values: [SimpleExpr; 6] = [
         Expr::val(snapshot_key.as_i64()),
         Expr::val(stored_status(params.status).code()),
         Expr::val(params.modified_at),
         Expr::val(params.last_used_at),
         optional_json(params.queries_details, UnencodableSnapshotError::QueriesDetails)?,
         optional_json(params.temporal_queries_details, UnencodableSnapshotError::TemporalQueriesDetails)?,
-        Expr::val(branch_version),
     ];
     let mut insert = Query::insert();
     insert
@@ -86,7 +83,6 @@ fn preparation_insert(params: &InsertSnapshotParams<'_>, snapshot_key: SnapshotK
             SnapshotPreparation::LastUsedAt,
             SnapshotPreparation::QueriesDetails,
             SnapshotPreparation::TemporalQueriesDetails,
-            SnapshotPreparation::BranchSchemaVersion,
         ])
         .values(values)
         .map_err(|error| persistence_error::<SnapshotError>(error))?;
@@ -97,7 +93,6 @@ fn preparation_insert(params: &InsertSnapshotParams<'_>, snapshot_key: SnapshotK
 /// staging branch schema, all in one transaction. The published branch comes
 /// into being only when the preparation renames the staging schema.
 pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<'_>) -> Result<(), SnapshotError> {
-    let branch_version = current_version()?;
     let mut tx = pool.begin().await.map_err(|error| persistence_error::<SnapshotError>(error))?;
     let snapshot_key_raw: i64 = control_insert(&params)?
         .to_query_scalar()
@@ -105,7 +100,7 @@ pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<
         .await
         .map_err(|error| snapshot_create_error(error, params.id))?;
     let snapshot_key = SnapshotKey::try_from(snapshot_key_raw).map_err(|error| SnapshotError::from(undecodable(&error)))?;
-    preparation_insert(&params, snapshot_key, branch_version.get())?
+    preparation_insert(&params, snapshot_key)?
         .to_query()
         .execute(&mut *tx)
         .await
@@ -193,14 +188,18 @@ mod tests {
     }
 
     #[test]
-    fn the_preparation_insert_binds_the_status_code_and_the_branch_version() {
+    fn the_preparation_insert_binds_the_key_status_and_times() {
         let id: Identifier = "urn:ngsi-ld:Snapshot:a".parse().expect("a valid identifier");
         let key = SnapshotKey::try_from(7).expect("a positive key");
-        let (sql, values) = preparation_insert(&params(&id), key, 24)
+        let (sql, values) = preparation_insert(&params(&id), key)
             .expect("the preparation insert builds")
             .build(PostgresQueryBuilder);
-        assert!(sql.starts_with(r#"INSERT INTO "snapshot_preparation""#), "{sql}");
-        assert!(sql.contains(r#""branch_schema_version""#), "{sql}");
-        assert_eq!(values.0.len(), 5, "the two absent details documents are NULL: {sql}");
+        assert!(
+            sql.starts_with(
+                r#"INSERT INTO "snapshot_preparation" ("snapshot_key", "status", "modified_at", "last_used_at", "queries_details", "temporal_queries_details")"#
+            ),
+            "{sql}"
+        );
+        assert_eq!(values.0.len(), 4, "the two absent details documents are NULL: {sql}");
     }
 }

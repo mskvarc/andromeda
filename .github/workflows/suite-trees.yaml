@@ -2,7 +2,8 @@ name: suite-trees
 
 # The images and suite trees of one commit, called by ci and suite so that every tree runs the same way in both. The
 # arm64 broker image and the runner image are keyed on their inputs and built only when no image of those inputs exists
-# yet, and every tree runs them with the published database image, so a tree compiles nothing.
+# yet. Every tree runs them with the published database image, and the upgrade tree runs the runner and that image with
+# no broker, so a tree compiles nothing.
 on:
   workflow_call:
     inputs:
