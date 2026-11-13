@@ -1,8 +1,8 @@
-//! When attribute instances expire (clause 4.22).
+//! When an Entity and its attribute instances expire (clause 4.22).
 //!
-//! An instance is invalid from its `expiresAt` on: at the instant itself it is
-//! already gone. The entity-level `expiresAt` is the entity's own and does not
-//! take part in the attribute minimum.
+//! An Entity or instance is invalid from its `expiresAt` on: at the instant
+//! itself it is already gone. The entity-level `expiresAt` is the entity's own
+//! and does not take part in the attribute minimum.
 
 use crate::{entity_state::EntityState, instance::Instance};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::date_time::NgsiLdDateTime};
@@ -23,6 +23,14 @@ impl EntityState {
     #[must_use]
     pub fn entity_expiry(&self) -> Option<DateTime<Utc>> {
         self.expires_at().map(NgsiLdDateTime::get)
+    }
+
+    /// Whether the entity itself is expired at `at` (clause 4.22: from its
+    /// `expiresAt` on), so no read serves it although the expiry sweep has
+    /// yet to delete it.
+    #[must_use]
+    pub fn expired_at(&self, at: DateTime<Utc>) -> bool {
+        self.entity_expiry().is_some_and(|expires_at| expires_at <= at)
     }
 
     /// The earliest expiry of any attribute instance: what the expiry sweep
@@ -118,6 +126,17 @@ mod tests {
             node.extend(members.iter().map(|(key, value)| (key.clone(), value.clone())));
         }
         EntityState::from_slice(&serde_json::to_vec(&json!([node])).expect("JSON")).expect("a state")
+    }
+
+    /// Clause 4.22: the entity is gone at its `expiresAt` itself, and an
+    /// entity without one never expires.
+    #[test]
+    fn an_entity_is_expired_from_its_own_expiry_on() {
+        let expiring =
+            state(&json!({"https://uri.etsi.org/ngsi-ld/expiresAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2030-01-01T00:00:00Z"}]}));
+        assert!(!expiring.expired_at(instant("2029-12-31T23:59:59Z")));
+        assert!(expiring.expired_at(instant("2030-01-01T00:00:00Z")));
+        assert!(!state(&json!({})).expired_at(instant("2999-01-01T00:00:00Z")));
     }
 
     #[test]

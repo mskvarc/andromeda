@@ -9,7 +9,7 @@
 //! about which rows a `GeoProperty` lives in would silently order by a geometry
 //! they did not filter on.
 
-use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs, instance_expiry::instance_stands, stored_geometry::StoredGeometry};
+use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs, expiry::unexpired, stored_geometry::StoredGeometry};
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::{literal::int_literal, postgis::judged_geometry};
 use sea_query::{Alias, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
@@ -39,7 +39,7 @@ pub fn geometry_instances_of(outer: &EntityRowRefs, subquery_alias: &str, attrib
         .and_where(SeaExpr::col((alias.clone(), CurrentAttributes::AttributeNameKey)).eq(attribute_name_key.get()))
         .and_where(SeaExpr::col((alias.clone(), CurrentAttributes::ValueGeometry)).is_not_null())
         // Clause 4.22: a past-due instance neither matches nor is measured to.
-        .and_where(instance_stands(SeaExpr::col((alias, CurrentAttributes::ExpiresAt))));
+        .and_where(unexpired(SeaExpr::col((alias, CurrentAttributes::ExpiresAt))));
     scan
 }
 

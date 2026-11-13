@@ -66,7 +66,8 @@ impl EntityQueryService {
     /// # Errors
     ///
     /// Returns [`EntityError::not_found`] when no entity with that identifier
-    /// exists, when its types fall outside the requested type selector, or when
+    /// exists or it is past its `expiresAt` (clause 4.22), when its types fall
+    /// outside the requested type selector, or when
     /// `attrs` or the clause 4.21 projection selected none of the members it
     /// has, and otherwise whatever the store or the context expansion failed
     /// with.
@@ -88,6 +89,12 @@ impl EntityQueryService {
             let Some(RetrievedEntity { state, sys_attrs }) = self.reader.get_with_sys_attrs(target, id, &returned).await? else {
                 return Err(EntityError::not_found(id));
             };
+            let now = Utc::now();
+            // Clause 4.22: an Entity past its `expiresAt` is invalid, though
+            // the expiry sweep has yet to delete it.
+            if state.expired_at(now) {
+                return Err(EntityError::not_found(id));
+            }
             // Clause 5.7.1.4: the target is the entity "whose id (URI), and
             // where specified type, is equivalent", so an entity outside the
             // selector is not held locally for this retrieval.
@@ -99,7 +106,6 @@ impl EntityQueryService {
                 }
             }
 
-            let now = Utc::now();
             let state = narrow_to_selection(state, id, narrowing, &wanted_iris, now)?;
             // Tables 6.4.3.2-1 and 5.2.14.1-1 make `attrs` "a synonym for
             // pick", so the clause 5.7.1.4 rule `attrs` obeys is the same rule here,

@@ -30,7 +30,7 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_query::{
     dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
-    entity_sides::holds_current_state,
+    entity_sides::{holds_standing_state, not_expired},
     type_membership::{Memberships, drives, members_of_any},
 };
 use andromeda_postgresql_schema::{
@@ -128,8 +128,9 @@ impl EntityRelations {
         let driving_key: SimpleExpr = match self.source {
             RowSource::Entities => {
                 // An identity row whose current state a core deletion removed
-                // keeps only its Temporal Evolution, which no core read sees.
-                select.from(qualified(schema, Entities::Table)).and_where(holds_current_state(Entities::Table));
+                // keeps only its Temporal Evolution, which no core read sees,
+                // and an Entity past its `expiresAt` is invalid (clause 4.22).
+                select.from(qualified(schema, Entities::Table)).and_where(holds_standing_state(Entities::Table));
                 Expr::col((Entities::Table, Entities::EntityKey))
             }
             RowSource::TypeMembers { walk, entities } => {
@@ -142,6 +143,9 @@ impl EntityRelations {
                     (Entities::Table, Entities::EntityKey),
                     &key,
                 );
+                // The walk reads current-side memberships alone, so only the
+                // clause 4.22 expiry is left to test.
+                select.and_where(not_expired(key.clone(), schema));
                 key
             }
         };
@@ -317,7 +321,10 @@ mod tests {
     fn an_identifier_query_with_no_filter_joins_nothing() {
         assert_eq!(relations(&empty_query()), joined(Demand::NotJoined));
         let sql = from_clause(relations(&empty_query()));
-        assert_eq!(sql, r#"SELECT "entities"."id" FROM "entities" WHERE "entities"."created_at" IS NOT NULL"#);
+        assert_eq!(
+            sql,
+            r#"SELECT "entities"."id" FROM "entities" WHERE "entities"."created_at" IS NOT NULL AND ("entities"."expires_at" IS NULL OR "entities"."expires_at" > NOW())"#
+        );
     }
 
     /// A `q` filter reads the rows of its attributes through probes on the
@@ -328,7 +335,7 @@ mod tests {
         filtered.selection.q_expr = Some(parser::parse("\"https://example.com/speed\">1").expect("valid q"));
         assert_eq!(
             from_clause(relations(&filtered)),
-            r#"SELECT "entities"."id" FROM "entities" WHERE "entities"."created_at" IS NOT NULL"#
+            r#"SELECT "entities"."id" FROM "entities" WHERE "entities"."created_at" IS NOT NULL AND ("entities"."expires_at" IS NULL OR "entities"."expires_at" > NOW())"#
         );
     }
 
@@ -374,7 +381,7 @@ mod tests {
         ));
         assert_eq!(
             from_clause(relations),
-            r#"SELECT "selected"."id" FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (4) AND "is_current_member") AS "selected""#
+            r#"SELECT "selected"."id" FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (4) AND "is_current_member") AS "selected" WHERE "selected"."entity_key" NOT IN (SELECT "entity_key" FROM "entities" WHERE "expires_at" <= NOW())"#
         );
     }
 
@@ -428,7 +435,10 @@ mod tests {
         query.ordering.terms = vec![term(OrderTarget::CreatedAt, OrderDirection::Asc)];
         let relations = relations(&query);
         assert!(matches!(relations.source, RowSource::TypeMembers { entities: Demand::Joined, .. }));
-        assert!(from_clause(relations).ends_with(r#"AS "selected" JOIN "entities" ON "entities"."entity_key" = "selected"."entity_key""#));
+        assert!(from_clause(relations).ends_with(concat!(
+            r#"AS "selected" JOIN "entities" ON "entities"."entity_key" = "selected"."entity_key" "#,
+            r#"WHERE "selected"."entity_key" NOT IN (SELECT "entity_key" FROM "entities" WHERE "expires_at" <= NOW())"#
+        )));
     }
 
     /// Every relation a walked statement joins correlates on the walk's key.

@@ -128,14 +128,18 @@ fn sys_attrs() -> SysAttrsSnapshot {
 
 /// A Vehicle in `/Madrid` with a `speed` and a `name`.
 fn service() -> EntityQueryService {
-    let document = json!([{
+    service_holding(&json!([{
         "@id": VEHICLE,
         "@type": ["https://example.com/Vehicle"],
         "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/Madrid"}],
         "https://example.com/speed": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 80}]}],
         "https://example.com/name": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "Bus"}]}]
-    }]);
-    let state = EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored state");
+    }]))
+}
+
+/// A service whose store holds the one expanded entity `document`.
+fn service_holding(document: &serde_json::Value) -> EntityQueryService {
+    let state = EntityState::from_slice(&serde_json::to_vec(document).expect("JSON")).expect("a stored state");
     let store = Arc::new(RetrievalStore {
         retrieved: RetrievedEntity {
             state: Arc::new(state),
@@ -216,6 +220,25 @@ fn attribute_names(entity: &Entity) -> Vec<&str> {
     let mut names: Vec<&str> = entity.attrs.keys().map(AttributeName::as_str).collect();
     names.sort_unstable();
     names
+}
+
+/// Clause 4.22: an Entity past its `expiresAt` is invalid, so a retrieval
+/// finds nothing while the store still holds it.
+#[tokio::test]
+async fn an_entity_past_its_expiry_is_not_found() {
+    let service = service_holding(&json!([{
+        "@id": VEHICLE,
+        "@type": ["https://example.com/Vehicle"],
+        "https://uri.etsi.org/ngsi-ld/expiresAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2000-01-01T00:00:00Z"}],
+        "https://example.com/speed": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 80}]}]
+    }]));
+    let held = service
+        .read_held(&ContextTarget::Live, &id(VEHICLE), &narrowing(&[], SysAttrsInclusion::Strip, None), &context())
+        .await;
+    assert!(
+        matches!(&held, Err(EntityError::NotFound { identifier }) if *identifier == id(VEHICLE)),
+        "{held:?}"
+    );
 }
 
 /// Clause 4.8, design defect 9.7: the entity-level `createdAt` and

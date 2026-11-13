@@ -18,7 +18,7 @@
 use crate::{
     attribute_name_key::AttributeNameKey,
     dictionary::resolved_names::ResolvedNames,
-    instance_expiry::instance_stands,
+    expiry::unexpired,
     q_predicate::{
         instance_row::{ElementLevel, InstanceRow, ProbedRow},
         sub_attribute::member_field::MemberField,
@@ -128,7 +128,7 @@ impl ElementPath {
             let level = ElementLevel::at(depth);
             let named = named.add(SeaExpr::expr(level.field(SubAttribute::AttributeNameKey)).eq(key.get()));
             match self.row {
-                ProbedRow::Current => named.add(instance_stands(level.field(SubAttribute::ExpiresAt))),
+                ProbedRow::Current => named.add(unexpired(level.field(SubAttribute::ExpiresAt))),
                 ProbedRow::History => named,
             }
         });

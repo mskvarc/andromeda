@@ -53,7 +53,7 @@ use andromeda_postgresql_query::{
     entity_ordering::ordering_collation,
     entity_row_refs::EntityRowRefs,
     error::RenderError,
-    instance_expiry::instance_stands,
+    expiry::unexpired,
     one_time_gate::{count_of, materialized, wrapped},
     q_predicate::projection_probe::{Ca, of_attribute, projection_column, standing},
     sort_key::SortKey,
@@ -242,7 +242,7 @@ fn earlier_instance(rows: &EntityRowRefs, attribute: AttributeNameKey) -> Select
         .from(rows.table(CurrentAttributes::Table).alias(Earlier))
         .and_where(column(CurrentAttributes::EntityKey).eq(projection_column(CurrentAttributes::EntityKey)))
         .and_where(column(CurrentAttributes::AttributeNameKey).eq(attribute.get()))
-        .and_where(instance_stands(column(CurrentAttributes::ExpiresAt)))
+        .and_where(unexpired(column(CurrentAttributes::ExpiresAt)))
         .and_where(column(CurrentAttributes::Ordinal).lt(projection_column(CurrentAttributes::Ordinal)))
         .take()
 }

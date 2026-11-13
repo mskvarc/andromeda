@@ -40,10 +40,12 @@ pub(crate) async fn matching_entities(
 
 /// The entities as they stand at `at`.
 ///
-/// Clause 4.22: an attribute instance past its `expiresAt` is invalid, so it
-/// is removed before any filter reads the entity, and the entities returned,
-/// the ones the notification carries, no longer hold it either.
+/// Clause 4.22: an Entity or attribute instance past its `expiresAt` is
+/// invalid, so it is removed before any filter reads the entity, and the
+/// entities returned, the ones the notification carries, no longer hold it
+/// either.
 fn standing_at(mut entities: Vec<EntityState>, at: DateTime<Utc>) -> Vec<EntityState> {
+    entities.retain(|entity| !entity.expired_at(at));
     for entity in &mut entities {
         entity.remove_expired_instances(at);
     }
@@ -156,6 +158,42 @@ mod tests {
             &LinkedStates::new(),
         );
         assert_eq!(matched, Vec::<EntityState>::new());
+    }
+
+    /// A Vehicle whose `speed` is 20 and never expires, the Vehicle itself
+    /// expiring at `expires_at`.
+    fn expiring_vehicle(expires_at: &str) -> EntityState {
+        let document = json!([{
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            "@type": ["https://example.org/Vehicle"],
+            "https://uri.etsi.org/ngsi-ld/expiresAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": expires_at}],
+            SPEED: [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 20}]
+            }]
+        }]);
+        EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity decodes")
+    }
+
+    /// Clause 4.22: an Entity past its `expiresAt` is invalid, so a periodic
+    /// evaluation leaves it out while the sweep has yet to delete it, and
+    /// carries it while it stands.
+    #[test]
+    fn a_periodic_evaluation_leaves_out_an_entity_past_its_own_expiry() {
+        let at_expiry = filtered(
+            speeding(),
+            vec![expiring_vehicle("2030-01-01T00:00:00Z")],
+            instant("2030-01-01T00:00:00Z"),
+            &LinkedStates::new(),
+        );
+        assert_eq!(at_expiry, Vec::<EntityState>::new());
+        let before = filtered(
+            speeding(),
+            vec![expiring_vehicle("2030-01-01T00:00:00Z")],
+            instant("2029-01-01T00:00:00Z"),
+            &LinkedStates::new(),
+        );
+        assert_eq!(before, vec![expiring_vehicle("2030-01-01T00:00:00Z")]);
     }
 
     #[test]

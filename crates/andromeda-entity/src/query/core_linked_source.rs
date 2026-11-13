@@ -78,9 +78,9 @@ impl<'s> CoreLinkedSource<'s> {
 
     /// Read the candidates the local store holds, in candidate order.
     ///
-    /// A candidate the store does not hold, or whose state does not compact
-    /// into an entity, is left out: clause 4.5.23 leaves such a Relationship a
-    /// plain URI rather than failing the retrieval.
+    /// A candidate the store does not hold, holds past its `expiresAt`, or whose
+    /// state does not compact into an entity, is left out: clause 4.5.23 leaves
+    /// such a Relationship a plain URI rather than failing the retrieval.
     async fn read_locally(&self, candidates: &[LinkedCandidate]) -> Result<LevelRead<Entity>, EntityError> {
         let ids: Vec<Identifier> = candidates.iter().map(|candidate| candidate.id.clone()).collect();
         // Clause 4.8: the entity-level system times come back with each state
@@ -93,7 +93,10 @@ impl<'s> CoreLinkedSource<'s> {
         let mut nodes = IndexMap::with_capacity(retrieved.len());
         let mut edges = Vec::new();
         for candidate in candidates {
-            let (state, times) = match retrieved.get(&candidate.id) {
+            // Clause 4.22: an Entity past its `expiresAt` is invalid, so the
+            // store holds it no longer, though the expiry sweep has yet to
+            // delete it.
+            let (state, times) = match retrieved.get(&candidate.id).filter(|held| !held.state.expired_at(now)) {
                 Some(RetrievedEntity { state, sys_attrs }) => (&**state, HeldTimes::Stored(sys_attrs)),
                 None => match self.carried.iter().find(|carried| carried.state.id() == &candidate.id) {
                     Some(carried) => (&carried.state, HeldTimes::Carried(carried.system_times)),
