@@ -9,7 +9,7 @@
 
 use crate::repository::{PinError, constraint, schema};
 use andromeda_ngsi_ld_lexicon::{identifier_length::IDENTIFIER_BYTE_LIMIT, tenant::TENANT_NAME_BYTE_LIMIT};
-use andromeda_ngsi_ld_request::pagination::page_query::PAGE_QUERY_DIGEST_BYTES;
+use andromeda_ngsi_ld_request::pagination::query_digest::QUERY_DIGEST_BYTES;
 use andromeda_postgresql_schema::{
     string_value_column::INDEXED_STRING_BYTE_LIMIT,
     tenancy::{DATABASE_NAME_BYTE_LIMIT, EXTENSION_NAME_BYTE_LIMIT, EXTENSION_VERSION_BYTE_LIMIT},
@@ -106,7 +106,7 @@ fn every_octet_length_bound_in_the_migrations_equals_its_rust_constant() -> Resu
         } else if *table == "tenant_extension_versions" && EXTENSION_VERSION_COLUMNS.contains(&column) {
             EXTENSION_VERSION_BYTE_LIMIT
         } else if (*table, column) == ("posted_queries", "digest") {
-            PAGE_QUERY_DIGEST_BYTES
+            QUERY_DIGEST_BYTES
         } else if PROJECTED_STRING_COLUMNS.contains(&column) {
             INDEXED_STRING_BYTE_LIMIT
         } else if PROJECTED_URI_COLUMNS.contains(&column) {

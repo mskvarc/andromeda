@@ -192,7 +192,7 @@ mod tests {
         page_reach::PageReach,
         page_window::{PageStart, PageWindow},
     };
-    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_pointers::PagePointers, page_query::PageQuery};
+    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_pointers::PagePointers, query_digest::QueryDigest};
     use axum::http::Uri;
     use serde_json::json;
 
@@ -200,7 +200,7 @@ mod tests {
         PagePointing::new(
             PagePointers::OverRequestUri,
             PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
-            PageQuery::of(None),
+            QueryDigest::of(None),
             PointedRequest::new(None, Uri::from_static("/ngsi-ld/v1/entities")),
         )
     }

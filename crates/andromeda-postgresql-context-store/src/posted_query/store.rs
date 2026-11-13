@@ -9,7 +9,7 @@ use crate::{
     },
     store_fault::persistence_error,
 };
-use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
+use andromeda_ngsi_ld_request::pagination::query_digest::QueryDigest;
 use andromeda_posted_query::{
     error::PostedQueryError,
     posted_query::{PostedQuery, PostedQueryKind},
@@ -29,7 +29,7 @@ impl PostedQueryStore for PostedQueryRepository {
                 .execute(&mut *transaction)
                 .await
                 .map_err(|error| persistence_error::<PostedQueryError>(error))?;
-            if let Some(eviction) = eviction_statement(query.key(), quota) {
+            if let Some(eviction) = eviction_statement(query.digest(), quota) {
                 eviction
                     .to_query()
                     .execute(&mut *transaction)
@@ -40,9 +40,9 @@ impl PostedQueryStore for PostedQueryRepository {
         })
     }
 
-    fn get<'a>(&'a self, key: &'a PageQuery, kind: PostedQueryKind) -> PostedQueryStoreFuture<'a, Option<PostedQuery>> {
+    fn get<'a>(&'a self, digest: &'a QueryDigest, kind: PostedQueryKind) -> PostedQueryStoreFuture<'a, Option<PostedQuery>> {
         Box::pin(async move {
-            let row = live_statement(key, kind)
+            let row = live_statement(digest, kind)
                 .to_query()
                 .fetch_optional(self.pool())
                 .await

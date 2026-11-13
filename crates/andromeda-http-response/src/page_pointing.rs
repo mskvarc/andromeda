@@ -3,7 +3,7 @@
 //!
 //! A query answered on the query-string binding is walked by its own query
 //! string. A query sent by POST is held by the broker and walked through the
-//! GET binding of the same query by its key. Either way the page decides its
+//! GET binding of the same query by its digest. Either way the page decides its
 //! pointers here, once, so every query binding points alike.
 
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
     pagination::{PageOutcome, page_link_targets},
 };
 use andromeda_ngsi_ld_query::page_window::PageWindow;
-use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_pointers::PagePointers, page_query::PageQuery};
+use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_pointers::PagePointers, query_digest::QueryDigest};
 
 /// The walk a query's page belongs to, and the request its pointers rebuild.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,9 +23,9 @@ pub struct PagePointing {
     /// The `@context` a query-string walk is read under, which every pointer
     /// of one carries (clause 5.5.9.1).
     context: PageContext,
-    /// The digest of the query a query-string walk answers, or the key of the
+    /// The digest of the query a query-string walk answers, or the digest of the
     /// posted query the walk names.
-    query: PageQuery,
+    query: QueryDigest,
     /// The request every pointer rebuilds, as a client reaches it.
     pointed: PointedRequest,
 }
@@ -34,7 +34,7 @@ impl PagePointing {
     /// The pointing of a page built over `pointers`, of a walk read under
     /// `context` for `query`, whose pointers rebuild `pointed`.
     #[must_use]
-    pub const fn new(pointers: PagePointers, context: PageContext, query: PageQuery, pointed: PointedRequest) -> PagePointing {
+    pub const fn new(pointers: PagePointers, context: PageContext, query: QueryDigest, pointed: PointedRequest) -> PagePointing {
         PagePointing {
             pointers,
             context,
@@ -68,14 +68,14 @@ mod tests {
     use crate::{link_target::PointedRequest, page_pointing::PagePointing, pagination::PageOutcome};
     use andromeda_http_headers::link::relation_type::RelationType;
     use andromeda_ngsi_ld_query::{page_reach::PageReach, page_window::PageWindow};
-    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_pointers::PagePointers, page_query::PageQuery};
+    use andromeda_ngsi_ld_request::pagination::{page_context::PageContext, page_pointers::PagePointers, query_digest::QueryDigest};
     use axum::http::Uri;
 
     fn pointing(pointers: PagePointers, raw: &'static str) -> PagePointing {
         PagePointing::new(
             pointers,
             PageContext::try_from("https://example.com/a.jsonld").expect("an IRI"),
-            PageQuery::of(Some("type=Vehicle")),
+            QueryDigest::of(Some("type=Vehicle")),
             PointedRequest::new(None, Uri::from_static(raw)),
         )
     }
@@ -89,7 +89,7 @@ mod tests {
     }
 
     #[test]
-    fn a_query_string_walk_carries_its_context_and_a_posted_walk_its_key() {
+    fn a_query_string_walk_carries_its_context_and_a_posted_walk_its_digest() {
         let window = PageWindow::offset(2, 0);
         let query_string = pointing(PagePointers::OverRequestUri, "/ngsi-ld/v1/entities?type=Vehicle&limit=2").targets(&window, continuing());
         let next = query_string.target(&RelationType::Next).expect("a next pointer");

@@ -26,7 +26,7 @@ pub fn classify_posted_query_error(error: &PostedQueryError) -> ClassifiedReport
 mod tests {
     use crate::posted_query_failure::classify_posted_query_error;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
-    use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
+    use andromeda_ngsi_ld_request::pagination::query_digest::QueryDigest;
     use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
     use andromeda_posted_query::error::PostedQueryError;
     use pretty_assertions::assert_eq;
@@ -35,7 +35,7 @@ mod tests {
     fn a_pointer_to_a_query_no_longer_held_or_under_another_context_is_bad_request_data() {
         for error in [
             PostedQueryError::NotFound {
-                key: PageQuery::of(Some("type=Vehicle")),
+                digest: QueryDigest::of(Some("type=Vehicle")),
             },
             PostedQueryError::ContextChanged,
         ] {

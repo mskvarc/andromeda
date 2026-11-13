@@ -18,7 +18,7 @@ use axum::{extract::FromRequestParts, http::request::Parts};
 pub enum EntityQuerySource {
     /// The query itself.
     Query(Box<EntityQueryParameters>),
-    /// A posted query the broker holds, by its key, beside the URL parameters
+    /// A posted query the broker holds, by its digest, beside the URL parameters
     /// of the POST that posted it (clause 6.23.3.1).
     Posted(PostedQueryReference<PostQueryParams>),
 }
@@ -41,7 +41,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::entity_query_source::EntityQuerySource;
-    use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
+    use andromeda_ngsi_ld_request::pagination::query_digest::QueryDigest;
     use axum::{extract::FromRequestParts, http::Request};
 
     async fn source(query: &str) -> EntityQuerySource {
@@ -55,9 +55,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_query_string_naming_a_posted_query_is_a_reference() {
-        let key = PageQuery::of(Some("type=Vehicle"));
-        let posted = source(&format!("limit=2&postedQuery={}", key.encode())).await;
-        assert!(matches!(posted, EntityQuerySource::Posted(reference) if reference.key == key));
+        let digest = QueryDigest::of(Some("type=Vehicle"));
+        let posted = source(&format!("limit=2&postedQuery={}", digest.encode())).await;
+        assert!(matches!(posted, EntityQuerySource::Posted(reference) if reference.digest == digest));
         assert!(matches!(source("type=Vehicle&limit=2").await, EntityQuerySource::Query(_)));
     }
 }

@@ -2,7 +2,7 @@
 //! holds (clauses 5.5.9 and 6.23.3.1).
 //!
 //! Every pointer of a paged POST query is a GET on `/entities` naming the held
-//! query by its key. Following one runs the held query exactly as the POST ran
+//! query by its digest. Following one runs the held query exactly as the POST ran
 //! it: the same clause 5.2.23 body under the same `@context` (clause 5.5.9.1),
 //! with the URL parameters the pointer carries.
 
@@ -27,7 +27,7 @@ pub(crate) struct FollowedQuery {
     pub(crate) context: AdmittedContext,
     /// The posted query with the URL parameters the pointer carries.
     pub(crate) query: EntityQueryParameters,
-    /// The pagination of the walk, paged under the key the pointer names.
+    /// The pagination of the walk, paged under the digest the pointer names.
     pub(crate) pagination: RequestPagination,
 }
 
@@ -36,7 +36,7 @@ pub(crate) struct FollowedQuery {
 ///
 /// # Errors
 ///
-/// `BadRequestData` for a key that names no live query posted to Query
+/// `BadRequestData` for a digest that names no live query posted to Query
 /// Entities and for a follower naming another `@context` (clause 5.5.9.1);
 /// otherwise the classified failure of the store, of admitting the held
 /// context, or of reading the held query.
@@ -47,10 +47,10 @@ pub(crate) async fn followed_query(
     pagination: RequestPagination,
     uri: &Uri,
 ) -> Result<FollowedQuery, ProblemResponse> {
-    let PostedQueryReference { key, url } = reference;
+    let PostedQueryReference { digest, url } = reference;
     let posted = services
         .posted_queries
-        .resolve(&key, PostedQueryKind::Entities)
+        .resolve(&digest, PostedQueryKind::Entities)
         .await
         .with_entity_instance(uri)?;
     posted.admit_follower(follower).with_entity_instance(uri)?;
@@ -60,11 +60,11 @@ pub(crate) async fn followed_query(
         .with_entity_instance(uri)?;
     let mut query = url.parameters_of(body).with_entity_instance(uri)?;
     // Clause 5.5.9.1: a followed cursor is bound to the query it walks, which
-    // the key names.
-    query.page.query = Some(key.clone()); // clone: the walk is paged under the same key the cursor is bound to
+    // the digest names.
+    query.page.query = Some(digest.clone()); // clone: the walk is paged under the same digest the cursor is bound to
     Ok(FollowedQuery {
         context,
         query,
-        pagination: pagination.following(key),
+        pagination: pagination.following(digest),
     })
 }

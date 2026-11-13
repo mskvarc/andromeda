@@ -69,9 +69,9 @@ mod tests {
     use andromeda_ngsi_ld_request::pagination::{
         cursor_request::CursorRequest,
         page_context::PageContext,
-        page_query::PageQuery,
         parameters::PageParameters,
         policy::PaginationPolicy,
+        query_digest::QueryDigest,
     };
     use axum::{
         http::{StatusCode, Uri},
@@ -83,7 +83,7 @@ mod tests {
         RequestPagination {
             policy: PaginationPolicy::CursorDefault,
             context: PageContext::try_from("https://example.com/core.jsonld").expect("an IRI"),
-            query: PageQuery::of(None),
+            query: QueryDigest::of(None),
             pointed: PointedRequest::new(None, uri()),
         }
     }

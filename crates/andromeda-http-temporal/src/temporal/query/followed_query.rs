@@ -2,7 +2,7 @@
 //! the broker holds (clauses 5.5.9 and 6.24.3.1).
 //!
 //! Every pointer of a paged POST temporal query is a GET on
-//! `/temporal/entities` naming the held query by its key. Following one runs
+//! `/temporal/entities` naming the held query by its digest. Following one runs
 //! the held query exactly as the POST ran it: the same clause 5.2.23 body
 //! under the same `@context` (clause 5.5.9.1), admitted as a body is, with the
 //! URL parameters the pointer carries.
@@ -33,7 +33,7 @@ pub(crate) struct FollowedQuery {
     pub(crate) context: AdmittedContext,
     /// The posted query with the URL parameters the pointer carries.
     pub(crate) params: TemporalQueryParameters,
-    /// The element page the pointer asks for, of the walk the key names.
+    /// The element page the pointer asks for, of the walk the digest names.
     pub(crate) page: QueriedPage,
 }
 
@@ -42,7 +42,7 @@ pub(crate) struct FollowedQuery {
 ///
 /// # Errors
 ///
-/// `BadRequestData` for a key that names no live query posted to Query
+/// `BadRequestData` for a digest that names no live query posted to Query
 /// Temporal Evolution of Entities and for a follower naming another
 /// `@context` (clause 5.5.9.1); otherwise the classified failure of the store,
 /// of admitting the held context or the held query, or of the page asked for.
@@ -54,15 +54,15 @@ pub(crate) async fn followed_query(
     pagination: RequestPagination,
     uri: &Uri,
 ) -> Result<FollowedQuery, ProblemResponse> {
-    let PostedQueryReference { key, url } = reference;
-    let posted = services.posted_queries.resolve(&key, PostedQueryKind::Temporal).await.with_instance(uri)?;
+    let PostedQueryReference { digest, url } = reference;
+    let posted = services.posted_queries.resolve(&digest, PostedQueryKind::Temporal).await.with_instance(uri)?;
     posted.admit_follower(follower).with_instance(uri)?;
     let (body, context) = posted.into_parts();
     let context = admit_request_context(services.temporal.engine(), SubmittedContext::from(context), uri).await?;
     let mut params = admitted_body_parameters(body, url, admission).map_err(|report| ProblemResponse::classified(report, uri.clone()))?;
     // Clause 5.5.9.1: a followed cursor is bound to the query it walks, which
-    // the key names.
-    params.page.query = Some(key.clone()); // clone: the walk is paged under the same key the cursor is bound to
-    let page = QueriedPage::requested(pagination.following(key), &params, PagePointers::OverPostedQuery).with_instance(uri)?;
+    // the digest names.
+    params.page.query = Some(digest.clone()); // clone: the walk is paged under the same digest the cursor is bound to
+    let page = QueriedPage::requested(pagination.following(digest), &params, PagePointers::OverPostedQuery).with_instance(uri)?;
     Ok(FollowedQuery { context, params, page })
 }

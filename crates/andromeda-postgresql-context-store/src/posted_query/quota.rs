@@ -6,7 +6,7 @@
 //! to the sweep: no read serves them, so they take no place in the quota.
 
 use crate::posted_query::{lifecycle::live, mapper::stored_digest};
-use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
+use andromeda_ngsi_ld_request::pagination::query_digest::QueryDigest;
 use andromeda_posted_query::retention::PostedQueryQuota;
 use andromeda_postgresql_schema::posted_query::PostedQueries;
 use andromeda_postgresql_seaquery::{aggregate::row_number, catalog_function::column_size};
@@ -26,7 +26,7 @@ enum Ranked {
 
 /// The statement deleting the live queries past `quota`, never `held`, or
 /// `None` when the quota sets no ceiling.
-pub(crate) fn eviction_statement(held: &PageQuery, quota: PostedQueryQuota) -> Option<DeleteStatement> {
+pub(crate) fn eviction_statement(held: &QueryDigest, quota: PostedQueryQuota) -> Option<DeleteStatement> {
     let ceilings: Vec<SimpleExpr> = [
         quota
             .max_count
@@ -74,14 +74,14 @@ fn bigint(ceiling: impl TryInto<i64>) -> i64 {
 #[cfg(test)]
 mod tests {
     use crate::posted_query::quota::eviction_statement;
-    use andromeda_ngsi_ld_request::pagination::page_query::PageQuery;
+    use andromeda_ngsi_ld_request::pagination::query_digest::QueryDigest;
     use andromeda_posted_query::retention::PostedQueryQuota;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
     use std::num::NonZeroUsize;
 
-    fn held() -> PageQuery {
-        PageQuery::of(Some("type=Held"))
+    fn held() -> QueryDigest {
+        QueryDigest::of(Some("type=Held"))
     }
 
     #[test]

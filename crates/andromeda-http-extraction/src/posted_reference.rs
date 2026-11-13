@@ -2,7 +2,7 @@
 //!
 //! The query-string binding of a query answers both the query a client wrote
 //! and the pointers of a query a client sent by POST, which name the query the
-//! broker holds by its key. A parameter beside the key that the held query
+//! broker holds by its digest. A parameter beside the digest that the held query
 //! already fixes is refused with `BadRequestData` before anything is decoded,
 //! since the pointer was not followed as the broker built it.
 
@@ -22,7 +22,7 @@ use serde::de::DeserializeOwned;
 ///
 /// # Errors
 ///
-/// A `BadRequestData` naming a parameter the posted query fixes or a key that
+/// A `BadRequestData` naming a parameter the posted query fixes or a digest that
 /// is not one the broker emits, and the refusal of URL parameters that do not
 /// decode.
 pub(crate) fn decode_posted_reference<P>(parts: &Parts) -> Result<PostedQueryReference<P>, ExtractorRejection>
@@ -31,9 +31,9 @@ where
 {
     let query = parts.uri.query().unwrap_or("");
     PostedQueryReference::<P>::refuse_reselection(query).map_err(|refused| bad_request_data(&refused, parts))?;
-    let (key, url) = split_posted_query(query).map_err(|refused| bad_request_data(&refused, parts))?;
+    let (digest, url) = split_posted_query(query).map_err(|refused| bad_request_data(&refused, parts))?;
     let url = decode_query::<P>(&url).map_err(|refusal| refusal.into_rejection(addressed_uri(parts)))?;
-    Ok(PostedQueryReference { key, url })
+    Ok(PostedQueryReference { digest, url })
 }
 
 /// The `BadRequestData` a pointer not followed as the broker built it is
@@ -54,7 +54,7 @@ pub(crate) fn names_posted_query<P: QueryParameterSet>(parts: &Parts) -> bool {
 mod tests {
     use crate::posted_reference::decode_posted_reference;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemDetail};
-    use andromeda_ngsi_ld_request::{entity_operations::PostQueryParams, pagination::page_query::PageQuery};
+    use andromeda_ngsi_ld_request::{entity_operations::PostQueryParams, pagination::query_digest::QueryDigest};
     use axum::http::Request;
     use pretty_assertions::assert_eq;
 
@@ -71,14 +71,14 @@ mod tests {
 
     #[test]
     fn a_pointer_as_the_broker_built_it_decodes() {
-        let key = PageQuery::of(Some("type=Vehicle")).encode();
-        assert_eq!(refusal(&format!("limit=2&offset=2&postedQuery={key}")), None);
+        let digest = QueryDigest::of(Some("type=Vehicle")).encode();
+        assert_eq!(refusal(&format!("limit=2&offset=2&postedQuery={digest}")), None);
     }
 
     #[test]
-    fn a_selection_beside_the_key_is_bad_request_data() {
-        let key = PageQuery::of(Some("type=Vehicle")).encode();
-        assert_eq!(refusal(&format!("postedQuery={key}&q=speed%3E1")), Some(NgsiLdErrorType::BadRequestData));
+    fn a_selection_beside_the_digest_is_bad_request_data() {
+        let digest = QueryDigest::of(Some("type=Vehicle")).encode();
+        assert_eq!(refusal(&format!("postedQuery={digest}&q=speed%3E1")), Some(NgsiLdErrorType::BadRequestData));
     }
 
     #[test]
@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn a_name_outside_the_vocabulary_is_invalid_request() {
-        let key = PageQuery::of(Some("type=Vehicle")).encode();
-        assert_eq!(refusal(&format!("postedQuery={key}&bogus=1")), Some(NgsiLdErrorType::InvalidRequest));
+        let digest = QueryDigest::of(Some("type=Vehicle")).encode();
+        assert_eq!(refusal(&format!("postedQuery={digest}&bogus=1")), Some(NgsiLdErrorType::InvalidRequest));
     }
 }
