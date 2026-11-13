@@ -8,6 +8,8 @@ pub mod aggregation_gathering;
 pub mod answer_body;
 /// Reading a context source's answer of entities into the model.
 mod answer_reading;
+/// Whether a context source's error answer is its verdict on the request as sent.
+pub mod answer_verdict;
 /// Reading every source's answer of Temporal Evolutions into the model.
 mod answered_temporal;
 /// Which attributes of a forwarded write a registration covers.

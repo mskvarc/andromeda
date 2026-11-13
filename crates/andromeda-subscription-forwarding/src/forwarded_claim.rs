@@ -14,8 +14,10 @@
 //! under the identifier it was recorded with. A source holding that copy
 //! already answers the second creation with `AlreadyExists`, so it never holds
 //! two. Since an earlier send of a taken-over claim may have reached the
-//! source, only an answer from the source releases it. A send again that never
-//! reached the source leaves the claim to its lease, to be tried once more.
+//! source, only the source refusing the copy as sent releases it. A send again
+//! the source answered with an error status that depends on the moment it
+//! came, or that never reached the source, leaves the claim to its lease, to
+//! be tried once more.
 
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
@@ -46,8 +48,9 @@ pub enum ClaimOrigin {
     /// a send that never reached the source leaves nothing there.
     Recorded,
     /// The claim was taken over from a placement whose lease ran out, whose
-    /// send may have reached the source. A send that never reaches the source
-    /// learns nothing of it, so the claim stays to its lease.
+    /// send may have reached the source. A send the source answers with an
+    /// error status that depends on the moment it came, or that never reaches
+    /// the source, learns nothing of it, so the claim stays to its lease.
     TakenOver,
 }
 

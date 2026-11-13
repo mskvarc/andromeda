@@ -3,11 +3,8 @@
 
 use crate::{outcome::TransportFailure, remote_answer::RemoteAnswer, remote_effect::RemoteEffect};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
+use http::StatusCode;
 use thiserror::Error;
-
-/// The status a source answers the creation of something it already holds
-/// with (`AlreadyExists`, clause 5.5.2).
-const CONFLICT: u16 = 409;
 
 /// Why one subscription forward did not complete at the source.
 #[derive(Debug, Clone, Error)]
@@ -33,7 +30,10 @@ impl SubscriptionForwardFailure {
     /// What the forward may have left at the source. An error status is the
     /// source saying it did not carry the operation out, except a 409 that
     /// names `AlreadyExists`, or no problem type at all, which says the source
-    /// holds what the operation creates already.
+    /// holds what the operation creates already, and a 502 or 504 that does
+    /// not name `LdContextNotAvailable`, a gateway saying the source behind it
+    /// gave no valid answer in time, which leaves the operation as possible as
+    /// no answer at all does.
     #[must_use]
     pub fn remote_effect(&self) -> RemoteEffect {
         match self {
@@ -44,13 +44,26 @@ impl SubscriptionForwardFailure {
     }
 }
 
-/// What the error status `answer` left at the source. A 409 of another
-/// problem type, `Conflict` say, refused the operation for a reason of its
-/// own, so it left nothing there.
+/// What the error status `answer` left at the source.
+///
+/// A 409 is the status a source answers the creation of something it already
+/// holds with (`AlreadyExists`, clause 5.5.2), and a 409 of another problem
+/// type, `Conflict` say, refused the operation for a reason of its own, so it
+/// left nothing there. A gateway answers 502 when the source behind it gave an
+/// invalid answer and 504 when it gave none in time, after passing the
+/// operation on (RFC 9110 sections 15.6.3 and 15.6.5, clause 6.3.17). The one
+/// error type Table 6.3.2-1 answers with 504 is `LdContextNotAvailable`, the
+/// source refusing the operation because it could not retrieve its `@context`.
 fn answered_effect(answer: &RemoteAnswer) -> RemoteEffect {
     let already_exists = BatchErrorKind::Known(ProblemClassification::Category(NgsiLdErrorType::AlreadyExists));
-    let present = answer.status == CONFLICT && answer.problem.as_ref().is_none_or(|problem| problem.error_type == already_exists);
-    if present { RemoteEffect::Present } else { RemoteEffect::Untouched }
+    let context_not_available = BatchErrorKind::Known(ProblemClassification::Category(NgsiLdErrorType::LdContextNotAvailable));
+    let names = |kind: &BatchErrorKind| answer.problem.as_ref().is_some_and(|problem| problem.error_type == *kind);
+    match StatusCode::from_u16(answer.status) {
+        Ok(StatusCode::CONFLICT) if answer.problem.is_none() || names(&already_exists) => RemoteEffect::Present,
+        Ok(StatusCode::GATEWAY_TIMEOUT) if names(&context_not_available) => RemoteEffect::Untouched,
+        Ok(StatusCode::BAD_GATEWAY | StatusCode::GATEWAY_TIMEOUT) => RemoteEffect::Possible,
+        Ok(_) | Err(_) => RemoteEffect::Untouched,
+    }
 }
 
 #[cfg(test)]
@@ -66,11 +79,11 @@ mod tests {
     use serde_json::json;
     use std::{sync::Arc, time::Duration};
 
-    /// A 409 answer carrying a problem document of `problem_type`.
-    fn conflict_of(problem_type: &str) -> SubscriptionForwardFailure {
-        let problem: BatchProblemDetail = serde_json::from_value(json!({"type": problem_type, "detail": "the subscription exists"})).expect("a problem detail");
+    /// An answer of `status` carrying a problem document of `problem_type`.
+    fn answered(status: u16, problem_type: &str) -> SubscriptionForwardFailure {
+        let problem: BatchProblemDetail = serde_json::from_value(json!({"type": problem_type, "detail": "the forward failed"})).expect("a problem detail");
         SubscriptionForwardFailure::Answered(RemoteAnswer {
-            status: 409,
+            status,
             problem: Some(problem),
         })
     }
@@ -80,7 +93,7 @@ mod tests {
     /// identifier it already holds is answered.
     #[test]
     fn a_409_naming_already_exists_found_what_the_forward_creates_present() {
-        let already_exists = conflict_of("https://uri.etsi.org/ngsi-ld/errors/AlreadyExists");
+        let already_exists = answered(409, "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists");
         pretty_assertions::assert_eq!(already_exists.remote_effect(), RemoteEffect::Present);
     }
 
@@ -96,7 +109,7 @@ mod tests {
     /// holds nothing of it.
     #[test]
     fn a_409_naming_another_problem_type_left_nothing_there() {
-        let conflict = conflict_of("https://uri.etsi.org/ngsi-ld/errors/Conflict");
+        let conflict = answered(409, "https://uri.etsi.org/ngsi-ld/errors/Conflict");
         pretty_assertions::assert_eq!(conflict.remote_effect(), RemoteEffect::Untouched);
     }
 
@@ -106,11 +119,36 @@ mod tests {
         pretty_assertions::assert_eq!(timed_out.remote_effect(), RemoteEffect::Possible);
     }
 
+    /// A gateway that passed the forward on answers 502 for an invalid answer
+    /// of the source behind it and 504 for none in time (RFC 9110 sections
+    /// 15.6.3 and 15.6.5, clause 6.3.17), so the source may have carried it
+    /// out.
+    #[test]
+    fn a_forward_a_gateway_got_no_valid_answer_to_may_have_been_carried_out() {
+        let gateways = [
+            SubscriptionForwardFailure::Answered(RemoteAnswer { status: 502, problem: None }),
+            SubscriptionForwardFailure::Answered(RemoteAnswer { status: 504, problem: None }),
+            answered(504, "about:blank"),
+        ];
+        for gateway in gateways {
+            pretty_assertions::assert_eq!(gateway.remote_effect(), RemoteEffect::Possible, "{gateway}");
+        }
+    }
+
+    /// Table 6.3.2-1 answers `LdContextNotAvailable` with 504, which is the
+    /// source refusing the forward, not a gateway passing it on.
+    #[test]
+    fn a_504_naming_ld_context_not_available_left_nothing_there() {
+        let context_not_available = answered(504, "https://uri.etsi.org/ngsi-ld/errors/LdContextNotAvailable");
+        pretty_assertions::assert_eq!(context_not_available.remote_effect(), RemoteEffect::Untouched);
+    }
+
     #[test]
     fn a_forward_the_source_refused_or_never_received_left_nothing_there() {
         let untouched = [
             SubscriptionForwardFailure::Answered(RemoteAnswer { status: 400, problem: None }),
             SubscriptionForwardFailure::Answered(RemoteAnswer { status: 500, problem: None }),
+            SubscriptionForwardFailure::Answered(RemoteAnswer { status: 503, problem: None }),
             SubscriptionForwardFailure::Transport(TransportFailure::CoolingDown {
                 remaining: Duration::from_secs(1),
             }),

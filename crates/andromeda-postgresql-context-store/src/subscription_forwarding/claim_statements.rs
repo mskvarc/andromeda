@@ -85,7 +85,7 @@ pub(crate) fn settle_claim_statement(local: &Identifier, registration: &Identifi
 
 /// The local subscription URI, registration and recorded identifier of up to
 /// `limit` claims whose lease has ended, the longest overdue first, served by
-/// `idx_forwarded_subscription_claims_lease_claim`.
+/// `idx_forwarded_subscription_claims_claim`.
 pub(crate) fn stale_claims_statement(limit: u32) -> SelectStatement {
     let claim = Alias::new(CLAIM);
     let copy = Alias::new(COPY);

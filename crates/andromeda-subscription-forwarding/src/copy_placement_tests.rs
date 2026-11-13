@@ -161,6 +161,23 @@ async fn a_copy_the_source_does_not_answer_in_time_stays_recorded_and_routed() {
     pretty_assertions::assert_eq!(scene.router().unregistered(), Vec::<Identifier>::new());
 }
 
+/// A gateway answers 504 once it has passed the copy on and the source behind
+/// it gave no answer in time (RFC 9110 section 15.6.5), so the source may
+/// still create the copy and notify under it, and the claim and the route
+/// stay.
+#[tokio::test]
+async fn a_copy_a_gateway_timed_out_on_stays_recorded_and_routed() {
+    let scene = scene_holding(Vec::new()).await;
+    let source = SubscribingSource::start_answering(&identifier(SOURCE), ResponseTemplate::new(504)).await;
+
+    scene.place_as_at_creation(&source.stored()).await.expect("the placement is settled");
+
+    let claim = the_claim(&scene.maps());
+    pretty_assertions::assert_eq!(scene.removed_mappings(), Vec::<Identifier>::new());
+    pretty_assertions::assert_eq!(scene.router().registered(), vec![claim.remote_subscription]);
+    pretty_assertions::assert_eq!(scene.router().unregistered(), Vec::<Identifier>::new());
+}
+
 /// A source that answers the copy with `AlreadyExists` (clause 5.5.2) holds a
 /// subscription under its identifier, so the claim is settled and the route
 /// kept.
