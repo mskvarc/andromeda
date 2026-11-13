@@ -160,6 +160,7 @@ pub mod report_matcher;
 pub mod reported_instant;
 pub mod request_fields;
 pub mod request_version;
+pub mod reserved_receiver_info;
 pub mod respond_async;
 pub mod retry_chain;
 pub mod room_building;

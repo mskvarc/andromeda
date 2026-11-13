@@ -3,9 +3,10 @@
 //! ETSI GS CIM 009 clauses 6.3.8, 6.3.9 and 6.3.19 require the key and the
 //! value of an HTTP-bound `receiverInfo` or `contextSourceInfo` entry to adhere
 //! to IETF RFC 7230: the key is a token and the value a field value without
-//! control characters. The pair keeps its stored shape (clause 5.2.22); this
-//! module is the single reading admission and delivery share, so what is
-//! accepted at registration time is exactly what is sent later.
+//! control characters. The pair keeps its stored shape (clause 5.2.22). This
+//! is the syntax every HTTP-bound entry shares, read alike at admission and at
+//! delivery, so an entry accepted when its resource is written is sent as it
+//! was accepted.
 
 use crate::key_value_pair::KeyValuePair;
 use http::{

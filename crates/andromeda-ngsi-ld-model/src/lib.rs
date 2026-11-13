@@ -38,6 +38,7 @@ pub mod key_value_pair;
 pub mod lifetime_expiry;
 pub mod node_refusal;
 pub mod notification;
+pub mod notification_header_field;
 pub mod notification_media_type;
 pub mod notification_request;
 pub mod query;

@@ -8,7 +8,7 @@ use crate::{
     },
     host_port::HostPort,
 };
-use andromeda_ngsi_ld_model::{http_header_field::HttpHeaderField, key_value_pair::KeyValuePair};
+use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, notification_header_field::notification_header_field};
 use secrecy::SecretString;
 use std::str::FromStr;
 use url::Url;
@@ -83,15 +83,16 @@ pub fn parse_endpoint_transport(uri: &Url, notifier_info: Option<&[KeyValuePair]
 
 /// Admit an endpoint at subscription time: the transport it names, and for an
 /// `http` or `https` endpoint a `receiverInfo` whose every entry is an HTTP
-/// header field, as clauses 6.3.8 and 6.3.9 require. An `mqtt` or `mqtts`
-/// endpoint carries its `receiverInfo` as message metadata (clause 7.2), which
-/// has no such rule.
+/// header field, as clauses 6.3.8 and 6.3.9 require, and names no field the
+/// broker writes on every notification itself. An `mqtt` or `mqtts` endpoint
+/// carries its `receiverInfo` as message metadata (clause 7.2), which has no
+/// such rule.
 ///
 /// # Errors
 ///
 /// Returns what [`parse_endpoint_transport`] returns, and
 /// [`EndpointParseError::ReceiverInfo`] for an `http` or `https` endpoint with an
-/// entry that is not a header field.
+/// entry that is not a header field or names a reserved one.
 pub fn admit_endpoint_transport(
     uri: &Url,
     notifier_info: Option<&[KeyValuePair]>,
@@ -103,7 +104,7 @@ pub fn admit_endpoint_transport(
             receiver_info
                 .unwrap_or_default()
                 .iter()
-                .try_for_each(|pair| HttpHeaderField::try_from(pair).map(|_field| ()))?;
+                .try_for_each(|pair| notification_header_field(pair).map(|_field| ()))?;
         }
         EndpointTransport::Mqtt(_) => {}
     }
@@ -170,7 +171,11 @@ mod tests {
         mqtt::{MqttEndpointConfig, MqttQoS, MqttVersion},
         transport::{EndpointTransport, admit_endpoint_transport, parse_endpoint_transport as parse_typed_endpoint_transport},
     };
-    use andromeda_ngsi_ld_model::{http_header_field::HttpHeaderFieldError, key_value_pair::KeyValuePair};
+    use andromeda_ngsi_ld_model::{
+        http_header_field::HttpHeaderFieldError,
+        key_value_pair::KeyValuePair,
+        notification_header_field::{NotificationHeaderFieldError, ReservedHeader},
+    };
     use secrecy::ExposeSecret;
     use url::Url;
 
@@ -352,7 +357,9 @@ mod tests {
         let receiver = notifier_info(&[("Bad Name", "x")]);
         assert!(matches!(
             admit("http://example.com/notify", None, Some(&receiver)),
-            Err(EndpointParseError::ReceiverInfo(HttpHeaderFieldError::Name(_)))
+            Err(EndpointParseError::ReceiverInfo(NotificationHeaderFieldError::Field(
+                HttpHeaderFieldError::Name(_)
+            )))
         ));
     }
 
@@ -361,8 +368,27 @@ mod tests {
         let receiver = notifier_info(&[("X-A", "a\nb")]);
         assert!(matches!(
             admit("https://example.com/notify", None, Some(&receiver)),
-            Err(EndpointParseError::ReceiverInfo(HttpHeaderFieldError::Value(_)))
+            Err(EndpointParseError::ReceiverInfo(NotificationHeaderFieldError::Field(
+                HttpHeaderFieldError::Value(_)
+            )))
         ));
+    }
+
+    #[test]
+    fn an_http_endpoint_with_a_receiver_info_key_naming_a_framing_header_is_refused() {
+        let receiver = notifier_info(&[("Authorization", "Bearer abc"), ("content-LENGTH", "5")]);
+        assert!(matches!(
+            admit("http://example.com/notify", None, Some(&receiver)),
+            Err(EndpointParseError::ReceiverInfo(NotificationHeaderFieldError::Reserved(
+                ReservedHeader::ContentLength
+            )))
+        ));
+    }
+
+    #[test]
+    fn an_mqtt_endpoint_keeps_a_receiver_info_key_naming_a_framing_header() {
+        let receiver = notifier_info(&[("Content-Type", "text/plain")]);
+        assert!(admit("mqtt://broker:1883/topic", None, Some(&receiver)).is_ok());
     }
 
     #[test]
