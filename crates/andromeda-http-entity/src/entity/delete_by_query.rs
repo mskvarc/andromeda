@@ -29,6 +29,7 @@ use andromeda_extensions::enabled::EnabledExtensions;
 use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::{context::ContextUrl, context_target, query::ValidatedQuery};
+use andromeda_jsonld::user_context_admission::{SubmittedContext, admit_user_context};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::{entity_selection::ConsideredEntities, page_window::PageWindow, projection::purge::DatasetPurgeScope};
 use andromeda_ngsi_ld_request::query::entity::{
@@ -97,6 +98,12 @@ pub(crate) async fn delete_by_query(
     Extension(enabled): Extension<EnabledExtensions>,
     ValidatedQuery(mut params): ValidatedQuery<PurgeEntitiesParameters>,
 ) -> Result<Response, ProblemResponse> {
+    // Clause 5.5.6 refuses a request whose `@context` cannot be loaded, so the
+    // context is admitted before anything is purged, though a selection by
+    // full IRIs alone expands nothing under it.
+    let context = admit_user_context(state.entity_query.engine(), SubmittedContext::from(context))
+        .await
+        .with_entity_instance(&uri)?;
     if !target.permits_federation() {
         params.local = Some(true);
     }

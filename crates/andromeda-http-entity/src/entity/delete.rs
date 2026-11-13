@@ -2,7 +2,6 @@
 
 use crate::{
     entity::{
-        ContextSpec,
         ContextUrl,
         EntityResultExt,
         EntityTenantState,
@@ -27,6 +26,7 @@ use crate::{
 use andromeda_entity::write_target::WriteTarget;
 use andromeda_federation::{outcome::ForwardedWriteOutcome, request::TriggeringRequest};
 use andromeda_http_extraction::{context_target, path_segment::EntityId};
+use andromeda_jsonld::user_context_admission::{SubmittedContext, admit_user_context};
 use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
 use axum::http::{HeaderMap, Method};
 
@@ -39,15 +39,20 @@ pub(crate) async fn delete(
         snapshot: _,
     }: EntityTenantState,
     OriginalUri(uri): OriginalUri,
-    context: ContextUrl,
+    ContextUrl(context): ContextUrl,
     TypedPath(EntityId(id)): TypedPath<EntityId>,
     ValidatedQuery(params): ValidatedQuery<EntityWriteParams>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
 ) -> Result<Response, ProblemResponse> {
+    // Clause 5.5.6 refuses a request whose `@context` cannot be loaded, so the
+    // context is admitted before anything is deleted, though a deletion by
+    // identifier alone expands nothing under it.
+    let context = admit_user_context(state.entity_query.engine(), SubmittedContext::from(context))
+        .await
+        .with_entity_instance(&uri)?;
     let service = &state.entities;
     let is_local = params.local.unwrap_or(false);
-    let context: ContextSpec = context.into_inner();
     let selector = service
         .expand_write_selector(params.entity_type.as_ref(), &context)
         .await
