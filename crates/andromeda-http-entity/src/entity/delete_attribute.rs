@@ -2,7 +2,6 @@
 
 use crate::{
     entity::{
-        ContextSpec,
         ContextUrl,
         DatasetSelection,
         DatasetSelector,
@@ -33,6 +32,7 @@ use andromeda_http_extraction::{
     context_target,
     path_segment::{AttrId, EntityId},
 };
+use andromeda_jsonld::user_context_admission::{SubmittedContext, admit_user_context};
 use axum::http::{HeaderMap, Method};
 use std::slice;
 
@@ -45,14 +45,19 @@ pub(crate) async fn delete_attr(
         snapshot: _,
     }: EntityTenantState,
     OriginalUri(uri): OriginalUri,
-    context: ContextUrl,
+    ContextUrl(context): ContextUrl,
     TypedPath((EntityId(id), AttrId(attr_id))): TypedPath<(EntityId, AttrId)>,
     ValidatedQuery(params): ValidatedQuery<EntityAttributeDeletionParams>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
 ) -> Result<Response, ProblemResponse> {
+    // Clause 5.5.6 refuses a request whose `@context` cannot be loaded, and
+    // clause 5.5.7 one that declares a scoped context, before anything is
+    // deleted.
+    let context = admit_user_context(state.entity_query.engine(), SubmittedContext::from(context))
+        .await
+        .with_entity_instance(&uri)?;
     let service = &state.entities;
-    let context: ContextSpec = context.into_inner();
     let delete_all = params.delete_all.unwrap_or(false);
     let dataset_id = params.dataset_id.as_ref();
     // NGSI-LD clause 5.6.5: `deleteAll` wins over `datasetId`, and with neither
