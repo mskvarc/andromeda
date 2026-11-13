@@ -16,13 +16,14 @@ use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,
     model::{DateTime, Entity, Lossless, NgsiLdMediaType},
+    query::temporal_query::TemporalProperty,
     subscription::{Endpoint, NotificationParams, NotificationTrigger, Subscription},
 };
 
 /// Pins: An Entity created with speed 30 and an `expiresAt` two seconds ahead is deleted by the expiry sweep: a
 /// Subscription listening to `entityDeleted` on its type is notified with the Entity carrying `deletedAt`, and its
-/// Temporal Evolution records the deletion of speed as the NGSI-LD Null with a `deletedAt`
-/// Clause: 4.22, 5.6.6.4, 5.8.6, 4.3.1
+/// Temporal Evolution read on `deletedAt` records the deletion of speed as the NGSI-LD Null with a `deletedAt`
+/// Clause: 4.22, 5.6.6.4, 5.8.6, 4.3.1, 4.11
 /// Recorded: Andromeda configuration, not v1.9.1: clause 4.22 lets a broker remove an expired Entity at a lag it
 /// leaves open; Andromeda removes it through the deletion Delete Entity runs, and the stack sweeps every second
 #[gtest]
@@ -54,10 +55,12 @@ async fn a_ent_del_9002_the_expiry_sweep_deletes_an_entity_as_a_deletion_does() 
     expect_that!(notification.data().as_slice(), nth(0, has_id(&vehicle_expiring_id)));
     let item = notification.data().first().or_fail()?;
     expect_that!(system_time::of_entity(item, SystemMember::DeletedAt).ok(), some(anything()));
+    // speed carries no observedAt, the default timeproperty (clause 4.11), so its deletion is read on deletedAt.
     let retrieved = broker
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .temporal()
         .retrieve(&vehicle_expiring_id)
+        .time_property(TemporalProperty::DeletedAt)
         .send()
         .await?;
     expect_that!(retrieved.body(), has_evolution("speed", contains(deleted_instance())));
