@@ -36,4 +36,8 @@ mod n_fed_qry_9019;
 mod n_fed_qry_9020;
 mod n_fed_qry_9021;
 mod n_fed_qry_9022;
+mod n_fed_qry_9023;
+mod n_fed_qry_9024;
+mod n_fed_qry_9025;
+mod n_fed_qry_9026;
 mod o_fed_qry_0020;
