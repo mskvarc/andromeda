@@ -180,6 +180,7 @@ impl From<EntityRefusal> for EntityError {
             | EntityRefusal::TypeNotString
             | EntityRefusal::EntityType { .. }
             | EntityRefusal::MissingType
+            | EntityRefusal::TypeNull
             | EntityRefusal::ExpandedAttributeName(_)
             | EntityRefusal::ExpandedMemberName(_)
             | EntityRefusal::Scope(_)

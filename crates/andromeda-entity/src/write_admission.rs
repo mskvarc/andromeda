@@ -300,6 +300,7 @@ mod tests {
         admission_fixture::{admitted_context, admitted_written},
         batch::UpsertPolicy,
         document_census::admit_entity_document,
+        entity_validation_reason::EntityValidationReason,
         error::EntityError,
         notification_recording_harness::{budgeted_recording_service, geometry_budget, recording_service, value_budget},
         write_admission::{AttributeWrite, BatchWrite, EntityWrite},
@@ -310,6 +311,7 @@ mod tests {
     use andromeda_ngsi_ld_entity::{
         admission::{instance_completeness::InstanceCompleteness, null_sentinel_admission::NullSentinelAdmission, written_families::WrittenFamilies},
         document::{EntityDocument, instance_document::InstanceDocument},
+        refusal::EntityRefusal,
     };
     use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier_length::IDENTIFIER_BYTE_LIMIT};
@@ -677,6 +679,26 @@ mod tests {
             )
             .await
             .expect("five positions are within a budget of five");
+    }
+
+    /// Clause 5.5.4: the NGSI-LD Null is an absolute IRI that expansion
+    /// leaves as written, so a compact `type` naming it reaches the admission
+    /// as the Null, alone or beside another type, and a create is refused.
+    #[tokio::test]
+    async fn the_create_admission_refuses_the_null_as_an_entity_type() {
+        let (service, _writes) = recording_service().await;
+        let context = admitted_context(&service, &ContextSpec::core_only()).await;
+        for types in [json!("urn:ngsi-ld:null"), json!(["Vehicle", "urn:ngsi-ld:null"])] {
+            let entity: Entity = serde_json::from_value(json!({"id": "urn:ngsi-ld:Vehicle:1", "type": types})).expect("the compact model reads it");
+            let refusal = service
+                .admit_entity_write::<CreateEntity>(&entity, &context, WrittenFamilies::Final)
+                .await
+                .expect_err("clause 5.5.4 refuses a first-level Null in a create");
+            assert!(
+                matches!(&refusal, EntityError::Validation(EntityValidationReason::Refused(refused)) if matches!(**refused, EntityRefusal::TypeNull)),
+                "{types}: {refusal:?}"
+            );
+        }
     }
 
     /// Assert that, for every limit from one value to `up_to`, the admission of

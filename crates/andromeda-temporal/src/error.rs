@@ -190,6 +190,7 @@ impl From<EntityRefusal> for TemporalError {
             | EntityRefusal::TypeNotString
             | EntityRefusal::EntityType { .. }
             | EntityRefusal::MissingType
+            | EntityRefusal::TypeNull
             | EntityRefusal::ExpandedAttributeName(_)
             | EntityRefusal::ExpandedMemberName(_)
             | EntityRefusal::Scope(_)

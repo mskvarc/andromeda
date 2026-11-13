@@ -40,6 +40,7 @@ use andromeda_ngsi_ld_lexicon::{
     unit_code_admission::{UnitCodeAdmission, unit_code_admission},
 };
 use andromeda_ngsi_ld_representation::family_member_admission::MemberAdmission;
+use andromeda_ngsi_ld_vocabulary::ngsi_ld_null::is_ngsi_ld_null;
 
 impl EntityDocument {
     /// Hold the document to the rules of an operation writing it under
@@ -85,13 +86,18 @@ impl EntityDocument {
     ///
     /// # Errors
     ///
-    /// Returns [`EntityRefusal::EntityExpiresAt`] or [`EntityRefusal::ScopeNull`]
-    /// for an entity member deleted outside a fragment,
-    /// [`EntityRefusal::ReservedNullValue`] for an attribute, instance or
-    /// sub-attribute deleted outside a fragment, and
+    /// Returns [`EntityRefusal::TypeNull`], [`EntityRefusal::EntityExpiresAt`]
+    /// or [`EntityRefusal::ScopeNull`] for an entity member that is the Null
+    /// outside a fragment, [`EntityRefusal::ReservedNullValue`] for an
+    /// attribute, instance or sub-attribute deleted outside a fragment, and
     /// [`EntityRefusal::NestedNullValue`] for the Null under a key of a Property
     /// value outside a merge fragment.
     pub fn admit_null_placements(&self, admission: NullSentinelAdmission) -> Result<(), EntityRefusal> {
+        // `type` is a first-level member, and the Null is an absolute IRI that
+        // expansion leaves as written, so it reaches here as a type name.
+        if admission.deletion_admission() == MemberAdmission::Forbidden && self.types().iter().any(|entity_type| is_ngsi_ld_null(entity_type.as_str())) {
+            return Err(EntityRefusal::TypeNull);
+        }
         if admission.deletion_admission() == MemberAdmission::Forbidden && self.expires_at().is_some_and(Slot::is_remove) {
             return Err(EntityRefusal::EntityExpiresAt);
         }
