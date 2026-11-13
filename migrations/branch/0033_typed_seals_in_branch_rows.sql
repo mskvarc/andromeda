@@ -33,9 +33,10 @@
 -- A history chunk in the columnstore is decompressed only for the streams a
 -- statement names as a bound value. A plain statement can name them only
 -- through a subquery, which decompresses every batch, so the block reads the
--- streams into variables first. The streams of top-level instances leave
--- history before the rest is rewritten, so no row is rewritten only to be
--- deleted, and the bound on the rows one statement may decompress is lifted.
+-- streams into variables first, and the bound on the rows one statement may
+-- decompress is lifted. The top-level instances leave the current state, and
+-- their streams leave history, before the rest is rewritten, so no row is
+-- rewritten only to be deleted.
 --
 -- No row is a sub-attribute, so no row keeps `proof_seals`. The check that a
 -- tombstone holds nothing beside its deletion names the column, so dropping
@@ -64,22 +65,7 @@ begin
     if seal_key is null then
         return;
     end if;
-    if exists (
-        select
-        from
-            current_attributes) then
-    update
-        current_attributes
-    set
-        sub_attributes = (seal_conversion_typed_tree(row (sub_attributes)::sub_attribute_tree, seal_key)).elements
-    where
-        exists (
-            select
-            from
-                unnest(sub_attributes) element
-            where
-                element.attribute_name_key = seal_key);
-end if;
+
     with removed as (
         delete from current_attributes
         where attribute_name_key = seal_key
@@ -88,166 +74,196 @@ end if;
             attribute_name_key,
             attribute_kind,
             ordinal
-),
-closed as (
-    update
-        current_attributes
-    set
-        ordinal = current_attributes.ordinal - behind.dropped
-    from (
+    ),
+    closed as (
+        update
+            current_attributes
+        set
+            ordinal = current_attributes.ordinal - behind.dropped
+        from (
+            select
+                later.entity_key,
+                later.attribute_name_key,
+                later.dataset_key,
+                count(*) as dropped
+            from
+                removed
+                join current_attributes as later on later.entity_key = removed.entity_key
+                    and later.attribute_name_key <> removed.attribute_name_key
+                    and later.ordinal > removed.ordinal
+            group by
+                later.entity_key,
+                later.attribute_name_key,
+                later.dataset_key) as behind
+        where
+            current_attributes.entity_key = behind.entity_key
+            and current_attributes.attribute_name_key = behind.attribute_name_key
+            and current_attributes.dataset_key = behind.dataset_key
+    ),
+    counted as (
         select
-            later.entity_key,
-            later.attribute_name_key,
-            later.dataset_key,
-            count(*) as dropped
+            entity_key,
+            attribute_name_key,
+            attribute_kind,
+            count(*) as instance_count
         from
             removed
-            join current_attributes as later on later.entity_key = removed.entity_key
-                and later.attribute_name_key <> removed.attribute_name_key
-                and later.ordinal > removed.ordinal
         group by
-            later.entity_key,
-            later.attribute_name_key,
-            later.dataset_key) as behind
-    where
-        current_attributes.entity_key = behind.entity_key
-        and current_attributes.attribute_name_key = behind.attribute_name_key
-        and current_attributes.dataset_key = behind.dataset_key
-),
-counted as (
-    select
-        entity_key,
-        attribute_name_key,
-        attribute_kind,
-        count(*) as instance_count
-    from
-        removed
-    group by
-        entity_key,
-        attribute_name_key,
-        attribute_kind
-),
-searched as (
-    update
-        entity_search
-    set
-        attribute_name_keys = array_remove(attribute_name_keys, sealed.attribute_name_key),
-        attribute_instance_name_keys = coalesce((
-            select
-                array_agg(held.name_key order by held.position)
-            from unnest(attribute_instance_name_keys, attribute_instance_kinds)
-            with ordinality as held (name_key, kind, position)
-            where
-                held.name_key <> sealed.attribute_name_key), '{}'),
-        attribute_instance_kinds = coalesce((
-            select
-                array_agg(held.kind order by held.position)
-            from unnest(attribute_instance_name_keys, attribute_instance_kinds)
-            with ordinality as held (name_key, kind, position)
-            where
-                held.name_key <> sealed.attribute_name_key), '{}'),
-        written_xid = pg_current_xact_id()
-    from ( select distinct
             entity_key,
-            attribute_name_key
-        from
-            removed) as sealed
-    where
-        entity_search.entity_key = sealed.entity_key
-    returning
-        entity_search.entity_key,
-        entity_search.entity_type_name_keys
-),
-named as (
-    insert into attribute_census (
-        instance_delta,
-        attribute_name_key)
-    select
-        - sum(instance_count),
-        attribute_name_key
-    from
-        counted
-    group by
-        attribute_name_key)
-insert into entity_type_attribute_census (
-    instance_delta,
-    entity_type_name_key,
-    attribute_name_key,
-    attribute_kind)
-select
-    - sum(counted.instance_count),
-    typed.entity_type_name_key,
-    counted.attribute_name_key,
-    counted.attribute_kind
-from
-    counted
-    join searched using (entity_key)
-    cross join unnest(searched.entity_type_name_keys) as typed (entity_type_name_key)
-group by
-    typed.entity_type_name_key,
-    counted.attribute_name_key,
-    counted.attribute_kind;
-        top_level_streams := array (
-            select
-                stream_key
-            from
-                temporal_attribute_streams
-            where
-                attribute_name_key = seal_key);
-        delete from attribute_history
-        where stream_key = any (top_level_streams);
-        sealed_streams := array ( select distinct
-                stream_key
-            from
-                attribute_history
-            where
-                exists (
-                    select
-                    from
-                        unnest(sub_attributes) element
-                    where
-                        element.attribute_name_key = seal_key));
-        if cardinality(sealed_streams) > 0 then
-            update
-                attribute_history
-            set
-                sub_attributes = (seal_conversion_typed_tree(row (sub_attributes)::sub_attribute_tree, seal_key)).elements
-            where
-                stream_key = any (sealed_streams)
-                and exists (
-                    select
-                    from
-                        unnest(sub_attributes) element
-                    where
-                        element.attribute_name_key = seal_key);
-        end if;
-        delete from attribute_history_instance_claims
-        where attribute_name_key = seal_key;
-        with removed as (
-            delete from temporal_attribute_streams
-            where attribute_name_key = seal_key
-            returning
+            attribute_name_key,
+            attribute_kind
+    ),
+    searched as (
+        update
+            entity_search
+        set
+            attribute_name_keys = array_remove(attribute_name_keys, sealed.attribute_name_key),
+            attribute_instance_name_keys = coalesce((
+                select
+                    array_agg(held.name_key order by held.position)
+                from
+                    unnest(attribute_instance_name_keys, attribute_instance_kinds)
+                    with ordinality as held (name_key, kind, position)
+                where
+                    held.name_key <> sealed.attribute_name_key), '{}'),
+            attribute_instance_kinds = coalesce((
+                select
+                    array_agg(held.kind order by held.position)
+                from
+                    unnest(attribute_instance_name_keys, attribute_instance_kinds)
+                    with ordinality as held (name_key, kind, position)
+                where
+                    held.name_key <> sealed.attribute_name_key), '{}'),
+            written_xid = pg_current_xact_id()
+        from (
+            select distinct
                 entity_key,
-                attribute_name_key)
-        insert into stream_type_census (
-            stream_delta,
-            entity_type_name_key,
+                attribute_name_key
+            from
+                removed) as sealed
+        where
+            entity_search.entity_key = sealed.entity_key
+        returning
+            entity_search.entity_key,
+            entity_search.entity_type_name_keys
+    ),
+    named as (
+        insert into attribute_census (
+            instance_delta,
             attribute_name_key)
         select
-            - count(*),
-            typed.entity_type_name_key,
-            removed.attribute_name_key
+            - sum(instance_count),
+            attribute_name_key
         from
-            removed
-            join entities on entities.entity_key = removed.entity_key
-            cross join unnest(entities.evolution_type_name_keys) as typed (entity_type_name_key)
-group by
-    typed.entity_type_name_key,
-    removed.attribute_name_key;
-        if exists (
-            select
-            from
-                notification_events) then
+            counted
+        group by
+            attribute_name_key
+    )
+    insert into entity_type_attribute_census (
+        instance_delta,
+        entity_type_name_key,
+        attribute_name_key,
+        attribute_kind)
+    select
+        - sum(counted.instance_count),
+        typed.entity_type_name_key,
+        counted.attribute_name_key,
+        counted.attribute_kind
+    from
+        counted
+        join searched using (entity_key)
+        cross join unnest(searched.entity_type_name_keys) as typed (entity_type_name_key)
+    group by
+        typed.entity_type_name_key,
+        counted.attribute_name_key,
+        counted.attribute_kind;
+
+    if exists (
+        select
+        from
+            current_attributes) then
+        update
+            current_attributes
+        set
+            sub_attributes = (seal_conversion_typed_tree(row (sub_attributes)::sub_attribute_tree, seal_key)).elements
+        where
+            exists (
+                select
+                from
+                    unnest(sub_attributes) element
+                where
+                    element.attribute_name_key = seal_key);
+    end if;
+
+    top_level_streams := array (
+        select
+            stream_key
+        from
+            temporal_attribute_streams
+        where
+            attribute_name_key = seal_key);
+
+    delete from attribute_history
+    where stream_key = any (top_level_streams);
+
+    sealed_streams := array (
+        select distinct
+            stream_key
+        from
+            attribute_history
+        where
+            exists (
+                select
+                from
+                    unnest(sub_attributes) element
+                where
+                    element.attribute_name_key = seal_key));
+
+    if cardinality(sealed_streams) > 0 then
+        update
+            attribute_history
+        set
+            sub_attributes = (seal_conversion_typed_tree(row (sub_attributes)::sub_attribute_tree, seal_key)).elements
+        where
+            stream_key = any (sealed_streams)
+            and exists (
+                select
+                from
+                    unnest(sub_attributes) element
+                where
+                    element.attribute_name_key = seal_key);
+    end if;
+
+    delete from attribute_history_instance_claims
+    where attribute_name_key = seal_key;
+
+    with removed as (
+        delete from temporal_attribute_streams
+        where attribute_name_key = seal_key
+        returning
+            entity_key,
+            attribute_name_key
+    )
+    insert into stream_type_census (
+        stream_delta,
+        entity_type_name_key,
+        attribute_name_key)
+    select
+        - count(*),
+        typed.entity_type_name_key,
+        removed.attribute_name_key
+    from
+        removed
+        join entities on entities.entity_key = removed.entity_key
+        cross join unnest(entities.evolution_type_name_keys) as typed (entity_type_name_key)
+    group by
+        typed.entity_type_name_key,
+        removed.attribute_name_key;
+
+    if exists (
+        select
+        from
+            notification_events) then
         update
             notification_events
         set
@@ -260,7 +276,7 @@ group by
             seal_key = any (change_attribute_name_keys)
             or seal_conversion_state_holds_seal(entity_snapshot, seal_key)
             or seal_conversion_state_holds_seal(previous_snapshot, seal_key);
-end if;
+    end if;
 end
 $$;
 
