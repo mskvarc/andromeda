@@ -18,9 +18,10 @@ use crate::fixtures::{
     rehearsal::{at_v1_0_0, intern_seal_attribute},
     statements::{count_rows, read_column},
     test_error::UpgradeTestError,
-    vocabulary::{complete_seals, proof_node},
+    vocabulary::{SEALED_TYPE, complete_seals, proof_node, seal_element, seals},
 };
 use pretty_assertions::assert_eq;
+use serde_json::json;
 use std::collections::BTreeMap;
 
 /// The client-supplied identifier of the seal's one recorded instance.
@@ -107,6 +108,25 @@ async fn a_top_level_seal_stream_is_counted_out_under_every_type_its_evolution_r
     database.migrate_to_current().await?;
 
     assert_eq!(streams_by_type_and_attribute(database.pool()).await?, BTreeMap::new());
+    database.drop_database().await?;
+    Ok(())
+}
+
+/// A converted seal adds every type it names to the dictionary. The
+/// sub-attributes of a top-level `ngsildproof` leave with it unconverted, so
+/// a type only a seal among them names is never added.
+#[tokio::test]
+async fn a_seal_under_a_top_level_seal_leaves_with_it_unconverted() -> Result<(), UpgradeTestError> {
+    let (mut database, _) = at_v1_0_0().await?;
+    let seal_key = intern_seal_attribute(database.pool()).await?;
+    let entity_key = insert_entity(database.pool(), "urn:ngsi-ld:Store:001").await?;
+    let nested = seal_element(0, seal_key, &proof_node(), &seals(&json!([{"@id": "https://example.org/Unseen"}])));
+    insert_number_attribute(database.pool(), entity_key, seal_key, 0, &[nested]).await?;
+
+    database.migrate_to_current().await?;
+
+    assert_eq!(count_rows(database.pool(), "current_attributes").await?, 0);
+    assert_eq!(read_column::<String>(database.pool(), "entity_type_names", "name").await?, [SEALED_TYPE]);
     database.drop_database().await?;
     Ok(())
 }
