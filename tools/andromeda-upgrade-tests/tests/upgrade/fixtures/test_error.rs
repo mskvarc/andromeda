@@ -2,6 +2,7 @@
 
 use andromeda_context_space::snapshot_key::SnapshotKeyError;
 use andromeda_ngsi_ld_lexicon::identifier::IdentifierParseError;
+use andromeda_postgresql_attribute_instance::stored_members::StoredInstanceError;
 use andromeda_snapshot::error::SnapshotError;
 use andromeda_upgrade_tests::upgrade_database_error::{UpgradeDatabaseError, UpgradeServerError};
 use sea_query::error::Error as StatementError;
@@ -35,6 +36,9 @@ pub(crate) enum UpgradeTestError {
     /// The broker's Snapshot store refused a step.
     #[error("the snapshot store failed")]
     Snapshot(#[from] SnapshotError),
+    /// The broker's decoder refused an element the upgrade left.
+    #[error("the broker cannot read a stored sub-attribute")]
+    Stored(#[from] StoredInstanceError),
     /// A row the test needs is missing.
     #[error("the row for {what} is missing")]
     Missing {

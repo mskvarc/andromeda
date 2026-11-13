@@ -21,17 +21,21 @@
 -- candidate is rechecked against its element. The keys are the broker's to
 -- derive, so no statement here derives them again.
 --
--- A statement reads the `ngsildproof` key from a function in its FROM clause,
--- which is evaluated once, where a call in a condition would run for every
--- row.
+-- The conversion runs in one block, which reads the `ngsildproof` key once
+-- and ends at once while no instance has named it. The tenant set drops the
+-- `seal_conversion_` functions with `proof_seals`, and a Snapshot branch
+-- created after that runs this file over relations that are still empty. A
+-- statement of the block is resolved when it first runs, so each statement
+-- that calls one of the functions runs only where its relation holds a row:
+-- an empty branch never names a dropped function, and a branch that still
+-- holds rows fails rather than lose its seals unconverted.
 --
 -- A history chunk in the columnstore is decompressed only for the streams a
 -- statement names as a bound value. A plain statement can name them only
--- through a subquery, which decompresses every batch, so history is changed
--- in a block that reads the streams into variables first. The streams of
--- top-level instances leave history before the rest is rewritten, so no row
--- is rewritten only to be deleted, and the bound on the rows one statement
--- may decompress is lifted.
+-- through a subquery, which decompresses every batch, so the block reads the
+-- streams into variables first. The streams of top-level instances leave
+-- history before the rest is rewritten, so no row is rewritten only to be
+-- deleted, and the bound on the rows one statement may decompress is lifted.
 --
 -- No row is a sub-attribute, so no row keeps `proof_seals`. The check that a
 -- tombstone holds nothing beside its deletion names the column, so dropping
@@ -43,27 +47,40 @@
 select
     set_config('timescaledb.max_tuples_decompressed_per_dml_transaction', '0', true);
 
-update
-    current_attributes
-set
-    sub_attributes = (seal_conversion_typed_tree(row (sub_attributes)::sub_attribute_tree, seal_key)).elements
-from
-    seal_conversion_attribute_key() as seal_key
-where
-    exists (
+do $$
+declare
+    seal_key integer := (
+        select
+            attribute_name_key
+        from
+            attribute_names
+        where
+            name = 'https://uri.etsi.org/ngsi-ld/ngsildproof');
+    top_level_streams bigint[];
+    sealed_streams bigint[];
+begin
+    if seal_key is null then
+        return;
+    end if;
+    if exists (
         select
         from
-            unnest(sub_attributes) element
-        where
-            element.attribute_name_key = seal_key);
-
-with removed as (
-    delete from current_attributes
-    where attribute_name_key in (
+            current_attributes) then
+    update
+        current_attributes
+    set
+        sub_attributes = (seal_conversion_typed_tree(row (sub_attributes)::sub_attribute_tree, seal_key)).elements
+    where
+        exists (
             select
-                seal_key
             from
-                seal_conversion_attribute_key() as seal_key)
+                unnest(sub_attributes) element
+            where
+                element.attribute_name_key = seal_key);
+end if;
+    with removed as (
+        delete from current_attributes
+        where attribute_name_key = seal_key
         returning
             entity_key,
             attribute_name_key,
@@ -168,99 +185,82 @@ group by
     typed.entity_type_name_key,
     counted.attribute_name_key,
     counted.attribute_kind;
-
-do $$
-declare
-    seal_key integer := seal_conversion_attribute_key();
-    top_level_streams bigint[];
-    sealed_streams bigint[];
-begin
-    if seal_key is null then
-        return;
-    end if;
-    top_level_streams := array (
-        select
-            stream_key
-        from
-            temporal_attribute_streams
-        where
-            attribute_name_key = seal_key);
-    delete from attribute_history
-    where stream_key = any (top_level_streams);
-    sealed_streams := array ( select distinct
-            stream_key
-        from
-            attribute_history
-        where
-            exists (
-                select
-                from
-                    unnest(sub_attributes) element
-                where
-                    element.attribute_name_key = seal_key));
-    update
-        attribute_history
-    set
-        sub_attributes = (seal_conversion_typed_tree(row (sub_attributes)::sub_attribute_tree, seal_key)).elements
-    where
-        stream_key = any (sealed_streams)
-        and exists (
+        top_level_streams := array (
             select
+                stream_key
             from
-                unnest(sub_attributes) element
+                temporal_attribute_streams
             where
-                element.attribute_name_key = seal_key);
-end
-$$;
-
-delete from attribute_history_instance_claims
-where attribute_name_key in (
-        select
-            seal_key
-        from
-            seal_conversion_attribute_key() as seal_key);
-
-with removed as (
-    delete from temporal_attribute_streams
-    where attribute_name_key in (
-            select
-                seal_key
+                attribute_name_key = seal_key);
+        delete from attribute_history
+        where stream_key = any (top_level_streams);
+        sealed_streams := array ( select distinct
+                stream_key
             from
-                seal_conversion_attribute_key() as seal_key)
-        returning
-            entity_key,
+                attribute_history
+            where
+                exists (
+                    select
+                    from
+                        unnest(sub_attributes) element
+                    where
+                        element.attribute_name_key = seal_key));
+        if cardinality(sealed_streams) > 0 then
+            update
+                attribute_history
+            set
+                sub_attributes = (seal_conversion_typed_tree(row (sub_attributes)::sub_attribute_tree, seal_key)).elements
+            where
+                stream_key = any (sealed_streams)
+                and exists (
+                    select
+                    from
+                        unnest(sub_attributes) element
+                    where
+                        element.attribute_name_key = seal_key);
+        end if;
+        delete from attribute_history_instance_claims
+        where attribute_name_key = seal_key;
+        with removed as (
+            delete from temporal_attribute_streams
+            where attribute_name_key = seal_key
+            returning
+                entity_key,
+                attribute_name_key)
+        insert into stream_type_census (
+            stream_delta,
+            entity_type_name_key,
             attribute_name_key)
-insert into stream_type_census (
-    stream_delta,
-    entity_type_name_key,
-    attribute_name_key)
-select
-    - count(*),
-    typed.entity_type_name_key,
-    removed.attribute_name_key
-from
-    removed
-    join entities on entities.entity_key = removed.entity_key
-    cross join unnest(entities.evolution_type_name_keys) as typed (entity_type_name_key)
+        select
+            - count(*),
+            typed.entity_type_name_key,
+            removed.attribute_name_key
+        from
+            removed
+            join entities on entities.entity_key = removed.entity_key
+            cross join unnest(entities.evolution_type_name_keys) as typed (entity_type_name_key)
 group by
     typed.entity_type_name_key,
     removed.attribute_name_key;
-
-update
-    notification_events
-set
-    change_kinds = seal_conversion_kept_changes(change_kinds, change_attribute_name_keys, seal_key),
-    change_attribute_name_keys = seal_conversion_kept_changes(change_attribute_name_keys, change_attribute_name_keys, seal_key),
-    change_dataset_ids = seal_conversion_kept_changes(change_dataset_ids, change_attribute_name_keys, seal_key),
-    entity_snapshot = seal_conversion_typed_state(entity_snapshot, seal_key),
-    previous_snapshot = seal_conversion_typed_state(previous_snapshot, seal_key)
-from
-    seal_conversion_attribute_key() as seal_key
-where
-    seal_key is not null
-    and (seal_key = any (change_attribute_name_keys)
-        or seal_conversion_state_holds_seal(entity_snapshot, seal_key)
-        or seal_conversion_state_holds_seal(previous_snapshot, seal_key));
+        if exists (
+            select
+            from
+                notification_events) then
+        update
+            notification_events
+        set
+            change_kinds = seal_conversion_kept_changes(change_kinds, change_attribute_name_keys, seal_key),
+            change_attribute_name_keys = seal_conversion_kept_changes(change_attribute_name_keys, change_attribute_name_keys, seal_key),
+            change_dataset_ids = seal_conversion_kept_changes(change_dataset_ids, change_attribute_name_keys, seal_key),
+            entity_snapshot = seal_conversion_typed_state(entity_snapshot, seal_key),
+            previous_snapshot = seal_conversion_typed_state(previous_snapshot, seal_key)
+        where
+            seal_key = any (change_attribute_name_keys)
+            or seal_conversion_state_holds_seal(entity_snapshot, seal_key)
+            or seal_conversion_state_holds_seal(previous_snapshot, seal_key);
+end if;
+end
+$$;
 
 alter table current_attributes
     drop column proof_seals;

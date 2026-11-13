@@ -1,6 +1,6 @@
-//! The upgrade leaves in `public` only the `seal_conversion_` functions a
-//! Snapshot branch created later calls again. The two that convert the queues
-//! are temporary, so they never reach the schema.
+//! The upgrade leaves no `seal_conversion_` function in `public`: the tenant
+//! set drops them once every branch is converted, and the two that convert
+//! the queues are temporary, so they never reach the schema.
 
 use crate::fixtures::{
     rehearsal::{at_v1_0_0, intern_seal_attribute},
@@ -35,30 +35,13 @@ async fn conversion_functions(pool: &PgPool) -> Result<Vec<String>, UpgradeTestE
 }
 
 #[tokio::test]
-async fn the_upgrade_leaves_in_public_only_the_conversion_functions_a_later_snapshot_branch_calls() -> Result<(), UpgradeTestError> {
+async fn the_upgrade_leaves_no_conversion_function_in_public() -> Result<(), UpgradeTestError> {
     let (mut database, _) = at_v1_0_0().await?;
     intern_seal_attribute(database.pool()).await?;
 
     database.migrate_to_current().await?;
 
-    assert_eq!(
-        conversion_functions(database.pool()).await?,
-        [
-            "seal_conversion_admits_uri",
-            "seal_conversion_attribute_key",
-            "seal_conversion_entity_id",
-            "seal_conversion_entity_type_names",
-            "seal_conversion_intern_entity_types",
-            "seal_conversion_kept_changes",
-            "seal_conversion_plain_string",
-            "seal_conversion_proof",
-            "seal_conversion_reference",
-            "seal_conversion_state_holds_seal",
-            "seal_conversion_typed_state",
-            "seal_conversion_typed_string",
-            "seal_conversion_typed_tree",
-        ]
-    );
+    assert_eq!(conversion_functions(database.pool()).await?, Vec::<String>::new());
     database.drop_database().await?;
     Ok(())
 }

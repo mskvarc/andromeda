@@ -2427,6 +2427,7 @@ dependencies = [
  "andromeda-json-literal",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
+ "andromeda-postgresql-attribute-instance",
  "andromeda-postgresql-branch",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-pool",

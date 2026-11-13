@@ -12,6 +12,9 @@ description = "The PostgreSQL adapter of sea-query: the one crate that spells SQ
 [lints]
 workspace = true
 
+[features]
+test-support = []
+
 [dependencies]
 derive_more = { version = "2.1.1", features = ["display"] }
 sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "thread-safe", "with-bigdecimal", "with-chrono", "with-uuid"] }

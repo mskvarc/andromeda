@@ -50,6 +50,7 @@ pub mod hashed_membership;
 mod identifier;
 pub mod interval;
 pub mod introspection;
+#[cfg(feature = "test-support")]
 pub mod json_record;
 pub mod json_type;
 pub mod jsonb;
@@ -79,6 +80,8 @@ pub mod rowstore_chunk;
 pub mod scalar_subquery;
 pub mod schema_definition;
 pub mod schema_migration;
+#[cfg(feature = "test-support")]
+pub mod seal_conversion;
 pub mod search_path;
 pub mod sequence;
 pub mod setting;

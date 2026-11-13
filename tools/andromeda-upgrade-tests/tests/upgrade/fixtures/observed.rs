@@ -6,9 +6,14 @@ use crate::fixtures::{
     test_error::UpgradeTestError,
     vocabulary::{FURTHER_MEMBER, SEALED_ENTITY_ID},
 };
+use andromeda_postgresql_attribute_instance::{
+    stored_proof::StoredProof,
+    stored_value::StoredValue,
+    sub_attribute::{SubAttributeElement, SubAttributeRecord},
+};
 use andromeda_postgresql_seaquery::{statement::Statement, structured_value::sub_attribute_value_object, unnest::unnest_of};
 use pretty_assertions::assert_eq;
-use sea_query::{Expr, Query};
+use sea_query::{Expr, ExprTrait, Order, Query};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
@@ -37,6 +42,27 @@ pub(crate) async fn current_proofs_as_written(pool: &PgPool) -> Result<Vec<Value
         .from_function(unnest_of(Expr::col((name("current_attributes"), name("sub_attributes")))), name("seal"))
         .to_owned();
     Ok(select.to_query_scalar::<Value>().fetch_all(pool).await?)
+}
+
+/// The seals of the current state as the broker reads them: every
+/// sub-attribute is decoded through the broker's own `sub_attribute` record
+/// and held to the invariants a stored element must meet, so an element the
+/// broker could not serve fails the read.
+pub(crate) async fn current_seals_as_the_broker_reads(pool: &PgPool) -> Result<Vec<StoredProof>, UpgradeTestError> {
+    let select = Query::select()
+        .column(name("sub_attributes"))
+        .from(name("current_attributes"))
+        .and_where(Expr::col(name("sub_attributes")).is_not_null())
+        .order_by(name("entity_key"), Order::Asc)
+        .to_owned();
+    let rows = select.to_query_scalar::<Vec<SubAttributeRecord>>().fetch_all(pool).await?;
+    let mut seals = Vec::new();
+    for record in rows.into_iter().flatten() {
+        if let StoredValue::Proof(proof) = SubAttributeElement::try_from(record)?.members.value {
+            seals.push(*proof);
+        }
+    }
+    Ok(seals)
 }
 
 /// The only document of `rows`, which holds one row.

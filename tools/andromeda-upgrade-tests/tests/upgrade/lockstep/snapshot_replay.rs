@@ -23,8 +23,9 @@ const CREATED: &str = "urn:ngsi-ld:Snapshot:created";
 #[tokio::test]
 async fn a_snapshot_created_after_the_upgrade_builds_its_branch_through_every_branch_migration() -> Result<(), UpgradeTestError> {
     let (mut database, _) = at_v1_0_0().await?;
-    // With a seal attribute interned, the replayed seal conversion plans its
-    // rewrites, so every function they call must still exist.
+    // With a seal attribute interned, the replayed seal conversion goes past
+    // its first check, and must reach no statement that calls a function the
+    // upgrade dropped.
     intern_seal_attribute(database.pool()).await?;
     database.migrate_to_current().await?;
 
