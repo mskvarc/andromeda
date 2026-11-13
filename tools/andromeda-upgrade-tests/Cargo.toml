@@ -26,12 +26,14 @@ uuid = { version = "1.29.2", features = ["v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+andromeda-configuration.workspace = true
 andromeda-json-literal.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-postgresql-attribute-instance.workspace = true
 andromeda-postgresql-seaquery = { workspace = true, features = ["test-support"] }
 andromeda-postgresql-temporal-store.workspace = true
 andromeda-snapshot.workspace = true
+andromeda-tenancy.workspace = true
 chrono = "0.4.45"
 pretty_assertions = "1.4.1"
 sea-query = { version = "1.0.2", default-features = false, features = ["backend-postgres", "thread-safe"] }

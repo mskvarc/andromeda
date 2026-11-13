@@ -137,7 +137,7 @@ package(andromeda-test-suite) & binary(~ngsi_ld_) & (
   | test(/(^|::)(n_qry_ent_0014|n_qry_ent_0018|n_qry_ent_3021|n_qry_ent_3050|n_qry_ent_3051|n_qry_ent_3052|n_qry_ent_9003|n_qry_ent_9005)_/)
   | test(/(^|::)(n_qry_pag_9008|n_qry_qlg_0002|n_qry_qlg_0003|n_qry_typ_9004|n_snp_cln_9169|n_snp_cre_8126|n_snp_del_8101|n_snp_qry_8110)_/)
   | test(/(^|::)(n_snp_qry_8121|n_snp_qry_8124|n_snp_sta_8104|n_sub_qry_0001|n_sub_qry_0004|n_sub_qry_0012|n_sub_qry_0013|n_sub_qry_0015)_/)
-  | test(/(^|::)(n_sub_qry_0017|n_sub_qry_0018|n_sub_qry_9003|n_ten_hdr_0001|n_ten_hdr_0003|n_ten_iso_0003|n_tmp_qry_3080|n_tmp_qry_3081|n_tmp_qry_9006)_/)
+  | test(/(^|::)(n_sub_qry_0017|n_sub_qry_0018|n_sub_qry_9003|n_ten_hdr_0001|n_ten_hdr_0003|n_ten_iso_0003|n_ten_iso_9001|n_tmp_qry_3080|n_tmp_qry_3081|n_tmp_qry_9006)_/)
   | test(/(^|::)(n_tmp_qry_9007|o_css_qry_0004|o_css_qry_0005|o_css_qry_0007|o_css_qry_0008|o_css_qry_9002|o_ctx_add_0007)_/)
   | test(/(^|::)(o_ctx_add_0008|o_ctx_add_0009|o_ctx_add_0011|o_ctx_add_0012|o_ctx_add_0013|o_ctx_cmp_0003|o_ctx_cmp_0004|o_ctx_cmp_0005)_/)
   | test(/(^|::)(o_ctx_cmp_0006|o_ctx_cmp_0008|o_ctx_cmp_0009|o_ctx_cmp_0010|o_ctx_cmp_0011|o_ctx_cmp_0014|o_ctx_cmp_0015|o_ctx_cmp_0016)_/)

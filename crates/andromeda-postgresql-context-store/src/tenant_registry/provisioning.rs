@@ -8,7 +8,8 @@
 use crate::{
     error::ContextStoreError,
     store_fault::persistence_failure,
-    tenant_database::{create_database_if_missing, generate_database_name},
+    tenant_database::create_database_if_missing,
+    tenant_database_naming::derive_database_name,
     tenant_migration::migrate_single_tenant_db,
     tenant_registry::{
         PostgresTenantRegistry,
@@ -78,7 +79,7 @@ impl PostgresTenantRegistry {
                 }
             }
         } else {
-            let database_name = generate_database_name(&self.databases.name_prefix, name);
+            let database_name = derive_database_name(&self.databases.name_prefix, name);
             let statement = tenant_insert(name.as_str(), database_name.as_str(), TenantStatusCode::Provisional)?;
             statement.to_query().execute(&mut *tx).await?;
             Registration::Provisional(database_name)

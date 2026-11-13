@@ -11,3 +11,5 @@ mod fixtures;
 mod lockstep;
 #[cfg(test)]
 mod seal;
+#[cfg(test)]
+mod tenancy;

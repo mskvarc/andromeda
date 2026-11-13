@@ -8,7 +8,7 @@ The tests never reach a broker over the network, and they don't need one. They n
 
 ## What is covered
 
-The crate's one test target, `upgrade`, has two groups of tests.
+The crate's one test target, `upgrade`, has three groups of tests.
 
 `seal` covers the conversion of data-integrity seals (see [Data-integrity seals](../data-integrity-seals.md)), which migrations 0032, 0033 and 0034 perform.
 
@@ -44,6 +44,12 @@ The crate's one test target, `upgrade`, has two groups of tests.
 - A database no migration has reached takes the whole tenant set.
 - A database whose ledger records an applied branch migration other than the one this build embeds is refused, even when nothing is left to apply.
 - The platform database runs the platform set and then converts the seals of its live branch and its Snapshot branch, with every ledger at the last migration of its set.
+
+`tenancy` covers the tenant registry of a v1.0.0 platform database, opened by the broker's own registry as the broker opens it when it starts.
+
+- A tenant v1.0.0 registered is served from the database name the registry stores for it, the name v1.0.0 derived from a 32-bit hash. The registry never derives that name again.
+- A tenant whose provisioning v1.0.0 left unfinished is provisioned under the database name v1.0.0 stored for it.
+- A tenant registered after the upgrade whose name shares its label with a v1.0.0 tenant, `Acme` beside `acme`, gets the database name this build derives, distinct from the stored one.
 
 ## Running
 

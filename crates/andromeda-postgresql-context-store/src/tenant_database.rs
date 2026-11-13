@@ -1,15 +1,13 @@
-//! Reaching, creating and dropping the database behind one tenant.
+//! Creating and dropping the database behind one tenant.
 //!
-//! Every database the broker creates comes from here so that identifier limits
-//! are decided once rather than per call site. Migrating a database is
-//! [`crate::tenant_migration`]'s concern, and its session defaults are
+//! Every database the broker creates or drops goes through here. Naming a
+//! tenant's database is [`crate::tenant_database_naming`]'s concern, migrating
+//! it is [`crate::tenant_migration`]'s, and its session defaults are
 //! [`crate::database_defaults`]'s.
 
 use crate::error::ContextStoreError;
-use andromeda_configuration::schema::db_name_prefix::DbNamePrefix;
-use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
+use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use andromeda_postgresql_pool::{database_url::DatabaseUrl, sql_state::SqlState, transaction_rollback::is_transaction_rolled_back};
-use andromeda_postgresql_schema::tenancy::DATABASE_NAME_BYTE_LIMIT;
 use andromeda_postgresql_seaquery::{
     command::Command,
     database_definition::{ConnectedSessions, DatabaseDefinition},
@@ -20,42 +18,7 @@ use andromeda_postgresql_seaquery::{
 use andromeda_retry::{retry_policy::RetryPolicy, schedule::BackoffSchedule, tokio_retry_delay::TokioRetryDelay};
 use sea_query::{Alias, Expr, ExprTrait, Query};
 use sqlx::{Connection, PgConnection};
-use std::{
-    hash::{DefaultHasher, Hash, Hasher},
-    num::NonZeroU32,
-    time::Duration,
-};
-
-/// Replace non-alphanumeric characters with underscores, lowercase, and
-/// collapse consecutive underscores.
-#[must_use]
-pub fn sanitize_identifier(input: &str) -> String {
-    let replaced: String = input
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '_' })
-        .collect();
-    let collapsed = replaced.split('_').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("_");
-    if collapsed.is_empty() { "tenant".to_string() } else { collapsed }
-}
-
-/// Build a per-tenant Postgres database name of the form
-/// `{prefix}_{sanitized}_{hash}` while ensuring the result fits within
-/// Postgres's identifier length limit. Uniqueness is preserved by the
-/// fixed-length hash suffix even when the sanitized label is truncated.
-#[must_use]
-pub fn generate_database_name(prefix: &DbNamePrefix, tenant_name: &TenantName) -> TenantDatabaseName {
-    let prefix = prefix.as_str();
-    let sanitized = sanitize_identifier(tenant_name.as_str());
-    let mut hasher = DefaultHasher::new();
-    tenant_name.hash(&mut hasher);
-    let hash = hasher.finish();
-    let short_hash = format!("{:08x}", (hash & 0xffff_ffff) as u32);
-    let fixed_len = prefix.len() + 1 + 1 + short_hash.len();
-    let max_sanitized = DATABASE_NAME_BYTE_LIMIT.saturating_sub(fixed_len);
-    let truncated: String = sanitized.chars().take(max_sanitized).collect();
-    let trimmed = truncated.trim_end_matches('_');
-    TenantDatabaseName::from(format!("{prefix}_{trimmed}_{short_hash}"))
-}
+use std::{num::NonZeroU32, time::Duration};
 
 /// Create the named database if it does not already exist, from a connection
 /// to the database `base_url` names. `CREATE DATABASE` runs from any database,

@@ -8,33 +8,25 @@ use andromeda_ngsi_ld_lexicon::tenant_database_name::TenantDatabaseName;
 use andromeda_postgresql_branch::{snapshot_schema_name, snapshot_search_path};
 use andromeda_postgresql_context_store::{
     migration_set::{branch::branch_migrator, migration_version::MigrationVersion, platform::platform_migrator, tenant::tenant_migrator},
-    tenant_database::{DatabaseDrop, create_database_if_missing, drop_database_unless_in_use},
+    tenant_database::create_database_if_missing,
     tenant_migration::{migrate_platform_db, migrate_tenant_db, open_schema_change_pool},
 };
 use andromeda_postgresql_pool::{database_url::DatabaseUrl, pool_options::configure_pool_options, schema_change_lock::schema_change_connect_options};
-use andromeda_retry::{retry_policy::RetryPolicy, schedule::BackoffSchedule, tokio_retry_delay::TokioRetryDelay};
 use sqlx::PgPool;
-use std::{num::NonZeroU32, time::Duration};
+use std::time::Duration;
 use url::Url;
 use uuid::Uuid;
 
 /// How long a step waits for the database's one connection.
 const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The wait for the server to end the session of a closed connection before a
-/// drop is refused: twenty runs a quarter of a second apart.
-const DROP_RETRY: RetryPolicy = RetryPolicy {
-    attempts: NonZeroU32::MIN.saturating_add(19),
-    schedule: BackoffSchedule::constant(Duration::from_millis(250)),
-};
-
 /// A database created for one rehearsal, with the one connection its migrations
 /// and its test share in `public`. A Snapshot branch schema is reached through
 /// a pool of its own.
 #[derive(Debug)]
 pub struct UpgradeDatabase {
-    /// The server's URL, which creating and dropping the database go through.
-    server: DatabaseUrl,
+    /// The server, which creating and dropping the database go through.
+    server: UpgradeServer,
     /// The database's own name, unique to this rehearsal.
     name: TenantDatabaseName,
     /// The database's own URL.
@@ -56,7 +48,7 @@ impl UpgradeDatabase {
         let url = server.url().with_database_name(&name);
         let pool = open_schema_change_pool(&url, ACQUIRE_TIMEOUT).await?;
         Ok(UpgradeDatabase {
-            server: server.url().clone(),
+            server: server.clone(),
             name,
             url,
             pool,
@@ -172,6 +164,12 @@ impl UpgradeDatabase {
         &self.pool
     }
 
+    /// The database's own URL, for a broker component the test opens on it.
+    #[must_use]
+    pub fn database_url(&self) -> DatabaseUrl {
+        DatabaseUrl::new(self.url.clone())
+    }
+
     /// Closes the connection and drops the database.
     ///
     /// # Errors
@@ -181,16 +179,7 @@ impl UpgradeDatabase {
     /// fails.
     pub async fn drop_database(self) -> Result<(), UpgradeDatabaseError> {
         self.pool.close().await;
-        DROP_RETRY
-            .run(
-                &TokioRetryDelay,
-                |error, _| matches!(error, UpgradeDatabaseError::StillConnected),
-                async |_| match drop_database_unless_in_use(&self.server, &self.name).await? {
-                    DatabaseDrop::Dropped => Ok(()),
-                    DatabaseDrop::InUse => Err(UpgradeDatabaseError::StillConnected),
-                },
-            )
-            .await
+        self.server.drop_database(&self.name).await
     }
 }
 

@@ -28,12 +28,14 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-retry",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-configuration",
         "andromeda-json-literal",
         "andromeda-ngsi-ld-model",
         "andromeda-postgresql-attribute-instance",
         "andromeda-postgresql-seaquery",
         "andromeda-postgresql-temporal-store",
         "andromeda-snapshot",
+        "andromeda-tenancy",
     ],
     allow_production_dependencies: ["sqlx"],
 }
