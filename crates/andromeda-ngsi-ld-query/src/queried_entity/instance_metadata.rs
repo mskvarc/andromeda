@@ -23,8 +23,9 @@ use strum::{EnumIter, IntoEnumIterator};
 /// exactly as it addresses a sub-attribute (`temperature.observedAt`).
 ///
 /// Its target value is what the instance holds there: the four instants are
-/// `DateTime` values (clauses 4.8 and 4.22), every other member a String. A
-/// path ends at such a member; nothing is addressable beneath it.
+/// `DateTime` values (clauses 4.8 and 4.22), every other member a String, and
+/// an `objectType` naming several types the array of them. A path ends at such
+/// a member; nothing is addressable beneath it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter)]
 pub enum InstanceMetadata {
     /// When the value was observed, `observedAt`.
@@ -43,8 +44,7 @@ pub enum InstanceMetadata {
     UnitCode,
     /// The type of the value, `valueType`.
     ValueType,
-    /// The first type a Relationship declares its object to have,
-    /// `objectType`.
+    /// The types a Relationship declares its object to have, `objectType`.
     ObjectType,
 }
 
@@ -66,12 +66,26 @@ impl InstanceMetadata {
         }
     }
 
-    /// The clause 4.9 target value of the member holding `text`.
+    /// The clause 4.9 target value of the member holding `texts`, or `None`
+    /// when it holds none.
+    ///
+    /// Several texts are the array clause 4.9 compares by membership ("Is
+    /// included in the target value, if the latter is an array").
+    #[must_use]
+    pub fn target_value<'a>(self, texts: impl Iterator<Item = Cow<'a, str>>) -> Option<TargetValue<'a>> {
+        let mut values = texts.map(|text| self.lexical_value(text));
+        let first = values.next()?;
+        Some(match values.next() {
+            None => first,
+            Some(second) => TargetValue::Array([first, second].into_iter().chain(values).collect()),
+        })
+    }
+
+    /// The target value one lexical form of the member is.
     ///
     /// An instant the instance holds was admitted as a `DateTime` or stamped by
     /// the broker, so its text always reads as one.
-    #[must_use]
-    pub fn target_value(self, text: Cow<'_, str>) -> TargetValue<'_> {
+    fn lexical_value(self, text: Cow<'_, str>) -> TargetValue<'_> {
         match self {
             InstanceMetadata::ObservedAt | InstanceMetadata::CreatedAt | InstanceMetadata::ModifiedAt | InstanceMetadata::ExpiresAt => text
                 .parse()
@@ -81,6 +95,25 @@ impl InstanceMetadata {
             | InstanceMetadata::UnitCode
             | InstanceMetadata::ValueType
             | InstanceMetadata::ObjectType => TargetValue::Text(text),
+        }
+    }
+
+    /// Whether the member holds a vocabulary term, which the core `@context`
+    /// coerces with `@vocab`: `valueType` (clause 4.5.2) and `objectType`
+    /// (clause 4.5.3). The instance holds such a member expanded, so a Query
+    /// Term operand compared with it is a term to expand under the same
+    /// `@context`.
+    #[must_use]
+    pub const fn holds_vocabulary_term(self) -> bool {
+        match self {
+            InstanceMetadata::ValueType | InstanceMetadata::ObjectType => true,
+            InstanceMetadata::ObservedAt
+            | InstanceMetadata::CreatedAt
+            | InstanceMetadata::ModifiedAt
+            | InstanceMetadata::ExpiresAt
+            | InstanceMetadata::DatasetId
+            | InstanceMetadata::InstanceId
+            | InstanceMetadata::UnitCode => false,
         }
     }
 

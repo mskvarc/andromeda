@@ -62,9 +62,11 @@ pub trait QueriedInstance<'a>: Copy {
     /// so each instance is read.
     fn sub_attribute_instances(self, name: &AttributeName) -> impl Iterator<Item = Self>;
 
-    /// The lexical form of what the instance holds as `member`, or `None` when
-    /// it holds nothing there.
-    fn metadata(self, member: InstanceMetadata) -> Option<Cow<'a, str>>;
+    /// The lexical forms of what the instance holds as `member`, in written
+    /// order: one for every member but `objectType`, which a Relationship may
+    /// declare several of (clause 4.5.3), and none when the instance holds
+    /// nothing there.
+    fn metadata(self, member: InstanceMetadata) -> impl Iterator<Item = Cow<'a, str>>;
 }
 
 /// One node of a structured Property value, whose members a `q` compound path

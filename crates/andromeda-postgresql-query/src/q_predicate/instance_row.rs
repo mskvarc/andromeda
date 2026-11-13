@@ -11,14 +11,17 @@
 //! elements in `sub_attributes`, so a path into a sub-attribute walks the tree
 //! of whichever [`ProbedRow`] the probe reads.
 
-use crate::q_predicate::{history_aliases::HistoryAliases, projection_probe::projection_column, value_column::ValueColumn};
+use crate::{
+    history_source::grain::HistoryGrain,
+    q_predicate::{history_aliases::HistoryAliases, projection_probe::projection_column, value_column::ValueColumn},
+};
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, SubAttribute},
     temporal::AttributeHistory,
 };
 use andromeda_postgresql_seaquery::{
-    literal::{false_literal, int_literal},
+    literal::{false_literal, int_literal, text_literal},
     operator::null_if,
     structured_value::sub_attribute_value_object,
 };
@@ -120,25 +123,42 @@ impl InstanceRow {
         }
     }
 
+    /// One field every instance records, named in each of the three relations.
+    #[must_use]
+    pub fn field(self, current: CurrentAttributes, history: AttributeHistory, element: SubAttribute) -> SimpleExpr {
+        match self {
+            InstanceRow::Current => projection_column(current),
+            InstanceRow::History => HistoryAliases::top_level().instance_column(history),
+            InstanceRow::Element(level) => level.field(element),
+        }
+    }
+
     /// The attribute family code of the instance, which every one of them
     /// records.
     #[must_use]
     pub fn attribute_family(self) -> SimpleExpr {
-        match self {
-            InstanceRow::Current => projection_column(CurrentAttributes::AttributeKind),
-            InstanceRow::History => HistoryAliases::top_level().instance_column(AttributeHistory::AttributeKind),
-            InstanceRow::Element(level) => level.field(SubAttribute::AttributeKind),
-        }
+        self.field(CurrentAttributes::AttributeKind, AttributeHistory::AttributeKind, SubAttribute::AttributeKind)
     }
 
     /// The `entity_type_names` key of the instance's `valueType`.
     #[must_use]
     pub fn value_type_key(self) -> SimpleExpr {
-        match self {
-            InstanceRow::Current => projection_column(CurrentAttributes::ValueTypeKey),
-            InstanceRow::History => HistoryAliases::top_level().instance_column(AttributeHistory::ValueTypeKey),
-            InstanceRow::Element(level) => level.field(SubAttribute::ValueTypeKey),
-        }
+        self.field(CurrentAttributes::ValueTypeKey, AttributeHistory::ValueTypeKey, SubAttribute::ValueTypeKey)
+    }
+
+    /// The instance's `datasetId` (clause 4.5.5), NULL for the default
+    /// instance.
+    ///
+    /// A row keys its grain by the empty string for the default instance, and
+    /// an element records NULL.
+    #[must_use]
+    pub fn dataset_id(self) -> SimpleExpr {
+        let grain_key = match self {
+            InstanceRow::Current => projection_column(CurrentAttributes::DatasetKey),
+            InstanceRow::History => HistoryAliases::top_level().instance_grain(HistoryGrain::DatasetKey),
+            InstanceRow::Element(level) => return level.field(SubAttribute::DatasetId),
+        };
+        null_if(grain_key, text_literal(""))
     }
 
     /// Whether the instance records the value kind `kind`, which tells apart
@@ -150,11 +170,7 @@ impl InstanceRow {
     /// datatype difference as a match.
     #[must_use]
     pub fn value_kind_is(self, kind: ValueKind) -> SimpleExpr {
-        let column = match self {
-            InstanceRow::Current => projection_column(CurrentAttributes::ValueKind),
-            InstanceRow::History => HistoryAliases::top_level().instance_column(AttributeHistory::ValueKind),
-            InstanceRow::Element(level) => level.field(SubAttribute::ValueKind),
-        };
+        let column = self.field(CurrentAttributes::ValueKind, AttributeHistory::ValueKind, SubAttribute::ValueKind);
         null_if(column.eq(int_literal(i64::from(kind.code()))), false_literal())
     }
 

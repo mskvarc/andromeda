@@ -57,7 +57,7 @@ pub(crate) struct FixtureInstance {
     family: AttributeType,
     /// The values of the family's value member.
     values: Vec<FixtureItem>,
-    /// The instance members held as data.
+    /// The instance members held as data, each with every node it holds.
     metadata: Vec<(InstanceMetadata, String)>,
     /// The sub-attributes with their instances.
     sub_attributes: Vec<(AttributeName, Vec<FixtureInstance>)>,
@@ -146,10 +146,13 @@ impl FixtureInstance {
                 | AttributeType::JsonProperty => nodes.iter().map(item_of).collect(),
             });
         let metadata = InstanceMetadata::iter()
-            .filter_map(|member| {
-                let node = object.get(member.iri().as_str())?.as_array()?.first()?;
-                let text = node.get("@value").or_else(|| node.get("@id"))?.as_str()?;
-                Some((member, text.to_owned()))
+            .flat_map(|member| {
+                object
+                    .get(member.iri().as_str())
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(move |node| Some((member, node.get("@value").or_else(|| node.get("@id"))?.as_str()?.to_owned())))
             })
             .collect();
         let sub_attributes = object
@@ -304,10 +307,10 @@ impl<'a> QueriedInstance<'a> for &'a FixtureInstance {
             .flat_map(|(_, instances)| instances)
     }
 
-    fn metadata(self, member: InstanceMetadata) -> Option<Cow<'a, str>> {
+    fn metadata(self, member: InstanceMetadata) -> impl Iterator<Item = Cow<'a, str>> {
         self.metadata
             .iter()
-            .find(|(held, _)| *held == member)
+            .filter(move |(held, _)| *held == member)
             .map(|(_, text)| Cow::Borrowed(text.as_str()))
     }
 }

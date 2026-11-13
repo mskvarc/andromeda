@@ -26,6 +26,7 @@ pub mod language_targeting;
 pub mod lexer;
 pub mod linked_entity;
 pub mod operand;
+pub mod operand_coercion;
 pub mod parser;
 pub mod path;
 pub mod predicate;

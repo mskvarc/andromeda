@@ -313,6 +313,40 @@ mod tests {
         assert!(sql.contains(r#"'] )[ ("ordered"."element")."unit_code_id" ] AS "value_text""#), "{sql}");
     }
 
+    /// A `datasetId` orders by the URI of the dataset, the default instance
+    /// having none.
+    #[test]
+    fn a_dataset_id_orders_by_the_uri_of_the_dataset() {
+        let sql = lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/datasetId\"");
+        assert!(sql.contains(r#"nullif("ordered"."dataset_key", '') AS "value_text""#), "{sql}");
+        let element = lateral("\"https://example.com/temperature\".\"https://example.com/accuracy\".\"https://uri.etsi.org/ngsi-ld/datasetId\"");
+        assert!(element.contains(r#"("ordered"."element")."dataset_id" AS "value_text""#), "{element}");
+    }
+
+    /// A `valueType` and a single `objectType` order by the expanded IRI their
+    /// dictionary keys name; several types are an array with no String to
+    /// order by.
+    #[test]
+    fn a_declared_type_orders_by_the_iri_its_key_names() {
+        let value_type = lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/hasValueType\"");
+        assert!(
+            value_type.contains(r#""mt"."entity_type_name_key" = "ordered"."value_type_key""#),
+            "{value_type}"
+        );
+        let object_type = lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/hasObjectType\"");
+        assert!(
+            object_type.contains(r#"CASE WHEN (cardinality("ordered"."object_type_keys") = (1))"#),
+            "{object_type}"
+        );
+    }
+
+    /// No stored instance holds an `instanceId`.
+    #[test]
+    fn an_instance_id_orders_as_absent() {
+        let sql = lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/instanceId\"");
+        assert!(sql.contains(r#"NULL::text AS "value_text""#), "{sql}");
+    }
+
     #[test]
     fn an_instant_member_orders_by_its_instant_and_no_text() {
         let sql = lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/observedAt\"");

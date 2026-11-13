@@ -25,7 +25,7 @@
 //! | one trailing member (`attr[member]`) | the target language of a `languageMap`, disjoined with the member of a compound value read out of `value_object` |
 //! | a deeper value path (`attr[a.b]`) | the member of a compound value read out of `value_object` |
 //! | anything carrying a sub-attribute | the same tests on the element at the end of the path, rechecked through the tree inline (see [`sub_attribute`]) |
-//! | a path ending on `observedAt`, `unitCode` or a timestamp | the typed field of the instance it hangs off |
+//! | a path ending on an instance member (`observedAt`, `unitCode`, a timestamp, `datasetId`, `valueType`, `objectType`) | the typed field of the instance it hangs off, a type read as the IRI its dictionary key names; constant `FALSE` for `instanceId`, which no stored instance holds |
 //! | attribute IRI absent from `attribute_names` | constant `FALSE` |
 //!
 //! A temporal `q` reads `attribute_history` rows, which hold an instance the

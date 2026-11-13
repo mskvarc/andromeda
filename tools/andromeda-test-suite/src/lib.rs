@@ -139,6 +139,7 @@ pub mod problem;
 pub mod projected_evolution;
 pub mod projected_notification;
 pub mod q_counts;
+pub mod q_parity;
 pub mod q_selection;
 pub mod query_carriers;
 pub mod query_join;

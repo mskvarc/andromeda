@@ -83,20 +83,21 @@ impl<'a> QueriedInstance<'a> for HeldInstance<'a> {
         self.instance.sub_attributes().get(name.as_str()).into_iter().flat_map(HeldInstance::every)
     }
 
-    fn metadata(self, member: InstanceMetadata) -> Option<Cow<'a, str>> {
+    fn metadata(self, member: InstanceMetadata) -> impl Iterator<Item = Cow<'a, str>> {
         let instance = self.instance;
-        match member {
-            InstanceMetadata::ObservedAt => instance.observed_at().map(|instant| Cow::Owned(instant.to_string())),
-            InstanceMetadata::CreatedAt => instance.created_at().map(|instant| Cow::Owned(instant.to_string())),
-            InstanceMetadata::ModifiedAt => instance.modified_at().map(|instant| Cow::Owned(instant.to_string())),
-            InstanceMetadata::ExpiresAt => instance.expires_at().map(|instant| Cow::Owned(instant.to_string())),
-            InstanceMetadata::DatasetId => self.dataset_id.map(Identifier::as_str).map(Cow::Borrowed),
+        let (one, object_types): (Option<Cow<'a, str>>, &'a [NgsiLdReference]) = match member {
+            InstanceMetadata::ObservedAt => (instance.observed_at().map(|instant| Cow::Owned(instant.to_string())), &[]),
+            InstanceMetadata::CreatedAt => (instance.created_at().map(|instant| Cow::Owned(instant.to_string())), &[]),
+            InstanceMetadata::ModifiedAt => (instance.modified_at().map(|instant| Cow::Owned(instant.to_string())), &[]),
+            InstanceMetadata::ExpiresAt => (instance.expires_at().map(|instant| Cow::Owned(instant.to_string())), &[]),
+            InstanceMetadata::DatasetId => (self.dataset_id.map(Identifier::as_str).map(Cow::Borrowed), &[]),
             // Table 5.2.5-2 has `instanceId` only in the temporal representation,
             // so a held instance never carries one.
-            InstanceMetadata::InstanceId => None,
-            InstanceMetadata::UnitCode => instance.value().unit_code().map(|unit_code| Cow::Borrowed(unit_code.as_str())),
-            InstanceMetadata::ValueType => instance.value().value_type().map(NgsiLdReference::as_str).map(Cow::Borrowed),
-            InstanceMetadata::ObjectType => instance.value().object_types().first().map(NgsiLdReference::as_str).map(Cow::Borrowed),
-        }
+            InstanceMetadata::InstanceId => (None, &[]),
+            InstanceMetadata::UnitCode => (instance.value().unit_code().map(|unit_code| Cow::Borrowed(unit_code.as_str())), &[]),
+            InstanceMetadata::ValueType => (instance.value().value_type().map(NgsiLdReference::as_str).map(Cow::Borrowed), &[]),
+            InstanceMetadata::ObjectType => (None, instance.value().object_types()),
+        };
+        one.into_iter().chain(object_types.iter().map(NgsiLdReference::as_str).map(Cow::Borrowed))
     }
 }

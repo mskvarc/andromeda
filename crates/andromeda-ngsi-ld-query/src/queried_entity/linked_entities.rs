@@ -80,8 +80,8 @@ impl<'a> QueriedInstance<'a> for NoLinkedEntity {
         empty()
     }
 
-    fn metadata(self, _member: InstanceMetadata) -> Option<Cow<'a, str>> {
-        match self {}
+    fn metadata(self, _member: InstanceMetadata) -> impl Iterator<Item = Cow<'a, str>> {
+        empty()
     }
 }
 

@@ -4,9 +4,10 @@
 //! expanded IRIs it was written with, and a reader receives it spelled in the
 //! terms of the `@context` the read supplied. Every position expansion
 //! rewrote (the attribute, its sub-attributes, the compound-value members, a
-//! hop's Relationship and its entity-type guard) is rewritten back here, and
-//! nothing else is touched: operators, operands and the boolean structure
-//! come back exactly as stored.
+//! hop's Relationship and its entity-type guard, and the operands of a path
+//! ending on `valueType` or `objectType`) is rewritten back here, and nothing
+//! else is touched: operators, literal operands and the boolean structure come
+//! back exactly as stored.
 //!
 //! As with expansion, the walker lives beside the AST it rewrites and asks a
 //! [`TermCompactor`] for the one thing it needs from JSON-LD.
@@ -15,25 +16,40 @@ use crate::{
     filter::{
         expression::Expr,
         json_key_attributes::JsonKeyAttributes,
+        operand_coercion::OperandCoercion,
         path::{AttrPath, QueryPath},
         predicate::Predicate,
-        scalar::{CompareValue, Scalar},
         trailing_members::TrailingMembers,
         trailing_path::TrailingPath,
     },
     term_compactor::TermCompactor,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use iri_rs::Iri;
 use std::{collections::HashSet, future::Future, hash::BuildHasher, pin::Pin};
 
 /// Recursively compact every attribute term of a `q` expression.
 ///
-/// The boolean structure, the operators and the operands survive unchanged,
+/// The boolean structure, the operators and the literal operands survive
+/// unchanged, and the operands a path ending on `valueType` or `objectType`
+/// expanded compact by the inverse rule (see [`OperandCoercion::Vocabulary`]),
 /// so `expand_q_expr` applied to the result under the same `@context` yields
 /// the expression this was given.
 pub async fn compact_q_expr(expr: Expr, compactor: &impl TermCompactor) -> Expr {
-    compact_expr(expr, TrailingMembers::Terms(&JsonKeyAttributes::default()), compactor).await
+    let json_keys = JsonKeyAttributes::default();
+    let members = TrailingMembers::Terms(&json_keys);
+    map_predicates(expr, &|pred| compact_q_pred(pred, members, compactor)).await
+}
+
+/// Compact the operands of one `q` predicate whose path ends on a member
+/// holding a vocabulary term, then its attribute axis.
+///
+/// The operands go first: the member is recognised by its expanded name.
+async fn compact_q_pred(pred: Predicate, members: TrailingMembers<'_>, compactor: &impl TermCompactor) -> Predicate {
+    let pred = match pred.path().terminal().ending_member() {
+        Some((member, _)) if member.holds_vocabulary_term() => OperandCoercion::Vocabulary.compact_operands(pred, compactor).await,
+        Some(_) | None => pred,
+    };
+    compact_pred_terms(pred, members, compactor).await
 }
 
 /// Recursively compact every property term of a `csf` expression, leaving its
@@ -43,17 +59,44 @@ pub async fn compact_q_expr(expr: Expr, compactor: &impl TermCompactor) -> Expr 
 /// address raw JSON keys (see [`TrailingMembers::Verbatim`]), which no
 /// `@context` abbreviates.
 pub async fn compact_csf_expr(expr: Expr, compactor: &impl TermCompactor) -> Expr {
-    compact_expr(expr, TrailingMembers::Verbatim, compactor).await
+    map_predicates(expr, &|pred| compact_pred_terms(pred, TrailingMembers::Verbatim, compactor)).await
 }
 
-/// Compact every attribute term of an expression whose trailing members are
-/// spelled as `members` says.
-async fn compact_expr(expr: Expr, members: TrailingMembers<'_>, compactor: &impl TermCompactor) -> Expr {
+/// Rewrite every leaf predicate of an expression with `handler`, leaving its
+/// boolean structure intact.
+async fn map_predicates<F, Fut>(expr: Expr, handler: &F) -> Expr
+where
+    F: Fn(Predicate) -> Fut + Sync,
+    Fut: Future<Output = Predicate> + Send,
+{
     match expr {
-        Expr::And(terms) => Expr::And(compact_all_terms(terms, members, compactor).await),
-        Expr::Or(terms) => Expr::Or(compact_all_terms(terms, members, compactor).await),
-        Expr::Pred(pred) => Expr::Pred(compact_pred_terms(pred, members, compactor).await),
+        Expr::And(terms) => Expr::And(map_all_predicates(terms, handler).await),
+        Expr::Or(terms) => Expr::Or(map_all_predicates(terms, handler).await),
+        Expr::Pred(pred) => Expr::Pred(handler(pred).await),
     }
+}
+
+/// Rewrite the operands of one boolean node in order.
+async fn map_all_predicates<F, Fut>(terms: Vec<Expr>, handler: &F) -> Vec<Expr>
+where
+    F: Fn(Predicate) -> Fut + Sync,
+    Fut: Future<Output = Predicate> + Send,
+{
+    let mut rewritten = Vec::with_capacity(terms.len());
+    for term in terms {
+        rewritten.push(map_predicates_boxed(term, handler).await);
+    }
+    rewritten
+}
+
+/// Box-pinned wrapper: the walker recurses, and an `async fn` cannot name its
+/// own future type.
+fn map_predicates_boxed<'a, F, Fut>(expr: Expr, handler: &'a F) -> Pin<Box<dyn Future<Output = Expr> + Send + 'a>>
+where
+    F: Fn(Predicate) -> Fut + Sync,
+    Fut: Future<Output = Predicate> + Send + 'a,
+{
+    Box::pin(map_predicates(expr, handler))
 }
 
 /// Undo the `expandValues` coercion of clause 5.2.12 on a stored filter.
@@ -71,109 +114,16 @@ async fn compact_expr(expr: Expr, members: TrailingMembers<'_>, compactor: &impl
 /// matched against are the stored, expanded ones, so this runs before
 /// [`compact_q_expr`] turns those paths back into terms.
 pub async fn revert_expand_values<S: BuildHasher + Sync>(expr: Expr, expand_attrs: &HashSet<AttributeName, S>, compactor: &impl TermCompactor) -> Expr {
-    match expr {
-        Expr::And(terms) => Expr::And(revert_all_terms(terms, expand_attrs, compactor).await),
-        Expr::Or(terms) => Expr::Or(revert_all_terms(terms, expand_attrs, compactor).await),
-        Expr::Pred(pred) => Expr::Pred(revert_compare_values(pred, expand_attrs, compactor).await),
-    }
+    map_predicates(expr, &|pred| revert_compare_values(pred, expand_attrs, compactor)).await
 }
 
-/// Revert the operands of one boolean node in order.
-async fn revert_all_terms<S: BuildHasher + Sync>(terms: Vec<Expr>, expand_attrs: &HashSet<AttributeName, S>, compactor: &impl TermCompactor) -> Vec<Expr> {
-    let mut reverted = Vec::with_capacity(terms.len());
-    for term in terms {
-        reverted.push(revert_expand_values_boxed(term, expand_attrs, compactor).await);
-    }
-    reverted
-}
-
-/// Box-pinned wrapper: the walker recurses, and an `async fn` cannot name its
-/// own future type.
-fn revert_expand_values_boxed<'a, S: BuildHasher + Sync, C: TermCompactor>(
-    expr: Expr,
-    expand_attrs: &'a HashSet<AttributeName, S>,
-    compactor: &'a C,
-) -> Pin<Box<dyn Future<Output = Expr> + Send + 'a>> {
-    Box::pin(revert_expand_values(expr, expand_attrs, compactor))
-}
-
-/// Put the right-hand side of a comparison back in the client's terms when its
+/// Put the operands of a comparison back in the client's terms when its
 /// attribute opted in via `expandValues`.
 async fn revert_compare_values<S: BuildHasher + Sync>(pred: Predicate, expand_attrs: &HashSet<AttributeName, S>, compactor: &impl TermCompactor) -> Predicate {
-    match pred {
-        Predicate::Equality { path, membership, rhs } if expand_attrs.contains(path.terminal().attr.as_str()) => Predicate::Equality {
-            rhs: revert_rhs_values(rhs, compactor).await,
-            path,
-            membership,
-        },
-        Predicate::Ordering { path, op, rhs } if expand_attrs.contains(path.terminal().attr.as_str()) => Predicate::Ordering {
-            rhs: revert_scalar(rhs, compactor).await,
-            path,
-            op,
-        },
-        Predicate::Exists(_) | Predicate::Equality { .. } | Predicate::Ordering { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. } => {
-            pred
-        }
+    if expand_attrs.contains(pred.path().terminal().attr.as_str()) {
+        return OperandCoercion::ExpandValues.compact_operands(pred, compactor).await;
     }
-}
-
-/// Put one coerced scalar operand back in the client's terms.
-///
-/// Only a string or a `URI` can have been coerced; every other scalar kind was already a
-/// value. A string the coercion could not have produced (one that is not a
-/// usable attribute name) is the client's own literal and is left alone.
-async fn revert_scalar(scalar: Scalar, compactor: &impl TermCompactor) -> Scalar {
-    match scalar {
-        Scalar::Str(text) => match text.parse::<AttributeName>() {
-            Ok(coerced) => Scalar::Str(compactor.compact_term(&coerced).await.as_str().to_owned()),
-            Err(_not_a_name) => Scalar::Str(text),
-        },
-        Scalar::Uri(text) => match text.parse::<AttributeName>() {
-            Ok(coerced) => {
-                let compact = compactor.compact_term(&coerced).await.as_str().to_owned();
-                // A term the compaction leaves is no `URI`, and clause 4.9
-                // writes such a value only as a `quotedStr`.
-                if Iri::new(compact.as_str()).is_ok() {
-                    Scalar::Uri(compact)
-                } else {
-                    Scalar::Str(compact)
-                }
-            }
-            Err(_not_a_name) => Scalar::Uri(text),
-        },
-        other @ (Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) => other,
-    }
-}
-
-/// Put the string operands of an equality comparison back in the client's
-/// terms; a range is bounded by two ordered values, neither of which is a term.
-async fn revert_rhs_values(rhs: CompareValue, compactor: &impl TermCompactor) -> CompareValue {
-    match rhs {
-        CompareValue::Scalar(scalar) => CompareValue::Scalar(revert_scalar(scalar, compactor).await),
-        CompareValue::ValueList(values) => {
-            let mut reverted = Vec::with_capacity(values.len());
-            for value in values {
-                reverted.push(revert_scalar(value, compactor).await);
-            }
-            CompareValue::ValueList(reverted)
-        }
-        CompareValue::Range { .. } => rhs,
-    }
-}
-
-/// Compact the operands of one boolean node in order.
-async fn compact_all_terms(terms: Vec<Expr>, members: TrailingMembers<'_>, compactor: &impl TermCompactor) -> Vec<Expr> {
-    let mut compacted = Vec::with_capacity(terms.len());
-    for term in terms {
-        compacted.push(compact_expr_boxed(term, members, compactor).await);
-    }
-    compacted
-}
-
-/// Box-pinned wrapper: the walker recurses, and an `async fn` cannot name its
-/// own future type.
-fn compact_expr_boxed<'a, C: TermCompactor>(expr: Expr, members: TrailingMembers<'a>, compactor: &'a C) -> Pin<Box<dyn Future<Output = Expr> + Send + 'a>> {
-    Box::pin(compact_expr(expr, members, compactor))
+    pred
 }
 
 /// Compact the attribute axis of a single predicate, keeping its operator and
@@ -282,6 +232,7 @@ mod tests {
         term_expander::TermExpander,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBJECT_TYPE, VALUE_TYPE};
     use iri_rs::IriBuf;
     use std::{
         collections::HashSet,
@@ -295,9 +246,17 @@ mod tests {
     /// that strips the same prefix, so the pair is an exact inverse.
     struct PrefixExpander;
 
+    /// The core members a path ends on in [`SHAPES`], each with the term the
+    /// pair below expands to its core IRI and compacts back to.
+    fn core_members() -> [(&'static str, &'static str); 2] {
+        [("valueType", VALUE_TYPE.as_str()), ("objectType", OBJECT_TYPE.as_str())]
+    }
+
     impl TermExpander for PrefixExpander {
         fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            ready(Ok(IriBuf::new(format!("{TERM_PREFIX}{term}")).expect("valid IRI")))
+            let core = core_members().into_iter().find(|(core_term, _)| *core_term == term);
+            let iri = core.map_or_else(|| format!("{TERM_PREFIX}{term}"), |(_, iri)| iri.to_owned());
+            ready(Ok(IriBuf::new(iri).expect("valid IRI")))
         }
 
         fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
@@ -311,7 +270,8 @@ mod tests {
     struct PrefixCompactor;
 
     fn strip(name: &AttributeName, prefix: &str) -> AttributeName {
-        match name.as_str().strip_prefix(prefix) {
+        let core = core_members().into_iter().find(|(_, iri)| *iri == name.as_str()).map(|(term, _)| term);
+        match core.or_else(|| name.as_str().strip_prefix(prefix)) {
             Some(term) => term.parse().expect("a stripped term is a valid attribute name"),
             None => name.clone(),
         }
@@ -330,7 +290,7 @@ mod tests {
     /// The suite's operators and path shapes: every operand kind, every
     /// operator, the three local axes, a guarded and an unguarded hop, and the
     /// boolean structure with an explicit group.
-    const SHAPES: [&str; 18] = [
+    const SHAPES: [&str; 20] = [
         "speed>50",
         "speed>=50",
         "speed<50",
@@ -349,6 +309,8 @@ mod tests {
         "sensor.rawdata[airquality.particulate]==40",
         "isParkedIn{Building,Store:category}==\"x\"",
         "(a|b);c{d{e}}==5",
+        "reading.valueType==\"String\"",
+        "reading.objectType!=\"Device\",\"Sensor\"",
     ];
 
     /// Clause 5.5.7 in both directions: a filter expanded when the resource
