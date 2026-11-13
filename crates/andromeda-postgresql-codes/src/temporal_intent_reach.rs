@@ -11,8 +11,8 @@ compact_code_registry! {
     /// learns which statements its claimed intents reach from that column
     /// alone and skips the rest without reading any entry.
     TemporalIntentReach {
-        frozen_prefix: 5,
-        frozen_digest: 0x2d53_da8e_35be_853f,
+        frozen_prefix: 6,
+        frozen_digest: 0x231c_e7eb_1f1b_0f9c,
         codes: {
             /// The intent states types, which bring a Temporal Evolution into
             /// being (clause 4.5.6).

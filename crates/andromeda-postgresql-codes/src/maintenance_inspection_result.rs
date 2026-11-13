@@ -7,8 +7,8 @@ compact_code_registry! {
     ///
     /// An Andromeda operational concept, so the labels are kebab-case.
     MaintenanceInspectionResultCode {
-        frozen_prefix: 20,
-        frozen_digest: 0xaeac_39e8_0ec4_152b,
+        frozen_prefix: 23,
+        frozen_digest: 0xc0d3_1156_f215_bc14,
         codes: {
             /// The inspection started and has not finished.
             Started = 1, "started";

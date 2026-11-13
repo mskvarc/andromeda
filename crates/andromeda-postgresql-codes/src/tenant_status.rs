@@ -9,8 +9,8 @@ compact_code_registry! {
     /// Tenant status is an Andromeda administrative concept, so the labels are
     /// kebab-case.
     TenantStatusCode {
-        frozen_prefix: 2,
-        frozen_digest: 0x6352_03c8_2aff_79c9,
+        frozen_prefix: 3,
+        frozen_digest: 0x8a83_8e65_2f83_40cc,
         codes: {
             /// The tenant is in service.
             Active = 1, "active";

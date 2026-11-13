@@ -15,8 +15,8 @@ compact_code_registry! {
     /// is a target of its own too, labelled with the heap's name and a
     /// `_repack` suffix.
     MaintenanceTargetCode {
-        frozen_prefix: 13,
-        frozen_digest: 0xeca3_e32a_1519_99bf,
+        frozen_prefix: 55,
+        frozen_digest: 0x3fa9_82f9_158a_fe4d,
         codes: {
             /// The current attributes' grain primary key index.
             PkCaGrain = 1, "pk_ca_grain";
