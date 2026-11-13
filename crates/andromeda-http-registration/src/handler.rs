@@ -271,15 +271,25 @@ mod tests {
         })
     }
 
-    /// Clause 5.9.2: a registration with a `GeoProperty` location and a member
-    /// the specification does not define is read from the request text.
+    /// Clause 5.9.2: a registration with a geometry location and a member the
+    /// specification does not define is read from the request text.
     #[tokio::test]
     async fn a_registration_is_read_into_its_typed_body_from_the_request_text() {
         let read = read(
-            r#"{"type": "ContextSourceRegistration", "endpoint": "https://source.example.org", "information": [{"propertyNames": ["speed"]}], "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [13.4, 52.5]}}, "tier": 3}"#,
+            r#"{"type": "ContextSourceRegistration", "endpoint": "https://source.example.org", "information": [{"propertyNames": ["speed"]}], "location": {"type": "Point", "coordinates": [13.4, 52.5]}, "tier": 3}"#,
         )
         .await;
         assert!(read.is_ok(), "{read:?}");
+    }
+
+    /// Table 5.2.9-1 types a registration `location` as a `GeoJSON` geometry,
+    /// so the `GeoProperty` an entity holds it as is no registration member.
+    #[tokio::test]
+    async fn a_registration_location_written_as_a_geo_property_is_bad_request_data() {
+        let detail = read(r#"{"type": "ContextSourceRegistration", "endpoint": "https://source.example.org", "information": [{"propertyNames": ["speed"]}], "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [13.4, 52.5]}}}"#)
+            .await
+            .expect_err("a GeoProperty is no geometry");
+        assert!(detail.contains("location"), "{detail}");
     }
 
     /// Clause 5.5.4: a member outside Table 5.2.9-1 is `BadRequestData`, and
@@ -291,7 +301,7 @@ mod tests {
             .expect_err("a zero timeout is refused");
         assert!(detail.contains("management"), "{detail}");
 
-        let detail = read(r#"{"type": "ContextSourceRegistration", "endpoint": "https://source.example.org", "information": [{"propertyNames": ["speed"]}], "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [0.0, 91.0]}}}"#)
+        let detail = read(r#"{"type": "ContextSourceRegistration", "endpoint": "https://source.example.org", "information": [{"propertyNames": ["speed"]}], "location": {"type": "Point", "coordinates": [0.0, 91.0]}}"#)
             .await
             .expect_err("a latitude past the pole is refused");
         assert!(detail.contains("location"), "{detail}");

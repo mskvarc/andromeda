@@ -14,7 +14,7 @@ use crate::{
 use andromeda_context_commit::history_record::mutation_history;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{engine::term_lookup::PreparedTermContext, user_context_admission::AdmittedContext};
-use andromeda_ngsi_ld_entity::entity_state::EntityState;
+use andromeda_ngsi_ld_entity::{admission::written_families::WrittenFamilies, entity_state::EntityState};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{attribute::merge_member::MergeMember, entity::EntityPatch};
 use andromeda_telemetry::entity::{self, EntityOperation};
@@ -66,8 +66,9 @@ impl EntityService {
                 // any depth, but "a datasetId cannot be deleted by setting it to
                 // the value urn:ngsi-ld:null". Clause 4.18 admits the sentinel as
                 // the whole value of `scope`, which clause 5.5.12 then reads as
-                // the deletion of that member.
-                let rewritten = self.admit_entity_write::<MergeEntity>(&adapted, context).await?;
+                // the deletion of that member. The rewritten fragment holds the
+                // families the merge stores, so they are judged here.
+                let rewritten = self.admit_entity_write::<MergeEntity>(&adapted, context, WrittenFamilies::Final).await?;
                 // Clause 4.3.6.3: the fragment as written still names the
                 // attributes proxied registrations took, and the rewrite must
                 // not bring them back into this merge.

@@ -2,7 +2,7 @@
 //! (clause 4.5.2.2, ETSI TS 104 179 V1.1.1 clauses 5.1.2 and 5.2.3).
 
 use crate::{
-    admission::null_sentinel_admission::NullSentinelAdmission,
+    admission::{null_sentinel_admission::NullSentinelAdmission, written_families::WrittenFamilies},
     document::{EntityDocument, instance_document::InstanceDocument},
     entity_state::EntityState,
     family_value::FamilyValue,
@@ -155,7 +155,10 @@ fn a_seal_on_the_entity_is_refused() {
         ngsi("ngsildproof"): [seal_of("Property", &proof(), &both_seals())]
     }]);
     let written = EntityDocument::from_slice(document.to_string().as_bytes()).expect("an expanded document");
-    assert!(matches!(written.admit(NullSentinelAdmission::Refused), Err(EntityRefusal::ProofOnEntity)));
+    assert!(matches!(
+        written.admit(NullSentinelAdmission::Refused, WrittenFamilies::Final),
+        Err(EntityRefusal::ProofOnEntity)
+    ));
     assert!(matches!(EntityState::try_from(written), Err(EntityRefusal::ProofOnEntity)));
 }
 

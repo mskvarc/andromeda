@@ -31,6 +31,7 @@ use andromeda_entity::{write_kind::AppendAttributes, write_target::WriteTarget};
 use andromeda_federation::{forwarded_content::ForwardedContent, request::TriggeringRequest};
 use andromeda_http_extraction::{context_target, path_segment::EntityId};
 use andromeda_jsonld::user_context_admission::admit_user_context;
+use andromeda_ngsi_ld_entity::admission::written_families::WrittenFamilies;
 use andromeda_ngsi_ld_request::{fragment_entity_id::admit_fragment_entity_id, query_narrowing::ExecutionScope};
 use axum::http::Method;
 
@@ -86,7 +87,7 @@ pub(crate) async fn append_attrs(
     // phase, so a fragment this broker refuses reaches no context source and an
     // append left with nothing local is still validated. The registrations the
     // plan sends the fragment to read the document the admission expanded.
-    let admitted = admit_written_entity::<AppendAttributes>(service, &fragment, &context)
+    let admitted = admit_written_entity::<AppendAttributes>(service, &fragment, &context, WrittenFamilies::Final)
         .await
         .with_entity_instance(&uri)?;
     let overwrite = match requested_policy.with_entity_instance(&uri)? {

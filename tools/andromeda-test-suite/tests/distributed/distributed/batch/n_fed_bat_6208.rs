@@ -2,7 +2,6 @@
 
 use andromeda_test_suite::{
     attribute_matcher::any_attribute,
-    body_json::{json_absent, json_equals},
     broker,
     context_source::ContextSource,
     entity_matcher::{has_attribute, lacks_attribute},
@@ -16,8 +15,11 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use http::{Method, StatusCode};
 use ngsi_ld::{
-    http::{UncheckedDocument, operation::BatchUpsert},
-    model::{Entity, Lossless, RawJson},
+    http::operation::BatchUpsert,
+    model::{
+        Entity,
+        geometry::{Position, Shape},
+    },
     registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo, RegistrationMode},
 };
 
@@ -73,16 +75,9 @@ async fn n_fed_bat_6208_upsert_forwards_each_redirect_source_only_the_attributes
         .entity_type(vehicle_type.clone())
         .property("brandName", "Mercedes")
         .property("speed", 42)
+        .geo_property("location", Shape::Point(Position::try_new(14.5, 46.05)?))
         .build()?];
-    // The model requires `location` to be a GeoProperty, so the Vehicle is written with it as text.
-    let location: RawJson = r#"{"type": "Property", "value": "home"}"#.parse()?;
-    let vehicle_document = entities
-        .first()
-        .map(|vehicle| UncheckedDocument::from_entity(vehicle, Lossless::Normalized).set_member("location", &location))
-        .or_fail()?;
-    let request = broker
-        .unchecked(&BatchUpsert::builder().entities(&entities).build())?
-        .documents(&[vehicle_document]);
+    let request = broker.unchecked(&BatchUpsert::builder().entities(&entities).build())?;
     let answer = broker.send_unchecked(request).await;
     expect_that!(&answer, answered(StatusCode::CREATED));
     let forwarded = source.received_on(Method::POST, "/s1/ngsi-ld/v1/entityOperations/upsert").await?;
@@ -102,11 +97,18 @@ async fn n_fed_bat_6208_upsert_forwards_each_redirect_source_only_the_attributes
     );
     let forwarded_2 = source.received_on(Method::POST, "/s2/ngsi-ld/v1/entityOperations/upsert").await?;
     expect_that!(forwarded_2, len(eq(1)));
-    // The batch the second source receives holds `location` as a Property, which the entity reader refuses, so it is
-    // read as received.
     let forwarded_one_2 = forwarded_2.first().or_fail()?;
-    expect_that!(forwarded_one_2, json_equals("$[0].id", vehicle_id.to_string()));
-    expect_that!(forwarded_one_2, json_equals("$[0].location.value", "home"));
-    expect_that!(forwarded_one_2, json_absent("$[0].speed"));
+    expect_that!(
+        forwarded_body::entities(forwarded_one_2)?,
+        nth(
+            0,
+            all!(
+                has_id(&vehicle_id),
+                has_attribute("location", any_attribute()),
+                lacks_attribute("speed"),
+                lacks_attribute("brandName")
+            )
+        )
+    );
     Ok(())
 }

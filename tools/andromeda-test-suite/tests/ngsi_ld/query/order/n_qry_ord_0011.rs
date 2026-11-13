@@ -1,29 +1,16 @@
 //! Geo properties rank first and entities lacking the attribute last.
 
-use andromeda_test_suite::{
-    body_json::{json_count, json_equals},
-    broker,
-    namespace::Namespace,
-    problem::answered,
-};
+use andromeda_test_suite::{broker, identity_matcher::has_id, namespace::Namespace, nth::nth, outcome::Done};
 use googletest::prelude::*;
-use http::StatusCode;
 use ngsi_ld::{
-    http::{
-        UncheckedDocument,
-        headers::Accept,
-        operation::{BatchCreate, QueryEntities},
-    },
+    http::headers::Accept,
     model::{
         Entity,
-        Lossless,
         NgsiLdMediaType,
-        RawJson,
         geometry::{Position, Shape},
     },
     query::{
         Locality,
-        builders::SelectorTypeBuilder,
         ordering::{OrderBy, builders::EntityOrderingBuilder},
     },
 };
@@ -44,53 +31,46 @@ async fn n_qry_ord_0011_geo_properties_rank_first_and_entities_lacking_the_attri
         namespace.urn("Building", 4)?,
     ];
     let building_type = namespace.entity_type("Building")?;
+    // `site` rather than `location`: Table 5.2.4-1 lets `location` hold a GeoProperty only, and a non-geo value of
+    // the ordered attribute is one of the cases ranked.
     let entities = [
         Entity::builder()
             .id(ids[0].clone())
             .entity_type(building_type.clone())
-            .geo_property("location", Shape::Point(Position::try_new(2.3522, 48.8566)?))
+            .geo_property("site", Shape::Point(Position::try_new(2.3522, 48.8566)?))
             .build()?,
         Entity::builder()
             .id(ids[1].clone())
             .entity_type(building_type.clone())
-            .property("name", "NoLocation")
+            .property("name", "NoSite")
             .build()?,
-        Entity::builder().id(ids[2].clone()).entity_type(building_type.clone()).build()?,
+        Entity::builder()
+            .id(ids[2].clone())
+            .entity_type(building_type.clone())
+            .property("site", "somewhere")
+            .build()?,
         Entity::builder()
             .id(ids[3].clone())
             .entity_type(building_type.clone())
-            .geo_property("location", Shape::Point(Position::try_new(13.3986, 52.5547)?))
+            .geo_property("site", Shape::Point(Position::try_new(13.3986, 52.5547)?))
             .build()?,
     ];
-    let location: RawJson = r#"{"type": "Property", "value": "somewhere"}"#.parse()?;
-    let documents = [
-        UncheckedDocument::from_entity(&entities[0], Lossless::Normalized),
-        UncheckedDocument::from_entity(&entities[1], Lossless::Normalized),
-        UncheckedDocument::from_entity(&entities[2], Lossless::Normalized).set_member("location", &location),
-        UncheckedDocument::from_entity(&entities[3], Lossless::Normalized),
-    ];
-    // The third entity holds `location` as a Property, which the entity model refuses, so it is written as text.
-    let created = broker.unchecked(&BatchCreate::builder().entities(&entities).build())?.documents(&documents);
-    expect_that!(&broker.send_unchecked(created).await, answered(StatusCode::CREATED));
-    let selector = SelectorTypeBuilder::from(&building_type).build()?;
-    let json = broker.with_accept(Accept::new(NgsiLdMediaType::Json));
+    broker.entities().batch_create(&entities).send().await?.done()?;
     for (direction, order) in [("asc", [3, 0, 2, 1]), ("desc", [0, 3, 2, 1])] {
-        let ordering = EntityOrderingBuilder::from(format!("location;dist-{direction}").parse::<OrderBy>()?)
-            .origin(Shape::Point(Position::try_new(13.3986, 52.5547)?))
-            .build()?;
-        let query = QueryEntities::builder()
-            .entity_type(&selector)
+        let page = broker
+            .with_accept(Accept::new(NgsiLdMediaType::Json))
+            .entities()
+            .query()
+            .entity_type(&building_type)
             .locality(Locality::Local)
-            .ordering(&ordering)
-            .format(Lossless::Normalized)
-            .build();
-        // The entity reader refuses `location` as a Property, so the page is read as received.
-        let answer = json.send_unchecked(json.unchecked(&query)?).await;
-        expect_that!(&answer, answered(StatusCode::OK));
-        let body = answer?.into_body();
-        expect_that!(&body, json_count("$", 4));
+            .ordering(
+                EntityOrderingBuilder::from(format!("site;dist-{direction}").parse::<OrderBy>()?).origin(Shape::Point(Position::try_new(13.3986, 52.5547)?)),
+            )
+            .send()
+            .await?;
+        expect_that!(page.items(), len(eq(4)), "dist-{direction}");
         for (position, index) in order.into_iter().enumerate() {
-            expect_that!(&body, json_equals(&format!("$[{position}].id"), ids[index].to_string()));
+            expect_that!(page.items(), nth(position, has_id(&ids[index])), "dist-{direction} at {position}");
         }
     }
     Ok(())

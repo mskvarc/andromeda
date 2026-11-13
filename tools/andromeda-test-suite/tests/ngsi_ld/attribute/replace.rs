@@ -16,6 +16,7 @@ mod n_att_rpl_7604;
 mod n_att_rpl_9001;
 mod n_att_rpl_9002;
 mod n_att_rpl_9003;
+mod n_att_rpl_9005;
 mod o_att_rpl_0002;
 mod o_att_rpl_0011;
 mod o_att_rpl_2303;

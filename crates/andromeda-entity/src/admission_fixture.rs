@@ -16,6 +16,7 @@ use andromeda_jsonld::{
     context_spec::ContextSpec,
     user_context_admission::{AdmittedContext, SubmittedContext, admit_user_context},
 };
+use andromeda_ngsi_ld_entity::admission::written_families::WrittenFamilies;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{
     attribute::member_reading::MemberReading,
@@ -40,7 +41,10 @@ pub(crate) async fn admitted_entity<W: EntityWriteKind>(
     context: &ContextSpec,
 ) -> AdmittedEntity<W> {
     let context = admitted_context(service, context).await;
-    service.admit_entity_write(payload, &context).await.expect("the payload is admitted")
+    service
+        .admit_entity_write(payload, &context, WrittenFamilies::Final)
+        .await
+        .expect("the payload is admitted")
 }
 
 /// Admit the entity-shaped payload `written`, decoded as the transport decodes

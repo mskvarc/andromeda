@@ -62,6 +62,9 @@ pub mod entity_validation_reason;
 pub mod error;
 /// Applying entity-level and attribute-instance expiry policy.
 pub mod expiry;
+/// The geospatial members a write holds only as a `GeoProperty`.
+#[cfg(test)]
+mod geo_member_write_tests;
 /// Assertions over the Temporal Evolution a recorded write carries.
 #[cfg(test)]
 mod history_recording_assertions;

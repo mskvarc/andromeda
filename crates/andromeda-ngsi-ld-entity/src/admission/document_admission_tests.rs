@@ -1,7 +1,7 @@
 //! The admission rules of a written entity document and of a bare attribute fragment.
 
 use crate::{
-    admission::{instance_completeness::InstanceCompleteness, null_sentinel_admission::NullSentinelAdmission},
+    admission::{instance_completeness::InstanceCompleteness, null_sentinel_admission::NullSentinelAdmission, written_families::WrittenFamilies},
     document::{EntityDocument, instance_document::InstanceDocument},
     refusal::EntityRefusal,
 };
@@ -38,7 +38,7 @@ fn entity_with_instance(instance: &Value) -> Value {
 /// Decode `document` and admit it under `admission`.
 fn admit(document: &Value, admission: NullSentinelAdmission) -> Result<(), EntityRefusal> {
     let bytes = serde_json::to_vec(document).expect("JSON");
-    EntityDocument::from_slice(&bytes)?.admit(admission)
+    EntityDocument::from_slice(&bytes)?.admit(admission, WrittenFamilies::Final)
 }
 
 /// Decode the attribute fragment `fragment` and admit it under `admission`,

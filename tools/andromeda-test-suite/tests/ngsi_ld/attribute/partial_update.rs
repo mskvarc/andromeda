@@ -43,6 +43,7 @@ mod n_att_pat_9021;
 mod n_att_pat_9022;
 mod n_att_pat_9023;
 mod n_att_pat_9025;
+mod n_att_pat_9026;
 mod o_att_pat_0012;
 mod o_att_pat_0013;
 mod o_att_pat_0014;

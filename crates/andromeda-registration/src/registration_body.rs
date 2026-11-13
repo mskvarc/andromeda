@@ -401,7 +401,7 @@ mod tests {
         payload["expiresAt"] = json!("2099-03-04T05:06:07.123456Z");
         payload["scope"] = json!(["/Madrid/Gardens"]);
         payload["contextSourceAlias"] = json!("broker-alias-x");
-        payload["location"] = json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}});
+        payload["location"] = json!({"type": "Point", "coordinates": [1.0, 2.0]});
         payload["customThing"] = json!({"kept": true});
         payload["status"] = json!("ok");
         let params = create_of(&payload).expect("valid registration");

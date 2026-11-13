@@ -1,12 +1,14 @@
 //! The geometry members of a registration body.
 //!
-//! A registration writes `location`, `observationSpace` and `operationSpace` as
-//! a `GeoJSON` geometry or as the `GeoProperty` carrying one (clause 5.2.9). The
-//! body reads either into a [`Geometry`], and the budget a geometry is admitted
-//! under (clause 6.3.2) is checked on the geometry the body holds.
+//! Table 5.2.9-1 types `location`, `observationSpace` and `operationSpace` of
+//! a registration as a `GeoJSON` geometry (clause 4.7), not as the
+//! `GeoProperty` an entity holds them as, so a member written as an attribute
+//! is no geometry and is refused. The body reads each into a [`Geometry`], and
+//! the budget a geometry is admitted under (clause 6.3.2) is checked on the
+//! geometry the body holds.
 
 use crate::{csr_member::CsrMember, error::RegistrationError};
-use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
+use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_geometry::{
     geometry::Geometry,
     geometry_census::{GeometryCensusLimits, GeometryOverLimit},
@@ -14,11 +16,7 @@ use andromeda_ngsi_ld_geometry::{
 use andromeda_ngsi_ld_number::json_value::value_census::{ValueCensusError, count_values_within};
 use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
 
-/// The `type` a `GeoProperty` carrying a geometry is written with.
-const GEO_PROPERTY_TYPE: &str = "GeoProperty";
-
-/// A geometry member as a registration body writes it (clause 5.2.9): the
-/// `GeoJSON` geometry itself, or the `GeoProperty` whose `value` is one.
+/// A geometry member as a registration body writes it (Table 5.2.9-1).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RegistrationGeometry(Geometry);
 
@@ -36,26 +34,20 @@ impl RegistrationGeometry {
     }
 }
 
+// Hand-written: the geometry is read from the member's admitted text, which
+// no derive expresses.
 impl<'de> Deserialize<'de> for RegistrationGeometry {
-    /// Read the member as the `GeoProperty` it is when it names that type and
-    /// carries a `value`, and as a bare geometry otherwise.
+    /// Read the member as the geometry it is.
     ///
-    /// The member is held as admitted text while its form is decided, because a
-    /// geometry object does not say which form it has until its `type` is
-    /// read, whichever order its members were written in.
+    /// The member is held as admitted text and the geometry read from that
+    /// text, so every coordinate is read as `serde_json` reads a number,
+    /// whichever deserializer delivered the body.
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<RegistrationGeometry, D::Error> {
         let written = JsonLiteral::deserialize(deserializer)?;
-        let geometry = geo_property_value(written.piece()).unwrap_or_else(|| written.piece());
-        serde_json::from_str::<Geometry>(geometry.text())
+        serde_json::from_str::<Geometry>(written.text())
             .map(RegistrationGeometry)
             .map_err(DeserializeError::custom)
     }
-}
-
-/// The `value` of `member` when it is a `GeoProperty`.
-fn geo_property_value(member: JsonPiece<'_>) -> Option<JsonPiece<'_>> {
-    let named = member.member("type")?.as_str()?;
-    (named == GEO_PROPERTY_TYPE).then(|| member.member("value")).flatten()
 }
 
 /// Admit the geometries a registration body writes when each stays within
@@ -135,13 +127,9 @@ mod tests {
     }
 
     #[test]
-    fn geo_property_wrapper_returns_inner_value() {
+    fn a_geo_property_carrying_a_geometry_is_no_registration_geometry() {
         let input = json!({ "type": "GeoProperty", "value": {"type": "Point", "coordinates": [1, 2]} });
-        let geometry = read(&input).expect("decode");
-        pretty_assertions::assert_eq!(
-            serde_json::to_value(&geometry).expect("serialize"),
-            json!({"type": "Point", "coordinates": [1, 2]})
-        );
+        assert!(read(&input).is_err());
     }
 
     #[test]
@@ -161,7 +149,7 @@ mod tests {
     /// off the CRS84 axes, as it does anywhere a geometry is read.
     #[test]
     fn a_refused_geometry_names_why() {
-        let error = read(&json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [0, 91]}})).expect_err("latitude 91");
+        let error = read(&json!({"type": "Point", "coordinates": [0, 91]})).expect_err("latitude 91");
         assert!(error.to_string().contains("latitude 91 is outside [-90, 90]"), "{error}");
     }
 

@@ -50,6 +50,7 @@ use andromeda_ngsi_ld_entity::{
         attribute_nesting_admission::{admit_document_nesting, admit_instance_nesting},
         instance_completeness::InstanceCompleteness,
         null_sentinel_admission::NullSentinelAdmission,
+        written_families::WrittenFamilies,
     },
     document::EntityDocument,
 };
@@ -189,8 +190,8 @@ impl BatchWrite {
     }
 }
 
-/// Screen one written entity document under clause 5.5.4, the payload budget
-/// and the attribute nesting.
+/// Screen one written entity document, its instances being of `families`,
+/// under clause 5.5.4, the payload budget and the attribute nesting.
 ///
 /// # Errors
 ///
@@ -198,13 +199,19 @@ impl BatchWrite {
 /// [`EntityError::AttributeNesting`] for an attribute nesting deeper than it
 /// admits, and
 /// the [`EntityError::Validation`] of an NGSI-LD Null the operation does not
-/// admit, an instance its family does not admit, or a `scope` member outside
-/// clause 4.18; the HTTP binding answers it with the `BadRequestData` of
-/// clause 5.5.4.
-pub(crate) fn admit_written_entity(budget: EntityPayloadBudget, document: &EntityDocument, admission: NullSentinelAdmission) -> Result<(), EntityError> {
+/// admit, an instance its family does not admit, a geospatial member written
+/// as another family than `GeoProperty`, or a `scope` member outside clause
+/// 4.18; the HTTP binding answers it with the `BadRequestData` of clause
+/// 5.5.4.
+pub(crate) fn admit_written_entity(
+    budget: EntityPayloadBudget,
+    document: &EntityDocument,
+    admission: NullSentinelAdmission,
+    families: WrittenFamilies,
+) -> Result<(), EntityError> {
     admit_entity_document(budget, document)?;
     admit_document_nesting(budget.attribute_nesting, document)?;
-    document.admit(admission)?;
+    document.admit(admission, families)?;
     Ok(())
 }
 
@@ -217,7 +224,10 @@ impl EntityService {
     /// screening reads the document the write applies. A merge fragment is
     /// the one payload not screened in its final shape: Table 6.5.3.4-1's
     /// `format` and `lang` are applied against the stored entity later, and
-    /// that rewrite neither introduces an NGSI-LD Null nor removes one.
+    /// that rewrite neither introduces an NGSI-LD Null nor removes one. It
+    /// does give a simplified fragment the attribute types the target holds,
+    /// so such a fragment is screened with `families` left to the target, and
+    /// its families are judged when the rewritten fragment is admitted.
     ///
     /// # Errors
     ///
@@ -229,6 +239,7 @@ impl EntityService {
         &self,
         payload: impl WritePayload<Member = W::Member>,
         context: &AdmittedContext,
+        families: WrittenFamilies,
     ) -> Result<AdmittedEntity<W>, EntityError> {
         // Clause 6.3.2: a typed geometry past the budget is refused before the
         // expansion copies it into the written document.
@@ -237,7 +248,7 @@ impl EntityService {
             .await?
             .bounded_by(self.payload_budget.json_values);
         let document = payload.expand(&expansion, W::WRITE.normalization()).await?;
-        admit_written_entity(self.payload_budget, &document, W::WRITE.null_sentinel_admission())?;
+        admit_written_entity(self.payload_budget, &document, W::WRITE.null_sentinel_admission(), families)?;
         Ok(AdmittedEntity::new(document))
     }
 
@@ -297,7 +308,7 @@ mod tests {
     use andromeda_json_literal::piece::JsonPiece;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_entity::{
-        admission::{instance_completeness::InstanceCompleteness, null_sentinel_admission::NullSentinelAdmission},
+        admission::{instance_completeness::InstanceCompleteness, null_sentinel_admission::NullSentinelAdmission, written_families::WrittenFamilies},
         document::{EntityDocument, instance_document::InstanceDocument},
     };
     use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, normalization::Normalization};
@@ -314,7 +325,7 @@ mod tests {
     /// as the admission screens what it expanded.
     fn admit_expanded_entity(expanded: &Value, admission: NullSentinelAdmission) -> Result<(), EntityError> {
         let document = EntityDocument::from_slice(&serde_json::to_vec(expanded).expect("JSON"))?;
-        document.admit(admission)?;
+        document.admit(admission, WrittenFamilies::Final)?;
         Ok(())
     }
 
@@ -646,7 +657,11 @@ mod tests {
     async fn the_create_admission_refuses_an_oversized_geometry() {
         let tight = budgeted_recording_service(geometry_budget(4));
         let refusal = tight
-            .admit_entity_write::<CreateEntity>(&located_vehicle(), &admitted_context(&tight, &ContextSpec::core_only()).await)
+            .admit_entity_write::<CreateEntity>(
+                &located_vehicle(),
+                &admitted_context(&tight, &ContextSpec::core_only()).await,
+                WrittenFamilies::Final,
+            )
             .await
             .expect_err("five positions exceed a budget of four");
         assert!(
@@ -655,7 +670,11 @@ mod tests {
         );
         let roomy = budgeted_recording_service(geometry_budget(5));
         roomy
-            .admit_entity_write::<CreateEntity>(&located_vehicle(), &admitted_context(&roomy, &ContextSpec::core_only()).await)
+            .admit_entity_write::<CreateEntity>(
+                &located_vehicle(),
+                &admitted_context(&roomy, &ContextSpec::core_only()).await,
+                WrittenFamilies::Final,
+            )
             .await
             .expect("five positions are within a budget of five");
     }
@@ -676,7 +695,7 @@ mod tests {
             let census = admit_entity_document(value_budget(values), &document);
             let service = budgeted_recording_service(value_budget(values));
             let admission = service
-                .admit_entity_write::<CreateEntity>(probe, &admitted_context(&service, &ContextSpec::core_only()).await)
+                .admit_entity_write::<CreateEntity>(probe, &admitted_context(&service, &ContextSpec::core_only()).await, WrittenFamilies::Final)
                 .await;
             match (&census, &admission) {
                 (Ok(()), Ok(_))
@@ -740,7 +759,7 @@ mod tests {
         .expect("a valid entity");
         let tight = budgeted_recording_service(geometry_budget(4));
         let refusal = tight
-            .admit_entity_write::<CreateEntity>(&concise, &admitted_context(&tight, &ContextSpec::core_only()).await)
+            .admit_entity_write::<CreateEntity>(&concise, &admitted_context(&tight, &ContextSpec::core_only()).await, WrittenFamilies::Final)
             .await
             .expect_err("five positions exceed a budget of four");
         assert!(
@@ -749,7 +768,7 @@ mod tests {
         );
         let roomy = budgeted_recording_service(geometry_budget(5));
         roomy
-            .admit_entity_write::<CreateEntity>(&concise, &admitted_context(&roomy, &ContextSpec::core_only()).await)
+            .admit_entity_write::<CreateEntity>(&concise, &admitted_context(&roomy, &ContextSpec::core_only()).await, WrittenFamilies::Final)
             .await
             .expect("five positions are within a budget of five");
     }
@@ -761,7 +780,7 @@ mod tests {
         let entity = located_vehicle();
         let tight = budgeted_recording_service(geometry_budget(4));
         let refusal = tight
-            .admit_entity_write::<CreateEntity>(&entity, &admitted_context(&tight, &ContextSpec::core_only()).await)
+            .admit_entity_write::<CreateEntity>(&entity, &admitted_context(&tight, &ContextSpec::core_only()).await, WrittenFamilies::Final)
             .await
             .expect_err("five positions exceed a budget of four");
         let EntityError::PayloadBudget(PayloadBudgetExceeded::GeometryPositions {

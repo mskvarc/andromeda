@@ -18,6 +18,7 @@ mod n_tmp_mod_9001;
 mod n_tmp_mod_9002;
 mod n_tmp_mod_9003;
 mod n_tmp_mod_9004;
+mod n_tmp_mod_9006;
 mod o_tmp_mod_0002;
 mod o_tmp_mod_0006;
 mod o_tmp_mod_2700;

@@ -64,8 +64,9 @@ impl WrittenEvolution {
     /// Returns [`TemporalError::JsonLd`] when the context does not resolve or
     /// the processor refuses the payload, and [`TemporalError::Validation`]
     /// when the payload is no Temporal Evolution the model admits, puts a
-    /// `unitCode` on a family defined without one, or holds the NGSI-LD Null
-    /// under a key of a Property value.
+    /// `unitCode` on a family defined without one, writes a geospatial member
+    /// as another family than `GeoProperty`, or holds the NGSI-LD Null under a
+    /// key of a Property value.
     pub(crate) async fn expand(expansion: &EntityExpansion<'_>, written: WrittenTemporalEntity) -> Result<WrittenEvolution, TemporalError> {
         let (fragment, reified) = written.into_fragment();
         let document = expansion.entity_patch(&fragment, Normalization::Entity).await?;
@@ -74,6 +75,7 @@ impl WrittenEvolution {
             None => None,
         };
         admit_document_unit_codes(&document)?;
+        document.admit_geo_members()?;
         document.admit_datatypes()?;
         document.admit_null_placements(NullSentinelAdmission::TemporalEvolution)?;
         Ok(WrittenEvolution::new(Arc::new(document), reified_scope.map(Arc::new)))
@@ -87,8 +89,9 @@ impl WrittenEvolution {
     /// # Errors
     ///
     /// Returns [`TemporalError::Validation`] when an instance puts a
-    /// `unitCode` on a family defined without one, or holds the NGSI-LD Null
-    /// under a key of a Property value.
+    /// `unitCode` on a family defined without one, writes a geospatial member
+    /// as another family than `GeoProperty`, or holds the NGSI-LD Null under a
+    /// key of a Property value.
     pub(crate) fn of_history(history: TemporalDocument) -> Result<WrittenEvolution, TemporalError> {
         let (entity, _system_times, _emptied) = history.into_parts();
         let EntityDocumentParts {
@@ -103,6 +106,7 @@ impl WrittenEvolution {
             .map(|entry| EntityDocument::new(None, Vec::new(), None, None, IndexMap::from([entry])));
         let document = EntityDocument::new(id, types, scope, expires_at, attributes);
         admit_document_unit_codes(&document)?;
+        document.admit_geo_members()?;
         document.admit_datatypes()?;
         document.admit_null_placements(NullSentinelAdmission::TemporalEvolution)?;
         Ok(WrittenEvolution::new(Arc::new(document), reified_scope.map(Arc::new)))
@@ -379,5 +383,32 @@ mod tests {
         expanded(evolution_of(&json!({"type": "Property", "value": "urn:ngsi-ld:null"})))
             .await
             .expect("a deleted instance is the temporal representation of a deletion");
+    }
+
+    /// Clause 5.2.20 makes the Temporal Evolution of an Entity the datatype of
+    /// clause 5.2.4, whose Table 5.2.4-1 types the three geospatial members as
+    /// `GeoProperty`.
+    #[tokio::test]
+    async fn a_temporal_evolution_refuses_a_geospatial_member_written_as_a_property() {
+        for member in ["location", "observationSpace", "operationSpace"] {
+            let observed = json!({"type": "Property", "value": "somewhere", "observedAt": "2024-01-01T00:00:00Z"});
+            let payload = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", member: [observed]});
+            let refused = expanded(payload).await.expect_err("a Property is no GeoProperty");
+            assert!(
+                matches!(
+                    refused,
+                    TemporalError::Validation(TemporalValidationReason::Representation(EntityRefusal::NotAGeoProperty { .. }))
+                ),
+                "{member}: {refused:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_temporal_evolution_admits_observed_and_deleted_geo_property_locations() {
+        let observed = json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [13.4, 52.5]}, "observedAt": "2024-01-01T00:00:00Z"});
+        let deleted = json!({"type": "GeoProperty", "value": "urn:ngsi-ld:null", "observedAt": "2024-01-02T00:00:00Z", "deletedAt": "2024-01-02T00:00:00Z"});
+        let payload = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "location": [observed, deleted]});
+        expanded(payload).await.expect("GeoProperty observations and a dated deletion");
     }
 }

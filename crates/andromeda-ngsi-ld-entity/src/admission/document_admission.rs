@@ -7,7 +7,8 @@
 //! the document as a whole or on the operation: the instance identities of
 //! clause 4.5.5.1, the value member a declared family requires (clause
 //! 5.2.5), the members a family never carries (clauses 4.5.2.2 to 4.5.24.2),
-//! and where the operation admits the NGSI-LD Null.
+//! the family of the geospatial members Table 5.2.4-1 types, and where the
+//! operation admits the NGSI-LD Null.
 //!
 //! The NGSI-LD Null placements are also held on their own, for a write whose
 //! envelope rules are not the Core API's: a Temporal Evolution records a
@@ -15,7 +16,7 @@
 //! write outside a merge.
 
 use crate::{
-    admission::{instance_completeness::InstanceCompleteness, null_sentinel_admission::NullSentinelAdmission},
+    admission::{instance_completeness::InstanceCompleteness, null_sentinel_admission::NullSentinelAdmission, written_families::WrittenFamilies},
     codec::geometry_decode::geo_value_of,
     document::{
         EntityDocument,
@@ -42,15 +43,16 @@ use andromeda_ngsi_ld_representation::family_member_admission::MemberAdmission;
 
 impl EntityDocument {
     /// Hold the document to the rules of an operation writing it under
-    /// `admission`.
+    /// `admission`, its instances being of `families`.
     ///
     /// # Errors
     ///
     /// Returns the [`EntityRefusal`] of the first rule the document breaks, in
     /// the order a seal on the entity, the attribute envelopes, the
-    /// sub-attribute instance identities, the family members, the NGSI-LD Null
+    /// sub-attribute instance identities, the family members, the family of
+    /// the geospatial members (when `families` is final), the NGSI-LD Null
     /// placements, the scope and the geometries are checked.
-    pub fn admit(&self, admission: NullSentinelAdmission) -> Result<(), EntityRefusal> {
+    pub fn admit(&self, admission: NullSentinelAdmission, families: WrittenFamilies) -> Result<(), EntityRefusal> {
         if self.attributes().keys().any(names_a_seal) {
             return Err(EntityRefusal::ProofOnEntity);
         }
@@ -62,6 +64,10 @@ impl EntityDocument {
         }
         for (name, member) in self.attributes() {
             member.instances().iter().try_for_each(|instance| admit_family_members(Some(name), instance))?;
+        }
+        match families {
+            WrittenFamilies::Final => self.admit_geo_members()?,
+            WrittenFamilies::TargetHeld => {}
         }
         for (name, member) in self.attributes() {
             member.instances().iter().try_for_each(|instance| admit_json_shapes(name, instance))?;
@@ -110,7 +116,8 @@ impl InstanceDocument {
     /// [`EntityRefusal::ProofOnEntity`] for an `ngsildproof`, which the
     /// fragment would put on the entity, then the family's missing-value
     /// refusal for a [`InstanceCompleteness::Complete`] fragment that names no
-    /// value member.
+    /// value member, then [`EntityRefusal::NotAGeoProperty`] for a geospatial
+    /// member written as another family.
     pub fn admit_fragment(&self, attribute: &AttributeName, admission: NullSentinelAdmission, completeness: InstanceCompleteness) -> Result<(), EntityRefusal> {
         if names_a_seal(attribute) {
             return Err(EntityRefusal::ProofOnEntity);
@@ -126,6 +133,7 @@ impl InstanceDocument {
                 .try_for_each(|instance| admit_envelope(name, instance, admission.value_omission()))?;
         }
         admit_family_members(None, self)?;
+        self.admit_geo_member(attribute)?;
         admit_json_shapes(attribute, self)?;
         self.admit_datatypes(attribute)?;
         self.admit_null_placements(attribute, admission)?;
