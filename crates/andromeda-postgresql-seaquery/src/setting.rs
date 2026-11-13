@@ -103,6 +103,9 @@ pub enum Setting {
     /// `server_version_num`.
     #[strum(serialize = "server_version_num")]
     ServerVersionNum,
+    /// `standard_conforming_strings`.
+    #[strum(serialize = "standard_conforming_strings")]
+    StandardConformingStrings,
     /// `statement_timeout`.
     #[strum(serialize = "statement_timeout")]
     StatementTimeout,

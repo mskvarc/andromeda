@@ -7,11 +7,13 @@
 use crate::fixtures::{
     current_state::{insert_entity, insert_number_attribute},
     observed::{current_proofs_as_written, current_seals_as_the_broker_reads, current_sub_attributes},
-    rehearsal::{at_v1_0_0, intern_seal_attribute},
+    rehearsal::{Keys, at_v1_0_0, intern_seal_attribute},
+    server_settings::read_backslash_escapes_in_plain_strings,
     test_error::UpgradeTestError,
     vocabulary::{SEALED_ENTITY_ID, SEALED_TYPE, proof_node, proof_node_with, seal_element, seals_naming},
 };
 use andromeda_postgresql_attribute_instance::stored_proof::StoredProof;
+use andromeda_upgrade_tests::upgrade_database::UpgradeDatabase;
 use pretty_assertions::assert_eq;
 use serde_json::{Value, json};
 
@@ -42,16 +44,21 @@ struct Upgraded {
     read: Vec<StoredProof>,
 }
 
-/// Upgrades a database whose one temperature carries one seal of `proof`
+/// A v1.0.0 database whose one temperature carries one seal of `proof`
 /// naming the entity `entity_id`.
-async fn upgrade_one_seal(proof: &Value, entity_id: &str) -> Result<Upgraded, UpgradeTestError> {
-    let (mut database, keys) = at_v1_0_0().await?;
+async fn seed_one_seal(proof: &Value, entity_id: &str) -> Result<(UpgradeDatabase, Keys), UpgradeTestError> {
+    let (database, keys) = at_v1_0_0().await?;
     let seal_key = intern_seal_attribute(database.pool()).await?;
     let entity_key = insert_entity(database.pool(), "urn:ngsi-ld:Store:001").await?;
     let subproperties = seals_naming(entity_id, &json!([{"@id": SEALED_TYPE}]));
     let seal = seal_element(0, seal_key, proof, &subproperties);
     insert_number_attribute(database.pool(), entity_key, keys.temperature, 0, &[seal]).await?;
+    Ok((database, keys))
+}
 
+/// Upgrades `database` and reads what is left of the seal its temperature
+/// carries.
+async fn upgrade(mut database: UpgradeDatabase, keys: Keys) -> Result<Upgraded, UpgradeTestError> {
     database.migrate_to_current().await?;
 
     let upgraded = Upgraded {
@@ -61,6 +68,13 @@ async fn upgrade_one_seal(proof: &Value, entity_id: &str) -> Result<Upgraded, Up
     };
     database.drop_database().await?;
     Ok(upgraded)
+}
+
+/// Upgrades a database whose one temperature carries one seal of `proof`
+/// naming the entity `entity_id`.
+async fn upgrade_one_seal(proof: &Value, entity_id: &str) -> Result<Upgraded, UpgradeTestError> {
+    let (database, keys) = seed_one_seal(proof, entity_id).await?;
+    upgrade(database, keys).await
 }
 
 /// [`proof_node`] verified by the method at `url`.
@@ -81,6 +95,23 @@ async fn a_seal_naming_a_port_a_url_can_carry_is_kept_and_one_past_it_is_dropped
     }
     let past = upgrade_one_seal(&verified_at("https://example.org:65536/keys/1#key-1"), SEALED_ENTITY_ID).await?;
     assert_eq!(past.sub_attributes, None);
+    Ok(())
+}
+
+/// With `standard_conforming_strings` off, a backslash in a plain string
+/// constant is an escape, and the `\.` of a pattern written as one is a dot,
+/// which matches any character: two labels an underscore joins would pass for
+/// a host name.
+#[tokio::test]
+async fn a_host_name_is_tested_alike_on_a_server_reading_backslash_escapes_in_plain_strings() -> Result<(), UpgradeTestError> {
+    let kept = verified_at("https://example.org/keys/1#key-1");
+    let (database, keys) = seed_one_seal(&kept, SEALED_ENTITY_ID).await?;
+    read_backslash_escapes_in_plain_strings(database.pool()).await?;
+    assert_eq!(upgrade(database, keys).await?.proofs, [kept]);
+
+    let (database, keys) = seed_one_seal(&verified_at("https://example_org/keys/1#key-1"), SEALED_ENTITY_ID).await?;
+    read_backslash_escapes_in_plain_strings(database.pool()).await?;
+    assert_eq!(upgrade(database, keys).await?.sub_attributes, None);
     Ok(())
 }
 
