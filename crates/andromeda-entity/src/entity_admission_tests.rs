@@ -12,7 +12,10 @@ use crate::{
     write_target::WriteTarget,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_entity::{admission::null_sentinel_admission::NullSentinelAdmission, document::EntityDocument};
+use andromeda_ngsi_ld_entity::{
+    admission::{null_sentinel_admission::NullSentinelAdmission, written_families::WrittenFamilies},
+    document::EntityDocument,
+};
 use andromeda_ngsi_ld_lexicon::identifier_length::IDENTIFIER_BYTE_LIMIT;
 use andromeda_ngsi_ld_model::{
     attribute::{member_reading::MemberReading, merge_member::MergeMember},
@@ -34,7 +37,7 @@ fn written_patch<M: MemberReading>(attribute: &str, node: &Value) -> EntityPatch
 /// Decode an expanded document and screen it as a creation.
 fn admit_expanded(expanded: &Value) -> Result<(), EntityError> {
     let document = EntityDocument::from_slice(&serde_json::to_vec(expanded).expect("JSON"))?;
-    document.admit(NullSentinelAdmission::Refused)?;
+    document.admit(NullSentinelAdmission::Refused, WrittenFamilies::Final)?;
     Ok(())
 }
 
@@ -44,7 +47,7 @@ async fn admit_created(attribute: &str, node: &Value) -> Result<(), String> {
     let (service, _recorded) = recording_service().await;
     let entity: Entity = serde_json::from_value(json!({"id": ENTITY_ID, "type": "Building", attribute: node})).map_err(|error| error.to_string())?;
     service
-        .admit_entity_write::<CreateEntity>(&entity, &admitted_context(&service, &ContextSpec::core_only()).await)
+        .admit_entity_write::<CreateEntity>(&entity, &admitted_context(&service, &ContextSpec::core_only()).await, WrittenFamilies::Final)
         .await
         .map(drop)
         .map_err(|error| error.to_string())
@@ -81,7 +84,7 @@ fn a_fragment_without_an_identifier_passes() {
     let fragment = json!([{"https://example.org/member": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]}]}]);
     let document = EntityDocument::from_slice(&serde_json::to_vec(&fragment).expect("JSON")).expect("a fragment names no entity");
     document
-        .admit(NullSentinelAdmission::PartialUpdateFragment)
+        .admit(NullSentinelAdmission::PartialUpdateFragment, WrittenFamilies::Final)
         .expect("a fragment names no entity");
 }
 
@@ -109,7 +112,7 @@ async fn creating_an_entity_whose_property_value_object_nests_a_null_is_refused(
     let (service, _recorded) = recording_service().await;
     let entity = written_entity("address", &json!({"type": "Property", "value": {"country": "urn:ngsi-ld:null"}}));
     let error = service
-        .admit_entity_write::<CreateEntity>(&entity, &admitted_context(&service, &ContextSpec::core_only()).await)
+        .admit_entity_write::<CreateEntity>(&entity, &admitted_context(&service, &ContextSpec::core_only()).await, WrittenFamilies::Final)
         .await
         .expect_err("a creation may not nest the sentinel in a value object");
     assert!(matches!(error, EntityError::Validation(_)), "{error}");
@@ -142,7 +145,7 @@ async fn merging_a_fragment_that_deletes_a_dataset_id_is_refused() {
     let (service, _recorded) = recording_service().await;
     let patch = written_patch("category", &json!({"type": "Property", "value": 9, "datasetId": "urn:ngsi-ld:null"}));
     let error = service
-        .admit_entity_write::<MergeEntity>(&patch, &admitted_context(&service, &ContextSpec::core_only()).await)
+        .admit_entity_write::<MergeEntity>(&patch, &admitted_context(&service, &ContextSpec::core_only()).await, WrittenFamilies::Final)
         .await
         .expect_err("a datasetId cannot be deleted by the sentinel");
     assert!(matches!(error, EntityError::Validation(_)), "{error}");
@@ -198,7 +201,11 @@ async fn creating_an_entity_with_any_family_spelling_of_the_sentinel_is_refused(
     for (attribute, node) in cases {
         let (service, _recorded) = recording_service().await;
         let outcome = service
-            .admit_entity_write::<CreateEntity>(&written_entity(attribute, &node), &admitted_context(&service, &ContextSpec::core_only()).await)
+            .admit_entity_write::<CreateEntity>(
+                &written_entity(attribute, &node),
+                &admitted_context(&service, &ContextSpec::core_only()).await,
+                WrittenFamilies::Final,
+            )
             .await;
         match outcome {
             Ok(admitted) => panic!("{attribute}: a creation admits no NGSI-LD Null, yet {admitted:?} was admitted"),

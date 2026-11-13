@@ -212,6 +212,7 @@ impl From<EntityRefusal> for TemporalError {
             | EntityRefusal::JsonNotAnObject { .. }
             | EntityRefusal::RepeatedInstance { .. }
             | EntityRefusal::MultipleDefaultInstances { .. }
+            | EntityRefusal::NotAGeoProperty { .. }
             | EntityRefusal::GeoProperty { .. }
             | EntityRefusal::NullBesideData { .. }
             | EntityRefusal::NullInState { .. }

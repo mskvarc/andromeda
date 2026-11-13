@@ -244,6 +244,15 @@ pub enum EntityRefusal {
         /// The offending attribute.
         attribute: AttributeName,
     },
+    /// One of the geospatial members Table 5.2.4-1 types as a `GeoProperty`
+    /// was written as another attribute family.
+    #[error("'{}' must be a GeoProperty, not a {family}", compact_term(.attribute))]
+    NotAGeoProperty {
+        /// The member, by its expanded IRI.
+        attribute: AttributeName,
+        /// The family it was written as.
+        family: AttributeType,
+    },
     /// A `GeoProperty` instance did not carry a usable `GeoJSON` geometry (clause 5.5.4).
     #[error("GeoProperty '{}': {source}", compact_term(.attribute))]
     GeoProperty {

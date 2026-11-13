@@ -30,6 +30,7 @@ use andromeda_entity::{write_kind::MergeEntity, write_target::WriteTarget};
 use andromeda_federation::{forwarded_content::ForwardedContent, request::TriggeringRequest};
 use andromeda_http_extraction::{context_target, path_segment::EntityId};
 use andromeda_jsonld::user_context_admission::admit_user_context;
+use andromeda_ngsi_ld_entity::admission::written_families::WrittenFamilies;
 use andromeda_ngsi_ld_model::attribute::merge_member::MergeMember;
 use andromeda_ngsi_ld_request::fragment_entity_id::admit_fragment_entity_id;
 use axum::http::Method;
@@ -69,7 +70,7 @@ pub(crate) async fn merge(
     // Clause 5.6.17.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a fragment this broker refuses reaches no context source and a
     // merge left with nothing local is still validated.
-    let admitted = admit_written_entity::<MergeEntity>(service, &patch, &context)
+    let admitted = admit_written_entity::<MergeEntity>(service, &patch, &context, WrittenFamilies::from(representation))
         .await
         .with_entity_instance(&uri)?;
 

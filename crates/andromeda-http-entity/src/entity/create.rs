@@ -35,6 +35,7 @@ use andromeda_http_extraction::{
     resource_location::{ResourceCollection, ResourceLocator},
 };
 use andromeda_jsonld::user_context_admission::admit_user_context;
+use andromeda_ngsi_ld_entity::admission::written_families::WrittenFamilies;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use axum::http::{HeaderMap, Method};
 
@@ -67,7 +68,7 @@ pub(crate) async fn create(
     // payload: after expansion a seal forged outside `ngsildproof` is
     // indistinguishable from a sub-attribute (clauses 4.5.2.2, 4.5.3.2 and
     // 4.5.3.3).
-    let admitted = admit_written_entity::<CreateEntity>(service, &entity, &context)
+    let admitted = admit_written_entity::<CreateEntity>(service, &entity, &context, WrittenFamilies::Final)
         .await
         .with_entity_instance(&uri)?;
     let is_local = params.local.unwrap_or(false);

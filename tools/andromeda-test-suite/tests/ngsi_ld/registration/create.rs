@@ -31,6 +31,7 @@ mod n_csr_cre_9001;
 mod n_csr_cre_9002;
 mod n_csr_cre_9005;
 mod n_csr_cre_9006;
+mod n_csr_cre_9007;
 mod o_csr_cre_0001;
 mod o_csr_cre_2301;
 mod o_csr_cre_9003;

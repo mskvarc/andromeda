@@ -9,6 +9,7 @@ use crate::{
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_entity::admission::written_families::WrittenFamilies;
 use andromeda_ngsi_ld_model::{
     attribute::merge_member::MergeMember,
     entity::{Entity, EntityPatch},
@@ -46,7 +47,7 @@ async fn created(member: &str, terms: Option<&str>) -> Result<String, String> {
     let text = format!(r#"{{"id": "{ENTITY_ID}", "type": "Building", "attr": {member}}}"#);
     let entity = <Entity>::from_request_text(text.as_bytes(), context.terms().reading()).map_err(|error| error.to_string())?;
     service
-        .admit_entity_write::<CreateEntity>(&entity, &context)
+        .admit_entity_write::<CreateEntity>(&entity, &context, WrittenFamilies::Final)
         .await
         .map_err(|error| error.to_string())?;
     serde_json::to_string(&entity).map_err(|error| error.to_string())
@@ -60,7 +61,7 @@ async fn merged(member: &str, terms: Option<&str>) -> Result<String, String> {
     let text = format!(r#"{{"attr": {member}}}"#);
     let patch = <EntityPatch<MergeMember>>::from_request_text(text.as_bytes(), context.terms().reading()).map_err(|error| error.to_string())?;
     service
-        .admit_entity_write::<MergeEntity>(&patch, &context)
+        .admit_entity_write::<MergeEntity>(&patch, &context, WrittenFamilies::Final)
         .await
         .map_err(|error| error.to_string())?;
     serde_json::to_string(&patch).map_err(|error| error.to_string())

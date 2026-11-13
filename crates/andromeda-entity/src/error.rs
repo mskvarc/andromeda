@@ -204,6 +204,7 @@ impl From<EntityRefusal> for EntityError {
             | EntityRefusal::UnitCodeUnusable { .. }
             | EntityRefusal::RepeatedInstance { .. }
             | EntityRefusal::MultipleDefaultInstances { .. }
+            | EntityRefusal::NotAGeoProperty { .. }
             | EntityRefusal::GeoProperty { .. }
             | EntityRefusal::NullBesideData { .. }
             | EntityRefusal::NullInState { .. }

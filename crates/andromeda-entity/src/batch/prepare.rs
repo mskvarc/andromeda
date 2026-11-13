@@ -22,7 +22,7 @@ use crate::{
     write_admission::{BatchWrite, admit_written_entity},
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::expansion_context::ExpansionContext};
-use andromeda_ngsi_ld_entity::{document::EntityDocument, entity_state::EntityState};
+use andromeda_ngsi_ld_entity::{admission::written_families::WrittenFamilies, document::EntityDocument, entity_state::EntityState};
 use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, typed_expander::TypedExpander, typed_expansion::TypedExpansion};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity::Entity;
@@ -169,7 +169,7 @@ fn walk<M: BatchMember>(entry: PendingEntity<M>, context: &ExpansionContext, scr
 /// attributes itself to this one entity, so the multi-status answer of clause
 /// 5.6.7 reports it without failing its siblings.
 fn screened<M>(entity: Entity<M>, document: EntityDocument, screening: Screening) -> PreparationOutcome<M> {
-    match admit_written_entity(screening.budget, &document, screening.write.null_sentinel_admission()) {
+    match admit_written_entity(screening.budget, &document, screening.write.null_sentinel_admission(), WrittenFamilies::Final) {
         Ok(()) => Ok((entity, document)),
         Err(error) => Err(Box::new((entity.id, error))),
     }

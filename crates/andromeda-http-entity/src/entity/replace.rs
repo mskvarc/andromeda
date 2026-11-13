@@ -29,6 +29,7 @@ use andromeda_entity::{write_kind::ReplaceEntity, write_target::WriteTarget};
 use andromeda_federation::{forwarded_content::ForwardedContent, request::TriggeringRequest};
 use andromeda_http_extraction::{context_target, path_segment::EntityId};
 use andromeda_jsonld::user_context_admission::admit_user_context;
+use andromeda_ngsi_ld_entity::admission::written_families::WrittenFamilies;
 use axum::http::Method;
 
 /// Replace Entity (clause 5.6.18): 204 when every part succeeded, 207 with the
@@ -59,7 +60,7 @@ pub(crate) async fn update(
     // Clause 5.6.18.4 runs the clause 5.5.4 validation before the forwarding
     // phase, so a payload this broker refuses reaches no context source and a
     // replacement left with nothing local is still validated.
-    let admitted = admit_written_entity::<ReplaceEntity>(service, &patch, &context)
+    let admitted = admit_written_entity::<ReplaceEntity>(service, &patch, &context, WrittenFamilies::Final)
         .await
         .with_entity_instance(&uri)?;
 

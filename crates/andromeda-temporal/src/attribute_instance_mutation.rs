@@ -37,8 +37,9 @@ impl TemporalService {
     /// the attribute name does not expand to a valid one, the Fragment does not
     /// carry exactly one instance of the target attribute, or the replacement
     /// puts a `unitCode` on an attribute family clause 4.5.2 defines without
-    /// one, carries a geometry clause 4.7 gives no reading of, or holds the
-    /// NGSI-LD Null under a key of a Property value (clause 5.5.4);
+    /// one, writes a geospatial member as another family than `GeoProperty`,
+    /// carries a geometry clause 4.7 gives no reading of, or holds the NGSI-LD
+    /// Null under a key of a Property value (clause 5.5.4);
     /// [`TemporalError::JsonLd`] when the Fragment cannot be expanded against
     /// `context`; [`TemporalError::HistoryUnsettled`] when the mutation
     /// barrier's bound runs out before the entity's queued history is applied;
@@ -101,6 +102,7 @@ impl TemporalService {
         admit_instance_document(self.limits.payload_budget, &attr_iri, &replacement)?;
         admit_instance_nesting(self.limits.payload_budget.attribute_nesting, &attr_iri, &replacement)?;
         admit_instance_unit_code(&attr_iri, &replacement)?;
+        replacement.admit_geo_member(&attr_iri)?;
         replacement.admit_datatypes(&attr_iri)?;
         // Clause 5.5.4: the temporal evolution is excepted from the second
         // NGSI-LD Null prohibition, never from the third.

@@ -41,10 +41,14 @@
 //!   admitted.
 //! - The rest read the expanded payload (where an NGSI-LD Null may stand,
 //!   what the `scope` member of clause 4.18 may hold, what an attribute
-//!   instance's envelope may carry, and whether a `GeoProperty` geometry is
+//!   instance's envelope may carry, which family the geospatial members of
+//!   Table 5.2.4-1 are written as, and whether a `GeoProperty` geometry is
 //!   well formed), and the entity write admission owns them, because
 //!   which of them an operation is exempt from is decided by that operation's
-//!   own clause.
+//!   own clause. A merge fragment in the simplified representation is the one
+//!   payload whose attribute families are not yet known here: Table 6.5.3.4-1
+//!   gives each bare value the type the target holds, so the family rule is
+//!   held to the fragment once the local merge rewrites it against the target.
 //!
 //! Only the report differs between the two shapes of write. Clause 5.6.1
 //! answers a single write with a problem details body, while clauses 5.6.7.4
@@ -74,6 +78,7 @@ use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_http_extraction::{batch_body_refusal::BatchBodyRefusal, blocking_decode::DecodeTaskFailure};
 use andromeda_http_response::request_refusal::RequestRefusal;
 use andromeda_jsonld::user_context_admission::AdmittedContext;
+use andromeda_ngsi_ld_entity::admission::written_families::WrittenFamilies;
 use andromeda_ngsi_ld_expansion::written_member::WrittenMember;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity::{Entity, EntityPatch};
@@ -140,7 +145,8 @@ impl<M: WrittenMember + Sync> WrittenEntityPayload for &EntityPatch<M> {
 }
 
 /// Screen one entity-shaped payload (a whole Entity or an entity-shaped
-/// Fragment) for the write `W` before it is forwarded or stored.
+/// Fragment), its instances being of `families`, for the write `W` before it
+/// is forwarded or stored.
 ///
 /// # Errors
 ///
@@ -150,9 +156,10 @@ pub(crate) async fn admit_written_entity<W: EntityWriteKind>(
     service: &EntityService,
     payload: impl WrittenEntityPayload<Member = W::Member>,
     context: &AdmittedContext,
+    families: WrittenFamilies,
 ) -> Result<AdmittedEntity<W>, WrittenPayloadRefusal> {
     payload.screen()?;
-    Ok(service.admit_entity_write(payload, context).await?)
+    Ok(service.admit_entity_write(payload, context, families).await?)
 }
 
 /// Screen the bare Attribute Fragment of clauses 5.6.4 and 5.6.19 written to
