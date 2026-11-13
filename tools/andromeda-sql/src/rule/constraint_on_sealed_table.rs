@@ -1,6 +1,7 @@
 //! `constraint-on-sealed-table`: a foreign key or check added to a table a
 //! sealed migration created is added `not valid`, and a later migration
-//! validates it, unless the table is a hypertable.
+//! validates it, unless the table is a hypertable or the check restates one
+//! the table already held.
 //!
 //! A sealed table may hold rows on every installation, so adding the
 //! constraint checks all of them under the `access exclusive` lock
@@ -17,11 +18,27 @@
 //! `not valid` to a hypertable could never be validated. A constraint on a
 //! hypertable is therefore added validated, in the one statement that checks
 //! the rows its uncompressed chunks hold.
+//!
+//! A check that restates one its table already held takes the place of a
+//! check a dropped column took with it, and every row that met the dropped
+//! check meets it. Reading the table to add it, or to validate it later, would
+//! learn nothing, so on a hypertable and on any other table it is added
+//! `not valid` and never validated. PostgreSQL tests every row written later
+//! against it all the same.
 
 use crate::{
     declared_schema::constraint::{ConstraintKind, DeclaredConstraint},
     rule::{Rule, RuleContext, RuleFinding},
 };
+
+/// The checks that restate one their table already held, as
+/// `(table, constraint)`. Each is the check of the same name without a column
+/// the statement adding it drops.
+const RESTATED_CHECKS: &[(&str, &str)] = &[
+    // A tombstone that held none of its members, `proof_seals` among them,
+    // holds none of the members left.
+    ("attribute_history", "chk_attribute_history_tombstone_members"),
+];
 
 /// A constraint added to a sealed table the costly way.
 #[derive(Debug, derive_more::Display)]
@@ -57,14 +74,26 @@ enum UnstagedConstraint<'schema> {
         /// The table.
         table: &'schema str,
     },
+    /// The check restates one the table already held and checks every row as
+    /// it is added.
+    #[display("{kind} {name} restates a check {table} already held and is added without not valid, so it reads every row to check what each already meets")]
+    Rechecked {
+        /// What the constraint enforces.
+        kind: ConstraintKind,
+        /// The constraint.
+        name: &'schema str,
+        /// The table.
+        table: &'schema str,
+    },
 }
 
 /// How an unnamed constraint is named in a finding.
 const UNNAMED: &str = "an unnamed constraint";
 
 /// Every foreign key or check on a sealed table that is not added `not valid`
-/// and validated by a later migration, or on a sealed hypertable that is not
-/// added validated.
+/// and validated by a later migration, on a sealed hypertable that is not
+/// added validated, or restating a check its table held that is not added
+/// `not valid`.
 #[must_use]
 pub fn check(context: &RuleContext<'_>) -> Vec<RuleFinding> {
     let schema = context.schema();
@@ -80,17 +109,7 @@ pub fn check(context: &RuleContext<'_>) -> Vec<RuleFinding> {
                 .any(|table| table.name() == constraint.table() && ledger.seals_version(table.origin().version()))
         })
         .filter_map(|constraint| {
-            let name = constraint.name().unwrap_or(UNNAMED);
-            let hypertable = schema.hypertables().iter().any(|hypertable| hypertable.table() == constraint.table());
-            let kind = constraint.kind();
-            let table = constraint.table();
-            let violation = match (constraint.name(), hypertable, constraint.is_not_valid()) {
-                (_, true, false) => return None,
-                (Some(name), false, true) if is_validated_later(context, constraint, name) => return None,
-                (_, true, true) => UnstagedConstraint::Unvalidatable { kind, name, table },
-                (Some(name), false, true) => UnstagedConstraint::NeverValidated { kind, name, table },
-                (_, false, false) | (None, false, true) => UnstagedConstraint::Validated { kind, name, table },
-            };
+            let violation = unstaged(context, constraint)?;
             Some(context.finding(
                 Rule::ConstraintOnSealedTable,
                 constraint.origin(),
@@ -99,6 +118,37 @@ pub fn check(context: &RuleContext<'_>) -> Vec<RuleFinding> {
             ))
         })
         .collect()
+}
+
+/// How `constraint`, a foreign key or check on a sealed table, is added the
+/// costly way, `None` when it is added as its table calls for.
+fn unstaged<'schema>(context: &RuleContext<'schema>, constraint: &'schema DeclaredConstraint) -> Option<UnstagedConstraint<'schema>> {
+    let name = constraint.name().unwrap_or(UNNAMED);
+    let kind = constraint.kind();
+    let table = constraint.table();
+    if is_restated(context, constraint) {
+        return (!constraint.is_not_valid()).then_some(UnstagedConstraint::Rechecked { kind, name, table });
+    }
+    let hypertable = context.schema().hypertables().iter().any(|hypertable| hypertable.table() == table);
+    match (constraint.name(), hypertable, constraint.is_not_valid()) {
+        (_, true, false) => None,
+        (Some(name), false, true) if is_validated_later(context, constraint, name) => None,
+        (_, true, true) => Some(UnstagedConstraint::Unvalidatable { kind, name, table }),
+        (Some(name), false, true) => Some(UnstagedConstraint::NeverValidated { kind, name, table }),
+        (_, false, false) | (None, false, true) => Some(UnstagedConstraint::Validated { kind, name, table }),
+    }
+}
+
+/// Whether `constraint` is one of [`RESTATED_CHECKS`], added by a migration
+/// after the one that created its table and the check it restates.
+fn is_restated(context: &RuleContext<'_>, constraint: &DeclaredConstraint) -> bool {
+    constraint.kind() == ConstraintKind::Check
+        && constraint.name().is_some_and(|name| RESTATED_CHECKS.contains(&(constraint.table(), name)))
+        && context
+            .schema()
+            .tables()
+            .iter()
+            .any(|table| table.name() == constraint.table() && table.origin().version() < constraint.origin().version())
 }
 
 /// Whether a migration after the one adding `constraint` validates it by
@@ -224,6 +274,50 @@ mod tests {
                 &[ENTITIES.0, HYPERTABLE.0]
             )?,
             ["migrations/tenant/0003_entity_kind_check.sql:2:9"]
+        );
+        Ok(())
+    }
+
+    const HISTORY: (&str, &str) = (
+        "tenant/0001_attribute_history.sql",
+        "create table attribute_history (\n    recorded_at timestamptz not null,\n    value_kind smallint not null,\n    expires_at timestamptz,\n    proof_seals jsonb,\n    constraint chk_attribute_history_tombstone_members check (value_kind <> 0 or num_nonnulls(expires_at, proof_seals) = 0)\n);\n",
+    );
+
+    const HISTORY_HYPERTABLE: (&str, &str) = (
+        "tenant/0002_history_hypertable.sql",
+        "select\n    create_hypertable('attribute_history', by_range('recorded_at'));\n",
+    );
+
+    #[test]
+    fn a_check_restating_one_its_sealed_hypertable_held_is_accepted_not_valid_and_never_validated() -> Result<(), FixtureError> {
+        let restated = (
+            "tenant/0003_history_without_proof_seals.sql",
+            "alter table attribute_history\n    drop column proof_seals,\n    add constraint chk_attribute_history_tombstone_members check (value_kind <> 0 or num_nonnulls(expires_at) = 0) not valid;\n",
+        );
+        assert_eq!(
+            findings_sealing(
+                Rule::ConstraintOnSealedTable,
+                &[HISTORY, HISTORY_HYPERTABLE, restated],
+                &[HISTORY.0, HISTORY_HYPERTABLE.0]
+            )?,
+            Vec::<String>::new()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_check_restating_one_its_table_held_is_refused_when_it_checks_every_row() -> Result<(), FixtureError> {
+        let rechecked = (
+            "tenant/0003_history_without_proof_seals.sql",
+            "alter table attribute_history\n    drop column proof_seals,\n    add constraint chk_attribute_history_tombstone_members check (value_kind <> 0 or num_nonnulls(expires_at) = 0);\n",
+        );
+        assert_eq!(
+            findings_sealing(
+                Rule::ConstraintOnSealedTable,
+                &[HISTORY, HISTORY_HYPERTABLE, rechecked],
+                &[HISTORY.0, HISTORY_HYPERTABLE.0]
+            )?,
+            ["migrations/tenant/0003_history_without_proof_seals.sql:3:9"]
         );
         Ok(())
     }

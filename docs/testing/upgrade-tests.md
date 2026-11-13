@@ -26,6 +26,7 @@ The crate's one test target, `upgrade`, has two groups of tests.
 - A top-level seal a pending change or a notification event touched leaves the change's three aligned arrays, its transition, attribute name and `datasetId` together, even when neither state holds it any longer.
 - In a database that names `ngsildproof`, a pending change, a notification event and an append intent that hold no seal keep the row versions v1.0.0 wrote, so the upgrade rewrites no queued row it does not convert.
 - Seals in history the columnstore holds are converted, and a top-level seal's stream leaves it, while the session lets one statement decompress a single row. The columnstore is turned on with the layout the broker gives it and every chunk is converted, as the broker does at runtime, since no migration does.
+- The check that a tombstone of history holds nothing beside its deletion is added again without `proof_seals` and without reading a row of history, so the hypertable and the chunks v1.0.0 wrote hold it unvalidated. It refuses a tombstone holding a member all the same, in rowstore history and in history the columnstore holds.
 - The upgrade leaves no `seal_conversion_` function in `public`. Migration 0034 drops them once every branch is converted, and the two that convert the queues are temporary and never reach the schema.
 - A database that never stored a seal upgrades with nothing changed.
 
