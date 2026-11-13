@@ -159,9 +159,7 @@ impl SchemaObjects {
             ));
             self.triggers.push(trigger);
         } else if let NodeEnum::DoStmt(block) = node {
-            let block = DoBlock::read(block, context).map_err(SchemaReadError::Routine)?;
-            self.read_do_block_calls(&block)?;
-            self.do_blocks.push(block);
+            self.do_blocks.push(DoBlock::read(block, context).map_err(SchemaReadError::Routine)?);
         } else if let NodeEnum::ViewStmt(view) = node
             && let Some(relation) = view.view.as_ref()
         {
@@ -322,25 +320,6 @@ impl SchemaObjects {
             ));
         }
     }
-
-    /// Record every function the expressions of `block` call.
-    fn read_do_block_calls(&mut self, block: &DoBlock) -> Result<(), SchemaReadError> {
-        for routine in block.routines() {
-            for sql in routine.embedded_sql() {
-                let parsed = pg_query::parse(sql.query(), sql.parse_options()).map_err(SchemaReadError::Expression)?;
-                for statement in parsed.protobuf.stmts.iter().filter_map(|statement| statement.stmt.as_deref()) {
-                    let sites = SyntaxSites::of(statement).map_err(SchemaReadError::Walk)?;
-                    self.calls.extend(
-                        sites
-                            .calls()
-                            .iter()
-                            .map(|call| FunctionCall::new(call.name().clone(), CallPlace::DoBlock, block.origin())),
-                    );
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 /// The parser location of `offset`, -1 when unknown.
@@ -362,9 +341,6 @@ pub enum SchemaReadError {
     /// A routine body could not be read.
     #[error(transparent)]
     Routine(#[from] PlpgsqlError),
-    /// An expression a `do` block embeds does not parse.
-    #[error("an expression of a do block does not parse: {0}")]
-    Expression(pg_query::Error),
     /// A syntax tree could not be walked.
     #[error("a syntax tree could not be walked: {0}")]
     Walk(serde_json::Error),

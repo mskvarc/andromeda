@@ -39,11 +39,9 @@ pub enum CallPlace {
     Statement,
     /// The `execute function` of a trigger.
     TriggerTarget,
-    /// An expression of a `do` block, which the formatter lays out too.
-    DoBlock,
 }
 
-/// One function call outside a function body.
+/// One function call outside a function body and a `do` block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionCall {
     /// The function.

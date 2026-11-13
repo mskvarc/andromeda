@@ -1,5 +1,5 @@
-//! The `CREATE FUNCTION` statements of a migration, held out of `pg_format` and
-//! put back as written.
+//! The `CREATE FUNCTION` statements and `DO` blocks of a migration, held out of
+//! `pg_format` and put back as written.
 //!
 //! `pg_format` reformats a `plpgsql` body as plain SQL, unwraps a body written
 //! as a string literal, and a `language plpgsql` clause can shift the
@@ -7,7 +7,10 @@
 //! PROCEDURE` parses to the same statement kind and is held out with them) is
 //! therefore swapped for a placeholder statement selecting a string literal
 //! that numbers it, which `pg_format` lays out like any other statement, and is
-//! put back verbatim once the text is formatted.
+//! put back verbatim once the text is formatted. A `DO` block is the body of a
+//! function with no name and no parameters, and `pg_format` loses its
+//! indentation after a condition holding a subquery or a statement opening
+//! with `WITH`, so it is held out with the function statements.
 
 use crate::sql_statement::{SqlStatement, SqlStatementError};
 use pg_query::{NodeEnum, protobuf::a_const::Val};
@@ -99,7 +102,7 @@ fn placeholder(position: usize) -> String {
 /// What one top-level statement is, as far as the hold-out is concerned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StatementKind {
-    /// A `CREATE FUNCTION` or `CREATE PROCEDURE` statement.
+    /// A `CREATE FUNCTION` or `CREATE PROCEDURE` statement, or a `DO` block.
     Function,
     /// A placeholder, numbering the held-out statement it stands for.
     Placeholder(usize),
@@ -119,7 +122,7 @@ fn parsed_statements(sql: &str) -> Result<Vec<(Range<usize>, StatementKind)>, Sq
 /// Whether the statement is a function statement, a placeholder, or neither.
 fn statement_kind(statement: Option<&NodeEnum>) -> StatementKind {
     match statement {
-        Some(NodeEnum::CreateFunctionStmt(_)) => StatementKind::Function,
+        Some(NodeEnum::CreateFunctionStmt(_) | NodeEnum::DoStmt(_)) => StatementKind::Function,
         Some(NodeEnum::SelectStmt(select)) if select.from_clause.is_empty() => match select.target_list.as_slice() {
             [target] => placeholder_position(target).map_or(StatementKind::Other, StatementKind::Placeholder),
             _ => StatementKind::Other,
@@ -203,6 +206,16 @@ mod tests {
             held.restore(formatted)?,
             format!("-- Refuses a change.\n{PLPGSQL_BLOCK}\n\nCREATE TABLE t (\n    a integer\n);\n\n-- Doubles.\n{STRING_LITERAL_BODY}\n\n")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_do_block_is_held_out_and_comes_back_unchanged() -> Result<(), FunctionStatementError> {
+        let block = "do $$\nbegin\n    if exists (\n        select\n        from\n            t) then\n        delete   from t;\n    end if;\nend\n$$;";
+        let migration = format!("create table t (a integer);\n\n{block}\n");
+        let held = HeldOutFunctions::hold_out(&migration)?;
+        assert_eq!(held.shielded(), "create table t (a integer);\n\nselect '__function_statement_0__';\n");
+        assert_eq!(held.restore(held.shielded())?, migration);
         Ok(())
     }
 
