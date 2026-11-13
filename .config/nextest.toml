@@ -150,6 +150,7 @@ package(andromeda-test-suite) & binary(~ngsi_ld_) & (
   | test(/(^|::)(o_ctx_lst_0016|o_ctx_lst_0017|o_ctx_lst_0018|o_ctx_lst_0019|o_ctx_srv_0004|o_ctx_srv_0005|o_ctx_srv_0021|o_ctx_srv_0022)_/)
   | test(/(^|::)(o_ctx_srv_0029|o_fed_dsc_0001|o_fed_dsc_0002|o_fed_dsc_0003|o_fed_dsc_0004|o_fed_dsc_0005|o_fed_dsc_0006|o_map_qen_9004)_/)
   | test(/(^|::)(o_qry_pag_0027|o_qry_pag_0028|o_qry_pag_0029|o_qry_pag_0032|o_snp_qry_8113|o_snp_qry_8123|o_sub_qry_0002|o_sub_qry_0003)_/)
+  | test(/(^|::)(o_snp_scp_8100|o_snp_scp_8103)_/)
   | test(/(^|::)(o_sub_qry_0005|o_sub_qry_0006|o_sub_qry_0009|o_sub_qry_0010|o_sub_qry_0011|o_sub_qry_0014|o_sub_qry_0016|o_sub_qry_9002)_/)
   | test(/(^|::)(o_ten_imp_0001|o_ten_imp_0002|o_ten_imp_0003|o_ten_imp_0004|o_ten_imp_0005|o_ten_imp_9001|o_ten_imp_9002|o_ten_imp_9003)_/)
   | test(/(^|::)(o_ten_imp_9004|o_ten_imp_9005|o_ten_imp_9006|o_ten_imp_9007|o_ten_imp_9008|o_ten_iso_0001|o_ten_iso_0002|o_tmp_qry_0025)_/)
@@ -164,7 +165,7 @@ package(andromeda-test-suite) & binary(~andromeda_) & (
   | test(/(^|::)(a_mgt_tnt_0001|a_mgt_tnt_0002|a_mgt_tnt_0003|a_mgt_tnt_0004|a_mgt_tnt_0006|a_mgt_tnt_0007|a_mgt_tnt_0010|a_ntf_trg_9015)_/)
   | test(/(^|::)(a_qry_typ_9003|a_snp_cln_9170|a_snp_cln_9171|a_snp_lim_8140|a_snp_lim_8141|a_snp_lim_8142|a_snp_lim_8143|a_snp_qry_8140|a_snp_qry_8143|a_sub_qry_0007)_/)
   | test(/(^|::)(a_ntf_dlv_9007|a_ntf_dlv_9009|a_ntf_trg_9017|a_obs_wbk_9001|a_obs_wbk_9002|a_sub_qry_0008|a_sub_qry_9084|a_tmp_cwh_0029)_/)
-  | test(/(^|::)(a_ntf_rty_9007|a_ntf_rty_9008|a_ntf_rty_9009|a_obs_wbk_9003|a_qry_pag_9095)_/)
+  | test(/(^|::)(a_ntf_rty_9007|a_ntf_rty_9008|a_ntf_rty_9009|a_obs_wbk_9003|a_qry_pag_9095|a_snp_scp_8100)_/)
 )'''
 test-group = 'private-tenants'
 

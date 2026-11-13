@@ -9,7 +9,10 @@ use crate::{
     wire::{WireError, request_to},
 };
 use http::{Method, StatusCode, Uri, uri::InvalidUri};
-use ngsi_ld::client::{ClientError, ReqwestError};
+use ngsi_ld::{
+    client::{ClientError, ReqwestError},
+    http::ResponseError,
+};
 use std::time::{Duration, Instant};
 use url::{ParseError, Url};
 
@@ -73,24 +76,30 @@ impl ReadinessProbe {
         })
     }
 
-    /// Asks the probe once.
+    /// Asks the probe once. A 503 is a reading like a 200: the client reports it as a problem, whose body it keeps
+    /// as received, and that body is the `HealthCheck`.
     ///
     /// # Errors
     ///
-    /// Returns [`ReadinessProbeError`] when no answer arrives or the answer is not a `HealthCheck`.
+    /// Returns [`ReadinessProbeError`] when no answer arrives, the answer is an error other than a problem, or it is
+    /// not a `HealthCheck`.
     pub async fn ask(&self) -> Result<Readiness, ReadinessProbeError> {
         let request = request_to(&self.management, Method::GET, "")?.uri(self.readyz.as_str().parse::<Uri>()?);
         let sent = Instant::now();
-        let answer = self
-            .management
-            .send_unchecked(request)
-            .await
-            .map_err(|error| ReadinessProbeError::Client(Box::new(error)))?;
+        let answer = self.management.send_unchecked(request).await;
         let took = sent.elapsed();
-        Ok(Readiness {
-            status: answer.status(),
-            document: serde_json::from_slice(answer.body())?,
-            took,
-        })
+        match answer {
+            Ok(answer) => Ok(Readiness {
+                status: answer.status(),
+                document: serde_json::from_slice(answer.body())?,
+                took,
+            }),
+            Err(ClientError::Response(ResponseError::Problem { status, body, .. })) => Ok(Readiness {
+                status,
+                document: serde_json::from_str(&body.to_string())?,
+                took,
+            }),
+            Err(error) => Err(ReadinessProbeError::Client(Box::new(error))),
+        }
     }
 }
