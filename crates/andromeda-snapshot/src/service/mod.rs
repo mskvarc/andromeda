@@ -12,7 +12,6 @@ pub mod purge;
 mod scoping;
 
 use crate::{
-    branch_condition::BranchCondition,
     error::SnapshotError,
     preparation_start::PreparationStart,
     prepare::to_insert_params,
@@ -273,8 +272,7 @@ impl SnapshotService {
     /// # Errors
     ///
     /// Returns [`SnapshotError::NotFound`] when the source snapshot is absent or
-    /// expired, [`SnapshotError::Quarantined`] when the source's stored branch
-    /// is behind this binary, [`SnapshotError::AlreadyExists`] when the requested clone
+    /// expired, [`SnapshotError::AlreadyExists`] when the requested clone
     /// identifier is already taken, [`SnapshotError::Validation`] when the
     /// resolved lifetime is not positive, [`SnapshotError::Internal`] when a
     /// generated identifier or the configured default lifetime cannot be
@@ -282,13 +280,6 @@ impl SnapshotService {
     /// persisted.
     pub async fn clone_snapshot(&self, source_id: &Identifier, input: SnapshotCloneInput) -> Result<Snapshot, SnapshotError> {
         let source = self.get(source_id).await?;
-        // A quarantined source cannot be copied column for column into a
-        // branch built by this binary, so the job is refused before it exists.
-        match self.repo.branch_condition(source_id).await? {
-            Some(BranchCondition::Current) => {}
-            Some(BranchCondition::Quarantined) => return Err(SnapshotError::quarantined(source_id)),
-            None => return Err(SnapshotError::not_found(source_id)),
-        }
 
         let new_id = match input.id {
             Some(id) => id,

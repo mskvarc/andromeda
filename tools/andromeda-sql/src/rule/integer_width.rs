@@ -55,7 +55,7 @@ const ORDINAL_NAMES: &[&str] = &["ordinal", "position", "parent"];
 const ORDINAL_SUFFIX: &str = "_ordinal";
 
 /// The `integer` names that hold a schema version.
-const SCHEMA_VERSION_NAMES: &[&str] = &["schema_version", "branch_schema_version"];
+const SCHEMA_VERSION_NAMES: &[&str] = &["schema_version"];
 
 /// The `integer` names that hold a server process id, which PostgreSQL types
 /// `integer` in `pg_backend_pid()` and `pg_stat_activity.pid` alike.

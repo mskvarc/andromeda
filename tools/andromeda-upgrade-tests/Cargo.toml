@@ -13,7 +13,9 @@ description = "Upgrade rehearsals: databases holding the data a released version
 workspace = true
 
 [dependencies]
+andromeda-context-space.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-postgresql-branch.workspace = true
 andromeda-postgresql-context-store.workspace = true
 andromeda-postgresql-pool.workspace = true
 andromeda-retry = { workspace = true, features = ["tokio"] }
@@ -24,7 +26,11 @@ uuid = { version = "1.29.2", features = ["v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+andromeda-json-literal.workspace = true
+andromeda-ngsi-ld-model.workspace = true
 andromeda-postgresql-seaquery.workspace = true
+andromeda-snapshot.workspace = true
+chrono = "0.4.45"
 pretty_assertions = "1.4.1"
 sea-query = { version = "1.0.2", default-features = false, features = ["backend-postgres", "thread-safe"] }
 serde_json = "1.0.154"

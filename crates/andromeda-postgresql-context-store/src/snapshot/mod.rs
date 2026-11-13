@@ -5,10 +5,6 @@
 pub mod branch_lock;
 /// Per-Snapshot branch schema creation, promotion and teardown.
 mod branch_schema;
-/// Bringing every Snapshot's branch schemas up to the binary's branch version.
-pub mod branch_upgrade;
-/// Which Snapshots' branch schemas carry the binary's current branch version.
-pub(crate) mod branch_version;
 /// Cross-schema copying of a Snapshot branch into another (clone preparation).
 mod clone;
 mod clone_context;
@@ -16,6 +12,8 @@ mod clone_context;
 mod clone_copy_session;
 /// Creating a Snapshot's control record, preparation row and branch schemas.
 mod creation;
+/// The surrogate key and URI of every Snapshot a tenant holds.
+pub(crate) mod identities;
 /// Encoding a typed value as the `json` a statement writes.
 mod json_value;
 /// Row-to-domain conversions for snapshot records.

@@ -1953,10 +1953,8 @@ name = "andromeda-postgresql-schema"
 version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
- "derive_more",
  "pretty_assertions",
  "sea-query",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -2139,7 +2137,6 @@ dependencies = [
  "indexmap 2.14.2",
  "pretty_assertions",
  "serde_json",
- "strum",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -2426,11 +2423,17 @@ name = "andromeda-upgrade-tests"
 version = "1.0.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-context-space",
+ "andromeda-json-literal",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-postgresql-branch",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-pool",
  "andromeda-postgresql-seaquery",
  "andromeda-retry",
+ "andromeda-snapshot",
+ "chrono",
  "pretty_assertions",
  "sea-query",
  "serde_json",

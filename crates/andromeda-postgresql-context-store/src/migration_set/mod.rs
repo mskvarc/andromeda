@@ -25,10 +25,14 @@
 //! inside a Snapshot schema, recorded in that schema's own
 //! [`branch::BRANCH_LEDGER`]. Because every set has a ledger of its own, none of
 //! them ever sees another's rows, so missing-migration detection stays on
-//! everywhere.
+//! everywhere. The ledgers are also what keeps every schema of a tenant
+//! database at one version: a branch file reaches `public` and every Snapshot
+//! schema before any later file runs anywhere.
 
-/// The branch migration set, which creates and upgrades a Snapshot schema.
+/// The branch migration set, which creates and migrates a Snapshot schema.
 pub mod branch;
+/// The version a migration file is numbered with.
+pub mod migration_version;
 /// The platform migration set.
 pub mod platform;
 /// The tenant migration set: `tenant/` together with `branch/`.

@@ -20,11 +20,18 @@ pub mod upgrade_server;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-context-space",
         "andromeda-ngsi-ld-lexicon",
+        "andromeda-postgresql-branch",
         "andromeda-postgresql-context-store",
         "andromeda-postgresql-pool",
         "andromeda-retry",
     ],
-    allow_workspace_dev_dependencies: ["andromeda-postgresql-seaquery"],
+    allow_workspace_dev_dependencies: [
+        "andromeda-json-literal",
+        "andromeda-ngsi-ld-model",
+        "andromeda-postgresql-seaquery",
+        "andromeda-snapshot",
+    ],
     allow_production_dependencies: ["sqlx"],
 }

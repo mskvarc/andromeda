@@ -96,8 +96,11 @@ impl PostgresTenantRegistry {
     /// Returns [`ContextStoreError::DatabaseUrlUnnamed`] when the base URL names
     /// no database, [`ContextStoreError::StatementBuild`] when the
     /// default-tenant upsert cannot be assembled,
-    /// [`ContextStoreError::Migration`] or [`ContextStoreError::SchemaContract`]
-    /// when the platform database cannot be migrated to this binary's contract,
+    /// [`ContextStoreError::Migration`],
+    /// [`ContextStoreError::SnapshotMigration`],
+    /// [`ContextStoreError::StoredSnapshot`] or
+    /// [`ContextStoreError::SchemaContract`] when the platform database cannot
+    /// be migrated to this binary's contract,
     /// and [`ContextStoreError::Database`] when the defaults cannot be
     /// installed, the platform pool cannot connect or the upsert fails.
     pub async fn connect(

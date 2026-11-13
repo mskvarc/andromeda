@@ -1,4 +1,4 @@
-//! Creating, upgrading, promoting and tearing down a Snapshot's branch schema.
+//! Creating, promoting and tearing down a Snapshot's branch schema.
 //!
 //! Each Snapshot owns its state in one dedicated PostgreSQL schema named after
 //! its surrogate key, holding the branch relation set: `snap_<key>_stg`, the
@@ -11,13 +11,18 @@
 //! first on the search path and recorded in the schema's own ledger, so every
 //! column, default, check constraint, index, foreign key, storage parameter,
 //! generated column and compression setting, and every name, is exactly the
-//! live branch's. The same migrator later upgrades the schema
-//! ([`crate::snapshot::branch_upgrade`]). History relations stay plain tables
-//! in a branch schema; only the live branch converts them to hypertables.
-//!
-use crate::{error::ContextStoreError, migration_set::branch::BranchMigrationSet};
+//! live branch's. Every later branch migration reaches the schema through the
+//! same migrator, in lockstep with `public`. History relations stay plain
+//! tables in a branch schema; only the live branch converts them to
+//! hypertables.
+
+use crate::{
+    error::ContextStoreError,
+    migration_set::branch::branch_migrator,
+    search_path::{current_search_path, steer_search_path},
+};
 use andromeda_context_space::{snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
-use andromeda_postgresql_branch::{snapshot_schema, snapshot_schema_name};
+use andromeda_postgresql_branch::{snapshot_schema, snapshot_search_path};
 use andromeda_postgresql_schema::{
     census::{AttributeCensus, EntityTypeAttributeCensus, EntityTypeCensus},
     current::{CurrentAttributes, Entities, EntitySearch, EntityTypeMembers},
@@ -27,14 +32,12 @@ use andromeda_postgresql_schema::{
 };
 use andromeda_postgresql_seaquery::{
     command::Command,
-    introspection::current_setting,
     maintenance::MaintenanceCommand,
     relation_truncation::RelationTruncation,
     schema_definition::SchemaDefinition,
-    setting::{Setting, SettingScope, set_config},
-    statement::Statement,
+    setting::SettingScope,
 };
-use sea_query::{DynIden, IntoIden, Query, TableName};
+use sea_query::{DynIden, IntoIden, TableName};
 use sqlx::PgConnection;
 
 /// The branch relations every Snapshot schema holds, in an order that respects
@@ -79,44 +82,15 @@ pub(crate) fn branch_tables() -> [DynIden; 17] {
 /// path cannot be set or restored, or a branch migration fails.
 pub(crate) async fn create_branch_schema(conn: &mut PgConnection, key: SnapshotKey, branch: SnapshotBranch) -> Result<(), ContextStoreError> {
     SchemaDefinition::create(snapshot_schema(key, branch)).to_query().execute(&mut *conn).await?;
-    let schema = snapshot_schema_name(key, branch);
     let previous = current_search_path(conn).await?;
-    steer_search_path(conn, &branch_search_path(&schema), SettingScope::Transaction).await?;
-    let mut migrator = BranchMigrationSet::embedded().migrator(&schema);
+    steer_search_path(conn, &snapshot_search_path(key, branch), SettingScope::Transaction).await?;
+    let mut migrator = branch_migrator(key, branch);
     migrator.set_locking(false);
     // `run_direct` rather than `run`: `run` goes through `Acquire`, whose
     // lifetime-generic bound does not hold for a borrowed connection inside the
     // `Send` futures the store's async-trait methods return.
     migrator.run_direct(None, conn, false).await?;
-    steer_search_path(conn, &previous, SettingScope::Transaction).await
-}
-
-/// The search path a branch migration runs under: the branch schema first, so
-/// its unqualified relations land there, then `public`, so the tenant-global
-/// dictionaries, unit codes, functions and extension types resolve.
-pub(crate) fn branch_search_path(schema: &str) -> String {
-    format!("{schema}, public")
-}
-
-/// Read the connection's current search path.
-async fn current_search_path(conn: &mut PgConnection) -> Result<String, ContextStoreError> {
-    Ok(Query::select()
-        .expr(current_setting(Setting::SearchPath))
-        .to_owned()
-        .to_query_scalar::<String>()
-        .fetch_one(conn)
-        .await?)
-}
-
-/// Set the connection's search path for `scope`.
-pub(crate) async fn steer_search_path(conn: &mut PgConnection, search_path: &str, scope: SettingScope) -> Result<(), ContextStoreError> {
-    Query::select()
-        .expr(set_config(Setting::SearchPath, search_path, scope))
-        .to_owned()
-        .to_query()
-        .execute(conn)
-        .await?;
-    Ok(())
+    Ok(steer_search_path(conn, &previous, SettingScope::Transaction).await?)
 }
 
 /// Drop a branch schema and everything it holds.
@@ -202,7 +176,7 @@ pub(crate) async fn publish_empty_branch(conn: &mut PgConnection, key: SnapshotK
 mod tests {
     use crate::{
         migration_set::branch::branch_migrations,
-        snapshot::branch_schema::{branch_relations, branch_search_path, branch_tables},
+        snapshot::branch_schema::{branch_relations, branch_tables},
     };
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, IntoIden, TableName};
@@ -215,11 +189,6 @@ mod tests {
         for (relation, table) in relations.into_iter().zip(branch_tables()) {
             assert_eq!(relation, TableName::from((Alias::new("snap_7_stg"), table)));
         }
-    }
-
-    #[test]
-    fn a_branch_migration_resolves_its_own_schema_before_the_tenant_globals() {
-        assert_eq!(branch_search_path("snap_7_stg"), "snap_7_stg, public");
     }
 
     /// The copy and truncation order names exactly the relations the branch

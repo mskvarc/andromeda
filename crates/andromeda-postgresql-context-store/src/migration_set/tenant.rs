@@ -6,12 +6,32 @@
 //! branch holds, then the global relations that reference them, then the
 //! TimescaleDB conversion of the live history tables.
 
-use crate::migration_set::branch::branch_migrations;
+use crate::migration_set::{branch::branch_migrations, migration_version::MigrationVersion};
 use sqlx::migrate::{Migration, Migrator};
-use std::{borrow::Cow, sync::LazyLock};
+use std::{borrow::Cow, collections::BTreeSet, sync::LazyLock};
 
 /// The ledger the tenant migration set is recorded in.
 pub const TENANT_LEDGER: &str = "_andromeda_tenant_migrations";
+
+/// Where a migration of the tenant set applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MigrationReach {
+    /// `public` alone: a file of `tenant/`, which names tenant-global
+    /// relations, functions and types.
+    Public,
+    /// Every branch: a file of `branch/`, which builds the live branch in
+    /// `public` and each Snapshot branch in its own schema.
+    EveryBranch,
+}
+
+/// One migration of the tenant set and where it applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TenantSetMigration {
+    /// The migration's version.
+    pub(crate) version: MigrationVersion,
+    /// Where the migration applies.
+    pub(crate) reach: MigrationReach,
+}
 
 /// The tenant-only migrations, exactly as embedded in the binary.
 static TENANT_ONLY_MIGRATIONS: Migrator = sqlx::migrate!("../../migrations/tenant");
@@ -33,6 +53,25 @@ pub fn tenant_migrator() -> &'static Migrator {
     &TENANT_MIGRATOR
 }
 
+/// Every up migration of the tenant set, in version order, with where it
+/// applies.
+#[must_use]
+pub(crate) fn tenant_set_migrations() -> Vec<TenantSetMigration> {
+    let branch: BTreeSet<i64> = branch_migrations().iter().map(|migration| migration.version).collect();
+    tenant_migrator()
+        .iter()
+        .filter(|migration| !migration.migration_type.is_down_migration())
+        .map(|migration| TenantSetMigration {
+            version: MigrationVersion::new(migration.version),
+            reach: if branch.contains(&migration.version) {
+                MigrationReach::EveryBranch
+            } else {
+                MigrationReach::Public
+            },
+        })
+        .collect()
+}
+
 /// Two migration sets merged into one, sorted by version.
 fn union(tenant: &[Migration], branch: &[Migration]) -> Vec<Migration> {
     // clone: the two embedded sets are separate static slices, so their union is an owned list.
@@ -46,7 +85,7 @@ mod tests {
     use crate::migration_set::{
         branch::branch_migrations,
         platform::platform_migrations,
-        tenant::{TENANT_LEDGER, TENANT_ONLY_MIGRATIONS, tenant_migrator},
+        tenant::{MigrationReach, TENANT_LEDGER, TENANT_ONLY_MIGRATIONS, tenant_migrator, tenant_set_migrations},
     };
     use pretty_assertions::assert_eq;
     use std::{collections::HashSet, fs, path::PathBuf};
@@ -103,6 +142,23 @@ mod tests {
         let all = all;
         let expected: Vec<i64> = (1..).take(all.len()).collect();
         assert_eq!(all, expected);
+    }
+
+    /// A file of `branch/` reaches every branch and a file of `tenant/` only
+    /// `public`, listed in the order the tenant migrator applies them.
+    #[test]
+    fn every_tenant_set_migration_reaches_the_branches_its_directory_names() {
+        let reached: Vec<(i64, MigrationReach)> = tenant_set_migrations()
+            .iter()
+            .map(|migration| (migration.version.get(), migration.reach))
+            .collect();
+        let mut expected: Vec<(i64, MigrationReach)> = versions_on_disk("tenant")
+            .into_iter()
+            .map(|version| (version, MigrationReach::Public))
+            .chain(versions_on_disk("branch").into_iter().map(|version| (version, MigrationReach::EveryBranch)))
+            .collect();
+        expected.sort_unstable_by_key(|(version, _)| *version);
+        assert_eq!(reached, expected);
     }
 
     #[test]

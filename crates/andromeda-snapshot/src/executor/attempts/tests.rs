@@ -1,5 +1,4 @@
 use crate::{
-    branch_condition::BranchCondition,
     error::SnapshotError,
     executor::attempts::{PREPARATION_ATTEMPTS, PreparationClaim, PreparationEnd, QueryCounts},
     snapshot_invariant::SnapshotInvariant,
@@ -38,7 +37,7 @@ async fn store(claim: ClaimHold) -> StoreDouble {
         .modified_at(now)
         .expires_at(now + ChronoDuration::hours(1))
         .build();
-    let store = StoreDouble::new(snapshot, BranchCondition::Current, claim);
+    let store = StoreDouble::new(snapshot, claim);
     let job = store.next_preparing(LeaseHolder::mint(), LEASE).await.expect("the double claims");
     assert!(job.is_some(), "the preparing Snapshot is claimed");
     store

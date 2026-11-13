@@ -5,9 +5,9 @@
 //! database's versioned extensions to the versions the server ships, recreates
 //! the optional extensions that ship no update scripts where they are behind,
 //! and installs the optional extensions it ships, then checks that the server can
-//! hold the schema before any migrator runs, then migrates, stamps and verifies
-//! the schema contract, and finally brings every Snapshot's branch schemas up
-//! to the branch version, quarantining a Snapshot whose upgrade fails.
+//! hold the schema before any migrator runs, then brings `public` and every
+//! Snapshot branch schema through the migrations in version lockstep, and
+//! finally stamps and verifies the schema contract.
 //!
 //! Every connection that changes the schema is opened by
 //! [`open_schema_change_pool`]: it waits at most a bounded time for each lock
@@ -19,7 +19,9 @@ use crate::{
     error::ContextStoreError,
     extension_recreation::pending_extension_recreations,
     extension_update::{begin_without_timescaledb, installable_optional_extensions, pending_extension_updates, update_extensions},
-    migration_set::{branch::BranchMigrationSet, platform::platform_migrator, tenant::tenant_migrator},
+    lockstep_migration::migrate_in_lockstep,
+    migration_session::MigrationSession,
+    migration_set::platform::platform_migrator,
     schema_contract::{
         contract::current_tenant_schema_contract,
         error::SchemaContractError,
@@ -27,18 +29,9 @@ use crate::{
         schema_metadata::{ensure_schema_contract, verify_schema_contract},
         server_requirements::ExtensionPresence,
     },
-    snapshot::branch_upgrade::{BranchUpgradeReport, upgrade_snapshot_branches},
 };
-use andromeda_postgresql_pool::{
-    pool_options::configure_pool_options,
-    schema_change_lock::{SCHEMA_CHANGE_LOCK_RETRY, is_lock_not_available, schema_change_connect_options},
-    sql_state::SqlState,
-};
-use andromeda_retry::tokio_retry_delay::TokioRetryDelay;
-use sqlx::{
-    PgPool,
-    migrate::{MigrateError, Migrator},
-};
+use andromeda_postgresql_pool::{pool_options::configure_pool_options, schema_change_lock::schema_change_connect_options, sql_state::SqlState};
+use sqlx::PgPool;
 use std::time::Duration;
 use url::Url;
 
@@ -46,7 +39,7 @@ use url::Url;
 /// that order.
 ///
 /// The pool must reach PostgreSQL directly, never through a transaction-pooling
-/// proxy: the migrator holds a session advisory lock across the run, which a
+/// proxy: every migrator of the run holds a session advisory lock, which a
 /// per-transaction backend assignment would break.
 ///
 /// The platform database is also the unnamed default tenant's database, so it
@@ -64,23 +57,15 @@ use url::Url;
 /// failure [`migrate_tenant_db`] returns once its prerequisites are met.
 pub async fn migrate_platform_db(pool: &PgPool) -> Result<(), ContextStoreError> {
     verify_migration_prerequisites(pool).await?;
-    run_migrator(&platform_migrator(), pool).await?;
-    migrate_tenant_schema(pool).await
+    let mut session = MigrationSession::open(pool).await?;
+    let walked = migrate_platform_then_tenant_schemas(&mut session).await;
+    finish_migration(pool, session, walked).await
 }
 
-/// Run `migrator`, running it again while a migration is refused a lock.
-///
-/// A migration that waited out its `lock_timeout` rolled back, so running the
-/// migrator again resumes at that migration with nothing half-applied.
-async fn run_migrator(migrator: &Migrator, pool: &PgPool) -> Result<(), MigrateError> {
-    SCHEMA_CHANGE_LOCK_RETRY
-        .run(&TokioRetryDelay, |error, _| migration_lock_not_available(error), |_| migrator.run(pool))
-        .await
-}
-
-/// Whether a migration failed because a statement was refused a lock.
-fn migration_lock_not_available(error: &MigrateError) -> bool {
-    matches!(error, MigrateError::Execute(source) | MigrateError::ExecuteMigration(source, _) if is_lock_not_available(source))
+/// Run the platform set in `session`, then walk the tenant set.
+async fn migrate_platform_then_tenant_schemas(session: &mut MigrationSession) -> Result<(), ContextStoreError> {
+    session.run(&platform_migrator(), None).await?;
+    migrate_in_lockstep(session).await
 }
 
 /// A one-connection pool straight to PostgreSQL at `database_url` whose
@@ -96,9 +81,9 @@ pub async fn open_schema_change_pool(database_url: &Url, acquire_timeout: Durati
     Ok(configure_pool_options(1, acquire_timeout).connect_with(options).await?)
 }
 
-/// Run the tenant migrations against the given pool, stamp and verify the
-/// schema contract the migrated database now carries, and bring every
-/// Snapshot's branch schemas up to the branch version this binary embeds.
+/// Bring `public` and every Snapshot branch schema of the database behind the
+/// given pool through the tenant migrations in version lockstep, then stamp
+/// and verify the schema contract the migrated database now carries.
 ///
 /// The stamp is written here rather than by a migration because a migration
 /// cannot digest the migration set it belongs to. Verification refuses a tenant
@@ -109,8 +94,9 @@ pub async fn open_schema_change_pool(database_url: &Url, acquire_timeout: Durati
 /// upgrade migrates every tenant's schema on this same call, and a stamp left
 /// at the previous binary's version must not then read back as drift.
 ///
-/// A Snapshot whose branch upgrade fails is quarantined rather than failing the
-/// tenant: the tenant and every other Snapshot keep serving.
+/// The tenant does not open while a Snapshot branch cannot take a migration:
+/// the walk stops there, before any later migration runs anywhere, and the
+/// next call resumes from what each ledger records.
 ///
 /// # Errors
 ///
@@ -119,57 +105,37 @@ pub async fn open_schema_change_pool(database_url: &Url, acquire_timeout: Durati
 /// extension the migrations create, checked before any migration runs, and
 /// every failure the migration itself returns:
 /// [`ContextStoreError::Migration`] when a tenant migration fails,
-/// [`ContextStoreError::SchemaContract`] when the embedded migration set has no
-/// contract or the migrated database does not carry the schema, server or
-/// extensions this binary requires, and [`ContextStoreError::Database`] or
-/// [`ContextStoreError::BranchVersion`] when the Snapshot branches cannot be
-/// listed or an upgrade outcome cannot be recorded.
+/// [`ContextStoreError::SnapshotMigration`] naming the Snapshot branch whose
+/// ledger cannot be read or whose migration fails,
+/// [`ContextStoreError::StoredSnapshot`] when a Snapshot control record does
+/// not read back, [`ContextStoreError::SchemaContract`] when the embedded
+/// migration set has no contract or the migrated database does not carry the
+/// schema, server or extensions this binary requires, and
+/// [`ContextStoreError::Database`] when the migration session cannot be opened
+/// or a statement fails.
 pub async fn migrate_tenant_db(pool: &PgPool) -> Result<(), ContextStoreError> {
     verify_migration_prerequisites(pool).await?;
-    migrate_tenant_schema(pool).await
+    let mut session = MigrationSession::open(pool).await?;
+    let walked = migrate_in_lockstep(&mut session).await;
+    finish_migration(pool, session, walked).await
 }
 
-/// Run the tenant migrations on a database whose prerequisites are already
-/// verified, stamp and verify the contract, and upgrade the Snapshot branches.
-async fn migrate_tenant_schema(pool: &PgPool) -> Result<(), ContextStoreError> {
-    run_migrator(tenant_migrator(), pool).await?;
+/// End the migration `session` whether or not its walk succeeded, keeping the
+/// walk's failure as the one returned, then stamp and verify the contract of
+/// a database the walk brought through every migration.
+async fn finish_migration(pool: &PgPool, session: MigrationSession, walked: Result<(), ContextStoreError>) -> Result<(), ContextStoreError> {
+    match (walked, session.close().await) {
+        (Ok(()), closed) => closed?,
+        (Err(failure), Ok(())) => return Err(failure),
+        (Err(failure), Err(error)) => {
+            tracing::warn!(%error, event = "migration_session_not_closed", "the migration session could not be closed after a failed migration");
+            return Err(failure);
+        }
+    }
 
     let contract = current_tenant_schema_contract()?;
     ensure_schema_contract(pool, &contract).await?;
-    report_branch_upgrade(upgrade_snapshot_branches(pool, &BranchMigrationSet::embedded()).await?);
     Ok(())
-}
-
-/// Bring every Snapshot's branch schemas in one tenant database up to the
-/// branch version this binary embeds, over a direct one-connection pool.
-///
-/// Called on a tenant load whose schema is already current but whose
-/// [`snapshot_branch_state`](crate::snapshot::branch_upgrade::snapshot_branch_state) probe found a Snapshot behind: a binary that
-/// appended a branch migration started against a tenant another replica had
-/// already migrated, or an earlier upgrade quarantined a Snapshot.
-///
-/// # Errors
-///
-/// Returns [`ContextStoreError::Database`] when the pool cannot connect, and
-/// the errors [`upgrade_snapshot_branches`] returns.
-pub async fn upgrade_single_tenant_snapshot_branches(database_url: &Url, acquire_timeout: Duration) -> Result<(), ContextStoreError> {
-    let pool = open_schema_change_pool(database_url, acquire_timeout).await?;
-    let outcome = upgrade_snapshot_branches(&pool, &BranchMigrationSet::embedded()).await;
-    pool.close().await;
-    report_branch_upgrade(outcome?);
-    Ok(())
-}
-
-/// Log what an upgrade run did, when it did anything.
-fn report_branch_upgrade(report: BranchUpgradeReport) {
-    if report.upgraded > 0 || report.quarantined > 0 {
-        tracing::info!(
-            upgraded = report.upgraded,
-            quarantined = report.quarantined,
-            event = "snapshot_branches_upgraded",
-            "Snapshot branch schemas upgraded"
-        );
-    }
 }
 
 /// Update a single tenant database's extensions, then connect to it over a
@@ -177,7 +143,7 @@ fn report_branch_upgrade(report: BranchUpgradeReport) {
 /// the pool.
 ///
 /// `database_url` must reach PostgreSQL directly, never a transaction-pooling
-/// proxy: the migrator holds a session advisory lock across the run, which a
+/// proxy: every migrator holds a session advisory lock across its run, which a
 /// per-transaction backend assignment would break. Migration is single-threaded,
 /// so the pool holds exactly one connection. The extensions are updated before
 /// the pool opens, so the migrations and the floor check run against the
@@ -313,20 +279,9 @@ mod tests {
             server_requirements::{ExtensionPresence, ExtensionVersion, REQUIRED_POSTGIS_VERSION},
             versioned_extension::VersionedExtension,
         },
-        tenant_migration::{migration_lock_not_available, schema_error_is_migratable},
+        tenant_migration::schema_error_is_migratable,
     };
     use andromeda_postgresql_pool::fake_database_error::FakeDatabaseError;
-    use sqlx::migrate::MigrateError;
-
-    /// The lock classification itself is the pool crate's; what is decided
-    /// here is which migration failures carry a statement error to classify.
-    #[test]
-    fn a_migration_failure_without_a_refused_lock_is_not_run_again() {
-        assert!(!migration_lock_not_available(&MigrateError::Execute(sqlx::Error::PoolTimedOut)));
-        assert!(!migration_lock_not_available(&MigrateError::ExecuteMigration(sqlx::Error::RowNotFound, 30)));
-        assert!(!migration_lock_not_available(&MigrateError::VersionMismatch(30)));
-        assert!(!migration_lock_not_available(&MigrateError::Dirty(30)));
-    }
 
     /// A version behind the contract is a completed-migration-away, so the cold
     /// path migrates; a version ahead is a downgrade the migrator cannot make,

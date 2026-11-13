@@ -1,7 +1,7 @@
 //! A database that never stored a seal upgrades with nothing changed: no row
 //! is added or removed, and no element, search row or ledger moves.
 
-use crate::{
+use crate::fixtures::{
     census_ledger::{count_instance, count_stream, instances_by_attribute, instances_by_type_and_attribute, streams_by_type_and_attribute},
     current_state::{insert_entity, insert_entity_search, insert_number_attribute, insert_type_member, intern_attribute},
     history::{InstanceIdentity, insert_history_row, insert_stream},

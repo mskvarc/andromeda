@@ -17,7 +17,7 @@ In the model a seal is `FamilyValue::Proof`, a Property value holding the two se
 
 ## Upgrading a database that holds seals
 
-A database that holds an `ngsildproof` as an object value with a `proof_seals` member is converted when it upgrades. A seal whose value is a complete proof and whose seals name an entity becomes typed. Any other one is dropped with its own sub-attributes, and so is every top-level `ngsildproof`, which leaves the current state, its history and the discovery counts as a delete of it would. The conversion admits a slightly narrower set of URIs than the broker does, so a seal naming an unusual URI is dropped rather than stored in a form the broker can't read. A Snapshot is upgraded only after the tenant's types have changed, so it can't convert its seals, and it drops its `ngsildproof` sub-attributes.
+A database that holds an `ngsildproof` as an object value with a `proof_seals` member is converted when it upgrades. A seal whose value is a complete proof and whose seals name an entity becomes typed. Any other one is dropped with its own sub-attributes, and so is every top-level `ngsildproof`, which leaves the current state, its history and the discovery counts as a delete of it would. The conversion admits a slightly narrower set of URIs than the broker does, so a seal naming an unusual URI is dropped rather than stored in a form the broker can't read. Every Snapshot's seals are converted in the same way, before the tenant's types change, as [Schema](database/schema.md#migrations) describes.
 
 ## Known gaps for verification
 

@@ -1,5 +1,4 @@
 use crate::{
-    branch_condition::BranchCondition,
     executor::{
         attempts::{PreparationClaim, PreparationEnd, QueryCounts},
         drain::DrainWorker,
@@ -39,8 +38,7 @@ fn snapshot(id: Identifier, status: SnapshotStatus) -> Snapshot {
 
 /// A source in `status` and a preparing clone of it.
 fn source_and_clone(status: SnapshotStatus) -> StoreDouble {
-    StoreDouble::new(snapshot(source_id(), status), BranchCondition::Current, ClaimHold::Held)
-        .with_clone(snapshot(clone_id(), SnapshotStatus::Preparing), &source_id())
+    StoreDouble::new(snapshot(source_id(), status), ClaimHold::Held).with_clone(snapshot(clone_id(), SnapshotStatus::Preparing), &source_id())
 }
 
 /// Prepare one claimed job the way the preparation does: a clone copies its
@@ -179,8 +177,8 @@ fn created_id() -> Identifier {
 /// preparation, and still drains the rest.
 #[tokio::test(start_paused = true)]
 async fn the_creation_pass_claims_the_created_snapshot_before_the_other_waiting_preparations() {
-    let store = StoreDouble::new(snapshot(source_id(), SnapshotStatus::Preparing), BranchCondition::Current, ClaimHold::Held)
-        .with_capture(snapshot(created_id(), SnapshotStatus::Preparing));
+    let store =
+        StoreDouble::new(snapshot(source_id(), SnapshotStatus::Preparing), ClaimHold::Held).with_capture(snapshot(created_id(), SnapshotStatus::Preparing));
     let worker = LeaseHolder::mint();
     let claimed = Mutex::new(Vec::new());
 
@@ -202,7 +200,7 @@ async fn the_creation_pass_claims_the_created_snapshot_before_the_other_waiting_
 /// the next scheduled pass prepares it.
 #[tokio::test(start_paused = true)]
 async fn a_created_snapshot_the_creation_pass_cannot_claim_is_prepared_by_the_next_scheduled_pass() {
-    let store = StoreDouble::new(snapshot(created_id(), SnapshotStatus::Preparing), BranchCondition::Current, ClaimHold::Held);
+    let store = StoreDouble::new(snapshot(created_id(), SnapshotStatus::Preparing), ClaimHold::Held);
     store.hold_elsewhere(&created_id());
     let worker = LeaseHolder::mint();
     let claimed = Mutex::new(Vec::new());

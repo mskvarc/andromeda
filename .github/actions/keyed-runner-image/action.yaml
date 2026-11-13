@@ -1,9 +1,9 @@
 name: Keyed runner image
-description: Gives the commit its runner image in andromeda-ci, with the suite compiled into it as a nextest archive, building it only when no image of the commit's suite inputs exists yet. The job logs in to ghcr.io first.
+description: Gives the commit its runner image in andromeda-ci, with every tree's test binaries compiled into it as a nextest archive, building it only when no image of the commit's tree inputs exists yet. The job logs in to ghcr.io first.
 
 outputs:
   key:
-    description: The key of the commit's suite inputs.
+    description: The key of the commit's tree inputs.
     value: ${{ steps.inputs.outputs.key }}
 
 runs:
@@ -39,7 +39,7 @@ runs:
       uses: ./.github/actions/free-disk-space
     - if: ${{ steps.existing.outputs.found != 'true' }}
       uses: docker/setup-buildx-action@v4
-    # The layer cache keeps the toolchain and the suite's compiled third-party dependencies between builds.
+    # The layer cache keeps the toolchain and the trees' compiled third-party dependencies between builds.
     - if: ${{ steps.existing.outputs.found != 'true' }}
       name: Build and push the runner image
       uses: docker/build-push-action@v7

@@ -2,9 +2,8 @@
 //!
 //! Each durable queue keeps the latest failure of a row it will retry or has
 //! dead-lettered: `notification_deliveries.last_error`,
-//! `pending_side_effects.last_error`, `temporal_append_intents.last_error`,
-//! `snapshot_notification_outbox.last_error` and
-//! `snapshot_preparation.branch_upgrade_error`. Every one of those columns
+//! `pending_side_effects.last_error`, `temporal_append_intents.last_error` and
+//! `snapshot_notification_outbox.last_error`. Every one of those columns
 //! carries a check bounding it at [`FAILURE_SUMMARY_MAX_CHARACTERS`]
 //! characters. A diagnostic longer than that would fail the very write that
 //! records the retry, so it is cut here, once, on the way into the store.

@@ -1,7 +1,7 @@
 //! The statements every seed and every read is built from, and the typed
 //! values they bind.
 
-use crate::test_error::UpgradeTestError;
+use crate::fixtures::test_error::UpgradeTestError;
 use andromeda_postgresql_seaquery::{
     cast::cast,
     json_record::{composite_from_json, to_jsonb},
@@ -41,6 +41,11 @@ pub(crate) fn smallint(value: i16) -> SimpleExpr {
 /// A `jsonb` document.
 pub(crate) fn document(value: &Value) -> SimpleExpr {
     cast(Expr::val(value.to_string()), PostgresType::Jsonb)
+}
+
+/// A `json` document, kept as written.
+pub(crate) fn json_document(value: &Value) -> SimpleExpr {
+    cast(Expr::val(value.to_string()), PostgresType::Json)
 }
 
 /// An `integer[]`.

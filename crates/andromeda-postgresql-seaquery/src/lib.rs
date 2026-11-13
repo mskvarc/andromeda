@@ -79,6 +79,7 @@ pub mod rowstore_chunk;
 pub mod scalar_subquery;
 pub mod schema_definition;
 pub mod schema_migration;
+pub mod search_path;
 pub mod sequence;
 pub mod setting;
 pub mod spherical_distance;

@@ -2,7 +2,7 @@
 //! respond-async job owes, the notification events, and the temporal append
 //! intents, each holding Entity states or entries that carry sub-attributes.
 
-use crate::{
+use crate::fixtures::{
     statements::{composite, composites, insert, instant, integers, smallint, smallints, texts, uuid},
     test_error::UpgradeTestError,
 };

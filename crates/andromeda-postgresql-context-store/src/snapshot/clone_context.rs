@@ -15,7 +15,6 @@
 use crate::{
     snapshot::{
         branch_schema::{analyze_branch_schema, promote_staging_schema, publish_empty_branch},
-        branch_version::{condition_of, current_version},
         clone::clone_branch,
         clone_copy_session::{forget_copy_session, own_copy_session, record_copy_session},
         json_value::optional_json,
@@ -39,8 +38,8 @@ use andromeda_postgresql_seaquery::{
     statement::Statement,
     transaction::{Isolation, TransactionStart},
 };
-use andromeda_snapshot::{branch_condition::BranchCondition, error::SnapshotError, snapshot_invariant::SnapshotInvariant};
-use sea_query::{Expr, ExprTrait, JoinType, Keyword, LockType, Query, SelectStatement, SimpleExpr};
+use andromeda_snapshot::{error::SnapshotError, snapshot_invariant::SnapshotInvariant};
+use sea_query::{Expr, ExprTrait, Keyword, LockType, Query, SelectStatement, SimpleExpr};
 use sqlx::{PgPool, Postgres, Transaction};
 
 /// Publish one prepared branch (what a capture or a clone staged on success,
@@ -143,8 +142,8 @@ async fn lock_preparing_key(transaction: &mut Transaction<'_, Postgres>, id: &Id
     lock_claimed_preparation(transaction, id, claimed_by).await?.ok_or_else(|| claim_lost(id))
 }
 
-/// Select a clone source's surrogate key and branch version by URI, holding its
-/// control record `FOR KEY SHARE`.
+/// Select a clone source's surrogate key by URI, holding its control record
+/// `FOR KEY SHARE`.
 ///
 /// Every path that deletes a Snapshot takes `FOR UPDATE` on its control record
 /// before it drops the branch schema, so no delete, expiry or eviction of the
@@ -155,25 +154,16 @@ async fn lock_preparing_key(transaction: &mut Transaction<'_, Postgres>, id: &Id
 fn source_key_statement(source_id: &Identifier) -> SelectStatement {
     Query::select()
         .column((Snapshots::Table, Snapshots::SnapshotKey))
-        .column((SnapshotPreparation::Table, SnapshotPreparation::BranchSchemaVersion))
         .from(Snapshots::Table)
-        .join(
-            JoinType::Join,
-            SnapshotPreparation::Table,
-            Expr::col((SnapshotPreparation::Table, SnapshotPreparation::SnapshotKey)).equals((Snapshots::Table, Snapshots::SnapshotKey)),
-        )
         .and_where(Expr::col((Snapshots::Table, Snapshots::Id)).eq(source_id.as_str()))
         .lock_with_tables(LockType::KeyShare, [Snapshots::Table])
         .to_owned()
 }
 
-/// Resolve, and fence, a clone source's surrogate key by URI, refusing a
-/// quarantined source: its branch schema is behind this binary's branch
-/// relations, so a column-for-column copy into the target could not be trusted.
+/// Resolve, and fence, a clone source's surrogate key by URI.
 async fn source_snapshot_key(transaction: &mut Transaction<'_, Postgres>, source_id: &Identifier) -> Result<SnapshotKey, SnapshotError> {
-    let current = current_version()?;
-    let (raw, version) = source_key_statement(source_id)
-        .to_query_as::<(i64, i32)>()
+    let raw = source_key_statement(source_id)
+        .to_query_scalar::<i64>()
         .fetch_optional(&mut **transaction)
         .await
         .map_err(|error| persistence_error::<SnapshotError>(error))?
@@ -182,10 +172,7 @@ async fn source_snapshot_key(transaction: &mut Transaction<'_, Postgres>, source
                 source_snapshot: source_id.clone(), // clone: the error owns the Snapshot it names
             })
         })?;
-    match condition_of(version, current) {
-        BranchCondition::Current => SnapshotKey::try_from(raw).map_err(|error| SnapshotError::from(undecodable(&error))),
-        BranchCondition::Quarantined => Err(SnapshotError::quarantined(source_id)),
-    }
+    SnapshotKey::try_from(raw).map_err(|error| SnapshotError::from(undecodable(&error)))
 }
 
 /// Record the terminal preparation state, clearing the lease; must match the
@@ -231,15 +218,16 @@ async fn finalize_preparation(
 #[cfg(test)]
 mod tests {
     use crate::snapshot::clone_context::source_key_statement;
+    use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 
     #[test]
     fn a_clone_source_is_read_under_a_key_share_lock_of_its_control_record() {
         let source = "urn:ngsi-ld:Snapshot:src".parse().expect("valid snapshot uri");
         let sql = source_key_statement(&source).to_string(PostgresQueryBuilder);
-        assert!(sql.contains("JOIN \"snapshot_preparation\""), "{sql}");
-        assert!(sql.contains("\"snapshots\".\"id\" = 'urn:ngsi-ld:Snapshot:src'"), "{sql}");
-        assert!(sql.contains("\"snapshot_preparation\".\"branch_schema_version\""), "{sql}");
-        assert!(sql.ends_with("FOR KEY SHARE OF \"snapshots\""), "{sql}");
+        assert_eq!(
+            sql,
+            r#"SELECT "snapshots"."snapshot_key" FROM "snapshots" WHERE "snapshots"."id" = 'urn:ngsi-ld:Snapshot:src' FOR KEY SHARE OF "snapshots""#
+        );
     }
 }

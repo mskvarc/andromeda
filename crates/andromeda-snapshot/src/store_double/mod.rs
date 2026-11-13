@@ -12,7 +12,6 @@ mod entry;
 mod port;
 
 use crate::{
-    branch_condition::BranchCondition,
     error::SnapshotError,
     snapshot_invariant::SnapshotInvariant,
     store::{InsertSnapshotParams, SnapshotPreparationJob},
@@ -86,10 +85,9 @@ pub(crate) struct CloneCopy {
     pub(crate) source_status: SnapshotStatus,
 }
 
-/// A store holding a few Snapshots whose branches are in one condition.
+/// A store holding a few Snapshots.
 pub(crate) struct StoreDouble {
     entries: Mutex<Vec<Entry>>,
-    condition: BranchCondition,
     claim: ClaimHold,
     restarts: AtomicU32,
     renewal: Option<Renewal>,
@@ -100,12 +98,11 @@ pub(crate) struct StoreDouble {
 }
 
 impl StoreDouble {
-    /// A store holding `snapshot`, its branch in `condition`, and its
-    /// preparation claim held by the worker as `claim` says.
-    pub(crate) fn new(snapshot: Snapshot, condition: BranchCondition, claim: ClaimHold) -> StoreDouble {
+    /// A store holding `snapshot`, its preparation claim held by the worker as
+    /// `claim` says.
+    pub(crate) fn new(snapshot: Snapshot, claim: ClaimHold) -> StoreDouble {
         StoreDouble {
             entries: Mutex::new(vec![Entry::new(snapshot, None)]),
-            condition,
             claim,
             restarts: AtomicU32::new(0),
             renewal: None,

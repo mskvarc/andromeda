@@ -1,7 +1,7 @@
 //! A seal the broker would not admit is dropped with its own sub-attributes
 //! instead of being stored in a form it cannot read.
 
-use crate::{
+use crate::fixtures::{
     current_state::{insert_entity, insert_number_attribute, intern_attribute},
     observed::{current_sub_attributes, field_of_each},
     rehearsal::{at_v1_0_0, intern_seal_attribute},

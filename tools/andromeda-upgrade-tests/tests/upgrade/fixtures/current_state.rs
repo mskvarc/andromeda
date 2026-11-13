@@ -2,7 +2,7 @@
 //! dictionaries, the Entity, its search row, its type membership and its
 //! attribute instances.
 
-use crate::{
+use crate::fixtures::{
     statements::{composites, document, insert, insert_returning, instant, integers, numeric, smallint, smallints},
     test_error::UpgradeTestError,
 };

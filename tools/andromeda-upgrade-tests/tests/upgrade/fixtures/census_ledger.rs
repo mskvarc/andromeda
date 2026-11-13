@@ -1,7 +1,7 @@
 //! The discovery and temporal census ledgers, which count instances and
 //! streams as signed deltas that net out when a write removes them.
 
-use crate::{
+use crate::fixtures::{
     statements::{insert, name, smallint},
     test_error::UpgradeTestError,
 };

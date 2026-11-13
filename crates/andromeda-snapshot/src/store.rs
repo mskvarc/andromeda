@@ -11,7 +11,7 @@
 //! from that clock, and a worker whose clock differs from the store's never
 //! holds a lease that has already lapsed.
 
-use crate::{branch_condition::BranchCondition, error::SnapshotError};
+use crate::error::SnapshotError;
 use andromeda_context_commit::lease_holder::LeaseHolder;
 use andromeda_context_space::snapshot_target::SnapshotTarget;
 use andromeda_json_literal::JsonLiteral;
@@ -314,17 +314,6 @@ pub trait SnapshotStore: Send + Sync + 'static {
 
     /// Record that a snapshot was read.
     fn touch_last_used<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Identifier) -> BoxFuture<'async_trait, Result<(), SnapshotError>>
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: 'async_trait;
-
-    /// Whether a snapshot's stored branch is current or quarantined; `None`
-    /// when no such snapshot exists.
-    fn branch_condition<'life0, 'life1, 'async_trait>(
-        &'life0 self,
-        id: &'life1 Identifier,
-    ) -> BoxFuture<'async_trait, Result<Option<BranchCondition>, SnapshotError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

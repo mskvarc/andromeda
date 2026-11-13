@@ -1,7 +1,5 @@
 //! Snapshot lifecycle, preparation, frozen-read ports, and expiry policy.
 
-/// Whether a Snapshot's stored branch can be served by this binary.
-pub mod branch_condition;
 /// Snapshot operation configuration.
 pub mod error;
 pub mod executor;

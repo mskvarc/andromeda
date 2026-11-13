@@ -2,8 +2,7 @@
 //! share with quota eviction.
 //!
 //! Reaping drops a Snapshot's branch schemas and deletes its control record,
-//! which cascades the preparation and outbox rows. A quarantined Snapshot is
-//! reaped like any other: nothing here reads its branch schema version.
+//! which cascades the preparation and outbox rows.
 //!
 //! The schemas are dropped only when the Snapshot's branch lock is free. A
 //! reap never waits for it: when PostgreSQL maintenance holds it, the control

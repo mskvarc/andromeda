@@ -1,7 +1,6 @@
 //! Resolving the Snapshot a request is scoped to (clause 5.5.15).
 
 use crate::{
-    branch_condition::BranchCondition,
     error::SnapshotError,
     service::SnapshotService,
     status::{ScopingEligibility, scoping_eligibility},
@@ -24,8 +23,7 @@ impl SnapshotService {
     /// # Errors
     ///
     /// Returns [`SnapshotError::NotFound`] when the snapshot is absent or
-    /// expired, [`SnapshotError::Quarantined`] when its stored branch is behind
-    /// this binary, [`SnapshotError::PreparationTimeout`] when it is still
+    /// expired, [`SnapshotError::PreparationTimeout`] when it is still
     /// `preparing` at the scoped-operation deadline, and the store's own failure
     /// when the read does not complete.
     pub async fn validate_for_scoping(&self, id: &Identifier) -> Result<Snapshot, SnapshotError> {
@@ -38,11 +36,9 @@ impl SnapshotService {
             return Err(SnapshotError::not_found(id));
         }
 
-        let condition = self.repo.branch_condition(id).await?.ok_or_else(|| SnapshotError::not_found(id))?;
-        let snapshot = match scoping_eligibility(snapshot.status, condition) {
+        let snapshot = match scoping_eligibility(snapshot.status) {
             ScopingEligibility::Usable => snapshot,
-            ScopingEligibility::Preparing => self.wait_for_terminal(id, condition).await?,
-            ScopingEligibility::Quarantined => return Err(SnapshotError::quarantined(id)),
+            ScopingEligibility::Preparing => self.wait_for_terminal(id).await?,
         };
 
         if let Err(e) = self.repo.touch_last_used(id).await {
@@ -66,7 +62,7 @@ impl SnapshotService {
     }
 
     /// Wait until capture or clone promotion leaves `preparing` without treating status as absence.
-    async fn wait_for_terminal(&self, id: &Identifier, condition: BranchCondition) -> Result<Snapshot, SnapshotError> {
+    async fn wait_for_terminal(&self, id: &Identifier) -> Result<Snapshot, SnapshotError> {
         let wait = async {
             let mut poll = interval(Duration::from_millis(25));
             poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -76,9 +72,8 @@ impl SnapshotService {
                 if snapshot.expires_at < Utc::now() {
                     return Err(SnapshotError::not_found(id));
                 }
-                match scoping_eligibility(snapshot.status, condition) {
+                match scoping_eligibility(snapshot.status) {
                     ScopingEligibility::Usable => return Ok(snapshot),
-                    ScopingEligibility::Quarantined => return Err(SnapshotError::quarantined(id)),
                     ScopingEligibility::Preparing => {}
                 }
             }

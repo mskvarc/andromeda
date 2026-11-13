@@ -6,7 +6,6 @@
 
 /// Active PostgreSQL-family component discovery.
 pub mod component_report;
-/// PostgreSQL connection and pool configuration.
 /// The tenant-wide order context source registration and subscription writes
 /// commit in.
 mod context_source_change_clock;
@@ -49,7 +48,10 @@ pub mod health;
 pub mod json_text;
 /// Persistence layer for JSON-LD context documents.
 pub mod jsonld_context;
-/// PostgreSQL maintenance configuration owned beside the database connection settings.
+/// Migrating every schema of a tenant database in version lockstep.
+pub mod lockstep_migration;
+/// The one database session every migrator of a migration run runs in.
+mod migration_session;
 /// The three embedded migration sets and the ledger each is recorded in.
 pub mod migration_set;
 /// Persistence layer for the notification delivery queue.
@@ -69,6 +71,8 @@ pub mod posted_query;
 pub mod recreated_extension;
 /// The schema contract one tenant database carries, and what it is checked against.
 pub mod schema_contract;
+/// Reading and setting the search path of a connection.
+mod search_path;
 /// Persistence layer for snapshot records.
 pub mod snapshot;
 /// The text of a statement as the driver receives it.

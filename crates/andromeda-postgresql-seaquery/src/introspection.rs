@@ -164,6 +164,22 @@ pub fn schema_exists(name: &str) -> SimpleExpr {
 #[iden = "to_regnamespace"]
 struct ToRegnamespace;
 
+/// `to_regclass(name) IS NOT NULL` - whether `name`, qualified or not,
+/// resolves to a relation in the session's search path.
+///
+/// The relation name is bound; `to_regclass` answers `NULL` rather than
+/// failing for an absent relation, so a statement can ask about a relation a
+/// database not yet migrated lacks.
+#[must_use]
+pub fn relation_exists(name: &str) -> SimpleExpr {
+    SimpleExpr::from(Func::cust(ToRegclass).arg(Expr::val(name.to_owned()))).is_not_null()
+}
+
+/// The `to_regclass` system function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "to_regclass"]
+struct ToRegclass;
+
 /// The `current_setting` system function.
 #[derive(Iden, Clone, Copy)]
 #[iden = "current_setting"]
@@ -228,6 +244,7 @@ struct PgDatabaseSize;
 mod tests {
     use crate::{
         introspection::{
+            current_database_size,
             current_role_is_member_of,
             current_role_is_superuser,
             current_schema,
@@ -236,13 +253,16 @@ mod tests {
             extension_shipped_version,
             extension_trusted,
             extension_version,
+            relation_exists,
+            schema_exists,
             server_version_num,
+            table_is_visible,
             transaction_has_not_written,
         },
         setting::Setting,
     };
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, PostgresQueryBuilder, Query};
+    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
 
     #[test]
     fn the_current_schema_is_a_call_without_arguments() {
@@ -303,8 +323,6 @@ mod tests {
 
     #[test]
     fn visibility_asks_the_search_path_about_the_relation_oid() {
-        use crate::introspection::table_is_visible;
-        use sea_query::Expr;
         let sql = Query::select()
             .expr(table_is_visible(Expr::col(Alias::new("oid"))))
             .to_owned()
@@ -314,15 +332,20 @@ mod tests {
 
     #[test]
     fn the_schema_probe_binds_the_schema_name() {
-        use crate::introspection::schema_exists;
         let (sql, values) = Query::select().expr(schema_exists("snap_7")).build(PostgresQueryBuilder);
         assert_eq!(sql, "SELECT to_regnamespace($1) IS NOT NULL");
         assert_eq!(values.0.len(), 1);
     }
 
     #[test]
+    fn the_relation_probe_binds_the_relation_name() {
+        let (sql, values) = Query::select().expr(relation_exists("snapshots")).build(PostgresQueryBuilder);
+        assert_eq!(sql, "SELECT to_regclass($1) IS NOT NULL");
+        assert_eq!(values.0.len(), 1);
+    }
+
+    #[test]
     fn the_database_size_sizes_the_current_database() {
-        use crate::introspection::current_database_size;
         let sql = Query::select()
             .expr_as(current_database_size(), Alias::new("bytes"))
             .to_owned()

@@ -2,7 +2,7 @@
 //! attribute grain, the history rows of a stream, and the claims a
 //! client-supplied instance identifier takes.
 
-use crate::{
+use crate::fixtures::{
     statements::{composites, insert, insert_returning, instant, numeric, smallint, uuid},
     test_error::UpgradeTestError,
 };

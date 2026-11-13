@@ -7,27 +7,21 @@
 //! published branch yet, only its private staging branch, which holds no
 //! subscription a client created, so it is not visited. A branch reaped between
 //! this enumeration and the claim shows up as a missing schema, which the
-//! caller skips rather than fails on. A quarantined Snapshot branch (one whose
-//! schema is behind this binary) is not visited at all: its queue relations may
-//! not have the shape the claim expects, and its deliveries wait until its upgrade succeeds.
+//! caller skips rather than fails on.
 
 use crate::{
     error::ContextStoreError,
-    migration_set::branch::current_branch_version,
     snapshot::{record::status_is_preparing, stored_snapshot_error::StoredSnapshotError},
 };
 use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
 use andromeda_postgresql_pool::sql_state::SqlState;
-use andromeda_postgresql_schema::{
-    branch_schema_version::BranchSchemaVersion,
-    snapshot::{SnapshotPreparation, Snapshots, branch_is_current},
-};
+use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use andromeda_postgresql_seaquery::statement::Statement;
 use sea_query::{Expr, ExprTrait, JoinType, Query, SelectStatement};
 use sqlx::{PgExecutor, Row};
 
 /// The branches a per-branch drain sweeps: the live branch, then every
-/// current Snapshot branch published under `snap_<snapshot_key>`.
+/// Snapshot branch published under `snap_<snapshot_key>`.
 ///
 /// The pending-work probe reads the same branches, so a dormant tenant is woken
 /// for exactly the deliveries its drain would claim. A claim reads them inside
@@ -37,11 +31,10 @@ use sqlx::{PgExecutor, Row};
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Database`] when the Snapshot enumeration fails,
-/// [`ContextStoreError::BranchVersion`] when the embedded branch migration set
-/// has no version, or [`ContextStoreError::StoredSnapshot`] when a stored Snapshot key or URI cannot
-/// be read back as its domain type.
+/// or [`ContextStoreError::StoredSnapshot`] when a stored Snapshot key or URI
+/// cannot be read back as its domain type.
 pub(crate) async fn drainable_targets<'c>(executor: impl PgExecutor<'c>) -> Result<Vec<ContextTarget>, ContextStoreError> {
-    let rows = drainable_snapshots_statement(current_branch_version()?).to_query().fetch_all(executor).await?;
+    let rows = drainable_snapshots_statement().to_query().fetch_all(executor).await?;
 
     let mut targets = Vec::with_capacity(rows.len() + 1);
     targets.push(ContextTarget::Live);
@@ -55,8 +48,8 @@ pub(crate) async fn drainable_targets<'c>(executor: impl PgExecutor<'c>) -> Resu
     Ok(targets)
 }
 
-/// Every published Snapshot whose branch schema is current, with its URI.
-fn drainable_snapshots_statement(current: BranchSchemaVersion) -> SelectStatement {
+/// Every published Snapshot, with its URI.
+fn drainable_snapshots_statement() -> SelectStatement {
     Query::select()
         .columns([(Snapshots::Table, Snapshots::SnapshotKey), (Snapshots::Table, Snapshots::Id)])
         .from(Snapshots::Table)
@@ -65,7 +58,6 @@ fn drainable_snapshots_statement(current: BranchSchemaVersion) -> SelectStatemen
             SnapshotPreparation::Table,
             Expr::col((SnapshotPreparation::Table, SnapshotPreparation::SnapshotKey)).equals((Snapshots::Table, Snapshots::SnapshotKey)),
         )
-        .and_where(branch_is_current(current))
         .and_where(status_is_preparing().not())
         .to_owned()
 }
@@ -94,21 +86,12 @@ pub(crate) fn is_reaped_relation(error: &sqlx::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::notification_delivery::branches::drainable_snapshots_statement;
-    use andromeda_postgresql_schema::branch_schema_version::BranchSchemaVersion;
     use sea_query::PostgresQueryBuilder;
 
     #[test]
-    fn a_quarantined_snapshot_branch_is_not_drained() {
-        let current = BranchSchemaVersion::try_from(21_i64).expect("a positive version");
-        let sql = drainable_snapshots_statement(current).to_string(PostgresQueryBuilder);
-        assert!(sql.contains("JOIN \"snapshot_preparation\""), "{sql}");
-        assert!(sql.contains("\"snapshot_preparation\".\"branch_schema_version\" >= 21"), "{sql}");
-    }
-
-    #[test]
     fn a_snapshot_still_preparing_has_no_published_branch_to_drain() {
-        let current = BranchSchemaVersion::try_from(21_i64).expect("a positive version");
-        let sql = drainable_snapshots_statement(current).to_string(PostgresQueryBuilder);
+        let sql = drainable_snapshots_statement().to_string(PostgresQueryBuilder);
+        assert!(sql.contains("JOIN \"snapshot_preparation\""), "{sql}");
         assert!(sql.contains("NOT \"snapshot_preparation\".\"status\" = 1"), "{sql}");
     }
 }

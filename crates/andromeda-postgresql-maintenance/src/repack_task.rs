@@ -44,7 +44,6 @@ use crate::{
 use andromeda_configuration::schema::database::maintenance::{MaintenanceConfig, MaintenanceMode};
 use andromeda_postgresql_context_store::schema_contract::{contract::current_tenant_schema_contract, schema_metadata::verify_schema_contract};
 use andromeda_postgresql_pool::{database_url::DatabaseUrl, pool_options::configure_pool_options};
-use andromeda_postgresql_schema::branch_schema_version::BranchSchemaVersion;
 use andromeda_retry::retry_number::RetryNumber;
 use andromeda_telemetry::maintenance::{MaintenanceAction, MaintenanceActionOutcome, record_action};
 use chrono::Utc;
@@ -135,26 +134,17 @@ pub struct RepackTask {
     config: MaintenanceConfig,
     /// How long a tenant session waits for its connection.
     acquire_timeout: Duration,
-    /// The highest branch migration the binary embeds.
-    branch_version: BranchSchemaVersion,
 }
 
 impl RepackTask {
     /// A task over the shared platform registry.
     #[must_use]
-    pub const fn new(
-        platform_pool: PgPool,
-        direct_url: DatabaseUrl,
-        config: MaintenanceConfig,
-        acquire_timeout: Duration,
-        branch_version: BranchSchemaVersion,
-    ) -> RepackTask {
+    pub const fn new(platform_pool: PgPool, direct_url: DatabaseUrl, config: MaintenanceConfig, acquire_timeout: Duration) -> RepackTask {
         RepackTask {
             platform_pool,
             direct_url,
             config,
             acquire_timeout,
-            branch_version,
         }
     }
 
@@ -238,7 +228,7 @@ impl RepackTask {
             return Ok(RepackTaskOutcome::SchemaBehind);
         }
         if let Branch::Snapshot(key) = queued.branch
-            && !branch_selection::lock_branch(sessions.main(), tenant, key, self.branch_version).await?
+            && !branch_selection::lock_branch(sessions.main(), tenant, key).await?
         {
             return Ok(RepackTaskOutcome::Deferred);
         }
@@ -291,7 +281,6 @@ impl RepackTask {
             capability: capability::repack_capability(connection).await?,
             retained_wal_bytes: replication_slot::retained_wal(platform).await?,
             freeze: fleet.database(tenant.key).map_or(FreezePressure::Normal, |database| database.freeze.pressure()),
-            branch_version: self.branch_version,
         })
     }
 

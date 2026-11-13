@@ -9,7 +9,7 @@
 //! the schema through [`snapshot_schema`].
 
 use andromeda_context_space::{context_target::ContextTarget, snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey};
-use andromeda_postgresql_seaquery::branch::qualified;
+use andromeda_postgresql_seaquery::{branch::qualified, search_path::SearchPath};
 use sea_query::{Alias, DynIden, IntoIden, TableRef};
 
 /// The PostgreSQL schema name of a Snapshot branch.
@@ -31,6 +31,19 @@ pub fn snapshot_schema_name(key: SnapshotKey, branch: SnapshotBranch) -> String 
 #[must_use]
 pub fn snapshot_schema(key: SnapshotKey, branch: SnapshotBranch) -> DynIden {
     Alias::new(snapshot_schema_name(key, branch)).into_iden()
+}
+
+/// The search path statements of a Snapshot branch run under: the branch
+/// schema first, so its unqualified relations resolve there, then `public`,
+/// so the tenant-global dictionaries, unit codes, functions and composite
+/// types resolve.
+///
+/// A branch migration names every relation unqualified, so this path is what
+/// makes the branch set build and migrate the relations of the Snapshot branch
+/// rather than the live ones.
+#[must_use]
+pub fn snapshot_search_path(key: SnapshotKey, branch: SnapshotBranch) -> SearchPath {
+    SearchPath::of([snapshot_schema_name(key, branch).as_str(), "public"])
 }
 
 /// A POSIX regular expression matching exactly the published Snapshot branch
@@ -102,17 +115,22 @@ pub fn schema_iden(target: &ContextTarget) -> Option<DynIden> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{BranchSchema, PUBLISHED_SNAPSHOT_SCHEMA_PATTERN, SNAPSHOT_SCHEMA_PATTERN, published_snapshot_key, snapshot_schema_name, table_of};
+    use crate::{
+        BranchSchema,
+        PUBLISHED_SNAPSHOT_SCHEMA_PATTERN,
+        SNAPSHOT_SCHEMA_PATTERN,
+        published_snapshot_key,
+        snapshot_schema_name,
+        snapshot_search_path,
+        table_of,
+    };
     use andromeda_context_space::{context_target::ContextTarget, snapshot_branch::SnapshotBranch, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
     use sea_query::{Asterisk, PostgresQueryBuilder, Query};
 
     fn snapshot_target(branch: SnapshotBranch) -> ContextTarget {
         let key = SnapshotKey::try_from(7).expect("positive key");
         let id = "urn:ngsi-ld:Snapshot:abc".parse().expect("valid snapshot uri");
-        ContextTarget::Snapshot(match branch {
-            SnapshotBranch::Published => SnapshotTarget::published(key, id),
-            SnapshotBranch::Staging => SnapshotTarget::staging(key, id),
-        })
+        ContextTarget::Snapshot(SnapshotTarget::new(key, branch, id))
     }
 
     #[test]
@@ -120,6 +138,13 @@ mod tests {
         let key = SnapshotKey::try_from(7).expect("positive key");
         pretty_assertions::assert_eq!(snapshot_schema_name(key, SnapshotBranch::Published), "snap_7");
         pretty_assertions::assert_eq!(snapshot_schema_name(key, SnapshotBranch::Staging), "snap_7_stg");
+    }
+
+    #[test]
+    fn a_snapshot_branch_resolves_its_own_schema_before_the_tenant_globals() {
+        let key = SnapshotKey::try_from(7).expect("positive key");
+        pretty_assertions::assert_eq!(snapshot_search_path(key, SnapshotBranch::Published).as_str(), "snap_7, public");
+        pretty_assertions::assert_eq!(snapshot_search_path(key, SnapshotBranch::Staging).as_str(), "snap_7_stg, public");
     }
 
     #[test]

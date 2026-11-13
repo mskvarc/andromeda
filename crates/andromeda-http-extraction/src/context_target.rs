@@ -35,14 +35,6 @@ pub enum ContextTargetResolutionError {
         /// Requested Snapshot URI.
         identifier: Identifier,
     },
-    /// The Snapshot's stored branch is behind this broker and cannot be read
-    /// until its upgrade succeeds. The tenant keeps serving; only this
-    /// Snapshot is refused, as an internal error that names it.
-    #[error("Snapshot {identifier} is quarantined: its stored branch has not been upgraded to this broker's schema")]
-    Quarantined {
-        /// Requested Snapshot URI.
-        identifier: Identifier,
-    },
     /// A connection pool was saturated before the Snapshot target could be
     /// resolved. Backpressure, not a fault: shed as 503 with `Retry-After`.
     #[error("{}", RetryCause::Saturated)]
@@ -71,9 +63,6 @@ impl ContextTargetResolutionError {
                 ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, self.to_string()).with_retry_after(Duration::from_secs(1)),
                 instance,
             ),
-            ContextTargetResolutionError::Quarantined { .. } => {
-                ProblemResponse::classified(ClassifiedReport::public(NgsiLdErrorType::InternalError, self.to_string()), instance)
-            }
             ContextTargetResolutionError::Saturated => ProblemResponse::classified(ClassifiedReport::store_saturated(self.to_string()), instance),
             ContextTargetResolutionError::Persistence(failure) => {
                 ProblemResponse::classified(classify_store_failure(failure, &self, TARGET_RESOLUTION), instance)

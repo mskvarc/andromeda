@@ -13,9 +13,7 @@ description = "The physical-schema iden catalogue: the single source of truth fo
 workspace = true
 
 [dependencies]
-derive_more = { version = "2.1.1", features = ["display"] }
 sea-query = { version = "1.0.2", features = ["backend-postgres", "with-chrono"] }
-thiserror = "2.0.21"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

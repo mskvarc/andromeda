@@ -21,11 +21,10 @@
 -- and whose seals name an entity, becomes typed. Any other one is dropped with
 -- its own sub-attributes: no write admits it, so it is no seal. A top-level
 -- `ngsildproof` signs no attribute and is dropped too. This migration
--- converts the queues of the tenant, the branch set converts every branch,
--- the live one and each Snapshot's, and the tenant set then removes
--- `proof_seals` from the types. A Snapshot schema is upgraded only after
--- that, so it holds no seal it can convert: it drops its `ngsildproof`
--- sub-attributes, and the functions it converts with stay.
+-- converts the queues of the tenant, the branch set then converts every
+-- branch, the live one and each Snapshot's, and only then does the tenant set
+-- remove `proof_seals` from the types. The functions the conversion calls
+-- stay, since every Snapshot branch created later runs the branch set again.
 -- ============================================================================
 -- The W3C Data Integrity proof of a seal beside its `type`, which is always
 -- `DataIntegrityProof`:
@@ -255,8 +254,9 @@ end;
 -- typed when its value is a proof and its seals name an entity, dropped with
 -- every element below it otherwise. A kept element's `parent` is renumbered
 -- to its parent's new position, and no element left is no array. The seals
--- are read from the element's JSON image, which holds no `proof_seals` once
--- the types have dropped it, so a call made then finds none.
+-- are read from the element's JSON image rather than from a field, so the
+-- function outlives the field: once the types drop `proof_seals`, a call
+-- finds no seal instead of failing.
 create function typed_seal_tree (tree sub_attribute_tree, seal_key integer)
     returns sub_attribute_tree
     language plpgsql

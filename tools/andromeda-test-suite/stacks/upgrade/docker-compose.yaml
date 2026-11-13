@@ -1,0 +1,26 @@
+name: test-suite-upgrade
+
+# One database server for the upgrade rehearsals of andromeda-upgrade-tests, which create a database of their own for
+# every test and run no broker. The rehearsals run in the runner service on the same network, so no service publishes a
+# host port.
+
+services:
+  postgres:
+    extends:
+      file: ../templates/docker-compose.yaml
+      service: postgres
+
+  runner:
+    extends:
+      file: ../templates/docker-compose.yaml
+      service: runner
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: runner.env
+
+volumes:
+  target:
+    name: test-suite-target
+  registry:
+    name: test-suite-cargo-registry

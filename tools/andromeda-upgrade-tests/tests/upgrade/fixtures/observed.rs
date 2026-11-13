@@ -1,7 +1,7 @@
 //! Reading the upgraded rows back and holding them to the typed seal the
 //! migrations produce.
 
-use crate::{
+use crate::fixtures::{
     statements::{name, read_documents},
     test_error::UpgradeTestError,
     vocabulary::{FURTHER_MEMBER, SEALED_ENTITY_ID},

@@ -1,5 +1,5 @@
 name: Image inputs
-description: Computes the key of every file the broker or the suite's runner image is built from, and assembles a build context holding only those files.
+description: Computes the key of every file the broker or the runner image is built from, and assembles a build context holding only those files.
 
 inputs:
   image:
@@ -26,13 +26,13 @@ runs:
         rustup toolchain install stable --profile minimal --no-self-update
         cargo +stable metadata --format-version 1 --no-deps --locked > "${RUNNER_TEMP}/workspace.json"
 
-    # The inputs are the sources of the package the image compiles and of every workspace crate it compiles through
-    # normal and build dependencies, the manifest of every workspace package, the lockfile, the toolchain and build
-    # configuration, and the image's own paths: its image definition, and for the broker the migrations it embeds and
-    # the licence files it copies. The package counts only the directories the image compiles from it, and every other
-    # crate leaves out its tests, benches and examples, which the image never compiles. The actions that build the image
-    # are inputs of the key but not of the context: they set the platform, the target and the labels, and assemble the
-    # context.
+    # The inputs are the sources of the packages the image compiles and of every workspace crate it compiles through
+    # normal and build dependencies, and through the development dependencies of a package whose tests it compiles,
+    # the manifest of every workspace package, the lockfile, the toolchain and build configuration, and the image's own
+    # paths: its image definition, the migrations it embeds, and for the broker the licence files it copies. A package
+    # counts only the directories the image compiles from it, and every other crate leaves out its tests, benches and
+    # examples, which the image never compiles. The actions that build the image are inputs of the key but not of the
+    # context: they set the platform, the target and the labels, and assemble the context.
     - name: Compute the key and assemble the context
       id: inputs
       shell: bash
@@ -43,34 +43,38 @@ runs:
         build=(.github/actions/image-inputs/action.yaml)
         case "$IMAGE" in
           broker)
-            package=andromeda
+            packages=(andromeda)
+            tested=false
             compiles=(src/)
             paths=(migrations/ docker/images/andromeda/ LICENSE.md)
             build+=(.github/actions/keyed-broker-image/action.yaml .github/actions/broker-image/action.yaml)
             ;;
           runner)
-            package=andromeda-test-suite
+            packages=(andromeda-test-suite andromeda-upgrade-tests)
+            tested=true
             compiles=(src/ tests/)
-            paths=(tools/andromeda-test-suite/stacks/runner/Dockerfile)
+            paths=(migrations/ tools/andromeda-test-suite/stacks/runner/Dockerfile)
             build+=(.github/actions/keyed-runner-image/action.yaml)
             ;;
           *) echo "unknown image: ${IMAGE}" >&2; exit 1 ;;
         esac
         workspace="${RUNNER_TEMP}/workspace.json"
-        compiled="$(jq -c --arg package "$package" '
+        roots="$(jq -cn '$ARGS.positional' --args "${packages[@]}")"
+        compiled="$(jq -c --argjson roots "$roots" --argjson tested "$tested" '
           (.packages | map({key: .name, value: .}) | from_entries) as $packages
           | def reach($names):
               ([$names[] | $packages[.].dependencies[] | select(.path != null and (.kind == null or .kind == "build")) | .name] + $names | unique) as $next
               | if $next == $names then $names else reach($next) end;
-          reach([$package])' "$workspace")"
+          (if $tested then [$roots[] | $packages[.].dependencies[] | select(.path != null and .kind == "dev") | .name] else [] end) as $development
+          | reach($roots + $development | unique)' "$workspace")"
         list="${RUNNER_TEMP}/${IMAGE}-inputs"
         {
-          jq -r --argjson compiled "$compiled" --arg package "$package" --args '
+          jq -r --argjson compiled "$compiled" --argjson roots "$roots" --args '
             .workspace_root as $root
             | def relative: ltrimstr($root + "/");
             def directory: .manifest_path | relative | rtrimstr("Cargo.toml");
-            (.packages[] | select(.name == $package) | directory as $directory | $ARGS.positional[] | $directory + .),
-            (.packages[] | select(.name | IN($compiled[])) | select(.name != $package) | directory
+            (.packages[] | select(.name | IN($roots[])) | directory as $directory | $ARGS.positional[] | $directory + .),
+            (.packages[] | select(.name | IN($compiled[])) | select(.name | IN($roots[]) | not) | directory
               | if . == "" then "src/" else ., ":(exclude)" + . + ("tests/", "benches/", "examples/") end),
             (.packages[] | .manifest_path | relative)' "${compiles[@]}" < "$workspace"
           printf '%s\n' Cargo.lock rust-toolchain.toml .cargo/ "${paths[@]}"

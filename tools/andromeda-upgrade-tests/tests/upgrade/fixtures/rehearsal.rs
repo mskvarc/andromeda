@@ -1,7 +1,7 @@
 //! The start of every test: a database at the v1.0.0 schema holding the
 //! dictionary entries the seeded rows refer to.
 
-use crate::{
+use crate::fixtures::{
     current_state::{intern_attribute, intern_type},
     test_error::UpgradeTestError,
     vocabulary::{SEAL_ATTRIBUTE, SEALED_TYPE},
@@ -21,12 +21,24 @@ pub(crate) struct Keys {
     pub(crate) store: i32,
 }
 
-/// A database at the v1.0.0 schema, with the dictionary entries every test
-/// starts from.
+/// A tenant database at the v1.0.0 schema, with the dictionary entries every
+/// test starts from.
 pub(crate) async fn at_v1_0_0() -> Result<(UpgradeDatabase, Keys), UpgradeTestError> {
-    let server = UpgradeServer::from_environment()?;
-    let database = UpgradeDatabase::create(&server).await?;
+    let database = UpgradeDatabase::create(&UpgradeServer::from_environment()?).await?;
     database.migrate_to_v1_0_0().await?;
+    with_keys(database).await
+}
+
+/// The platform database at the v1.0.0 schema, with the dictionary entries
+/// every test starts from.
+pub(crate) async fn platform_at_v1_0_0() -> Result<(UpgradeDatabase, Keys), UpgradeTestError> {
+    let database = UpgradeDatabase::create(&UpgradeServer::from_environment()?).await?;
+    database.migrate_platform_to_v1_0_0().await?;
+    with_keys(database).await
+}
+
+/// `database` with the dictionary entries every test starts from added.
+async fn with_keys(database: UpgradeDatabase) -> Result<(UpgradeDatabase, Keys), UpgradeTestError> {
     let keys = Keys {
         temperature: intern_attribute(database.pool(), TEMPERATURE).await?,
         store: intern_type(database.pool(), SEALED_TYPE).await?,
