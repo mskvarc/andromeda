@@ -12,11 +12,10 @@
 //! * date-times in `value_date_time`,
 //! * strings in `value_string` for Properties and single-term
 //!   `VocabProperties` (or, past the B-tree bound, in `value_long_text`, which
-//!   [`ValueColumn::of_string`] decides from the byte length alone) and,
+//!   [`ValueColumn::holding`] decides from the byte length alone) and,
 //!   under the equality operators only, in `value_uri` for Relationship objects
-//!   (or, past the B-tree bound, in `value_long_uri`, which
-//!   [`ValueColumn::of_uri`] decides from the byte length alone), which is what
-//!   [`relationship_object_is_comparable`] decides,
+//!   (or, past the B-tree bound, in `value_long_uri`, decided the same way),
+//!   which is what [`relationship_object_is_comparable`] decides,
 //! * values declared as a `Date` or a `Time` in `value_string` too, told apart
 //!   from a String by `value_kind`. A date has one spelling, and a time is
 //!   held in its fixed-width storage encoding, so byte-wise order over either
@@ -27,7 +26,9 @@
 //! A String, a `Date` and a `Time` share `value_string`, so each comparison
 //! against it also names the value kind it reads: clause 4.9 matches a target
 //! only with an operand of its own data type, and a quoted operand is a
-//! String.
+//! String. The field each kind is held in, and whether a comparison names the
+//! kind beside it, are read off [`value_placement`], which the write path
+//! places every value by.
 //!
 //! Every value whose family is not a single scalar lives in `value_object`
 //! instead; [`crate::q_predicate::structured_target`] compares those.
@@ -39,7 +40,10 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::{predicate::CmpOp, scalar::Scalar};
 use andromeda_postgresql_seaquery::{literal::false_literal, numeric_special::is_not_nan};
-use andromeda_postgresql_stored_values::value_kind::ValueKind;
+use andromeda_postgresql_stored_values::{
+    value_kind::ValueKind,
+    value_placement::{ToldApart, ValueField, ValuePlacement, value_placement},
+};
 use sea_query::{Expr as SeaExpr, ExprTrait, SimpleExpr};
 
 /// Compare one scalar against the typed column that holds values of its kind.
@@ -67,11 +71,15 @@ use sea_query::{Expr as SeaExpr, ExprTrait, SimpleExpr};
 /// swallow.
 #[must_use]
 pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, row: InstanceRow) -> SimpleExpr {
+    let on_field = |field: ValueField| row.value(ValueColumn::Field(field));
     match scalar {
-        // SeaQuery owns every value in its AST, so this is the one necessary
-        // clone between the borrowed query domain value and the NUMERIC bind.
-        Scalar::Number(number) => number_condition(compare(row.value(ValueColumn::Number), op, SeaExpr::val(number.decimal().clone())), op, row),
-        Scalar::Bool(value) => compare(row.value(ValueColumn::Boolean), op, SeaExpr::val(*value)),
+        Scalar::Number(number) => on_kind(ValueKind::Number, row, |field| {
+            // SeaQuery owns every value in its AST, so this is the one necessary
+            // clone between the borrowed query domain value and the NUMERIC bind.
+            let compared = compare(on_field(field), op, SeaExpr::val(number.decimal().clone()));
+            number_condition(compared, op, on_field(field))
+        }),
+        Scalar::Bool(value) => on_kind(ValueKind::Boolean, row, |field| compare(on_field(field), op, SeaExpr::val(*value))),
         Scalar::Str(value) | Scalar::Uri(value) => {
             let string_test = string_condition(scalar, value.as_str(), op, row);
             match relationship_object_is_comparable(op) {
@@ -79,19 +87,41 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, row: InstanceRow) -> S
                     // Equality is byte identity, so a stored object equal to the
                     // operand sits in the one column the operand would be placed
                     // in, and only that column is read.
-                    let uri_test = compare(row.value(ValueColumn::of_uri(value.as_str())), op, SeaExpr::val(value.as_str()));
+                    let uri_test = on_kind(ValueKind::Uri, row, |field| {
+                        compare(row.value(ValueColumn::holding(field, value.as_str())), op, SeaExpr::val(value.as_str()))
+                    });
                     string_test.or(uri_test)
                 }
                 RelationshipObjects::NonMatching => string_test,
             }
         }
-        Scalar::DateTime(value) => compare(row.value(ValueColumn::DateTime), op, SeaExpr::val(*value)),
-        Scalar::Date(value) => {
-            compare(row.value(ValueColumn::String), op, SeaExpr::val(NgsiLdDate::from(*value).to_string())).and(row.value_kind_is(ValueKind::Date))
-        }
-        Scalar::Time(value) => {
-            compare(row.value(ValueColumn::String), op, SeaExpr::val(NgsiLdTime::normalise(*value).to_string())).and(row.value_kind_is(ValueKind::Time))
-        }
+        Scalar::DateTime(value) => on_kind(ValueKind::DateTime, row, |field| compare(on_field(field), op, SeaExpr::val(*value))),
+        Scalar::Date(value) => on_kind(ValueKind::Date, row, |field| {
+            compare(on_field(field), op, SeaExpr::val(NgsiLdDate::from(*value).to_string()))
+        }),
+        Scalar::Time(value) => on_kind(ValueKind::Time, row, |field| {
+            compare(on_field(field), op, SeaExpr::val(NgsiLdTime::normalise(*value).to_string()))
+        }),
+    }
+}
+
+/// `compared` over the field `kind` is placed in, read for `kind` alone where
+/// that field also holds kinds of another data type.
+///
+/// Every kind a scalar operand compares with is held in a typed field; a seal
+/// and a tombstone are in none, so nothing of theirs equals or orders against
+/// an operand.
+fn on_kind(kind: ValueKind, row: InstanceRow, compared: impl FnOnce(ValueField) -> SimpleExpr) -> SimpleExpr {
+    match value_placement(kind) {
+        ValuePlacement::Field {
+            field,
+            told_apart: ToldApart::Unneeded,
+        } => compared(field),
+        ValuePlacement::Field {
+            field,
+            told_apart: ToldApart::ByValueKind,
+        } => compared(field).and(row.value_kind_is(kind)),
+        ValuePlacement::Proof | ValuePlacement::Valueless => false_literal(),
     }
 }
 
@@ -104,10 +134,10 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, row: InstanceRow) -> S
 /// already order as XSD orders them. `NaN` is unordered, so it must fail every
 /// ordering; it never equals an operand, which is always finite, so equality
 /// needs no guard, and `!=`, the total negation of `==`, holds for it.
-fn number_condition(compared: SimpleExpr, op: CmpOp, row: InstanceRow) -> SimpleExpr {
+fn number_condition(compared: SimpleExpr, op: CmpOp, column: SimpleExpr) -> SimpleExpr {
     match op {
         CmpOp::Equal | CmpOp::Unequal => compared,
-        CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => compared.and(is_not_nan(row.value(ValueColumn::Number))),
+        CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => compared.and(is_not_nan(column)),
     }
 }
 
@@ -122,14 +152,13 @@ fn number_condition(compared: SimpleExpr, op: CmpOp, row: InstanceRow) -> Simple
 /// yields NULL for that arm, which the disjunction absorbs. An ordering
 /// compares under the collation [`ordered_string`] picks.
 fn string_condition(scalar: &Scalar, value: &str, op: CmpOp, row: InstanceRow) -> SimpleExpr {
-    let compared = match op {
-        CmpOp::Equal | CmpOp::Unequal => compare(row.value(ValueColumn::of_string(value)), op, SeaExpr::val(value)),
+    on_kind(ValueKind::String, row, |field| match op {
+        CmpOp::Equal | CmpOp::Unequal => compare(row.value(ValueColumn::holding(field, value)), op, SeaExpr::val(value)),
         CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => {
-            let ordered = |column: &ValueColumn| compare(ordered_string(row.value(*column), scalar, op), op, SeaExpr::val(value));
-            row.string_columns().iter().map(ordered).reduce(ExprTrait::or).unwrap_or_else(false_literal)
+            let ordered = |column: ValueColumn| compare(ordered_string(row.value(column), scalar, op), op, SeaExpr::val(value));
+            row.columns(field).map(ordered).reduce(ExprTrait::or).unwrap_or_else(false_literal)
         }
-    };
-    compared.and(row.value_kind_is(ValueKind::String))
+    })
 }
 
 /// Whether a Relationship's object is a comparison target under one operator.

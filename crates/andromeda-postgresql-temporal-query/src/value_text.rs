@@ -1,28 +1,22 @@
-//! One attribute history row's value as text, whatever column holds it.
+//! One attribute history row's value as text, whatever field holds it.
 //!
-//! A row holds its value in the one typed column its value kind names, so the
-//! value as text is the coalesce of every value column, each cast to text.
+//! A row holds its value in the one field its value kind is placed in, so the
+//! value as text is the coalesce of every value field, each cast to text.
 //! `distinctCount` counts distinct values of it and an `aggrGroupBy` value key
-//! groups on it, so both fold the same columns, which are read off
-//! [`ValueKind::history_column`] rather than listed again.
+//! groups on it, so both fold the same fields, which are read off
+//! [`ValueField`] rather than listed again.
 
-use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
-use andromeda_postgresql_stored_values::value_kind::ValueKind;
+use andromeda_postgresql_stored_values::value_placement::ValueField;
 use sea_query::{Expr, Func, IntoIden, SimpleExpr};
+use strum::IntoEnumIterator;
 
 /// The value of the attribute history row under `row`, as text; SQL `NULL` for
 /// a tombstone.
 #[must_use]
 pub(crate) fn value_text(row: impl IntoIden) -> SimpleExpr {
     let row = row.into_iden();
-    let mut columns: Vec<AttributeHistory> = Vec::new();
-    for column in ValueKind::ALL.iter().filter_map(|kind| kind.history_column()) {
-        if !columns.contains(&column) {
-            columns.push(column);
-        }
-    }
-    Func::coalesce(columns.into_iter().map(|column| cast(Expr::col((row.clone(), column)), PostgresType::Text))).into()
+    Func::coalesce(ValueField::iter().map(|field| cast(Expr::col((row.clone(), field.in_history())), PostgresType::Text))).into()
 }
 
 #[cfg(test)]

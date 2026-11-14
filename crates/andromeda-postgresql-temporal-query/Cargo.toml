@@ -25,6 +25,7 @@ cefact-units = "1.0.0"
 chrono = "0.4.45"
 iri-rs = { version = "4.1.1", features = ["serde", "static"] }
 sea-query = { version = "1.0.2", features = ["backend-postgres", "with-chrono"] }
+strum = "0.28.0"
 thiserror = "2.0.21"
 
 [dev-dependencies]
@@ -35,4 +36,3 @@ andromeda-postgresql-seaquery = { workspace = true, features = ["test-support"] 
 insta = "1.49.0"
 pretty_assertions = "1.4.1"
 serde_json = "1.0.154"
-strum = "0.28.0"

@@ -7,6 +7,7 @@
 //! does not name, a code no release defines) is refused.
 
 use crate::{
+    placed_value::{FieldValue, PlacedValue},
     stored_json::StoredJson,
     stored_number::StoredNumber,
     stored_proof::ProofFields,
@@ -301,21 +302,20 @@ impl InstanceMembers {
             observed_at: self.observed_at,
             expires_at: self.expires_at,
         };
-        match self.value {
-            StoredValue::Number { number, .. } => columns.value_number = Some(StoredNumber::from(number)),
-            StoredValue::String { text, .. } => columns.value_string = Some(text),
-            StoredValue::Boolean { flag, .. } | StoredValue::DeclaredBoolean { flag, .. } => columns.value_boolean = Some(flag),
-            StoredValue::DeclaredNumber { number, .. } => columns.value_number = Some(StoredNumber::from(number)),
-            StoredValue::DateTime { instant, .. } => columns.value_date_time = Some(instant),
-            StoredValue::Date { date, .. } => columns.value_string = Some(date.to_string()),
-            StoredValue::Time { time, .. } => columns.value_string = Some(time.to_string()),
-            StoredValue::Geometry { form, members } => {
-                columns.value_geometry = Some(EwkbGeometry::of(&form)?);
-                columns.value_geometry_members = members.map(StoredJson::into_json);
-            }
-            StoredValue::Object(object) => columns.value_object = Some(object.into_json()),
-            StoredValue::Uri(uri) => columns.value_uri = Some(String::from(uri)),
-            StoredValue::Proof(proof) => return Ok((self.dataset_id, columns, ProofFields::from(*proof))),
+        match PlacedValue::from(self.value) {
+            PlacedValue::Field(content) => match content {
+                FieldValue::Number(number) => columns.value_number = Some(number),
+                FieldValue::String(text) => columns.value_string = Some(text),
+                FieldValue::Boolean(flag) => columns.value_boolean = Some(flag),
+                FieldValue::Geometry { form, members } => {
+                    columns.value_geometry = Some(EwkbGeometry::of(&form)?);
+                    columns.value_geometry_members = members.map(StoredJson::into_json);
+                }
+                FieldValue::Object(object) => columns.value_object = Some(object.into_json()),
+                FieldValue::DateTime(instant) => columns.value_date_time = Some(instant),
+                FieldValue::Uri(uri) => columns.value_uri = Some(String::from(uri)),
+            },
+            PlacedValue::Proof(proof) => return Ok((self.dataset_id, columns, ProofFields::from(*proof))),
         }
         Ok((self.dataset_id, columns, ProofFields::default()))
     }

@@ -17,6 +17,7 @@ use andromeda_ngsi_ld_query::filter::{
     predicate::{CmpOp, SetMembership},
     scalar::{CompareValue, Scalar},
 };
+use andromeda_postgresql_stored_values::value_placement::ValueField;
 use sea_query::{Condition, SimpleExpr};
 
 /// An equality comparison (`==`/`!=`) against the fields of one instance that
@@ -67,7 +68,7 @@ pub(crate) fn equality_value(membership: SetMembership, rhs: &CompareValue, row:
 /// Its inner disjunction is the whole `equal` condition,
 /// so the two operators cannot drift apart.
 fn equality_condition(scalar: &Scalar, membership: SetMembership, row: InstanceRow) -> Condition {
-    let column = row.value(ValueColumn::Object);
+    let column = row.value(ValueColumn::Field(ValueField::Object));
     match membership {
         SetMembership::Within => carries_any_target_value(&column, scalar, row),
         SetMembership::Outside => Condition::all().add(does_not_hold(carries_any_target_value(&column, scalar, row))),

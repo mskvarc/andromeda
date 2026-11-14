@@ -7,10 +7,11 @@
 //! literals of the `objectType` keys and of the sub-attribute equality keys,
 //! and the `sub_attribute_tree` each row's elements travel in.
 
-use crate::current_attribute::row::{CurrentAttributeRow, row_column};
+use crate::current_attribute::{row::CurrentAttributeRow, text_columns::TextColumns};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_attribute_instance::{
     name_keys::NameKeys,
+    placed_value::{FieldValue, PlacedValue},
     stored_json::StoredJson,
     stored_members::InstanceMembers,
     stored_number::StoredNumber,
@@ -23,7 +24,6 @@ use andromeda_postgresql_encoding::{
     ewkb::{EwkbError, encode},
     ewkb_binding::reach_bytes,
 };
-use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::{
     external_arguments::ExternalArguments,
     pg_array::{nullable_array, text_array},
@@ -61,10 +61,8 @@ pub enum StagedRowError {
 struct ValueColumns {
     /// `value_number`.
     number: Option<StoredNumber>,
-    /// `value_string`.
-    string: Option<String>,
-    /// `value_long_text`.
-    long_text: Option<String>,
+    /// `value_string` and `value_long_text`.
+    string: TextColumns,
     /// `value_boolean`.
     boolean: Option<bool>,
     /// `value_date_time`.
@@ -77,36 +75,31 @@ struct ValueColumns {
     geometry_members: Option<Json<Box<RawValue>>>,
     /// `value_object`.
     object: Option<Json<Box<RawValue>>>,
-    /// `value_uri`.
-    uri: Option<String>,
-    /// `value_long_uri`.
-    long_uri: Option<String>,
+    /// `value_uri` and `value_long_uri`.
+    uri: TextColumns,
 }
 
 impl ValueColumns {
     /// The columns `value` occupies, a String or a URI past its B-tree bound
     /// in its overflow column.
     fn of(value: StoredValue) -> Result<ValueColumns, StagedRowError> {
-        let column = row_column(&value).ok_or(StagedRowError::Seal)?;
+        let content = match PlacedValue::from(value) {
+            PlacedValue::Field(content) => content,
+            PlacedValue::Proof(_) => return Err(StagedRowError::Seal),
+        };
         let mut columns = ValueColumns::default();
-        match value {
-            StoredValue::Number { number, .. } => columns.number = Some(StoredNumber::from(number)),
-            StoredValue::String { text, .. } if column == CurrentAttributes::ValueLongText => columns.long_text = Some(text),
-            StoredValue::String { text, .. } => columns.string = Some(text),
-            StoredValue::DeclaredNumber { number, .. } => columns.number = Some(StoredNumber::from(number)),
-            StoredValue::Boolean { flag, .. } | StoredValue::DeclaredBoolean { flag, .. } => columns.boolean = Some(flag),
-            StoredValue::DateTime { instant, .. } => columns.date_time = Some(instant),
-            StoredValue::Date { date, .. } => columns.string = Some(date.to_string()),
-            StoredValue::Time { time, .. } => columns.string = Some(time.to_string()),
-            StoredValue::Geometry { form, members } => {
+        match content {
+            FieldValue::Number(number) => columns.number = Some(number),
+            FieldValue::String(text) => columns.string = TextColumns::of_string(text),
+            FieldValue::Boolean(flag) => columns.boolean = Some(flag),
+            FieldValue::Geometry { form, members } => {
                 columns.geometry = Some(encode(&form)?.to_vec());
                 columns.geometry_reach = reach_bytes(Some(&form));
                 columns.geometry_members = members.map(StoredJson::into_json);
             }
-            StoredValue::Object(object) => columns.object = Some(object.into_json()),
-            StoredValue::Uri(uri) if column == CurrentAttributes::ValueLongUri => columns.long_uri = Some(String::from(uri)),
-            StoredValue::Uri(uri) => columns.uri = Some(String::from(uri)),
-            StoredValue::Proof(_) => return Err(StagedRowError::Seal),
+            FieldValue::Object(object) => columns.object = Some(object.into_json()),
+            FieldValue::DateTime(instant) => columns.date_time = Some(instant),
+            FieldValue::Uri(uri) => columns.uri = TextColumns::of_uri(String::from(uri)),
         }
         Ok(columns)
     }
@@ -219,16 +212,16 @@ impl<'a> StagedRows<'a> {
             self.attribute_kinds.push(AttributeKind::code(attribute_kind));
             self.value_kinds.push(kind);
             self.value_numbers.push(values.number);
-            self.value_strings.push(values.string);
-            self.value_long_texts.push(values.long_text);
+            self.value_strings.push(values.string.indexed);
+            self.value_long_texts.push(values.string.overflow);
             self.value_booleans.push(values.boolean);
             self.value_date_times.push(values.date_time);
             self.value_geometries.push(values.geometry);
             self.value_geometry_reaches.push(values.geometry_reach);
             self.value_geometry_members.push(values.geometry_members);
             self.value_objects.push(values.object);
-            self.value_uris.push(values.uri);
-            self.value_long_uris.push(values.long_uri);
+            self.value_uris.push(values.uri.indexed);
+            self.value_long_uris.push(values.uri.overflow);
             self.value_datatype_keys.push(datatype_key);
             self.value_languages.push(language);
             self.value_type_keys.push(value_type_key.map(EntityTypeNameKey::get));

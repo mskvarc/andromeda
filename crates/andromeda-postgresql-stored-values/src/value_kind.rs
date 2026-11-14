@@ -1,7 +1,6 @@
 //! The persisted value shape of one attribute-history row.
 
 use crate::{compact_code_domain::CompactCodeDomain, compact_code_registry, registry::UnknownCompactCode};
-use andromeda_postgresql_schema::temporal::AttributeHistory;
 
 compact_code_registry! {
     /// Which typed column of an attribute-history row holds its value.
@@ -67,51 +66,9 @@ compact_code_registry! {
     }
 }
 
-impl ValueKind {
-    /// The `attribute_history` column a row of this kind holds its value in;
-    /// `None` for the tombstone, which holds none, and for a seal, which no
-    /// row holds. A `Date` and a `Time` share the string column with a String,
-    /// a declared number the number column with a JSON number, and a declared
-    /// Boolean the boolean column with a JSON boolean.
-    #[must_use]
-    pub const fn history_column(self) -> Option<AttributeHistory> {
-        match self {
-            ValueKind::Tombstone | ValueKind::DataIntegrityProof => None,
-            ValueKind::Number | ValueKind::DeclaredNumber => Some(AttributeHistory::ValueNumber),
-            ValueKind::String | ValueKind::Date | ValueKind::Time => Some(AttributeHistory::ValueString),
-            ValueKind::Boolean | ValueKind::DeclaredBoolean => Some(AttributeHistory::ValueBoolean),
-            ValueKind::Geometry => Some(AttributeHistory::ValueGeometry),
-            ValueKind::Object => Some(AttributeHistory::ValueObject),
-            ValueKind::DateTime => Some(AttributeHistory::ValueDateTime),
-            ValueKind::Uri => Some(AttributeHistory::ValueUri),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::value_kind::ValueKind;
-    use andromeda_postgresql_schema::temporal::AttributeHistory;
-
-    /// Only the tombstone and a seal hold no history column; three kinds
-    /// share the string column and two each the number and boolean columns.
-    #[test]
-    fn every_kind_but_the_tombstone_and_a_seal_names_the_column_it_holds_its_value_in() {
-        assert_eq!(ValueKind::Tombstone.history_column(), None);
-        assert_eq!(ValueKind::DataIntegrityProof.history_column(), None);
-        for kind in [ValueKind::String, ValueKind::Date, ValueKind::Time] {
-            assert_eq!(kind.history_column(), Some(AttributeHistory::ValueString), "{kind:?}");
-        }
-        for kind in [ValueKind::Number, ValueKind::DeclaredNumber] {
-            assert_eq!(kind.history_column(), Some(AttributeHistory::ValueNumber), "{kind:?}");
-        }
-        for kind in [ValueKind::Boolean, ValueKind::DeclaredBoolean] {
-            assert_eq!(kind.history_column(), Some(AttributeHistory::ValueBoolean), "{kind:?}");
-        }
-        let columns: Vec<AttributeHistory> = ValueKind::ALL.iter().filter_map(|kind| kind.history_column()).collect();
-        let distinct = columns.iter().enumerate().filter(|(index, column)| !columns[..*index].contains(column)).count();
-        assert_eq!(distinct, 7);
-    }
     use pretty_assertions::assert_eq;
 
     #[test]

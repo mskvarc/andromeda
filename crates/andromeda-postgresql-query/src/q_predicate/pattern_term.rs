@@ -20,6 +20,7 @@ use andromeda_ngsi_ld_query::{
     filter::predicate::{PatternPolarity, Predicate},
     pattern::Pattern,
 };
+use andromeda_postgresql_stored_values::value_placement::ValueField;
 use sea_query::{Condition, SimpleExpr};
 
 /// Where an instance's own value holds a String a pattern is tested against.
@@ -44,11 +45,7 @@ pub enum PatternTarget {
 /// Every target an instance's own value offers a pattern: its String fields,
 /// then its `languageMap`.
 pub fn pattern_targets(row: InstanceRow) -> impl Iterator<Item = PatternTarget> {
-    row.string_columns()
-        .iter()
-        .copied()
-        .map(PatternTarget::Column)
-        .chain([PatternTarget::LanguageMap])
+    row.columns(ValueField::String).map(PatternTarget::Column).chain([PatternTarget::LanguageMap])
 }
 
 /// `pred`, a pattern term of `polarity`, tested against one target of `row`.
@@ -68,11 +65,12 @@ pub fn pattern_on(target: PatternTarget, pred: &Predicate, pattern: &Pattern, po
 /// and nothing else indexes a String a pattern reads.
 const fn column_indexes(row: InstanceRow, column: ValueColumn) -> PatternIndexes {
     match (row, column) {
-        (InstanceRow::Current, ValueColumn::String) => PatternIndexes::TrigramsAndByteOrder,
+        (InstanceRow::Current, ValueColumn::Field(ValueField::String)) => PatternIndexes::TrigramsAndByteOrder,
         (InstanceRow::Current, ValueColumn::LongText) => PatternIndexes::Trigrams,
         (
             InstanceRow::Current,
-            ValueColumn::Number | ValueColumn::Boolean | ValueColumn::DateTime | ValueColumn::Uri | ValueColumn::LongUri | ValueColumn::Object,
+            ValueColumn::Field(ValueField::Number | ValueField::Boolean | ValueField::Geometry | ValueField::Object | ValueField::DateTime | ValueField::Uri)
+            | ValueColumn::LongUri,
         ) => PatternIndexes::None,
         (InstanceRow::History | InstanceRow::Element(_), _unindexed) => PatternIndexes::None,
     }
@@ -105,6 +103,7 @@ mod tests {
         predicate::{PatternPolarity, Predicate},
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::value_placement::ValueField;
     use pretty_assertions::assert_eq;
     use sea_query::{Query, SelectStatement};
 
@@ -123,14 +122,14 @@ mod tests {
         assert_eq!(
             pattern_targets(InstanceRow::Current).collect::<Vec<_>>(),
             [
-                PatternTarget::Column(ValueColumn::String),
+                PatternTarget::Column(ValueColumn::Field(ValueField::String)),
                 PatternTarget::Column(ValueColumn::LongText),
                 PatternTarget::LanguageMap
             ]
         );
         assert_eq!(
             pattern_targets(InstanceRow::History).collect::<Vec<_>>(),
-            [PatternTarget::Column(ValueColumn::String), PatternTarget::LanguageMap]
+            [PatternTarget::Column(ValueColumn::Field(ValueField::String)), PatternTarget::LanguageMap]
         );
     }
 

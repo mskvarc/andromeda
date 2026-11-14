@@ -64,6 +64,12 @@ impl EwkbGeometry {
     pub fn reach_of(form: &GeometryForm) -> Option<EwkbGeometry> {
         reach_bytes(Some(form)).map(EwkbGeometry)
     }
+
+    /// The EWKB itself.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8] {
+        self.0.as_slice()
+    }
 }
 
 // Hand-written: `geometry` is a `PostGIS` type `sqlx` knows only by name, and

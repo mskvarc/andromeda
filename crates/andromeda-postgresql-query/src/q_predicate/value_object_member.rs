@@ -43,7 +43,7 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
-use andromeda_postgresql_stored_values::attribute_kind::AttributeKind;
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, value_placement::ValueField};
 use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
 
 /// The alias the member a path reaches is read under, which is also the name
@@ -167,7 +167,7 @@ fn literal_target(value: SimpleExpr) -> JsonTarget {
 /// `JsonProperty` holds no IRI-keyed member nodes, and only a `JsonProperty`
 /// is read as a literal, so at most one of them reaches a member.
 pub(crate) fn member_term(pred: &Predicate, members: &MemberPath, row: InstanceRow) -> Condition {
-    let object = row.value(ValueColumn::Object);
+    let object = row.value(ValueColumn::Field(ValueField::Object));
     let expanded = reading_term(pred, MemberShape::ValueNodes.member_source(object.clone(), members), MemberShape::ValueNodes); // clone: both readings walk the one value
     let literal = reading_term(pred, MemberShape::JsonLiteral.member_source(object, members), MemberShape::JsonLiteral);
     Condition::any()

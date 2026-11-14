@@ -5,8 +5,9 @@
 //! writes into `SMALLINT` columns: the attribute family and value shape of a
 //! history row, the trigger conditions of a subscription, the lifecycle and
 //! instance transitions of a notification event, the origin of an owed
-//! change, the operation set of a context-source registration. The second is
-//! the identities and encodings those rows are keyed and referenced by: the
+//! change, the operation set of a context-source registration. Beside the
+//! value shape sits the field each shape is held in. The second is the
+//! identities and encodings those rows are keyed and referenced by: the
 //! entity key, the attribute stream key, the unit-code identity the
 //! `cefact-units` library assigns, the dictionary keys attribute and type names
 //! are held as (with the name type each key stands for and the keys one
@@ -115,6 +116,8 @@ pub mod temporal_intent_reach;
 pub mod tenant_status;
 /// The persisted value shape of one attribute-history row.
 pub mod value_kind;
+/// Where a stored instance holds its value, by value shape.
+pub mod value_placement;
 
 #[cfg(test)]
 andromeda_architecture_checks::forbid_sql!();

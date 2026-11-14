@@ -22,8 +22,9 @@ use andromeda_postgresql_seaquery::{
     structured_value::sub_attribute_value_object,
 };
 use andromeda_postgresql_stored_form::history_grain::HistoryGrain;
-use andromeda_postgresql_stored_values::value_kind::ValueKind;
+use andromeda_postgresql_stored_values::{value_kind::ValueKind, value_placement::ValueField};
 use sea_query::{Alias, Expr as SeaExpr, ExprTrait, IntoIden, SimpleExpr};
+use std::iter;
 
 /// The top-level row a probe reads, whose `sub_attributes` a sub-attribute
 /// path walks.
@@ -109,13 +110,11 @@ impl InstanceRow {
             InstanceRow::Current => projection_column(column.in_current()),
             InstanceRow::History => HistoryAliases::top_level().instance_column(column.in_history()),
             InstanceRow::Element(level) => match column {
-                ValueColumn::Object => level.structured_value(),
-                ValueColumn::Number
-                | ValueColumn::Boolean
-                | ValueColumn::String
+                ValueColumn::Field(ValueField::Object) => level.structured_value(),
+                ValueColumn::Field(
+                    ValueField::Number | ValueField::String | ValueField::Boolean | ValueField::Geometry | ValueField::DateTime | ValueField::Uri,
+                )
                 | ValueColumn::LongText
-                | ValueColumn::DateTime
-                | ValueColumn::Uri
                 | ValueColumn::LongUri => level.field(column.in_element()),
             },
         }
@@ -172,17 +171,17 @@ impl InstanceRow {
         null_if(column.eq(int_literal(i64::from(kind.code()))), false_literal())
     }
 
-    /// The fields a String target value can occupy, each named once.
+    /// The columns the instance holds `field` in, each named once.
     ///
-    /// A row moves a String past the B-tree bound into its overflow column;
-    /// history and an element have none and keep every String in
-    /// `value_string`.
-    #[must_use]
-    pub const fn string_columns(self) -> &'static [ValueColumn] {
-        match self {
-            InstanceRow::Current => &[ValueColumn::String, ValueColumn::LongText],
-            InstanceRow::History | InstanceRow::Element(_) => &[ValueColumn::String],
-        }
+    /// A row moves a String or a URI past the B-tree bound into the field's
+    /// overflow column; history and an element have none and keep every
+    /// value of a field in its one column.
+    pub fn columns(self, field: ValueField) -> impl Iterator<Item = ValueColumn> {
+        let overflow = match self {
+            InstanceRow::Current => ValueColumn::overflow_of(field),
+            InstanceRow::History | InstanceRow::Element(_) => None,
+        };
+        iter::once(ValueColumn::Field(field)).chain(overflow)
     }
 }
 

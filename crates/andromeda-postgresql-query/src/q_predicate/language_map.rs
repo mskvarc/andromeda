@@ -33,7 +33,7 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
-use andromeda_postgresql_stored_values::attribute_kind::AttributeKind;
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, value_placement::ValueField};
 use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Func, Query, SelectStatement, SimpleExpr};
 
 /// The alias one unnested `languageMap` entry is read under.
@@ -69,7 +69,7 @@ impl LanguageMap {
     #[must_use]
     pub fn of_instance(row: InstanceRow) -> LanguageMap {
         let language_property = int_literal(i64::from(AttributeKind::LanguageProperty.code()));
-        let map = CaseStatement::new().case(row.attribute_family().eq(language_property), row.value(ValueColumn::Object));
+        let map = CaseStatement::new().case(row.attribute_family().eq(language_property), row.value(ValueColumn::Field(ValueField::Object)));
         LanguageMap(map.into())
     }
 

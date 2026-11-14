@@ -53,6 +53,8 @@ pub(crate) mod history_removal;
 pub(crate) mod history_row_decode;
 /// The identity and column reads the two history hypertables share.
 pub(crate) mod history_row_identity;
+/// The value columns of one history row, as both history writers bind them.
+pub(crate) mod history_value_columns;
 /// Answering the wake loop for the history a dormant tenant owes its sweeps.
 pub mod history_work_probe;
 /// Raising the activity horizon of Temporal Evolutions to cover what a write records.
