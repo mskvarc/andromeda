@@ -12,8 +12,8 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngin
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReference};
 use andromeda_ngsi_ld_model::{
     clearable::Clearable,
+    entity_selector::EntitySelector,
     notification_request::NotificationRequest,
-    subscription::entity_selector::EntitySelector,
     subscription_request::SubscriptionRequest,
 };
 use andromeda_ngsi_ld_query::{

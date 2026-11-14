@@ -4,8 +4,9 @@
 
 /// The engine: the model modules that define registrations, subscriptions
 /// and their entity selectors, and decide every match over them.
-pub(crate) const ENGINE: [&str; 4] = [
+pub(crate) const ENGINE: [&str; 5] = [
     "crates/andromeda-ngsi-ld-model/src/entity_info.rs",
+    "crates/andromeda-ngsi-ld-model/src/entity_selector.rs",
     "crates/andromeda-ngsi-ld-model/src/registration/",
     "crates/andromeda-ngsi-ld-model/src/registration_matching/",
     "crates/andromeda-ngsi-ld-model/src/subscription/",

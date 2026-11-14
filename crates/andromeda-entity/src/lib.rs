@@ -50,8 +50,6 @@ mod entity_admission_tests;
 pub mod entity_invariant;
 /// Versioned entity snapshots used by optimistic writes.
 pub mod entity_snapshot;
-/// Whether a stored entity is the one a clause 4.17 type selector names.
-mod entity_type_match;
 /// What the existing Entities carrying one type hold.
 pub mod entity_type_summary;
 /// The concrete reasons an entity payload or operation is rejected as invalid.

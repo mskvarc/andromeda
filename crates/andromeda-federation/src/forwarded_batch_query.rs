@@ -2,7 +2,7 @@
 
 use crate::{error::FederationError, federation_invariant::FederationInvariant, forwarded_parameter::ForwardedParameter, forwarded_query::ForwardedQuery};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
-use andromeda_ngsi_ld_model::query::{body::Query, entity_selector::QueryEntitySelector};
+use andromeda_ngsi_ld_model::{entity_selector::EntitySelector, query::body::Query};
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 
 /// The clause 5.2.23 `Query` of a forwarded batch query: one entity selector
@@ -28,14 +28,14 @@ pub(crate) fn batch_query(query: &ForwardedQuery) -> Result<Query, FederationErr
             .split(',')
             .map(|id| {
                 let id = id.parse::<Identifier>().map_err(FederationInvariant::ForwardedIdentifier)?;
-                Ok(QueryEntitySelector {
+                Ok(EntitySelector {
                     id: Some(vec![id]),
                     id_pattern: None,
                     type_: entity_type.clone(), // clone: one selector per identifier names the same type
                 })
             })
             .collect::<Result<Vec<_>, FederationError>>()?,
-        None => vec![QueryEntitySelector {
+        None => vec![EntitySelector {
             id: None,
             id_pattern: None,
             type_: entity_type,

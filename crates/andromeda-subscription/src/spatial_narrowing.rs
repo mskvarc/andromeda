@@ -115,8 +115,9 @@ mod tests {
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_model::{
+        entity_selector::EntitySelector,
         notification::NotificationTrigger,
-        subscription::{SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding},
+        subscription::{SubscriptionStatus, standing::SubscriptionStanding},
     };
     use andromeda_ngsi_ld_query::{filter::language_matching::LanguageMatching, geo::input::GeoQueryInput, projection::compiled::Projection};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;

@@ -9,7 +9,10 @@
 
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_model::subscription::{NotificationParams, Subscription, SubscriptionFilters, entity_selector::EntitySelector};
+use andromeda_ngsi_ld_model::{
+    entity_selector::EntitySelector,
+    subscription::{NotificationParams, Subscription, SubscriptionFilters},
+};
 use andromeda_ngsi_ld_query::{
     filter::compaction::{compact_csf_expr, compact_q_expr, revert_expand_values},
     projection::{

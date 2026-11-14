@@ -101,7 +101,10 @@ mod tests {
         selector_routing::{SelectorRouting, SelectorShape},
     };
     use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};
-    use andromeda_ngsi_ld_model::subscription::{SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding};
+    use andromeda_ngsi_ld_model::{
+        entity_selector::EntitySelector,
+        subscription::{SubscriptionStatus, standing::SubscriptionStanding},
+    };
     use andromeda_ngsi_ld_query::{filter::language_matching::LanguageMatching, projection::compiled::Projection};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use chrono::{DateTime, Utc};

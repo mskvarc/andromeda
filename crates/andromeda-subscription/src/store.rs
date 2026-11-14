@@ -14,9 +14,10 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
+    entity_selector::EntitySelector,
     notification::NotificationTrigger,
     query::temporal_query::TemporalQuery,
-    subscription::{NotificationParams, Subscription, SubscriptionStatus, entity_selector::EntitySelector},
+    subscription::{NotificationParams, Subscription, SubscriptionStatus},
 };
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,

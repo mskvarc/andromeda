@@ -10,9 +10,10 @@
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
+    entity_selector::EntitySelector,
     notification::NotificationTrigger,
     query::temporal_query::TemporalQuery,
-    subscription::{NotificationParams, SubscriptionStatus, entity_selector::EntitySelector},
+    subscription::{NotificationParams, SubscriptionStatus},
 };
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, geo::input::GeoQueryInput, scope::query::ScopeQuery};
 use chrono::{DateTime, Utc};

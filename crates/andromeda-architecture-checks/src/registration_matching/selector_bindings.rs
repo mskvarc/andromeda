@@ -27,15 +27,14 @@ pub(crate) struct SelectorBindings(BTreeSet<String>);
 
 impl SelectorBindings {
     /// The parameters of `signature` typed as a registered selector, or as
-    /// the subscription `EntitySelector` when `subscription_selector` names
-    /// it in this source.
-    pub(crate) fn of_parameters(signature: &Signature, subscription_selector: bool) -> SelectorBindings {
+    /// the model's clause 5.2.33 `EntitySelector` when `model_selector` says
+    /// this source imports it.
+    pub(crate) fn of_parameters(signature: &Signature, model_selector: bool) -> SelectorBindings {
         let mut bindings = SelectorBindings::default();
         for argument in &signature.inputs {
             if let FnArg::Typed(parameter) = argument {
                 let declared = parameter.ty.to_token_stream();
-                if REGISTERED_SELECTORS.iter().any(|selector| mentions(&declared, selector)) || (subscription_selector && mentions(&declared, "EntitySelector"))
-                {
+                if REGISTERED_SELECTORS.iter().any(|selector| mentions(&declared, selector)) || (model_selector && mentions(&declared, "EntitySelector")) {
                     bindings.bind(&parameter.pat);
                 }
             }

@@ -46,9 +46,15 @@ fn an_identifier_pattern_read_in_a_source_handling_no_registration_passes() {
 }
 
 #[test]
-fn a_subscription_selector_pattern_read_is_flagged() {
-    let source = "use andromeda_ngsi_ld_model::subscription::entity_selector::EntitySelector; fn f(s: &EntitySelector) -> bool { s.id_pattern.is_some() }";
+fn a_model_selector_pattern_read_is_flagged() {
+    let source = "use andromeda_ngsi_ld_model::entity_selector::EntitySelector; fn f(s: &EntitySelector) -> bool { s.id_pattern.is_some() }";
     assert_eq!(sites("crates/andromeda-notification/src/x.rs", source).len(), 1);
+}
+
+#[test]
+fn a_request_selector_pattern_read_passes() {
+    let source = "use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams; fn f(s: &EntitySelectorParams, id: &str) -> bool { s.id_pattern.as_ref().is_some_and(|p| p.is_match(id)) }";
+    assert_eq!(reports(OUTSIDE, source), Vec::<String>::new());
 }
 
 #[test]

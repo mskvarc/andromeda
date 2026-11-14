@@ -1,17 +1,17 @@
 //! NGSI-LD subscription types (ETSI GS CIM 009 clause 5.2.12).
 
-pub mod entity_selector;
 pub mod standing;
 
 use crate::{
     attribute_name_csv,
     delivery_seconds,
+    entity_selector::EntitySelector,
     ignored_member,
     key_value_pair::KeyValuePair,
     notification::NotificationTrigger,
     notification_media_type::NotificationMediaType,
     query::temporal_query::TemporalQuery,
-    subscription::{entity_selector::EntitySelector, standing::SubscriptionStanding},
+    subscription::standing::SubscriptionStanding,
 };
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,

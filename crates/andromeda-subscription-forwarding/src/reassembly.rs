@@ -40,6 +40,7 @@ use andromeda_ngsi_ld_expansion::{entity_expansion::EntityExpansion, received_st
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     entity::Entity,
+    entity_selector::selectors_select,
     received::{ContextualEntity, ReceivedElement},
     registration::forwarding_mode::ForwardingMode,
 };
@@ -49,7 +50,7 @@ use andromeda_ngsi_ld_request::entity::GetEntityParams;
 use andromeda_subscription::{
     compilation::compile_subscription,
     compiled::CompiledSubscription,
-    matching::{matches_entity_filters, selects_entity},
+    matching::matches_entity_filters,
     notification_slot::{NotificationOutcome, NotificationSlot, NotificationSlotGate},
     outcome_tally::OutcomeTally,
 };
@@ -129,7 +130,7 @@ impl SubscriptionForwardingService {
     /// matching), so the source may notify an entity the local pattern does not
     /// select.
     async fn admits(&self, compiled: &CompiledSubscription, document: &EntityDocument) -> Result<bool, SubscriptionForwardingError> {
-        if !document.id().is_some_and(|id| selects_entity(compiled, document.types(), id)) {
+        if !document.id().is_some_and(|id| selectors_select(&compiled.selectors, document.types(), id)) {
             return Ok(false);
         }
         let filters: Vec<_> = compiled.hopping_filters().collect();

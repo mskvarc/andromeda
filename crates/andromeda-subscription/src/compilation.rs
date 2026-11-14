@@ -7,9 +7,10 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{
+    entity_selector::EntitySelector,
     notification::effective_notification_triggers,
     query::temporal_query::TemporalQuery,
-    subscription::{NotificationParams, Subscription, entity_selector::EntitySelector},
+    subscription::{NotificationParams, Subscription},
 };
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,

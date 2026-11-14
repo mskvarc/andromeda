@@ -381,8 +381,9 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::{
         entity_change::{EntityChange, EntityLifecycle},
+        entity_selector::EntitySelector,
         notification::ChangeOrigin,
-        subscription::{SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding},
+        subscription::{SubscriptionStatus, standing::SubscriptionStanding},
     };
     use andromeda_ngsi_ld_query::{filter::language_matching::LanguageMatching, projection::compiled::Projection};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
