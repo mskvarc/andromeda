@@ -37,12 +37,13 @@ use crate::{
     clearable_parsed,
     clearable_timestamp,
     delivery_seconds,
+    entity_selector::EntitySelector,
     ignored_member,
     notification::NotificationTrigger,
     notification_request::NotificationRequest,
     query::temporal_query::TemporalQuery,
     request_body::RequestBody,
-    subscription::{SubscriptionType, entity_selector::EntitySelector},
+    subscription::SubscriptionType,
     subscription_member::SubscriptionMember,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, spec_version::SpecVersion};

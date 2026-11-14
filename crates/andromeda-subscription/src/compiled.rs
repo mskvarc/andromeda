@@ -17,10 +17,11 @@ use andromeda_ngsi_ld_lexicon::{
     spec_version::SpecVersion,
 };
 use andromeda_ngsi_ld_model::{
+    entity_selector::EntitySelector,
     key_value_pair::KeyValuePair,
     notification::NotificationTrigger,
     notification_media_type::NotificationMediaType,
-    subscription::{entity_selector::EntitySelector, standing::SubscriptionStanding},
+    subscription::standing::SubscriptionStanding,
 };
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,

@@ -51,6 +51,11 @@ use syn::{
 /// registrations or subscriptions.
 const MATCHED_RESOURCES: [&str; 3] = ["registration", "subscription", "entity_info"];
 
+/// The model module defining the clause 5.2.33 `EntitySelector`. The query
+/// crate's compiled selector lives in `entity_selection`, and the request
+/// crate's selector type has a name of its own.
+const SELECTOR_MODULE: &str = "entity_selector";
+
 /// The methods that match a type expression.
 const TYPE_MATCHES: [&str; 2] = ["admits", "matches"];
 
@@ -70,9 +75,10 @@ pub(crate) struct Finding {
 pub(crate) struct RegistrationMatchingVisitor {
     /// Whether the source imports a registration or subscription type.
     handles_matched_resources: bool,
-    /// Whether the source imports the subscription `EntitySelector`, so that
-    /// the name stands for a selector of a subscription.
-    imports_subscription_selector: bool,
+    /// Whether the source imports the model's clause 5.2.33 `EntitySelector`,
+    /// so that the name stands for the selector a Subscription or a Query
+    /// selects with rather than the query crate's compiled one.
+    imports_model_selector: bool,
     /// The selector bindings of the functions enclosing the current node,
     /// innermost last.
     functions: Vec<SelectorBindings>,
@@ -107,8 +113,7 @@ impl RegistrationMatchingVisitor {
 
     /// Visit one function in a binding frame of its own.
     fn within_function(&mut self, signature: &Signature, visit_function: impl FnOnce(&mut RegistrationMatchingVisitor)) {
-        self.functions
-            .push(SelectorBindings::of_parameters(signature, self.imports_subscription_selector));
+        self.functions.push(SelectorBindings::of_parameters(signature, self.imports_model_selector));
         visit_function(self);
         self.functions.pop();
     }
@@ -152,8 +157,9 @@ impl<'ast> Visit<'ast> for RegistrationMatchingVisitor {
             if segments.iter().any(|segment| names_matched_resource(segment)) {
                 self.handles_matched_resources = true;
             }
-            if segments.last().is_some_and(|leaf| leaf == "EntitySelector") && segments.iter().any(|segment| segment == "subscription") {
-                self.imports_subscription_selector = true;
+            if segments.last().is_some_and(|leaf| leaf == "EntitySelector") && segments.iter().any(|segment| segment == SELECTOR_MODULE) {
+                self.handles_matched_resources = true;
+                self.imports_model_selector = true;
             }
         });
         visit_item_use(self, item);

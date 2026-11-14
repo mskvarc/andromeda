@@ -1,7 +1,6 @@
 //! Reading entities: clause 5.6.3 retrieval and clause 5.7.2 query.
 
 use crate::{
-    entity_type_match::entity_satisfies,
     error::EntityError,
     port::{retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
     query::{
@@ -100,7 +99,7 @@ impl EntityQueryService {
             if let Some(raw) = narrowing.entity_type {
                 let prepared = self.engine().prepare_term_context(context);
                 let selector = expand_type_expression(raw, &ContextualExpander::new(self.engine(), &prepared)).await?;
-                if !entity_satisfies(&state, &selector) {
+                if !selector.matches(state.types().as_slice()) {
                     return Err(EntityError::not_found(id));
                 }
             }

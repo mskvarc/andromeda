@@ -84,8 +84,9 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_model::{
+        entity_selector::EntitySelector,
         registration::ContextSourceRegistration,
-        subscription::{SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding},
+        subscription::{SubscriptionStatus, standing::SubscriptionStanding},
     };
     use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrTemporalFilter, filter::parser, scope::query::ScopeQuery, temporal::window::TimeInterval};
     use chrono::{DateTime, Utc};

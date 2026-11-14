@@ -4,10 +4,11 @@
 use crate::{error::SubscriptionError, store::SubscriptionFields, subscription_validation_reason::SubscriptionValidationReason, variant::DatasetIdPolicy};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
 use andromeda_ngsi_ld_model::{
+    entity_selector::EntitySelector,
     notification::NotificationTrigger,
     notification_request::NotificationRequest,
     query::temporal_query::TemporalQuery,
-    subscription::{NotificationParams, Subscription, entity_selector::EntitySelector},
+    subscription::{NotificationParams, Subscription},
     subscription_request::SubscriptionRequest,
 };
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, geo::input::GeoQueryInput, scope::query::ScopeQuery};

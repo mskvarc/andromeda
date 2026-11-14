@@ -23,8 +23,9 @@ use andromeda_ngsi_ld_entity::{
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, reference::NgsiLdReferenceError};
 use andromeda_ngsi_ld_model::{
     entity_change::{EntityChange, EntityLifecycle},
+    entity_selector::EntitySelector,
     notification::{ChangeOrigin, NotificationTrigger},
-    subscription::{SubscriptionStatus, entity_selector::EntitySelector, standing::SubscriptionStanding},
+    subscription::{SubscriptionStatus, standing::SubscriptionStanding},
 };
 use andromeda_ngsi_ld_query::{
     error::QueryError,

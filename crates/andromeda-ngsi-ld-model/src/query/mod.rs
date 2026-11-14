@@ -2,6 +2,5 @@
 
 pub mod aggregation_parameters;
 pub mod body;
-pub mod entity_selector;
 pub mod non_empty_member;
 pub mod temporal_query;

@@ -2,7 +2,8 @@
 
 use crate::{
     attribute_name_csv,
-    query::{aggregation_parameters::AggregationParameters, entity_selector::QueryEntitySelector, non_empty_member, temporal_query::TemporalQuery},
+    entity_selector::EntitySelector,
+    query::{aggregation_parameters::AggregationParameters, non_empty_member, temporal_query::TemporalQuery},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, duration::Iso8601Duration, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
@@ -32,7 +33,7 @@ pub struct Query {
     pub type_: QueryType,
     /// Entity selector union.
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "non_empty_member::deserialize_array")]
-    pub entities: Option<Vec<QueryEntitySelector>>,
+    pub entities: Option<Vec<EntitySelector>>,
     /// Clause-4.9 entity filter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub q: Option<Expr>,

@@ -7,11 +7,7 @@
 //! `ResourceNotFound`. The identifier and the selector are therefore one value,
 //! so no write can name one without the other.
 
-use crate::{
-    EntityService,
-    entity_type_match::{entity_satisfies, types_satisfy},
-    error::EntityError,
-};
+use crate::{EntityService, error::EntityError};
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
@@ -46,14 +42,14 @@ impl<'a> WriteTarget<'a> {
     /// Returns [`EntityError::NotFound`] when the selector excludes the entity.
     pub(crate) fn admits(&self, state: &EntityState) -> Result<(), EntityError> {
         match self.entity_type {
-            Some(selector) if !entity_satisfies(state, selector) => Err(EntityError::not_found(self.id)),
+            Some(selector) if !selector.matches(state.types().as_slice()) => Err(EntityError::not_found(self.id)),
             Some(_) | None => Ok(()),
         }
     }
 
     /// Hold an entity of `types`, as a deletion outlines it, to the selector.
     pub(crate) fn selects(&self, types: &[EntityTypeName]) -> bool {
-        self.entity_type.is_none_or(|selector| types_satisfy(types, selector))
+        self.entity_type.is_none_or(|selector| selector.matches(types))
     }
 }
 
@@ -87,7 +83,11 @@ mod tests {
     use serde_json::json;
 
     fn vehicle() -> EntityState {
-        let document = json!([{"@id": "urn:ngsi-ld:Vehicle:1", "@type": ["https://example.org/Vehicle"]}]);
+        typed(&["https://example.org/Vehicle"])
+    }
+
+    fn typed(types: &[&str]) -> EntityState {
+        let document = json!([{"@id": "urn:ngsi-ld:Vehicle:1", "@type": types}]);
         EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored state")
     }
 
@@ -115,5 +115,26 @@ mod tests {
         assert!(matches!(error, EntityError::NotFound { .. }), "{error:?}");
         let selector = TypeExpr::Or(vec![named("Building"), named("Vehicle")]);
         WriteTarget::new(&id, Some(&selector)).admits(&vehicle()).expect("inside the selector");
+    }
+
+    /// Clause 4.17: an alternation needs one of its types, a conjunction every
+    /// one of them, and the wildcard none.
+    #[test]
+    fn a_target_holds_the_entity_to_the_clause_4_17_reading_of_its_selector() {
+        let id = id();
+        let vehicle_asset = typed(&["https://example.org/Vehicle", "https://example.org/Asset"]);
+        for selector in [
+            named("Vehicle"),
+            TypeExpr::Or(vec![named("Building"), named("Asset")]),
+            TypeExpr::And(vec![named("Vehicle"), named("Asset")]),
+            TypeExpr::Wildcard,
+        ] {
+            WriteTarget::new(&id, Some(&selector)).admits(&vehicle_asset).expect("inside the selector");
+        }
+        let conjunction = TypeExpr::And(vec![named("Vehicle"), named("Asset")]);
+        let error = WriteTarget::new(&id, Some(&conjunction))
+            .admits(&vehicle())
+            .expect_err("one type of the conjunction is missing");
+        assert!(matches!(error, EntityError::NotFound { .. }), "{error:?}");
     }
 }

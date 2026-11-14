@@ -21,8 +21,8 @@
 
 use crate::{
     entity_info::{EntityInfo, EntityTypeSelection},
+    entity_selector::EntitySelector,
     registration::info::RegistrationInfo,
-    subscription::entity_selector::EntitySelector,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, type_selection::grammar::TypeExprRaw};
@@ -140,12 +140,12 @@ fn push_once<T: PartialEq>(items: &mut Vec<T>, item: T) {
 #[cfg(test)]
 mod tests {
     use crate::{
+        entity_selector::EntitySelector,
         registration::info::RegistrationInfo,
         registration_matching::{
             entity_specification::EntitySpecification,
             selector_reduction::{narrowed_selector, reduced_selectors},
         },
-        subscription::entity_selector::EntitySelector,
     };
     use serde_json::{Value, json};
 

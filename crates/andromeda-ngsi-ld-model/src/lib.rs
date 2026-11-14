@@ -28,6 +28,7 @@ pub mod entity_map;
 pub mod entity_map_fingerprint;
 mod entity_member;
 mod entity_node;
+pub mod entity_selector;
 pub mod entity_system_times;
 pub mod entity_type;
 pub mod entity_type_list;
