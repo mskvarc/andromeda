@@ -1,4 +1,4 @@
-//! Q count and pages hold exactly the entities q admits.
+//! Q count and pages hold exactly the entities q admits inside the window.
 
 use andromeda_test_suite::{
     broker,
@@ -15,14 +15,11 @@ use ngsi_ld::{
     query::{q, temporal_query},
 };
 
-/// Pins: with a q read against the instances in effect over a between window, count=true reports the four entities
-/// q admits and limit and offset page through exactly those four in identifier order
+/// Pins: a temporal q power>0 with a window between t60 and t120 admits M1 and M4, whose instances 9 and 1 are
+/// observed inside the window, and none of the meters whose only instances are observed before it; count=true
+/// reports those two, and limit 1 with offset pages through exactly those two in identifier order
 /// Clause: 5.7.4.4, 5.5.9, 6.3.10, 6.3.13, 4.11, 4.9
-/// Recorded: clause 5.7.4.4 checks q against the Attribute instances "during the interval defined by the temporal
-/// query" and clause 4.11 makes them the values "valid within the specified timeframe", without saying whether the
-/// instance observed before the window opens and not yet replaced is one of them; Andromeda reads it as one (as
-/// Annex C clause C.5.5 evaluates a q on an attribute it does not render), evaluated by q but never rendered; the
-/// identifier order of the pages is Andromeda's choice (clause 5.5.9 sets none)
+/// Recorded: the identifier order of the pages is Andromeda's choice (clause 5.5.9 sets none)
 #[gtest]
 #[tokio::test]
 async fn o_tmp_qry_0003_q_count_and_pages_hold_exactly_the_entities_q_admits() -> Result<()> {
@@ -135,31 +132,29 @@ async fn o_tmp_qry_0003_q_count_and_pages_hold_exactly_the_entities_q_admits() -
         .temporal()
         .query(temporal_query::between(t60, t120).last_n(1))
         .entity_type(&meter_type)
-        .q(q::attr("power").gt(8))
+        .q(q::attr("power").gt(0))
         .attrs(vec!["status".parse()?])
         .count(ResultsCount::Include)
-        .limit(2)
+        .limit(1)
         .send()
         .await?;
-    expect_that!(page.total(), some(eq(4)));
-    expect_that!(page.items(), len(eq(2)));
+    expect_that!(page.total(), some(eq(2)));
+    expect_that!(page.items(), len(eq(1)));
     expect_that!(page.items(), nth(0, has_id(&meter_m1_id)));
-    expect_that!(page.items(), nth(1, has_id(&meter_m2_id)));
     let page_2 = broker
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .temporal()
         .query(temporal_query::between(t60, t120).last_n(1))
         .entity_type(&meter_type)
-        .q(q::attr("power").gt(8))
+        .q(q::attr("power").gt(0))
         .attrs(vec!["status".parse()?])
         .count(ResultsCount::Include)
-        .limit(2)
-        .offset(2)
+        .limit(1)
+        .offset(1)
         .send()
         .await?;
-    expect_that!(page_2.total(), some(eq(4)));
-    expect_that!(page_2.items(), len(eq(2)));
-    expect_that!(page_2.items(), nth(0, has_id(&meter_m5_id)));
-    expect_that!(page_2.items(), nth(1, has_id(&meter_m6_id)));
+    expect_that!(page_2.total(), some(eq(2)));
+    expect_that!(page_2.items(), len(eq(1)));
+    expect_that!(page_2.items(), nth(0, has_id(&meter_m4_id)));
     Ok(())
 }

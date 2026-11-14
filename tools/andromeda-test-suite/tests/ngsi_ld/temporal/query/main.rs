@@ -2,6 +2,9 @@
 //! each a sequence of requests and the requirements on their answers, in the shared default tenant unless the test
 //! names a private one.
 
+mod n_tmp_qry_0002;
+mod n_tmp_qry_0004;
+mod n_tmp_qry_0005;
 mod n_tmp_qry_0006;
 mod n_tmp_qry_0011;
 mod n_tmp_qry_0012;
@@ -102,11 +105,9 @@ mod n_tmp_qry_9379;
 mod n_tmp_qry_9380;
 mod n_tmp_qry_9381;
 mod n_tmp_qry_9383;
+mod n_tmp_qry_9384;
 mod o_tmp_qry_0001;
-mod o_tmp_qry_0002;
 mod o_tmp_qry_0003;
-mod o_tmp_qry_0004;
-mod o_tmp_qry_0005;
 mod o_tmp_qry_0010;
 mod o_tmp_qry_0018;
 mod o_tmp_qry_0019;

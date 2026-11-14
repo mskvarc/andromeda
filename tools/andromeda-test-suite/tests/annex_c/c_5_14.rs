@@ -4,7 +4,7 @@
 use crate::{
     printed_document::{as_floats, expect_flat},
     served_context::{ServedContexts, linked, ok_body},
-    speed_evolution::record_b9211,
+    speed_evolution::{BrandObserved, record_b9211},
     vehicle_example::aggregated_context,
 };
 use andromeda_test_suite::{broker, namespace::Namespace};
@@ -18,13 +18,15 @@ use serde_json::json;
 /// Pins: Query Temporal Evolution of Entities with aggrMethods=max,avg over PT4M periods answers the aggregated speed
 /// of B9211 as C.5.14 prints
 /// Clause: C.5.14, 4.5.19, 6.3.12, 5.7.4
+/// Expected: B9211's `brandName` is observed at 12:00, inside the window, where the annex observes it at 11:00; a
+/// query is checked only against the instances inside the window (clauses 4.11 and 5.7.4.4)
 #[gtest]
 #[tokio::test]
 async fn c_5_14_0001_the_aggregated_speed_evolution() -> Result<()> {
     let namespace = Namespace::fresh();
     let served = ServedContexts::start(&namespace).await?;
     let broker = linked(&broker::front()?, &aggregated_context(&served, &namespace).await?)?;
-    let id = record_b9211(&broker, &namespace).await?;
+    let id = record_b9211(&broker, &namespace, BrandObserved::AtWindowStart).await?;
     let body = ok_body(
         broker
             .with_accept(NgsiLdMediaType::JsonLd)

@@ -1,4 +1,4 @@
-//! Q on modified at admits the instances in effect when the window opens.
+//! Q on modified at reads only the instances written inside the window.
 
 use andromeda_test_suite::{
     attribute_matcher::any_attribute,
@@ -25,17 +25,13 @@ use tokio::time::sleep;
 /// A wall-clock second plus a margin, so an instant taken after it lies in a later second than any earlier write.
 const ONE_SECOND: Duration = Duration::from_millis(1100);
 
-/// Pins: a temporal q on `timeproperty=modifiedAt` reads the instances in effect when an after window opens: every
-/// power instance and the deletion were written before it, so each entity is judged by its last power write, all of
-/// whose instances are in effect, and the entity whose last write is a deletion is left out
-/// Clause: 5.7.4.4, 4.11, 4.8, 5.2.21, 4.9, 4.5.7
-/// Recorded: clause 5.7.4.4 checks q against the Attribute instances "during the interval defined by the temporal
-/// query" and clause 4.11 makes them the values "valid within the specified timeframe", without saying whether the
-/// instance observed before the window opens and not yet replaced is one of them; Andromeda reads it as one (as
-/// Annex C clause C.5.5 evaluates a q on an attribute it does not render), evaluated by q but never rendered
+/// Pins: with `timeproperty=modifiedAt` and a window opening after every power instance was written and before the
+/// status instances were, a temporal q power>8 selects no meter, since no power instance was modified inside the
+/// window, while q status=="on" selects all six, each answering its one status instance
+/// Clause: 5.7.4.4, 4.11, 4.8, 5.2.21, 4.9
 #[gtest]
 #[tokio::test]
-async fn o_tmp_qry_0004_q_on_modified_at_admits_the_instances_in_effect_when_the_window_opens() -> Result<()> {
+async fn n_tmp_qry_0004_q_on_modified_at_reads_only_the_instances_written_inside_the_window() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let at = instants()?;
@@ -49,7 +45,7 @@ async fn o_tmp_qry_0004_q_on_modified_at_admits_the_instances_in_effect_when_the
 
     let meter_type = namespace.entity_type("Meter")?;
     let json = broker.with_accept(Accept::new(NgsiLdMediaType::Json));
-    let page = json
+    let by_power = json
         .temporal()
         .query(temporal_query::after(between).time_property(TemporalProperty::ModifiedAt))
         .entity_type(&meter_type)
@@ -57,9 +53,18 @@ async fn o_tmp_qry_0004_q_on_modified_at_admits_the_instances_in_effect_when_the
         .attrs(vec!["status".parse()?])
         .send()
         .await?;
-    expect_that!(page.items(), len(eq(5)));
-    for suffix in ["M1", "M2", "M4", "M5", "M6"] {
-        let entity = with_id(page.items(), &meter_id(&namespace, suffix)?).or_fail()?;
+    expect_that!(by_power.items(), is_empty());
+    let by_status = json
+        .temporal()
+        .query(temporal_query::after(between).time_property(TemporalProperty::ModifiedAt))
+        .entity_type(&meter_type)
+        .q(q::attr("status").eq("on"))
+        .attrs(vec!["status".parse()?])
+        .send()
+        .await?;
+    expect_that!(by_status.items(), len(eq(6)));
+    for suffix in ["M1", "M2", "M3", "M4", "M5", "M6"] {
+        let entity = with_id(by_status.items(), &meter_id(&namespace, suffix)?).or_fail()?;
         expect_that!(entity.attributes.len(), eq(1));
         expect_that!(entity, has_evolution("status", all!(len(eq(1)), nth(0, any_attribute().observed_at(at.t75)))));
     }
