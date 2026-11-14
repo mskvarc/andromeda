@@ -62,7 +62,7 @@ impl ChangeAudience<'_> {
 /// entity filters.
 ///
 /// A delivery is queued because the commit found the change matching the
-/// subscription's `q`, `geoQ`, `scopeQ` and `csf` on the very states queued
+/// subscription's `q`, `geoQ` and `scopeQ` on the very states queued
 /// with it, and clause 5.8.6 decides a notification by the change and the
 /// state it left, both fixed at commit, so those filters are not evaluated a
 /// second time. What may have moved since is the subscription itself, which is

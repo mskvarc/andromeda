@@ -21,7 +21,6 @@ use andromeda_ngsi_ld_query::{
     },
     pattern::Pattern,
 };
-use andromeda_ngsi_ld_value_order::string_order::string_order;
 use andromeda_postgresql_codes::stored_unit_code::stored_unit_code;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, SubAttribute},
@@ -164,9 +163,7 @@ impl StoredMember {
     fn compared(&self, op: CmpOp, scalar: &Scalar) -> SimpleExpr {
         match (self, scalar) {
             (StoredMember::Instant(field), Scalar::DateTime(instant)) => compare(field.clone(), op, SeaExpr::val(*instant)),
-            (StoredMember::UnitCode(field), Scalar::Str(operand)) => {
-                listed_code_where(field, |code| op.holds(string_order(code, operand, op.string_relation())))
-            }
+            (StoredMember::UnitCode(field), Scalar::Str(operand)) => listed_code_where(field, |code| op.holds_for_strings(code, operand)),
             (StoredMember::Text(text), Scalar::Str(operand) | Scalar::Uri(operand)) => text_compared(text.clone(), op, scalar, operand),
             (StoredMember::TypeKeys(keys), Scalar::Str(operand) | Scalar::Uri(operand)) => text_compared(single_type_name(keys), op, scalar, operand),
             (StoredMember::Instant(_), Scalar::Number(_) | Scalar::Bool(_) | Scalar::Str(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_))

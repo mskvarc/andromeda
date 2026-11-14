@@ -38,6 +38,8 @@ pub mod endpoint_admission;
 pub mod endpoint_refusal;
 /// Entity subscription lifecycle policy.
 pub mod entity;
+/// The filters an entity is judged by, or that none can be evaluated.
+pub mod entity_filter_set;
 /// Subscription policy failures.
 pub mod error;
 pub mod expiry;

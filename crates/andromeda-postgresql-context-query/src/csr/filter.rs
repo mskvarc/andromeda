@@ -287,6 +287,7 @@ mod tests {
     };
     use andromeda_postgresql_schema::current::Entities;
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
+    use andromeda_q_corpus::conformance::{COLOR, CONFORMANCE, NAME, SPEED};
     use sea_query::{Alias, Condition, PostgresQueryBuilder, Query, SelectStatement};
 
     fn render(q: &str) -> SelectStatement {
@@ -456,20 +457,14 @@ mod tests {
         }
     }
 
-    /// An attribute IRI used by the conformance fixtures.
-    const SPEED: &str = "https://example.com/speed";
-    /// An attribute IRI used by the conformance fixtures.
-    const COLOR: &str = "https://example.com/color";
-    /// An attribute IRI used by the conformance fixtures.
-    const NAME: &str = "https://example.com/name";
-
     fn names() -> QueryNames {
         QueryNames {
-            attributes: ResolvedNames::from_pairs([
-                (SPEED.parse().expect("valid attribute name"), AttributeNameKey::from(1)),
-                (COLOR.parse().expect("valid attribute name"), AttributeNameKey::from(2)),
-                (NAME.parse().expect("valid attribute name"), AttributeNameKey::from(3)),
-            ]),
+            attributes: ResolvedNames::from_pairs(
+                [SPEED, COLOR, NAME]
+                    .into_iter()
+                    .zip(1..)
+                    .map(|(iri, key)| (iri.as_str().parse().expect("valid attribute name"), AttributeNameKey::from(key))),
+            ),
             types: ResolvedNames::default(),
             ..QueryNames::default()
         }
@@ -479,32 +474,17 @@ mod tests {
         Query::select().column(Entities::Id).from(Entities::Table).cond_where(condition).to_owned()
     }
 
-    /// The clause 4.9 conformance filters, written against the three fixture
-    /// attribute IRIs.
-    fn expressions() -> Vec<String> {
-        let quoted = |iri: &str| format!("\"{iri}\"");
-        vec![
-            format!("{}>50", quoted(SPEED)),
-            format!("{}==10..20", quoted(SPEED)),
-            format!("{}!=10..20", quoted(SPEED)),
-            format!("{}==\"red\",\"blue\"", quoted(COLOR)),
-            format!("{}!=\"red\",\"blue\"", quoted(COLOR)),
-            format!("{}~=\"^A.*\"", quoted(NAME)),
-            format!("{}!~=\"^A.*\"", quoted(NAME)),
-            quoted(SPEED),
-        ]
-    }
-
     /// Clause 4.9: an entity that does not carry the addressed element never
     /// satisfies a predicate over it, in either polarity. The two SQL renderings
-    /// decide it structurally, by conjoining the presence test rather than
-    /// disjoining it, which the snapshots of both renderings show. The one
-    /// `IS NULL OR` a projection probe holds is the clause 4.22 expiry guard of
-    /// the instance, not a test of the addressed element.
+    /// of every shared conformance filter decide it structurally, by conjoining
+    /// the presence test rather than disjoining it, which the snapshots of both
+    /// renderings show. The one `IS NULL OR` a projection probe holds is the
+    /// clause 4.22 expiry guard of the instance, not a test of the addressed
+    /// element.
     #[test]
-    fn every_backend_reads_clause_four_nine_the_same_way() {
-        for (index, expression) in expressions().into_iter().enumerate() {
-            let expr = parser::parse(&expression).unwrap_or_else(|error| panic!("{expression}: {error}"));
+    fn every_conformance_filter_renders_a_projection_probe_and_a_registration_condition() {
+        for (index, case) in CONFORMANCE.iter().enumerate() {
+            let expr = parser::parse(case.filter).unwrap_or_else(|error| panic!("{}: {error}", case.filter));
 
             let projection = entity_statement(compile(
                 &expr,

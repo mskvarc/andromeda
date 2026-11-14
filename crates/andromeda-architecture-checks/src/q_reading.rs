@@ -6,10 +6,14 @@
 //! on its syntax tree is a reading of the clause that can drift from the
 //! others. The guard flags, in any production source outside
 //! `crates/andromeda-ngsi-ld-query/src/filter/`, a pattern that names a
-//! variant of `Predicate`, `SetMembership`, `OrderingOp` or `CompareValue`:
-//! a `match` arm, an `if let`, a `let` with `else`, and the pattern of a
-//! `matches!` invocation, nested in another macro or not. Calling an accessor
-//! such as `Predicate::path()` and building a variant stay free, since neither
+//! variant of `Predicate`, `SetMembership`, `OrderingOp`, `CompareValue`,
+//! `Scalar`, `CmpOp` or `PatternPolarity`: a `match` arm, an `if let`, a
+//! `let` with `else`, and the pattern of a `matches!` invocation, nested in
+//! another macro or not. A variant is named as `Type::Variant`, as
+//! `Self::Variant` inside an `impl` of a watched type, through a `use` that
+//! imports it by name, or through a rename of the type; a glob import of a
+//! watched type's variants is a site of its own. Calling an accessor such as
+//! `Predicate::path()` and building a variant stay free, since neither
 //! decides what a term means.
 //!
 //! The baseline counts, per file, the sites the in-memory evaluator and the
@@ -23,6 +27,7 @@ use std::{
 };
 use syn::{File, visit::Visit};
 
+mod imports;
 mod visitor;
 
 /// The directory that owns the reading of a `q` term.
@@ -32,20 +37,26 @@ const OWNER: &str = "crates/andromeda-ngsi-ld-query/src/filter/";
 /// holds. Each change that moves a reading into the owner lowers or removes
 /// its file's entry.
 pub const Q_READING_BASELINE: &[(&str, usize)] = &[
-    ("crates/andromeda-ngsi-ld-query-evaluation/src/q/eval.rs", 12),
-    ("crates/andromeda-postgresql-context-query/src/csr/filter.rs", 12),
+    ("crates/andromeda-ngsi-ld-query-evaluation/src/q/eval.rs", 26),
+    ("crates/andromeda-postgresql-context-query/src/csr/filter.rs", 19),
+    ("crates/andromeda-postgresql-query/src/jsonb.rs", 7),
+    ("crates/andromeda-postgresql-query/src/operator.rs", 8),
     ("crates/andromeda-postgresql-query/src/q_predicate/equality_term.rs", 9),
     ("crates/andromeda-postgresql-query/src/q_predicate/json_value_term.rs", 3),
     ("crates/andromeda-postgresql-query/src/q_predicate/keyed_existence.rs", 1),
     ("crates/andromeda-postgresql-query/src/q_predicate/keyed_hop.rs", 8),
-    ("crates/andromeda-postgresql-query/src/q_predicate/keyed_ordering.rs", 9),
+    ("crates/andromeda-postgresql-query/src/q_predicate/keyed_ordering.rs", 16),
     ("crates/andromeda-postgresql-query/src/q_predicate/keyed_pattern.rs", 1),
     ("crates/andromeda-postgresql-query/src/q_predicate/keyed_term.rs", 5),
-    ("crates/andromeda-postgresql-query/src/q_predicate/language_term.rs", 10),
+    ("crates/andromeda-postgresql-query/src/q_predicate/language_term.rs", 24),
     ("crates/andromeda-postgresql-query/src/q_predicate/projection.rs", 5),
+    ("crates/andromeda-postgresql-query/src/q_predicate/string_ordering.rs", 14),
+    ("crates/andromeda-postgresql-query/src/q_predicate/structured_target.rs", 7),
     ("crates/andromeda-postgresql-query/src/q_predicate/sub_attribute/keyed_equality.rs", 3),
-    ("crates/andromeda-postgresql-query/src/q_predicate/sub_attribute/member_field.rs", 12),
+    ("crates/andromeda-postgresql-query/src/q_predicate/sub_attribute/member_field.rs", 51),
+    ("crates/andromeda-postgresql-query/src/q_predicate/typed_column.rs", 25),
     ("crates/andromeda-postgresql-query/src/q_predicate/value_object_member.rs", 10),
+    ("crates/andromeda-postgresql-query/src/sub_attribute_key/operand_keys.rs", 7),
 ];
 
 /// Every production site outside the owner that matches on a `q` term's
@@ -68,7 +79,7 @@ fn is_scanned(path: &str) -> bool {
 
 /// The sites of one parsed source, as `path:line: what`.
 fn source_sites(path: &str, syntax: &File) -> Vec<String> {
-    let mut visitor = QReadingVisitor::default();
+    let mut visitor = QReadingVisitor::for_file(syntax);
     visitor.visit_file(syntax);
     visitor.into_sites().into_iter().map(|(line, what)| format!("{path}:{line}: {what}")).collect()
 }

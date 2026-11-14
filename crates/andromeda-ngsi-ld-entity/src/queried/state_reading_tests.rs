@@ -10,7 +10,7 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_query_evaluation::{
     geo_query::geo_query_matches,
     q::eval::evaluate,
-    queried_entity::linked_entities::NoLinkedEntities,
+    queried_entity::{linked_entities::NoLinkedEntities, scoped_entity::ScopedEntity},
     scope_query::scope_query_matches,
 };
 use serde_json::{Value, json};
@@ -344,12 +344,12 @@ fn a_scope_query_reads_the_scopes_the_state_holds() {
     let mut document = vehicle();
     document[0]["https://uri.etsi.org/ngsi-ld/scope"] = json!([{"@value": "/Madrid/Gardens"}, {"@value": "/Berlin"}]);
     let scoped = state(&document);
-    assert!(scope_query_matches(&ScopeQuery::parse("/Madrid/#").expect("a scope query"), &scoped));
-    assert!(scope_query_matches(&ScopeQuery::parse("/Berlin").expect("a scope query"), &scoped));
-    assert!(!scope_query_matches(&ScopeQuery::parse("/Paris").expect("a scope query"), &scoped));
+    assert!(scope_query_matches(&ScopeQuery::parse("/Madrid/#").expect("a scope query"), (&scoped).scopes()));
+    assert!(scope_query_matches(&ScopeQuery::parse("/Berlin").expect("a scope query"), (&scoped).scopes()));
+    assert!(!scope_query_matches(&ScopeQuery::parse("/Paris").expect("a scope query"), (&scoped).scopes()));
     assert!(!scope_query_matches(
         &ScopeQuery::parse("/Madrid/#").expect("a scope query"),
-        &state(&vehicle())
+        (&state(&vehicle())).scopes()
     ));
 }
 

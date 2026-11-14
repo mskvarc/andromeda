@@ -9,6 +9,7 @@ use andromeda_ngsi_ld_query::{
     geo::{query::GeoQuery, registration_area::RegistrationGeometry},
     scope::query::ScopeQuery,
 };
+use andromeda_ngsi_ld_query_evaluation::scope_query::scope_query_matches;
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 
@@ -78,7 +79,7 @@ impl RegistrationCoverage {
     /// could match, as an Entity without a scope matches none (clause 4.19).
     #[must_use]
     pub fn admits_scope_query(&self, scope_q: &ScopeQuery) -> bool {
-        self.scope.as_deref().is_some_and(|scopes| scope_q.matches(scopes))
+        self.scope.as_deref().is_some_and(|scopes| scope_query_matches(scope_q, scopes))
     }
 
     /// Whether the registration falls on the side of the temporal partition

@@ -10,14 +10,25 @@
 //! reaches the broker over the network alone, can read it beside the broker's
 //! own tests.
 //!
-//! The attribute names are short terms of the requester's `@context`.
+//! The attribute names are short terms of the requester's `@context`. The
+//! Entities are described as typed data, so each execution builds its own
+//! form of them, and the filters expand under one vocabulary.
 
+pub mod attribute_description;
+pub mod case_filter;
+pub mod conformance;
 pub mod corpus;
 pub mod corpus_entity;
+pub mod corpus_vocabulary;
+pub mod entity_attributes;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
-    allow_workspace_dependencies: [],
+    allow_workspace_dependencies: [
+        "andromeda-ngsi-ld-lexicon",
+        "andromeda-ngsi-ld-query",
+        "andromeda-ngsi-ld-vocabulary",
+    ],
     allow_workspace_dev_dependencies: [],
     allow_production_dependencies: [],
 }

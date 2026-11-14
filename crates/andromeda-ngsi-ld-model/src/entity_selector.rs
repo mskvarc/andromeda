@@ -2,10 +2,10 @@
 //! Subscription's and a Query's `entities` are arrays of, and the one reading
 //! of which entities it selects.
 
-use crate::attribute::one_or_many::OneOrMany;
+use crate::{attribute::one_or_many::OneOrMany, query::non_empty_member::NonEmptyMemberError};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, pattern::Pattern, type_selection::grammar::TypeExprRaw};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError};
 
 /// One entity selector (ETSI GS CIM 009 clause 5.2.33).
 ///
@@ -16,9 +16,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub struct EntitySelector {
     /// The entity identifiers the selector admits.
     ///
-    /// Table 5.2.33-1 types `id` as "String or String[]": one identifier is
-    /// read from a String and written back as one, several from and to an
-    /// array.
+    /// Table 5.2.33-1 types `id` as "String or String[]" of "Valid URI(s)": one
+    /// identifier is read from a String and written back as one, several from
+    /// and to an array. An empty array names no entity and is refused, so a
+    /// present `id` always lists at least one identifier.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -96,12 +97,17 @@ where
 /// # Errors
 ///
 /// Returns the deserializer's refusal of a member that is neither a String nor
-/// an array, and an element's own refusal of a value that is no identifier.
+/// an array, an element's own refusal of a value that is no identifier, and a
+/// custom error for an empty array.
 pub fn deserialize_optional_ids<'de, D>(deserializer: D) -> Result<Option<Vec<Identifier>>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    Option::<OneOrMany<Identifier>>::deserialize(deserializer).map(|ids| ids.map(OneOrMany::into_vec))
+    let ids = Option::<OneOrMany<Identifier>>::deserialize(deserializer)?.map(OneOrMany::into_vec);
+    match ids {
+        Some(ids) if ids.is_empty() => Err(DeserializeError::custom(NonEmptyMemberError::EmptyArray)),
+        other => Ok(other),
+    }
 }
 
 #[cfg(test)]
@@ -178,14 +184,15 @@ mod tests {
         pretty_assertions::assert_eq!(serde_json::to_value(selector(several.clone())).expect("serialisable"), several);
     }
 
-    /// Table 5.2.33-1 restricts `id` to valid URIs, in either form, and lists
-    /// every member a selector has.
+    /// Table 5.2.33-1 restricts `id` to valid URIs, in either form, so an empty
+    /// array names none, and lists every member a selector has.
     #[test]
     fn an_id_that_is_no_uri_and_an_unknown_member_are_refused() {
         for wire in [
             json!({"type": "Vehicle", "id": "not a uri"}),
             json!({"type": "Vehicle", "id": ["urn:ngsi-ld:Vehicle:1", "not a uri"]}),
             json!({"type": "Vehicle", "id": 5}),
+            json!({"type": "Vehicle", "id": []}),
             json!({"type": "Vehicle", "ids": ["urn:ngsi-ld:Vehicle:1"]}),
         ] {
             assert!(serde_json::from_value::<EntitySelector>(wire.clone()).is_err(), "{wire}");

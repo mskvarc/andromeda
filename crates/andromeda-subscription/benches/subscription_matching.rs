@@ -187,7 +187,6 @@ fn subscription(key: i64, q: Expr) -> Result<Arc<CompiledSubscription>, SetupErr
         dataset_id: None,
         notification_join: None,
         notification_join_level: NonZeroU32::MIN,
-        compiled_csf: None,
         local_only: false,
         ngsild_conformance: None,
         lang: None,

@@ -15,8 +15,10 @@
 
 use crate::{
     q::{
-        family_target::{TerminalKeyword, family_target, first_family_value, held_values_target},
-        target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue, json_member},
+        axis_position::{AxisPosition, axis_positions},
+        compound_member::{resolve_compound_member, walk_member_hops},
+        language_target::language_target,
+        target_value::{ResolvedTarget, json_member},
     },
     queried_entity::{
         attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
@@ -26,11 +28,9 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_ngsi_ld_query::filter::{
-    instance_metadata::InstanceMetadata,
     language_matching::LanguageMatching,
     path::{AttrPath, QueryPath},
-    target_language::LanguageSelector,
-    trailing_path::{MemberPath, TrailingPath},
+    trailing_path::TrailingPath,
 };
 
 /// Resolve every value an attribute axis addresses, descending each
@@ -155,9 +155,8 @@ fn admitted_by_guard<'a, E: QueriedEntity<'a>>(linked: E, guard_types: &[Attribu
 ///
 /// All instances are resolved, not just the first. Clause 4.9 (p. 86) defines
 /// the comparison target for a multi-instance attribute as "any Value of such
-/// instances", so a predicate holds when it holds for at least one of them.
-/// Restricting this to the first instance made a `datasetId`-partitioned
-/// attribute match on whichever instance happened to serialise first.
+/// instances", so a predicate holds when it holds for at least one of them,
+/// whichever instance a `datasetId`-partitioned attribute writes first.
 ///
 /// The `[*]` language-suppression marker selects no different resolution here.
 /// Clause 4.9 defines a `LanguageProperty`'s target value with no target
@@ -170,20 +169,6 @@ fn resolve_values<'a, E: QueriedEntity<'a>>(entity: E, path: &AttrPath, matching
         .flat_map(|instance| axis_positions(instance, &path.sub_attrs))
         .filter_map(|position| resolve_position_value(position, path, matching))
         .collect()
-}
-
-/// Every position the sub-attribute chain `sub_attrs` reaches from one
-/// attribute instance, one per instance of each sub-attribute on the way.
-///
-/// Clause 4.9: "If a Property has multiple instances (identified by its
-/// respective datasetId), and no datasetId is explicitly addressed, the target
-/// value shall be any Value of such instances". The `q` grammar addresses no
-/// datasetId, so a sub-attribute's instances fan out exactly as an attribute's
-/// do.
-fn axis_positions<'a, I: QueriedInstance<'a>>(instance: I, sub_attrs: &[AttributeName]) -> Vec<AxisPosition<'a, I>> {
-    sub_attrs.iter().fold(vec![AxisPosition::Instance(instance)], |positions, name| {
-        positions.into_iter().flat_map(|position| position.step(name)).collect()
-    })
 }
 
 /// Resolve one position of the axis down to the target value the predicate
@@ -205,185 +190,6 @@ fn resolve_position_value<'a, I: QueriedInstance<'a>>(
             resolve_compound_member(position, path.members()?)
         }
     }
-}
-
-/// The target value clause 4.9 defines for a `LanguageProperty` with a target
-/// language: "the Value associated to the matching key-value pair held within
-/// the languageMap ... where the key matches the target language", every key
-/// `matching` selects contributing its strings.
-///
-/// A language holding several strings is matched "as a single element from the
-/// array of values of the key-value pair", which is the any-one reading the
-/// language map has with no target language.
-///
-/// A language the map does not hold yields an empty array: the entity still
-/// contains the target element, the `LanguageProperty`, and clause 4.9 makes
-/// `!=` match it where "No matching value is found as the value of the
-/// specified language key", and `!~=` where no value is in L(R). No positive
-/// operator matches an empty array.
-fn language_target<'a, I: QueriedInstance<'a>>(instance: I, language: LanguageSelector<'_>, matching: LanguageMatching) -> ResolvedTarget<'a> {
-    let mut strings = instance
-        .language_values(language, matching)
-        .filter_map(|item| TerminalKeyword::Literal.read(item));
-    let value = match (strings.next(), strings.next()) {
-        (Some(only), None) => only,
-        (None, _) => TargetValue::Array(Vec::new()),
-        (Some(first), Some(second)) => TargetValue::Array([first, second].into_iter().chain(strings).collect()),
-    };
-    ResolvedTarget {
-        value,
-        origin: TargetOrigin::AttributeValue,
-        reading: MultiValueReading::AnyOneValue,
-    }
-}
-
-/// Where a walk down the `.` axis stands.
-///
-/// A `.` segment names a sub-attribute, and the walk stands on each of its
-/// instances. It may instead name a member the instance carries as data of its
-/// own: an [`InstanceMetadata`] member, which ends the walk on the target value
-/// it holds, or the family's value member itself (`speed.value`), which lands
-/// on the first value. From a structured value the walk continues into its
-/// members.
-enum AxisPosition<'a, I: QueriedInstance<'a>> {
-    /// An attribute or sub-attribute instance.
-    Instance(I),
-    /// One value of a family member or of a structured value's member.
-    Value(ValueItem<'a, I::Node>),
-    /// The target value an instance member that is not a sub-attribute holds.
-    Metadata(TargetValue<'a>),
-}
-
-impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
-    /// The positions one `.` segment further down: one per instance of a
-    /// sub-attribute, at most one for any other member, and none when the
-    /// segment names nothing there.
-    fn step(self, name: &AttributeName) -> impl Iterator<Item = AxisPosition<'a, I>> {
-        let (member, sub_attribute) = match self {
-            AxisPosition::Instance(instance) => {
-                if let Some(member) = InstanceMetadata::named(name) {
-                    (TargetValue::of_metadata(member, instance.metadata(member)).map(AxisPosition::Metadata), None)
-                } else if instance.family().value_key().as_str() == name.as_str() {
-                    (first_family_value(instance).map(AxisPosition::Value), None)
-                } else {
-                    (None, Some(instance.sub_attribute_instances(name).map(AxisPosition::Instance)))
-                }
-            }
-            AxisPosition::Value(ValueItem::Node(node)) => (node.member_values(name).next().map(AxisPosition::Value), None),
-            AxisPosition::Value(ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Opaque) | AxisPosition::Metadata(..) => {
-                (None, None)
-            }
-        };
-        member.into_iter().chain(sub_attribute.into_iter().flatten())
-    }
-
-    /// The `LanguageProperty` instance at this position with the target
-    /// language `path`'s trailing group names, or `None` when the trailing
-    /// group addresses a compound member instead (see
-    /// [`AttrPath::target_language`]).
-    fn target_language<'p>(&self, path: &'p AttrPath) -> Option<(I, LanguageSelector<'p>)> {
-        match self {
-            AxisPosition::Instance(instance) if instance.family() == AttributeType::LanguageProperty => {
-                path.target_language().map(|language| (*instance, language))
-            }
-            AxisPosition::Instance(_) | AxisPosition::Value(_) | AxisPosition::Metadata(..) => None,
-        }
-    }
-
-    /// The first value of the family member at this position, the node a
-    /// compound value's members hang off.
-    fn first_family_value(&self) -> Option<ValueItem<'a, I::Node>> {
-        match self {
-            AxisPosition::Instance(instance) => first_family_value(*instance),
-            AxisPosition::Value(_) | AxisPosition::Metadata(..) => None,
-        }
-    }
-
-    /// The target value this position holds, or `None` when it holds none.
-    fn terminal(self) -> Option<ResolvedTarget<'a>> {
-        let value = match self {
-            AxisPosition::Instance(instance) => return family_target(instance),
-            AxisPosition::Value(item) => TerminalKeyword::Identifier.read(item)?,
-            AxisPosition::Metadata(value) => value,
-        };
-        Some(ResolvedTarget {
-            value,
-            origin: TargetOrigin::AttributeValue,
-            reading: MultiValueReading::WholeArray,
-        })
-    }
-}
-
-/// Resolve a compound value path (`address[city]`) at one position of the
-/// axis.
-///
-/// A compound value reaches this evaluator in either of two genuinely different
-/// shapes, and both are addressed by the same `q` path:
-///
-/// * A structured Property value is a node whose members are keyed by expanded
-///   IRI, so `city` is a member *hop*: the first value, then the member's
-///   first value, down to a literal. This is the shape a notification payload and a stored entity carry.
-/// * A `JsonProperty`'s value, and a Property value held as an opaque JSON
-///   object, are raw JSON, where `city` is an ordinary object key. The NGSI-LD
-///   data model puts no constraint on those keys, so they are read verbatim.
-///
-/// The member hop is tried first, addressed by the term-expanded spelling
-/// ([`MemberPath::addressed`]): it is the shape term expansion produced the
-/// path for, and a raw JSON object cannot carry a member whose key is the
-/// expanded IRI without the client having written that IRI. The raw-JSON
-/// fallback then retries with the pre-expansion spelling
-/// ([`MemberPath::written`]), because raw JSON is never touched by JSON-LD
-/// expansion: its keys are exactly what the client wrote, not what the request
-/// `@context` expands them to.
-fn resolve_compound_member<'a, I: QueriedInstance<'a>>(position: AxisPosition<'a, I>, members: &MemberPath) -> Option<ResolvedTarget<'a>> {
-    if let Some(target) = resolve_member_hops(position.first_family_value(), &members.addressed) {
-        return Some(target);
-    }
-    json_member(&position.terminal()?, &members.written)
-}
-
-/// Walk the members of a structured value down to the target the last member
-/// holds.
-///
-/// The member's literals are the target value as the values of a Property
-/// are: one is a scalar target, several an array (clause 4.9), and a member
-/// holding no literal holds no target value.
-fn resolve_member_hops<'a, N: QueriedValueNode<'a>>(start: Option<ValueItem<'a, N>>, value_path: &[AttributeName]) -> Option<ResolvedTarget<'a>> {
-    Some(ResolvedTarget {
-        value: held_values_target(walk_member_hops(start, value_path)?.filter_map(|item| TerminalKeyword::Literal.read(item)))?,
-        origin: TargetOrigin::AttributeValue,
-        reading: MultiValueReading::WholeArray,
-    })
-}
-
-/// The values of the member a structured value's member path leads to, or
-/// `None` when a step finds no member to descend into.
-///
-/// A member expression accesses a property of an object and an array has
-/// none, so every step before the last descends only into a member holding
-/// exactly one value, a node.
-fn walk_member_hops<'a, N: QueriedValueNode<'a>>(
-    start: Option<ValueItem<'a, N>>,
-    value_path: &[AttributeName],
-) -> Option<impl Iterator<Item = ValueItem<'a, N>>> {
-    let (last, steps) = value_path.split_last()?;
-    let node = steps.iter().try_fold(start?, |current, member| match current {
-        ValueItem::Node(node) => sole_value(node.member_values(member)),
-        ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Opaque => None,
-    })?;
-    match node {
-        ValueItem::Node(node) => {
-            let mut values = node.member_values(last).peekable();
-            values.peek().is_some().then_some(values)
-        }
-        ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Opaque => None,
-    }
-}
-
-/// The one value `values` holds, or `None` when it holds none or several.
-fn sole_value<T>(mut values: impl Iterator<Item = T>) -> Option<T> {
-    let first = values.next()?;
-    values.next().is_none().then_some(first)
 }
 
 #[cfg(test)]

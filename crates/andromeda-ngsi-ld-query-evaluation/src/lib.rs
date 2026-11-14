@@ -6,8 +6,10 @@
 //! Snapshot purging and the parts of a split query. This crate is that
 //! execution. It reads an entity through the traits of [`queried_entity`],
 //! which whatever holds the entity implements, so it depends on no entity
-//! model. No storage backend lists it, so a backend cannot answer a query by
-//! evaluating it in memory.
+//! model. No storage backend lists it: a store answers a query in its own
+//! statements, and reads an entity through none of these traits. What a store
+//! compares while it renders a statement, such as the stored `unitCode`
+//! against a `q` operand, uses the primitives of the language crate.
 
 pub mod entity_filters;
 pub mod geo_query;
@@ -28,6 +30,7 @@ andromeda_architecture_checks::dependency_boundary! {
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-q-corpus",
     ],
     allow_production_dependencies: [],
 }

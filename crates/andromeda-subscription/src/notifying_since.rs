@@ -16,6 +16,7 @@
 //! instant of every change they are compared with, so brokers sharing the
 //! tenant database order them alike.
 
+use crate::variant::CsfReach;
 use andromeda_context_commit::store_instant::StoreInstant;
 use andromeda_ngsi_ld_model::{
     clearable::Clearable,
@@ -72,10 +73,11 @@ pub enum SinceRestart {
 impl SinceRestart {
     /// Whether the update fragment `request` changes the value of what the
     /// `existing` Subscription selects: `entities`, `watchedAttributes`,
-    /// `notificationTrigger`, `q`, `geoQ`, `scopeQ`, `csf` or `localOnly`
+    /// `notificationTrigger`, `q`, `geoQ`, `scopeQ`, `localOnly`, and `csf`
+    /// where `csf_reach` makes it select what the Subscription is notified of
     /// (Table 5.2.12-1), each compared after its terms were expanded.
     #[must_use]
-    pub fn of_selection(request: &SubscriptionRequest, existing: &Subscription) -> SinceRestart {
+    pub fn of_selection(request: &SubscriptionRequest, existing: &Subscription, csf_reach: CsfReach) -> SinceRestart {
         let selection = &existing.selection;
         let filters = &existing.filters;
         let changed = request.entities.changes(selection.entities.as_ref())
@@ -84,7 +86,10 @@ impl SinceRestart {
             || request.q.changes(filters.q.as_ref())
             || request.geo_q.changes(filters.geo_q.as_ref())
             || request.scope_q.changes(filters.scope_q.as_ref())
-            || request.csf.changes(filters.csf.as_ref())
+            || match csf_reach {
+                CsfReach::NotifiedRegistrations => request.csf.changes(filters.csf.as_ref()),
+                CsfReach::ReachedSources => false,
+            }
             || local_only_changes(&request.local_only, existing.delivery.local_only);
         if changed { SinceRestart::Restarted } else { SinceRestart::Kept }
     }
@@ -128,7 +133,10 @@ impl NotifyingRestart {
 
 #[cfg(test)]
 mod tests {
-    use crate::notifying_since::{NotifyingRestart, NotifyingSince, SelectionJudged, SinceRestart};
+    use crate::{
+        notifying_since::{NotifyingRestart, NotifyingSince, SelectionJudged, SinceRestart},
+        variant::CsfReach,
+    };
     use andromeda_context_commit::store_instant::StoreInstant;
     use andromeda_ngsi_ld_model::{
         request_body::RequestBody,
@@ -223,9 +231,14 @@ mod tests {
         .expect("the fixture is a valid subscription")
     }
 
-    fn restart_of(fragment: &Value) -> SinceRestart {
+    fn restart_under(fragment: &Value, csf_reach: CsfReach) -> SinceRestart {
         let request = SubscriptionRequest::from_request_text(fragment.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable request");
-        SinceRestart::of_selection(&request, &stored())
+        SinceRestart::of_selection(&request, &stored(), csf_reach)
+    }
+
+    /// What an update of an entity Subscription restarts.
+    fn restart_of(fragment: &Value) -> SinceRestart {
+        restart_under(fragment, CsfReach::ReachedSources)
     }
 
     /// A member left out, or written with the value it holds, leaves the
@@ -257,10 +270,21 @@ mod tests {
             json!({"notificationTrigger": ["entityCreated"]}),
             json!({"geoQ": {"georel": "near;maxDistance==10", "geometry": "Point", "coordinates": [1, 2]}}),
             json!({"scopeQ": "/Madrid"}),
-            json!({"csf": "brand==\"ACME\""}),
             json!({"localOnly": true}),
         ] {
             pretty_assertions::assert_eq!(restart_of(&fragment), SinceRestart::Restarted, "{fragment}");
         }
+    }
+
+    /// An entity Subscription's `csf` names the Context Sources it reaches and
+    /// never which Entities notify (clauses 5.2.12 and 5.8.1.4), so a new one
+    /// keeps the selected instant; a Context Source Registration
+    /// Subscription's selects the registrations it is notified of (clause
+    /// 5.11.2.4), so a new one restarts it.
+    #[test]
+    fn a_new_csf_restarts_only_what_it_selects() {
+        let fragment = json!({"csf": "brand==\"ACME\""});
+        pretty_assertions::assert_eq!(restart_under(&fragment, CsfReach::ReachedSources), SinceRestart::Kept);
+        pretty_assertions::assert_eq!(restart_under(&fragment, CsfReach::NotifiedRegistrations), SinceRestart::Restarted);
     }
 }

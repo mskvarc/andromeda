@@ -19,6 +19,8 @@ pub mod scoped_entity;
 pub mod value_item;
 
 #[cfg(test)]
+pub(crate) mod corpus_fixture;
+#[cfg(test)]
 pub(crate) mod expanded_fixture;
 #[cfg(test)]
 pub(crate) mod fixture_literal;

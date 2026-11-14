@@ -104,8 +104,8 @@ mod tests {
     #[test]
     fn the_in_memory_matcher_and_the_lquery_rendering_agree_on_every_wildcard() {
         // Clause 4.18 has two readings in this workspace: `ScopePattern::matches`
-        // answers it in memory for subscription matching and for a residual
-        // filter, and this module answers it by handing PostgreSQL an `lquery`.
+        // answers it in memory for subscription matching, and this module
+        // answers it by handing PostgreSQL an `lquery`.
         // They are the same clause, so they must give the same verdict.
         let paths = ["/A/B", "/A/B/C", "/A/B/C/D", "/A"];
         let cases = [

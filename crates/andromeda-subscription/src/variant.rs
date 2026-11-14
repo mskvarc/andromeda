@@ -26,6 +26,17 @@ pub enum DatasetIdPolicy {
     Discard,
 }
 
+/// What a Subscription's `csf` decides for one kind of Subscription.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CsfReach {
+    /// Which Context Source Registrations the Subscription is notified of
+    /// (clause 5.11.2.4), so a new `csf` changes what it selects.
+    NotifiedRegistrations,
+    /// Which Context Sources an entity Subscription reaches (clauses 5.2.12
+    /// and 5.8.1.4), never which Entities it is notified of.
+    ReachedSources,
+}
+
 /// Trait for variant-specific subscription behaviour (entity vs. CSR subscriptions).
 pub trait SubscriptionVariant: Send + Sync {
     /// The change-event type emitted over the broadcast channel.
@@ -73,6 +84,9 @@ pub trait SubscriptionVariant: Send + Sync {
 
     /// Select how this subscription variant handles the `datasetId` field.
     fn dataset_id_policy(&self) -> DatasetIdPolicy;
+
+    /// What this subscription variant's `csf` decides.
+    fn csf_reach(&self) -> CsfReach;
 
     /// Build an "upserted" change event for a subscription that was created or
     /// updated, as `kind` says.

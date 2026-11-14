@@ -72,7 +72,6 @@ pub fn compile_subscription(stored: &StoredSubscription, language_matching: Lang
         dataset_id: sub.filters.dataset_id.clone(),    // clone: compiled state owns dataset identifiers.
         notification_join: sub.notification.join,
         notification_join_level: sub.notification.effective_join_level(),
-        compiled_csf: sub.filters.csf.clone(), // clone: compiled state owns its filter AST.
         local_only: sub.delivery.local_only.unwrap_or(false),
         ngsild_conformance: sub.delivery.ngsild_conformance,
         lang: sub.delivery.lang.clone(), // clone: compiled state owns the language tag.

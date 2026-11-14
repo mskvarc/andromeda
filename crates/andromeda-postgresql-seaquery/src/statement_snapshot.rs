@@ -7,8 +7,8 @@
 //! Laying the text out changes whitespace only, so a change of the statement
 //! shows in a snapshot diff on the line of the clause that changed.
 
-use crate::statement::Statement;
-use sea_query::{PostgresQueryBuilder, QueryBuilder, Value};
+use crate::{bound_value_type::BoundValueType, statement::Statement};
+use sea_query::{PostgresQueryBuilder, QueryBuilder};
 use sqlformat::{Dialect, FormatOptions, Indent, QueryParams};
 use std::iter;
 
@@ -23,37 +23,30 @@ pub fn statement_snapshot(statement: &impl Statement) -> String {
         dialect: Dialect::PostgreSql,
         ..FormatOptions::default()
     };
-    let markers = values
-        .0
-        .iter()
-        .enumerate()
-        .map(|(position, value)| format!("{}: {} {}", position + 1, value_type(value), PostgresQueryBuilder.value_to_string(value)));
+    let markers = values.0.iter().enumerate().map(|(position, value)| {
+        format!(
+            "{}: {} {}",
+            position + 1,
+            BoundValueType::from(value),
+            PostgresQueryBuilder.value_to_string(value)
+        )
+    });
     iter::once(sqlformat::format(&text, &QueryParams::None, &options))
         .chain(markers)
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-/// The name of the variant `value` is, which says how the driver binds it
-/// (`Int` as int4, `BigDecimal` as numeric, and so on).
-fn value_type(value: &Value) -> String {
-    let mut variant = format!("{value:?}");
-    if let Some(payload) = variant.find('(') {
-        variant.truncate(payload);
-    }
-    variant
-}
-
 /// Assert that the statement `$statement` matches the snapshot `$name` of the
 /// calling crate, as [`statement_snapshot`] renders it.
 ///
-/// Expands to `andromeda_architecture_checks::assert_named_snapshot!`, so the
+/// Expands to [`assert_named_snapshot!`](crate::assert_named_snapshot), so the
 /// snapshot is named and placed as every snapshot of the workspace is, and
 /// the calling crate takes `insta` as a dev-dependency.
 #[macro_export]
 macro_rules! assert_statement_snapshot {
     ($name:expr, $statement:expr $(,)?) => {
-        ::andromeda_architecture_checks::assert_named_snapshot!($name, $crate::statement_snapshot::statement_snapshot(&$statement))
+        $crate::assert_named_snapshot!($name, $crate::statement_snapshot::statement_snapshot(&$statement))
     };
 }
 
