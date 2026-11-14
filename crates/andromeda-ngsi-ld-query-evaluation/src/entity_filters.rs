@@ -22,7 +22,7 @@ where
 {
     filters.q.is_none_or(|expr| evaluate(expr, entity, linked, filters.language_matching))
         && filters.geo.is_none_or(|geo| geo_query_matches(geo, entity))
-        && filters.scope.is_none_or(|scope| scope_query_matches(scope, entity))
+        && filters.scope.is_none_or(|scope| scope_query_matches(scope, entity.scopes()))
 }
 
 #[cfg(test)]

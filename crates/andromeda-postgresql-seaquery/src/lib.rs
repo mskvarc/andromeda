@@ -19,6 +19,8 @@
 pub mod advisory_lock;
 pub mod aggregate;
 pub mod bit_string;
+#[cfg(feature = "test-support")]
+pub mod bound_value_type;
 pub mod branch;
 pub mod calendar_period;
 pub mod cast;
@@ -59,6 +61,8 @@ pub mod literal;
 pub mod lock_wait_bound;
 pub mod ltree;
 pub mod maintenance;
+#[cfg(feature = "test-support")]
+pub mod named_snapshot;
 pub mod numeric_special;
 pub mod open_instant;
 pub mod operator;

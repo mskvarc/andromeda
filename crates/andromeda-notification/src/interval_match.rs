@@ -2,7 +2,7 @@
 //! 5.8.6).
 //!
 //! A periodic notification reads entities a page at a time and decides in memory
-//! which ones the subscription's `q`, `geoQ`, `scopeQ` and `csf` accept, through
+//! which ones the subscription's `q`, `geoQ` and `scopeQ` accept, through
 //! the same entity filters a change-driven notification applies, because a
 //! boolean selector cannot be pushed into a `WHERE`.
 
@@ -14,7 +14,7 @@ use andromeda_subscription::{compiled::CompiledSubscription, matching::matches_e
 use chrono::{DateTime, Utc};
 
 /// The entities of a page the subscription's filters accept as they stand at
-/// `at`, the entities a `rel{…}` hop of its `q` or `csf` crosses into read
+/// `at`, the entities a `rel{…}` hop of its `q` crosses into read
 /// from the store (clause 4.9).
 ///
 /// # Errors
@@ -278,34 +278,24 @@ mod tests {
         assert_eq!(matched, vec![parked("urn:v1", "urn:p1")]);
     }
 
-    /// Clause 4.9: on an entity subscription `csf` is a second Query Language
-    /// expression over the notified entity, so a periodic notification applies
-    /// it as a change-driven one does.
+    /// Table 5.2.12-1 matches `csf` against Context Source Registrations, so on
+    /// an entity subscription it does not decide which entities a periodic
+    /// notification carries, whatever it says of them.
     #[test]
-    fn a_periodic_subscription_applies_its_csf() {
-        let with_csf = |csf: &str| {
-            let mut subscription = serde_json::to_value(speeding()).expect("the subscription serialises");
-            subscription["q"] = Value::Null;
-            subscription["csf"] = json!(csf);
-            serde_json::from_value::<Subscription>(subscription).expect("valid subscription")
-        };
-        let at = instant("2029-01-01T00:00:00Z");
+    fn a_periodic_subscription_ignores_its_csf() {
+        let mut subscription = serde_json::to_value(speeding()).expect("the subscription serialises");
+        subscription["q"] = Value::Null;
+        subscription["csf"] = json!(format!("\"{SPEED}\">30"));
+        let subscription: Subscription = serde_json::from_value(subscription).expect("valid subscription");
 
-        let refused = filtered(
-            with_csf(&format!("\"{SPEED}\">30")),
+        let carried = filtered(
+            subscription,
             vec![vehicle("2030-01-01T00:00:00Z")],
-            at,
-            &LinkedStates::new(),
-        );
-        let kept = filtered(
-            with_csf(&format!("\"{SPEED}\">10")),
-            vec![vehicle("2030-01-01T00:00:00Z")],
-            at,
+            instant("2029-01-01T00:00:00Z"),
             &LinkedStates::new(),
         );
 
-        assert_eq!(refused, Vec::<EntityState>::new());
-        assert_eq!(kept, vec![vehicle("2030-01-01T00:00:00Z")]);
+        assert_eq!(carried, vec![vehicle("2030-01-01T00:00:00Z")]);
     }
 
     /// A Vehicle with a `speed` of 20 until `expires_at`, a `location` in
@@ -379,7 +369,7 @@ mod tests {
     }
 
     /// Clause 5.8.6: a periodic notification and a change-driven one decide
-    /// `q`, `geoQ`, `scopeQ` and `csf` alike, so one entity is kept or
+    /// `q`, `geoQ` and `scopeQ` alike, so one entity is kept or
     /// refused by both.
     #[test]
     fn an_interval_and_a_change_keep_and_refuse_the_same_entity_by_each_filter() {
@@ -389,7 +379,6 @@ mod tests {
         let far = json!({"georel": "near;maxDistance==10", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"});
         let cases = [
             ("q", json!(format!("\"{SPEED}\">10")), json!(format!("\"{SPEED}\">30"))),
-            ("csf", json!(format!("\"{SPEED}\">10")), json!(format!("\"{SPEED}\">30"))),
             ("scopeQ", json!("/Spain"), json!("/France")),
             ("geoQ", near, far),
         ];
@@ -417,7 +406,7 @@ mod tests {
     /// so a filter reading it refuses the entity on both.
     #[test]
     fn an_interval_and_a_change_refuse_an_entity_whose_instance_has_expired() {
-        let filter = || filtering_on("csf", &json!(format!("\"{SPEED}\">10")));
+        let filter = || filtering_on("q", &json!(format!("\"{SPEED}\">10")));
         let expired = "2020-01-01T00:00:00Z";
         assert_eq!(
             (

@@ -8,7 +8,7 @@ use crate::{
     },
     pattern::Pattern,
 };
-use andromeda_ngsi_ld_value_order::string_order::StringRelation;
+use andromeda_ngsi_ld_value_order::string_order::{StringRelation, string_order};
 use std::cmp::Ordering;
 
 /// A single filter predicate within a `q` expression.
@@ -125,18 +125,19 @@ impl CmpOp {
         }
     }
 
-    /// The relation two text strings are ordered by under the comparison.
+    /// Whether the comparison holds between the text strings `lhs` and `rhs`.
     ///
     /// Clause 4.9 compares text strings following RFC 8259 section 8.3, which
     /// makes equality code unit identity, and asks for the Unicode Collation
     /// Algorithm where strings are ordered, so an equality compares code
     /// points and an ordering compares under the collation.
     #[must_use]
-    pub const fn string_relation(self) -> StringRelation {
-        match self {
+    pub fn holds_for_strings(self, lhs: &str, rhs: &str) -> bool {
+        let relation = match self {
             CmpOp::Equal | CmpOp::Unequal => StringRelation::CodePoint,
             CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => StringRelation::Collated,
-        }
+        };
+        self.holds(string_order(lhs, rhs, relation))
     }
 }
 
@@ -252,10 +253,11 @@ mod tests {
 
     #[test]
     fn an_equality_compares_strings_by_code_point_and_an_ordering_by_collation() {
-        assert_eq!(CmpOp::Equal.string_relation(), StringRelation::CodePoint);
-        assert_eq!(CmpOp::Unequal.string_relation(), StringRelation::CodePoint);
-        for op in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq] {
-            assert_eq!(op.string_relation(), StringRelation::Collated, "{op:?}");
-        }
+        assert!(!CmpOp::Equal.holds_for_strings("\u{e9}", "e\u{301}"));
+        assert!(CmpOp::Unequal.holds_for_strings("\u{e9}", "e\u{301}"));
+        assert!(CmpOp::Greater.holds_for_strings("\u{e9}", "e\u{301}"));
+        assert!(CmpOp::Less.holds_for_strings("\u{e9}", "f"));
+        assert!(CmpOp::LessEq.holds_for_strings("a", "B"));
+        assert!(!CmpOp::GreaterEq.holds_for_strings("a", "B"));
     }
 }

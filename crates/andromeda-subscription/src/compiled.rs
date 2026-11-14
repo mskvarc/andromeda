@@ -7,7 +7,7 @@
 //! reference the query AST and the renderer's system-attribute policy. Transport
 //! selection remains in delivery bindings and is not compiled here.
 
-use crate::{geo_filter::SubscriptionGeoFilter, notification_slot::NotificationCadence, notifying_since::NotifyingSince};
+use crate::{entity_filter_set::EntityFilterSet, geo_filter::SubscriptionGeoFilter, notification_slot::NotificationCadence, notifying_since::NotifyingSince};
 use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_lexicon::{
@@ -164,7 +164,7 @@ pub struct CompiledSubscription {
     pub notifying_since: NotifyingSince,
     /// Parsed entity filter expression.
     pub compiled_q: Option<Expr>,
-    /// How the target languages of `compiled_q` and `compiled_csf` select
+    /// How the target languages of `compiled_q` select
     /// languageMap keys: the matching of the broker's `q_target_languages` level
     /// when the subscription was compiled, so a stored filter reads as the broker now
     /// reads every filter.
@@ -183,8 +183,6 @@ pub struct CompiledSubscription {
     /// Maximum linked-entity join depth (the clause 4.5.23 joinLevel query parameter), which
     /// the spec bounds only by being a positive integer.
     pub notification_join_level: NonZeroU32,
-    /// Parsed context-source filter expression.
-    pub compiled_csf: Option<Expr>,
     /// When true, this subscription only matches locally-stored entities (clause 5.5.13).
     pub local_only: bool,
     /// The NGSI-LD version the Entities of a notification are amended to
@@ -205,17 +203,16 @@ impl CompiledSubscription {
         ListInForce::of(Some(&self.notification_projection), &self.notification_attributes)
     }
 
-    /// The `q`, `geoQ` and `scopeQ` an entity is filtered by (clause 5.8.6),
-    /// or `None` when the stored `geoQ` no longer compiles: a defined
-    /// geoquery the broker cannot evaluate admits no entity.
+    /// The `q`, `geoQ` and `scopeQ` an entity is filtered by (clause 5.8.6);
+    /// a stored `geoQ` that no longer compiles leaves none to evaluate.
     #[must_use]
-    pub const fn entity_filters(&self) -> Option<EntityFilters<'_>> {
+    pub const fn entity_filters(&self) -> EntityFilterSet<'_> {
         let geo = match &self.compiled_geo_q {
             SubscriptionGeoFilter::Unrestricted => None,
             SubscriptionGeoFilter::Restricts(query) => Some(query),
-            SubscriptionGeoFilter::Unusable => return None,
+            SubscriptionGeoFilter::Unusable => return EntityFilterSet::AdmitsNothing,
         };
-        Some(EntityFilters {
+        EntityFilterSet::Evaluate(EntityFilters {
             q: self.compiled_q.as_ref(),
             language_matching: self.language_matching,
             geo,
@@ -223,13 +220,9 @@ impl CompiledSubscription {
         })
     }
 
-    /// The filters whose `rel{…}` hops cross into linked entities: the `q`
-    /// and, on an entity subscription, the `csf` read over the same entity.
+    /// The filters whose `rel{…}` hops cross into linked entities: the `q`.
     pub fn hopping_filters(&self) -> impl Iterator<Item = &Expr> {
-        [self.compiled_q.as_ref(), self.compiled_csf.as_ref()]
-            .into_iter()
-            .flatten()
-            .filter(|filter| filter.contains_linked_hop())
+        self.compiled_q.as_ref().into_iter().filter(|filter| filter.contains_linked_hop())
     }
 
     /// Whether a filter of this subscription crosses into a linked entity

@@ -7,9 +7,6 @@
 //! the repository's naming of files and the name is unique within the crate.
 //! The header of each file names the test's source file and leaves out the
 //! asserted expression, which says nothing the source does not.
-//!
-//! A file another reader takes from a fixed path is not a snapshot: the
-//! [`generated_artifact`](crate::generated_artifact) check keeps it.
 
 /// Assert that the text `$text` matches the insta snapshot `$name` of the
 /// calling crate, under the settings this module describes.

@@ -21,7 +21,6 @@ use andromeda_ngsi_ld_query::filter::{
     predicate::{CmpOp, Predicate, SetMembership},
     scalar::{CompareValue, Scalar},
 };
-use andromeda_ngsi_ld_value_order::string_order::string_order;
 use std::borrow::Cow;
 
 /// Evaluate a parsed `q` expression (clause 4.9) against an entity, reading
@@ -236,7 +235,7 @@ fn compare_in_domain(value: &TargetValue<'_>, op: CmpOp, scalar: &Scalar) -> Opt
     match scalar {
         Scalar::Number(rhs) => Some(op.holds(value.number_ordering(rhs)?)),
         Scalar::Bool(rhs) => Some(op.holds(value.as_boolean()?.cmp(rhs))),
-        Scalar::Str(rhs) => Some(op.holds(string_order(&value.as_text()?, rhs, op.string_relation()))),
+        Scalar::Str(rhs) => Some(op.holds_for_strings(&value.as_text()?, rhs)),
         Scalar::Uri(rhs) => Some(op.holds(value.as_text()?.as_ref().cmp(rhs.as_str()))),
         // A time operand compares only with a value declared as one of its form
         // (clause 4.9: no equality of data types, no match), in the temporal
@@ -280,6 +279,7 @@ mod tests {
         },
         term_expander::TermExpander,
     };
+    use andromeda_q_corpus::conformance::{COLOR, CONFORMANCE, ConformanceVehicle, NAME, SPEED};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use serde_json::Value;
@@ -1729,16 +1729,16 @@ mod tests {
         }
     }
 
-    /// An entity carrying one Property value for each of `speed`, `color` and
-    /// `name`.
-    fn vehicle(speed: i64, color: &str, name: &str) -> Value {
+    /// An entity carrying one Property value for each of the conformance
+    /// attributes.
+    fn vehicle(vehicle: &ConformanceVehicle) -> Value {
         let property = |value: Value| serde_json::json!([{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value}]}]);
         serde_json::json!([{
             "@id": "urn:ngsi-ld:Vehicle:A1",
             "@type": ["https://example.com/Vehicle"],
-            "https://example.com/speed": property(speed.into()),
-            "https://example.com/color": property(color.into()),
-            "https://example.com/name": property(name.into()),
+            SPEED.as_str(): property(vehicle.speed.into()),
+            COLOR.as_str(): property(vehicle.color.into()),
+            NAME.as_str(): property(vehicle.name.into()),
         }])
     }
 
@@ -1747,52 +1747,14 @@ mod tests {
     /// predicate over it, in either polarity.
     #[test]
     fn every_operator_selects_by_value_and_never_an_entity_without_the_attribute() {
-        let cases = [
-            (
-                "\"https://example.com/speed\">50",
-                vehicle(80, "red", "Alpha"),
-                Some(vehicle(10, "red", "Alpha")),
-            ),
-            (
-                "\"https://example.com/speed\"==10..20",
-                vehicle(15, "red", "Alpha"),
-                Some(vehicle(25, "red", "Alpha")),
-            ),
-            (
-                "\"https://example.com/speed\"!=10..20",
-                vehicle(25, "red", "Alpha"),
-                Some(vehicle(15, "red", "Alpha")),
-            ),
-            (
-                "\"https://example.com/color\"==\"red\",\"blue\"",
-                vehicle(80, "red", "Alpha"),
-                Some(vehicle(80, "green", "Alpha")),
-            ),
-            (
-                "\"https://example.com/color\"!=\"red\",\"blue\"",
-                vehicle(80, "green", "Alpha"),
-                Some(vehicle(80, "red", "Alpha")),
-            ),
-            (
-                "\"https://example.com/name\"~=\"^A.*\"",
-                vehicle(80, "red", "Alpha"),
-                Some(vehicle(80, "red", "Beta")),
-            ),
-            (
-                "\"https://example.com/name\"!~=\"^A.*\"",
-                vehicle(80, "red", "Beta"),
-                Some(vehicle(80, "red", "Alpha")),
-            ),
-            ("\"https://example.com/speed\"", vehicle(80, "red", "Alpha"), None),
-        ];
         let absent = serde_json::json!([{"@id": "urn:ngsi-ld:Vehicle:A2", "@type": ["https://example.com/Vehicle"]}]);
-        for (q, matching, non_matching) in cases {
-            let expr = parse(q).expect("parses");
-            assert!(holds(&expr, &matching), "{q} must select its matching entity");
-            if let Some(non_matching) = non_matching {
-                assert!(!holds(&expr, &non_matching), "{q} must reject its non-matching entity");
+        for case in CONFORMANCE {
+            let expr = parse(case.filter).expect("parses");
+            assert!(holds(&expr, &vehicle(&case.selected)), "{} must select its matching entity", case.filter);
+            if let Some(rejected) = &case.rejected {
+                assert!(!holds(&expr, &vehicle(rejected)), "{} must reject its non-matching entity", case.filter);
             }
-            assert!(!holds(&expr, &absent), "{q} must reject an entity without the attribute");
+            assert!(!holds(&expr, &absent), "{} must reject an entity without the attribute", case.filter);
         }
     }
 }

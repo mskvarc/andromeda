@@ -116,6 +116,12 @@ macro_rules! workspace_architecture {
                 $crate::toolchain_pin::assert_images_install_the_pinned_toolchain(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
+            /// Every checked-in snapshot is taken by a test of its crate.
+            #[test]
+            fn every_snapshot_is_taken_by_a_test() {
+                $crate::orphan_snapshot::assert_every_snapshot_is_referenced(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
+            }
+
             /// No production source names a `dyn Error` trait object off the baseline.
             #[test]
             fn errors_are_typed_not_erased() {

@@ -4,12 +4,11 @@
 //! a compiled subscription. Used by the notification worker (event-driven
 //! delivery) and the subscription cache (notification-event generation).
 
-use crate::compiled::CompiledSubscription;
+use crate::{compiled::CompiledSubscription, entity_filter_set::EntityFilterSet};
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_ngsi_ld_model::{entity_selector::selectors_select, notification::ChangeOrigin};
 use andromeda_ngsi_ld_query_evaluation::{
     entity_filters::entity_filters_admit,
-    q::eval::evaluate,
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
 };
 use chrono::Utc;
@@ -75,14 +74,15 @@ pub fn selects_change(sub: &CompiledSubscription, event: &ChangeEvent) -> bool {
     true
 }
 
-/// Evaluate q (clause 4.9), geoQ (clause 4.10), scopeQ (clause 4.19) and csf
+/// Evaluate q (clause 4.9), geoQ (clause 4.10) and scopeQ (clause 4.19)
 /// against an entity, the entities a `rel{…}` hop crosses into read from
 /// `linked`.
 ///
 /// Returns `true` if the entity passes all configured filters on the subscription.
 /// Filters that are not configured (None) are skipped, and a stored `geoQ`
-/// that no longer compiles admits no entity. On an entity subscription `csf`
-/// is a second Query Language expression over the same entity. The entity is
+/// that no longer compiles admits no entity. The `csf` of an entity
+/// subscription takes no part: Table 5.2.12-1 matches it against Context
+/// Source Registrations, never against the Entities themselves. The entity is
 /// a stored state or a received document, read through the query language's
 /// own reading of an entity.
 pub fn matches_entity_filters<'a, E, L>(sub: &CompiledSubscription, entity: E, linked: L) -> bool
@@ -90,24 +90,19 @@ where
     E: QueriedEntity<'a> + LocatedEntity<'a> + ScopedEntity<'a>,
     L: LinkedEntities<'a>,
 {
-    let Some(filters) = sub.entity_filters() else {
-        debug!("Subscription {} skipped: its stored geoQ does not compile and admits no entity", sub.id);
-        return false;
-    };
-
-    if !entity_filters_admit(filters, entity, linked) {
-        debug!("Subscription {} skipped: q, geoQ or scopeQ did not admit entity", sub.id);
-        return false;
+    match sub.entity_filters() {
+        EntityFilterSet::AdmitsNothing => {
+            debug!("Subscription {} skipped: its stored geoQ does not compile and admits no entity", sub.id);
+            false
+        }
+        EntityFilterSet::Evaluate(filters) => {
+            let admitted = entity_filters_admit(filters, entity, linked);
+            if !admitted {
+                debug!("Subscription {} skipped: q, geoQ or scopeQ did not admit entity", sub.id);
+            }
+            admitted
+        }
     }
-
-    if let Some(ref csf_expr) = sub.compiled_csf
-        && !evaluate(csf_expr, entity, linked, sub.language_matching)
-    {
-        debug!("Subscription {} skipped: csf filter did not match entity", sub.id);
-        return false;
-    }
-
-    true
 }
 
 #[cfg(test)]
@@ -202,7 +197,6 @@ mod tests {
             dataset_id: None,
             notification_join: None,
             notification_join_level: NonZeroU32::MIN,
-            compiled_csf: None,
             local_only: false,
             ngsild_conformance: None,
             lang: None,

@@ -17,9 +17,11 @@ use andromeda_ngsi_ld_query::{
     entity_filters::EntityFilters,
     filter::{
         compilation::{FilterAdmission, FilterOptIns, compile_q_filter},
+        expression::Expr,
         language_targeting::LanguageTargeting,
     },
     geo::compile::compile_geo_query,
+    term_expander::TermExpander,
 };
 use andromeda_ngsi_ld_query_evaluation::entity_filters::entity_filters_admit;
 use andromeda_ngsi_ld_request::deferred_split_filters::DeferredSplitFilters;
@@ -47,44 +49,23 @@ impl EntityQueryService {
         &self,
         target: &ContextTarget,
         entities: Vec<ReceivedState>,
-        deferred: DeferredSplitFilters,
+        mut deferred: DeferredSplitFilters,
         context: &ContextSpec,
         language_targeting: LanguageTargeting,
     ) -> Result<Vec<ReceivedState>, EntityError> {
-        let DeferredSplitFilters {
-            q,
-            geo,
-            scope_q,
-            json_keys,
-            expand_values,
-            join,
-            join_level,
-        } = deferred;
         // One preparation serves the deferred `q` and the geoquery alike.
         let prepared_context = self.engine().prepare_term_context(context);
         let expander = ContextualExpander::new(self.engine(), &prepared_context);
-        let q = match q {
-            Some(q_expr) => {
-                // Clause 4.9 EXAMPLE 11: the deferred filter is expanded under
-                // the same `jsonKeys` declaration the local query used, so one
-                // request has one expansion of one filter.
-                let opt_ins = FilterOptIns::expanded(json_keys.as_deref(), expand_values.as_deref(), &expander).await?;
-                let admission = FilterAdmission {
-                    complexity: self.filter_complexity,
-                    language_targeting,
-                };
-                // Clause 5.7.2.4: `splitEntities` belongs to Query Entities.
-                let hops = FilterHops::new(LinkedOperation::QueryEntities, join, join_level);
-                Some(compile_q_filter::<EntityError, _, _>(q_expr, &opt_ins, admission, &hops, &expander).await?)
-            }
+        let q = match deferred.q.take() {
+            Some(q_expr) => Some(self.compile_deferred_q(q_expr, &deferred, language_targeting, &expander).await?),
             None => None,
         };
-        let geo = compile_geo_query(geo.as_ref(), &expander, self.geo_admission).await?;
+        let geo = compile_geo_query(deferred.geo.as_ref(), &expander, self.geo_admission).await?;
         let filters = EntityFilters {
             q: q.as_ref(),
             language_matching: language_targeting.matching(),
             geo: geo.as_ref(),
-            scope: scope_q.as_ref(),
+            scope: deferred.scope_q.as_ref(),
         };
 
         let documents: Vec<(ReceivedState, EntityDocument)> = entities
@@ -94,18 +75,51 @@ impl EntityQueryService {
                 (version, document)
             })
             .collect();
-        let linked = match filters.q.filter(|expr| expr.contains_linked_hop()) {
-            Some(expr) => {
-                let roots: Vec<&EntityDocument> = documents.iter().map(|(_, document)| document).collect();
-                self.linked_filter_states(target, &roots, &[expr], Utc::now()).await?
-            }
-            None => LinkedStates::new(),
-        };
+        let linked = self.linked_states_of(target, &documents, filters.q).await?;
         Ok(documents
             .into_iter()
             .filter(|(_, document)| entity_filters_admit(filters, document, &linked))
             .map(|(version, _)| version)
             .collect())
+    }
+
+    /// Compile the deferred `q`, expanded under the opt-ins and the hop bound
+    /// `deferred` carries.
+    async fn compile_deferred_q(
+        &self,
+        q_expr: Expr,
+        deferred: &DeferredSplitFilters,
+        language_targeting: LanguageTargeting,
+        expander: &impl TermExpander,
+    ) -> Result<Expr, EntityError> {
+        // Clause 4.9 EXAMPLE 11: the deferred filter is expanded under
+        // the same `jsonKeys` declaration the local query used, so one
+        // request has one expansion of one filter.
+        let opt_ins = FilterOptIns::expanded(deferred.json_keys.as_deref(), deferred.expand_values.as_deref(), expander).await?;
+        let admission = FilterAdmission {
+            complexity: self.filter_complexity,
+            language_targeting,
+        };
+        // Clause 5.7.2.4: `splitEntities` belongs to Query Entities.
+        let hops = FilterHops::new(LinkedOperation::QueryEntities, deferred.join, deferred.join_level);
+        compile_q_filter::<EntityError, _, _>(q_expr, &opt_ins, admission, &hops, expander).await
+    }
+
+    /// The entities the `rel{…}` hops of `q` cross into from the merged
+    /// `documents`, none when `q` takes no hop.
+    async fn linked_states_of(
+        &self,
+        target: &ContextTarget,
+        documents: &[(ReceivedState, EntityDocument)],
+        q: Option<&Expr>,
+    ) -> Result<LinkedStates, EntityError> {
+        match q.filter(|expr| expr.contains_linked_hop()) {
+            Some(expr) => {
+                let roots: Vec<&EntityDocument> = documents.iter().map(|(_, document)| document).collect();
+                self.linked_filter_states(target, &roots, &[expr], Utc::now()).await
+            }
+            None => Ok(LinkedStates::new()),
+        }
     }
 }
 

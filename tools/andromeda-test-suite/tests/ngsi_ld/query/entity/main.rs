@@ -45,4 +45,5 @@ mod n_qry_ent_9011;
 mod n_qry_ent_9012;
 mod n_qry_ent_9013;
 mod n_qry_ent_9014;
+mod n_qry_ent_9015;
 mod o_qry_ent_0005;

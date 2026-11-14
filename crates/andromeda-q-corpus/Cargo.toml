@@ -13,7 +13,12 @@ description = "A fixed corpus of NGSI-LD q filters, each with the Entities ETSI 
 workspace = true
 
 [dependencies]
+andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-query.workspace = true
+andromeda-ngsi-ld-vocabulary.workspace = true
+iri-rs = { version = "4.1.1", features = ["serde", "static"] }
 strum = { version = "0.28.0", features = ["derive"] }
+thiserror = "2.0.21"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

@@ -177,17 +177,6 @@ pub(crate) fn validate_common_members(request: &SubscriptionRequest, admission: 
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::EntitiesEmpty));
     }
 
-    // Table 5.2.33-1 makes a selector's `id` "Valid URI(s)": an empty array
-    // names no entity, and read as no identifier constraint it would select
-    // every entity of the selector's type.
-    if request
-        .entities
-        .as_set()
-        .is_some_and(|selectors| selectors.iter().any(|selector| selector.id.as_ref().is_some_and(Vec::is_empty)))
-    {
-        return Err(SubscriptionError::Validation(SubscriptionValidationReason::SelectorIdEmpty));
-    }
-
     if let Some(notification) = &request.notification {
         validate_notification(notification, request.q.as_set())?;
     }
@@ -282,7 +271,7 @@ mod tests {
 
     /// Table 5.2.33-1 types a selector's `id` as "String or String[]" of valid
     /// URIs: an array is admitted at create and update, and an empty one,
-    /// which names no entity, is refused at both.
+    /// which names no entity, is refused when the body is read.
     #[test]
     fn a_selector_id_array_is_admitted_and_an_empty_one_refused() {
         let notification = json!({"endpoint": {"uri": "https://receiver.example.com/notify"}});
@@ -299,19 +288,9 @@ mod tests {
         .expect("an id array is admitted in an update fragment");
 
         let unnamed = json!({"type": "Subscription", "entities": [{"type": "Vehicle", "id": []}], "notification": notification});
-        let created = validate_create_request(&request(&unnamed), broker_defaults(LanguageTargeting::Specification));
-        assert!(
-            matches!(&created, Err(SubscriptionError::Validation(SubscriptionValidationReason::SelectorIdEmpty))),
-            "got {created:?}"
-        );
-        let updated = validate_common_members(
-            &request(&json!({"entities": [{"type": "Vehicle"}, {"type": "Vehicle", "id": []}]})),
-            broker_defaults(LanguageTargeting::Specification),
-        );
-        assert!(
-            matches!(&updated, Err(SubscriptionError::Validation(SubscriptionValidationReason::SelectorIdEmpty))),
-            "got {updated:?}"
-        );
+        assert!(SubscriptionRequest::from_request_text(unnamed.to_string().as_bytes(), ContextReading::keyword_spellings()).is_err());
+        let fragment = json!({"entities": [{"type": "Vehicle"}, {"type": "Vehicle", "id": []}]});
+        assert!(SubscriptionRequest::from_request_text(fragment.to_string().as_bytes(), ContextReading::keyword_spellings()).is_err());
     }
 
     #[test]

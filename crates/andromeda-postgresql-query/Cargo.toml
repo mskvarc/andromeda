@@ -17,7 +17,6 @@ andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-query.workspace = true
-andromeda-ngsi-ld-value-order.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-encoding.workspace = true

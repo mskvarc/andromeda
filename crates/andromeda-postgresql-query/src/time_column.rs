@@ -27,8 +27,8 @@ pub const fn column_name(timeproperty: TimeProp) -> &'static str {
 #[cfg(test)]
 mod tests {
     use crate::time_column::column_name;
-    use andromeda_architecture_checks::assert_named_snapshot;
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
+    use andromeda_postgresql_seaquery::assert_named_snapshot;
 
     #[test]
     fn no_time_axis_falls_back_to_another_column() {

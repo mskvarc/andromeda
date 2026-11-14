@@ -4,7 +4,6 @@ use crate::{
     error::QueryError,
     scope::{pattern::ScopePattern, pattern_fault::ScopePatternFault},
 };
-use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{self, Write},
@@ -78,25 +77,6 @@ impl ScopeQuery {
     /// per backend.
     pub fn alternatives(&self) -> impl Iterator<Item = impl Iterator<Item = &ScopePattern>> {
         self.alternatives.iter().map(|alternative| alternative.iter())
-    }
-
-    /// Whether a set of entity scopes satisfies this query.
-    ///
-    /// Clause 4.19: an alternative holds when every one of its requirements is
-    /// satisfied by at least one of the entity's scopes, and the query holds
-    /// when any alternative does. This is the in-memory reading used by
-    /// subscription matching and by the post-merge filtering of a distributed
-    /// query; the backend renderings walk the same tree. The scopes are walked
-    /// once per requirement, so their iterator has to be cheap to clone.
-    pub fn matches<'a, I>(&self, scopes: I) -> bool
-    where
-        I: IntoIterator<Item = &'a ScopePath>,
-        I::IntoIter: Clone,
-    {
-        let scopes = scopes.into_iter();
-        self.alternatives
-            .iter()
-            .any(|alternative| alternative.iter().all(|pattern| scopes.clone().any(|scope| pattern.matches(scope))))
     }
 }
 
@@ -280,10 +260,6 @@ impl From<ScopeQuery> for String {
 mod tests {
     use super::*;
 
-    fn paths(raw: &[&str]) -> Vec<ScopePath> {
-        raw.iter().map(|path| path.parse().expect("a scope path")).collect()
-    }
-
     fn shape(raw: &str) -> Vec<Vec<String>> {
         ScopeQuery::parse(raw)
             .expect("valid scope query")
@@ -375,43 +351,9 @@ mod tests {
     }
 
     #[test]
-    fn a_conjunction_needs_every_requirement_met_by_some_scope() {
-        // Clause 4.19: `;` is AND across the entity's whole scope set, not
-        // within one scope.
-        let query = ScopeQuery::parse("(/Spain;/Madrid/Gardens)").expect("valid scope query");
-        assert!(query.matches(&paths(&["/Spain", "/Madrid/Gardens"])));
-        assert!(!query.matches(&paths(&["/Spain"])));
-    }
-
-    #[test]
-    fn a_disjunction_needs_only_one_alternative_met() {
-        let query = ScopeQuery::parse("/France,/Spain").expect("valid scope query");
-        assert!(query.matches(&paths(&["/Spain"])));
-        assert!(query.matches(&paths(&["/France"])));
-        assert!(!query.matches(&paths(&["/Italy"])));
-    }
-
-    #[test]
     fn a_pipe_is_an_alternative_separator_like_a_comma() {
         // Clause 4.19 `orOp = %x7C / %x2C`: `|` and `,` are both OR.
         assert_eq!(shape("/A|/B"), vec![vec!["/A".to_string()], vec!["/B".to_string()]]);
-    }
-
-    /// Clause 4.19 EXAMPLE 5: `(/Madrid/Districts;/CompanyA)|/CompanyB`.
-    #[test]
-    fn a_grouped_conjunction_or_a_pattern_matches_either() {
-        let query = ScopeQuery::parse("(/A;/B)|/C").expect("valid scope query");
-        assert!(query.matches(&paths(&["/A", "/B"])));
-        assert!(query.matches(&paths(&["/C"])));
-        assert!(!query.matches(&paths(&["/A"])));
-    }
-
-    /// Clause 4.19 spells rooted patterns only; a clause 4.18 Scope written
-    /// without its leading `/` meets them by its levels.
-    #[test]
-    fn a_scope_query_matches_bare_and_rooted_scopes_alike() {
-        let query = ScopeQuery::parse("(/A;/B)").expect("valid scope query");
-        assert!(query.matches(&paths(&["A", "/B"])));
     }
 
     #[test]

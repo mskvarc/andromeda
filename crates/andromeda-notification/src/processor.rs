@@ -448,7 +448,6 @@ mod tests {
             dataset_id: None,
             notification_join: None,
             notification_join_level: NonZeroU32::MIN,
-            compiled_csf: None,
             local_only: false,
             ngsild_conformance: None,
             lang: None,
@@ -957,8 +956,8 @@ mod tests {
         assert!(matches_entity_filters(&sub, &entity_with_geo_and_scope(), NoLinkedEntities));
     }
 
-    /// Design: the commit matched a durable delivery's `q`, `geoQ`, `scopeQ`
-    /// and `csf` on the state queued with it, so delivery does not evaluate
+    /// Design: the commit matched a durable delivery's `q`, `geoQ` and
+    /// `scopeQ` on the state queued with it, so delivery does not evaluate
     /// them again; a live change is filtered now.
     #[test]
     fn durable_delivery_does_not_re_evaluate_a_matched_filter() {

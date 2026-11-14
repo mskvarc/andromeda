@@ -247,7 +247,11 @@ where
             }
             let existing_status = existing.lifecycle.standing.reported_status(Utc::now());
             let status = compute_updated_status(existing_status, &requested_status_change(&request));
-            let restart = NotifyingRestart::of_update(existing_status, status, SinceRestart::of_selection(&request, &existing));
+            let restart = NotifyingRestart::of_update(
+                existing_status,
+                status,
+                SinceRestart::of_selection(&request, &existing, self.variant.csf_reach()),
+            );
             let merged = SubscriptionWriteValues::merged(request, existing, self.variant.dataset_id_policy())?;
             validate_merged_subscription(&merged)?;
             let fields = merged.to_fields();

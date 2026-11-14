@@ -89,7 +89,7 @@ pub enum HopResolution<'a> {
     Resolved(&'a LinkedStates),
 }
 
-/// The candidates whose `q`, `geoQ`, `scopeQ` and `csf` hold on a state the
+/// The candidates whose `q`, `geoQ` and `scopeQ` hold on a state the
 /// change is filtered against, in candidate order.
 ///
 /// With no state to read, no filter can be evaluated and the candidates stand.
@@ -215,7 +215,6 @@ mod tests {
             dataset_id: None,
             notification_join: None,
             notification_join_level: NonZeroU32::MIN,
-            compiled_csf: None,
             local_only: false,
             ngsild_conformance: None,
             lang: None,

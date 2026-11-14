@@ -11,7 +11,7 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_query_evaluation::{
     geo_query::geo_query_matches,
     q::eval::evaluate,
-    queried_entity::linked_entities::NoLinkedEntities,
+    queried_entity::{linked_entities::NoLinkedEntities, scoped_entity::ScopedEntity},
     scope_query::scope_query_matches,
 };
 use serde_json::{Value, json};
@@ -121,6 +121,9 @@ fn a_geo_query_and_a_scope_query_read_what_the_document_writes() {
         geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("an attribute name"),
     };
     assert!(geo_query_matches(&near, &written));
-    assert!(scope_query_matches(&ScopeQuery::parse("/Madrid/#").expect("a scope query"), &written));
-    assert!(!scope_query_matches(&ScopeQuery::parse("/Berlin").expect("a scope query"), &written));
+    assert!(scope_query_matches(
+        &ScopeQuery::parse("/Madrid/#").expect("a scope query"),
+        (&written).scopes()
+    ));
+    assert!(!scope_query_matches(&ScopeQuery::parse("/Berlin").expect("a scope query"), (&written).scopes()));
 }
