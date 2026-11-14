@@ -13,12 +13,9 @@ use crate::{error::EntityError, query::EntityQueryService};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{
-    filter::{
-        expression::Expr,
-        hop_steps::{hop_steps, linked_paths},
-        path::QueryPath,
-    },
+use andromeda_ngsi_ld_query::filter::{expression::Expr, path::QueryPath};
+use andromeda_ngsi_ld_query_evaluation::{
+    q::hop_steps::{hop_steps, linked_paths},
     queried_entity::attribute_reading::QueriedEntity,
 };
 use chrono::{DateTime, Utc};

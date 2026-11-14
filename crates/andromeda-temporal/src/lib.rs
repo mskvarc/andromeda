@@ -129,6 +129,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-query",
+        "andromeda-ngsi-ld-query-evaluation",
         "andromeda-ngsi-ld-render",
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-request",

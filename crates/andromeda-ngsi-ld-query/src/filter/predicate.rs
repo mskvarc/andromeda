@@ -8,6 +8,7 @@ use crate::{
     },
     pattern::Pattern,
 };
+use andromeda_ngsi_ld_value_order::string_order::StringRelation;
 use std::cmp::Ordering;
 
 /// A single filter predicate within a `q` expression.
@@ -123,6 +124,20 @@ impl CmpOp {
             CmpOp::LessEq => ord.is_le(),
         }
     }
+
+    /// The relation two text strings are ordered by under the comparison.
+    ///
+    /// Clause 4.9 compares text strings following RFC 8259 section 8.3, which
+    /// makes equality code unit identity, and asks for the Unicode Collation
+    /// Algorithm where strings are ordered, so an equality compares code
+    /// points and an ordering compares under the collation.
+    #[must_use]
+    pub const fn string_relation(self) -> StringRelation {
+        match self {
+            CmpOp::Equal | CmpOp::Unequal => StringRelation::CodePoint,
+            CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => StringRelation::Collated,
+        }
+    }
 }
 
 /// The four clause 4.9 ordering operators.
@@ -232,6 +247,15 @@ mod tests {
         ] {
             assert_eq!(op.as_cmp_op(), primitive, "{op:?}");
             assert_eq!(op.ngsi_token(), token, "{op:?}");
+        }
+    }
+
+    #[test]
+    fn an_equality_compares_strings_by_code_point_and_an_ordering_by_collation() {
+        assert_eq!(CmpOp::Equal.string_relation(), StringRelation::CodePoint);
+        assert_eq!(CmpOp::Unequal.string_relation(), StringRelation::CodePoint);
+        for op in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq] {
+            assert_eq!(op.string_relation(), StringRelation::Collated, "{op:?}");
         }
     }
 }

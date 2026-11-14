@@ -1,25 +1,27 @@
 //! In-memory evaluation of parsed `q` filter expressions against entities.
 //!
 //! What a Query Term compares against is resolved elsewhere:
-//! [`attribute_axis`](crate::filter::attribute_axis) walks the axis a Query Term
-//! names, and [`family_target`](crate::filter::family_target) owns the clause
+//! [`attribute_axis`](crate::q::attribute_axis) walks the axis a Query Term
+//! names, and [`family_target`](crate::q::family_target) owns the clause
 //! 4.9 definition of the target value each attribute family carries. This module
 //! owns the operators clause 4.9 applies to that target.
 
 use crate::{
-    filter::{
+    q::{
         attribute_axis::{addresses_element, resolve_targets},
-        expression::Expr,
-        language_matching::LanguageMatching,
-        path::QueryPath,
-        predicate::{CmpOp, Predicate, SetMembership},
-        scalar::{CompareValue, Scalar},
-        string_order::string_order,
         target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue},
     },
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities},
 };
 use andromeda_ngsi_ld_lexicon::time::value::TimeValue;
+use andromeda_ngsi_ld_query::filter::{
+    expression::Expr,
+    language_matching::LanguageMatching,
+    path::QueryPath,
+    predicate::{CmpOp, Predicate, SetMembership},
+    scalar::{CompareValue, Scalar},
+};
+use andromeda_ngsi_ld_value_order::string_order::string_order;
 use std::borrow::Cow;
 
 /// Evaluate a parsed `q` expression (clause 4.9) against an entity, reading
@@ -234,7 +236,7 @@ fn compare_in_domain(value: &TargetValue<'_>, op: CmpOp, scalar: &Scalar) -> Opt
     match scalar {
         Scalar::Number(rhs) => Some(op.holds(value.number_ordering(rhs)?)),
         Scalar::Bool(rhs) => Some(op.holds(value.as_boolean()?.cmp(rhs))),
-        Scalar::Str(rhs) => Some(op.holds(string_order(&value.as_text()?, rhs, op))),
+        Scalar::Str(rhs) => Some(op.holds(string_order(&value.as_text()?, rhs, op.string_relation()))),
         Scalar::Uri(rhs) => Some(op.holds(value.as_text()?.as_ref().cmp(rhs.as_str()))),
         // A time operand compares only with a value declared as one of its form
         // (clause 4.9: no equality of data types, no match), in the temporal
@@ -257,20 +259,24 @@ fn compare_in_domain(value: &TargetValue<'_>, op: CmpOp, scalar: &Scalar) -> Opt
 #[cfg(test)]
 mod tests {
     use crate::{
-        error::QueryError,
-        filter::{
+        q::{
             eval::{evaluate, evaluate_members, predicate_holds_in},
-            expansion::expand_q_expression,
-            expression::Expr,
-            json_key_attributes::JsonKeyAttributes,
-            language_matching::LanguageMatching,
-            parser::parse,
-            path::QueryPath,
             target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue},
         },
         queried_entity::{
             expanded_fixture::{FixtureEntity, FixtureLinked},
             linked_entities::NoLinkedEntities,
+        },
+    };
+    use andromeda_ngsi_ld_query::{
+        error::QueryError,
+        filter::{
+            expansion::expand_q_expr,
+            expression::Expr,
+            json_key_attributes::JsonKeyAttributes,
+            language_matching::LanguageMatching,
+            parser::parse,
+            path::QueryPath,
         },
         term_expander::TermExpander,
     };
@@ -847,16 +853,22 @@ mod tests {
     /// `resolve_member_hops` cannot walk into a `JsonProperty`'s raw `@value` object (it carries no IRI-keyed member nodes), so a compound `q` over one falls back to the raw-JSON walk, which has to use the key the client wrote, not the IRI the path was expanded to. Parsing without expansion cannot exercise this, as `path.value_path` is then already the compact spelling.
     #[tokio::test]
     async fn a_json_property_compound_member_is_still_reached_after_the_path_is_expanded() {
-        let expanded = expand_q_expression(Some("myJson[city]==\"Berlin\""), &JsonKeyAttributes::default(), &PrefixExpander)
-            .await
-            .expect("expands")
-            .expect("present");
+        let expanded = expand_q_expr(
+            parse("myJson[city]==\"Berlin\"").expect("parses"),
+            &JsonKeyAttributes::default(),
+            &PrefixExpander,
+        )
+        .await
+        .expect("expands");
         assert!(holds(&expanded, &entity_with_json_property()));
 
-        let non_matching = expand_q_expression(Some("myJson[city]==\"Paris\""), &JsonKeyAttributes::default(), &PrefixExpander)
-            .await
-            .expect("expands")
-            .expect("present");
+        let non_matching = expand_q_expr(
+            parse("myJson[city]==\"Paris\"").expect("parses"),
+            &JsonKeyAttributes::default(),
+            &PrefixExpander,
+        )
+        .await
+        .expect("expands");
         assert!(!holds(&non_matching, &entity_with_json_property()));
     }
 
@@ -1714,6 +1726,73 @@ mod tests {
             ("endpoint!=\"x\"|priority==7", true),
         ] {
             assert_eq!(evaluate_members(&parse(q).unwrap(), &member_of), expected, "{q}");
+        }
+    }
+
+    /// An entity carrying one Property value for each of `speed`, `color` and
+    /// `name`.
+    fn vehicle(speed: i64, color: &str, name: &str) -> Value {
+        let property = |value: Value| serde_json::json!([{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value}]}]);
+        serde_json::json!([{
+            "@id": "urn:ngsi-ld:Vehicle:A1",
+            "@type": ["https://example.com/Vehicle"],
+            "https://example.com/speed": property(speed.into()),
+            "https://example.com/color": property(color.into()),
+            "https://example.com/name": property(name.into()),
+        }])
+    }
+
+    /// Clause 4.9: every operator selects by the value of its target, and an
+    /// entity that does not carry the addressed element never satisfies a
+    /// predicate over it, in either polarity.
+    #[test]
+    fn every_operator_selects_by_value_and_never_an_entity_without_the_attribute() {
+        let cases = [
+            (
+                "\"https://example.com/speed\">50",
+                vehicle(80, "red", "Alpha"),
+                Some(vehicle(10, "red", "Alpha")),
+            ),
+            (
+                "\"https://example.com/speed\"==10..20",
+                vehicle(15, "red", "Alpha"),
+                Some(vehicle(25, "red", "Alpha")),
+            ),
+            (
+                "\"https://example.com/speed\"!=10..20",
+                vehicle(25, "red", "Alpha"),
+                Some(vehicle(15, "red", "Alpha")),
+            ),
+            (
+                "\"https://example.com/color\"==\"red\",\"blue\"",
+                vehicle(80, "red", "Alpha"),
+                Some(vehicle(80, "green", "Alpha")),
+            ),
+            (
+                "\"https://example.com/color\"!=\"red\",\"blue\"",
+                vehicle(80, "green", "Alpha"),
+                Some(vehicle(80, "red", "Alpha")),
+            ),
+            (
+                "\"https://example.com/name\"~=\"^A.*\"",
+                vehicle(80, "red", "Alpha"),
+                Some(vehicle(80, "red", "Beta")),
+            ),
+            (
+                "\"https://example.com/name\"!~=\"^A.*\"",
+                vehicle(80, "red", "Beta"),
+                Some(vehicle(80, "red", "Alpha")),
+            ),
+            ("\"https://example.com/speed\"", vehicle(80, "red", "Alpha"), None),
+        ];
+        let absent = serde_json::json!([{"@id": "urn:ngsi-ld:Vehicle:A2", "@type": ["https://example.com/Vehicle"]}]);
+        for (q, matching, non_matching) in cases {
+            let expr = parse(q).expect("parses");
+            assert!(holds(&expr, &matching), "{q} must select its matching entity");
+            if let Some(non_matching) = non_matching {
+                assert!(!holds(&expr, &non_matching), "{q} must reject its non-matching entity");
+            }
+            assert!(!holds(&expr, &absent), "{q} must reject an entity without the attribute");
         }
     }
 }

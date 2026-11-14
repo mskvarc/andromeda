@@ -17,10 +17,8 @@ use crate::{
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
-use andromeda_ngsi_ld_query::{
-    filter::{language_matching::LanguageMatching, target_language::LanguageSelector},
-    queried_entity::value_item::{LiteralValue, ValueItem},
-};
+use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, target_language::LanguageSelector};
+use andromeda_ngsi_ld_query_evaluation::queried_entity::value_item::{LiteralValue, ValueItem};
 use std::{borrow::Cow, slice::Iter};
 
 /// The values of one family member, in the order the instance holds them.

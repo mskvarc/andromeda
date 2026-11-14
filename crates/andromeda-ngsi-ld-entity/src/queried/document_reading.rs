@@ -11,7 +11,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath};
-use andromeda_ngsi_ld_query::queried_entity::{attribute_reading::QueriedEntity, located_entity::LocatedEntity, scoped_entity::ScopedEntity};
+use andromeda_ngsi_ld_query_evaluation::queried_entity::{attribute_reading::QueriedEntity, located_entity::LocatedEntity, scoped_entity::ScopedEntity};
 use std::borrow::Cow;
 
 impl<'a> QueriedEntity<'a> for &'a EntityDocument {

@@ -7,29 +7,31 @@
 //! `LanguageProperty`, and the `rel{…}` hop that crosses a Relationship into the
 //! entity it names. What the axis terminates at, the target value each
 //! attribute family carries, is
-//! [`family_target`](crate::filter::family_target)'s.
+//! [`family_target`](crate::q::family_target)'s.
 //!
 //! An attribute may carry several instances (clause 4.5.5), and each of them
 //! contributes its own target: clause 4.9 (p. 86) defines the comparison target
 //! of a multi-instance attribute as "any Value of such instances".
 
 use crate::{
-    filter::{
+    q::{
         family_target::{TerminalKeyword, family_target, first_family_value, held_values_target},
-        language_matching::LanguageMatching,
-        path::{AttrPath, QueryPath},
-        target_language::LanguageSelector,
         target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue, json_member},
-        trailing_path::{MemberPath, TrailingPath},
     },
     queried_entity::{
         attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
-        instance_metadata::InstanceMetadata,
         linked_entities::LinkedEntities,
         value_item::ValueItem,
     },
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
+use andromeda_ngsi_ld_query::filter::{
+    instance_metadata::InstanceMetadata,
+    language_matching::LanguageMatching,
+    path::{AttrPath, QueryPath},
+    target_language::LanguageSelector,
+    trailing_path::{MemberPath, TrailingPath},
+};
 
 /// Resolve every value an attribute axis addresses, descending each
 /// linked-entity hop into the entity it names in `linked`.
@@ -260,7 +262,7 @@ impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
         let (member, sub_attribute) = match self {
             AxisPosition::Instance(instance) => {
                 if let Some(member) = InstanceMetadata::named(name) {
-                    (member.target_value(instance.metadata(member)).map(AxisPosition::Metadata), None)
+                    (TargetValue::of_metadata(member, instance.metadata(member)).map(AxisPosition::Metadata), None)
                 } else if instance.family().value_key().as_str() == name.as_str() {
                     (first_family_value(instance).map(AxisPosition::Value), None)
                 } else {
@@ -387,13 +389,9 @@ fn sole_value<T>(mut values: impl Iterator<Item = T>) -> Option<T> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        filter::{
+        q::{
             attribute_axis::{addresses_element, resolve_targets},
-            language_matching::LanguageMatching,
-            path::{AttrPath, QueryPath},
             target_value::TargetOrigin,
-            trailing_path::{MemberPath, TrailingPath},
-            value_path::parse_attribute_path,
         },
         queried_entity::{
             expanded_fixture::{FixtureEntity, target_json},
@@ -401,6 +399,12 @@ mod tests {
         },
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_query::filter::{
+        language_matching::LanguageMatching,
+        path::{AttrPath, QueryPath},
+        trailing_path::{MemberPath, TrailingPath},
+        value_path::parse_attribute_path,
+    };
     use serde_json::{Value, json};
 
     /// An attribute name for a test path.

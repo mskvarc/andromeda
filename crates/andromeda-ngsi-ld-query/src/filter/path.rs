@@ -3,10 +3,10 @@
 use crate::{
     error::QueryError,
     filter::{
+        instance_metadata::InstanceMetadata,
         target_language::LanguageSelector,
         trailing_path::{MemberPath, TrailingPath},
     },
-    queried_entity::instance_metadata::InstanceMetadata,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use iri_rs::IriBuf;

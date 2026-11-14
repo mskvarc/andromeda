@@ -7,13 +7,12 @@
 //! traits and the crate depends on no entity model.
 //!
 //! [`attribute_reading`] is what `q` reads: attribute instances by name, the
-//! values of their family member, their sub-attributes and the instance members
-//! listed in [`instance_metadata`]. [`linked_entities`] is where a `q` hop reads
-//! the entities a Relationship links to. [`located_entity`] is what a geo-query
-//! reads and [`scoped_entity`] what a scope query reads.
+//! values of their family member, their sub-attributes and the members an
+//! instance holds as data of its own. [`linked_entities`] is where a `q` hop
+//! reads the entities a Relationship links to. [`located_entity`] is what a
+//! geo-query reads and [`scoped_entity`] what a scope query reads.
 
 pub mod attribute_reading;
-pub mod instance_metadata;
 pub mod linked_entities;
 pub mod located_entity;
 pub mod scoped_entity;

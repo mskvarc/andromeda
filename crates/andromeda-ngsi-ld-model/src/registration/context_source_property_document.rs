@@ -249,10 +249,8 @@ impl ContextSourcePropertyDocument {
 mod tests {
     use crate::registration::{ContextSourceRegistration, context_source_property_document::TABLE_MEMBERS};
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_query::{
-        filter::{eval::evaluate, language_matching::LanguageMatching, parser::parse},
-        queried_entity::linked_entities::NoLinkedEntities,
-    };
+    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse};
+    use andromeda_ngsi_ld_query_evaluation::{q::eval::evaluate, queried_entity::linked_entities::NoLinkedEntities};
     use serde_json::{Value, json};
     use std::collections::BTreeSet;
 

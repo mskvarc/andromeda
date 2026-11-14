@@ -23,10 +23,8 @@ use andromeda_ngsi_ld_entity::document::{EntityDocument, instance_document::Inst
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath};
 use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
-use andromeda_ngsi_ld_query::{
-    queried_entity::{attribute_reading::QueriedEntity, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
-    temporal::window::TemporalWindow,
-};
+use andromeda_ngsi_ld_query::temporal::window::TemporalWindow;
+use andromeda_ngsi_ld_query_evaluation::queried_entity::{attribute_reading::QueriedEntity, located_entity::LocatedEntity, scoped_entity::ScopedEntity};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use std::borrow::Cow;
 
@@ -97,10 +95,13 @@ mod tests {
     use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
-        queried_entity::{linked_entities::NoLinkedEntities, scoped_entity::ScopedEntity},
         scope::query::ScopeQuery,
         split_filter::{LeafTruths, SplitFilter},
         temporal::window::{TemporalWindow, TimeInterval},
+    };
+    use andromeda_ngsi_ld_query_evaluation::{
+        queried_entity::{linked_entities::NoLinkedEntities, scoped_entity::ScopedEntity},
+        split_filter::leaf_truths,
     };
     use serde_json::json;
 
@@ -119,7 +120,7 @@ mod tests {
     /// The truths of the leaves of `selection` over `answer`, read over
     /// `window`.
     fn truths_over(selection: &EntitySelection, answer: &TemporalDocument, window: TemporalWindow) -> LeafTruths {
-        SplitFilter::of(selection).truths_of(&AnsweredEvolution::of(answer, window), NoLinkedEntities)
+        leaf_truths(&SplitFilter::of(selection), &AnsweredEvolution::of(answer, window), NoLinkedEntities)
     }
 
     /// The truths of the leaves of `selection` over `answer`, read over an

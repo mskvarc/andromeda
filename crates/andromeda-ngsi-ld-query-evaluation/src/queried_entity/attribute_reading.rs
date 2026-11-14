@@ -6,11 +6,9 @@
 //! evaluator passes them by value and every value it reads borrows from the
 //! entity for `'a`.
 
-use crate::{
-    filter::{language_matching::LanguageMatching, target_language::LanguageSelector},
-    queried_entity::{instance_metadata::InstanceMetadata, value_item::ValueItem},
-};
+use crate::queried_entity::value_item::ValueItem;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
 use std::borrow::Cow;
 
 /// An entity as the `q` evaluator reads it (clause 4.9).

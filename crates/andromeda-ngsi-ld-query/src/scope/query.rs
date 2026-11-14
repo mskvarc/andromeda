@@ -2,7 +2,6 @@
 
 use crate::{
     error::QueryError,
-    queried_entity::scoped_entity::ScopedEntity,
     scope::{pattern::ScopePattern, pattern_fault::ScopePatternFault},
 };
 use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
@@ -98,11 +97,6 @@ impl ScopeQuery {
         self.alternatives
             .iter()
             .any(|alternative| alternative.iter().all(|pattern| scopes.clone().any(|scope| pattern.matches(scope))))
-    }
-
-    /// Whether an entity's scopes (clause 4.18) satisfy this query.
-    pub fn matches_entity<'a, E: ScopedEntity<'a>>(&self, entity: E) -> bool {
-        self.matches(entity.scopes())
     }
 }
 
@@ -459,28 +453,5 @@ mod tests {
     fn a_malformed_scope_query_is_rejected_when_the_resource_is_deserialized() {
         // Clause 4.19 admits `#` only as the last segment.
         assert!(serde_json::from_str::<ScopeQuery>("\"/A/#/C\"").is_err());
-    }
-
-    /// An entity carrying the given scopes (clause 4.18).
-    struct ScopedFixture(Vec<ScopePath>);
-
-    impl<'a> ScopedEntity<'a> for &'a ScopedFixture {
-        fn scopes(self) -> impl Iterator<Item = &'a ScopePath> + Clone {
-            self.0.iter()
-        }
-    }
-
-    fn scoped(paths: &[&str]) -> ScopedFixture {
-        ScopedFixture(paths.iter().map(|path| path.parse().expect("a scope path")).collect())
-    }
-
-    /// Clause 4.19 read against an entity's scopes: every requirement of one
-    /// alternative met by some scope, and no scope at all meeting nothing.
-    #[test]
-    fn an_entity_is_matched_by_the_scopes_it_carries() {
-        let query = ScopeQuery::parse("(/Madrid/#;/Spain)").expect("parses");
-        assert!(query.matches_entity(&scoped(&["/Spain", "/Madrid/Gardens"])));
-        assert!(!query.matches_entity(&scoped(&["/Spain"])));
-        assert!(!query.matches_entity(&scoped(&[])));
     }
 }

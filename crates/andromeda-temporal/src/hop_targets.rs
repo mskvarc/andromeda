@@ -42,10 +42,10 @@ use andromeda_ngsi_ld_model::temporal::{
 };
 use andromeda_ngsi_ld_query::{
     projection::attrs_selection::AttrsAdmission,
-    queried_entity::linked_entities::LinkedEntities,
     split_filter::HopReads,
     temporal::{compiled::CompiledTemporalQuery, window::TemporalWindow},
 };
+use andromeda_ngsi_ld_query_evaluation::queried_entity::linked_entities::LinkedEntities;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use std::{
@@ -303,6 +303,7 @@ mod tests {
         split_filter::SplitFilter,
         temporal::window::{TemporalWindow, TimeInterval},
     };
+    use andromeda_ngsi_ld_query_evaluation::split_filter::leaf_truths;
     use serde_json::{Value, json};
 
     const PARKED_IN: &str = "https://example.com/parkedIn";
@@ -357,7 +358,7 @@ mod tests {
         let selection = free_parking();
         let filter = SplitFilter::of(&selection);
         let linked = HopTargets::of(&reading, noon_to_one());
-        filter.holds(&filter.truths_of(&AnsweredEvolution::of(&part, noon_to_one()), &linked))
+        filter.holds(&leaf_truths(&filter, &AnsweredEvolution::of(&part, noon_to_one()), &linked))
     }
 
     /// Clause 4.9 with clause 5.7.4.4: a hop from a remote part reaches the
@@ -422,7 +423,7 @@ mod tests {
             };
             let linked = HopTargets::of(&reading, noon_to_one());
             pretty_assertions::assert_eq!(
-                filter.holds(&filter.truths_of(&AnsweredEvolution::of(&part, noon_to_one()), &linked)),
+                filter.holds(&leaf_truths(&filter, &AnsweredEvolution::of(&part, noon_to_one()), &linked)),
                 expected,
                 "{name}"
             );

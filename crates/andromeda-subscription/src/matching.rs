@@ -8,9 +8,11 @@ use crate::compiled::CompiledSubscription;
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::notification::ChangeOrigin;
-use andromeda_ngsi_ld_query::{
-    filter::eval::evaluate,
+use andromeda_ngsi_ld_query_evaluation::{
+    geo_query::geo_query_matches,
+    q::eval::evaluate,
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
+    scope_query::scope_query_matches,
 };
 use chrono::Utc;
 use tracing::debug;
@@ -103,13 +105,13 @@ where
         return false;
     }
 
-    if !sub.compiled_geo_q.admits(|geo_q| geo_q.matches_entity(entity)) {
+    if !sub.compiled_geo_q.admits(|geo_q| geo_query_matches(geo_q, entity)) {
         debug!("Subscription {} skipped: geoQ filter did not admit entity", sub.id);
         return false;
     }
 
     if let Some(ref scope_q) = sub.compiled_scope_q
-        && !scope_q.matches_entity(entity)
+        && !scope_query_matches(scope_q, entity)
     {
         debug!("Subscription {} skipped: scopeQ filter did not match entity", sub.id);
         return false;
@@ -154,9 +156,9 @@ mod tests {
         filter::language_matching::LanguageMatching,
         geo::{admission::GeoQueryAdmission, compile::compile_geo_query, input::GeoQueryInput, near_distance_band::NearDistanceBand},
         projection::compiled::Projection,
-        queried_entity::linked_entities::NoLinkedEntities,
         term_expander::{TermExpander, TermExpansionFailure},
     };
+    use andromeda_ngsi_ld_query_evaluation::{geo_query::geo_query_matches, queried_entity::linked_entities::NoLinkedEntities};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use chrono::{DateTime, Utc};
     use futures::executor::block_on;
@@ -332,11 +334,12 @@ mod tests {
         })))
         .expect("the subscription geoQ fixture did not compile");
 
-        assert!(geo_query.matches_entity(&located(13.4, 52.5)));
-        assert!(!geo_query.matches_entity(&located(13.4, 53.5)));
-        assert!(!geo_query.matches_entity(&state(
-            &serde_json::json!([{"@id": "urn:ngsi-ld:Building:002", "@type": ["https://example.com/Building"]}])
-        )));
+        assert!(geo_query_matches(&geo_query, &located(13.4, 52.5)));
+        assert!(!geo_query_matches(&geo_query, &located(13.4, 53.5)));
+        assert!(!geo_query_matches(
+            &geo_query,
+            &state(&serde_json::json!([{"@id": "urn:ngsi-ld:Building:002", "@type": ["https://example.com/Building"]}]))
+        ));
     }
 
     /// Clause 5.8.6: every changed entity is included only when no geoquery is

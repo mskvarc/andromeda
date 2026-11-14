@@ -12,9 +12,9 @@
 //! such as `Predicate::path()` and building a variant stay free, since neither
 //! decides what a term means.
 //!
-//! The sites that existed when the guard was introduced are its baseline,
-//! counted per file. A file may hold no more sites than its count, and a file
-//! that holds fewer must lower its count, so the baseline only shrinks.
+//! The baseline counts, per file, the sites the in-memory evaluator and the
+//! SQL renderings hold. A file may hold no more sites than its count, and a
+//! file that holds fewer must lower its count, so the baseline only shrinks.
 
 use crate::{q_reading::visitor::QReadingVisitor, source_scan::workspace_sources};
 use std::{
@@ -28,10 +28,11 @@ mod visitor;
 /// The directory that owns the reading of a `q` term.
 const OWNER: &str = "crates/andromeda-ngsi-ld-query/src/filter/";
 
-/// The sites outside the owner that existed when the guard was introduced,
-/// as the file and the number of sites it held. Each change that moves a
-/// reading into the owner lowers or removes its file's entry.
+/// The sites outside the owner, as the file and the number of sites it
+/// holds. Each change that moves a reading into the owner lowers or removes
+/// its file's entry.
 pub const Q_READING_BASELINE: &[(&str, usize)] = &[
+    ("crates/andromeda-ngsi-ld-query-evaluation/src/q/eval.rs", 12),
     ("crates/andromeda-postgresql-context-query/src/csr/filter.rs", 12),
     ("crates/andromeda-postgresql-query/src/q_predicate/equality_term.rs", 9),
     ("crates/andromeda-postgresql-query/src/q_predicate/json_value_term.rs", 3),

@@ -3,10 +3,15 @@
 use crate::{entity_state::EntityState, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};
 use andromeda_ngsi_ld_query::{
-    filter::{eval::evaluate, language_matching::LanguageMatching, parser::parse},
+    filter::{language_matching::LanguageMatching, parser::parse},
     geo::query::GeoQuery,
-    queried_entity::linked_entities::NoLinkedEntities,
     scope::query::ScopeQuery,
+};
+use andromeda_ngsi_ld_query_evaluation::{
+    geo_query::geo_query_matches,
+    q::eval::evaluate,
+    queried_entity::linked_entities::NoLinkedEntities,
+    scope_query::scope_query_matches,
 };
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -324,13 +329,13 @@ fn a_geo_query_reads_every_geometry_the_state_holds() {
         geometry: point(longitude, latitude),
         geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("an attribute name"),
     };
-    assert!(near(13.4, 52.5).matches_entity(&entity));
-    assert!(!near(2.35, 48.85).matches_entity(&entity));
+    assert!(geo_query_matches(&near(13.4, 52.5), &entity));
+    assert!(!geo_query_matches(&near(2.35, 48.85), &entity));
     let elsewhere = GeoQuery {
         geoproperty: "https://example.com/address".parse().expect("an attribute name"),
         ..near(13.4, 52.5)
     };
-    assert!(!elsewhere.matches_entity(&entity), "a Property holds no geometry");
+    assert!(!geo_query_matches(&elsewhere, &entity), "a Property holds no geometry");
 }
 
 /// Clause 4.19: a scope query reads the scopes the state belongs to.
@@ -339,10 +344,13 @@ fn a_scope_query_reads_the_scopes_the_state_holds() {
     let mut document = vehicle();
     document[0]["https://uri.etsi.org/ngsi-ld/scope"] = json!([{"@value": "/Madrid/Gardens"}, {"@value": "/Berlin"}]);
     let scoped = state(&document);
-    assert!(ScopeQuery::parse("/Madrid/#").expect("a scope query").matches_entity(&scoped));
-    assert!(ScopeQuery::parse("/Berlin").expect("a scope query").matches_entity(&scoped));
-    assert!(!ScopeQuery::parse("/Paris").expect("a scope query").matches_entity(&scoped));
-    assert!(!ScopeQuery::parse("/Madrid/#").expect("a scope query").matches_entity(&state(&vehicle())));
+    assert!(scope_query_matches(&ScopeQuery::parse("/Madrid/#").expect("a scope query"), &scoped));
+    assert!(scope_query_matches(&ScopeQuery::parse("/Berlin").expect("a scope query"), &scoped));
+    assert!(!scope_query_matches(&ScopeQuery::parse("/Paris").expect("a scope query"), &scoped));
+    assert!(!scope_query_matches(
+        &ScopeQuery::parse("/Madrid/#").expect("a scope query"),
+        &state(&vehicle())
+    ));
 }
 
 /// Clause 4.9 EXAMPLE 13: a hop reads the stored state of the entity the

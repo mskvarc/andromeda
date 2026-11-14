@@ -28,7 +28,7 @@
 //! operators off it.
 
 use crate::{
-    filter::target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue},
+    q::target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue},
     queried_entity::{
         attribute_reading::{QueriedInstance, QueriedValueNode},
         value_item::ValueItem,
@@ -189,7 +189,7 @@ pub fn first_family_value<'a, I: QueriedInstance<'a>>(instance: I) -> Option<Val
 #[cfg(test)]
 mod tests {
     use crate::{
-        filter::{family_target::family_target, target_value::TargetOrigin},
+        q::{family_target::family_target, target_value::TargetOrigin},
         queried_entity::expanded_fixture::{FixtureInstance, target_json},
     };
     use serde_json::{Value, json};

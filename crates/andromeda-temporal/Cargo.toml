@@ -28,6 +28,7 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-query.workspace = true
+andromeda-ngsi-ld-query-evaluation.workspace = true
 andromeda-ngsi-ld-render.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-request.workspace = true

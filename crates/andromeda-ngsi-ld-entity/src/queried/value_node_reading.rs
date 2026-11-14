@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_lexicon::{
     reference::NgsiLdReference,
 };
 use andromeda_ngsi_ld_number::declared_number::DeclaredNumber;
-use andromeda_ngsi_ld_query::queried_entity::{attribute_reading::QueriedValueNode, value_item};
+use andromeda_ngsi_ld_query_evaluation::queried_entity::{attribute_reading::QueriedValueNode, value_item};
 use std::borrow::Cow;
 
 /// The item one expanded value is to the evaluator, `value_type` being the

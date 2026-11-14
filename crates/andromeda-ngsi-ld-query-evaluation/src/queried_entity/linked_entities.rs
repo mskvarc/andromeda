@@ -6,15 +6,12 @@
 //! hold. Whoever evaluates a filter in memory therefore hands the evaluator a
 //! source of those entities beside the entity itself.
 
-use crate::{
-    filter::{language_matching::LanguageMatching, target_language::LanguageSelector},
-    queried_entity::{
-        attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
-        instance_metadata::InstanceMetadata,
-        value_item::ValueItem,
-    },
+use crate::queried_entity::{
+    attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
+    value_item::ValueItem,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
 use std::{borrow::Cow, iter::empty};
 
 /// The entities a hop may cross into, looked up by the Relationship object

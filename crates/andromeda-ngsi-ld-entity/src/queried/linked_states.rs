@@ -7,7 +7,7 @@
 
 use crate::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::queried_entity::linked_entities::LinkedEntities;
+use andromeda_ngsi_ld_query_evaluation::queried_entity::linked_entities::LinkedEntities;
 use std::{collections::HashMap, sync::Arc};
 
 /// Linked entity states keyed by identifier.
@@ -59,7 +59,7 @@ impl<'a> LinkedEntities<'a> for &'a LinkedStates {
 #[cfg(test)]
 mod tests {
     use crate::{entity_state::EntityState, entity_types::EntityTypes, queried::linked_states::LinkedStates};
-    use andromeda_ngsi_ld_query::queried_entity::linked_entities::LinkedEntities;
+    use andromeda_ngsi_ld_query_evaluation::queried_entity::linked_entities::LinkedEntities;
     use std::sync::Arc;
 
     fn parking() -> Arc<EntityState> {

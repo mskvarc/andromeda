@@ -6,11 +6,11 @@ use crate::registration::{ContextSourceRegistration, coverage::RegistrationCover
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
-    filter::{eval::evaluate, expression::Expr, language_matching::LanguageMatching},
+    filter::{expression::Expr, language_matching::LanguageMatching},
     geo::query::GeoQuery,
-    queried_entity::linked_entities::NoLinkedEntities,
     scope::query::ScopeQuery,
 };
+use andromeda_ngsi_ld_query_evaluation::{q::eval::evaluate, queried_entity::linked_entities::NoLinkedEntities};
 
 /// Whether the clause 5.10.2.4 temporal partition applies.
 ///

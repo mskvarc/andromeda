@@ -18,10 +18,8 @@ use crate::{
     value_mode::Fragment,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReference};
-use andromeda_ngsi_ld_query::{
-    filter::{language_matching::LanguageMatching, target_language::LanguageSelector},
-    queried_entity::{attribute_reading::QueriedInstance, instance_metadata::InstanceMetadata, value_item::ValueItem},
-};
+use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
+use andromeda_ngsi_ld_query_evaluation::queried_entity::{attribute_reading::QueriedInstance, value_item::ValueItem};
 use cefact_units::UnitCode;
 use std::borrow::Cow;
 

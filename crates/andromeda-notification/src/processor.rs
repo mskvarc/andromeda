@@ -368,9 +368,9 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         filter::{language_matching::LanguageMatching, parser},
         projection::compiled::Projection,
-        queried_entity::linked_entities::NoLinkedEntities,
         scope::query::ScopeQuery,
     };
+    use andromeda_ngsi_ld_query_evaluation::queried_entity::linked_entities::NoLinkedEntities;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_subscription::{
         cache::SubscriptionCache,

@@ -10,7 +10,7 @@
 use crate::{answered_evolution::AnsweredEvolution, in_effect_entity::InEffectEntity};
 use andromeda_ngsi_ld_entity::document::instance_document::InstanceDocument;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-use andromeda_ngsi_ld_query::queried_entity::attribute_reading::QueriedEntity;
+use andromeda_ngsi_ld_query_evaluation::queried_entity::attribute_reading::QueriedEntity;
 
 /// One hop target, as a hop reads it.
 #[derive(Debug)]

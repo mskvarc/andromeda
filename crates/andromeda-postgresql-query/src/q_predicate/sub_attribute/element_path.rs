@@ -23,7 +23,7 @@ use crate::{
     sub_attribute_key::path_hash::PathHash,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::{filter::path::AttrPath, queried_entity::instance_metadata::InstanceMetadata};
+use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, path::AttrPath};
 use andromeda_postgresql_schema::current::SubAttribute;
 use andromeda_postgresql_seaquery::unnest::{exists_in_positional_tree, first_in_positional_tree};
 use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
@@ -149,8 +149,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
-        filter::{expression::Expr, language_matching::LanguageMatching, parser::parse, path::QueryPath},
-        queried_entity::instance_metadata::InstanceMetadata,
+        filter::{expression::Expr, instance_metadata::InstanceMetadata, language_matching::LanguageMatching, parser::parse, path::QueryPath},
         temporal::window::TimeInterval,
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;

@@ -146,9 +146,11 @@ andromeda-ngsi-ld-model = { path = "crates/andromeda-ngsi-ld-model" }
 andromeda-ngsi-ld-number = { path = "crates/andromeda-ngsi-ld-number" }
 andromeda-ngsi-ld-problem-details = { path = "crates/andromeda-ngsi-ld-problem-details" }
 andromeda-ngsi-ld-query = { path = "crates/andromeda-ngsi-ld-query" }
+andromeda-ngsi-ld-query-evaluation = { path = "crates/andromeda-ngsi-ld-query-evaluation" }
 andromeda-ngsi-ld-render = { path = "crates/andromeda-ngsi-ld-render" }
 andromeda-ngsi-ld-representation = { path = "crates/andromeda-ngsi-ld-representation" }
 andromeda-ngsi-ld-request = { path = "crates/andromeda-ngsi-ld-request" }
+andromeda-ngsi-ld-value-order = { path = "crates/andromeda-ngsi-ld-value-order" }
 andromeda-ngsi-ld-vocabulary = { path = "crates/andromeda-ngsi-ld-vocabulary" }
 andromeda-notification = { path = "crates/andromeda-notification" }
 andromeda-outbound-http = { path = "crates/andromeda-outbound-http" }
