@@ -12,7 +12,6 @@
 //! N/A over objects, so that one split is read from the value itself.
 
 use crate::{alias::Ah, structured_json::structured_json};
-use andromeda_postgresql_codes::{recorded_shape::RecordedShape, value_kind::ValueKind};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -20,6 +19,7 @@ use andromeda_postgresql_seaquery::{
     literal::int_literal,
     pg_type::PostgresType,
 };
+use andromeda_postgresql_stored_values::{recorded_shape::RecordedShape, value_kind::ValueKind};
 use sea_query::{CaseStatement, Expr, ExprTrait, Iden, SimpleExpr};
 
 /// The name this shape is projected under by [`recorded_shape`].

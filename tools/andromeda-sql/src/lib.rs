@@ -78,8 +78,8 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-request",
-        "andromeda-postgresql-codes",
         "andromeda-postgresql-schema",
+        "andromeda-postgresql-stored-values",
     ],
     allow_production_dependencies: all,
 }

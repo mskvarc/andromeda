@@ -48,7 +48,7 @@ fn names_in_key_order(keys: SimpleExpr, table: impl IntoIden + Copy, key: impl I
 
 #[cfg(test)]
 mod tests {
-    use crate::dictionary::names_in_key_order::{attribute_names_of, type_names_of};
+    use crate::names_in_key_order::{attribute_names_of, type_names_of};
     use andromeda_postgresql_schema::{current::EntitySearch, subscriptions::Subscriptions};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::{Expr, Query};

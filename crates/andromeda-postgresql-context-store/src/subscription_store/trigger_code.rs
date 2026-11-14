@@ -10,7 +10,7 @@
 //! where the decision about its persisted number belongs.
 
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
-use andromeda_postgresql_codes::notification_trigger::NotificationTriggerCode;
+use andromeda_postgresql_stored_values::notification_trigger::NotificationTriggerCode;
 
 /// The registry member the schema persists for a trigger condition.
 #[must_use]
@@ -49,7 +49,7 @@ pub(crate) const fn trigger_of(code: NotificationTriggerCode) -> NotificationTri
 mod tests {
     use crate::subscription_store::trigger_code::{stored_trigger, stored_trigger_list, trigger_of};
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
-    use andromeda_postgresql_codes::notification_trigger::NotificationTriggerCode;
+    use andromeda_postgresql_stored_values::notification_trigger::NotificationTriggerCode;
     use strum::IntoEnumIterator;
 
     #[test]

@@ -11,7 +11,7 @@
 use crate::name_keys::{HeldKeys, KeyNames, MentionedNames, NameKeys};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReference};
 use andromeda_postgresql_name_dictionary::name_lookup::{NameLookup, NameLookupError};
-use andromeda_postgresql_query::dictionary::resolved_names::ResolvedNames;
+use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
 use sqlx::PgConnection;
 use std::collections::HashMap;
 

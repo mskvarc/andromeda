@@ -30,8 +30,13 @@ use andromeda_postgresql_attribute_instance::{
     stored_value::{LiteralAnnotation, StoredValue},
     sub_attribute::{SubAttributeElement, SubAttributeRecord},
 };
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
+use andromeda_postgresql_stored_values::{
+    attribute_kind::AttributeKind,
+    attribute_name_key::AttributeNameKey,
+    entity_type_name_key::EntityTypeNameKey,
+    resolved_names::ResolvedNames,
+    value_kind::ValueKind,
+};
 use chrono::{TimeZone, Utc};
 use indexmap::IndexSet;
 use sea_query::Iden;

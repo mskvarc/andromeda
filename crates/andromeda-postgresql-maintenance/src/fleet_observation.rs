@@ -20,7 +20,6 @@ use crate::{
     unvisited_database::{DatabaseName, UnvisitedDatabase, UnvisitedRegistration},
 };
 use andromeda_configuration::schema::db_name_prefix::DbNamePrefix;
-use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
 use andromeda_postgresql_schema::tenancy::Tenants;
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -30,6 +29,7 @@ use andromeda_postgresql_seaquery::{
     setting::Setting,
     statement::Statement,
 };
+use andromeda_postgresql_stored_values::tenant_status::TenantStatusCode;
 use andromeda_telemetry::maintenance::{FreezePressureLevel, record_fleet_freeze};
 use chrono::{DateTime, Utc};
 use sea_query::{Alias, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement};
@@ -330,7 +330,7 @@ mod tests {
         state::TenantKey,
         unvisited_database::{DatabaseName, UnvisitedDatabase, UnvisitedRegistration},
     };
-    use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
+    use andromeda_postgresql_stored_values::tenant_status::TenantStatusCode;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 

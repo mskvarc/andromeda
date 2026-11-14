@@ -31,7 +31,6 @@ use andromeda_entity::{
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_encoding::ewkb::Ewkb;
-use andromeda_postgresql_query::dictionary::names_in_key_order::type_names_of;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     cast::{cast, typed_null},
@@ -40,6 +39,7 @@ use andromeda_postgresql_seaquery::{
     statement::Statement,
     transaction_id::{as_transaction_id, snapshot_xmax, snapshot_xmin},
 };
+use andromeda_postgresql_stored_form::names_in_key_order::type_names_of;
 use async_trait::async_trait;
 use sea_query::{Expr, ExprTrait, JoinType, Query, SelectStatement, UnionType};
 use tracing::warn;

@@ -23,7 +23,6 @@ use crate::{
 };
 use andromeda_context_space::snapshot_key::SnapshotKey;
 use andromeda_postgresql_branch::{PUBLISHED_SNAPSHOT_SCHEMA_PATTERN, published_snapshot_key};
-use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
 use andromeda_postgresql_context_store::snapshot::branch_lock::branch_lock_key;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use andromeda_postgresql_seaquery::{
@@ -32,6 +31,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     statement::Statement,
 };
+use andromeda_postgresql_stored_values::snapshot_status::SnapshotStatusCode;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use sea_query::{Alias, Expr, ExprTrait, Func, Iden, JoinType, Query, SelectStatement, extension::postgres::PgBinOper};
 use sqlx::{PgConnection, Row};
@@ -267,7 +267,7 @@ fn branch_churn_statement() -> SelectStatement {
 mod tests {
     use crate::branch_selection::{BranchChurn, BranchEligibility, SnapshotRecord, branch_churn_statement, churn_order, snapshot_records_statement};
     use andromeda_context_space::snapshot_key::SnapshotKey;
-    use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
+    use andromeda_postgresql_stored_values::snapshot_status::SnapshotStatusCode;
     use chrono::{Duration, Utc};
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;

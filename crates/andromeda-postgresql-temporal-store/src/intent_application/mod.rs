@@ -58,13 +58,13 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::schema_iden;
-use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
 use andromeda_postgresql_seaquery::{
     external_arguments::{ExternalArguments, ExternallyBound},
     generic_plan_stretch::GenericPlanStretch,
     statement::Statement,
     unnest::UnnestAliased,
 };
+use andromeda_postgresql_stored_values::temporal_intent_reach::TemporalIntentReach;
 use andromeda_temporal::temporal_not_found_reason::TemporalNotFoundReason;
 use derive_more::From;
 use sea_query::{DeleteStatement, DynIden, InsertStatement, SelectStatement, UpdateStatement, WithQuery, error::Error as SeaQueryError};

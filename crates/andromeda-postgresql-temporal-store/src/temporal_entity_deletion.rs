@@ -39,17 +39,15 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_branch::schema_iden;
-use andromeda_postgresql_codes::entity_key::EntityKey;
-use andromeda_postgresql_query::{
-    entity_sides::holds_evolution,
-    history_source::{HistoryBranch, PendingEntries, entity_rows::holds_visible_evolution},
-};
+use andromeda_postgresql_query::history_source::{HistoryBranch, PendingEntries, entity_rows::holds_visible_evolution};
 use andromeda_postgresql_schema::{
     current::Entities,
     queue::TemporalAppendIntents,
     temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams},
 };
 use andromeda_postgresql_seaquery::{aggregate::count_all, branch::qualified, statement::Statement};
+use andromeda_postgresql_stored_form::entity_sides::holds_evolution;
+use andromeda_postgresql_stored_values::entity_key::EntityKey;
 use andromeda_postgresql_temporal_query::alias::{Ah, S, Te};
 use andromeda_temporal::temporal_not_found_reason::TemporalNotFoundReason;
 use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, Iden, JoinType, LockType, Query, QueryStatementBuilder, SelectStatement, SimpleExpr};
@@ -331,8 +329,8 @@ mod tests {
         visible_evolution_statement,
     };
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_postgresql_codes::entity_key::EntityKey;
     use andromeda_postgresql_query::history_source::{HistoryBranch, PendingEntries};
+    use andromeda_postgresql_stored_values::entity_key::EntityKey;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, IntoIden, PostgresQueryBuilder};
 

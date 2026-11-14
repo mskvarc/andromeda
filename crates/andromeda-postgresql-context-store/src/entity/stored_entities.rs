@@ -37,11 +37,10 @@ use andromeda_postgresql_attribute_instance::{
     name_resolution::names_of,
 };
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_context_query::entity_head::{EntityHead, select_head};
 use andromeda_postgresql_pool::pool_share::PoolLane;
-use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
 use andromeda_postgresql_schema::current::{CurrentAttributes, E, Entities, EntitySearch};
+use andromeda_postgresql_stored_values::{entity_key::EntityKey, entity_type_name_key::EntityTypeNameKey};
 use sea_query::{Expr, ExprTrait, Iden, JoinType, Query, SelectStatement};
 use sqlx::{Row, postgres::PgRow};
 use std::{collections::HashMap, sync::Arc};
@@ -404,11 +403,11 @@ mod tests {
     };
     use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
     use andromeda_postgresql_attribute_instance::name_keys::{KeyNames, NameKeys};
-    use andromeda_postgresql_codes::entity_key::EntityKey;
-    use andromeda_postgresql_query::{
+    use andromeda_postgresql_stored_values::{
         attribute_name_key::AttributeNameKey,
-        dictionary::resolved_names::ResolvedNames,
+        entity_key::EntityKey,
         entity_type_name_key::EntityTypeNameKey,
+        resolved_names::ResolvedNames,
     };
     use chrono::{TimeZone, Utc};
     use pretty_assertions::assert_eq;

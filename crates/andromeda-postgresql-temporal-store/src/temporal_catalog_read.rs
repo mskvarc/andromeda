@@ -16,14 +16,11 @@ use crate::{error::TemporalStoreError, repo::TemporalRepository, stored_catalog_
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_postgresql_branch::schema_iden;
-use andromeda_postgresql_query::{
-    attribute_name_key::AttributeNameKey,
-    dataset_key::DatasetKey,
-    dictionary::names_in_key_order::type_names_of,
-    history_source::{HistoryBranch, entity_rows::entity_rows},
-};
+use andromeda_postgresql_query::history_source::{HistoryBranch, entity_rows::entity_rows};
 use andromeda_postgresql_schema::{current::Entities, name_dictionary::AttributeNames, temporal::TemporalAttributeStreams};
 use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of, statement::Statement};
+use andromeda_postgresql_stored_form::names_in_key_order::type_names_of;
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, dataset_key::DatasetKey};
 use andromeda_postgresql_temporal_query::alias::{An, S, Te};
 use sea_query::{Alias, DynIden, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement, SimpleExpr};
 use sqlx::Row;
@@ -245,7 +242,8 @@ mod tests {
         temporal_entity_exists_query,
         temporal_entity_types_query,
     };
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, history_source::HistoryBranch};
+    use andromeda_postgresql_query::history_source::HistoryBranch;
+    use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
     use sea_query::PostgresQueryBuilder;
 
     /// Clause 5.6.6 keeps the Temporal Evolution when the current state is

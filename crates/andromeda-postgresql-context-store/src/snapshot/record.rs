@@ -26,9 +26,9 @@ use andromeda_ngsi_ld_model::{
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
     snapshot_filter::PurgeCandidate,
 };
-use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
 use andromeda_postgresql_seaquery::{clock::now, statement::Statement};
+use andromeda_postgresql_stored_values::snapshot_status::SnapshotStatusCode;
 use andromeda_snapshot::error::SnapshotError;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, Func, JoinType, Keyword, LockBehavior, LockType, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};

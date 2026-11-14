@@ -40,12 +40,12 @@ use andromeda_ngsi_ld_query::{
     temporal::compiled::CompiledTemporalQuery,
 };
 use andromeda_postgresql_query::{
-    dictionary::query_names::QueryNames,
     entity_ordering::sql_order,
     error::RenderError,
     history_source::{BesideComparison, HistoryBranch},
     one_time_gate::{Candidates, ShortWalkMatches, bounded, count_of, materialized, within, wrapped},
     page_window::apply_identifier_window,
+    query_names::QueryNames,
 };
 use andromeda_postgresql_schema::current::{E, Entities};
 use sea_query::{Asterisk, Condition, Expr, ExprTrait, IntoIden, Query, SelectStatement, SimpleExpr, TableRef, UnionType, WithClause};

@@ -42,8 +42,7 @@ use andromeda_ngsi_ld_lexicon::{
     time::{date_time::NgsiLdDateTime, system_instant::SystemInstant, value::TimeValue},
 };
 use andromeda_ngsi_ld_model::temporal::structured_value::StructuredValue;
-use andromeda_postgresql_codes::attribute_kind_code::stored_attribute_kind;
-use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use andromeda_postgresql_stored_values::{attribute_kind_code::stored_attribute_kind, entity_type_name_key::EntityTypeNameKey};
 use serde::Serialize;
 use serde_json::value::to_raw_value;
 use thiserror::Error;

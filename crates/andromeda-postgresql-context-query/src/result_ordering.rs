@@ -24,7 +24,6 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_postgresql_encoding::ewkb::encode;
 use andromeda_postgresql_query::{
-    dictionary::{names_in_key_order::type_names_of, resolved_names::ResolvedNames},
     entity_ordering::{entity_identifier_key, ordering_collation},
     entity_row_refs::EntityRowRefs,
     error::RenderError,
@@ -32,6 +31,8 @@ use andromeda_postgresql_query::{
 };
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::collation::{PostgresCollation, collate};
+use andromeda_postgresql_stored_form::names_in_key_order::type_names_of;
+use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
 use sea_query::{Expr as SeaExpr, JoinType, SelectStatement, SimpleExpr};
 
 /// The sort keys of the result order, in the order they decide; the

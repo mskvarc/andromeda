@@ -50,10 +50,6 @@ pub mod attribute_rows;
 pub mod axis;
 /// The Temporal Evolutions and the types they are recorded under.
 pub mod entity_rows;
-/// The history columns an entry of a queued intent is recorded in.
-pub mod entry_values;
-/// The grain columns every source projects.
-pub mod grain;
 /// The holders of the attributes a temporal selection by attribute alone names.
 pub mod holder_rows;
 /// The queued entries that replace a recorded instance.
@@ -65,7 +61,7 @@ pub mod scope_rows;
 /// The attribute history of one stream, read in parts.
 pub mod stream_parts;
 
-use crate::history_source::grain::HistoryGrain;
+use andromeda_postgresql_stored_form::history_grain::HistoryGrain;
 use sea_query::{DynIden, Expr, ExprTrait, IntoIden, SelectStatement, SimpleExpr};
 
 /// Whether a branch's history sources read queued entries beside the

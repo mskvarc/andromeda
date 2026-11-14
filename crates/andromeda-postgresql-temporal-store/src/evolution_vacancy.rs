@@ -33,9 +33,9 @@
 //! every intent the Entity's writers committed, and no writer queues more
 //! before the caller commits.
 
-use andromeda_postgresql_query::{entity_sides::holds_evolution, type_membership::Memberships, type_membership_moves::side_departure};
 use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents, temporal::AttributeHistoryInstanceClaims, type_membership::MembershipSide};
 use andromeda_postgresql_seaquery::{aggregate::count_all, branch::qualified};
+use andromeda_postgresql_stored_form::{entity_sides::holds_evolution, memberships::Memberships, type_membership_moves::side_departure};
 use sea_query::{CaseStatement, CommonTableExpression, DynIden, Expr, ExprTrait, Iden, Keyword, Query, SelectStatement, SimpleExpr, WithClause, WithQuery};
 
 /// The identity rows whose Evolution the statement gives up, `vacated`.

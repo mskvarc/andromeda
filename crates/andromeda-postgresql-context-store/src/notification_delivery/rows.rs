@@ -10,7 +10,7 @@ use andromeda_notification::{
     delivery_entry::{DeliveryEntry, DeliveryKey},
     notification_event::NotificationEventKey,
 };
-use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use thiserror::Error;

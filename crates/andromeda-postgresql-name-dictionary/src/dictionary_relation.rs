@@ -1,7 +1,7 @@
 //! Which physical relation holds the dictionary of one interned name type.
 
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
-use andromeda_postgresql_query::dictionary::interned_name::InternedName;
+use andromeda_postgresql_stored_values::interned_name::InternedName;
 use andromeda_telemetry::name_dictionary::NameDictionary;
 use sea_query::DynIden;
 use std::str::FromStr;

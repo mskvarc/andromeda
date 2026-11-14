@@ -9,12 +9,10 @@
 
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::contributed_entities::ContributedEntities;
-use andromeda_postgresql_query::{
-    entity_sides::holds_evolution,
-    history_source::{HistoryBranch, PendingEntries},
-};
+use andromeda_postgresql_query::history_source::{HistoryBranch, PendingEntries};
 use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of};
+use andromeda_postgresql_stored_form::entity_sides::holds_evolution;
 use sea_query::{Expr, Query, SelectStatement};
 
 /// The Evolutions of `branch` of every Entity `contributed` names: their

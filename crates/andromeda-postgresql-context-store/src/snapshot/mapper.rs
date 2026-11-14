@@ -13,8 +13,8 @@ use andromeda_ngsi_ld_model::{
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority},
     snapshot_filter::PurgeCandidate,
 };
-use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
 use andromeda_postgresql_schema::snapshot::{SnapshotPreparation, Snapshots};
+use andromeda_postgresql_stored_values::snapshot_status::SnapshotStatusCode;
 use sea_query::Iden;
 use serde::de::DeserializeOwned;
 use sqlx::{Row, postgres::PgRow};

@@ -14,12 +14,12 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{attribute_summary::AttributeSummary, port::discovery::AttributeEntityTypes};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_postgresql_schema::{
     census::{AttributeCensus, EntityTypeAttributeCensus},
     name_dictionary::{AttributeNames, EntityTypeNames},
 };
 use andromeda_postgresql_seaquery::{aggregate::array_agg_distinct, statement::Statement};
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Cond, Expr, ExprTrait, Func, JoinType, Order, Query, SelectStatement};
 use std::slice::from_ref;
 
@@ -137,7 +137,7 @@ mod tests {
     use crate::entity::census::read::attributes::{attribute_entity_types_statement, attribute_summary_of, attribute_summary_statement};
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
-    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+    use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, SelectStatement};
 

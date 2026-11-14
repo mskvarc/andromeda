@@ -11,12 +11,6 @@ use crate::intent_application::{
     established_evolutions::{Upserted, among, left_established, no_types},
     intent_source::{E, I, StagedSource, attribute_entry, intent, latest_entry_instant, source_intents, source_intents_as},
 };
-use andromeda_postgresql_query::{
-    evolution_horizon::horizon_of,
-    type_list_union::{TypeListColumn, type_list_union},
-    type_membership::Memberships,
-    type_membership_moves::{Member, carried_among, membership_insert},
-};
 use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents, type_membership::MembershipSide};
 use andromeda_postgresql_seaquery::{
     branch::qualified,
@@ -28,6 +22,12 @@ use andromeda_postgresql_seaquery::{
     returning_image::{New, Old},
     scalar_subquery::scalar_subquery,
     unnest::unnest_of,
+};
+use andromeda_postgresql_stored_form::{
+    evolution_horizon::horizon_of,
+    memberships::Memberships,
+    type_list_union::{TypeListColumn, type_list_union},
+    type_membership_moves::{Member, carried_among, membership_insert},
 };
 use sea_query::{
     CaseStatement,

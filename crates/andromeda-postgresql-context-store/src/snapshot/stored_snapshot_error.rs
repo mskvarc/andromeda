@@ -9,7 +9,7 @@
 use andromeda_context_space::snapshot_key::SnapshotKeyError;
 use andromeda_ngsi_ld_lexicon::{duration::Iso8601DurationError, identifier::IdentifierParseError};
 use andromeda_ngsi_ld_model::snapshot::SnapshotPriorityParseError;
-use andromeda_postgresql_codes::registry::UnknownCompactCode;
+use andromeda_postgresql_stored_values::registry::UnknownCompactCode;
 use std::num::TryFromIntError;
 use thiserror::Error;
 

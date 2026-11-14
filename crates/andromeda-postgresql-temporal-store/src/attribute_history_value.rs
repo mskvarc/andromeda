@@ -10,8 +10,7 @@ use andromeda_postgresql_attribute_instance::{
     stored_number::StoredNumber,
     stored_value::{LiteralAnnotation, StoredValue},
 };
-use andromeda_postgresql_codes::value_kind::ValueKind;
-use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use andromeda_postgresql_stored_values::{entity_type_name_key::EntityTypeNameKey, value_kind::ValueKind};
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use serde_json::value::{RawValue, to_raw_value};
@@ -324,8 +323,7 @@ mod tests {
         stored_number::StoredNumber,
         stored_value::{LiteralAnnotation, StoredValue},
     };
-    use andromeda_postgresql_codes::value_kind::ValueKind;
-    use andromeda_postgresql_query::{dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
+    use andromeda_postgresql_stored_values::{entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames, value_kind::ValueKind};
     use chrono::{TimeZone, Utc};
     use langtag::LangTagBuf;
     use serde_json::value::RawValue;

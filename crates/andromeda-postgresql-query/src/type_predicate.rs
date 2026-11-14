@@ -8,10 +8,10 @@
 //! constant `FALSE`. The only thing that varies between callers is which
 //! relation's `entity_type_name_keys` column is read.
 
-use crate::dictionary::resolved_names::ResolvedNames;
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
 use andromeda_postgresql_seaquery::{literal::false_literal, operator::array_contains_key};
+use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
 use sea_query::{Condition, SimpleExpr};
 
 /// Render a type expression against the given `entity_type_name_keys` column.
@@ -34,11 +34,12 @@ pub fn condition(expr: &TypeExpr, entity_type_name_keys: &SimpleExpr, types: &Re
 
 #[cfg(test)]
 mod tests {
-    use crate::{dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey, type_predicate::condition};
+    use crate::type_predicate::condition;
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
     use andromeda_postgresql_schema::current::{E, Entities, EntitySearch};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use sea_query::{Condition, Expr, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};

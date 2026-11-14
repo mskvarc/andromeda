@@ -17,7 +17,6 @@ use andromeda_ngsi_ld_vocabulary::{
     expanded::classes::{DATE, TIME},
     keyword,
 };
-use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_query::q_predicate::{
     extended_filter_pattern::{CaseFolding, exact_tag_pattern, extended_filter_pattern},
     sub_attribute::{
@@ -37,6 +36,7 @@ use andromeda_postgresql_seaquery::{
     structured_value::sub_attribute_value_object,
     unnest::composite_field,
 };
+use andromeda_postgresql_stored_values::value_kind::ValueKind;
 use sea_query::{Alias, CaseStatement, Expr as SeaExpr, ExprTrait, Func, SimpleExpr};
 
 /// The typed value the read instance holds for the path, read off the

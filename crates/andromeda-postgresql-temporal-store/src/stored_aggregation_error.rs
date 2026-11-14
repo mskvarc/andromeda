@@ -8,7 +8,7 @@
 //! naming the column itself.
 
 use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError};
-use andromeda_postgresql_codes::registry::UnknownCompactCode;
+use andromeda_postgresql_stored_values::registry::UnknownCompactCode;
 use strum::{Display, IntoStaticStr};
 use thiserror::Error;
 

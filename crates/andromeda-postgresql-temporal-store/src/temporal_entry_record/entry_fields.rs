@@ -17,13 +17,14 @@ use andromeda_postgresql_attribute_instance::{
     stored_number::StoredNumber,
     sub_attribute::{EwkbGeometry, SubAttributeRecord},
 };
-use andromeda_postgresql_codes::{
+use andromeda_postgresql_stored_values::{
     attribute_kind::AttributeKind,
+    dataset_key::DatasetKey,
+    entity_type_name_key::EntityTypeNameKey,
     stored_unit_code::stored_unit_code,
     temporal_entry_kind::TemporalEntryKind,
     value_kind::ValueKind,
 };
-use andromeda_postgresql_query::{dataset_key::DatasetKey, entity_type_name_key::EntityTypeNameKey};
 use andromeda_temporal::scope_entry_kind::ScopeEntryKind;
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;

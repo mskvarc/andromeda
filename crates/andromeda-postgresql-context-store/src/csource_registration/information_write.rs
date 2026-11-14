@@ -19,7 +19,6 @@ use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
 use andromeda_ngsi_ld_query::portable_pattern::RenderingRevision;
 use andromeda_postgresql_encoding::array_literal::{IntegerArrayLiteral, TextArrayLiteral};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_postgresql_schema::csr::RegistrationInformation;
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -28,6 +27,7 @@ use andromeda_postgresql_seaquery::{
     statement::Statement,
     unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{DeleteStatement, Expr, ExprTrait, Iden, InsertStatement, IntoIden, Query, SimpleExpr};
 use sqlx::PgConnection;
 use std::collections::HashMap;
@@ -255,7 +255,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
     use andromeda_postgresql_encoding::array_literal::{IntegerArrayLiteral, TextArrayLiteral};
-    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+    use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use std::collections::HashMap;

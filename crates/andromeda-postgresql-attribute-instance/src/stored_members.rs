@@ -20,14 +20,15 @@ use andromeda_ngsi_ld_lexicon::{
     uri::UriParseError,
 };
 use andromeda_ngsi_ld_number::JsonNumberError;
-use andromeda_postgresql_codes::{
+use andromeda_postgresql_encoding::ewkb::EwkbError;
+use andromeda_postgresql_stored_values::{
     attribute_kind::AttributeKind,
+    attribute_name_key::AttributeNameKey,
+    entity_type_name_key::EntityTypeNameKey,
     registry::UnknownCompactCode,
     stored_unit_code::{UnknownStoredUnitCode, stored_unit_code, unit_code_from_stored},
     value_kind::ValueKind,
 };
-use andromeda_postgresql_encoding::ewkb::EwkbError;
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
 use cefact_units::UnitCode;
 use chrono::{DateTime, Utc};
 use langtag::{InvalidLangTag, LangTagBuf};

@@ -9,9 +9,9 @@
 //! already. The census names those types and how many streams each holds,
 //! read once before the statement is rendered, as the dictionaries are.
 
-use crate::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
 use andromeda_postgresql_schema::temporal::StreamTypeCensus;
 use andromeda_postgresql_seaquery::{branch::qualified, cast::cast, literal::int_literal, pg_array::is_any_of, pg_type::PostgresType};
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
 use sea_query::{DynIden, Expr, ExprTrait, Func, Iden, Query, SelectStatement, SimpleExpr};
 use std::collections::HashMap;
 
@@ -92,12 +92,9 @@ pub fn holder_types_query(schema: Option<&DynIden>, keys: &[AttributeNameKey]) -
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        attribute_name_key::AttributeNameKey,
-        entity_type_name_key::EntityTypeNameKey,
-        history_source::attribute_holders::{AttributeHolders, HolderType, holder_types_query},
-    };
+    use crate::history_source::attribute_holders::{AttributeHolders, HolderType, holder_types_query};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, IntoIden};
 

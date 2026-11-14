@@ -9,8 +9,7 @@
 
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, reference::NgsiLdReferenceError};
 use andromeda_ngsi_ld_query::error::QueryError;
-use andromeda_postgresql_codes::registry::UnknownCompactCode;
-use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, registry::UnknownCompactCode};
 use thiserror::Error;
 
 /// A `registration_information` row set that does not assemble to an

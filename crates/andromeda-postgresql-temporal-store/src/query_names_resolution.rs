@@ -8,18 +8,17 @@ use andromeda_ngsi_ld_query::temporal::{
     grouping::{AggregationGrouping, group_key::GroupKey},
 };
 use andromeda_postgresql_query::{
-    attribute_name_key::AttributeNameKey,
-    dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-    entity_type_name_key::EntityTypeNameKey,
     history_source::{
         HistoryBranch,
         attribute_holders::{AttributeHolders, HeldStreams, HolderType, holder_types_query},
     },
     projected_attribute_names::projected_attribute_names,
     projected_type_names::projected_type_names,
+    query_names::QueryNames,
 };
 use andromeda_postgresql_schema::temporal::StreamTypeCensus;
 use andromeda_postgresql_seaquery::statement::Statement;
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
 use andromeda_postgresql_temporal_query::stage1::evolution_walk::{concerned_attribute_keys, walks_attribute_holders};
 use andromeda_temporal::error::TemporalError;
 use iri_rs::IriBuf;

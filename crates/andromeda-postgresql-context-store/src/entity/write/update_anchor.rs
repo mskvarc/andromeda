@@ -10,9 +10,9 @@ use crate::entity::write::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_query::entity_sides::holds_current_state;
 use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_seaquery::returning_image::{New, Old};
+use andromeda_postgresql_stored_form::entity_sides::holds_current_state;
 use chrono::{DateTime, Utc};
 use sea_query::{Cond, Expr, ExprTrait, Query, UpdateStatement};
 

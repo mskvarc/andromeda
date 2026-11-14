@@ -48,14 +48,12 @@ use andromeda_ngsi_ld_query::{
     read_order::ReadOrder,
 };
 use andromeda_postgresql_query::{
-    attribute_name_key::AttributeNameKey,
-    dictionary::query_names::QueryNames,
     entity_ordering::ordering_collation,
     entity_row_refs::EntityRowRefs,
     error::RenderError,
-    expiry::unexpired,
     one_time_gate::{count_of, materialized, wrapped},
     q_predicate::projection_probe::{Ca, of_attribute, projection_column, standing},
+    query_names::QueryNames,
     sort_key::SortKey,
 };
 use andromeda_postgresql_schema::current::CurrentAttributes;
@@ -65,6 +63,8 @@ use andromeda_postgresql_seaquery::{
     literal::int_literal,
     pg_type::PostgresType,
 };
+use andromeda_postgresql_stored_form::expiry::unexpired;
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Alias, Asterisk, Condition, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement, UnionType, WithClause};
 
 /// The furthest row a walk reads, the window's offset and its limit together,
@@ -264,12 +264,9 @@ mod tests {
         page_window::PageWindow,
         type_selection::grammar::TypeExpr,
     };
-    use andromeda_postgresql_query::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        entity_type_name_key::EntityTypeNameKey,
-    };
+    use andromeda_postgresql_query::query_names::QueryNames;
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, SelectStatement};

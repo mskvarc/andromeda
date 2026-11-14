@@ -1,7 +1,7 @@
 //! Which subscription family a statement addresses.
 
-use andromeda_postgresql_codes::subscription_kind::SubscriptionKindCode;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
+use andromeda_postgresql_stored_values::subscription_kind::SubscriptionKindCode;
 use sea_query::{Expr, ExprTrait, SimpleExpr};
 
 /// Which subscription family a repository serves; both share the `subscriptions`
@@ -37,7 +37,7 @@ pub(crate) fn of_kind(kind: StoredKind) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::subscription_store::stored_kind::{StoredKind, of_kind};
-    use andromeda_postgresql_codes::subscription_kind::SubscriptionKindCode;
+    use andromeda_postgresql_stored_values::subscription_kind::SubscriptionKindCode;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
 

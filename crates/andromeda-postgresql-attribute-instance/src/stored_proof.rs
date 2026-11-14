@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_lexicon::{
     time::{date_time::NgsiLdDateTime, spelled_date_time::SpelledDateTime},
     uri::Uri,
 };
-use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use andromeda_postgresql_stored_values::entity_type_name_key::EntityTypeNameKey;
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
 use sqlx::{Type, types::Json};
@@ -137,7 +137,7 @@ mod tests {
         stored_members::StoredInstanceError,
         stored_proof::{ProofFields, StoredProof},
     };
-    use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+    use andromeda_postgresql_stored_values::entity_type_name_key::EntityTypeNameKey;
 
     fn proof() -> StoredProof {
         StoredProof {

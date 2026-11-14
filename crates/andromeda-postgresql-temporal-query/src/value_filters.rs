@@ -20,10 +20,10 @@
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, contributed_entities::ContributedEntities};
 use andromeda_postgresql_query::{
-    dictionary::query_names::QueryNames,
     error::RenderError,
     history_source::{EvolutionColumns, HistoryBranch, HistoryOf},
     q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, projection as q_filter},
+    query_names::QueryNames,
     scope_predicate::{ScopeTarget, condition as scope_condition},
     window_reach::WindowReach,
 };
@@ -163,14 +163,9 @@ mod tests {
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_postgresql_query::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        entity_type_name_key::EntityTypeNameKey,
-        history_source::HistoryBranch,
-        window_reach::WindowReach,
-    };
+    use andromeda_postgresql_query::{history_source::HistoryBranch, query_names::QueryNames, window_reach::WindowReach};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use chrono::{DateTime, Utc};
     use iri_rs::IriBuf;
     use sea_query::{Alias, Expr, IntoIden, Query, SelectStatement};

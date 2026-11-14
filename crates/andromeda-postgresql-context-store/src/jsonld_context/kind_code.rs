@@ -8,7 +8,7 @@
 
 use andromeda_context_registry::creation_kind::ContextCreationKind;
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
-use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
+use andromeda_postgresql_stored_values::jsonld_context_kind::JsonldContextKindCode;
 
 /// The registry member the store persists for a Context kind.
 #[must_use]
@@ -44,7 +44,7 @@ mod tests {
     use crate::jsonld_context::kind_code::{created_kind, kind_of, stored_kind};
     use andromeda_context_registry::creation_kind::ContextCreationKind;
     use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
-    use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
+    use andromeda_postgresql_stored_values::jsonld_context_kind::JsonldContextKindCode;
     use pretty_assertions::assert_eq;
     use strum::IntoEnumIterator;
 

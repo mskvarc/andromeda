@@ -39,12 +39,7 @@ use andromeda_ngsi_ld_query::temporal::{
     window::TemporalWindow,
 };
 use andromeda_postgresql_branch::schema_iden;
-use andromeda_postgresql_query::{
-    attribute_name_key::AttributeNameKey,
-    dataset_predicate::dataset_condition,
-    dictionary::resolved_names::ResolvedNames,
-    history_source::axis::axis_window,
-};
+use andromeda_postgresql_query::{dataset_predicate::dataset_condition, history_source::axis::axis_window};
 use andromeda_postgresql_schema::{
     current::Entities,
     temporal::{AttributeHistory, TemporalAttributeStreams},
@@ -55,6 +50,7 @@ use andromeda_postgresql_seaquery::{
     pg_array::{is_any_of, is_none_of},
     statement::Statement,
 };
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
 use andromeda_postgresql_temporal_query::alias::{Ah, S, Te};
 use iri_rs::IriBuf;
 use sea_query::{Condition, DeleteStatement, DynIden, Expr, ExprTrait, Iden, LockType, Query, SelectStatement};
@@ -286,7 +282,7 @@ mod tests {
             window::{TemporalWindow, TimeInterval},
         },
     };
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use chrono::{DateTime, Utc};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;

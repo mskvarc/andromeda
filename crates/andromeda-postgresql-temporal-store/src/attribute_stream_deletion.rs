@@ -14,9 +14,9 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_postgresql_branch::schema_iden;
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dataset_key::DatasetKey};
 use andromeda_postgresql_schema::{current::Entities, temporal::TemporalAttributeStreams};
 use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of, statement::Statement};
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, dataset_key::DatasetKey};
 use andromeda_postgresql_temporal_query::alias::{S, Te};
 use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, LockType, Query, SelectStatement};
 
@@ -120,7 +120,7 @@ fn delete_streams_query(schema: Option<&DynIden>, stream_keys: &[i64]) -> Delete
 mod tests {
     use crate::attribute_stream_deletion::{DatasetSelector, delete_streams_query, select_attribute_streams_query};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dataset_key::DatasetKey};
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, dataset_key::DatasetKey};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, DynIden, IntoIden, PostgresQueryBuilder};
 

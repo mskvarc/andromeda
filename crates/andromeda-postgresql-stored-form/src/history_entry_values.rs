@@ -128,7 +128,7 @@ pub fn scope_entry_values(field: impl Fn(TemporalEntry) -> SimpleExpr) -> [(Scop
 
 #[cfg(test)]
 mod tests {
-    use crate::history_source::entry_values::{attribute_entry_values, recorded_extent, scope_entry_values};
+    use crate::history_entry_values::{attribute_entry_values, recorded_extent, scope_entry_values};
     use andromeda_postgresql_schema::temporal_intent::TemporalEntry;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::{Alias, Expr, Iden, Query, SelectStatement, SimpleExpr};

@@ -11,11 +11,7 @@
 //! elements in `sub_attributes`, so a path into a sub-attribute walks the tree
 //! of whichever [`ProbedRow`] the probe reads.
 
-use crate::{
-    history_source::grain::HistoryGrain,
-    q_predicate::{history_aliases::HistoryAliases, projection_probe::projection_column, value_column::ValueColumn},
-};
-use andromeda_postgresql_codes::value_kind::ValueKind;
+use crate::q_predicate::{history_aliases::HistoryAliases, projection_probe::projection_column, value_column::ValueColumn};
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, SubAttribute},
     temporal::AttributeHistory,
@@ -25,6 +21,8 @@ use andromeda_postgresql_seaquery::{
     operator::null_if,
     structured_value::sub_attribute_value_object,
 };
+use andromeda_postgresql_stored_form::history_grain::HistoryGrain;
+use andromeda_postgresql_stored_values::value_kind::ValueKind;
 use sea_query::{Alias, Expr as SeaExpr, ExprTrait, IntoIden, SimpleExpr};
 
 /// The top-level row a probe reads, whose `sub_attributes` a sub-attribute

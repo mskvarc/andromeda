@@ -24,8 +24,7 @@ use andromeda_postgresql_attribute_instance::{
     stored_value::{LiteralAnnotation, StoredValue},
     sub_attribute::SubAttributeElement,
 };
-use andromeda_postgresql_codes::attribute_kind::AttributeKind;
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
 use cefact_units::UnitCode;
 use chrono::{TimeZone, Utc};
 use serde_json::{Value, json, value::to_raw_value};

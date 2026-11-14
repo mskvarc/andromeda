@@ -33,9 +33,9 @@ use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_context_query::entity_head::select_head;
 use andromeda_postgresql_pool::pool_share::PoolLane;
-use andromeda_postgresql_query::entity_sides::holds_current_state;
 use andromeda_postgresql_schema::current::{CurrentAttributes, E, Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{pg_array::is_any_of, statement::Statement};
+use andromeda_postgresql_stored_form::entity_sides::holds_current_state;
 use sea_query::{Expr, ExprTrait, JoinType, Query, SelectStatement, SimpleExpr};
 use sqlx::{Row, postgres::PgRow};
 use std::{collections::HashMap, sync::Arc};
@@ -249,7 +249,7 @@ mod tests {
         entity::read::{entities_query, sys_attrs_query},
     };
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+    use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Value};
 

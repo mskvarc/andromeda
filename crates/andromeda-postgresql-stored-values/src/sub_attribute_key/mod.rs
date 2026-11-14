@@ -3,12 +3,12 @@
 //! reads through `idx_ca_sub_eq_keys`.
 //!
 //! A write keys every scalar value of an instance's sub-attribute tree and a
-//! query keys its operand, both here, so the two sides read clause 4.6.3 and
-//! the number domain by the same rules: `1.0` and `1.00` share a key, a value
-//! declared as a time value is keyed under its kind, a String under its own,
-//! and an array member is read through its `@value` and `@type`. A key selects
-//! candidates only: two values may share one, so a query rechecks the value it
-//! compares.
+//! query keys its operand with the same key, so the two sides read clause
+//! 4.6.3 and the number domain by the same rules: `1.0` and `1.00` share a
+//! key, a value declared as a time value is keyed under its kind, a String
+//! under its own, and an array member is read through its `@value` and
+//! `@type`. A key selects candidates only: two values may share one, so a
+//! query rechecks the value it compares.
 //!
 //! The hash is XXH3-64, whose output the xxHash specification fixes for every
 //! platform and build, and every byte it hashes is spelled little-endian. A
@@ -17,7 +17,5 @@
 
 /// The key of one value at one name path.
 pub mod key;
-/// The keys a `q` operand reads.
-pub mod operand_keys;
 /// The hash of a sub-attribute's name path.
 pub mod path_hash;

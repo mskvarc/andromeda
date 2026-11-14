@@ -23,19 +23,19 @@ use andromeda_ngsi_ld_query::{
     temporal::{compiled::CompiledTemporalQuery, instance_page::InstancePage, period_budget::PeriodBudget},
 };
 use andromeda_postgresql_query::{
-    attribute_name_key::AttributeNameKey,
     dataset_predicate::dataset_condition,
-    dictionary::query_names::QueryNames,
     history_source::{
         HistoryBranch,
         HistoryOf,
         attribute_rows::attribute_rows,
         axis::{axis_column, axis_present, axis_window},
-        grain::HistoryGrain,
     },
+    query_names::QueryNames,
 };
 use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::AttributeHistory};
 use andromeda_postgresql_seaquery::{pg_array::is_any_of, postgis::st_as_ewkb};
+use andromeda_postgresql_stored_form::history_grain::HistoryGrain;
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use iri_rs::IriBuf;
 use sea_query::{Alias, Asterisk, Condition, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement};
 
@@ -233,12 +233,9 @@ mod tests {
         },
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_postgresql_query::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        history_source::HistoryBranch,
-    };
+    use andromeda_postgresql_query::{history_source::HistoryBranch, query_names::QueryNames};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use iri_rs::IriBuf;
     use sea_query::{IntoIden, SelectStatement};
     use std::{num::NonZeroU32, slice};

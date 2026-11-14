@@ -12,7 +12,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, split_filter::LeafTruths, temporal::compiled::CompiledTemporalQuery};
-use andromeda_postgresql_codes::{
+use andromeda_postgresql_stored_values::{
     attribute_kind_code::{attribute_type_of, stored_attribute_kind},
     recorded_shape::RecordedShape,
 };
@@ -262,7 +262,7 @@ mod tests {
         stored_attribute_shape::StoredAttributeShape,
         temporal_store_invariant::TemporalStoreInvariant,
     };
-    use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
+    use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
 
     #[test]
     fn a_count_statement_answering_no_row_is_a_broken_contract() {

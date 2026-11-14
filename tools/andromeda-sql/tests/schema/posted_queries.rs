@@ -1,7 +1,7 @@
 //! The API codes a posted query may store.
 
 use crate::repository::{PinError, constraint_definition, schema};
-use andromeda_postgresql_codes::posted_query_kind::PostedQueryKindCode;
+use andromeda_postgresql_stored_values::posted_query_kind::PostedQueryKindCode;
 use pretty_assertions::assert_eq;
 
 /// The check admits exactly the codes the registry assigns, so an API added to

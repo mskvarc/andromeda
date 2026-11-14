@@ -22,7 +22,6 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, instance_identity::InstanceIdentity};
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, evolution_horizon::horizon_of};
 use andromeda_postgresql_schema::{
     current::Entities,
     temporal::{AttributeHistory, AttributeHistoryInstanceClaims, TemporalAttributeStreams},
@@ -35,6 +34,8 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     postgis::{bounding_box_contains, repaired_when_invalid, st_collect, st_envelope, st_geom_from_ewkb},
 };
+use andromeda_postgresql_stored_form::evolution_horizon::horizon_of;
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use andromeda_postgresql_temporal_query::alias::{Ah, S, Te};
 use chrono::{DateTime, Utc};
 use sea_query::{Condition, DeleteStatement, Expr, ExprTrait, Func, JoinType, Query, SelectStatement, SimpleExpr, UpdateStatement};
@@ -313,7 +314,7 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, instance_identity::InstanceIdentity};
     use andromeda_postgresql_attribute_instance::stored_value::StoredValue;
-    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+    use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
     use pretty_assertions::assert_eq;
     use sea_query::{Expr, PostgresQueryBuilder};
 

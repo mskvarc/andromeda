@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_model::{
     temporal::{StreamExtent, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-use andromeda_postgresql_codes::scope_value_kind::ScopeValueKind;
+use andromeda_postgresql_stored_values::scope_value_kind::ScopeValueKind;
 use andromeda_temporal::{append_intent::TemporalObservationIdentity, port::history_reader::TemporalHistoryObservation};
 use chrono::{DateTime, Utc};
 use sqlx::{Row, postgres::PgRow};

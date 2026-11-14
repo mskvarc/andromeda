@@ -21,7 +21,6 @@ use andromeda_ngsi_ld_query::{
     },
     pattern::Pattern,
 };
-use andromeda_postgresql_codes::stored_unit_code::stored_unit_code;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, SubAttribute},
     name_dictionary::EntityTypeNames,
@@ -32,6 +31,7 @@ use andromeda_postgresql_seaquery::{
     pg_array::{any, array_element, array_subscript, cardinality, is_any_of, is_none_of},
     scalar_subquery::scalar_subquery,
 };
+use andromeda_postgresql_stored_values::stored_unit_code::stored_unit_code;
 use cefact_units::UnitCode;
 use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Query, SimpleExpr};
 use std::slice;
@@ -290,12 +290,12 @@ mod tests {
         sub_attribute::member_field::{member_condition, unit_code_text},
     };
     use andromeda_ngsi_ld_query::filter::{expression::Expr, instance_metadata::InstanceMetadata, parser::parse};
-    use andromeda_postgresql_codes::stored_unit_code::stored_unit_code;
     use andromeda_postgresql_schema::{
         current::{CurrentAttributes, SubAttribute},
         temporal::AttributeHistory,
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::stored_unit_code::stored_unit_code;
     use cefact_units::UnitCode;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query, SelectStatement, Value};

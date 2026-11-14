@@ -48,8 +48,8 @@ pub(crate) fn project_horizon(select: &mut SelectStatement, horizon: SimpleExpr)
 #[cfg(test)]
 mod tests {
     use crate::horizon_raise::{horizon_raise_statement, project_horizon};
-    use andromeda_postgresql_query::evolution_horizon::horizon_of;
     use andromeda_postgresql_schema::current::Entities;
+    use andromeda_postgresql_stored_form::evolution_horizon::horizon_of;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
 

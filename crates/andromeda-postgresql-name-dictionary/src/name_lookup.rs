@@ -21,7 +21,7 @@
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_pool::{persistence_classification::classify, saturation::is_pool_saturated};
-use andromeda_postgresql_query::dictionary::{interned_name::InternedName, resolved_names::ResolvedNames};
+use andromeda_postgresql_stored_values::{interned_name::InternedName, resolved_names::ResolvedNames};
 use sea_query::error::Error as SeaQueryError;
 use sqlx::PgConnection;
 use std::{collections::HashMap, fmt::Debug};

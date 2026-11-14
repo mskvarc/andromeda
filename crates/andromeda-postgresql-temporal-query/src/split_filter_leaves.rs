@@ -26,10 +26,10 @@ use andromeda_ngsi_ld_query::{
     temporal::compiled::CompiledTemporalQuery,
 };
 use andromeda_postgresql_query::{
-    dictionary::query_names::QueryNames,
     error::RenderError,
     history_source::{HistoryBranch, HistoryOf, entity_rows::entity_rows},
     q_predicate::{instance_scan::InstanceScan, projection as q_filter},
+    query_names::QueryNames,
     scope_predicate::pattern_condition,
     window_reach::WindowReach,
 };
@@ -95,12 +95,9 @@ mod tests {
         },
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_postgresql_query::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        history_source::HistoryBranch,
-    };
+    use andromeda_postgresql_query::{history_source::HistoryBranch, query_names::QueryNames};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
 
     fn compiled(q: &str, geo: Option<GeoQuery>, scope: Option<&str>) -> CompiledTemporalQuery {
         CompiledTemporalQuery::builder()

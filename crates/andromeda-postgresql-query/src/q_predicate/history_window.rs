@@ -35,7 +35,6 @@
 //! recorded ones.
 
 use crate::{
-    attribute_name_key::AttributeNameKey,
     error::RenderError,
     geo_predicate::restriction,
     history_source::{
@@ -44,7 +43,6 @@ use crate::{
         attribute_rows::{attribute_rows, stream_rows},
         axis::{axis_present, axis_window},
         entity_rows::entity_rows,
-        grain::HistoryGrain,
     },
     q_predicate::{
         history_aliases::HistoryAliases,
@@ -52,7 +50,6 @@ use crate::{
         instance_test::{InstanceTest, non_empty},
     },
     stored_geometry::{BoxIndexing, StoredGeometry},
-    tombstone::carries_a_value,
     window_reach::WindowReach,
 };
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
@@ -62,6 +59,8 @@ use andromeda_postgresql_seaquery::{
     literal::{false_literal, int_literal},
     pg_array::is_any_of,
 };
+use andromeda_postgresql_stored_form::{history_grain::HistoryGrain, tombstone::carries_a_value};
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use chrono::{DateTime, Utc};
 use sea_query::{Asterisk, Condition, DynIden, Expr as SeaExpr, ExprTrait, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, TableRef};
 use typed_builder::TypedBuilder;
@@ -327,7 +326,6 @@ impl HistoryWindow {
 #[cfg(test)]
 mod tests {
     use crate::{
-        attribute_name_key::AttributeNameKey,
         history_source::{EvolutionColumns, HistoryBranch, HistoryOf},
         q_predicate::{
             history_aliases::HistoryAliases,
@@ -339,6 +337,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
     use chrono::{DateTime, Utc};
     use sea_query::{Alias, Condition, Expr, ExprTrait, IntoIden, Query, SelectStatement};
 

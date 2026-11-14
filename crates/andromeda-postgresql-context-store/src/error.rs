@@ -15,7 +15,6 @@ use crate::{
 };
 use andromeda_context_commit::write_ordinal::WriteOrdinalOutOfRange;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
-use andromeda_postgresql_codes::registry::UnknownCompactCode;
 use andromeda_postgresql_collation::provisioned_collations::CollationProvisioningError;
 use andromeda_postgresql_encoding::{copy::CopyFieldError, ewkb::EwkbError};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
@@ -27,6 +26,7 @@ use andromeda_postgresql_pool::{
     transaction_rollback::is_transaction_rolled_back,
 };
 use andromeda_postgresql_query::error::RenderError;
+use andromeda_postgresql_stored_values::registry::UnknownCompactCode;
 use sea_query::error::Error as SeaQueryError;
 use sqlx::migrate::MigrateError;
 

@@ -8,9 +8,9 @@
 //! mask already holding every recorded combination is left alone, which is
 //! the steady state of a stream: the write then updates no catalogue row.
 
-use andromeda_postgresql_query::tombstone::carries_a_value;
 use andromeda_postgresql_schema::temporal::{AttributeHistory, TemporalAttributeStreams};
 use andromeda_postgresql_seaquery::bit_string::{bit_union, bit_union_of_rows};
+use andromeda_postgresql_stored_form::tombstone::carries_a_value;
 use andromeda_postgresql_temporal_query::{alias::Ah, shape_mask::recorded_combination};
 use sea_query::{Expr, ExprTrait, Iden, IntoIden, Query, SelectStatement, SimpleExpr, TableRef, UpdateStatement};
 

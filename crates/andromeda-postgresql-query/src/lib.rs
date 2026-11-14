@@ -6,15 +6,15 @@
 //! rows, a `georel` becomes a `PostGIS`
 //! predicate, a `scopeQ` becomes an `lquery` match, a type selection becomes a
 //! predicate over the interned `entity_type_name_keys` array or a walk of a
-//! type-membership relation. The walk is only as good as the relation is
-//! current, so the rows a write moves in it are spelled here too, beside the
-//! walk that reads them.
+//! type-membership relation.
 //!
 //! The primitives those renderings are built from live below the NGSI-LD line:
 //! the dialect vocabulary (PostGIS/ltree/jsonb operators, casts, bind, quoting)
-//! is `andromeda-postgresql-seaquery`, and the physical relation identifiers are
-//! `andromeda-postgresql-schema`. This crate holds only the translation of the
-//! query languages onto them.
+//! is `andromeda-postgresql-seaquery`, the physical relation identifiers are
+//! `andromeda-postgresql-schema`, and what a stored row means (a deletion, an
+//! expiry, the side of an identity row, the default instance) is
+//! `andromeda-postgresql-stored-form`. This crate holds only the translation of
+//! the query languages onto them.
 //!
 //! Everything here is a fragment. Assembling fragments into a statement is the
 //! job of the crate that owns the statement:
@@ -24,18 +24,11 @@
 //! the fragments are here and not in either of them.
 
 pub mod attribute_instance_correlation;
-pub mod attribute_name_key;
-pub mod dataset_key;
 pub mod dataset_predicate;
 pub mod declared_operand;
-pub mod dictionary;
 pub mod entity_ordering;
 pub mod entity_row_refs;
-pub mod entity_sides;
-pub mod entity_type_name_key;
 pub mod error;
-pub mod evolution_horizon;
-pub mod expiry;
 pub mod geo_predicate;
 pub mod history_source;
 pub mod id_pattern_trigrams;
@@ -48,19 +41,16 @@ pub mod page_window;
 pub mod projected_attribute_names;
 pub mod projected_type_names;
 pub mod q_predicate;
-pub mod scope_assertion;
+pub mod query_names;
 pub mod scope_predicate;
 pub mod scope_validity;
 pub mod sort_key;
 pub mod stored_geometry;
-pub mod sub_attribute_key;
+pub mod sub_attribute_operand_keys;
 pub mod temporal_operand;
 pub mod time_column;
 pub mod time_interval_predicate;
-pub mod tombstone;
-pub mod type_list_union;
 pub mod type_membership;
-pub mod type_membership_moves;
 pub mod type_predicate;
 /// Which of the instances valid within a temporal window a probe reads.
 pub mod window_reach;
@@ -73,10 +63,11 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
-        "andromeda-postgresql-codes",
         "andromeda-postgresql-encoding",
         "andromeda-postgresql-schema",
         "andromeda-postgresql-seaquery",
+        "andromeda-postgresql-stored-form",
+        "andromeda-postgresql-stored-values",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-postgresql-seaquery",

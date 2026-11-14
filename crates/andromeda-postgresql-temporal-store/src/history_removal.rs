@@ -9,9 +9,9 @@
 //! subquery.
 
 use crate::error::TemporalStoreError;
-use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_schema::temporal::{AttributeHistory, ScopeHistory};
 use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of, statement::Statement};
+use andromeda_postgresql_stored_values::entity_key::EntityKey;
 use sea_query::{DeleteStatement, DynIden, Expr, ExprTrait, Query};
 use sqlx::{Postgres, Transaction};
 
@@ -61,7 +61,7 @@ fn scope_history_delete(schema: Option<&DynIden>, entity_key: EntityKey) -> Dele
 #[cfg(test)]
 mod tests {
     use crate::history_removal::{scope_history_delete, stream_history_delete};
-    use andromeda_postgresql_codes::entity_key::EntityKey;
+    use andromeda_postgresql_stored_values::entity_key::EntityKey;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, DynIden, IntoIden, PostgresQueryBuilder};
 

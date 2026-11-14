@@ -8,15 +8,9 @@
 //! limit or a bound reaches the index of each part.
 
 use crate::alias::{Ah, An};
-use andromeda_postgresql_query::history_source::{
-    HistoryBranch,
-    HistoryOf,
-    HistoryStream,
-    attribute_rows::stream_rows,
-    grain::HistoryGrain,
-    stream_parts::whole_stream_parts,
-};
+use andromeda_postgresql_query::history_source::{HistoryBranch, HistoryOf, HistoryStream, attribute_rows::stream_rows, stream_parts::whole_stream_parts};
 use andromeda_postgresql_schema::name_dictionary::AttributeNames;
+use andromeda_postgresql_stored_form::history_grain::HistoryGrain;
 use sea_query::{Asterisk, Condition, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
 
 /// Alias `st`: the stream a lateral read narrows to.

@@ -19,8 +19,7 @@
 //!   nothing, as an attribute entry without a client `instanceId` does.
 //! - A Scope assertion is written only where the Scope in force at its write
 //!   differs, judged against the recorded Scope events and the earlier queued
-//!   ones by the judgement the application applies
-//!   ([`crate::scope_assertion`]).
+//!   ones by the one judgement the application applies too.
 //!
 //! The visible types of an Entity with a queued intent stating types are
 //! those its recorded Temporal Evolution holds, then every other type its
@@ -31,20 +30,11 @@
 //! an entry is judged against are named in the schema the caller gives, which
 //! is `None` unless the statement's unqualified names resolve elsewhere.
 
-use crate::{
-    entity_sides::holds_evolution,
-    history_source::{
-        HistoryOf,
-        HistoryStream,
-        entry_values::{attribute_entry_values, scope_entry_values},
-        grain::HistoryGrain,
-        instance_replacement::{ReplacingEntry, naming_instance},
-    },
-    scope_assertion::{EVENT_COLUMNS, held_in_force, path_set},
-    tombstone::entry_carries_a_value,
-    type_list_union::{TypeListColumn, type_list_union},
+use crate::history_source::{
+    HistoryOf,
+    HistoryStream,
+    instance_replacement::{ReplacingEntry, naming_instance},
 };
-use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_schema::{
     current::Entities,
     queue::{TemporalAppendEntries, TemporalAppendIntents},
@@ -52,6 +42,15 @@ use andromeda_postgresql_schema::{
     temporal_intent::TemporalEntry,
 };
 use andromeda_postgresql_seaquery::{branch::qualified, cast::typed_null, literal::int_literal, pg_array::has_elements, pg_type::PostgresType};
+use andromeda_postgresql_stored_form::{
+    entity_sides::holds_evolution,
+    history_entry_values::{attribute_entry_values, scope_entry_values},
+    history_grain::HistoryGrain,
+    scope_assertion::{EVENT_COLUMNS, held_in_force, path_set},
+    tombstone::entry_carries_a_value,
+    type_list_union::{TypeListColumn, type_list_union},
+};
+use andromeda_postgresql_stored_values::temporal_entry_kind::TemporalEntryKind;
 use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
 
 /// Alias `pe`: the queued entry a source row is projected from.

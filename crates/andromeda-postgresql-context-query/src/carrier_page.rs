@@ -27,7 +27,7 @@ use crate::{
     gated_page::{GatedColumns, IndexOrWalk, PageSource, ShortWalk, Walked, gated_page},
 };
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, entity_selection::ConsideredEntities, read_order::ReadOrder};
-use andromeda_postgresql_query::{dictionary::query_names::QueryNames, entity_row_refs::EntityRowRefs, error::RenderError, one_time_gate::CandidateBound};
+use andromeda_postgresql_query::{entity_row_refs::EntityRowRefs, error::RenderError, one_time_gate::CandidateBound, query_names::QueryNames};
 use andromeda_postgresql_schema::current::EntitySearch;
 use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, Query, SelectStatement};
 
@@ -134,12 +134,9 @@ mod tests {
         page_window::PageWindow,
         type_selection::grammar::TypeExpr,
     };
-    use andromeda_postgresql_query::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        entity_type_name_key::EntityTypeNameKey,
-    };
+    use andromeda_postgresql_query::query_names::QueryNames;
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use sea_query::SelectStatement;

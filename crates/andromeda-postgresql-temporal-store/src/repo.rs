@@ -5,7 +5,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_postgresql_collation::provisioned_collations::ProvisionedCollations;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_pool::pool_share::PoolShare;
-use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sqlx::postgres::PgPool;
 use std::{slice, sync::Arc};
 

@@ -9,12 +9,13 @@ use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelection,
     projection::projected_members::{ProjectedMembers, ScopeRetention},
 };
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::query_names::QueryNames, entity_row_refs::EntityRowRefs};
+use andromeda_postgresql_query::{entity_row_refs::EntityRowRefs, query_names::QueryNames};
 use andromeda_postgresql_schema::current::EntitySearch;
 use andromeda_postgresql_seaquery::{
     literal::false_literal,
     operator::{array_contained_by_keys, array_contains_key},
 };
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Condition, ExprTrait};
 
 /// The `attrs` selection: the Entity carries at least one of the named

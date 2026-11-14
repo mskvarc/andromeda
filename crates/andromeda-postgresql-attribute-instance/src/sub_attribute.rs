@@ -296,8 +296,12 @@ mod tests {
     };
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError, declared_number::NonFinite};
-    use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
+    use andromeda_postgresql_stored_values::{
+        attribute_kind::AttributeKind,
+        attribute_name_key::AttributeNameKey,
+        entity_type_name_key::EntityTypeNameKey,
+        value_kind::ValueKind,
+    };
     use cefact_units::UnitCode;
     use chrono::{TimeZone, Utc};
     use serde_json::{json, value::to_raw_value};

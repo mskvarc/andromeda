@@ -4,10 +4,11 @@
 //! The column is a [`DatasetKey`], so the default and the named instances are
 //! one membership test with plain `=`, and an index on the grain answers it.
 
-use crate::dataset_key::{DatasetKey, is_default_instance};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::dataset::DatasetFilter;
 use andromeda_postgresql_seaquery::pg_array::is_any_of;
+use andromeda_postgresql_stored_form::default_instance::is_default_instance;
+use andromeda_postgresql_stored_values::dataset_key::DatasetKey;
 use sea_query::{Condition, SimpleExpr};
 
 /// Whether the instance whose grain key is `column` is one `filter` selects.

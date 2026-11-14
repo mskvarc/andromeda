@@ -16,10 +16,11 @@ workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
-andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-query.workspace = true
 andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
+andromeda-postgresql-stored-form.workspace = true
+andromeda-postgresql-stored-values.workspace = true
 cefact-units = "1.0.0"
 chrono = "0.4.45"
 iri-rs = { version = "4.1.1", features = ["serde", "static"] }

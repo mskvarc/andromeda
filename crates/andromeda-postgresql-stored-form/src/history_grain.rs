@@ -24,7 +24,7 @@ pub enum HistoryGrain {
 
 #[cfg(test)]
 mod tests {
-    use crate::history_source::grain::HistoryGrain;
+    use crate::history_grain::HistoryGrain;
     use sea_query::Iden;
 
     #[test]

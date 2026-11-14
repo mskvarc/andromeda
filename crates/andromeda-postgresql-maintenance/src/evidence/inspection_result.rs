@@ -1,7 +1,7 @@
 //! What one tenant's inspection came to.
 
 use crate::controller::PassOutcome;
-use andromeda_postgresql_codes::maintenance_inspection_result::MaintenanceInspectionResultCode;
+use andromeda_postgresql_stored_values::maintenance_inspection_result::MaintenanceInspectionResultCode;
 use strum::EnumIter;
 
 /// What the last maintenance inspection of a tenant came to.
@@ -95,7 +95,7 @@ impl InspectionResult {
 #[cfg(test)]
 mod tests {
     use crate::evidence::inspection_result::InspectionResult;
-    use andromeda_postgresql_codes::maintenance_inspection_result::MaintenanceInspectionResultCode;
+    use andromeda_postgresql_stored_values::maintenance_inspection_result::MaintenanceInspectionResultCode;
     use pretty_assertions::assert_eq;
     use strum::IntoEnumIterator;
 

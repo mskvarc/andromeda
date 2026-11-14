@@ -33,11 +33,8 @@
 //! `expires_at`.
 
 use crate::{
-    attribute_name_key::AttributeNameKey,
-    dataset_key::is_named_instance,
     entity_row_refs::EntityRowRefs,
     error::RenderError,
-    expiry::unexpired,
     geo_predicate::restriction,
     stored_geometry::{BoxIndexing, StoredGeometry},
 };
@@ -45,6 +42,8 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery};
 use andromeda_postgresql_schema::current::{CurrentAttributes, Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{literal::false_literal, pg_array::is_any_of};
+use andromeda_postgresql_stored_form::{default_instance::is_named_instance, expiry::unexpired};
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, JoinType, Order, Query, SelectStatement, UnionType};
 
 /// Alias the hoisted-instance arm reads `entity_search` under.
@@ -180,7 +179,6 @@ fn dataset_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, location_key: Attr
 #[cfg(test)]
 mod tests {
     use crate::{
-        attribute_name_key::AttributeNameKey,
         entity_row_refs::EntityRowRefs,
         location_instances::{MAX_PROBED_CANDIDATES, any_location_instance},
     };
@@ -188,6 +186,7 @@ mod tests {
     use andromeda_ngsi_ld_query::geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery};
     use andromeda_postgresql_schema::current::Entities;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Condition, Query, SelectStatement};
     use std::str::FromStr;

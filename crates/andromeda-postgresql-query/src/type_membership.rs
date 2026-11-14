@@ -15,15 +15,13 @@
 //! The wildcard selects every Entity whatever its types, so it has no range to
 //! walk, and neither has any expression it would have to be merged into.
 
-use crate::{dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
-use andromeda_postgresql_schema::{current::EntityTypeMembers, type_membership::MembershipSide};
-use andromeda_postgresql_seaquery::{
-    branch::qualified,
-    literal::{false_literal, int_literal},
-};
-use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, Order, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
+use andromeda_postgresql_schema::current::EntityTypeMembers;
+use andromeda_postgresql_seaquery::literal::{false_literal, int_literal};
+use andromeda_postgresql_stored_form::memberships::Memberships;
+use andromeda_postgresql_stored_values::{entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
+use sea_query::{Condition, Expr, ExprTrait, Iden, Order, Query, SelectStatement, SimpleExpr, UnionType};
 
 /// The merge of several ranges, `typed`.
 #[derive(Iden, Clone, Copy)]
@@ -39,22 +37,6 @@ struct Candidate;
 #[derive(Iden, Clone, Copy)]
 #[iden = "type_member"]
 struct TypeMember;
-
-/// The memberships of one side a walk or a probe reads, in its branch.
-#[derive(Clone, Copy, Debug)]
-pub struct Memberships<'a> {
-    /// Which side.
-    pub side: MembershipSide,
-    /// The branch schema the relation is named in, `None` for the live branch.
-    pub schema: Option<&'a DynIden>,
-}
-
-impl Memberships<'_> {
-    /// The relation, qualified by its branch schema.
-    pub(crate) fn table(self) -> TableRef {
-        qualified(self.schema, EntityTypeMembers::Table)
-    }
-}
 
 /// Whether `expr` has a range to walk: every leaf it would merge names a type,
 /// and every conjunction has one such child to narrow.
@@ -194,15 +176,13 @@ fn merged(streams: Vec<SelectStatement>, memberships: Memberships<'_>) -> Select
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        dictionary::resolved_names::ResolvedNames,
-        entity_type_name_key::EntityTypeNameKey,
-        type_membership::{Memberships, drives, members_of_any, membership},
-    };
+    use crate::type_membership::{drives, members_of_any, membership};
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
     use andromeda_postgresql_schema::type_membership::MembershipSide;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_form::memberships::Memberships;
+    use andromeda_postgresql_stored_values::{entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Condition, Expr, IntoIden, Query, SelectStatement};

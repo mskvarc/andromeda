@@ -32,7 +32,6 @@ use andromeda_postgresql_context_query::csr::{
     statement as csr_sql,
 };
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
 use andromeda_postgresql_schema::csr::Csr;
 use andromeda_postgresql_seaquery::{
     aggregate::count_all,
@@ -40,6 +39,7 @@ use andromeda_postgresql_seaquery::{
     statement::Statement,
     transaction::{Isolation, TransactionStart},
 };
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use andromeda_registration::{error::RegistrationError, store::page::RegistrationPage};
 use chrono::{DateTime, Utc};
 use sea_query::{Expr as SeaExpr, ExprTrait, Iden, Order, Query, SelectStatement};

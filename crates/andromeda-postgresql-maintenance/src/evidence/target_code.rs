@@ -1,7 +1,7 @@
 //! The number a maintenance target is stored as.
 
 use crate::candidate::{MaintenanceTarget, heap_target::HeapTarget, history_table::HistoryTable, index_target::IndexTarget};
-use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
+use andromeda_postgresql_stored_values::maintenance_target::MaintenanceTargetCode;
 
 /// The registry member the platform database stores for a target.
 pub(crate) const fn stored_target(target: MaintenanceTarget) -> MaintenanceTargetCode {
@@ -139,8 +139,8 @@ mod tests {
         candidate::{MaintenanceTarget, heap_target::HeapTarget, history_table::HistoryTable, index_target::IndexTarget},
         evidence::target_code::{stored_target, target_of},
     };
-    use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
     use andromeda_postgresql_context_store::migration_set::platform::platform_migrations;
+    use andromeda_postgresql_stored_values::maintenance_target::MaintenanceTargetCode;
     use pretty_assertions::assert_eq;
 
     #[test]

@@ -8,16 +8,16 @@
 //! reads the String key of its served spelling and leaves the declaration to
 //! the recheck.
 
-use crate::sub_attribute_key::{
-    key::{KeyedValue, SubAttributeKey, TextKind},
-    path_hash::PathHash,
-};
 use andromeda_ngsi_ld_lexicon::time::{
     date::NgsiLdDate,
     rendering::{instant_text, time_of_day_text},
     time_of_day::NgsiLdTime,
 };
 use andromeda_ngsi_ld_query::filter::scalar::Scalar;
+use andromeda_postgresql_stored_values::sub_attribute_key::{
+    key::{KeyedValue, SubAttributeKey, TextKind},
+    path_hash::PathHash,
+};
 
 /// The keys `scalar` reads at `path`.
 ///
@@ -49,15 +49,15 @@ pub fn operand_keys(path: PathHash, scalar: &Scalar) -> Vec<SubAttributeKey> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
+    use crate::sub_attribute_operand_keys::operand_keys;
+    use andromeda_ngsi_ld_query::filter::scalar::{Scalar, parse_date, parse_time};
+    use andromeda_postgresql_stored_values::{
         attribute_name_key::AttributeNameKey,
         sub_attribute_key::{
             key::{KeyedValue, SubAttributeKey, TextKind},
-            operand_keys::operand_keys,
             path_hash::PathHash,
         },
     };
-    use andromeda_ngsi_ld_query::filter::scalar::{Scalar, parse_date, parse_time};
     use pretty_assertions::{assert_eq, assert_ne};
 
     fn path() -> PathHash {

@@ -19,9 +19,9 @@ use crate::{
         branch_rows::{branch_of_stored_key, stored_snapshot_key},
     },
 };
-use andromeda_postgresql_codes::{maintenance_repack_phase::MaintenanceRepackPhaseCode, maintenance_target::MaintenanceTargetCode};
 use andromeda_postgresql_schema::maintenance::PostgresqlMaintenanceRepackRuns;
 use andromeda_postgresql_seaquery::statement::Statement;
+use andromeda_postgresql_stored_values::{maintenance_repack_phase::MaintenanceRepackPhaseCode, maintenance_target::MaintenanceTargetCode};
 use chrono::{DateTime, Utc};
 use sea_query::{
     DeleteStatement,
@@ -217,7 +217,7 @@ mod tests {
         },
     };
     use andromeda_context_space::snapshot_key::SnapshotKey;
-    use andromeda_postgresql_codes::maintenance_repack_phase::MaintenanceRepackPhaseCode;
+    use andromeda_postgresql_stored_values::maintenance_repack_phase::MaintenanceRepackPhaseCode;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, error::Error as SeaQueryError};
 

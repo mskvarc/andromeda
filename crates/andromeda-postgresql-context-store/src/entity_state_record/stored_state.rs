@@ -13,7 +13,7 @@ use crate::{
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, entity_types::EntityTypes, scopes::Scopes};
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier, scope::path::ScopePath, time::date_time::NgsiLdDateTime};
 use andromeda_postgresql_attribute_instance::name_keys::{HeldKeys, KeyNames};
-use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use andromeda_postgresql_stored_values::entity_type_name_key::EntityTypeNameKey;
 use chrono::{DateTime, Utc};
 
 /// One Entity's state beside its identifier, its names held as keys.

@@ -1,7 +1,7 @@
 //! The need codes a queued temporal intent may store.
 
 use crate::repository::{PinError, constraint_definition, schema};
-use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
+use andromeda_postgresql_stored_values::temporal_intent_reach::TemporalIntentReach;
 use pretty_assertions::assert_eq;
 
 /// The check admits exactly the codes the registry assigns, so a need added to

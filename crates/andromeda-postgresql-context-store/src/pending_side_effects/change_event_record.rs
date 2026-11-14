@@ -34,8 +34,12 @@ use andromeda_ngsi_ld_model::{
     notification::{ChangeOrigin, SysAttrsSnapshot},
 };
 use andromeda_postgresql_attribute_instance::name_keys::{HeldKeys, KeyNames, MentionedNames, NameKeys};
-use andromeda_postgresql_codes::{change_origin::ChangeOriginCode, registry::UnknownCompactCode};
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
+use andromeda_postgresql_stored_values::{
+    attribute_name_key::AttributeNameKey,
+    change_origin::ChangeOriginCode,
+    entity_type_name_key::EntityTypeNameKey,
+    registry::UnknownCompactCode,
+};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use thiserror::Error;

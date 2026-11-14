@@ -32,13 +32,13 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_postgresql_query::{
     entity_row_refs::EntityRowRefs,
-    entity_sides::holds_standing_state,
     error::RenderError,
     id_pattern_trigrams::{ID_PATTERN_CANDIDATE_BOUND, ID_PATTERN_SHORT_WALK, trigram_pattern},
     one_time_gate::CandidateBound,
     operator::{PatternIndexes, pattern as pattern_predicate},
 };
 use andromeda_postgresql_schema::current::Entities;
+use andromeda_postgresql_stored_form::entity_sides::holds_standing_state;
 use sea_query::{Condition, DynIden, Expr, Query, SelectStatement};
 
 /// An `idPattern` and the Entities of any type whose identifier it matches.
@@ -144,12 +144,9 @@ mod tests {
         pattern::Pattern,
         type_selection::grammar::TypeExpr,
     };
-    use andromeda_postgresql_query::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        entity_type_name_key::EntityTypeNameKey,
-    };
+    use andromeda_postgresql_query::query_names::QueryNames;
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use sea_query::SelectStatement;

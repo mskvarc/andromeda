@@ -13,9 +13,8 @@ use crate::{
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_number::{JsonNumber, declared_number::DeclaredNumber};
-use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_encoding::ewkb::Ewkb;
-use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use andromeda_postgresql_stored_values::{entity_type_name_key::EntityTypeNameKey, value_kind::ValueKind};
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use serde_json::value::RawValue;

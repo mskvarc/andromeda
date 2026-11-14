@@ -29,11 +29,7 @@
 //! change for unrelated reasons.
 
 use crate::{
-    attribute_name_key::AttributeNameKey,
-    dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
-    entity_sides::holds_standing_state,
-    expiry::unexpired,
     history_source::HistoryOf,
     q_predicate::{
         history_aliases::HistoryAliases,
@@ -42,7 +38,6 @@ use crate::{
     },
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, Entities, EntitySearch},
     temporal::AttributeHistory,
@@ -54,6 +49,8 @@ use andromeda_postgresql_seaquery::{
     operator::array_contains_key,
     pg_operator::PgBinaryOperator,
 };
+use andromeda_postgresql_stored_form::{entity_sides::holds_standing_state, expiry::unexpired};
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
 use sea_query::{Alias, Condition, DynIden, Expr as SeaExpr, ExprTrait, Func, JoinType, Query, SelectStatement, SimpleExpr, TableRef};
 
 /// One hop of a traversal: the relations its probe introduces, and the probe
@@ -377,9 +374,6 @@ fn type_guard(guard_types: &[AttributeName], types: &ResolvedNames<EntityTypeNam
 #[cfg(test)]
 mod tests {
     use crate::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::resolved_names::ResolvedNames,
-        entity_type_name_key::EntityTypeNameKey,
         history_source::{HistoryBranch, HistoryOf},
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, traversal::LinkedHop},
         window_reach::WindowReach,
@@ -387,6 +381,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use sea_query::{Alias, Condition, Expr, ExprTrait, Query};
 
     /// Clause 5.7.4.4 with clause 4.11: a hop in a temporal `q` follows every

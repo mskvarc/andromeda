@@ -6,9 +6,9 @@
 //! groups on it, so both fold the same columns, which are read off
 //! [`ValueKind::history_column`] rather than listed again.
 
-use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
+use andromeda_postgresql_stored_values::value_kind::ValueKind;
 use sea_query::{Expr, Func, IntoIden, SimpleExpr};
 
 /// The value of the attribute history row under `row`, as text; SQL `NULL` for

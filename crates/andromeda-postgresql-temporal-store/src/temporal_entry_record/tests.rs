@@ -21,15 +21,17 @@ use andromeda_postgresql_attribute_instance::{
     name_resolution::distinct,
     stored_number::StoredNumber,
 };
-use andromeda_postgresql_codes::{
+use andromeda_postgresql_schema::{temporal::AttributeHistory, temporal_intent::TemporalEntry};
+use andromeda_postgresql_stored_values::{
     attribute_kind::AttributeKind,
+    attribute_name_key::AttributeNameKey,
+    entity_type_name_key::EntityTypeNameKey,
+    resolved_names::ResolvedNames,
     scope_value_kind::ScopeValueKind,
     temporal_entry_kind::TemporalEntryKind,
     temporal_intent_reach::TemporalIntentReach,
     value_kind::ValueKind,
 };
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
-use andromeda_postgresql_schema::{temporal::AttributeHistory, temporal_intent::TemporalEntry};
 use andromeda_temporal::{
     append_intent::{TemporalAppendEntry, TemporalAppendIntent},
     scope_entry_kind::ScopeEntryKind,

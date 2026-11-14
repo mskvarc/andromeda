@@ -13,11 +13,6 @@ use crate::{
     },
     stream_census::{StreamChange, counted_stream_addition, stream_census_change, typed_rows},
 };
-use andromeda_postgresql_query::{
-    entity_sides::holds_evolution,
-    history_source::entry_values::{attribute_entry_values, recorded_extent},
-    tombstone::entry_carries_a_value,
-};
 use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents, temporal::TemporalAttributeStreams, temporal_intent::TemporalEntry};
 use andromeda_postgresql_seaquery::{
     bit_string::bit_union_of_rows,
@@ -25,6 +20,11 @@ use andromeda_postgresql_seaquery::{
     pg_array::{any, array_of_subquery, has_elements},
     postgis::{st_collect_rows, st_envelope},
     unnest::unnest_of,
+};
+use andromeda_postgresql_stored_form::{
+    entity_sides::holds_evolution,
+    history_entry_values::{attribute_entry_values, recorded_extent},
+    tombstone::entry_carries_a_value,
 };
 use andromeda_postgresql_temporal_query::{
     alias::{Ah, Te},

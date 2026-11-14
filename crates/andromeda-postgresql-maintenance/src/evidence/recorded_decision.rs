@@ -1,7 +1,7 @@
 //! The decision last recorded for one target.
 
 use crate::policy::{DeferralReason, PolicyDecision};
-use andromeda_postgresql_codes::maintenance_decision::MaintenanceDecisionCode;
+use andromeda_postgresql_stored_values::maintenance_decision::MaintenanceDecisionCode;
 
 /// The decision `postgresql_maintenance_targets.last_decision` records.
 ///
@@ -50,7 +50,7 @@ mod tests {
         evidence::recorded_decision::RecordedDecision,
         policy::{DeferralReason, PolicyDecision},
     };
-    use andromeda_postgresql_codes::maintenance_decision::MaintenanceDecisionCode;
+    use andromeda_postgresql_stored_values::maintenance_decision::MaintenanceDecisionCode;
     use pretty_assertions::assert_eq;
 
     /// Every decision the controller can record, in registry order.

@@ -1694,13 +1694,12 @@ dependencies = [
  "andromeda-ngsi-ld-model",
  "andromeda-persistence-failure",
  "andromeda-postgresql-attribute-instance",
- "andromeda-postgresql-codes",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-name-dictionary",
  "andromeda-postgresql-pool",
- "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
+ "andromeda-postgresql-stored-values",
  "andromeda-postgresql-temporal-store",
  "andromeda-retry",
  "andromeda-telemetry",
@@ -1727,10 +1726,9 @@ dependencies = [
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-number",
- "andromeda-postgresql-codes",
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-name-dictionary",
- "andromeda-postgresql-query",
+ "andromeda-postgresql-stored-values",
  "bigdecimal",
  "cefact-units",
  "chrono",
@@ -1752,21 +1750,6 @@ dependencies = [
  "andromeda-postgresql-seaquery",
  "pretty_assertions",
  "sea-query",
-]
-
-[[package]]
-name = "andromeda-postgresql-codes"
-version = "1.0.0"
-dependencies = [
- "andromeda-architecture-checks",
- "andromeda-ngsi-ld-lexicon",
- "andromeda-postgresql-schema",
- "cefact-units",
- "derive_more",
- "pretty_assertions",
- "semver",
- "strum",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1794,11 +1777,12 @@ dependencies = [
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-postgresql-branch",
- "andromeda-postgresql-codes",
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
+ "andromeda-postgresql-stored-form",
+ "andromeda-postgresql-stored-values",
  "andromeda-q-corpus",
  "chrono",
  "derive_more",
@@ -1836,7 +1820,6 @@ dependencies = [
  "andromeda-posted-query",
  "andromeda-postgresql-attribute-instance",
  "andromeda-postgresql-branch",
- "andromeda-postgresql-codes",
  "andromeda-postgresql-collation",
  "andromeda-postgresql-context-query",
  "andromeda-postgresql-encoding",
@@ -1845,6 +1828,8 @@ dependencies = [
  "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
+ "andromeda-postgresql-stored-form",
+ "andromeda-postgresql-stored-values",
  "andromeda-registration",
  "andromeda-retry",
  "andromeda-snapshot",
@@ -1900,11 +1885,11 @@ dependencies = [
  "andromeda-context-space",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-postgresql-branch",
- "andromeda-postgresql-codes",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-pool",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
+ "andromeda-postgresql-stored-values",
  "andromeda-retry",
  "andromeda-telemetry",
  "chrono",
@@ -1929,9 +1914,9 @@ dependencies = [
  "andromeda-ngsi-ld-lexicon",
  "andromeda-persistence-failure",
  "andromeda-postgresql-pool",
- "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
+ "andromeda-postgresql-stored-values",
  "andromeda-telemetry",
  "async-trait",
  "chrono",
@@ -1976,15 +1961,14 @@ dependencies = [
  "andromeda-ngsi-ld-number",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
- "andromeda-postgresql-codes",
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
+ "andromeda-postgresql-stored-form",
+ "andromeda-postgresql-stored-values",
  "andromeda-q-corpus",
- "bigdecimal",
  "cefact-units",
  "chrono",
- "derive_more",
  "insta",
  "iri-rs",
  "langtag",
@@ -1996,7 +1980,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "typed-builder",
- "xxhash-rust",
 ]
 
 [[package]]
@@ -2024,6 +2007,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-postgresql-stored-form"
+version = "1.0.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-postgresql-schema",
+ "andromeda-postgresql-seaquery",
+ "andromeda-postgresql-stored-values",
+ "insta",
+ "pretty_assertions",
+ "sea-query",
+]
+
+[[package]]
+name = "andromeda-postgresql-stored-values"
+version = "1.0.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-postgresql-schema",
+ "bigdecimal",
+ "cefact-units",
+ "chrono",
+ "derive_more",
+ "pretty_assertions",
+ "semver",
+ "strum",
+ "thiserror 2.0.21",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "andromeda-postgresql-temporal-query"
 version = "1.0.0"
 dependencies = [
@@ -2033,10 +2047,11 @@ dependencies = [
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
- "andromeda-postgresql-codes",
  "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
+ "andromeda-postgresql-stored-form",
+ "andromeda-postgresql-stored-values",
  "cefact-units",
  "chrono",
  "insta",
@@ -2066,7 +2081,6 @@ dependencies = [
  "andromeda-persistence-failure",
  "andromeda-postgresql-attribute-instance",
  "andromeda-postgresql-branch",
- "andromeda-postgresql-codes",
  "andromeda-postgresql-collation",
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-name-dictionary",
@@ -2074,6 +2088,8 @@ dependencies = [
  "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
+ "andromeda-postgresql-stored-form",
+ "andromeda-postgresql-stored-values",
  "andromeda-postgresql-temporal-query",
  "andromeda-retry",
  "andromeda-telemetry",
@@ -2233,9 +2249,9 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-request",
- "andromeda-postgresql-codes",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-schema",
+ "andromeda-postgresql-stored-values",
  "clap",
  "derive_more",
  "gix",

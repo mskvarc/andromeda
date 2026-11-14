@@ -11,8 +11,7 @@
 //! - a boolean is one byte, 0 or 1;
 //! - an instant is its epoch microseconds as a little-endian `i64`.
 
-use crate::sub_attribute_key::path_hash::PathHash;
-use andromeda_postgresql_codes::value_kind::ValueKind;
+use crate::{sub_attribute_key::path_hash::PathHash, value_kind::ValueKind};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use xxhash_rust::xxh3::xxh3_64_with_seed;

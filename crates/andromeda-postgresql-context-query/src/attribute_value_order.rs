@@ -26,7 +26,6 @@ use andromeda_ngsi_ld_vocabulary::{
     keyword,
 };
 use andromeda_postgresql_query::{
-    dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
     q_predicate::{
         instance_row::ProbedRow,
@@ -41,6 +40,7 @@ use andromeda_postgresql_seaquery::{
     literal::{false_literal, int_literal, text_literal},
     pg_operator::PgBinaryOperator,
 };
+use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
 use sea_query::{Alias, Asterisk, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Func, Iden, IntoIden, Order, Query, SelectStatement, SimpleExpr};
 
 /// The lateral projection one ordering term reads its attribute value from.
@@ -234,8 +234,9 @@ mod tests {
         },
         ordering::sort_direction::SortDirection,
     };
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_row_refs::EntityRowRefs};
+    use andromeda_postgresql_query::entity_row_refs::EntityRowRefs;
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, collation::PostgresCollation};
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use sea_query::{Query, SelectStatement, SimpleExpr};
 
     fn names() -> ResolvedNames<AttributeName> {

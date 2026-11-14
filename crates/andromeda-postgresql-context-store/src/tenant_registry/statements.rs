@@ -1,8 +1,8 @@
 //! The `SeaQuery` statements the tenant registry runs against the `tenants` table.
 
-use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
 use andromeda_postgresql_schema::tenancy::Tenants;
 use andromeda_postgresql_seaquery::{advisory_lock::advisory_xact_lock, aggregate::count_all, clock::now};
+use andromeda_postgresql_stored_values::tenant_status::TenantStatusCode;
 use andromeda_tenancy::tenant_page_start::TenantPageStart;
 use sea_query::{
     Alias,
@@ -267,7 +267,7 @@ mod tests {
         tenant_records_page_query,
     };
     use andromeda_ngsi_ld_lexicon::tenant::TenantName;
-    use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
+    use andromeda_postgresql_stored_values::tenant_status::TenantStatusCode;
     use andromeda_tenancy::tenant_page_start::TenantPageStart;
     use pretty_assertions::assert_eq;
     use sea_query::{DeleteStatement, PostgresQueryBuilder, SelectStatement, UpdateStatement};

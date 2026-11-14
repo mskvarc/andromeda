@@ -11,12 +11,12 @@
 use crate::stage1::queued_candidates::queued_candidates;
 use andromeda_ngsi_ld_query::{filter::predicate::PatternPolarity, pattern::Pattern};
 use andromeda_postgresql_query::{
-    entity_sides::holds_evolution,
     history_source::{HistoryBranch, PendingEntries},
     operator::{PatternIndexes, pattern as pattern_predicate},
 };
 use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents};
 use andromeda_postgresql_seaquery::branch::qualified;
+use andromeda_postgresql_stored_form::entity_sides::holds_evolution;
 use sea_query::{Expr, Query, SelectStatement, UnionType};
 
 /// The Evolutions of `branch` whose identifier `pattern` matches: their

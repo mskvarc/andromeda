@@ -9,7 +9,7 @@
 //! before it can be tagged.
 
 use crate::repository::{PinError, repository_root};
-use andromeda_postgresql_codes::registry_freeze::RegistryFreeze;
+use andromeda_postgresql_stored_values::registry_freeze::RegistryFreeze;
 use andromeda_sql::seal_ledger::SealLedger;
 
 #[test]

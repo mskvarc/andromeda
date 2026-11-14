@@ -7,13 +7,13 @@
 //! knowing which.
 
 use crate::{
-    attribute_name_key::AttributeNameKey,
     entity_row_refs::EntityRowRefs,
-    expiry::unexpired,
     q_predicate::instance_test::{InstanceTest, non_empty},
 };
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::literal::int_literal;
+use andromeda_postgresql_stored_form::expiry::unexpired;
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Iden, Query, SelectStatement, SimpleExpr};
 
 /// The alias every value probe reads the `current_attributes` rows under.
@@ -118,7 +118,6 @@ fn projection_probe(filter: Condition, rows: &EntityRowRefs) -> SelectStatement 
 #[cfg(test)]
 mod tests {
     use crate::{
-        attribute_name_key::AttributeNameKey,
         entity_row_refs::EntityRowRefs,
         q_predicate::{
             instance_test::InstanceTest,
@@ -127,6 +126,7 @@ mod tests {
     };
     use andromeda_postgresql_schema::current::{CurrentAttributes, Entities};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
     use sea_query::{Condition, ExprTrait, Query, SelectStatement};
 
     fn render(condition: Condition) -> SelectStatement {

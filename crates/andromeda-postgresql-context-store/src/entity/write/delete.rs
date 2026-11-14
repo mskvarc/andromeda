@@ -24,16 +24,16 @@ use andromeda_context_commit::{deleted_entity::DeletedEntity, entity_version::En
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_postgresql_branch::{schema_iden, table_of};
-use andromeda_postgresql_query::{
-    entity_sides::{holds_current_state, holds_evolution},
-    type_membership::Memberships,
-    type_membership_moves::side_departure,
-};
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, E, Entities, EntitySearch},
     type_membership::MembershipSide,
 };
 use andromeda_postgresql_seaquery::{clock::now, pg_array::text_array, statement::Statement, unnest::UnnestAliased};
+use andromeda_postgresql_stored_form::{
+    entity_sides::{holds_current_state, holds_evolution},
+    memberships::Memberships,
+    type_membership_moves::side_departure,
+};
 use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
 use chrono::{DateTime, Utc};
 use sea_query::{

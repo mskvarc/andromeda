@@ -4,7 +4,7 @@
 //! tenancy vocabulary fails to compile here, where its persisted number is
 //! decided.
 
-use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
+use andromeda_postgresql_stored_values::tenant_status::TenantStatusCode;
 use andromeda_tenancy::status::TenantStatus;
 
 /// Where a registered tenant stands, as its stored status names it.
@@ -39,7 +39,7 @@ pub const fn standing_of(code: TenantStatusCode) -> StoredStanding {
 #[cfg(test)]
 mod tests {
     use crate::tenant_registry::status_code::{StoredStanding, standing_of, stored_status};
-    use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
+    use andromeda_postgresql_stored_values::tenant_status::TenantStatusCode;
     use andromeda_tenancy::status::TenantStatus;
     use pretty_assertions::assert_eq;
     use strum::IntoEnumIterator;

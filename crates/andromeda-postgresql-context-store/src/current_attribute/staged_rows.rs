@@ -18,17 +18,22 @@ use andromeda_postgresql_attribute_instance::{
     sub_attribute::{SubAttributeRecord, SubAttributeTree},
     sub_attribute_keys::{SubAttributeKeyError, sub_attribute_keys},
 };
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stored_unit_code::stored_unit_code, value_kind::ValueKind};
 use andromeda_postgresql_encoding::{
     array_literal::IntegerArrayLiteral,
     ewkb::{EwkbError, encode},
     ewkb_binding::reach_bytes,
 };
-use andromeda_postgresql_query::{dataset_key::DatasetKey, entity_type_name_key::EntityTypeNameKey};
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::{
     external_arguments::ExternalArguments,
     pg_array::{nullable_array, text_array},
+};
+use andromeda_postgresql_stored_values::{
+    attribute_kind::AttributeKind,
+    dataset_key::DatasetKey,
+    entity_type_name_key::EntityTypeNameKey,
+    stored_unit_code::stored_unit_code,
+    value_kind::ValueKind,
 };
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, SimpleExpr};

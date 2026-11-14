@@ -12,7 +12,7 @@
 use crate::store_fault::persistence_error;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use andromeda_subscription::{error::SubscriptionError, store::SubscriptionFields, subscription_invariant::SubscriptionInvariant};
 use sqlx::PgConnection;
 use std::collections::HashMap;
@@ -76,7 +76,7 @@ fn keys_of(list: Option<&[AttributeName]>, keys: &HashMap<AttributeName, Attribu
 mod tests {
     use crate::subscription_store::interned_attributes::keys_of;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+    use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
 

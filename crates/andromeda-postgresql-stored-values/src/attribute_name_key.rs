@@ -7,9 +7,9 @@ use derive_more::From;
 /// `attribute_names` normalises attribute IRIs to an `INTEGER` so the temporal
 /// catalogue, the history hypertable, and `current_attributes` (its rows and
 /// the elements of their sub-attribute trees) can all index on a four-byte key
-/// instead of a full IRI. It is a PostgreSQL schema
-/// artefact and names nothing in ETSI GS CIM 009, which is why it lives beside
-/// the statements that bind it rather than in the data model.
+/// instead of a full IRI. It is a PostgreSQL schema artefact and names nothing
+/// in ETSI GS CIM 009, which is why it lives with the stored form rather than in
+/// the data model.
 ///
 /// The key is `INTEGER` rather than `SMALLINT` because attribute IRIs are
 /// open-world domain values: NGSI-LD sets no bound on how many distinct ones a

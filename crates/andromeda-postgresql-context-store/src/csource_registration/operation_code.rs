@@ -14,7 +14,7 @@
 //! write time would freeze one release's reading of the table into stored rows.
 
 use andromeda_ngsi_ld_model::registration::operation::CsrOperation;
-use andromeda_postgresql_codes::csr_operation::CsrOperationCode;
+use andromeda_postgresql_stored_values::csr_operation::CsrOperationCode;
 
 /// The registry member a registration persists for an operation.
 #[must_use]
@@ -129,7 +129,7 @@ pub const fn operation_of(code: CsrOperationCode) -> CsrOperation {
 #[cfg(test)]
 mod tests {
     use crate::csource_registration::operation_code::{operation_of, stored_operation};
-    use andromeda_postgresql_codes::csr_operation::CsrOperationCode;
+    use andromeda_postgresql_stored_values::csr_operation::CsrOperationCode;
 
     /// Every registered number decodes to the operation whose stored number it
     /// is. The reverse direction is enforced by the compiler: both matches are

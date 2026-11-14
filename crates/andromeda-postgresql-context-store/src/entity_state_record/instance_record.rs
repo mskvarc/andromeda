@@ -11,9 +11,8 @@ use andromeda_postgresql_attribute_instance::{
     stored_number::StoredNumber,
     sub_attribute::{EwkbGeometry, SubAttributeElement, SubAttributeRecord},
 };
-use andromeda_postgresql_codes::value_kind::ValueKind;
-use andromeda_postgresql_query::dataset_key::DatasetKey;
 use andromeda_postgresql_schema::current::CurrentAttributes;
+use andromeda_postgresql_stored_values::{dataset_key::DatasetKey, value_kind::ValueKind};
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
 use sqlx::types::Json;

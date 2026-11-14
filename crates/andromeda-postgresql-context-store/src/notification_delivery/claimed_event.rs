@@ -312,7 +312,7 @@ pub(crate) mod tests {
     };
     use andromeda_postgresql_attribute_instance::{name_keys::KeyNames, name_resolution::names_of, stored_members::StoredInstanceError};
     use andromeda_postgresql_name_dictionary::name_lookup::{NameLookup, NameLookupError};
-    use andromeda_postgresql_query::dictionary::{interned_name::InternedName, resolved_names::ResolvedNames};
+    use andromeda_postgresql_stored_values::{interned_name::InternedName, resolved_names::ResolvedNames};
     use chrono::Utc;
     use serde_json::{Value, json};
     use sqlx::PgConnection;

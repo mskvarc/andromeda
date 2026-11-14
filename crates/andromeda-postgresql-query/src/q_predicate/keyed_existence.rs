@@ -9,12 +9,12 @@
 //! Entities the term keeps.
 
 use crate::{
-    dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
     q_predicate::{
         local_target::{LocalTarget, local_target},
         projection_probe::exists_on_projection,
     },
+    query_names::QueryNames,
 };
 use andromeda_ngsi_ld_query::filter::{path::QueryPath, predicate::Predicate};
 use andromeda_postgresql_schema::current::EntitySearch;
@@ -52,14 +52,10 @@ pub(crate) fn existence_candidates(pred: &Predicate, rows: &EntityRowRefs, names
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        entity_row_refs::EntityRowRefs,
-        q_predicate::keyed_existence::existence_candidates,
-    };
+    use crate::{entity_row_refs::EntityRowRefs, q_predicate::keyed_existence::existence_candidates, query_names::QueryNames};
     use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, IntoIden, SelectStatement};
 

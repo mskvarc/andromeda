@@ -13,12 +13,11 @@ use andromeda_context_commit::{
 };
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use andromeda_postgresql_attribute_instance::{flatten::FlattenError, name_keys::NameKeys};
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::stored_attribute_kind};
 use andromeda_postgresql_context_store::{
     current_attribute::{row_edit::RowEdit, staged_grains::StagedGrains, staged_rows::StagedRows},
     entity::{params::PreparedEntityColumns, staged_geometry::StagedGeometry, staged_scopes::StagedScopes},
 };
-use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, attribute_kind_code::stored_attribute_kind, attribute_name_key::AttributeNameKey};
 
 /// The binds of one fused entity statement: one entry per entity, and the
 /// `current_attributes` rows and grains each entity's edit writes.
@@ -178,11 +177,7 @@ mod tests {
     };
     use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
     use andromeda_postgresql_context_store::entity::staged_geometry::StagedGeometry;
-    use andromeda_postgresql_query::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::resolved_names::ResolvedNames,
-        entity_type_name_key::EntityTypeNameKey,
-    };
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use chrono::Utc;
     use serde_json::json;
     use std::sync::Arc;

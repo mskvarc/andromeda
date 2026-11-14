@@ -18,7 +18,6 @@ use crate::{
     alias::Ah,
     recorded_shape::{RecordedShapeColumn, recorded_shape},
 };
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
     bit_string::{bit_is_set, empty_bit_set, single_bit},
@@ -27,6 +26,7 @@ use andromeda_postgresql_seaquery::{
     literal::int_literal,
     pg_type::PostgresType,
 };
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
 use sea_query::{Expr, ExprTrait, Iden, Query, SelectStatement, SimpleExpr};
 
 /// The width of a mask: one bit for each of the 8 families times each of the
@@ -108,8 +108,8 @@ fn position() -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::shape_mask::{SHAPE_MASK_WIDTH, SHAPES_PER_FAMILY, combination_position, held_combinations, holds_combination, recorded_combination};
-    use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, Query};
     use std::collections::HashSet;

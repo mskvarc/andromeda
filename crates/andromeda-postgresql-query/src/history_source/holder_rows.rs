@@ -9,10 +9,7 @@
 //! of the types the stream census names as holding it, which yield their
 //! members in identifier order. The ranges merge with each Evolution once.
 
-use crate::{
-    attribute_name_key::AttributeNameKey,
-    history_source::{HistoryBranch, HistoryOf, PendingEntries, attribute_holders::AttributeHolders, entity_rows::WalkedKeys, grain::HistoryGrain, pending},
-};
+use crate::history_source::{HistoryBranch, HistoryOf, PendingEntries, attribute_holders::AttributeHolders, entity_rows::WalkedKeys, pending};
 use andromeda_postgresql_schema::{
     current::{Entities, EntityTypeMembers},
     temporal::TemporalAttributeStreams,
@@ -26,6 +23,8 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     scalar_subquery::scalar_subquery,
 };
+use andromeda_postgresql_stored_form::history_grain::HistoryGrain;
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Expr, ExprTrait, Iden, IntoIden, JoinType, Order, Query, SelectStatement, TableRef, UnionType};
 
 /// Alias `held`: one stream row of the merged attribute walk.
@@ -272,17 +271,14 @@ fn no_holder() -> SelectStatement {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        attribute_name_key::AttributeNameKey,
-        entity_type_name_key::EntityTypeNameKey,
-        history_source::{
-            HistoryBranch,
-            attribute_holders::{AttributeHolders, HolderType},
-            entity_rows::WalkedKeys,
-            holder_rows::{attribute_holder_rows, attribute_holder_rows_by_key},
-        },
+    use crate::history_source::{
+        HistoryBranch,
+        attribute_holders::{AttributeHolders, HolderType},
+        entity_rows::WalkedKeys,
+        holder_rows::{attribute_holder_rows, attribute_holder_rows_by_key},
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
     use sea_query::{Alias, Asterisk, IntoIden, Query, SelectStatement, TableRef};
 
     fn rendered(source: TableRef) -> SelectStatement {

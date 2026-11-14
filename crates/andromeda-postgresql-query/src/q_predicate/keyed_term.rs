@@ -25,7 +25,6 @@
 //! to read ([`CandidateRead`]).
 
 use crate::{
-    dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
     q_predicate::{
         keyed_existence::existence_candidates,
@@ -34,6 +33,7 @@ use crate::{
         keyed_pattern::pattern_candidates,
         sub_attribute::keyed_equality::equality_candidates,
     },
+    query_names::QueryNames,
 };
 use andromeda_ngsi_ld_query::filter::{expression::Expr, language_matching::LanguageMatching, predicate::Predicate};
 use sea_query::SelectStatement;
@@ -115,13 +115,13 @@ fn candidates_of(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames, mat
 #[cfg(test)]
 mod tests {
     use crate::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         entity_row_refs::EntityRowRefs,
         q_predicate::keyed_term::{CandidateRead, keyed_candidates},
+        query_names::QueryNames,
     };
     use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::assert_eq;
     use sea_query::SelectStatement;
 

@@ -15,17 +15,13 @@
 //! its elements are read against expiry, which clause 4.22 places on the
 //! storage of the Entity as it stands.
 
-use crate::{
-    attribute_name_key::AttributeNameKey,
-    dictionary::resolved_names::ResolvedNames,
-    expiry::unexpired,
-    q_predicate::instance_row::{ElementLevel, InstanceRow, ProbedRow},
-    sub_attribute_key::path_hash::PathHash,
-};
+use crate::q_predicate::instance_row::{ElementLevel, InstanceRow, ProbedRow};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, path::AttrPath};
 use andromeda_postgresql_schema::current::SubAttribute;
 use andromeda_postgresql_seaquery::unnest::{exists_in_positional_tree, first_in_positional_tree};
+use andromeda_postgresql_stored_form::expiry::unexpired;
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames, sub_attribute_key::path_hash::PathHash};
 use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
 
 /// The `parent` an element under the top-level instance itself carries.
@@ -134,8 +130,6 @@ impl ElementPath {
 #[cfg(test)]
 mod tests {
     use crate::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         history_source::{HistoryBranch, HistoryOf},
         q_predicate::{
             history_window::HistoryWindow,
@@ -144,7 +138,7 @@ mod tests {
             projection::compile,
             sub_attribute::element_path::ElementPath,
         },
-        sub_attribute_key::path_hash::PathHash,
+        query_names::QueryNames,
         window_reach::WindowReach,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
@@ -153,6 +147,7 @@ mod tests {
         temporal::window::TimeInterval,
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames, sub_attribute_key::path_hash::PathHash};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Condition, Expr as SeaExpr, Query, SelectStatement};
 

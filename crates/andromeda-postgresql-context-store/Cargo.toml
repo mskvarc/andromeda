@@ -35,7 +35,6 @@ andromeda-persistence-failure.workspace = true
 andromeda-posted-query.workspace = true
 andromeda-postgresql-attribute-instance.workspace = true
 andromeda-postgresql-branch.workspace = true
-andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-collation.workspace = true
 andromeda-postgresql-context-query.workspace = true
 andromeda-postgresql-encoding.workspace = true
@@ -44,6 +43,8 @@ andromeda-postgresql-pool.workspace = true
 andromeda-postgresql-query.workspace = true
 andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
+andromeda-postgresql-stored-form.workspace = true
+andromeda-postgresql-stored-values.workspace = true
 andromeda-registration.workspace = true
 andromeda-retry = { workspace = true, features = ["tokio"] }
 andromeda-snapshot.workspace = true

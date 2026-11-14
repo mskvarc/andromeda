@@ -6,8 +6,6 @@
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{entity_selection::ConsideredEntities, temporal::compiled::CompiledTemporalQuery, type_selection::grammar::TypeExpr};
 use andromeda_postgresql_query::{
-    attribute_name_key::AttributeNameKey,
-    dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     history_source::{
         HistoryBranch,
         PendingEntries,
@@ -15,9 +13,11 @@ use andromeda_postgresql_query::{
         holder_rows::{attribute_holder_rows, attribute_holder_rows_by_key},
     },
     one_time_gate::{Candidates, column_of},
+    query_names::QueryNames,
     type_membership::drives,
 };
 use andromeda_postgresql_schema::current::{E, Entities};
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
 use iri_rs::IriBuf;
 use sea_query::{Asterisk, Expr, ExprTrait, IntoIden, Order, Query, TableRef};
 
@@ -248,12 +248,9 @@ mod tests {
         temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
         type_selection::grammar::TypeExpr,
     };
-    use andromeda_postgresql_query::{
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        entity_type_name_key::EntityTypeNameKey,
-        history_source::HistoryBranch,
-    };
+    use andromeda_postgresql_query::{history_source::HistoryBranch, query_names::QueryNames};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use sea_query::{Alias, IntoIden, SelectStatement};
 
     /// Clause 4.17: a selection by type alone walks the type's membership

@@ -29,15 +29,19 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_model::temporal::{TemporalValue, observation_metadata::ObservationMetadata};
 use andromeda_postgresql_attribute_instance::{name_keys::MentionedNames, name_resolution::resolve_mentioned, sub_attribute::SubAttributeRecord};
 use andromeda_postgresql_branch::schema_iden;
-use andromeda_postgresql_codes::{attribute_kind_code::stored_attribute_kind, stored_unit_code::stored_unit_code};
 use andromeda_postgresql_encoding::{
     ewkb::EwkbError,
     ewkb_binding::{geometry_bytes, reach_bytes},
 };
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
 use andromeda_postgresql_seaquery::{
     external_arguments::{ExternalArguments, ExternallyBound},
     statement::Statement,
+};
+use andromeda_postgresql_stored_values::{
+    attribute_kind_code::stored_attribute_kind,
+    attribute_name_key::AttributeNameKey,
+    entity_type_name_key::EntityTypeNameKey,
+    stored_unit_code::stored_unit_code,
 };
 use andromeda_temporal::{observed_instance::ObservedInstance, temporal_not_found_reason::TemporalNotFoundReason};
 use chrono::{DateTime, Utc};
@@ -256,11 +260,11 @@ mod tests {
     use andromeda_ngsi_ld_entity::document::instance_document::InstanceDocument;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
     use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
-    use andromeda_postgresql_codes::value_kind::ValueKind;
-    use andromeda_postgresql_query::{
+    use andromeda_postgresql_stored_values::{
         attribute_name_key::AttributeNameKey,
-        dictionary::resolved_names::ResolvedNames,
         entity_type_name_key::EntityTypeNameKey,
+        resolved_names::ResolvedNames,
+        value_kind::ValueKind,
     };
     use andromeda_temporal::observed_instance::ObservedInstance;
     use pretty_assertions::assert_eq;

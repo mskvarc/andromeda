@@ -32,7 +32,6 @@ use andromeda_context_commit::store_instant::StoreInstant;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::system_instant::SystemInstant};
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_query::evolution_horizon::horizon_of;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{
     clock::now,
@@ -42,6 +41,7 @@ use andromeda_postgresql_seaquery::{
     returning_image::{New, Old},
     unnest::UnnestAliased,
 };
+use andromeda_postgresql_stored_form::evolution_horizon::horizon_of;
 use andromeda_telemetry::statement::{ObservedStatement, observe_statement};
 use chrono::{DateTime, Utc};
 use sea_query::{

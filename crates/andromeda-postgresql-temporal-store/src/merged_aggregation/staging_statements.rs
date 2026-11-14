@@ -11,17 +11,11 @@
 
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
-use andromeda_postgresql_query::{
-    dataset_key::DatasetKey,
-    entity_sides::holds_evolution,
-    history_source::{
-        HistoryBranch,
-        HistoryOf,
-        attribute_rows::{attribute_rows, stream_rows},
-        axis::axis_window,
-        entry_values::attribute_value_columns,
-        grain::HistoryGrain,
-    },
+use andromeda_postgresql_query::history_source::{
+    HistoryBranch,
+    HistoryOf,
+    attribute_rows::{attribute_rows, stream_rows},
+    axis::axis_window,
 };
 use andromeda_postgresql_schema::{
     current::Entities,
@@ -33,6 +27,8 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
     temporary_table::{TemporaryCopy, TemporarySchema},
 };
+use andromeda_postgresql_stored_form::{entity_sides::holds_evolution, history_entry_values::attribute_value_columns, history_grain::HistoryGrain};
+use andromeda_postgresql_stored_values::dataset_key::DatasetKey;
 use chrono::{DateTime, Utc};
 use sea_query::{
     Condition,

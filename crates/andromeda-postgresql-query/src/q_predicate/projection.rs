@@ -10,7 +10,6 @@
 //! descends linked-entity hops first.
 
 use crate::{
-    dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
     q_predicate::{
         equality_term::equality_value,
@@ -26,6 +25,7 @@ use crate::{
         traversal::LinkedHop,
         value_object_member::member_term,
     },
+    query_names::QueryNames,
 };
 use andromeda_ngsi_ld_query::filter::{
     expression::Expr,
@@ -244,16 +244,12 @@ pub(crate) fn unsatisfiable_term() -> CompiledTerm {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::resolved_names::ResolvedNames,
-        entity_row_refs::EntityRowRefs,
-        entity_type_name_key::EntityTypeNameKey,
-    };
+    use crate::entity_row_refs::EntityRowRefs;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::filter::parser;
     use andromeda_postgresql_schema::{current::Entities, string_value_column::INDEXED_STRING_BYTE_LIMIT};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use sea_query::{Alias, Query, SelectStatement};
 
     const SPEED: &str = "https://example.com/speed";

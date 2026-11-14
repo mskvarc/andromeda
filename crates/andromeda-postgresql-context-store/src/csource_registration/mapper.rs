@@ -37,8 +37,8 @@ use andromeda_ngsi_ld_model::{
     time_interval::TimeInterval,
 };
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
-use andromeda_postgresql_codes::{csr_mode::CsrModeCode, csr_operation::CsrOperationCode, csr_status::CsrStatusCode};
 use andromeda_postgresql_encoding::ewkb::{Ewkb, EwkbError};
+use andromeda_postgresql_stored_values::{csr_mode::CsrModeCode, csr_operation::CsrOperationCode, csr_status::CsrStatusCode};
 use chrono::{DateTime, Utc};
 use mediatype::MediaTypeBuf;
 use serde::de::DeserializeOwned;

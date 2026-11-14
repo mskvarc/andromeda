@@ -11,12 +11,12 @@ use crate::{error::ContextStoreError, jsonld_context::mapper::ContextMapperError
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, ngsi_ld_urn::JsonLdContextIdParseError};
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
-use andromeda_postgresql_codes::registry::UnknownCompactCode;
 use andromeda_postgresql_encoding::ewkb::EwkbError;
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookupError;
 use andromeda_postgresql_pool::persistence_classification::classify;
 use andromeda_postgresql_query::error::RenderError;
 use andromeda_postgresql_seaquery::committing_statement::BoundCommittingStatement;
+use andromeda_postgresql_stored_values::registry::UnknownCompactCode;
 use sea_query::error::Error as SeaQueryError;
 use std::{fmt::Display, num::TryFromIntError};
 
