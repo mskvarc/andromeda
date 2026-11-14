@@ -8,10 +8,11 @@ use andromeda_test_suite::{
 use googletest::prelude::*;
 use ngsi_ld::model::{Entity, Relationship};
 
-/// Pins: for a Vehicle whose Relationship `r` targets a URI, Query Entities and a Subscription with q r!=1..5 select
-/// it and with q r==1..5 select nothing; a range is a value of the equal and unequal productions, which are the two
-/// operators a Relationship admits, and a URI object and a Number range are of different data types, so they are
-/// unequal and not equal
+/// Pins: for a Vehicle whose Relationship `r` targets a URI, Query Entities and a Subscription with q r!=1..5 or
+/// r!="urn:a".."urn:z" select it and with q r==1..5 or r=="urn:a".."urn:z" select nothing; a range is a value of the
+/// equal and unequal productions, which are the two operators a Relationship admits, and a URI object is of another
+/// data type than a range of Numbers or of Strings, even one whose bounds enclose its text, so they are unequal and
+/// not equal
 /// Clause: 4.9, 5.8.1
 #[gtest]
 #[tokio::test]
@@ -34,6 +35,16 @@ async fn n_qry_qlg_9085_a_range_against_a_relationship_is_unequal_in_a_query_and
         },
         QCase {
             q: "r==1..5",
+            selects: &[],
+            request: QRequest::PLAIN,
+        },
+        QCase {
+            q: "r!=\"urn:a\"..\"urn:z\"",
+            selects: &[&vehicle_id],
+            request: QRequest::PLAIN,
+        },
+        QCase {
+            q: "r==\"urn:a\"..\"urn:z\"",
             selects: &[],
             request: QRequest::PLAIN,
         },

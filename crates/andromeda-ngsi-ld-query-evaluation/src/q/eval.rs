@@ -170,28 +170,28 @@ fn any_one_value<'t, 'a>(target: &'t ResolvedTarget<'a>) -> Option<&'t [TargetVa
 /// Evaluate an equality comparison (`==`/`!=`) against a scalar, a range, or a
 /// value list.
 ///
-/// "Outside" is the exact complement of "within", for a range as for a value
-/// list, so a target incomparable with the bounds is outside the range, not
-/// neither in nor out. The exception is a Range target that is a Relationship
-/// object: clause 4.9 forbids the ordering operators against a Relationship in
-/// either direction, and a range is two ordering comparisons, so neither
-/// membership polarity holds. "Outside" is not a match here either, mirroring the Ordering predicate arm above and the SQL compiler, which routes `<`/`>`/`<=`/`>=` away from `value_uri` for both range halves.
+/// A range and a value list are values of the `equal` and `unequal` operators
+/// (clause 4.9), and "outside" is the exact complement of "within", so a
+/// target incomparable with the bounds is outside the range, not neither in
+/// nor out. A Relationship's object compares with no range bound, since
+/// clause 4.9 bars a Relationship from every operator other than equal and
+/// unequal, so it lies within no range and outside every one, whatever its
+/// text: the Unequal rule makes a target of another data type than the Query
+/// Term value unequal to it.
 fn eval_equality(target: &ResolvedTarget<'_>, membership: SetMembership, rhs: &CompareValue) -> bool {
     match rhs {
         CompareValue::Scalar(scalar) => compare(&target.value, membership.as_cmp_op(), scalar),
         CompareValue::Range { min, max } => {
-            if is_relationship(target) {
-                return false;
-            }
             let in_range = |value: &TargetValue<'_>| compare(value, CmpOp::GreaterEq, min) && compare(value, CmpOp::LessEq, max);
             // Where clause 4.9 makes any one value of a language map the target
             // value, the range holds when one of them lies in it, and its
             // complement when none does, the reading `unequal` gives a
             // language map: "No matching value is found".
-            let within = match any_one_value(target) {
-                Some(values) => values.iter().any(in_range),
-                None => in_range(&target.value),
-            };
+            let within = !is_relationship(target)
+                && match any_one_value(target) {
+                    Some(values) => values.iter().any(in_range),
+                    None => in_range(&target.value),
+                };
             match membership {
                 SetMembership::Within => within,
                 SetMembership::Outside => !within,
@@ -1106,10 +1106,15 @@ mod tests {
     }
 
     #[test]
-    fn a_range_comparison_against_a_relationship_does_not_match_in_either_polarity() {
-        // Clause 4.9: a range is two ordering comparisons, and ordering shall not match a Relationship object in either direction, so neither `==` (within) nor `!=` (outside) holds.
+    fn a_relationship_lies_within_no_range_and_outside_every_one() {
+        // Clause 4.9 bars a Relationship from every operator other than equal
+        // and unequal, and a range is a value of those two, so the object
+        // compares with neither bound although its text lies between these:
+        // its data type differs from the range's, which the Unequal rule makes
+        // unequal.
         assert!(!holds(&parse("\"https://example.com/owner\"==\"urn:a\"..\"urn:z\"").unwrap(), &rich_entity()));
-        assert!(!holds(&parse("\"https://example.com/owner\"!=\"urn:a\"..\"urn:z\"").unwrap(), &rich_entity()));
+        assert!(holds(&parse("\"https://example.com/owner\"!=\"urn:a\"..\"urn:z\"").unwrap(), &rich_entity()));
+        assert!(holds(&parse("\"https://example.com/owner\"!=1..5").unwrap(), &rich_entity()));
     }
 
     #[test]
