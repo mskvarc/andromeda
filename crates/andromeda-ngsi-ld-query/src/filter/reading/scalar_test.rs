@@ -1,0 +1,66 @@
+//! The comparison a Query Term makes, and the target kinds it compares with.
+
+use crate::{
+    filter::reading::{
+        interval::Interval,
+        operand::{Comparison, Operand},
+        order_relation::OrderRelation,
+        target_kind::TargetKind,
+    },
+    pattern::Pattern,
+};
+use andromeda_ngsi_ld_number::declared_number::NonFinite;
+use andromeda_ngsi_ld_value_order::number_order::{HeldNumber, number_order};
+use std::cmp::Ordering;
+
+/// What a Query Term asks of one target value, before any negation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScalarTest {
+    /// Equal to one of the operands: one for `==` and `!=` with a value,
+    /// several for a value list, each comparing with its own kinds.
+    EqualsAny(Vec<Operand>),
+    /// Ordered against the operand.
+    Ordered {
+        /// The relation the target stands in to the operand.
+        relation: OrderRelation,
+        /// The operand.
+        operand: Operand,
+    },
+    /// Inside the closed interval.
+    Within(Interval),
+    /// Found anywhere in a String target: clause 4.9's "in the L(R) of the
+    /// regular pattern" is read as a search, as IEEE 1003.2 matching runs.
+    Matches(Pattern),
+    /// A range whose bounds are of two kinds, which no target kind compares
+    /// with.
+    Unsatisfiable,
+}
+
+impl ScalarTest {
+    /// Whether the test compares with a target of `kind`: clause 4.9 makes a
+    /// target of any other kind "not matching" for every operator, and
+    /// "unequal" under `!=`.
+    #[must_use]
+    pub fn compares_with(&self, kind: TargetKind) -> bool {
+        match self {
+            ScalarTest::EqualsAny(operands) => operands.iter().any(|operand| operand.compares_with(kind, Comparison::Equality)),
+            ScalarTest::Ordered { operand, .. } => operand.compares_with(kind, Comparison::Order),
+            ScalarTest::Within(interval) => interval.min().compares_with(kind, Comparison::Order),
+            ScalarTest::Matches(_) => matches!(kind, TargetKind::String),
+            ScalarTest::Unsatisfiable => false,
+        }
+    }
+
+    /// Whether the test holds on `value`, a number beyond the decimals, in the
+    /// order the number primitive gives it against every finite operand.
+    #[must_use]
+    pub fn holds_beyond_decimals(&self, value: NonFinite) -> bool {
+        let ordered = |operand: &Operand| operand.number().and_then(|number| number_order(HeldNumber::NonFinite(value), number));
+        match self {
+            ScalarTest::EqualsAny(operands) => operands.iter().any(|operand| ordered(operand).is_some_and(Ordering::is_eq)),
+            ScalarTest::Ordered { relation, operand } => ordered(operand).is_some_and(|ordering| relation.holds(ordering)),
+            ScalarTest::Within(interval) => ordered(interval.min()).is_some_and(Ordering::is_ge) && ordered(interval.max()).is_some_and(Ordering::is_le),
+            ScalarTest::Matches(_) | ScalarTest::Unsatisfiable => false,
+        }
+    }
+}

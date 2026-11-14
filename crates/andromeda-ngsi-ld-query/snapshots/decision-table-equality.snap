@@ -1,0 +1,206 @@
+---
+source: crates/andromeda-ngsi-ld-query/src/filter/reading/decision_table_tests.rs
+---
+x==5
+  Number               Holds(equals 5)
+  NotANumber           Never                              ruling: numbers beyond the decimals follow XSD
+  PositiveInfinity     Never                              ruling: numbers beyond the decimals follow XSD
+  NegativeInfinity     Never                              ruling: numbers beyond the decimals follow XSD
+  String               Never
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Never
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           SomeElement
+  ObjectArray          SomeElement
+  AnyOneValue          SomeElement
+
+x!=5
+  Number               HoldsNot(equals 5)
+  NotANumber           Always                             ruling: numbers beyond the decimals follow XSD
+  PositiveInfinity     Always                             ruling: numbers beyond the decimals follow XSD
+  NegativeInfinity     Always                             ruling: numbers beyond the decimals follow XSD
+  String               Always
+  RelationshipObject   Always
+  Boolean              Always
+  DateTime             Always
+  Date                 Always
+  Time                 Always
+  Null                 Always
+  Object               Always
+  ValueArray           NoElement
+  ObjectArray          NoElement
+  AnyOneValue          NoElement
+
+x=="a"
+  Number               Never
+  NotANumber           Never
+  PositiveInfinity     Never
+  NegativeInfinity     Never
+  String               Holds(equals "a")
+  RelationshipObject   Holds(equals "a")
+  Boolean              Never
+  DateTime             Never
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           SomeElement
+  ObjectArray          SomeElement
+  AnyOneValue          SomeElement
+
+x!="a"
+  Number               Always
+  NotANumber           Always
+  PositiveInfinity     Always
+  NegativeInfinity     Always
+  String               HoldsNot(equals "a")
+  RelationshipObject   HoldsNot(equals "a")
+  Boolean              Always
+  DateTime             Always
+  Date                 Always
+  Time                 Always
+  Null                 Always
+  Object               Always
+  ValueArray           NoElement
+  ObjectArray          NoElement
+  AnyOneValue          NoElement
+
+x==true
+  Number               Never
+  NotANumber           Never
+  PositiveInfinity     Never
+  NegativeInfinity     Never
+  String               Never
+  RelationshipObject   Never
+  Boolean              Holds(equals true)
+  DateTime             Never
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           SomeElement
+  ObjectArray          SomeElement
+  AnyOneValue          SomeElement
+
+x!=true
+  Number               Always
+  NotANumber           Always
+  PositiveInfinity     Always
+  NegativeInfinity     Always
+  String               Always
+  RelationshipObject   Always
+  Boolean              HoldsNot(equals true)
+  DateTime             Always
+  Date                 Always
+  Time                 Always
+  Null                 Always
+  Object               Always
+  ValueArray           NoElement
+  ObjectArray          NoElement
+  AnyOneValue          NoElement
+
+x==2024-01-15T00:00:00Z
+  Number               Never
+  NotANumber           Never
+  PositiveInfinity     Never
+  NegativeInfinity     Never
+  String               Never
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Holds(equals 2024-01-15T00:00:00Z)
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           SomeElement
+  ObjectArray          SomeElement
+  AnyOneValue          SomeElement
+
+x!=2024-01-15T00:00:00Z
+  Number               Always
+  NotANumber           Always
+  PositiveInfinity     Always
+  NegativeInfinity     Always
+  String               Always
+  RelationshipObject   Always
+  Boolean              Always
+  DateTime             HoldsNot(equals 2024-01-15T00:00:00Z)
+  Date                 Always
+  Time                 Always
+  Null                 Always
+  Object               Always
+  ValueArray           NoElement
+  ObjectArray          NoElement
+  AnyOneValue          NoElement
+
+x==2024-01-15
+  Number               Never
+  NotANumber           Never
+  PositiveInfinity     Never
+  NegativeInfinity     Never
+  String               Never
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Never
+  Date                 Holds(equals 2024-01-15)
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           SomeElement
+  ObjectArray          SomeElement
+  AnyOneValue          SomeElement
+
+x!=2024-01-15
+  Number               Always
+  NotANumber           Always
+  PositiveInfinity     Always
+  NegativeInfinity     Always
+  String               Always
+  RelationshipObject   Always
+  Boolean              Always
+  DateTime             Always
+  Date                 HoldsNot(equals 2024-01-15)
+  Time                 Always
+  Null                 Always
+  Object               Always
+  ValueArray           NoElement
+  ObjectArray          NoElement
+  AnyOneValue          NoElement
+
+x==12:00:00Z
+  Number               Never
+  NotANumber           Never
+  PositiveInfinity     Never
+  NegativeInfinity     Never
+  String               Never
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Never
+  Date                 Never
+  Time                 Holds(equals 12:00:00Z)
+  Null                 Never
+  Object               Never
+  ValueArray           SomeElement
+  ObjectArray          SomeElement
+  AnyOneValue          SomeElement
+
+x!=12:00:00Z
+  Number               Always
+  NotANumber           Always
+  PositiveInfinity     Always
+  NegativeInfinity     Always
+  String               Always
+  RelationshipObject   Always
+  Boolean              Always
+  DateTime             Always
+  Date                 Always
+  Time                 HoldsNot(equals 12:00:00Z)
+  Null                 Always
+  Object               Always
+  ValueArray           NoElement
+  ObjectArray          NoElement
+  AnyOneValue          NoElement

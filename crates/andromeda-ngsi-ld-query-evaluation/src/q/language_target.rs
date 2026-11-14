@@ -2,12 +2,16 @@
 
 use crate::{
     q::{
-        family_target::TerminalKeyword,
-        target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue},
+        family_target::terminal_value,
+        target_value::{ResolvedTarget, TargetValue},
     },
     queried_entity::attribute_reading::QueriedInstance,
 };
-use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, target_language::LanguageSelector};
+use andromeda_ngsi_ld_query::filter::{
+    language_matching::LanguageMatching,
+    reading::family_reading::{MultiValueReading, TargetOrigin, TerminalKeyword},
+    target_language::LanguageSelector,
+};
 
 /// The target value clause 4.9 defines for a `LanguageProperty` with a target
 /// language: "the Value associated to the matching key-value pair held within
@@ -26,7 +30,7 @@ use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, targe
 pub(crate) fn language_target<'a, I: QueriedInstance<'a>>(instance: I, language: LanguageSelector<'_>, matching: LanguageMatching) -> ResolvedTarget<'a> {
     let mut strings = instance
         .language_values(language, matching)
-        .filter_map(|item| TerminalKeyword::Literal.read(item));
+        .filter_map(|item| terminal_value(TerminalKeyword::Literal, item));
     let value = match (strings.next(), strings.next()) {
         (Some(only), None) => only,
         (None, _) => TargetValue::Array(Vec::new()),

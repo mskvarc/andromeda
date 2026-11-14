@@ -1,14 +1,17 @@
 //! The clause 4.9 target value a Query Term compares its operand with, and the
 //! readings clause 4.9 gives a target holding several values.
 //!
-//! What each attribute family's target is, is
-//! [`family_target`](crate::q::family_target)'s.
+//! What each attribute family's target is, is the language crate's
+//! `family_reading`.
 
 use crate::queried_entity::value_item::LiteralValue;
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::value::TimeValue};
 use andromeda_ngsi_ld_number::{JsonNumber, declared_number::NonFinite};
-use andromeda_ngsi_ld_query::filter::instance_metadata::InstanceMetadata;
+use andromeda_ngsi_ld_query::filter::{
+    instance_metadata::InstanceMetadata,
+    reading::family_reading::{MultiValueReading, TargetOrigin},
+};
 use andromeda_ngsi_ld_value_order::number_order::{HeldNumber, number_order};
 use std::{borrow::Cow, cmp::Ordering};
 
@@ -173,45 +176,6 @@ impl<'a> TargetValue<'a> {
     }
 }
 
-/// What clause 4.9 makes of an attribute that carries several values.
-///
-/// The two readings agree on the equality operators and part company on every
-/// other one, so which of them applies is a property of the target rather than
-/// of the operator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MultiValueReading {
-    /// The array of values is itself the target value.
-    ///
-    /// Clause 4.9 defines a `ListProperty`'s target value as "the valueList
-    /// array associated to such a `ListProperty`" and a `ListRelationship`'s as
-    /// "the array of objects", and a Property's is the Value the client wrote,
-    /// an array when they wrote one. The equality operators test membership in
-    /// it ("Is included in the target value, if the latter is an array"), while
-    /// an operator defined over a scalar or a String target does not match it at
-    /// all: "If the target value data type is different than String then it
-    /// shall be considered as not matching."
-    WholeArray,
-    /// Any one of the values is the target value in its own right.
-    ///
-    /// Clause 4.9: "If the target element is a `LanguageProperty`, and no target
-    /// language is specified, the target value is defined as a value from any of
-    /// the key-value pairs held within the languageMap." Every operator is
-    /// therefore answered by the values themselves, and the negated ones hold
-    /// only when none of them satisfies the Query Term: "No matching value is
-    /// found in any of the values of the key-value pairs of a languageMap".
-    AnyOneValue,
-}
-
-/// Which clause 4.9 definition a resolved target came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TargetOrigin {
-    /// A target *value*: what a Property-family attribute carries.
-    AttributeValue,
-    /// A target *object*: the URI, or array of URIs, a Relationship or a
-    /// `ListRelationship` names.
-    RelationshipObject,
-}
-
 /// Address a member of raw JSON by the keys the client wrote, starting from
 /// the target value a path resolved to.
 ///
@@ -231,9 +195,10 @@ pub fn json_member<'a>(seed: &ResolvedTarget<'a>, keys: &[AttributeName]) -> Opt
 
 #[cfg(test)]
 mod tests {
-    use crate::q::target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue, json_member};
+    use crate::q::target_value::{ResolvedTarget, TargetValue, json_member};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_query::filter::reading::family_reading::{MultiValueReading, TargetOrigin};
     use std::borrow::Cow;
 
     fn keys(names: &[&str]) -> Vec<AttributeName> {

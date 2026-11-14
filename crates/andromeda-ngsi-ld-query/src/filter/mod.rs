@@ -28,6 +28,7 @@ pub mod parser;
 pub mod path;
 pub mod predicate;
 pub mod quoting;
+pub mod reading;
 pub mod referenced_attributes;
 #[cfg(test)]
 mod round_trip_tests;

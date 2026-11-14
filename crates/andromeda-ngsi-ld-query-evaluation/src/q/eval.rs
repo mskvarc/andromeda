@@ -9,7 +9,7 @@
 use crate::{
     q::{
         attribute_axis::{addresses_element, resolve_targets},
-        target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue},
+        target_value::{ResolvedTarget, TargetValue},
     },
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities},
 };
@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_query::filter::{
     language_matching::LanguageMatching,
     path::QueryPath,
     predicate::{CmpOp, Predicate, SetMembership},
+    reading::family_reading::{MultiValueReading, TargetOrigin},
     scalar::{CompareValue, Scalar},
 };
 use std::borrow::Cow;
@@ -260,7 +261,7 @@ mod tests {
     use crate::{
         q::{
             eval::{evaluate, evaluate_members, predicate_holds_in},
-            target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue},
+            target_value::{ResolvedTarget, TargetValue},
         },
         queried_entity::{
             expanded_fixture::{FixtureEntity, FixtureLinked},
@@ -275,6 +276,7 @@ mod tests {
             language_matching::LanguageMatching,
             parser::parse,
             path::QueryPath,
+            reading::family_reading::{MultiValueReading, TargetOrigin},
         },
         namespace_expander::EXAMPLE_NAMESPACE_TYPED,
     };

@@ -21,6 +21,7 @@ pub mod god_file;
 pub mod linked_retrieval;
 pub mod manifest_hygiene;
 pub mod module_naming;
+pub mod named_snapshot;
 pub mod orphan_snapshot;
 pub mod package_metadata;
 pub mod q_reading;

@@ -1,0 +1,104 @@
+---
+source: crates/andromeda-ngsi-ld-query/src/filter/reading/decision_table_tests.rs
+---
+x==1,2
+  Number               Holds(equals 1 or 2)
+  NotANumber           Never                              ruling: numbers beyond the decimals follow XSD
+  PositiveInfinity     Never                              ruling: numbers beyond the decimals follow XSD
+  NegativeInfinity     Never                              ruling: numbers beyond the decimals follow XSD
+  String               Never
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Never
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           SomeElement
+  ObjectArray          SomeElement
+  AnyOneValue          SomeElement
+
+x!=1,2
+  Number               HoldsNot(equals 1 or 2)
+  NotANumber           Always                             ruling: numbers beyond the decimals follow XSD
+  PositiveInfinity     Always                             ruling: numbers beyond the decimals follow XSD
+  NegativeInfinity     Always                             ruling: numbers beyond the decimals follow XSD
+  String               Always
+  RelationshipObject   Always
+  Boolean              Always
+  DateTime             Always
+  Date                 Always
+  Time                 Always
+  Null                 Always
+  Object               Always
+  ValueArray           NoElement
+  ObjectArray          NoElement
+  AnyOneValue          NoElement
+
+x=="a",5
+  Number               Holds(equals "a" or 5)
+  NotANumber           Never                              ruling: numbers beyond the decimals follow XSD
+  PositiveInfinity     Never                              ruling: numbers beyond the decimals follow XSD
+  NegativeInfinity     Never                              ruling: numbers beyond the decimals follow XSD
+  String               Holds(equals "a" or 5)
+  RelationshipObject   Holds(equals "a" or 5)
+  Boolean              Never
+  DateTime             Never
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           SomeElement
+  ObjectArray          SomeElement
+  AnyOneValue          SomeElement
+
+x!="a",5
+  Number               HoldsNot(equals "a" or 5)
+  NotANumber           Always                             ruling: numbers beyond the decimals follow XSD
+  PositiveInfinity     Always                             ruling: numbers beyond the decimals follow XSD
+  NegativeInfinity     Always                             ruling: numbers beyond the decimals follow XSD
+  String               HoldsNot(equals "a" or 5)
+  RelationshipObject   HoldsNot(equals "a" or 5)
+  Boolean              Always
+  DateTime             Always
+  Date                 Always
+  Time                 Always
+  Null                 Always
+  Object               Always
+  ValueArray           NoElement
+  ObjectArray          NoElement
+  AnyOneValue          NoElement
+
+x=="a","b"
+  Number               Never
+  NotANumber           Never
+  PositiveInfinity     Never
+  NegativeInfinity     Never
+  String               Holds(equals "a" or "b")
+  RelationshipObject   Holds(equals "a" or "b")
+  Boolean              Never
+  DateTime             Never
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           SomeElement
+  ObjectArray          SomeElement
+  AnyOneValue          SomeElement
+
+x!=true,false
+  Number               Always
+  NotANumber           Always
+  PositiveInfinity     Always
+  NegativeInfinity     Always
+  String               Always
+  RelationshipObject   Always
+  Boolean              HoldsNot(equals true or false)
+  DateTime             Always
+  Date                 Always
+  Time                 Always
+  Null                 Always
+  Object               Always
+  ValueArray           NoElement
+  ObjectArray          NoElement
+  AnyOneValue          NoElement
