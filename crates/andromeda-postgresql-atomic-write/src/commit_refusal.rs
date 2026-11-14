@@ -138,7 +138,6 @@ pub(crate) fn temporal(error: TemporalError) -> CommitError {
         TemporalError::Persistence(failure) => CommitError::Persistence(failure),
         other @ (TemporalError::Validation(_)
         | TemporalError::NotFound(_)
-        | TemporalError::OperationNotSupported(_)
         | TemporalError::TooManyResults { .. }
         | TemporalError::PayloadBudget(_)
         | TemporalError::AttributeNesting(_)

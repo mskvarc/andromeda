@@ -204,7 +204,6 @@ const fn failure_reach(error: &EntityError) -> FailureReach {
         | EntityError::MemberNotFound(_)
         | EntityError::AlreadyExists { .. }
         | EntityError::Contention { .. }
-        | EntityError::OperationNotSupported(_)
         | EntityError::PayloadBudget(_)
         | EntityError::AttributeNesting(_)
         | EntityError::JsonLd(_)

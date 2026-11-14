@@ -159,9 +159,9 @@ impl EntitySelection {
     ///
     /// True only when there is at least one selector and every selector
     /// constrains: an unconstrained selector admits every entity, so a union
-    /// containing one places no constraint. Both the SQL renderer and the
-    /// in-memory residual read this, so the pushed-down and finished-in-memory
-    /// readings of a union cannot disagree.
+    /// containing one places no constraint. The entity and the temporal SQL
+    /// renderings both read this, so their readings of a union cannot
+    /// disagree.
     pub fn selectors_constrain(&self) -> bool {
         !self.selectors.is_empty() && self.selectors.iter().all(EntitySelector::constrains)
     }

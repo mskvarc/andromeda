@@ -4,7 +4,7 @@ use crate::{
     aggregation_eligibility::{disqualifying_shapes, ensure_aggregation_eligible},
     error::TemporalError,
     port::{
-        history_reader::{ShapeHolders, TemporalHistoryReader},
+        history_reader::ShapeHolders,
         read_scope::{ScopeReach, TemporalReadScope},
     },
     query_reading::QueryReading,
@@ -13,12 +13,11 @@ use crate::{
     service::{TemporalReadResult, TemporalService},
     temporal_invariant::TemporalInvariant,
     temporal_not_found_reason::TemporalNotFoundReason,
-    temporal_operation_unsupported::TemporalOperationUnsupported,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_compaction::entity_compactor::EntityCompactor;
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     candidate_filters::CandidateFilters,
     count_policy::CountPolicy,
@@ -37,9 +36,7 @@ impl TemporalService {
     ///
     /// Returns [`TemporalError::Request`] when the parameters do not satisfy
     /// clause 5.7.3 or name an attribute that is ineligible for a requested
-    /// aggregation method (clause 5.7.4.4),
-    /// [`TemporalError::OperationNotSupported`] when the selected reader
-    /// refuses one of those methods, [`TemporalError::NotFound`] when the
+    /// aggregation method (clause 5.7.4.4), [`TemporalError::NotFound`] when the
     /// entity has no Temporal Evolution or an `attrs` filter selects none of
     /// it (clause 5.7.2), and [`TemporalError::Persistence`] or
     /// [`TemporalError::Rendering`] when the history cannot be read or
@@ -58,7 +55,6 @@ impl TemporalService {
             let compiled = self
                 .compile_temporal_query(params, context, self.language_targeting(), AttrsAdmission::AttributeNamesOnly)
                 .await?;
-            ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
             if shapes_decide_eligibility(&compiled) {
                 let every = self.reader.read_scope(target, ScopeReach::Every).await?;
                 self.ensure_requested_attributes_aggregable(&every, &compiled, ShapeHolders::Entity(entity_id))
@@ -167,11 +163,8 @@ impl TemporalService {
     /// # Errors
     ///
     /// Returns [`TemporalError::Request`] when the parameters do not satisfy
-    /// clause 5.7.4, [`TemporalError::OperationNotSupported`] when the
-    /// selected reader refuses a requested aggregation method,
-    /// [`TemporalError::Internal`] when the reader reports a stage-one outcome
-    /// that paginated ahead of a residual predicate, and
-    /// [`TemporalError::Persistence`] when the identifiers cannot be read.
+    /// clause 5.7.4, and [`TemporalError::Persistence`] when the identifiers
+    /// cannot be read.
     pub async fn query_ids(
         &self,
         target: &ContextTarget,
@@ -197,7 +190,6 @@ impl TemporalService {
                 CandidateFilters::Deferred => compiled.entities.without_split_filters(),
             }
             let compiled = compiled;
-            ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
             let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
             let outcome = self.reader.query_entity_ids(&scope, &compiled, window, CountPolicy::Omit).await?;
             Ok(outcome.entity_ids)
@@ -253,18 +245,6 @@ impl TemporalService {
 /// representation naming its attributes.
 const fn shapes_decide_eligibility(compiled: &CompiledTemporalQuery) -> bool {
     compiled.representation.format.is_aggregated() && !compiled.instances.attr_filter.is_empty()
-}
-
-/// Reject unsupported aggregation before invoking any reader query operation.
-fn ensure_aggregation_supported(reader: &dyn TemporalHistoryReader, requested: &[AggrMethod]) -> Result<(), TemporalError> {
-    let refused = reader.refused_aggregation_methods(requested);
-    if refused.is_empty() {
-        Ok(())
-    } else {
-        Err(TemporalError::OperationNotSupported(TemporalOperationUnsupported::ReaderRefusedAggregation {
-            methods: refused,
-        }))
-    }
 }
 
 /// Reading the aggregated periods of a response and cutting them together.

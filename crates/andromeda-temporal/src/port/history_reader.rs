@@ -11,21 +11,12 @@ use crate::{
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_ngsi_ld_lexicon::{
-    aggr_method::AggrMethod,
-    attribute_name::AttributeName,
-    attribute_type::AttributeType,
-    entity_type_name::EntityTypeName,
-    identifier::Identifier,
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, split_filter::LeafTruths, temporal::compiled::CompiledTemporalQuery};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use std::{
-    collections::{HashMap, HashSet},
-    time::Duration,
-};
+use std::collections::{HashMap, HashSet};
 
 /// What a history read answered for one entity.
 #[derive(Debug)]
@@ -128,52 +119,9 @@ pub enum ShapeHolders<'a> {
     Selected,
 }
 
-/// Whether aggregation is materialized, computed from raw history, or unavailable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AggregationPushdown {
-    /// Pre-materialized aggregates are available for eligible requests.
-    Materialized,
-    /// Aggregation is computed from raw history for each request.
-    OnTheFly,
-    /// Aggregation is not supported by this reader.
-    None,
-}
-
-/// Whether committed history is immediately visible to subsequent reads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HistoryVisibility {
-    /// Writes are visible on the next read.
-    Immediate,
-    /// Writes become visible only after the bounded lag.
-    Eventual {
-        /// Maximum expected visibility lag.
-        maximum_lag: Duration,
-    },
-}
-
-/// Capabilities of one selected temporal history reader.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TemporalReaderCapabilities {
-    /// Aggregation execution capability.
-    pub aggregation: AggregationPushdown,
-    /// Committed-history visibility capability.
-    pub history_visibility: HistoryVisibility,
-}
-
 /// Reads compiled temporal history without exposing adapter rows or query languages.
 #[async_trait]
 pub trait TemporalHistoryReader: Send + Sync {
-    /// Report this reader's narrow temporal capabilities.
-    fn capabilities(&self) -> TemporalReaderCapabilities;
-
-    /// Return requested aggregation methods this reader refuses.
-    fn refused_aggregation_methods(&self, requested: &[AggrMethod]) -> Vec<AggrMethod> {
-        match self.capabilities().aggregation {
-            AggregationPushdown::Materialized | AggregationPushdown::OnTheFly => Vec::new(),
-            AggregationPushdown::None => requested.to_vec(),
-        }
-    }
-
     /// The scope a read of `target` that begins now runs in, reaching the
     /// history `reach` names: every later call of the read takes it, so the
     /// reader inspects the branch once per read rather than once per

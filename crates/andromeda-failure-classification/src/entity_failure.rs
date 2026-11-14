@@ -26,7 +26,6 @@ pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
         // is told the truth: the entity is contended and the identical request
         // may be sent again.
         EntityError::Contention { .. } => ClassifiedReport::public(NgsiLdErrorType::Conflict, error.to_string()),
-        EntityError::OperationNotSupported(reason) => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, reason.to_string()),
         // Clause 6.3.2 raises "Request Entity too large" (413) for an input too
         // large to process; the budget is counted in values and positions
         // rather than bytes, and the client's remedy is the same.
@@ -55,13 +54,7 @@ pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
 #[cfg(test)]
 mod tests {
     use crate::entity_failure::classify_entity_error;
-    use andromeda_entity::{
-        entity_invariant::EntityInvariant,
-        entity_operation_unsupported::EntityOperationUnsupported,
-        entity_validation_reason::EntityValidationReason,
-        error::EntityError,
-        residual_predicate::ResidualPredicate,
-    };
+    use andromeda_entity::{entity_invariant::EntityInvariant, entity_validation_reason::EntityValidationReason, error::EntityError};
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryOverLimit, GeometryPositionLimit};
     use andromeda_ngsi_ld_lexicon::{
         attribute_name::AttributeName,
@@ -92,12 +85,6 @@ mod tests {
             (EntityError::not_found(&identifier), NgsiLdErrorType::ResourceNotFound),
             (EntityError::attribute_not_found(&attribute), NgsiLdErrorType::ResourceNotFound),
             (EntityError::already_exists(&identifier), NgsiLdErrorType::AlreadyExists),
-            (
-                EntityError::OperationNotSupported(EntityOperationUnsupported::Unnarrowable {
-                    predicates: vec![ResidualPredicate::ValueFilter],
-                }),
-                NgsiLdErrorType::OperationNotSupported,
-            ),
         ] {
             let report = classify_entity_error(&error);
             pretty_assertions::assert_eq!(report.error_type(), expected, "wrong category for {error:?}");

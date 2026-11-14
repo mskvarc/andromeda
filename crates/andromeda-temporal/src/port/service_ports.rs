@@ -12,7 +12,7 @@ use std::sync::Arc;
 /// being able to append it, or appending without the barrier that orders an
 /// immediate mutation against deferred work, is not a working service.
 pub struct TemporalServicePorts {
-    /// Base entity lookups a temporal read resolves its subjects against.
+    /// The current state of the Entity a Temporal Evolution write folds into.
     pub entity_reader: Arc<dyn EntityReader>,
     /// Temporal history reads.
     pub reader: Arc<dyn TemporalHistoryReader>,

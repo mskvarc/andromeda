@@ -48,7 +48,7 @@ enum TypeTest {
 ///
 /// A union that contains an unconstrained selector places no constraint, so it
 /// is rendered only when every selector constrains, the reading
-/// `EntitySelection::selectors_constrain` shares with the in-memory residual.
+/// `EntitySelection::selectors_constrain` shares with the temporal path.
 #[must_use]
 pub fn condition(selection: &EntitySelection, rows: &EntityRowRefs, types: &ResolvedNames<EntityTypeName>, source: &RowSource) -> Option<Condition> {
     if !selection.selectors_constrain() {

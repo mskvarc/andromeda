@@ -13,7 +13,6 @@
 //! Entity can see its attributes.
 
 use crate::error::ContextStoreError;
-use andromeda_entity::storage_profile::StorageProfile;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_query::ordering::compiled::ResultOrdering;
 use andromeda_postgresql_collation::provisioned_collations::ProvisionedCollations;
@@ -41,11 +40,6 @@ pub struct EntityRepository {
 }
 
 impl EntityRepository {
-    /// What this store can be asked to do with a compiled query.
-    ///
-    /// A constant rather than a probe: the tenant migrations create the `PostGIS` geometry columns and the `ltree` scope columns, so a pool that migrated has them and one that could not migrate never becomes a store. That is the difference between these axes and the `TimescaleDB` edition, which is genuinely per-pool runtime state.
-    pub const PROFILE: StorageProfile = StorageProfile::POSTGIS_LTREE;
-
     /// Create a new entity repository backed by the given connection pool,
     /// its read requests drawing on `reads`.
     pub fn new(

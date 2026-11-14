@@ -110,11 +110,10 @@ mod tests {
         configured_policy::{filter_complexity_limits, geometry_census_limits},
         entity_snapshot::EntitySnapshot,
         error::EntityError,
-        port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
+        port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity},
         query::EntityQueryService,
         query_outcome::QueryOutcome,
         spatial_acceleration::SpatialAcceleration,
-        storage_profile::StorageProfile,
     };
     use andromeda_configuration::schema::request_limits::RequestLimitsConfig;
     use andromeda_context_space::context_target::ContextTarget;
@@ -206,26 +205,17 @@ mod tests {
 
     #[async_trait]
     impl EntityQueryStore for Held {
-        fn profile(&self) -> &StorageProfile {
-            panic!("the linked-state gathering never inspects the store's profile")
-        }
-
         async fn query_compiled(
             &self,
             _target: &ContextTarget,
             _compiled: &CompiledEntityQuery,
             _window: &PageWindow,
             _count: CountPolicy,
-        ) -> Result<QueryOutcome<StoredEntry<RetrievedEntity>>, EntityError> {
+        ) -> Result<QueryOutcome, EntityError> {
             Err(unread("query_compiled"))
         }
 
-        async fn query_ids(
-            &self,
-            _target: &ContextTarget,
-            _compiled: &CompiledEntityQuery,
-            _window: &PageWindow,
-        ) -> Result<QueryOutcome<Identifier>, EntityError> {
+        async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery, _window: &PageWindow) -> Result<Vec<Identifier>, EntityError> {
             Err(unread("query_ids"))
         }
     }

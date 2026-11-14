@@ -25,10 +25,6 @@ pub enum RegistrationInvariant {
     /// which every expanded name is.
     #[error("a declared attribute name is not an IRI: {0}")]
     EntityProbeAttributeIri(#[source] InvalidIri<String>),
-    /// The entity store declined a predicate of an identifier-only admission
-    /// check, which leaves nothing to finish the predicate against.
-    #[error("the entity store declined a predicate of a registration admission check")]
-    EntityProbeDeclinedPredicate,
     /// The subscriptions forwarded under a registration could not be read before
     /// it was removed.
     #[error("the subscriptions forwarded under a registration could not be read")]

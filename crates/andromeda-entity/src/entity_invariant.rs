@@ -4,7 +4,6 @@
 //! policy and the ports it drives that a correct broker never breaks, so a
 //! broken one is answered `InternalError`.
 
-use crate::residual_predicate::ResidualPredicate;
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_lexicon::{
     identifier::Identifier,
@@ -29,14 +28,6 @@ pub enum EntityInvariant {
     /// the write path admitted is always readable.
     #[error("a stored entity did not read back as a compact entity: {0}")]
     CompactReading(#[source] RefusedNode),
-    /// A store applied a query's result window while leaving part of its
-    /// filter unapplied, so the page would be short and every later page
-    /// misaligned.
-    #[error("the store applied the result window but left {} unapplied", describe_predicates(.unapplied))]
-    IncoherentResidual {
-        /// The predicates the store left unapplied.
-        unapplied: Vec<ResidualPredicate>,
-    },
     /// A read-modify-write landed without the builder producing its result.
     #[error("read-modify-write for {entity} landed without producing a result")]
     ReadModifyWriteWithoutResult {
@@ -81,9 +72,4 @@ pub enum EntityInvariant {
     /// The identifier minted for an `AttributeList` (clause 5.2.27) is not one.
     #[error("a minted attribute list identifier is not one: {0}")]
     MintedAttributeListId(#[source] AttributeListIdParseError),
-}
-
-/// Render the predicates a store left unapplied, for the invariant's message.
-fn describe_predicates(predicates: &[ResidualPredicate]) -> String {
-    predicates.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
 }

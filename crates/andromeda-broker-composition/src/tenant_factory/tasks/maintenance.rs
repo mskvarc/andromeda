@@ -322,7 +322,6 @@ pub(super) const fn classify_entity_expiry_failure(error: EntityError) -> TaskFa
         | EntityError::AttributeNotFound { name: _ }
         | EntityError::MemberNotFound(_)
         | EntityError::AlreadyExists { identifier: _ }
-        | EntityError::OperationNotSupported(_)
         | EntityError::PayloadBudget(_)
         | EntityError::AttributeNesting(_)
         | EntityError::JsonLd(_)

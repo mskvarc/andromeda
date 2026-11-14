@@ -96,7 +96,6 @@ mod stub_broker;
 /// The invariants temporal policy relies on.
 pub mod temporal_invariant;
 pub mod temporal_not_found_reason;
-pub mod temporal_operation_unsupported;
 pub mod temporal_validation_reason;
 mod unit_code_admission;
 /// A mutation refused while its entity's queued history is held elsewhere.

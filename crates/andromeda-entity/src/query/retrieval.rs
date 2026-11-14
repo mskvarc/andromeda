@@ -8,10 +8,9 @@ use crate::{
         EntityQueryService,
         entity_versions::held_version,
         projection_remainder::state_remainder,
-        pushdown_refusal::refuse_unnarrowable,
-        residual::finish_page,
         state_projection::{keeps_a_standing_attribute, narrow_state},
     },
+    query_outcome::QueryOutcome,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
@@ -142,9 +141,8 @@ impl EntityQueryService {
     ///
     /// Reports [`EntityError::JsonLd`] when the request cannot be expanded
     /// against `context`, [`EntityError::Query`] when the request's filter
-    /// expressions are not well formed, [`EntityError::OperationNotSupported`]
-    /// when the store cannot narrow a predicate at all (clause 5.5.2), and
-    /// [`EntityError::Persistence`] when the store could not answer the query.
+    /// expressions are not well formed, and [`EntityError::Persistence`] when
+    /// the store could not answer the query.
     pub async fn query_states(
         &self,
         target: &ContextTarget,
@@ -157,21 +155,18 @@ impl EntityQueryService {
         let timer = entity::start(EntityOperation::Query);
         let result: Result<(Vec<StoredEntry<RetrievedEntity>>, Option<i64>), EntityError> = async {
             let compiled = self.compile_query_cached(query, context, language_targeting).await?;
-            // The spatial index narrows only the default `location` instances;
-            // the store still evaluates the geo-query, so the refusal below reads
-            // the selection the store is actually handed.
+            // The spatial index narrows only the default `location` instances,
+            // so the store still evaluates the geo-query over what it narrowed.
             let narrowed = self.spatial_prefilter(target, &compiled).await;
-            refuse_unnarrowable(*self.query_store.profile(), &narrowed.selection)?;
-            let outcome = self.query_store.query_compiled(target, &narrowed, window, count).await?;
-            let mut page = finish_page(outcome, window, count)?;
-            for row in &mut page.rows {
+            let QueryOutcome { mut rows, total_count } = self.query_store.query_compiled(target, &narrowed, window, count).await?;
+            for row in &mut rows {
                 if let StoredEntry::Read(row) = row {
                     // The store decoded each state into its own allocation, so
                     // this borrows it mutably without a copy.
                     narrow_to_query(Arc::make_mut(&mut row.state), &compiled);
                 }
             }
-            Ok((page.rows, page.total_count))
+            Ok((rows, total_count))
         }
         .await;
         timer.finish_result(&result);
@@ -184,13 +179,10 @@ impl EntityQueryService {
     ///
     /// # Errors
     ///
-    /// Reports [`EntityError::OperationNotSupported`] when the store cannot
-    /// narrow a predicate of `compiled` at all (clause 5.5.2), and
-    /// [`EntityError::Persistence`] when the store could not answer the query.
+    /// Reports [`EntityError::Persistence`] when the store could not answer
+    /// the query.
     pub async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery, window: &PageWindow) -> Result<Vec<Identifier>, EntityError> {
-        refuse_unnarrowable(*self.query_store.profile(), &compiled.selection)?;
-        let outcome = self.query_store.query_ids(target, compiled, window).await?;
-        self.finish_ids(target, outcome, window).await
+        self.query_store.query_ids(target, compiled, window).await
     }
 }
 

@@ -221,11 +221,10 @@ mod tests {
     use crate::{
         configured_policy::{filter_complexity_limits, geometry_census_limits},
         entity_snapshot::EntitySnapshot,
-        port::{query::EntityQueryStore, reader::EntityReader, stored_entry::StoredEntry},
+        port::{query::EntityQueryStore, reader::EntityReader},
         query::{core_linked_source::*, remote_linked::RemoteLinkedEntitySource},
         query_outcome::QueryOutcome,
         spatial_acceleration::SpatialAcceleration,
-        storage_profile::StorageProfile,
     };
     use andromeda_configuration::schema::request_limits::RequestLimitsConfig;
     use andromeda_json_literal::JsonLiteral;
@@ -373,26 +372,17 @@ mod tests {
 
     #[async_trait]
     impl EntityQueryStore for StubStore {
-        fn profile(&self) -> &StorageProfile {
-            panic!("the traversal never inspects the store's profile")
-        }
-
         async fn query_compiled(
             &self,
             _target: &ContextTarget,
             _compiled: &CompiledEntityQuery,
             _window: &PageWindow,
             _count: CountPolicy,
-        ) -> Result<QueryOutcome<StoredEntry<RetrievedEntity>>, EntityError> {
+        ) -> Result<QueryOutcome, EntityError> {
             Err(unsupported("query_compiled"))
         }
 
-        async fn query_ids(
-            &self,
-            _target: &ContextTarget,
-            _compiled: &CompiledEntityQuery,
-            _window: &PageWindow,
-        ) -> Result<QueryOutcome<Identifier>, EntityError> {
+        async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery, _window: &PageWindow) -> Result<Vec<Identifier>, EntityError> {
             Err(unsupported("query_ids"))
         }
     }

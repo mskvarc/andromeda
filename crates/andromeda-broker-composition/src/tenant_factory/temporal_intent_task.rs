@@ -141,7 +141,6 @@ const fn classify_temporal_drain_failure(error: TemporalError) -> TaskFailure<Te
         TemporalError::Internal(_) => FailureClass::InvariantViolation,
         TemporalError::Validation(_)
         | TemporalError::NotFound(_)
-        | TemporalError::OperationNotSupported(_)
         | TemporalError::TooManyResults { .. }
         | TemporalError::PayloadBudget(_)
         | TemporalError::AttributeNesting(_)

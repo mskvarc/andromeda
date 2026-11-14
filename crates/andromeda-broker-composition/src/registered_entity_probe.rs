@@ -76,21 +76,12 @@ impl EntityStoreRegistrationProbe {
             .selection(EntitySelection::builder().selectors(selectors).attrs(attrs).build())
             .build();
         // One identifier answers whether any entity is present.
-        let outcome = self
+        let ids = self
             .query
             .query_ids(&self.live_target, &compiled, &PageWindow::offset(1, 0))
             .await
             .map_err(|error| probe_error(&error))?;
-        // An identifier-only read leaves nothing to finish a declined
-        // predicate against, so a store that declined one cannot answer.
-        if !outcome.unapplied.is_empty() {
-            return Err(RegistrationInvariant::EntityProbeDeclinedPredicate.into());
-        }
-        Ok(if outcome.rows.is_empty() {
-            EntityPresence::Absent
-        } else {
-            EntityPresence::Present
-        })
+        Ok(if ids.is_empty() { EntityPresence::Absent } else { EntityPresence::Present })
     }
 }
 
@@ -109,7 +100,6 @@ fn probe_error(error: &EntityError) -> RegistrationError {
         | EntityError::MemberNotFound(_)
         | EntityError::AlreadyExists { .. }
         | EntityError::Contention { .. }
-        | EntityError::OperationNotSupported(_)
         | EntityError::PayloadBudget(_)
         | EntityError::AttributeNesting(_)
         | EntityError::JsonLd(_)
@@ -176,14 +166,7 @@ impl RegisteredEntityProbe for EntityStoreRegistrationProbe {
 mod tests {
     use crate::registered_entity_probe::EntityStoreRegistrationProbe;
     use andromeda_context_space::context_target::ContextTarget;
-    use andromeda_entity::{
-        error::EntityError,
-        pagination_outcome::PaginationOutcome,
-        port::{query::EntityQueryStore, retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
-        query_outcome::QueryOutcome,
-        query_residual::ResidualFilter,
-        storage_profile::StorageProfile,
-    };
+    use andromeda_entity::{error::EntityError, port::query::EntityQueryStore, query_outcome::QueryOutcome};
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, page_window::PageWindow};
@@ -206,17 +189,13 @@ mod tests {
     }
 
     impl EntityQueryStore for AttributeIndex {
-        fn profile(&self) -> &StorageProfile {
-            &StorageProfile::POSTGIS_LTREE
-        }
-
         fn query_compiled<'life0, 'life1, 'life2, 'life3, 'async_trait>(
             &'life0 self,
             _target: &'life1 ContextTarget,
             _compiled: &'life2 CompiledEntityQuery,
             _window: &'life3 PageWindow,
             _count: CountPolicy,
-        ) -> BoxFuture<'async_trait, Result<QueryOutcome<StoredEntry<RetrievedEntity>>, EntityError>>
+        ) -> BoxFuture<'async_trait, Result<QueryOutcome, EntityError>>
         where
             'life0: 'async_trait,
             'life1: 'async_trait,
@@ -232,7 +211,7 @@ mod tests {
             _target: &'life1 ContextTarget,
             compiled: &'life2 CompiledEntityQuery,
             window: &'life3 PageWindow,
-        ) -> BoxFuture<'async_trait, Result<QueryOutcome<Identifier>, EntityError>>
+        ) -> BoxFuture<'async_trait, Result<Vec<Identifier>, EntityError>>
         where
             'life0: 'async_trait,
             'life1: 'async_trait,
@@ -244,13 +223,7 @@ mod tests {
             let admitted = compiled.selection.selectors.iter().all(|selector| selector.ids.contains(&self.entity));
             let holds = compiled.selection.attrs.is_empty() || compiled.selection.attrs.iter().any(|attribute| self.attributes.contains(attribute));
             let rows = if admitted && holds { vec![self.entity.clone()] } else { Vec::new() };
-            Box::pin(async move {
-                Ok(QueryOutcome {
-                    rows,
-                    unapplied: ResidualFilter::default(),
-                    pagination: PaginationOutcome::Applied { total: None },
-                })
-            })
+            Box::pin(async move { Ok(rows) })
         }
     }
 

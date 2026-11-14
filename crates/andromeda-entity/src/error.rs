@@ -1,6 +1,6 @@
 //! Failures produced by entity policy and its persistence ports.
 
-use crate::{entity_invariant::EntityInvariant, entity_operation_unsupported::EntityOperationUnsupported, entity_validation_reason::EntityValidationReason};
+use crate::{entity_invariant::EntityInvariant, entity_validation_reason::EntityValidationReason};
 use andromeda_context_commit::error::CommitError;
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
@@ -59,9 +59,6 @@ pub enum EntityError {
         /// Attempts spent before the broker gave up.
         attempts: u32,
     },
-    /// The selected storage capability cannot answer the operation safely.
-    #[error("entity operation is not supported: {0}")]
-    OperationNotSupported(EntityOperationUnsupported),
     /// The written payload exceeds the budget an entity is admitted under
     /// before it is expanded (clause 6.3.2, "Request Entity too large").
     #[error(transparent)]

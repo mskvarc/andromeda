@@ -17,7 +17,6 @@ pub fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
     match error {
         TemporalError::Validation(reason) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, reason.to_string()),
         TemporalError::NotFound(reason) => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, reason.to_string()),
-        TemporalError::OperationNotSupported(reason) => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, reason.to_string()),
         // Clause 5.5.6 leaves the threshold to the implementation: a 403 naming
         // the count, the limit and its setting so the client can narrow its
         // window or selectors.
@@ -62,7 +61,6 @@ mod tests {
         result_bound::ResultBound,
         temporal_invariant::TemporalInvariant,
         temporal_not_found_reason::TemporalNotFoundReason,
-        temporal_operation_unsupported::TemporalOperationUnsupported,
         temporal_validation_reason::TemporalValidationReason,
         unsettled_history::UnsettledHistory,
     };
@@ -85,12 +83,6 @@ mod tests {
                     id: "urn:ngsi-ld:Entity:missing".parse().expect("a valid identifier"),
                 }),
                 NgsiLdErrorType::ResourceNotFound,
-                None,
-            ),
-            (
-                "OperationNotSupported",
-                TemporalError::OperationNotSupported(TemporalOperationUnsupported::RecordingSinkNoAggregation),
-                NgsiLdErrorType::OperationNotSupported,
                 None,
             ),
             (

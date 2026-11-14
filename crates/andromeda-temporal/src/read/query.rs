@@ -13,7 +13,6 @@ use crate::{
     read::{
         aggregated_page::{AggregationRendering, render_aggregation_page, settle_aggregation_pages},
         dataset_step::DatasetStep,
-        ensure_aggregation_supported,
         rendered_entity::{HistoryPresence, RenderedTemporalEntity, render_history_page},
         unread_entity::UnreadEntity,
     },
@@ -45,12 +44,8 @@ impl TemporalService {
     ///
     /// Returns [`TemporalError::Request`] when the parameters do not satisfy
     /// clause 5.7.4 or name an attribute that is ineligible for a requested
-    /// aggregation method (clause 5.7.4.4),
-    /// [`TemporalError::OperationNotSupported`] when the selected reader
-    /// refuses one of those methods, [`TemporalError::Internal`] when the
-    /// reader reports a stage-one outcome that paginated ahead of a residual
-    /// predicate, and [`TemporalError::Persistence`] when the history cannot
-    /// be read. A single entity that fails to render is reported as a warning
+    /// aggregation method (clause 5.7.4.4), and [`TemporalError::Persistence`]
+    /// when the history cannot be read. A single entity that fails to render is reported as a warning
     /// on the result rather than failing the query.
     ///
     /// `contributed` names the entities a Context Source contributed a part of
@@ -78,7 +73,6 @@ impl TemporalService {
             compiled.contributed = contributed;
             let compiled = compiled;
 
-            ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
             let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
             self.ensure_requested_attributes_aggregable(&scope, &compiled, ShapeHolders::Selected).await?;
             // Clause 5.5.9.1: the identifier page is read one entity past the
