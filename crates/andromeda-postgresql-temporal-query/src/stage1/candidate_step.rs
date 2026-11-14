@@ -205,7 +205,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
-        filter::parser,
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
         page_window::PageWindow,
         scope::query::ScopeQuery,
         temporal::window::TimeInterval,
@@ -220,7 +220,10 @@ mod tests {
     #[test]
     fn a_q_filter_takes_no_step_of_its_own() {
         let mut compiled = opened(sensors());
-        compiled.entities.q_expr = Some(parser::parse("\"https://uri.etsi.org/ngsi-ld/default-context/temperature\">99").expect("valid q"));
+        compiled.entities.q = Some(CompiledFilter::new(
+            parser::parse("\"https://uri.etsi.org/ngsi-ld/default-context/temperature\">99").expect("valid q"),
+            LanguageMatching::TagEquality,
+        ));
         let stage1 = build_stage1_entity_ids(
             &HistoryBranch::live_recorded(),
             &compiled,

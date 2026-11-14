@@ -81,7 +81,7 @@ async fn a_query_reads_its_registrations_once_and_contacts_each_source_in_its_ph
         split: SplitEntities::Complete,
         context: &context,
         triggering: TriggeringRequest::default(),
-        csf_expr: None,
+        csf: None,
         geo: None,
         entity_map: EntityMapInUse::None,
         budget: &budget,

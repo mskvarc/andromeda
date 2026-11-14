@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
-    filter::language_matching::LanguageMatching,
+    filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
     projection::{
         compiled::Projection,
         grammar::{ProjectionList, RawProjectionTerm},
@@ -65,8 +65,7 @@ pub fn compile_subscription(stored: &StoredSubscription, language_matching: Lang
         notification_show_changes: sub.notification.show_changes.unwrap_or(false),
         jsonld_context: sub.delivery.jsonld_context.clone(), // clone: compiled state owns the context URL.
         notifying_since: stored.notifying_since,
-        compiled_q: sub.filters.q.clone(), // clone: compiled state owns its filter AST.
-        language_matching,
+        compiled_q: sub.filters.q.clone().map(|q| CompiledFilter::new(q, language_matching)), // clone: compiled state owns its filter AST.
         compiled_geo_q: SubscriptionGeoFilter::from_stored(sub.filters.geo_q.as_ref(), sub.id.as_ref()),
         compiled_scope_q: sub.filters.scope_q.clone(), // clone: compiled state owns its scope AST.
         dataset_id: sub.filters.dataset_id.clone(),    // clone: compiled state owns dataset identifiers.
@@ -104,7 +103,10 @@ pub fn compile_csource_subscription(sub: &Subscription) -> CompiledCsrSubscripti
         throttling_secs: sub.delivery.throttling,
         time_interval_secs: sub.delivery.time_interval,
         jsonld_context: sub.delivery.jsonld_context.clone(), // clone: compiled state owns the context URL.
-        compiled_csf: sub.filters.csf.clone(),               // clone: compiled state owns its filter AST.
+        // Context Source Properties are Properties, never a
+        // `LanguageProperty`, so no target language selects a string of
+        // theirs whatever the matching.
+        compiled_csf: sub.filters.csf.as_ref().map(|csf| FilterReading::of(csf, LanguageMatching::TagEquality)),
     }
 }
 

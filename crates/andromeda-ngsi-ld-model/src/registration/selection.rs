@@ -6,11 +6,11 @@ use crate::registration::{ContextSourceRegistration, coverage::RegistrationCover
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
-    filter::{expression::Expr, language_matching::LanguageMatching},
+    filter::reading::filter_reading::FilterReading,
     geo::query::GeoQuery,
     scope::query::ScopeQuery,
 };
-use andromeda_ngsi_ld_query_evaluation::{q::eval::evaluate, queried_entity::linked_entities::NoLinkedEntities};
+use andromeda_ngsi_ld_query_evaluation::{q::filter_run::filter_holds, queried_entity::linked_entities::NoLinkedEntities};
 
 /// Whether the clause 5.10.2.4 temporal partition applies.
 ///
@@ -68,9 +68,9 @@ pub struct RegistrationFilters<'a> {
     pub scope: ScopeFilter<'a>,
     /// The geoquery, matched against the geometry its `geoproperty` names.
     pub geo: Option<&'a GeoQuery>,
-    /// The context source filter, expanded, matched against the Context Source
-    /// Properties.
-    pub csf: Option<&'a Expr>,
+    /// The reading of the context source filter, expanded, matched against the
+    /// Context Source Properties.
+    pub csf: Option<&'a FilterReading>,
     /// The temporal partition.
     pub temporal: TemporalPartition<'a>,
 }
@@ -96,9 +96,8 @@ impl RegistrationFilters<'_> {
             return Ok(true);
         };
         let document = registration.property_members().document()?;
-        // Context Source Properties carry no Relationship a hop could cross,
-        // and no LanguageProperty a target language could select keys of.
-        Ok(evaluate(csf, document.properties(), NoLinkedEntities, LanguageMatching::TagEquality))
+        // Context Source Properties carry no Relationship a hop could cross.
+        Ok(filter_holds(csf, document.properties(), NoLinkedEntities))
     }
 }
 
@@ -108,7 +107,10 @@ mod tests {
         ContextSourceRegistration,
         selection::{RegistrationFilters, ScopeFilter, TemporalPartition},
     };
-    use andromeda_ngsi_ld_query::{filter::parser::parse, scope::query::ScopeQuery};
+    use andromeda_ngsi_ld_query::{
+        filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading},
+        scope::query::ScopeQuery,
+    };
     use serde_json::{Value, json};
 
     fn registration(extra: &Value) -> ContextSourceRegistration {
@@ -198,12 +200,18 @@ mod tests {
     /// `mode` and the properties it adds.
     #[test]
     fn a_context_source_filter_reads_the_mode_and_the_added_properties() {
-        let exclusive = parse("\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\"").expect("the filter parses");
+        let exclusive = FilterReading::of(
+            &parse("\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\"").expect("the filter parses"),
+            LanguageMatching::TagEquality,
+        );
         let filters = RegistrationFilters { csf: Some(&exclusive), ..NONE };
         assert!(filters.admits(&registration(&json!({"mode": "exclusive"}))).expect("admission decides"));
         assert!(!filters.admits(&registration(&json!({"mode": "inclusive"}))).expect("admission decides"));
 
-        let gold = parse("\"https://example.org/tier\"==\"gold\"").expect("the filter parses");
+        let gold = FilterReading::of(
+            &parse("\"https://example.org/tier\"==\"gold\"").expect("the filter parses"),
+            LanguageMatching::TagEquality,
+        );
         let filters = RegistrationFilters { csf: Some(&gold), ..NONE };
         assert!(
             filters

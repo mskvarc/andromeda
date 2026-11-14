@@ -181,6 +181,7 @@ mod tests {
     use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         geo::query::GeoQuery,
         scope::query::ScopeQuery,
         split_filter::SplitFilter,
@@ -270,7 +271,10 @@ mod tests {
         }))
         .await;
         let above = EntitySelection::builder()
-            .q_expr(Some("\"https://example.com/speed\">50".parse().expect("a valid q")))
+            .q(Some(CompiledFilter::new(
+                "\"https://example.com/speed\">50".parse().expect("a valid q"),
+                LanguageMatching::TagEquality,
+            )))
             .build();
         assert!(holds(&above, &[&local]));
         assert!(!holds(&above, &[&local, &remote]));
@@ -354,7 +358,10 @@ mod tests {
         }))
         .await;
         let above = EntitySelection::builder()
-            .q_expr(Some("\"https://example.com/speed\">50".parse().expect("a valid q")))
+            .q(Some(CompiledFilter::new(
+                "\"https://example.com/speed\">50".parse().expect("a valid q"),
+                LanguageMatching::TagEquality,
+            )))
             .build();
         let filter = SplitFilter::of(&above);
         let at = |raw: &str| raw.parse::<NgsiLdDateTime>().expect("a valid instant").get();

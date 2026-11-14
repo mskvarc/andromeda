@@ -1,5 +1,5 @@
 use crate::{
-    q::eval::evaluate,
+    q::filter_run::filter_holds,
     queried_entity::{expanded_fixture::FixtureEntity, linked_entities::NoLinkedEntities},
 };
 use andromeda_ngsi_ld_query::{
@@ -9,6 +9,7 @@ use andromeda_ngsi_ld_query::{
         json_key_attributes::JsonKeyAttributes,
         language_matching::LanguageMatching,
         parser::parse,
+        reading::filter_reading::FilterReading,
         serialize::{serialize, serialize_written_members},
     },
     namespace_expander::EXAMPLE_NAMESPACE,
@@ -42,10 +43,14 @@ async fn a_persisted_target_language_keeps_the_written_tag() {
         }]
     }));
     let english = persisted_round_trip("name[en]==\"Door\"").await;
-    assert!(evaluate(&english, &door, NoLinkedEntities, LanguageMatching::TagEquality));
+    assert!(filter_holds(
+        &FilterReading::of(&english, LanguageMatching::TagEquality),
+        &door,
+        NoLinkedEntities
+    ));
     let addressed_only: Expr = serialize(&english).parse().expect("parses");
     assert!(
-        !evaluate(&addressed_only, &door, NoLinkedEntities, LanguageMatching::TagEquality),
+        !filter_holds(&FilterReading::of(&addressed_only, LanguageMatching::TagEquality), &door, NoLinkedEntities),
         "the expanded text alone has lost the tag"
     );
 }

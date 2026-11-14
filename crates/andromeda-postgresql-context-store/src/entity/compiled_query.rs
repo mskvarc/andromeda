@@ -16,6 +16,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
+    filter::compiled_filter::CompiledFilter,
     page_window::PageWindow,
     projection::returned_attributes::ReturnedAttributes,
 };
@@ -165,7 +166,7 @@ impl EntityRepository {
             .chain(compiled.selection.projected_members.names());
         let attribute_names = projected_attribute_names(
             members,
-            compiled.selection.q_expr.as_ref(),
+            compiled.selection.q.as_ref().map(CompiledFilter::expr),
             compiled.selection.geo.as_ref(),
             &compiled.ordering.terms,
         );

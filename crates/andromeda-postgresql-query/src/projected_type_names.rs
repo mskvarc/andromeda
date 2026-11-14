@@ -28,8 +28,8 @@ pub fn projected_type_names(selection: &EntitySelection) -> Vec<EntityTypeName> 
             collect_selection(type_expr, &mut names);
         }
     }
-    if let Some(q_expr) = &selection.q_expr {
-        collect_guards(q_expr, &mut names);
+    if let Some(q) = &selection.q {
+        collect_guards(q.expr(), &mut names);
     }
     names
 }
@@ -76,7 +76,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_query::{
         entity_selection::{EntitySelection, EntitySelector},
-        filter::parser,
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
         type_selection::grammar::TypeExpr,
     };
     use iri_rs::IriBuf;
@@ -87,7 +87,7 @@ mod tests {
             type_expr,
             ..EntitySelector::default()
         });
-        selection.q_expr = q.map(|q| parser::parse(q).expect("parse q"));
+        selection.q = q.map(|q| CompiledFilter::new(parser::parse(q).expect("parse q"), LanguageMatching::TagEquality));
         selection
     }
 

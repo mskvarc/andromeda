@@ -10,7 +10,11 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::value::Time
 use andromeda_ngsi_ld_number::{JsonNumber, declared_number::NonFinite};
 use andromeda_ngsi_ld_query::filter::{
     instance_metadata::InstanceMetadata,
-    reading::family_reading::{MultiValueReading, TargetOrigin},
+    reading::{
+        array_target::ArrayTarget,
+        family_reading::{MultiValueReading, TargetOrigin},
+        target_kind::TargetKind,
+    },
 };
 use andromeda_ngsi_ld_value_order::number_order::{HeldNumber, number_order};
 use std::{borrow::Cow, cmp::Ordering};
@@ -29,6 +33,30 @@ pub struct ResolvedTarget<'a> {
     pub origin: TargetOrigin,
     /// What clause 4.9 makes of it when it holds several values.
     pub reading: MultiValueReading,
+}
+
+impl ResolvedTarget<'_> {
+    /// What clause 4.9 makes of the target when it holds several values: any
+    /// one string of a languageMap, or the array of a Relationship's objects
+    /// or of a Property's values, which is the target whole.
+    #[must_use]
+    pub const fn array_target(&self) -> ArrayTarget {
+        match (self.reading, self.origin) {
+            (MultiValueReading::AnyOneValue, TargetOrigin::AttributeValue | TargetOrigin::RelationshipObject) => ArrayTarget::AnyOneValue,
+            (MultiValueReading::WholeArray, TargetOrigin::RelationshipObject) => ArrayTarget::ObjectArray,
+            (MultiValueReading::WholeArray, TargetOrigin::AttributeValue) => ArrayTarget::ValueArray,
+        }
+    }
+}
+
+/// How clause 4.9 compares a target value: as one value of a kind, or as the
+/// values an array holds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ValueShape<'v, 'a> {
+    /// One value, of the kind the operand's data type is compared with.
+    One(TargetKind),
+    /// Several values, each of a kind of its own.
+    Several(&'v [TargetValue<'a>]),
 }
 
 /// A clause 4.9 target value, in the JSON types a Query Term operand is
@@ -163,6 +191,40 @@ impl<'a> TargetValue<'a> {
         }
     }
 
+    /// How the value is compared: one value of its kind, a Relationship's
+    /// object kept apart from a String by the `origin` of its target, or the
+    /// values of an array.
+    ///
+    /// A JSON array is never one raw JSON value, since [`TargetValue::json`]
+    /// makes it the array of its elements, so a raw JSON value that is no
+    /// scalar is an object.
+    #[must_use]
+    pub fn shape(&self, origin: TargetOrigin) -> ValueShape<'_, 'a> {
+        let text = match origin {
+            TargetOrigin::AttributeValue => TargetKind::String,
+            TargetOrigin::RelationshipObject => TargetKind::RelationshipObject,
+        };
+        match self {
+            TargetValue::Array(values) => ValueShape::Several(values),
+            TargetValue::Number(_) => ValueShape::One(TargetKind::Number),
+            TargetValue::Text(_) => ValueShape::One(text),
+            TargetValue::Boolean(_) => ValueShape::One(TargetKind::Boolean),
+            TargetValue::Json(json) => ValueShape::One(match json.kind() {
+                JsonKind::Null => TargetKind::Null,
+                JsonKind::String => text,
+                JsonKind::Number => TargetKind::Number,
+                JsonKind::Boolean => TargetKind::Boolean,
+                JsonKind::Array | JsonKind::Object => TargetKind::Object,
+            }),
+            TargetValue::Time(TimeValue::DateTime(_)) => ValueShape::One(TargetKind::DateTime),
+            TargetValue::Time(TimeValue::Date(_)) => ValueShape::One(TargetKind::Date),
+            TargetValue::Time(TimeValue::Time(_)) => ValueShape::One(TargetKind::Time),
+            TargetValue::NonFiniteNumber(NonFinite::NotANumber) => ValueShape::One(TargetKind::NotANumber),
+            TargetValue::NonFiniteNumber(NonFinite::PositiveInfinity) => ValueShape::One(TargetKind::PositiveInfinity),
+            TargetValue::NonFiniteNumber(NonFinite::NegativeInfinity) => ValueShape::One(TargetKind::NegativeInfinity),
+        }
+    }
+
     /// The value when it is a String, the only type a String or URI operand
     /// and a pattern operator compare with (clause 4.9); a number or a boolean
     /// is no String, whatever its spelling.
@@ -195,10 +257,15 @@ pub fn json_member<'a>(seed: &ResolvedTarget<'a>, keys: &[AttributeName]) -> Opt
 
 #[cfg(test)]
 mod tests {
-    use crate::q::target_value::{ResolvedTarget, TargetValue, json_member};
+    use crate::q::target_value::{ResolvedTarget, TargetValue, ValueShape, json_member};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::filter::reading::family_reading::{MultiValueReading, TargetOrigin};
+    use andromeda_ngsi_ld_number::declared_number::NonFinite;
+    use andromeda_ngsi_ld_query::filter::reading::{
+        array_target::ArrayTarget,
+        family_reading::{MultiValueReading, TargetOrigin},
+        target_kind::TargetKind,
+    };
     use std::borrow::Cow;
 
     fn keys(names: &[&str]) -> Vec<AttributeName> {
@@ -215,6 +282,58 @@ mod tests {
             origin: TargetOrigin::AttributeValue,
             reading: MultiValueReading::WholeArray,
         }
+    }
+
+    /// Clause 4.9 bars a Relationship from every operator but equal and
+    /// unequal, so the text of an object is a kind of its own, and a raw JSON
+    /// value is of the kind its JSON type is.
+    #[test]
+    fn a_value_is_of_its_own_kind_and_an_object_apart_from_a_string() {
+        let (null, object, number) = (literal("null"), literal(r#"{"a": 1}"#), literal("3"));
+        let text = TargetValue::Text(Cow::Borrowed("urn:x:1"));
+        pretty_assertions::assert_eq!(text.shape(TargetOrigin::AttributeValue), ValueShape::One(TargetKind::String));
+        pretty_assertions::assert_eq!(text.shape(TargetOrigin::RelationshipObject), ValueShape::One(TargetKind::RelationshipObject));
+        pretty_assertions::assert_eq!(
+            TargetValue::Json(null.piece()).shape(TargetOrigin::AttributeValue),
+            ValueShape::One(TargetKind::Null)
+        );
+        pretty_assertions::assert_eq!(
+            TargetValue::Json(object.piece()).shape(TargetOrigin::AttributeValue),
+            ValueShape::One(TargetKind::Object)
+        );
+        pretty_assertions::assert_eq!(
+            TargetValue::Json(number.piece()).shape(TargetOrigin::AttributeValue),
+            ValueShape::One(TargetKind::Number)
+        );
+        pretty_assertions::assert_eq!(
+            TargetValue::NonFiniteNumber(NonFinite::NegativeInfinity).shape(TargetOrigin::AttributeValue),
+            ValueShape::One(TargetKind::NegativeInfinity)
+        );
+        let several = TargetValue::Array(vec![TargetValue::Boolean(true)]);
+        pretty_assertions::assert_eq!(several.shape(TargetOrigin::AttributeValue), ValueShape::Several(&[TargetValue::Boolean(true)]));
+    }
+
+    /// A languageMap's values are each the target, a Relationship's objects
+    /// and a Property's values the target whole.
+    #[test]
+    fn an_array_target_is_read_by_its_reading_and_its_origin() {
+        let target = |origin, reading| ResolvedTarget {
+            value: TargetValue::Array(Vec::new()),
+            origin,
+            reading,
+        };
+        pretty_assertions::assert_eq!(
+            target(TargetOrigin::AttributeValue, MultiValueReading::AnyOneValue).array_target(),
+            ArrayTarget::AnyOneValue
+        );
+        pretty_assertions::assert_eq!(
+            target(TargetOrigin::RelationshipObject, MultiValueReading::WholeArray).array_target(),
+            ArrayTarget::ObjectArray
+        );
+        pretty_assertions::assert_eq!(
+            target(TargetOrigin::AttributeValue, MultiValueReading::WholeArray).array_target(),
+            ArrayTarget::ValueArray
+        );
     }
 
     /// A JSON array is the array of its elements, nested arrays included, so

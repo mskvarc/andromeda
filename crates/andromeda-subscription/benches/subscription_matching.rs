@@ -29,10 +29,10 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     error::QueryError,
-    filter::{expression::Expr, language_matching::LanguageMatching, parser::parse},
+    filter::{compiled_filter::CompiledFilter, expression::Expr, language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading},
     projection::compiled::Projection,
 };
-use andromeda_ngsi_ld_query_evaluation::{q::eval::evaluate, queried_entity::linked_entities::NoLinkedEntities};
+use andromeda_ngsi_ld_query_evaluation::{q::filter_run::filter_holds, queried_entity::linked_entities::NoLinkedEntities};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::{
     candidate_index::CandidateIndex,
@@ -180,8 +180,7 @@ fn subscription(key: i64, q: Expr) -> Result<Arc<CompiledSubscription>, SetupErr
             active: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
             selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
         },
-        compiled_q: Some(q),
-        language_matching: LanguageMatching::TagEquality,
+        compiled_q: Some(CompiledFilter::new(q, LanguageMatching::TagEquality)),
         compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
         compiled_scope_q: None,
         dataset_id: None,
@@ -243,8 +242,9 @@ impl Fixture {
 fn one_filter_over_one_entity(criterion: &mut Criterion, fixture: &Fixture) {
     let mut group = criterion.benchmark_group("evaluate");
     for (position, expr) in fixture.filters.iter().enumerate() {
-        group.bench_with_input(BenchmarkId::new("filter", position), expr, |bencher, expr| {
-            bencher.iter(|| evaluate(black_box(expr), &fixture.entity, NoLinkedEntities, LanguageMatching::TagEquality));
+        let reading = FilterReading::of(expr, LanguageMatching::TagEquality);
+        group.bench_with_input(BenchmarkId::new("filter", position), &reading, |bencher, reading| {
+            bencher.iter(|| filter_holds(black_box(reading), &fixture.entity, NoLinkedEntities));
         });
     }
     group.finish();

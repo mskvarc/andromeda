@@ -26,7 +26,12 @@ use andromeda_ngsi_ld_model::{
         selection::{RegistrationFilters, ScopeFilter, TemporalPartition},
     },
 };
-use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::query::GeoQuery, scope::query::ScopeQuery, written_entity_selector::WrittenEntitySelector};
+use andromeda_ngsi_ld_query::{
+    filter::reading::filter_reading::FilterReading,
+    geo::query::GeoQuery,
+    scope::query::ScopeQuery,
+    written_entity_selector::WrittenEntitySelector,
+};
 use chrono::Utc;
 use tracing::warn;
 
@@ -38,9 +43,9 @@ pub(crate) struct RegistrationSelection<'a> {
     pub(crate) selectors: &'a [WrittenEntitySelector],
     /// Which of the matching registrations are contacted.
     pub(crate) reach: SourceReach<'a>,
-    /// The expanded context source filter, evaluated against each
-    /// registration's Context Source Properties (clause 4.9).
-    pub(crate) csf: Option<&'a Expr>,
+    /// The reading of the expanded context source filter, evaluated against
+    /// each registration's Context Source Properties (clause 4.9).
+    pub(crate) csf: Option<&'a FilterReading>,
     /// The Scope query a registration's declared `scope` has to match for it
     /// to be contacted, absent for a read whose entities may be split. A
     /// registration declaring no `scope` is contacted, the query travelling with
@@ -194,7 +199,13 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
     use andromeda_ngsi_ld_model::{entity_map::EntityMap, registration::ContextSourceRegistration};
     use andromeda_ngsi_ld_query::{
-        filter::{expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes, parser},
+        filter::{
+            expansion::expand_q_expr,
+            json_key_attributes::JsonKeyAttributes,
+            language_matching::LanguageMatching,
+            parser,
+            reading::filter_reading::FilterReading,
+        },
         geo::query::GeoQuery,
         scope::query::ScopeQuery,
     };
@@ -284,13 +295,16 @@ mod tests {
             let context = &context;
             async move {
                 let prepared = service.engine().prepare_term_context(context);
-                let filter = expand_q_expr(
-                    parser::parse(q).expect("the filter parses"),
-                    &JsonKeyAttributes::default(),
-                    &ContextualExpander::new(service.engine(), &prepared),
-                )
-                .await
-                .expect("the filter expands");
+                let filter = FilterReading::of(
+                    &expand_q_expr(
+                        parser::parse(q).expect("the filter parses"),
+                        &JsonKeyAttributes::default(),
+                        &ContextualExpander::new(service.engine(), &prepared),
+                    )
+                    .await
+                    .expect("the filter expands"),
+                    LanguageMatching::TagEquality,
+                );
                 service
                     .select_registrations(
                         context,

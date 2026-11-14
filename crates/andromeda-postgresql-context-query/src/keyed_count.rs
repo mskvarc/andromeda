@@ -83,7 +83,7 @@ mod tests {
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
         entity_selection::EntitySelection,
-        filter::parser::parse,
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
         page_window::PageWindow,
     };
     use andromeda_postgresql_query::query_names::QueryNames;
@@ -105,7 +105,7 @@ mod tests {
 
     fn query(q: &str) -> CompiledEntityQuery {
         let mut query = CompiledEntityQuery::builder().selection(EntitySelection::builder().build()).build();
-        query.selection.q_expr = Some(parse(q).expect("valid q"));
+        query.selection.q = Some(CompiledFilter::new(parse(q).expect("valid q"), LanguageMatching::TagEquality));
         query
     }
 

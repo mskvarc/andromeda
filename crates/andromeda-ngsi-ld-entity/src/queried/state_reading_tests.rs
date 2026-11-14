@@ -3,13 +3,13 @@
 use crate::{entity_state::EntityState, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};
 use andromeda_ngsi_ld_query::{
-    filter::{language_matching::LanguageMatching, parser::parse},
+    filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading},
     geo::query::GeoQuery,
     scope::query::ScopeQuery,
 };
 use andromeda_ngsi_ld_query_evaluation::{
     geo_query::geo_query_matches,
-    q::eval::evaluate,
+    q::filter_run::filter_holds,
     queried_entity::{linked_entities::NoLinkedEntities, scoped_entity::ScopedEntity},
     scope_query::scope_query_matches,
 };
@@ -289,7 +289,11 @@ fn the_state_reading_answers_every_query_term_as_clause_4_9_does() {
         let entity = state(&fixture());
         for (q, expected) in terms {
             let expr = parse(q).expect("the Query Term parses");
-            pretty_assertions::assert_eq!(evaluate(&expr, &entity, NoLinkedEntities, LanguageMatching::TagEquality), expected, "{q}");
+            pretty_assertions::assert_eq!(
+                filter_holds(&FilterReading::of(&expr, LanguageMatching::TagEquality), &entity, NoLinkedEntities),
+                expected,
+                "{q}"
+            );
         }
     }
 }
@@ -310,7 +314,10 @@ fn a_bare_path_holds_for_a_structured_value_and_a_geometry() {
     let entity = state(&document);
     for q in ["\"https://example.com/address\"", "\"https://example.com/site\""] {
         let expr = parse(q).expect("the Query Term parses");
-        assert!(evaluate(&expr, &entity, NoLinkedEntities, LanguageMatching::TagEquality), "{q}");
+        assert!(
+            filter_holds(&FilterReading::of(&expr, LanguageMatching::TagEquality), &entity, NoLinkedEntities),
+            "{q}"
+        );
     }
 }
 
@@ -365,12 +372,15 @@ fn a_hop_reads_the_linked_state() {
             "https://example.com/category": [{"@type": [PROPERTY], "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": category}]}]
         }]))
     };
-    let hop = parse("\"https://example.com/isParked\"{\"https://example.com/category\"}==\"commercial\"").expect("the Query Term parses");
+    let hop = FilterReading::of(
+        &parse("\"https://example.com/isParked\"{\"https://example.com/category\"}==\"commercial\"").expect("the Query Term parses"),
+        LanguageMatching::TagEquality,
+    );
     let mut commercial = LinkedStates::new();
     commercial.insert(Arc::new(parking("commercial")));
     let mut residential = LinkedStates::new();
     residential.insert(Arc::new(parking("residential")));
-    assert!(evaluate(&hop, &vehicle, &commercial, LanguageMatching::TagEquality));
-    assert!(!evaluate(&hop, &vehicle, &residential, LanguageMatching::TagEquality));
-    assert!(!evaluate(&hop, &vehicle, NoLinkedEntities, LanguageMatching::TagEquality));
+    assert!(filter_holds(&hop, &vehicle, &commercial));
+    assert!(!filter_holds(&hop, &vehicle, &residential));
+    assert!(!filter_holds(&hop, &vehicle, NoLinkedEntities));
 }

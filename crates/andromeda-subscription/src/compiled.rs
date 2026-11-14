@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
     dataset::DatasetSelector,
     entity_filters::EntityFilters,
-    filter::{expression::Expr, language_matching::LanguageMatching},
+    filter::{compiled_filter::CompiledFilter, expression::Expr, reading::filter_reading::FilterReading},
     projection::compiled::Projection,
     scope::query::ScopeQuery,
 };
@@ -82,9 +82,9 @@ pub struct CompiledCsrSubscription {
     pub time_interval_secs: Option<f64>,
     /// JSON-LD context supplied with notifications.
     pub jsonld_context: Option<IriBuf>,
-    /// Parsed context-source filter, evaluated against the registration's
-    /// Context Source Properties (clause 4.9).
-    pub compiled_csf: Option<Expr>,
+    /// The reading of the context-source filter, evaluated against the
+    /// registration's Context Source Properties (clause 4.9).
+    pub compiled_csf: Option<FilterReading>,
 }
 
 impl CompiledCsrSubscription {
@@ -162,13 +162,10 @@ pub struct CompiledSubscription {
     /// created, set active again or reselected is owed only if it committed
     /// after that.
     pub notifying_since: NotifyingSince,
-    /// Parsed entity filter expression.
-    pub compiled_q: Option<Expr>,
-    /// How the target languages of `compiled_q` select
-    /// languageMap keys: the matching of the broker's `q_target_languages` level
-    /// when the subscription was compiled, so a stored filter reads as the broker now
-    /// reads every filter.
-    pub language_matching: LanguageMatching,
+    /// The entity filter, compiled under the language matching of the
+    /// broker's `q_target_languages` level when the subscription was compiled,
+    /// so a stored filter reads as the broker now reads every filter.
+    pub compiled_q: Option<CompiledFilter>,
     /// The restriction the subscription's `geoQ` places on matching (clause
     /// 4.10): none without a `geoQ`, the compiled geoquery otherwise, and no
     /// entity at all for a stored `geoQ` that no longer compiles.
@@ -214,7 +211,6 @@ impl CompiledSubscription {
         };
         EntityFilterSet::Evaluate(EntityFilters {
             q: self.compiled_q.as_ref(),
-            language_matching: self.language_matching,
             geo,
             scope: self.compiled_scope_q.as_ref(),
         })
@@ -222,7 +218,11 @@ impl CompiledSubscription {
 
     /// The filters whose `rel{…}` hops cross into linked entities: the `q`.
     pub fn hopping_filters(&self) -> impl Iterator<Item = &Expr> {
-        self.compiled_q.as_ref().into_iter().filter(|filter| filter.contains_linked_hop())
+        self.compiled_q
+            .as_ref()
+            .map(CompiledFilter::expr)
+            .into_iter()
+            .filter(|filter| filter.contains_linked_hop())
     }
 
     /// Whether a filter of this subscription crosses into a linked entity

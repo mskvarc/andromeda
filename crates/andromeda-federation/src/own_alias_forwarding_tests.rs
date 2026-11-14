@@ -79,7 +79,7 @@ async fn query_over(source: &MockServer, registration: ContextSourceRegistration
         split: SplitEntities::Complete,
         context: &context,
         triggering: TriggeringRequest::default(),
-        csf_expr: None,
+        csf: None,
         geo: None,
         entity_map: EntityMapInUse::None,
         budget: &budget,

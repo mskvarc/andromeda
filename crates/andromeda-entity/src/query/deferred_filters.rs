@@ -16,6 +16,7 @@ use andromeda_ngsi_ld_query::{
     entity_filters::EntityFilters,
     filter::{
         compilation::{AdmittedFilter, FilterOptIns, compile_q_filter},
+        compiled_filter::CompiledFilter,
         expression::Expr,
         language_targeting::LanguageTargeting,
     },
@@ -55,13 +56,15 @@ impl EntityQueryService {
         let prepared_context = self.engine().prepare_term_context(context);
         let expander = ContextualExpander::new(self.engine(), &prepared_context);
         let q = match &deferred.q {
-            Some(admitted) => Some(compile_deferred_q(admitted, &deferred, &expander).await?),
+            Some(admitted) => Some(CompiledFilter::new(
+                compile_deferred_q(admitted, &deferred, &expander).await?,
+                language_targeting.matching(),
+            )),
             None => None,
         };
         let geo = compile_geo_query(deferred.geo.as_ref(), &expander, self.geo_admission).await?;
         let filters = EntityFilters {
             q: q.as_ref(),
-            language_matching: language_targeting.matching(),
             geo: geo.as_ref(),
             scope: deferred.scope_q.as_ref(),
         };
@@ -73,7 +76,7 @@ impl EntityQueryService {
                 (version, document)
             })
             .collect();
-        let linked = self.linked_states_of(target, &documents, filters.q).await?;
+        let linked = self.linked_states_of(target, &documents, filters.q.map(CompiledFilter::expr)).await?;
         Ok(documents
             .into_iter()
             .filter(|(_, document)| entity_filters_admit(filters, document, &linked))

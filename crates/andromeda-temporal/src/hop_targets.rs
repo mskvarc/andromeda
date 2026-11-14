@@ -303,6 +303,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         split_filter::SplitFilter,
         temporal::window::{TemporalWindow, TimeInterval},
     };
@@ -344,9 +345,10 @@ mod tests {
     /// `parkedIn{free}>0`.
     fn free_parking() -> EntitySelection {
         EntitySelection::builder()
-            .q_expr(Some(
+            .q(Some(CompiledFilter::new(
                 "\"https://example.com/parkedIn\"{\"https://example.com/free\"}>0".parse().expect("a valid q"),
-            ))
+                LanguageMatching::TagEquality,
+            )))
             .build()
     }
 
@@ -412,11 +414,12 @@ mod tests {
             })
         };
         let selection = EntitySelection::builder()
-            .q_expr(Some(
+            .q(Some(CompiledFilter::new(
                 "\"https://example.com/parkedIn\"{\"https://example.com/operator\"{\"https://example.com/name\"}}==\"Acme\""
                     .parse()
                     .expect("a valid q"),
-            ))
+                LanguageMatching::TagEquality,
+            )))
             .build();
         let filter = SplitFilter::of(&selection);
         for (name, expected) in [("Acme", true), ("Other", false)] {

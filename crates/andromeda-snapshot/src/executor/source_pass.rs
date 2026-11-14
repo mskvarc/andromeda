@@ -153,7 +153,7 @@ impl SnapshotExecutor {
                     context: capture.context,
                     operation: ForwardingOperation::QueryTemporalEntity,
                     triggering: TriggeringRequest::default(),
-                    csf_expr: capture.filters.csf(),
+                    csf: capture.filters.csf(),
                     geo: capture.filters.geo(),
                     mode_filter: CsrModeFilter::All,
                     reach: SourceReach::Every,

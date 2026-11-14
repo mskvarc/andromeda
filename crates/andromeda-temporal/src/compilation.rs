@@ -7,6 +7,7 @@ use andromeda_ngsi_ld_query::{
     entity_selection::{ConsideredEntities, EntitySelection},
     filter::{
         compilation::{FilterOptIns, compile_q_filter},
+        compiled_filter::CompiledFilter,
         expansion::expand_attr_path,
         json_key_attributes::JsonKeyAttributes,
         trailing_members::TrailingMembers,
@@ -75,8 +76,11 @@ impl TemporalService {
             .map_or_default(ToOwned::to_owned);
 
         let opt_ins = FilterOptIns::expanded(params.json_keys.as_deref(), params.expand_values.as_deref(), &expander).await?;
-        let q_expr = match params.filter() {
-            Some(filter) => Some(compile_q_filter(filter, &opt_ins, &expander).await?),
+        let q = match params.filter() {
+            Some(filter) => Some(CompiledFilter::new(
+                compile_q_filter(filter, &opt_ins, &expander).await?,
+                language_targeting.matching(),
+            )),
             None => None,
         };
         let geo = self.compile_geo_query(params, &prepared_context).await?;
@@ -89,8 +93,7 @@ impl TemporalService {
             .entities(
                 EntitySelection::builder()
                     .selectors(selectors)
-                    .q_expr(q_expr)
-                    .language_matching(language_targeting.matching())
+                    .q(q)
                     .geo(geo)
                     // clone: the compiled selection outlives the borrowed request, which may be reused.
                     .scope_q(params.scope_q.clone())

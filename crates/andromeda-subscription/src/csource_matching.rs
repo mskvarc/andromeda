@@ -88,7 +88,12 @@ mod tests {
         registration::ContextSourceRegistration,
         subscription::{SubscriptionStatus, standing::SubscriptionStanding},
     };
-    use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrTemporalFilter, filter::parser, scope::query::ScopeQuery, temporal::window::TimeInterval};
+    use andromeda_ngsi_ld_query::{
+        csr::compiled::CompiledCsrTemporalFilter,
+        filter::{language_matching::LanguageMatching, parser, reading::filter_reading::FilterReading},
+        scope::query::ScopeQuery,
+        temporal::window::TimeInterval,
+    };
     use chrono::{DateTime, Utc};
     use serde_json::{Value, json};
     use url::Url;
@@ -269,7 +274,10 @@ mod tests {
     #[test]
     fn the_context_source_filter_is_matched_against_the_registration_properties() {
         let mut sub = subscription();
-        sub.compiled_csf = Some(parser::parse(&format!("\"{TIER}\"==\"gold\"")).expect("a valid test fixture"));
+        sub.compiled_csf = Some(FilterReading::of(
+            &parser::parse(&format!("\"{TIER}\"==\"gold\"")).expect("a valid test fixture"),
+            LanguageMatching::TagEquality,
+        ));
         let gold = registration(&json!({TIER: {"type": "Property", "value": "gold"}}));
         let silver = registration(&json!({TIER: {"type": "Property", "value": "silver"}}));
         assert!(notified_of_change(&sub, &gold));
@@ -283,10 +291,16 @@ mod tests {
     #[test]
     fn the_context_source_filter_reads_the_registration_mode() {
         let mut sub = subscription();
-        sub.compiled_csf = Some(parser::parse("\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\"").expect("a valid test fixture"));
+        sub.compiled_csf = Some(FilterReading::of(
+            &parser::parse("\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\"").expect("a valid test fixture"),
+            LanguageMatching::TagEquality,
+        ));
         assert!(notified_of_change(&sub, &registration(&json!({"mode": "exclusive"}))));
         assert!(!notified_of_change(&sub, &registration(&json!({"mode": "inclusive"}))));
-        sub.compiled_csf = Some(parser::parse("\"https://uri.etsi.org/ngsi-ld/mode\"==\"inclusive\"").expect("a valid test fixture"));
+        sub.compiled_csf = Some(FilterReading::of(
+            &parser::parse("\"https://uri.etsi.org/ngsi-ld/mode\"==\"inclusive\"").expect("a valid test fixture"),
+            LanguageMatching::TagEquality,
+        ));
         assert!(notified_of_change(&sub, &registration(&json!({}))));
     }
 
@@ -317,7 +331,10 @@ mod tests {
             ("\"https://uri.etsi.org/ngsi-ld/timesSent\"==3", false),
         ] {
             let mut sub = subscription();
-            sub.compiled_csf = Some(parser::parse(csf).expect("a valid test fixture"));
+            sub.compiled_csf = Some(FilterReading::of(
+                &parser::parse(csf).expect("a valid test fixture"),
+                LanguageMatching::TagEquality,
+            ));
             pretty_assertions::assert_eq!(notified_of_change(&sub, &declared), selected, "{csf}");
         }
     }

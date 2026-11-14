@@ -339,6 +339,24 @@ fn a_range_of_two_kinds_holds_for_no_target_and_its_complement_for_every_one() {
     assert_eq!(array_rules(&negated), [ArrayRule::Always, ArrayRule::Always, ArrayRule::NoElement]);
 }
 
+/// "No element satisfies the asserted test": an element of an array target is
+/// tested with the asserted test under either polarity, at every depth, so a
+/// negated equality tests each element for equality and a negated range finds
+/// no element inside it of an array that is no target of a range.
+#[test]
+fn an_element_is_tested_with_the_asserted_test_whatever_the_polarity() {
+    let negated = value_test("x!=1");
+    let ones = equals(vec![number("1")]);
+    assert_eq!(negated.verdict(TargetKind::Number), Verdict::HoldsNot(&ones));
+    assert_eq!(negated.element_verdict(TargetKind::Number), Verdict::Holds(&ones));
+    assert_eq!(negated.element_verdict(TargetKind::String), Verdict::Never);
+    assert_eq!(negated.element_array_rule(ArrayTarget::ValueArray), ArrayRule::SomeElement);
+    let negated_range = value_test("x!=1..5");
+    assert_eq!(negated_range.array_rule(ArrayTarget::ValueArray), ArrayRule::Always);
+    assert_eq!(negated_range.element_array_rule(ArrayTarget::ValueArray), ArrayRule::Never);
+    assert_eq!(negated_range.element_array_rule(ArrayTarget::AnyOneValue), ArrayRule::SomeElement);
+}
+
 /// A recorded ruling an answer of the table rests on, or `None` when a
 /// sentence of clause 4.9 states it.
 fn ruling_behind(test: &ValueTest, cell: Cell) -> Option<&'static str> {

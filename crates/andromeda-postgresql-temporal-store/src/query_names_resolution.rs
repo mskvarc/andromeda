@@ -3,9 +3,12 @@
 //! attribute alone, the types holding each attribute.
 
 use crate::{error::TemporalStoreError, repo::TemporalRepository};
-use andromeda_ngsi_ld_query::temporal::{
-    compiled::CompiledTemporalQuery,
-    grouping::{AggregationGrouping, group_key::GroupKey},
+use andromeda_ngsi_ld_query::{
+    filter::compiled_filter::CompiledFilter,
+    temporal::{
+        compiled::CompiledTemporalQuery,
+        grouping::{AggregationGrouping, group_key::GroupKey},
+    },
 };
 use andromeda_postgresql_query::{
     history_source::{
@@ -72,7 +75,7 @@ impl TemporalRepository {
                 .map(IriBuf::as_str)
                 .chain(compiled.entities.projected_members.names())
                 .chain(grouped),
-            compiled.entities.q_expr.as_ref(),
+            compiled.entities.q.as_ref().map(CompiledFilter::expr),
             compiled.entities.geo.as_ref(),
             &[],
         );

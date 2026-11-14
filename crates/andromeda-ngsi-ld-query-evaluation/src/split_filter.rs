@@ -6,7 +6,7 @@
 
 use crate::{
     geo_query::geo_query_matches,
-    q::eval::predicate_holds_in,
+    q::filter_run::term_holds,
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
 };
 use andromeda_ngsi_ld_query::split_filter::{FilterLeaf, LeafTruths, SplitFilter};
@@ -18,12 +18,11 @@ where
     E: QueriedEntity<'a> + LocatedEntity<'a> + ScopedEntity<'a>,
     L: LinkedEntities<'a>,
 {
-    let language_matching = filter.filters().language_matching;
     LeafTruths::from_vec(
         filter
             .leaves()
             .map(|leaf| match leaf {
-                FilterLeaf::Term(pred) => predicate_holds_in(pred, entity, linked, language_matching),
+                FilterLeaf::Term { reading, .. } => term_holds(reading, entity, linked),
                 FilterLeaf::Geo(geo) => geo_query_matches(geo, entity),
                 FilterLeaf::ScopeRequirement(pattern) => entity.scopes().any(|scope| pattern.matches(scope)),
             })
@@ -45,7 +44,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         entity_filters::EntityFilters,
         entity_selection::EntitySelection,
-        filter::parser::parse,
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
         geo::query::GeoQuery,
         scope::query::ScopeQuery,
         split_filter::SplitFilter,
@@ -67,7 +66,7 @@ mod tests {
 
     fn selection(q: Option<&str>, geo: Option<GeoQuery>, scope: Option<&str>) -> EntitySelection {
         EntitySelection::builder()
-            .q_expr(q.map(|raw| parse(raw).expect("q parses")))
+            .q(q.map(|raw| CompiledFilter::new(parse(raw).expect("q parses"), LanguageMatching::TagEquality)))
             .geo(geo)
             .scope_q(scope.map(|raw| ScopeQuery::parse(raw).expect("scopeQ parses")))
             .build()

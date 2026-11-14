@@ -2,8 +2,7 @@
 
 use crate::{
     q::{
-        axis_position::AxisPosition,
-        family_target::{held_values_target, terminal_value},
+        family_target::{family_target, first_family_value, held_values_target, terminal_value},
         target_value::{ResolvedTarget, json_member},
     },
     queried_entity::{
@@ -17,8 +16,8 @@ use andromeda_ngsi_ld_query::filter::{
     trailing_path::MemberPath,
 };
 
-/// Resolve a compound value path (`address[city]`) at one position of the
-/// axis.
+/// Resolve a compound value path (`address[city]`) at one attribute or
+/// sub-attribute instance the axis reaches.
 ///
 /// A compound value reaches this evaluator in either of two genuinely different
 /// shapes, and both are addressed by the same `q` path:
@@ -38,11 +37,11 @@ use andromeda_ngsi_ld_query::filter::{
 /// ([`MemberPath::written`]), because raw JSON is never touched by JSON-LD
 /// expansion: its keys are exactly what the client wrote, not what the request
 /// `@context` expands them to.
-pub(crate) fn resolve_compound_member<'a, I: QueriedInstance<'a>>(position: AxisPosition<'a, I>, members: &MemberPath) -> Option<ResolvedTarget<'a>> {
-    if let Some(target) = resolve_member_hops(position.first_family_value(), &members.addressed) {
+pub(crate) fn resolve_compound_member<'a, I: QueriedInstance<'a>>(instance: I, members: &MemberPath) -> Option<ResolvedTarget<'a>> {
+    if let Some(target) = resolve_member_hops(first_family_value(instance), &members.addressed) {
         return Some(target);
     }
-    json_member(&position.terminal()?, &members.written)
+    json_member(&family_target(instance)?, &members.written)
 }
 
 /// Walk the members of a structured value down to the target the last member

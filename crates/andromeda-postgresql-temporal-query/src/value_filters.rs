@@ -47,12 +47,12 @@ pub(crate) fn value_filter_condition(branch: &HistoryBranch, compiled: &Compiled
     let of = stage1_evolution();
     let mut filters = Condition::all();
     let mut present = false;
-    if let Some(q_expr) = compiled.entities.q_expr.as_ref() {
+    if let Some(q) = compiled.entities.q.as_ref() {
         filters = filters.add(q_filter::compile(
-            q_expr,
+            q.expr(),
             &InstanceScan::History(&windowed_instances(branch, compiled, &of, WindowReach::InsideAndInEffect)),
             names,
-            compiled.entities.language_matching,
+            q.matching(),
         ));
         present = true;
     }
@@ -151,7 +151,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         entity_selection::{EntitySelection, EntitySelector},
-        filter::parser,
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
         geo::query::GeoQuery,
         scope::query::ScopeQuery,
         temporal::{
@@ -224,7 +224,10 @@ mod tests {
 
     /// `q=temperature>99`.
     fn rare_q(mut compiled: CompiledTemporalQuery) -> CompiledTemporalQuery {
-        compiled.entities.q_expr = Some(parser::parse(&format!("\"{TEMPERATURE}\">99")).expect("q parses"));
+        compiled.entities.q = Some(CompiledFilter::new(
+            parser::parse(&format!("\"{TEMPERATURE}\">99")).expect("q parses"),
+            LanguageMatching::TagEquality,
+        ));
         compiled
     }
 

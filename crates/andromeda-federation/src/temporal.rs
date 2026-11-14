@@ -104,7 +104,7 @@ impl FederationService {
             context,
             operation,
             triggering,
-            csf_expr,
+            csf,
             geo,
             mode_filter,
             reach,
@@ -121,7 +121,7 @@ impl FederationService {
                 RegistrationSelection {
                     selectors: &client.selectors(),
                     reach,
-                    csf: csf_expr,
+                    csf,
                     scope_q: split.registration_scope_query(client_query.scope_q.as_ref()),
                     geo,
                     serving: RegistrationServing::Operation(operation),

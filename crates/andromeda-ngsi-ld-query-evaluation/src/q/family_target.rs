@@ -61,8 +61,7 @@ pub(crate) fn held_values_target<'a>(mut values: impl Iterator<Item = TargetValu
 }
 
 /// The first value of an attribute instance's family member, which is the node
-/// a compound value's members hang off and the value a path naming the member
-/// itself (`speed.value`) lands on.
+/// a compound value's members hang off.
 ///
 /// A list family holds its items inside one list, which has neither a literal
 /// nor members of its own, so a path into it addresses nothing.

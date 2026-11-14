@@ -37,7 +37,6 @@ const OWNER: &str = "crates/andromeda-ngsi-ld-query/src/filter/";
 /// holds. Each change that moves a reading into the owner lowers or removes
 /// its file's entry.
 pub const Q_READING_BASELINE: &[(&str, usize)] = &[
-    ("crates/andromeda-ngsi-ld-query-evaluation/src/q/eval.rs", 26),
     ("crates/andromeda-postgresql-context-query/src/csr/filter.rs", 19),
     ("crates/andromeda-postgresql-query/src/jsonb.rs", 7),
     ("crates/andromeda-postgresql-query/src/operator.rs", 8),

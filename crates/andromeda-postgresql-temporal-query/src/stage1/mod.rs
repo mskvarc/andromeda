@@ -233,7 +233,7 @@ mod tests {
         cursor::PageCursor,
         dataset::DatasetSelector,
         entity_selection::EntitySelector,
-        filter::parser,
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
         geo::query::GeoQuery,
         ordering::{collation::IcuCollation, sort_direction::SortDirection},
         page_window::{PageStart, PageWindow},
@@ -322,7 +322,10 @@ mod tests {
                 .iter()
                 .map(|selector| DatasetSelector::parse(selector).expect("a valid dataset selector"))
                 .collect();
-            compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">100").unwrap());
+            compiled.entities.q = Some(CompiledFilter::new(
+                parser::parse("\"https://example.com/speed\">100").unwrap(),
+                LanguageMatching::TagEquality,
+            ));
             compiled.entities.geo = Some(GeoQuery {
                 georel: GeoRel::Within,
                 geometry: point(&serde_json::json!([1.0, 2.0])),

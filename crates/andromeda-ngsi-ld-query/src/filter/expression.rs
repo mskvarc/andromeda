@@ -54,6 +54,15 @@ impl Expr {
         }
     }
 
+    /// Every Query Term, in pre-order.
+    #[must_use]
+    pub fn predicates(&self) -> Vec<&Predicate> {
+        match self {
+            Expr::And(terms) | Expr::Or(terms) => terms.iter().flat_map(Expr::predicates).collect(),
+            Expr::Pred(pred) => vec![pred],
+        }
+    }
+
     /// The local path every Query Term terminates at, in pre-order.
     #[must_use]
     pub fn terminal_paths(&self) -> Vec<&AttrPath> {

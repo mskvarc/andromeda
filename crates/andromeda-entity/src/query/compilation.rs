@@ -10,6 +10,7 @@ use andromeda_ngsi_ld_query::{
     entity_selection::{ConsideredEntities, EntitySelection},
     filter::{
         compilation::{FilterOptIns, compile_q_filter},
+        compiled_filter::CompiledFilter,
         expansion::expand_attr_path,
         json_key_attributes::JsonKeyAttributes,
         language_targeting::LanguageTargeting,
@@ -102,8 +103,11 @@ impl EntityQueryService {
         // row admits.
         let attrs = expand_attrs_admitted(params.attrs.as_deref().unwrap_or_default(), AttrsAdmission::AttributeNamesOnly, &expander).await?;
         let opt_ins = FilterOptIns::expanded(params.json_keys.as_deref(), params.expand_values.as_deref(), &expander).await?;
-        let q_expr = match params.filter() {
-            Some(filter) => Some(compile_q_filter(filter, &opt_ins, &expander).await?),
+        let q = match params.filter() {
+            Some(filter) => Some(CompiledFilter::new(
+                compile_q_filter(filter, &opt_ins, &expander).await?,
+                language_targeting.matching(),
+            )),
             None => None,
         };
         let geo = self.compile_geo_query(params, prepared_context).await?;
@@ -123,8 +127,7 @@ impl EntityQueryService {
                 EntitySelection::builder()
                     .selectors(selectors)
                     .attrs(attrs)
-                    .q_expr(q_expr)
-                    .language_matching(language_targeting.matching())
+                    .q(q)
                     .geo(geo)
                     .scope_q(params.scope_q.clone())
                     // Clause 5.5.14: a request narrowed to an empty identifier

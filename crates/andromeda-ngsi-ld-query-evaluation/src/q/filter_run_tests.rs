@@ -1,0 +1,1509 @@
+//! The in-memory execution of the reading against expanded entities, each
+//! operator, path shape and attribute family in a test of its own.
+
+use crate::{
+    q::{
+        filter_run::{filter_holds, members_hold, term_holds},
+        target_value::{ResolvedTarget, TargetValue},
+    },
+    queried_entity::{
+        expanded_fixture::{FixtureEntity, FixtureLinked},
+        linked_entities::NoLinkedEntities,
+    },
+};
+use andromeda_ngsi_ld_query::{
+    filter::{
+        expansion::expand_q_expr,
+        expression::Expr,
+        json_key_attributes::JsonKeyAttributes,
+        language_matching::LanguageMatching,
+        parser::parse,
+        reading::{
+            family_reading::{MultiValueReading, TargetOrigin},
+            filter_reading::FilterReading,
+            term_reading::TermReading,
+        },
+    },
+    namespace_expander::EXAMPLE_NAMESPACE_TYPED,
+};
+use andromeda_q_corpus::conformance::{COLOR, CONFORMANCE, ConformanceVehicle, NAME, SPEED};
+use pretty_assertions::assert_eq;
+use serde_json::Value;
+use std::borrow::Cow;
+
+/// Whether an expanded entity satisfies an expression, read through the
+/// entity traits.
+fn holds(expr: &Expr, document: &Value) -> bool {
+    holds_under(expr, document, LanguageMatching::TagEquality)
+}
+
+/// Whether an expanded entity satisfies an expression whose target
+/// languages select keys by `matching`.
+fn holds_under(expr: &Expr, document: &Value, matching: LanguageMatching) -> bool {
+    filter_holds(&FilterReading::of(expr, matching), &FixtureEntity::from_expanded(document), NoLinkedEntities)
+}
+
+/// Whether an expanded entity satisfies an expression whose hops cross into
+/// the expanded `linked` entities.
+fn holds_linked(expr: &Expr, document: &Value, linked: &[Value]) -> bool {
+    let linked: Vec<FixtureEntity> = linked.iter().map(FixtureEntity::from_expanded).collect();
+    filter_holds(
+        &FilterReading::of(expr, LanguageMatching::TagEquality),
+        &FixtureEntity::from_expanded(document),
+        FixtureLinked(&linked),
+    )
+}
+
+fn vehicle_entity() -> Value {
+    serde_json::json!([{
+        "@id": "urn:ngsi-ld:Vehicle:A1",
+        "@type": ["https://example.com/Vehicle"],
+        "https://example.com/speed": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 80}]
+        }],
+        "https://example.com/temperature": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 23.5}]
+        }],
+        "https://example.com/brandName": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "Mercedes"}]
+        }],
+        "https://example.com/isParked": [{
+            "https://uri.etsi.org/ngsi-ld/hasObject": [{
+                "@id": "urn:ngsi-ld:OffStreetParking:Downtown1"
+            }]
+        }],
+        "https://example.com/active": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": true}]
+        }],
+        "https://example.com/address": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                "@value": {
+                    "city": "Berlin",
+                    "country": "DE"
+                }
+            }]
+        }]
+    }])
+}
+
+/// A Query Term evaluated on its own answers exactly what the expression
+/// made of that one term answers, for every operator kind.
+#[test]
+fn a_single_predicate_is_evaluated_as_its_own_expression() {
+    let fixture = FixtureEntity::from_expanded(&vehicle_entity());
+    let terms = [
+        "\"https://example.com/speed\"",
+        "\"https://example.com/nonexistent\"",
+        "\"https://example.com/speed\">50",
+        "\"https://example.com/speed\">100",
+        "\"https://example.com/brandName\"==\"BMW\",\"Mercedes\"",
+        "\"https://example.com/brandName\"~=\"Merc.*\"",
+        "\"https://example.com/brandName\"!~=\"Merc.*\"",
+        "\"https://example.com/isParked\">\"a\"",
+    ];
+    for raw in terms {
+        let expr = parse(raw).expect("parses");
+        let Expr::Pred(pred) = &expr else {
+            panic!("{raw} is a single Query Term");
+        };
+        pretty_assertions::assert_eq!(
+            term_holds(&TermReading::of(pred, LanguageMatching::TagEquality), &fixture, NoLinkedEntities),
+            filter_holds(&FilterReading::of(&expr, LanguageMatching::TagEquality), &fixture, NoLinkedEntities),
+            "term {raw}"
+        );
+    }
+}
+
+#[test]
+fn eval_existence_present() {
+    let expr = parse("\"https://example.com/speed\"").unwrap();
+    assert!(holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_existence_absent() {
+    let expr = parse("\"https://example.com/nonexistent\"").unwrap();
+    assert!(!holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_number_greater() {
+    let expr = parse("\"https://example.com/speed\">50").unwrap();
+    assert!(holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_number_greater_false() {
+    let expr = parse("\"https://example.com/speed\">100").unwrap();
+    assert!(!holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_number_equal() {
+    let expr = parse("\"https://example.com/speed\"==80").unwrap();
+    assert!(holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_number_unequal() {
+    let expr = parse("\"https://example.com/speed\"!=50").unwrap();
+    assert!(holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_float_equal() {
+    let expr = parse("\"https://example.com/temperature\"==23.5").unwrap();
+    assert!(holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn exact_decimals_compare_beyond_binary64_precision() {
+    let entity: Value = serde_json::from_str(
+        r#"[{"@id":"urn:ngsi-ld:Sensor:1","https://example.com/reading":[{"https://uri.etsi.org/ngsi-ld/hasValue":[{"@value":0.100000000000000005}]}]}]"#,
+    )
+    .expect("exact arbitrary-precision JSON");
+    assert!(holds(
+        &parse("\"https://example.com/reading\"==0.100000000000000005").expect("exact equality"),
+        &entity
+    ));
+    assert!(holds(
+        &parse("\"https://example.com/reading\">0.100000000000000004").expect("exact ordering"),
+        &entity
+    ));
+    assert!(!holds(
+        &parse("\"https://example.com/reading\"==0.100000000000000004").expect("adjacent inequality"),
+        &entity
+    ));
+}
+
+/// A JSON string declared as an XSD number is a number (clause 4.9 compares
+/// by data type, and a declared datatype is the data type of a typed
+/// literal), so it matches a number operand and no String one.
+#[test]
+fn a_json_string_declared_as_a_number_compares_as_the_number_it_names() {
+    let entity = serde_json::json!([{
+        "@id": "urn:ngsi-ld:Sensor:1",
+        "https://example.com/reading": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "0.100000000000000005", "@type": "http://www.w3.org/2001/XMLSchema#decimal"}]
+        }]
+    }]);
+    let reading = |q: &str| holds(&parse(&format!("\"https://example.com/reading\"{q}")).expect("parses"), &entity);
+    assert!(reading("==0.100000000000000005"));
+    assert!(!reading("!=0.100000000000000005"));
+    assert!(reading(">0.1"));
+    assert!(!reading("==\"0.100000000000000005\""));
+    assert!(reading("!=\"0.100000000000000005\""));
+}
+
+fn declared_double(value: &str) -> Value {
+    serde_json::json!([{
+        "@id": "urn:ngsi-ld:Sensor:1",
+        "https://example.com/reading": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value, "@type": "http://www.w3.org/2001/XMLSchema#double"}]
+        }]
+    }])
+}
+
+fn double_holds(value: &str, q: &str) -> bool {
+    holds(&parse(&format!("\"https://example.com/reading\"{q}")).expect("parses"), &declared_double(value))
+}
+
+/// XSD orders `INF` above every finite number and `-INF` below; an operand
+/// is always finite, so equality never holds.
+#[test]
+fn an_infinity_matches_the_orderings_xsd_gives_it() {
+    for q in [">3", ">=3", "!=3", "!=\"INF\"", "==3..4", "!=3..4"] {
+        let expected = !matches!(q, "==3..4");
+        pretty_assertions::assert_eq!(double_holds("INF", q), expected, "INF {q}");
+    }
+    for q in ["<3", "<=3", "!=3"] {
+        assert!(double_holds("-INF", q), "-INF {q}");
+    }
+    for q in ["==3", "<3", "==\"INF\""] {
+        assert!(!double_holds("INF", q), "INF {q}");
+    }
+    assert!(!double_holds("-INF", ">3"));
+}
+
+/// `NaN` compares with no operand: it fails `==` and every ordering and
+/// passes `!=`.
+#[test]
+fn not_a_number_matches_only_unequal() {
+    for q in ["==3", ">3", ">=3", "<3", "<=3", "==3..4", "==\"NaN\""] {
+        assert!(!double_holds("NaN", q), "NaN {q}");
+    }
+    for q in ["!=3", "!=3..4", "!=\"NaN\""] {
+        assert!(double_holds("NaN", q), "NaN {q}");
+    }
+}
+
+#[test]
+fn a_json_string_declared_as_a_boolean_compares_as_a_boolean() {
+    let entity = serde_json::json!([{
+        "@id": "urn:ngsi-ld:Sensor:1",
+        "https://example.com/open": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "true", "@type": "http://www.w3.org/2001/XMLSchema#boolean"}]
+        }]
+    }]);
+    let open = |q: &str| holds(&parse(&format!("\"https://example.com/open\"{q}")).expect("parses"), &entity);
+    assert!(open("==true"));
+    assert!(!open("!=true"));
+    assert!(!open("==\"true\""));
+    assert!(open("!=\"true\""));
+}
+
+/// A JSON string with no datatype, or one declared as `xsd:string`, is a
+/// String whatever it spells.
+#[test]
+fn a_json_string_declared_as_no_number_compares_as_a_string() {
+    for value in [
+        serde_json::json!({"@value": "4"}),
+        serde_json::json!({"@value": "4", "@type": "http://www.w3.org/2001/XMLSchema#string"}),
+    ] {
+        let entity = serde_json::json!([{
+            "@id": "urn:ngsi-ld:Sensor:1",
+            "https://example.com/reading": [{"https://uri.etsi.org/ngsi-ld/hasValue": [value]}]
+        }]);
+        let reading = |q: &str| holds(&parse(&format!("\"https://example.com/reading\"{q}")).expect("parses"), &entity);
+        assert!(!reading("==4") && reading("!=4") && !reading(">3"));
+        assert!(reading("==\"4\"") && !reading("!=\"4\""));
+    }
+}
+
+#[test]
+fn eval_string_equal() {
+    let expr = parse("\"https://example.com/brandName\"==\"Mercedes\"").unwrap();
+    assert!(holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_string_unequal() {
+    let expr = parse("\"https://example.com/brandName\"!=\"BMW\"").unwrap();
+    assert!(holds(&expr, &vehicle_entity()));
+}
+
+/// Clause 4.9 recommends the UCA for ordering text strings: `Mercedes`
+/// follows `a` under it, though `M` precedes `a` by code point.
+#[test]
+fn a_string_ordering_follows_the_unicode_collation_algorithm() {
+    assert!(holds(&parse("\"https://example.com/brandName\">\"a\"").unwrap(), &vehicle_entity()));
+    assert!(!holds(&parse("\"https://example.com/brandName\"<\"a\"").unwrap(), &vehicle_entity()));
+    assert!(holds(&parse("\"https://example.com/brandName\"==\"a\"..\"z\"").unwrap(), &vehicle_entity()));
+}
+
+#[test]
+fn eval_relationship_equal() {
+    let expr = parse("\"https://example.com/isParked\"==\"urn:ngsi-ld:OffStreetParking:Downtown1\"").unwrap();
+    assert!(holds(&expr, &vehicle_entity()));
+}
+
+/// RFC 3986 section 6.2.2.2: a percent-encoded reserved character is not
+/// equivalent to the character, so an encoded object matches only its
+/// own spelling, quoted or bare.
+#[test]
+fn a_percent_encoded_relationship_object_matches_only_its_own_spelling() {
+    let entity = serde_json::json!([{
+        "@id": "urn:ngsi-ld:Room:1",
+        "@type": ["https://example.com/Room"],
+        "https://example.com/locatedIn": [{
+            "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld%3ABuilding%3A1"}]
+        }]
+    }]);
+    for (expression, expected) in [
+        ("\"https://example.com/locatedIn\"==\"urn:ngsi-ld%3ABuilding%3A1\"", true),
+        ("\"https://example.com/locatedIn\"==urn:ngsi-ld%3ABuilding%3A1", true),
+        ("\"https://example.com/locatedIn\"==\"urn:ngsi-ld:Building:1\"", false),
+        ("\"https://example.com/locatedIn\"==urn:ngsi-ld:Building:1", false),
+        ("\"https://example.com/locatedIn\"!=\"urn:ngsi-ld:Building:1\"", true),
+    ] {
+        pretty_assertions::assert_eq!(holds(&parse(expression).unwrap(), &entity), expected, "{expression}");
+    }
+    assert!(!holds(
+        &parse("\"https://example.com/isParked\"==\"urn:ngsi-ld%3AOffStreetParking%3ADowntown1\"").unwrap(),
+        &vehicle_entity()
+    ));
+}
+
+#[test]
+fn eval_boolean() {
+    let expr = parse("\"https://example.com/active\"==true").unwrap();
+    assert!(holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_range() {
+    let expr = parse("\"https://example.com/speed\"==70..90").unwrap();
+    assert!(holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_range_outside() {
+    let expr = parse("\"https://example.com/speed\"==90..100").unwrap();
+    assert!(!holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_value_list_match() {
+    let expr = parse("\"https://example.com/brandName\"==\"BMW\",\"Mercedes\",\"Audi\"").unwrap();
+    assert!(holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_value_list_no_match() {
+    let expr = parse("\"https://example.com/brandName\"==\"BMW\",\"Audi\"").unwrap();
+    assert!(!holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_match_pattern() {
+    let expr = parse("\"https://example.com/brandName\"~=\"Merc.*\"").unwrap();
+    assert!(holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_not_match_pattern() {
+    let expr = parse("\"https://example.com/brandName\"!~=\"BMW.*\"").unwrap();
+    assert!(holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_and() {
+    let expr = parse("\"https://example.com/speed\">50;\"https://example.com/brandName\"==\"Mercedes\"").unwrap();
+    assert!(holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_and_one_false() {
+    let expr = parse("\"https://example.com/speed\">100;\"https://example.com/brandName\"==\"Mercedes\"").unwrap();
+    assert!(!holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_or() {
+    let expr = parse("\"https://example.com/speed\">100|\"https://example.com/brandName\"==\"Mercedes\"").unwrap();
+    assert!(holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_compound_value_path() {
+    let expr = parse("\"https://example.com/address\"[city]==\"Berlin\"").unwrap();
+    assert!(holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_compound_value_path_no_match() {
+    let expr = parse("\"https://example.com/address\"[city]==\"Paris\"").unwrap();
+    assert!(!holds(&expr, &vehicle_entity()));
+}
+
+/// A structured Property value expanded by JSON-LD, which is the shape a notification payload and a stored entity carry: the members are IRI-keyed nodes hanging off `hasValue`, not keys inside one `@value`.
+fn entity_with_expanded_compound_value() -> Value {
+    serde_json::json!([{
+        "@id": "urn:ngsi-ld:Building:1",
+        "@type": ["https://example.com/Building"],
+        "https://example.com/address": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                "https://example.com/city": [{"@value": "Berlin"}],
+                "https://example.com/country": [{"@value": "DE"}]
+            }]
+        }],
+        "https://example.com/sensor": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                "https://example.com/airquality": [{
+                    "https://example.com/particulate": [{"@value": 40}]
+                }]
+            }]
+        }]
+    }])
+}
+
+#[test]
+fn a_compound_member_of_an_expanded_value_is_reached_through_its_member_node() {
+    let entity = entity_with_expanded_compound_value();
+    assert!(holds(
+        &parse("\"https://example.com/address\"[\"https://example.com/city\"]==\"Berlin\"").unwrap(),
+        &entity
+    ));
+    assert!(!holds(
+        &parse("\"https://example.com/address\"[\"https://example.com/city\"]==\"Paris\"").unwrap(),
+        &entity
+    ));
+}
+
+#[test]
+fn a_nested_compound_member_is_reached_through_one_hop_per_member() {
+    let entity = entity_with_expanded_compound_value();
+    assert!(holds(
+        &parse("\"https://example.com/sensor\"[\"https://example.com/airquality\".\"https://example.com/particulate\"]==40").unwrap(),
+        &entity
+    ));
+    assert!(holds(
+        &parse("\"https://example.com/sensor\"[\"https://example.com/airquality\".\"https://example.com/particulate\"]>30").unwrap(),
+        &entity
+    ));
+}
+
+#[test]
+fn a_compound_member_the_value_does_not_carry_resolves_no_target() {
+    let entity = entity_with_expanded_compound_value();
+    assert!(!holds(
+        &parse("\"https://example.com/address\"[\"https://example.com/postcode\"]==\"10115\"").unwrap(),
+        &entity
+    ));
+    assert!(!holds(
+        &parse("\"https://example.com/address\"[\"https://example.com/postcode\"]").unwrap(),
+        &entity
+    ));
+}
+
+/// A structured value whose `rooms` member holds two values and whose
+/// `floors` member holds two nodes, each with a `level`.
+fn entity_with_several_member_values() -> Value {
+    serde_json::json!([{
+        "@id": "urn:ngsi-ld:Building:2",
+        "@type": ["https://example.com/Building"],
+        "https://example.com/address": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                "https://example.com/rooms": [{"@value": 4}, {"@value": 5}],
+                "https://example.com/floors": [
+                    {"https://example.com/level": [{"@value": 1}]},
+                    {"https://example.com/level": [{"@value": 2}]}
+                ],
+                "https://example.com/wing": [{"@id": "urn:ngsi-ld:Wing:1"}]
+            }]
+        }]
+    }])
+}
+
+/// Whether the `q` text holds for [`entity_with_several_member_values`].
+fn several_values_hold(q: &str) -> bool {
+    holds(&parse(q).expect("parses"), &entity_with_several_member_values())
+}
+
+/// Clause 4.9: "If the data type of the target value and the data type of
+/// the Query Term value are different, then they shall be considered
+/// unequal", so a quoted operand compares only with a String member and an
+/// unquoted number only with a number member, alone and inside `;` and `|`.
+#[test]
+fn a_member_compares_only_with_an_operand_of_its_own_json_type() {
+    let entity = serde_json::json!([{
+        "@id": "urn:ngsi-ld:Building:3",
+        "https://example.com/address": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                "https://example.com/zip": [{"@value": 3310}],
+                "https://example.com/code": [{"@value": "3310"}],
+                "https://example.com/open": [{"@value": "true"}]
+            }]
+        }]
+    }]);
+    let member_holds = |q: &str| holds(&parse(q).expect("parses"), &entity);
+    let zip = "\"https://example.com/address\"[\"https://example.com/zip\"]";
+    let code = "\"https://example.com/address\"[\"https://example.com/code\"]";
+    let open = "\"https://example.com/address\"[\"https://example.com/open\"]";
+    assert!(!member_holds(&format!("{zip}==\"3310\"")));
+    assert!(member_holds(&format!("{zip}!=\"3310\"")));
+    assert!(member_holds(&format!("{zip}==3310")));
+    assert!(!member_holds(&format!("{zip}<\"4\"")));
+    assert!(member_holds(&format!("{code}==\"3310\"")));
+    assert!(!member_holds(&format!("{code}==3310")));
+    assert!(member_holds(&format!("{code}!=3310")));
+    assert!(!member_holds(&format!("{code}>3000")));
+    assert!(!member_holds(&format!("{open}==true")));
+    assert!(member_holds(&format!("{open}!=true")));
+    assert!(!member_holds(&format!("{zip}==\"3310\"|{code}==9")));
+    assert!(member_holds(&format!("{zip}==\"3310\"|{code}==\"3310\"")));
+    assert!(!member_holds(&format!("{zip}==3310;{code}==3310")));
+    assert!(member_holds(&format!("{zip}==3310;{code}!=3310")));
+}
+
+/// Clause 4.9 `equal`: the operand "Is included in the target value, if
+/// the latter is an array"; `unequal`: it "Is not included".
+#[test]
+fn a_member_holding_several_values_is_compared_by_membership() {
+    assert!(several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]==4"));
+    assert!(several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]==5"));
+    assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]==6"));
+    assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]!=4"));
+    assert!(several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]!=6"));
+    assert!(several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]==6,5"));
+    assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]!=6,5"));
+}
+
+/// An array target matches no ordering and lies inside no range, so `!=` a
+/// range holds for it.
+#[test]
+fn a_member_holding_several_values_matches_no_ordering_and_no_range() {
+    assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]>3"));
+    assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]<9"));
+    assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]==1..9"));
+    assert!(several_values_hold("\"https://example.com/address\"[\"https://example.com/rooms\"]!=1..9"));
+}
+
+/// A member expression over an array addresses no member, so a step
+/// through `floors`, which holds two nodes, reaches nothing.
+#[test]
+fn a_step_through_a_member_holding_several_values_reaches_nothing() {
+    assert!(!several_values_hold(
+        "\"https://example.com/address\"[\"https://example.com/floors\".\"https://example.com/level\"]==1"
+    ));
+    assert!(!several_values_hold(
+        "\"https://example.com/address\"[\"https://example.com/floors\".\"https://example.com/level\"]!=3"
+    ));
+    assert!(!several_values_hold(
+        "\"https://example.com/address\"[\"https://example.com/floors\".\"https://example.com/level\"]"
+    ));
+}
+
+/// A member holding only a node is the target element but carries no
+/// literal a Query Term could compare.
+#[test]
+fn a_member_holding_no_literal_exists_and_compares_with_nothing() {
+    assert!(several_values_hold("\"https://example.com/address\"[\"https://example.com/wing\"]"));
+    assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/wing\"]==4"));
+    assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/wing\"]!=4"));
+}
+
+/// A `JsonProperty`, whose value is raw JSON that JSON-LD expansion never
+/// touches: `hasJSON`'s `@value` holds the object exactly as the client
+/// wrote it, keys included.
+fn entity_with_json_property() -> Value {
+    serde_json::json!([{
+        "@id": "urn:ngsi-ld:Building:1",
+        "@type": ["https://example.com/Building"],
+        "https://example.com/myJson": [{
+            "https://uri.etsi.org/ngsi-ld/hasJSON": [{
+                "@value": {"city": "Berlin"}
+            }]
+        }]
+    }])
+}
+
+/// `resolve_member_hops` cannot walk into a `JsonProperty`'s raw `@value` object (it carries no IRI-keyed member nodes), so a compound `q` over one falls back to the raw-JSON walk, which has to use the key the client wrote, not the IRI the path was expanded to. Parsing without expansion cannot exercise this, as `path.value_path` is then already the compact spelling.
+#[tokio::test]
+async fn a_json_property_compound_member_is_still_reached_after_the_path_is_expanded() {
+    let expanded = expand_q_expr(
+        parse("myJson[city]==\"Berlin\"").expect("parses"),
+        &JsonKeyAttributes::default(),
+        &EXAMPLE_NAMESPACE_TYPED,
+    )
+    .await
+    .expect("expands");
+    assert!(holds(&expanded, &entity_with_json_property()));
+
+    let non_matching = expand_q_expr(
+        parse("myJson[city]==\"Paris\"").expect("parses"),
+        &JsonKeyAttributes::default(),
+        &EXAMPLE_NAMESPACE_TYPED,
+    )
+    .await
+    .expect("expands");
+    assert!(!holds(&non_matching, &entity_with_json_property()));
+}
+
+/// Two `datasetId`-partitioned instances of the same attribute.
+fn multi_instance_entity() -> Value {
+    serde_json::json!([{
+        "@id": "urn:ngsi-ld:Vehicle:A1",
+        "@type": ["https://example.com/Vehicle"],
+        "https://example.com/speed": [
+            {
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 10}],
+                "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:slow"}]
+            },
+            {
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 60}],
+                "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:fast"}]
+            }
+        ]
+    }])
+}
+
+#[test]
+fn eval_matches_when_any_instance_satisfies_the_predicate() {
+    // Clause 4.9 p. 86: the target value is any value of the instances; the first instance alone is 10.
+    let expr = parse("\"https://example.com/speed\">50").unwrap();
+    assert!(holds(&expr, &multi_instance_entity()));
+}
+
+#[test]
+fn eval_rejects_when_no_instance_satisfies_the_predicate() {
+    let expr = parse("\"https://example.com/speed\">100").unwrap();
+    assert!(!holds(&expr, &multi_instance_entity()));
+}
+
+#[test]
+fn eval_not_match_pattern_requires_the_attribute_to_be_present() {
+    // Clause 4.9: notPatternOp requires the entity to contain the target
+    // element, so a missing attribute does not match.
+    let expr = parse("\"https://example.com/missing\"!~=\"x\"").unwrap();
+    assert!(!holds(&expr, &vehicle_entity()));
+}
+
+#[test]
+fn eval_not_match_pattern_still_matches_a_present_non_matching_value() {
+    let expr = parse("\"https://example.com/brandName\"!~=\"BMW.*\"").unwrap();
+    assert!(holds(&expr, &vehicle_entity()));
+}
+
+/// An entity exercising the attribute families and the sub-attribute shape a
+/// `q` has to reach beyond Property/Relationship.
+fn rich_entity() -> Value {
+    serde_json::json!([{
+        "@id": "urn:ngsi-ld:Device:1",
+        "@type": ["https://example.com/Device"],
+        "https://example.com/temperature": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 21}],
+            "https://uri.etsi.org/ngsi-ld/observedAt": [{"@value": "2024-06-01T00:00:00Z"}]
+        }],
+        "https://example.com/description": [{
+            "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [
+                {"@language": "en", "@value": "Door"},
+                {"@language": "de", "@value": "Tuer"}
+            ]
+        }],
+        "https://example.com/tags": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}, {"@value": 2}, {"@value": 3}]
+        }],
+        "https://example.com/colors": [{
+            "https://uri.etsi.org/ngsi-ld/hasValueList": [{"@list": [{"@value": "red"}, {"@value": "blue"}]}]
+        }],
+        "https://example.com/parts": [{
+            "https://uri.etsi.org/ngsi-ld/hasObjectList": [{"@list": [{"@value": "urn:ngsi-ld:Part:1"}, {"@value": "urn:ngsi-ld:Part:2"}]}]
+        }],
+        "https://example.com/gender": [{
+            "https://uri.etsi.org/ngsi-ld/hasVocab": [{"@id": "https://example.com/Male"}, {"@id": "https://example.com/Other"}]
+        }],
+        "https://example.com/owner": [{
+            "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:Person:42"}]
+        }]
+    }])
+}
+
+#[test]
+fn a_temporal_sub_attribute_resolves_to_its_direct_value() {
+    // Clause 4.9: `temperature.observedAt` terminates at a bare `@value`
+    // node, carrying neither `hasValue` nor `hasObject`; the evaluator must
+    // still reach it rather than resolving nothing. An instant the instance
+    // holds is a `DateTime`, which a bare `dateTime` operand compares with.
+    let expr = parse("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/observedAt\">2024-01-01T00:00:00Z").unwrap();
+    assert!(holds(&expr, &rich_entity()));
+}
+
+#[test]
+fn a_language_property_satisfies_a_bare_existence_check() {
+    // Clause 4.9: existence holds for any attribute family, including a LanguageProperty.
+    let expr = parse("\"https://example.com/description\"").unwrap();
+    assert!(holds(&expr, &rich_entity()));
+}
+
+/// Clause 4.9: "When a Query Term only defines an attribute path ..., the
+/// matching Entities shall be those which define the target element
+/// (Property or a Relationship), regardless of any target value or
+/// object." A structured Property value and a `GeoProperty` held as a
+/// geometry carry no literal, yet each defines its target element. The JSON
+/// document reading answers this by a comparable value and so disagrees,
+/// which is why these assertions read the entity traits alone.
+#[test]
+fn a_bare_attribute_path_holds_for_a_structured_value_and_a_geometry() {
+    let entity = serde_json::json!([{
+        "@id": "urn:ngsi-ld:Building:1",
+        "@type": ["https://example.com/Building"],
+        "https://example.com/address": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                "https://example.com/city": [{"@value": "Berlin"}],
+                "https://example.com/geo": [{"https://example.com/lat": [{"@value": 52}]}]
+            }]
+        }],
+        "https://uri.etsi.org/ngsi-ld/location": [{
+            "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                "@type": ["https://purl.org/geojson/vocab#Point"],
+                "https://purl.org/geojson/vocab#coordinates": [{"@list": [{"@value": 13.4}, {"@value": 52.5}]}]
+            }]
+        }]
+    }]);
+    let fixture = FixtureEntity::from_expanded(&entity);
+    let exists = |q: &str| {
+        filter_holds(
+            &FilterReading::of(&parse(q).expect("parses"), LanguageMatching::TagEquality),
+            &fixture,
+            NoLinkedEntities,
+        )
+    };
+    assert!(exists("\"https://example.com/address\""), "a structured Property value defines its element");
+    assert!(exists("\"https://uri.etsi.org/ngsi-ld/location\""), "a geometry defines its element");
+    assert!(
+        exists("\"https://example.com/address\"[\"https://example.com/geo\"]"),
+        "a member holding a structured value is a defined value"
+    );
+    assert!(!exists("\"https://example.com/address\"[\"https://example.com/postcode\"]"));
+    assert!(!exists("\"https://example.com/missing\""));
+    assert!(!exists("\"https://example.com/address\".\"https://uri.etsi.org/ngsi-ld/observedAt\""));
+}
+
+#[test]
+fn values_of_different_types_are_considered_unequal() {
+    // Clause 4.9: `!=` holds and `==` fails when the operand's type differs
+    // from the target's, here a boolean attribute against a number.
+    assert!(holds(&parse("\"https://example.com/active\"!=5").unwrap(), &vehicle_entity()));
+    assert!(!holds(&parse("\"https://example.com/active\"==5").unwrap(), &vehicle_entity()));
+}
+
+#[test]
+fn an_array_valued_property_is_matched_by_membership() {
+    // Clause 4.9, `equal`: the Query Term value "is included in the target
+    // value, if the latter is an array"; `unequal`: it "is not included in
+    // the target value, if the latter is an array". The array a client wrote
+    // as a Property value expands to one `hasValue` node per element, so
+    // every element is part of the target value.
+    assert!(holds(&parse("\"https://example.com/tags\"==1").unwrap(), &rich_entity()));
+    assert!(holds(&parse("\"https://example.com/tags\"==3").unwrap(), &rich_entity()));
+    assert!(!holds(&parse("\"https://example.com/tags\"==9").unwrap(), &rich_entity()));
+    assert!(holds(&parse("\"https://example.com/tags\"!=9").unwrap(), &rich_entity()));
+    assert!(!holds(&parse("\"https://example.com/tags\"!=3").unwrap(), &rich_entity()));
+}
+
+/// Clause 4.9: "If the target element is a `ListProperty`, the target value
+/// is defined as the valueList array associated to such a `ListProperty`",
+/// and `equal` holds when the operand "is included in the target value, if
+/// the latter is an array".
+#[test]
+fn a_list_property_is_matched_by_membership_of_its_value_list() {
+    assert!(holds(&parse("\"https://example.com/colors\"==\"red\"").unwrap(), &rich_entity()));
+    assert!(holds(&parse("\"https://example.com/colors\"==\"blue\"").unwrap(), &rich_entity()));
+    assert!(!holds(&parse("\"https://example.com/colors\"==\"green\"").unwrap(), &rich_entity()));
+    assert!(holds(&parse("\"https://example.com/colors\"!=\"green\"").unwrap(), &rich_entity()));
+    assert!(!holds(&parse("\"https://example.com/colors\"!=\"blue\"").unwrap(), &rich_entity()));
+}
+
+/// Clause 4.9: "If the target element is a `ListRelationship`, the target
+/// object is defined as the array of objects associated (represented as
+/// URIs) to such `ListRelationship`", and a URI Query Term matches when it
+/// "is included in the target value, if the latter is an array".
+#[test]
+fn a_list_relationship_is_matched_by_membership_of_its_object_list() {
+    assert!(holds(&parse("\"https://example.com/parts\"==\"urn:ngsi-ld:Part:2\"").unwrap(), &rich_entity()));
+    assert!(!holds(&parse("\"https://example.com/parts\"==\"urn:ngsi-ld:Part:9\"").unwrap(), &rich_entity()));
+    assert!(holds(&parse("\"https://example.com/parts\"!=\"urn:ngsi-ld:Part:9\"").unwrap(), &rich_entity()));
+    assert!(!holds(&parse("\"https://example.com/parts\"!=\"urn:ngsi-ld:Part:1\"").unwrap(), &rich_entity()));
+}
+
+/// Clause 4.9 bars a `ListRelationship` from every operator other than
+/// equality and inequality, exactly as it bars a Relationship: "the
+/// combination of such target element with any operator different than equal
+/// or unequal shall result in not matching".
+#[test]
+fn a_list_relationship_matches_no_ordering_or_pattern_operator() {
+    assert!(!holds(&parse("\"https://example.com/parts\">\"urn:ngsi-ld:Part:0\"").unwrap(), &rich_entity()));
+    assert!(!holds(&parse("\"https://example.com/parts\"~=\"urn:.*\"").unwrap(), &rich_entity()));
+    assert!(!holds(&parse("\"https://example.com/parts\"!~=\"nothing.*\"").unwrap(), &rich_entity()));
+}
+
+/// Clause 4.9: "If the target element is a `VocabProperty`, the target value
+/// shall be expanded according to the @context", and it is listed beside a
+/// Relationship as a target a URI Query Term matches when included in it,
+/// so a `VocabProperty` carrying several terms is matched on any of them,
+/// not only the first.
+#[test]
+fn a_multi_term_vocab_property_is_matched_by_membership() {
+    assert!(holds(
+        &parse("\"https://example.com/gender\"==\"https://example.com/Other\"").unwrap(),
+        &rich_entity()
+    ));
+    assert!(holds(
+        &parse("\"https://example.com/gender\"==\"https://example.com/Male\"").unwrap(),
+        &rich_entity()
+    ));
+    assert!(!holds(
+        &parse("\"https://example.com/gender\"==\"https://example.com/Female\"").unwrap(),
+        &rich_entity()
+    ));
+    assert!(holds(
+        &parse("\"https://example.com/gender\"!=\"https://example.com/Female\"").unwrap(),
+        &rich_entity()
+    ));
+    assert!(!holds(
+        &parse("\"https://example.com/gender\"!=\"https://example.com/Male\"").unwrap(),
+        &rich_entity()
+    ));
+}
+
+#[test]
+fn a_pattern_operator_does_not_match_a_non_string_target() {
+    // Clause 4.9: a non-String target is considered not matching, so the
+    // number 80 is not stringified to "80" and matched against "8.*".
+    assert!(!holds(&parse("\"https://example.com/speed\"~=\"8.*\"").unwrap(), &vehicle_entity()));
+}
+
+#[test]
+fn a_pattern_operator_does_not_match_a_relationship_object() {
+    // Clause 4.9 requires a Relationship operand to non-match every operator
+    // other than equality and inequality. A URI is string-shaped, so only its
+    // origin rules it out, and `notPatternOp` must not turn the exclusion
+    // into a match either.
+    assert!(!holds(&parse("\"https://example.com/owner\"~=\"urn:.*\"").unwrap(), &rich_entity()));
+    assert!(!holds(&parse("\"https://example.com/owner\"!~=\"^nothing\"").unwrap(), &rich_entity()));
+}
+
+#[test]
+fn an_ordering_comparison_against_a_relationship_does_not_match() {
+    // Clause 4.9: `>`/`<`/`>=`/`<=` against a Relationship shall not match,
+    // but equality against its object still does.
+    assert!(!holds(&parse("\"https://example.com/owner\">\"a\"").unwrap(), &rich_entity()));
+    assert!(holds(
+        &parse("\"https://example.com/owner\"==\"urn:ngsi-ld:Person:42\"").unwrap(),
+        &rich_entity()
+    ));
+}
+
+#[test]
+fn a_relationship_lies_within_no_range_and_outside_every_one() {
+    // Clause 4.9 bars a Relationship from every operator other than equal
+    // and unequal, and a range is a value of those two, so the object
+    // compares with neither bound although its text lies between these:
+    // its data type differs from the range's, which the Unequal rule makes
+    // unequal.
+    assert!(!holds(&parse("\"https://example.com/owner\"==\"urn:a\"..\"urn:z\"").unwrap(), &rich_entity()));
+    assert!(holds(&parse("\"https://example.com/owner\"!=\"urn:a\"..\"urn:z\"").unwrap(), &rich_entity()));
+    assert!(holds(&parse("\"https://example.com/owner\"!=1..5").unwrap(), &rich_entity()));
+}
+
+#[test]
+fn a_target_incomparable_with_a_range_is_outside_it() {
+    // "Outside" is the exact complement of "within", so `!=` a numeric range
+    // holds for a string target that cannot be inside it.
+    assert!(holds(&parse("\"https://example.com/brandName\"!=70..90").unwrap(), &vehicle_entity()));
+}
+
+/// A vehicle whose `isParkedIn` Relationship names `parking`.
+fn vehicle_parked_in(parking: &str) -> Value {
+    serde_json::json!([{
+        "@id": "urn:ngsi-ld:Vehicle:A1",
+        "@type": ["https://example.com/Vehicle"],
+        "https://example.com/isParkedIn": [{
+            "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": parking}]
+        }]
+    }])
+}
+
+/// A parking of `parking_type` whose `category` is `category`.
+fn parking(parking_id: &str, category: &str, parking_type: &str) -> Value {
+    serde_json::json!({
+        "@id": parking_id,
+        "@type": [parking_type],
+        "https://example.com/category": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": category}]
+        }]
+    })
+}
+
+const DOWNTOWN: &str = "urn:ngsi-ld:OffStreetParking:Downtown1";
+
+fn linked_predicate(inner_value: &str) -> Expr {
+    parse(&format!(
+        "\"https://example.com/isParkedIn\"{{\"https://example.com/category\"}}==\"{inner_value}\""
+    ))
+    .expect("parses")
+}
+
+/// Clause 4.9 EXAMPLE 13: a hop "makes a sub-query on matching target
+/// objects", the entity the Relationship's object names.
+#[test]
+fn a_hop_matches_on_the_value_of_the_linked_entity() {
+    let linked = [parking(DOWNTOWN, "commercial", "https://example.com/Building")];
+    assert!(holds_linked(&linked_predicate("commercial"), &vehicle_parked_in(DOWNTOWN), &linked));
+}
+
+#[test]
+fn a_hop_rejects_when_the_linked_entity_holds_another_value() {
+    let linked = [parking(DOWNTOWN, "residential", "https://example.com/Building")];
+    assert!(!holds_linked(&linked_predicate("commercial"), &vehicle_parked_in(DOWNTOWN), &linked));
+}
+
+#[test]
+fn a_type_guard_admits_only_a_linked_entity_of_a_listed_type() {
+    // Clause 4.9's `*1(EntityType 1*("," EntityType) ":")` constrains which
+    // linked entities the hop descends into.
+    let guarded = parse(concat!(
+        "\"https://example.com/isParkedIn\"{\"https://example.com/Building\",",
+        "\"https://example.com/Store\":\"https://example.com/category\"}==\"commercial\""
+    ))
+    .expect("parses");
+    let building = [parking(DOWNTOWN, "commercial", "https://example.com/Building")];
+    let warehouse = [parking(DOWNTOWN, "commercial", "https://example.com/Warehouse")];
+    assert!(holds_linked(&guarded, &vehicle_parked_in(DOWNTOWN), &building));
+    assert!(!holds_linked(&guarded, &vehicle_parked_in(DOWNTOWN), &warehouse));
+}
+
+/// An object naming no entity the source holds reaches nothing, so neither
+/// a comparison nor an existence test through it holds.
+#[test]
+fn a_hop_whose_object_names_no_known_entity_resolves_no_target() {
+    let linked = [parking("urn:ngsi-ld:OffStreetParking:Elsewhere", "commercial", "https://example.com/Building")];
+    assert!(!holds_linked(&linked_predicate("commercial"), &vehicle_parked_in(DOWNTOWN), &linked));
+    assert!(!holds_linked(
+        &parse("\"https://example.com/isParkedIn\"{\"https://example.com/category\"}").expect("parses"),
+        &vehicle_parked_in(DOWNTOWN),
+        &linked
+    ));
+    assert!(!holds(&linked_predicate("commercial"), &vehicle_parked_in(DOWNTOWN)));
+}
+
+#[test]
+fn two_hops_descend_through_two_linked_levels() {
+    let entity = serde_json::json!([{
+        "@id": "urn:a",
+        "@type": ["https://example.com/A"],
+        "https://example.com/outer": [{"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:b"}]}]
+    }]);
+    let linked = [
+        serde_json::json!({
+            "@id": "urn:b",
+            "@type": ["https://example.com/B"],
+            "https://example.com/inner": [{"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:c"}]}]
+        }),
+        serde_json::json!({
+            "@id": "urn:c",
+            "@type": ["https://example.com/C"],
+            "https://example.com/zone": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "north"}]}]
+        }),
+    ];
+    let two_hops = |zone: &str| {
+        parse(&format!(
+            "\"https://example.com/outer\"{{\"https://example.com/inner\"{{\"https://example.com/zone\"}}}}==\"{zone}\""
+        ))
+        .expect("parses")
+    };
+    assert!(holds_linked(&two_hops("north"), &entity, &linked));
+    assert!(!holds_linked(&two_hops("south"), &entity, &linked));
+}
+
+/// Clause 4.9: with several instances the target object is "any object of
+/// such instances", so the hop crosses into the entity every instance
+/// names, and holds when one of them matches.
+#[test]
+fn a_hop_follows_every_object_of_every_instance() {
+    let entity = serde_json::json!([{
+        "@id": "urn:ngsi-ld:Vehicle:A1",
+        "@type": ["https://example.com/Vehicle"],
+        "https://example.com/isParkedIn": [
+            {"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:p1"}]},
+            {
+                "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:p2"}],
+                "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:night"}]
+            }
+        ]
+    }]);
+    let linked = [
+        parking("urn:p1", "residential", "https://example.com/Building"),
+        parking("urn:p2", "commercial", "https://example.com/Building"),
+    ];
+    assert!(holds_linked(&linked_predicate("commercial"), &entity, &linked));
+    assert!(holds_linked(&linked_predicate("residential"), &entity, &linked));
+    assert!(!holds_linked(&linked_predicate("industrial"), &entity, &linked));
+}
+
+/// Only a Relationship names a linked entity: a Property whose value spells
+/// a URI is crossed into nothing.
+#[test]
+fn a_hop_through_a_property_follows_nothing() {
+    let entity = serde_json::json!([{
+        "@id": "urn:ngsi-ld:Vehicle:A1",
+        "@type": ["https://example.com/Vehicle"],
+        "https://example.com/isParkedIn": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": DOWNTOWN}]}]
+    }]);
+    let linked = [parking(DOWNTOWN, "commercial", "https://example.com/Building")];
+    assert!(!holds_linked(&linked_predicate("commercial"), &entity, &linked));
+}
+
+/// A Door whose `description` is a language map, and whose `tags` hold two
+/// strings under one language.
+fn door() -> Value {
+    serde_json::json!([{
+        "@id": "urn:ngsi-ld:Door:1",
+        "@type": ["https://example.com/Door"],
+        "https://example.com/description": [{
+            "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [
+                {"@language": "en", "@value": "Door"},
+                {"@language": "de", "@value": "Tuer"}
+            ]
+        }],
+        "https://example.com/tags": [{
+            "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [
+                {"@language": "en", "@value": "red"},
+                {"@language": "en", "@value": "cat"},
+                {"@language": "fr", "@value": "chat"}
+            ]
+        }],
+        "https://example.com/address": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"https://example.com/en": [{"@value": "Main Street"}]}]
+        }]
+    }])
+}
+
+/// Whether the Door satisfies `q`, its names already expanded.
+fn door_holds(q: &str) -> bool {
+    holds(&parse(q).expect("parses"), &door())
+}
+
+/// Clause 4.9 `equal`: "a match is found as the value of the key-value pair
+/// corresponding to the specified natural language of the languageMap".
+#[test]
+fn a_target_language_matches_only_the_value_under_that_language() {
+    assert!(door_holds("\"https://example.com/description\"[en]==\"Door\""));
+    assert!(!door_holds("\"https://example.com/description\"[en]==\"Tuer\""));
+    assert!(door_holds("\"https://example.com/description\"[de]==\"Tuer\""));
+}
+
+/// Clause 4.9 `unequal`: the entity "shall contain the target element", the
+/// `LanguageProperty`, and match where "No matching value is found as the
+/// value of the specified language key", which a language the map does not
+/// hold satisfies.
+#[test]
+fn a_target_language_inequality_matches_a_map_without_the_language() {
+    assert!(door_holds("\"https://example.com/description\"[en]!=\"Tuer\""));
+    assert!(!door_holds("\"https://example.com/description\"[en]!=\"Door\""));
+    assert!(door_holds("\"https://example.com/description\"[fr]!=\"Door\""));
+    assert!(door_holds("\"https://example.com/description\"[fr]!=\"Door\",\"Tuer\""));
+    assert!(!door_holds("\"https://example.com/description\"[fr]==\"Door\""));
+    assert!(!door_holds("\"https://example.com/absent\"[fr]!=\"Door\""));
+}
+
+#[test]
+fn a_target_language_existence_asks_for_the_language() {
+    assert!(door_holds("\"https://example.com/description\"[en]"));
+    assert!(!door_holds("\"https://example.com/description\"[fr]"));
+}
+
+/// The pattern and ordering operators read the language's value like any
+/// other String target (clause 4.9). Clause 4.9 `notPatternOp` requires the
+/// target element, the `LanguageProperty`, and a value not in L(R), which a
+/// language the map does not hold leaves none of.
+#[test]
+fn pattern_and_ordering_operators_read_the_target_language() {
+    assert!(door_holds("\"https://example.com/description\"[de]~=\"Tu.*\""));
+    assert!(!door_holds("\"https://example.com/description\"[en]~=\"Tu.*\""));
+    assert!(!door_holds("\"https://example.com/description\"[fr]~=\".*\""));
+    assert!(door_holds("\"https://example.com/description\"[en]!~=\"Tu.*\""));
+    assert!(!door_holds("\"https://example.com/description\"[de]!~=\"Tu.*\""));
+    assert!(door_holds("\"https://example.com/description\"[fr]!~=\"Tu.*\""));
+    assert!(!door_holds("\"https://example.com/absent\"[fr]!~=\"Tu.*\""));
+    assert!(door_holds("\"https://example.com/description\"[en]>\"A\""));
+    assert!(!door_holds("\"https://example.com/description\"[en]<\"A\""));
+}
+
+/// Clause 4.9: "a match is found as a single element from the array of
+/// values of the key-value pair corresponding to the specified natural
+/// language".
+#[test]
+fn several_strings_under_one_language_match_by_element() {
+    assert!(door_holds("\"https://example.com/tags\"[en]==\"cat\""));
+    assert!(!door_holds("\"https://example.com/tags\"[en]!=\"cat\""));
+    assert!(door_holds("\"https://example.com/tags\"[en]!=\"dog\""));
+    assert!(!door_holds("\"https://example.com/tags\"[en]==\"chat\""));
+}
+
+/// Clause 4.9's range operand over a language holding several strings: any
+/// one string inside the interval matches `==`, and `!=` is its complement,
+/// "No matching value is found" (with or without a target language).
+#[test]
+fn a_range_reads_any_one_string_of_a_language_map() {
+    assert!(door_holds("\"https://example.com/tags\"[en]==\"c\"..\"d\""));
+    assert!(!door_holds("\"https://example.com/tags\"[en]==\"x\"..\"z\""));
+    assert!(!door_holds("\"https://example.com/tags\"[en]!=\"c\"..\"d\""));
+    assert!(door_holds("\"https://example.com/tags\"[en]!=\"x\"..\"z\""));
+    assert!(door_holds("\"https://example.com/tags\"[pt]!=\"x\"..\"z\""));
+    assert!(!door_holds("\"https://example.com/tags\"[pt]==\"a\"..\"z\""));
+    assert!(door_holds("\"https://example.com/tags\"==\"c\"..\"d\""));
+    assert!(!door_holds("\"https://example.com/tags\"!=\"c\"..\"d\""));
+}
+
+/// The target element decides the reading of `attr[member]`: on any family
+/// other than `LanguageProperty` the member is a compound member, even one
+/// spelled like a language tag.
+#[test]
+fn a_bracketed_member_of_another_family_stays_a_compound_member() {
+    assert!(door_holds("\"https://example.com/address\"[\"https://example.com/en\"]==\"Main Street\""));
+}
+
+/// Clause 4.9's `patternOp` and `notPatternOp` are defined over a String
+/// target, and with no target language a `LanguageProperty`'s target value
+/// is "a value from any of the key-value pairs held within the languageMap",
+/// a String, so every language's value is a candidate, not only the one
+/// that happens to serialise first. `notPatternOp` is the complement: no
+/// value may match.
+#[test]
+fn a_pattern_operator_reaches_every_language_of_a_language_property() {
+    assert!(holds(&parse("\"https://example.com/description\"~=\"Tue.*\"").unwrap(), &rich_entity()));
+    assert!(holds(&parse("\"https://example.com/description\"~=\"Do.*\"").unwrap(), &rich_entity()));
+    assert!(!holds(&parse("\"https://example.com/description\"~=\"rot.*\"").unwrap(), &rich_entity()));
+    assert!(holds(&parse("\"https://example.com/description\"!~=\"rot.*\"").unwrap(), &rich_entity()));
+    assert!(!holds(&parse("\"https://example.com/description\"!~=\"Tue.*\"").unwrap(), &rich_entity()));
+}
+
+/// Clause 4.9 defines a `ListProperty`'s target value as the `valueList`
+/// array itself, and a pattern operator over a target whose "data type is
+/// different than String … shall be considered as not matching", so a
+/// pattern never reaches the elements of a list.
+#[test]
+fn a_pattern_operator_does_not_reach_the_elements_of_a_value_list() {
+    assert!(!holds(&parse("\"https://example.com/colors\"~=\"re.*\"").unwrap(), &rich_entity()));
+    assert!(!holds(&parse("\"https://example.com/colors\"!~=\"nothing.*\"").unwrap(), &rich_entity()));
+}
+
+#[test]
+fn a_language_property_with_no_target_language_matches_any_language_value() {
+    // Clause 4.9: "If the target element is a LanguageProperty, and no
+    // target language is specified, the target value is defined as a value
+    // from any of the key-value pairs held within the languageMap", which
+    // is what both spellings of "no target language" address, the bare path
+    // and the `[*]` suppression marker.
+    assert!(holds(&parse("\"https://example.com/description\"[*]==\"Tuer\"").unwrap(), &rich_entity()));
+    assert!(holds(&parse("\"https://example.com/description\"==\"Tuer\"").unwrap(), &rich_entity()));
+    assert!(holds(&parse("\"https://example.com/description\"==\"Door\"").unwrap(), &rich_entity()));
+    assert!(!holds(&parse("\"https://example.com/description\"==\"rot\"").unwrap(), &rich_entity()));
+    // Clause 4.9, `unequal`: "No matching value is found in any of the
+    // values of the key-value pairs of a languageMap", so a map that does
+    // hold the value is not a match in either spelling.
+    assert!(!holds(&parse("\"https://example.com/description\"!=\"Tuer\"").unwrap(), &rich_entity()));
+    assert!(!holds(&parse("\"https://example.com/description\"[*]!=\"Tuer\"").unwrap(), &rich_entity()));
+    assert!(holds(&parse("\"https://example.com/description\"!=\"rot\"").unwrap(), &rich_entity()));
+}
+
+/// An entity whose instances carry the members a `.` segment can name
+/// besides a sub-attribute.
+fn instance_members_entity() -> Value {
+    serde_json::json!([{
+        "@id": "urn:ngsi-ld:Sensor:1",
+        "@type": ["https://example.com/Sensor"],
+        "https://example.com/temperature": [
+            {
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 21}],
+                "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:a"}],
+                "https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "CEL"}],
+                "https://uri.etsi.org/ngsi-ld/createdAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2024-06-01T10:00:00.000000Z"}]
+            },
+            {
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 35}],
+                "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:b"}]
+            }
+        ],
+        "https://example.com/address": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                "https://example.com/city": [{"@value": "Berlin"}],
+                "https://example.com/extra": [{"@value": {"floor": 3}, "@type": "@json"}]
+            }]
+        }]
+    }])
+}
+
+/// Clause 4.9 addresses `datasetId` with `.` like a sub-attribute, and
+/// every instance answers for its own.
+#[test]
+fn the_dataset_of_every_instance_is_addressable() {
+    let entity = instance_members_entity();
+    let dataset = |id: &str| {
+        parse(&format!(
+            "\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/datasetId\"==\"{id}\""
+        ))
+        .expect("parses")
+    };
+    assert!(holds(&dataset("urn:ngsi-ld:Dataset:a"), &entity));
+    assert!(holds(&dataset("urn:ngsi-ld:Dataset:b"), &entity));
+    assert!(!holds(&dataset("urn:ngsi-ld:Dataset:c"), &entity));
+}
+
+/// A Property declaring a `valueType` and a Relationship declaring one
+/// `objectType`, beside one declaring two.
+fn declared_types_entity() -> Value {
+    serde_json::json!([{
+        "@id": "urn:ngsi-ld:Sensor:2",
+        "@type": ["https://example.com/Sensor"],
+        "https://example.com/reading": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "5"}],
+            "https://uri.etsi.org/ngsi-ld/hasValueType": [{"@id": "https://example.com/String"}]
+        }],
+        "https://example.com/feeds": [{
+            "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:Device:1"}],
+            "https://uri.etsi.org/ngsi-ld/hasObjectType": [{"@id": "https://example.com/Device"}]
+        }],
+        "https://example.com/serves": [{
+            "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:Device:2"}],
+            "https://uri.etsi.org/ngsi-ld/hasObjectType": [{"@id": "https://example.com/Device"}, {"@id": "https://example.com/Gauge"}]
+        }]
+    }])
+}
+
+/// Clause 4.9 reads `valueType` and `objectType` with `.` like a
+/// sub-attribute, each as the expanded IRI the instance holds.
+#[test]
+fn a_declared_value_type_and_object_type_are_addressable() {
+    let entity = declared_types_entity();
+    let holds_q = |q: &str| holds(&parse(q).expect("parses"), &entity);
+    assert!(holds_q(
+        "\"https://example.com/reading\".\"https://uri.etsi.org/ngsi-ld/hasValueType\"==\"https://example.com/String\""
+    ));
+    assert!(!holds_q(
+        "\"https://example.com/reading\".\"https://uri.etsi.org/ngsi-ld/hasValueType\"==\"https://example.com/Integer\""
+    ));
+    assert!(holds_q(
+        "\"https://example.com/feeds\".\"https://uri.etsi.org/ngsi-ld/hasObjectType\"==\"https://example.com/Device\""
+    ));
+    assert!(holds_q("\"https://example.com/feeds\".\"https://uri.etsi.org/ngsi-ld/hasObjectType\"~=\"Dev\""));
+    assert!(!holds_q("\"https://example.com/reading\".\"https://uri.etsi.org/ngsi-ld/hasObjectType\""));
+}
+
+/// Clause 4.9 compares an array target by membership ("Is included in the
+/// target value, if the latter is an array"), so either declared type
+/// matches, `!=` holds only for a type neither is, and a pattern, defined
+/// over a String, matches no array.
+#[test]
+fn several_object_types_are_compared_by_membership() {
+    let entity = declared_types_entity();
+    let holds_q = |q: &str| holds(&parse(q).expect("parses"), &entity);
+    let serves = "\"https://example.com/serves\".\"https://uri.etsi.org/ngsi-ld/hasObjectType\"";
+    assert!(holds_q(&format!("{serves}==\"https://example.com/Gauge\"")));
+    assert!(holds_q(&format!("{serves}==\"https://example.com/Device\"")));
+    assert!(!holds_q(&format!("{serves}!=\"https://example.com/Gauge\"")));
+    assert!(holds_q(&format!("{serves}!=\"https://example.com/Valve\"")));
+    assert!(!holds_q(&format!("{serves}~=\"Gauge\"")));
+}
+
+/// A held instance carries no `instanceId` (table 5.2.5-2 has it only in
+/// the temporal representation), so a term on it selects nothing.
+#[test]
+fn a_held_instance_has_no_instance_id_to_match() {
+    let entity = instance_members_entity();
+    assert!(!holds(
+        &parse("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/instanceId\"").expect("parses"),
+        &entity
+    ));
+}
+
+/// A unit code and a system time are compared like any other String, the
+/// time in its temporal domain when the operand is a `DateTime`.
+#[test]
+fn a_unit_code_and_a_creation_time_are_compared_as_their_lexical_forms() {
+    let entity = instance_members_entity();
+    assert!(holds(
+        &parse("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/unitCode\"==\"CEL\"").expect("parses"),
+        &entity
+    ));
+    assert!(holds(
+        &parse("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/createdAt\">2024-06-01T09:00:00Z").expect("parses"),
+        &entity
+    ));
+    assert!(!holds(
+        &parse("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/createdAt\">2024-06-01T11:00:00Z").expect("parses"),
+        &entity
+    ));
+    assert!(!holds(
+        &parse("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/modifiedAt\"").expect("parses"),
+        &entity
+    ));
+}
+
+/// One plain and one typed value in `DateTime` form, and an `observedAt`.
+fn time_value_entity() -> Value {
+    serde_json::json!([{
+        "@id": "urn:ngsi-ld:Device:1",
+        "@type": ["https://example.com/Device"],
+        "https://example.com/plain": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "2024-01-01T00:00:00Z"}]
+        }],
+        "https://example.com/typed": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "2024-01-01T00:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}],
+            "https://uri.etsi.org/ngsi-ld/observedAt": [{"@value": "2024-01-01T00:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}]
+        }]
+    }])
+}
+
+/// Clause 4.9: a target matches only an operand of its own data type, a
+/// bare `dateTime` is a time value and a `quotedStr` a String (annex C.6:
+/// an undeclared string is a String).
+#[test]
+fn a_date_time_operand_matches_a_declared_time_value_and_a_quoted_one_a_plain_string() {
+    let entity = time_value_entity();
+    let holds_q = |q: &str| holds(&parse(q).expect("parses"), &entity);
+    assert!(!holds_q("\"https://example.com/plain\"==2024-01-01T00:00:00Z"));
+    assert!(holds_q("\"https://example.com/typed\"==2024-01-01T00:00:00.000Z"));
+    assert!(holds_q(
+        "\"https://example.com/typed\".\"https://uri.etsi.org/ngsi-ld/observedAt\"==2024-01-01T00:00:00Z"
+    ));
+    assert!(holds_q("\"https://example.com/plain\"==\"2024-01-01T00:00:00Z\""));
+    assert!(!holds_q("\"https://example.com/plain\"==\"2024-01-01T00:00:00.000Z\""));
+    assert!(!holds_q("\"https://example.com/typed\"==\"2024-01-01T00:00:00Z\""));
+}
+
+/// Clause 4.9 makes each name after the first "a (sub)Property or
+/// (sub)Relationship", and a Property's Value is neither, so a segment
+/// naming the value member defines no target element: no operator
+/// matches, `!=` included, while the attribute itself still compares.
+#[test]
+fn a_segment_naming_the_value_member_matches_no_operator() {
+    let entity = instance_members_entity();
+    let holds_q = |q: &str| holds(&parse(q).expect("parses"), &entity);
+    let value_member = "\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/hasValue\"";
+    assert!(!holds_q(value_member));
+    assert!(!holds_q(&format!("{value_member}>30")));
+    assert!(!holds_q(&format!("{value_member}==21")));
+    assert!(!holds_q(&format!("{value_member}!=21")));
+    assert!(holds_q("\"https://example.com/temperature\">30"));
+}
+
+/// Clause 4.9: "If the data type of the target value and the data type of
+/// the Query Term value are different, then they shall be considered
+/// unequal", so the number 80 is not the String spelling it.
+#[test]
+fn a_number_is_unequal_to_a_string_spelling_it() {
+    let speed = |q: &str| holds(&parse(q).expect("parses"), &vehicle_entity());
+    assert!(!speed("\"https://example.com/speed\"==\"80\""));
+    assert!(speed("\"https://example.com/speed\"!=\"80\""));
+    assert!(!speed("\"https://example.com/speed\"<\"9\""));
+    assert!(speed("\"https://example.com/speed\"==80"));
+}
+
+/// Clause 4.9 enters a compound value through the trailing path alone, so
+/// a member of a structured value is reached in brackets and never through
+/// a segment naming the value member, and a raw JSON literal held inside a
+/// structured value is no member to descend into.
+#[test]
+fn a_structured_value_is_entered_through_the_trailing_path_alone() {
+    let entity = instance_members_entity();
+    assert!(!holds(
+        &parse("\"https://example.com/address\".\"https://uri.etsi.org/ngsi-ld/hasValue\".\"https://example.com/city\"==\"Berlin\"").expect("parses"),
+        &entity
+    ));
+    assert!(holds(
+        &parse("\"https://example.com/address\"[\"https://example.com/city\"]==\"Berlin\"").expect("parses"),
+        &entity
+    ));
+    assert!(!holds(
+        &parse("\"https://example.com/address\"[\"https://example.com/extra\".\"https://example.com/floor\"]==3").expect("parses"),
+        &entity
+    ));
+}
+
+/// A languageMap holding `en-GB`, `en`, `de-Latn-DE` and `fr`.
+fn multilingual_entity() -> Value {
+    serde_json::json!([{
+        "@id": "urn:ngsi-ld:Building:1",
+        "https://example.com/name": [{
+            "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [
+                {"@language": "en-GB", "@value": "Lift"},
+                {"@language": "en", "@value": "Elevator"},
+                {"@language": "de-Latn-DE", "@value": "Aufzug"},
+                {"@language": "fr", "@value": "Ascenseur"}
+            ]
+        }]
+    }])
+}
+
+/// Clause 4.9 with an RFC 5646 tag in the bracket (Annex C.5.13.2), its
+/// key compared case-insensitively (RFC 5646 section 2.1.1).
+#[test]
+fn a_full_tag_in_the_bracket_compares_its_key_case_insensitively() {
+    for matching in [LanguageMatching::TagEquality, LanguageMatching::ExtendedFiltering] {
+        assert!(holds_under(
+            &parse("\"https://example.com/name\"[en-gb]==\"Lift\"").unwrap(),
+            &multilingual_entity(),
+            matching
+        ));
+        assert!(!holds_under(
+            &parse("\"https://example.com/name\"[en-gb]==\"Elevator\"").unwrap(),
+            &multilingual_entity(),
+            matching
+        ));
+    }
+}
+
+#[test]
+fn a_primary_tag_reaches_its_regional_key_only_under_extended_filtering() {
+    let lift = parse("\"https://example.com/name\"[en]==\"Lift\"").unwrap();
+    assert!(!holds_under(&lift, &multilingual_entity(), LanguageMatching::TagEquality));
+    assert!(holds_under(&lift, &multilingual_entity(), LanguageMatching::ExtendedFiltering));
+    let elevator = parse("\"https://example.com/name\"[en]==\"Elevator\"").unwrap();
+    assert!(holds_under(&elevator, &multilingual_entity(), LanguageMatching::TagEquality));
+    assert!(holds_under(&elevator, &multilingual_entity(), LanguageMatching::ExtendedFiltering));
+}
+
+#[test]
+fn a_wildcard_range_matches_the_value_of_a_key_it_filters() {
+    let aufzug = parse("\"https://example.com/name\"[de-*-DE]==\"Aufzug\"").unwrap();
+    assert!(holds_under(&aufzug, &multilingual_entity(), LanguageMatching::ExtendedFiltering));
+    let pattern = parse("\"https://example.com/name\"[*-GB]~=\"^Li\"").unwrap();
+    assert!(holds_under(&pattern, &multilingual_entity(), LanguageMatching::ExtendedFiltering));
+}
+
+/// Clause 4.9: `!=` holds where "No matching value is found as the value
+/// of the specified language key", here over every selected key.
+#[test]
+fn unequal_under_filtering_holds_when_no_selected_string_matches() {
+    let entity = multilingual_entity();
+    let not_lift = parse("\"https://example.com/name\"[en]!=\"Lift\"").unwrap();
+    assert!(holds_under(&not_lift, &entity, LanguageMatching::TagEquality));
+    assert!(!holds_under(&not_lift, &entity, LanguageMatching::ExtendedFiltering));
+    let not_door = parse("\"https://example.com/name\"[en]!=\"Door\"").unwrap();
+    assert!(holds_under(&not_door, &entity, LanguageMatching::ExtendedFiltering));
+}
+
+/// A resource that is not an entity answers each Query Term from the one
+/// member its path names, and clause 4.9 requires the target element under
+/// every operator, so a member it does not hold matches no comparison,
+/// `unequal` included.
+#[test]
+fn a_resource_member_is_compared_and_one_it_does_not_hold_matches_nothing() {
+    let member_of = |term: &TermReading| match term.attribute().as_str() {
+        "priority" => Some(ResolvedTarget {
+            value: TargetValue::Number(Cow::Owned(7.into())),
+            origin: TargetOrigin::AttributeValue,
+            reading: MultiValueReading::WholeArray,
+        }),
+        _absent => None,
+    };
+    for (q, expected) in [
+        ("priority>5", true),
+        ("priority==1..6", false),
+        ("priority>5;(priority<7|priority==7)", true),
+        ("priority", true),
+        ("endpoint", false),
+        ("endpoint!=\"x\"", false),
+        ("endpoint!~=\"x\"", false),
+        ("endpoint!=\"x\"|priority==7", true),
+    ] {
+        assert_eq!(
+            members_hold(&FilterReading::of(&parse(q).unwrap(), LanguageMatching::TagEquality), &member_of),
+            expected,
+            "{q}"
+        );
+    }
+}
+
+/// An entity carrying one Property value for each of the conformance
+/// attributes.
+fn vehicle(vehicle: &ConformanceVehicle) -> Value {
+    let property = |value: Value| serde_json::json!([{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value}]}]);
+    serde_json::json!([{
+        "@id": "urn:ngsi-ld:Vehicle:A1",
+        "@type": ["https://example.com/Vehicle"],
+        SPEED.as_str(): property(vehicle.speed.into()),
+        COLOR.as_str(): property(vehicle.color.into()),
+        NAME.as_str(): property(vehicle.name.into()),
+    }])
+}
+
+/// Clause 4.9: every operator selects by the value of its target, and an
+/// entity that does not carry the addressed element never satisfies a
+/// predicate over it, in either polarity.
+#[test]
+fn every_operator_selects_by_value_and_never_an_entity_without_the_attribute() {
+    let absent = serde_json::json!([{"@id": "urn:ngsi-ld:Vehicle:A2", "@type": ["https://example.com/Vehicle"]}]);
+    for case in CONFORMANCE {
+        let expr = parse(case.filter).expect("parses");
+        assert!(holds(&expr, &vehicle(&case.selected)), "{} must select its matching entity", case.filter);
+        if let Some(rejected) = &case.rejected {
+            assert!(!holds(&expr, &vehicle(rejected)), "{} must reject its non-matching entity", case.filter);
+        }
+        assert!(!holds(&expr, &absent), "{} must reject an entity without the attribute", case.filter);
+    }
+}

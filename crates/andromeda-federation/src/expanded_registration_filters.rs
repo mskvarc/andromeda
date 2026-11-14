@@ -10,7 +10,7 @@
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_query::{
     error::QueryError,
-    filter::{expansion::expand_csf_expr, expression::Expr},
+    filter::{expansion::expand_csf_expr, expression::Expr, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
     geo::{admission::GeoQueryAdmission, compile::compile_geo_query, input::GeoQueryInput, query::GeoQuery},
 };
 
@@ -19,10 +19,10 @@ use andromeda_ngsi_ld_query::{
 /// local scope places on registrations (clause 5.5.13).
 #[derive(Debug, Default)]
 pub struct ExpandedRegistrationFilters {
-    /// The context source filter, expanded, which a registration's Context
-    /// Source Properties have to satisfy (clause 4.9); `None` when the query
-    /// has none.
-    csf: Option<Expr>,
+    /// The reading of the context source filter, expanded, which a
+    /// registration's Context Source Properties have to satisfy (clause 4.9);
+    /// `None` when the query has none.
+    csf: Option<FilterReading>,
     /// The geoquery, compiled, which a registration's declared geometry has to
     /// admit (clauses 4.3.6.1 and 5.10.2.4); `None` when the query has none.
     geo: Option<GeoQuery>,
@@ -52,16 +52,23 @@ impl ExpandedRegistrationFilters {
         let expander = ContextualExpander::new(engine, &prepared_context);
         let geo = compile_geo_query(geo, &expander, admission).await?;
         let csf = match csf {
-            // clone: the raw filter stays in the query, which forwards it as the client wrote it
-            Some(expression) => Some(expand_csf_expr(expression.clone(), &expander).await?),
+            // Context Source Properties are Properties, never a
+            // `LanguageProperty`, so no target language selects a string of
+            // theirs whatever the matching.
+            Some(expression) => Some(FilterReading::of(
+                // clone: the raw filter stays in the query, which forwards it as the client wrote it
+                &expand_csf_expr(expression.clone(), &expander).await?,
+                LanguageMatching::TagEquality,
+            )),
             None => None,
         };
         Ok(ExpandedRegistrationFilters { csf, geo })
     }
 
-    /// The expanded context source filter, if the query carries one.
+    /// The reading of the expanded context source filter, if the query
+    /// carries one.
     #[must_use]
-    pub const fn csf(&self) -> Option<&Expr> {
+    pub const fn csf(&self) -> Option<&FilterReading> {
         self.csf.as_ref()
     }
 
