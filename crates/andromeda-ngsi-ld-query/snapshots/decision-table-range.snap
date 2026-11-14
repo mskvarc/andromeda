@@ -1,0 +1,138 @@
+---
+source: crates/andromeda-ngsi-ld-query/src/filter/reading/decision_table_tests.rs
+---
+x==1..5
+  Number               Holds(within 1..5)
+  NotANumber           Never                              ruling: numbers beyond the decimals follow XSD
+  PositiveInfinity     Never                              ruling: numbers beyond the decimals follow XSD
+  NegativeInfinity     Never                              ruling: numbers beyond the decimals follow XSD
+  String               Never
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Never
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           Never
+  ObjectArray          Never
+  AnyOneValue          SomeElement
+
+x!=1..5
+  Number               HoldsNot(within 1..5)
+  NotANumber           Always                             ruling: numbers beyond the decimals follow XSD
+  PositiveInfinity     Always                             ruling: numbers beyond the decimals follow XSD
+  NegativeInfinity     Always                             ruling: numbers beyond the decimals follow XSD
+  String               Always
+  RelationshipObject   Always
+  Boolean              Always
+  DateTime             Always
+  Date                 Always
+  Time                 Always
+  Null                 Always
+  Object               Always
+  ValueArray           Always
+  ObjectArray          Always
+  AnyOneValue          NoElement                          ruling: no value of a languageMap satisfies the asserted test
+
+x=="a".."m"
+  Number               Never
+  NotANumber           Never
+  PositiveInfinity     Never
+  NegativeInfinity     Never
+  String               Holds(within "a".."m")
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Never
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           Never
+  ObjectArray          Never
+  AnyOneValue          SomeElement
+
+x!="a".."m"
+  Number               Always
+  NotANumber           Always
+  PositiveInfinity     Always
+  NegativeInfinity     Always
+  String               HoldsNot(within "a".."m")
+  RelationshipObject   Always
+  Boolean              Always
+  DateTime             Always
+  Date                 Always
+  Time                 Always
+  Null                 Always
+  Object               Always
+  ValueArray           Always
+  ObjectArray          Always
+  AnyOneValue          NoElement                          ruling: no value of a languageMap satisfies the asserted test
+
+x==2024-01-01..2024-12-31
+  Number               Never
+  NotANumber           Never
+  PositiveInfinity     Never
+  NegativeInfinity     Never
+  String               Never
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Never
+  Date                 Holds(within 2024-01-01..2024-12-31)
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           Never
+  ObjectArray          Never
+  AnyOneValue          SomeElement
+
+x!=2024-01-01..2024-12-31
+  Number               Always
+  NotANumber           Always
+  PositiveInfinity     Always
+  NegativeInfinity     Always
+  String               Always
+  RelationshipObject   Always
+  Boolean              Always
+  DateTime             Always
+  Date                 HoldsNot(within 2024-01-01..2024-12-31)
+  Time                 Always
+  Null                 Always
+  Object               Always
+  ValueArray           Always
+  ObjectArray          Always
+  AnyOneValue          NoElement                          ruling: no value of a languageMap satisfies the asserted test
+
+x==1.."z"
+  Number               Never                              ruling: a range of two kinds holds for no target
+  NotANumber           Never                              ruling: a range of two kinds holds for no target
+  PositiveInfinity     Never                              ruling: a range of two kinds holds for no target
+  NegativeInfinity     Never                              ruling: a range of two kinds holds for no target
+  String               Never                              ruling: a range of two kinds holds for no target
+  RelationshipObject   Never                              ruling: a range of two kinds holds for no target
+  Boolean              Never                              ruling: a range of two kinds holds for no target
+  DateTime             Never                              ruling: a range of two kinds holds for no target
+  Date                 Never                              ruling: a range of two kinds holds for no target
+  Time                 Never                              ruling: a range of two kinds holds for no target
+  Null                 Never                              ruling: a range of two kinds holds for no target
+  Object               Never                              ruling: a range of two kinds holds for no target
+  ValueArray           Never                              ruling: a range of two kinds holds for no target
+  ObjectArray          Never                              ruling: a range of two kinds holds for no target
+  AnyOneValue          SomeElement                        ruling: a range of two kinds holds for no target
+
+x!=1.."z"
+  Number               Always                             ruling: a range of two kinds holds for no target
+  NotANumber           Always                             ruling: a range of two kinds holds for no target
+  PositiveInfinity     Always                             ruling: a range of two kinds holds for no target
+  NegativeInfinity     Always                             ruling: a range of two kinds holds for no target
+  String               Always                             ruling: a range of two kinds holds for no target
+  RelationshipObject   Always                             ruling: a range of two kinds holds for no target
+  Boolean              Always                             ruling: a range of two kinds holds for no target
+  DateTime             Always                             ruling: a range of two kinds holds for no target
+  Date                 Always                             ruling: a range of two kinds holds for no target
+  Time                 Always                             ruling: a range of two kinds holds for no target
+  Null                 Always                             ruling: a range of two kinds holds for no target
+  Object               Always                             ruling: a range of two kinds holds for no target
+  ValueArray           Always                             ruling: a range of two kinds holds for no target
+  ObjectArray          Always                             ruling: a range of two kinds holds for no target
+  AnyOneValue          NoElement                          ruling: a range of two kinds holds for no target

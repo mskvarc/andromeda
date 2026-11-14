@@ -3,8 +3,8 @@
 use crate::{
     q::{
         axis_position::AxisPosition,
-        family_target::{TerminalKeyword, held_values_target},
-        target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, json_member},
+        family_target::{held_values_target, terminal_value},
+        target_value::{ResolvedTarget, json_member},
     },
     queried_entity::{
         attribute_reading::{QueriedInstance, QueriedValueNode},
@@ -12,7 +12,10 @@ use crate::{
     },
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::filter::trailing_path::MemberPath;
+use andromeda_ngsi_ld_query::filter::{
+    reading::family_reading::{MultiValueReading, TargetOrigin, TerminalKeyword},
+    trailing_path::MemberPath,
+};
 
 /// Resolve a compound value path (`address[city]`) at one position of the
 /// axis.
@@ -50,7 +53,7 @@ pub(crate) fn resolve_compound_member<'a, I: QueriedInstance<'a>>(position: Axis
 /// holding no literal holds no target value.
 fn resolve_member_hops<'a, N: QueriedValueNode<'a>>(start: Option<ValueItem<'a, N>>, value_path: &[AttributeName]) -> Option<ResolvedTarget<'a>> {
     Some(ResolvedTarget {
-        value: held_values_target(walk_member_hops(start, value_path)?.filter_map(|item| TerminalKeyword::Literal.read(item)))?,
+        value: held_values_target(walk_member_hops(start, value_path)?.filter_map(|item| terminal_value(TerminalKeyword::Literal, item)))?,
         origin: TargetOrigin::AttributeValue,
         reading: MultiValueReading::WholeArray,
     })

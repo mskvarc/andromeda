@@ -1,142 +1,30 @@
-//! The clause 4.9 target value each attribute family carries.
-//!
-//! Clause 4.9 defines a target value for every attribute family of clause
-//! 5.2.4, and the definitions differ in shape, not only in which member carries
-//! them:
-//!
-//! * "If the target element is a Property, the target value is defined as the
-//!   Value associated to such Property", one value, or, when the client wrote
-//!   an array, the array JSON-LD expansion turned into several `hasValue`
-//!   nodes;
-//! * "If the target element is a `LanguageProperty`, and no target language is
-//!   specified, the target value is defined as a value from any of the
-//!   key-value pairs held within the languageMap";
-//! * "If the target element is a `ListProperty`, the target value is defined as
-//!   the valueList array associated to such a `ListProperty`";
-//! * "If the target element is a `ListRelationship`, the target object is
-//!   defined as the array of objects associated (represented as URIs) to such
-//!   `ListRelationship`";
-//! * "If the target element is a `VocabProperty`, the target value shall be
-//!   expanded according to the @context";
-//! * "If the target element is a Relationship, the target object is defined as
-//!   the object associated (represented as a URI or array of URIs)".
-//!
-//! Every one of those that can hold more than one value resolves to an array, which is what makes the clause's array rules ("Is included in the target value, if the latter is an array", and under `unequal` "Is not included in the target value, if the latter is an array") apply to it.
-//!
-//! The two list families are ordered, so their target is the array even when
-//! it holds a single element, which is what keeps the ordering and pattern
-//! operators off it.
+//! The clause 4.9 target value one attribute instance carries, read as
+//! [`family_reading`] states for its family.
 
 use crate::{
-    q::target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue},
+    q::target_value::{ResolvedTarget, TargetValue},
     queried_entity::{
         attribute_reading::{QueriedInstance, QueriedValueNode},
         value_item::ValueItem,
     },
 };
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_query::filter::reading::family_reading::{TerminalKeyword, ValueLayout, family_reading};
 use std::borrow::Cow;
 
-/// How a family's value member holds its values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ValueCarrier {
-    /// One value node per value the client wrote. A single value is a scalar
-    /// target; several are an array target.
-    Nodes,
-    /// One ordered list, whose items are the target array whatever their count.
-    OrderedList,
-}
-
-/// Which values of a member a target is read from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TerminalKeyword {
-    /// Literals only, the values a JSON-LD value object carries under
-    /// `@value`.
-    Literal,
-    /// Literals and the IRIs references and nodes are identified by, carried
-    /// under `@id`: a Relationship's objects, a `VocabProperty`'s terms, and
-    /// the end of a path that stops on a node.
-    Identifier,
-}
-
-impl TerminalKeyword {
-    /// The target value one item carries under this keyword, or `None` when it
-    /// carries none.
-    ///
-    /// An item with nothing under the keyword holds nothing a Query Term
-    /// operand could be identical to or included in, so leaving it out changes
-    /// no comparison.
-    pub(crate) fn read<'a, N: QueriedValueNode<'a>>(self, item: ValueItem<'a, N>) -> Option<TargetValue<'a>> {
-        match (self, item) {
-            (TerminalKeyword::Literal | TerminalKeyword::Identifier, ValueItem::Literal(literal)) => Some(TargetValue::literal(literal)),
-            (TerminalKeyword::Literal | TerminalKeyword::Identifier, ValueItem::Json(json)) => Some(TargetValue::json(json)),
-            (TerminalKeyword::Identifier, ValueItem::Reference(iri)) => Some(TargetValue::Text(Cow::Borrowed(iri))),
-            (TerminalKeyword::Identifier, ValueItem::Node(node)) => node.id().map(|iri| TargetValue::Text(Cow::Borrowed(iri))),
-            (TerminalKeyword::Literal, ValueItem::Reference(_) | ValueItem::Node(_))
-            | (TerminalKeyword::Literal | TerminalKeyword::Identifier, ValueItem::Opaque) => None,
-        }
-    }
-}
-
-/// How clause 4.9 reads one attribute family's values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct FamilyReading {
-    /// How the family's value member holds its values.
-    carrier: ValueCarrier,
-    /// Which values of the member make the target.
-    terminal: TerminalKeyword,
-    /// Which clause 4.9 definition the values satisfy.
-    origin: TargetOrigin,
-    /// What clause 4.9 makes of several values.
-    reading: MultiValueReading,
-}
-
-/// How clause 4.9 reads the values of `family`, covering all eight attribute
-/// families of clause 5.2.4 so a `q` over any of them resolves.
-const fn family_reading(family: AttributeType) -> FamilyReading {
-    let (carrier, terminal, origin, reading) = match family {
-        AttributeType::Property | AttributeType::GeoProperty | AttributeType::JsonProperty => (
-            ValueCarrier::Nodes,
-            TerminalKeyword::Literal,
-            TargetOrigin::AttributeValue,
-            MultiValueReading::WholeArray,
-        ),
-        AttributeType::Relationship => (
-            ValueCarrier::Nodes,
-            TerminalKeyword::Identifier,
-            TargetOrigin::RelationshipObject,
-            MultiValueReading::WholeArray,
-        ),
-        AttributeType::VocabProperty => (
-            ValueCarrier::Nodes,
-            TerminalKeyword::Identifier,
-            TargetOrigin::AttributeValue,
-            MultiValueReading::WholeArray,
-        ),
-        AttributeType::LanguageProperty => (
-            ValueCarrier::Nodes,
-            TerminalKeyword::Literal,
-            TargetOrigin::AttributeValue,
-            MultiValueReading::AnyOneValue,
-        ),
-        AttributeType::ListProperty => (
-            ValueCarrier::OrderedList,
-            TerminalKeyword::Literal,
-            TargetOrigin::AttributeValue,
-            MultiValueReading::WholeArray,
-        ),
-        AttributeType::ListRelationship => (
-            ValueCarrier::OrderedList,
-            TerminalKeyword::Identifier,
-            TargetOrigin::RelationshipObject,
-            MultiValueReading::WholeArray,
-        ),
-    };
-    FamilyReading {
-        carrier,
-        terminal,
-        origin,
-        reading,
+/// The target value `item` carries under `keyword`, or `None` when it
+/// carries none.
+///
+/// An item with nothing under the keyword holds nothing a Query Term
+/// operand could be identical to or included in, so leaving it out changes
+/// no comparison.
+pub(crate) fn terminal_value<'a, N: QueriedValueNode<'a>>(keyword: TerminalKeyword, item: ValueItem<'a, N>) -> Option<TargetValue<'a>> {
+    match (keyword, item) {
+        (TerminalKeyword::Literal | TerminalKeyword::Identifier, ValueItem::Literal(literal)) => Some(TargetValue::literal(literal)),
+        (TerminalKeyword::Literal | TerminalKeyword::Identifier, ValueItem::Json(json)) => Some(TargetValue::json(json)),
+        (TerminalKeyword::Identifier, ValueItem::Reference(iri)) => Some(TargetValue::Text(Cow::Borrowed(iri))),
+        (TerminalKeyword::Identifier, ValueItem::Node(node)) => node.id().map(|iri| TargetValue::Text(Cow::Borrowed(iri))),
+        (TerminalKeyword::Literal, ValueItem::Reference(_) | ValueItem::Node(_))
+        | (TerminalKeyword::Literal | TerminalKeyword::Identifier, ValueItem::Opaque) => None,
     }
 }
 
@@ -149,10 +37,10 @@ const fn family_reading(family: AttributeType) -> FamilyReading {
 #[must_use]
 pub fn family_target<'a, I: QueriedInstance<'a>>(instance: I) -> Option<ResolvedTarget<'a>> {
     let reading = family_reading(instance.family());
-    let terminals = instance.values().filter_map(|item| reading.terminal.read(item));
-    let value = match reading.carrier {
-        ValueCarrier::Nodes => held_values_target(terminals)?,
-        ValueCarrier::OrderedList => TargetValue::Array(terminals.collect()),
+    let terminals = instance.values().filter_map(|item| terminal_value(reading.terminal, item));
+    let value = match reading.layout {
+        ValueLayout::Nodes => held_values_target(terminals)?,
+        ValueLayout::OrderedList => TargetValue::Array(terminals.collect()),
     };
     Some(ResolvedTarget {
         value,
@@ -180,18 +68,19 @@ pub(crate) fn held_values_target<'a>(mut values: impl Iterator<Item = TargetValu
 /// nor members of its own, so a path into it addresses nothing.
 #[must_use]
 pub fn first_family_value<'a, I: QueriedInstance<'a>>(instance: I) -> Option<ValueItem<'a, I::Node>> {
-    match family_reading(instance.family()).carrier {
-        ValueCarrier::Nodes => instance.values().next(),
-        ValueCarrier::OrderedList => None,
+    match family_reading(instance.family()).layout {
+        ValueLayout::Nodes => instance.values().next(),
+        ValueLayout::OrderedList => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        q::{family_target::family_target, target_value::TargetOrigin},
+        q::family_target::family_target,
         queried_entity::expanded_fixture::{FixtureInstance, target_json},
     };
+    use andromeda_ngsi_ld_query::filter::reading::family_reading::TargetOrigin;
     use serde_json::{Value, json};
 
     /// The target value one expanded attribute instance carries, panicking when

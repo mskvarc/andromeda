@@ -1,0 +1,155 @@
+---
+source: crates/andromeda-ngsi-ld-query/src/filter/reading/decision_table_tests.rs
+---
+x>5
+  Number               Holds(> 5)
+  NotANumber           Never                              ruling: numbers beyond the decimals follow XSD
+  PositiveInfinity     Always                             ruling: numbers beyond the decimals follow XSD
+  NegativeInfinity     Never                              ruling: numbers beyond the decimals follow XSD
+  String               Never
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Never
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           Never
+  ObjectArray          Never
+  AnyOneValue          SomeElement
+
+x>=5
+  Number               Holds(>= 5)
+  NotANumber           Never                              ruling: numbers beyond the decimals follow XSD
+  PositiveInfinity     Always                             ruling: numbers beyond the decimals follow XSD
+  NegativeInfinity     Never                              ruling: numbers beyond the decimals follow XSD
+  String               Never
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Never
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           Never
+  ObjectArray          Never
+  AnyOneValue          SomeElement
+
+x<5
+  Number               Holds(< 5)
+  NotANumber           Never                              ruling: numbers beyond the decimals follow XSD
+  PositiveInfinity     Never                              ruling: numbers beyond the decimals follow XSD
+  NegativeInfinity     Always                             ruling: numbers beyond the decimals follow XSD
+  String               Never
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Never
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           Never
+  ObjectArray          Never
+  AnyOneValue          SomeElement
+
+x<=5
+  Number               Holds(<= 5)
+  NotANumber           Never                              ruling: numbers beyond the decimals follow XSD
+  PositiveInfinity     Never                              ruling: numbers beyond the decimals follow XSD
+  NegativeInfinity     Always                             ruling: numbers beyond the decimals follow XSD
+  String               Never
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Never
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           Never
+  ObjectArray          Never
+  AnyOneValue          SomeElement
+
+x>"a"
+  Number               Never
+  NotANumber           Never
+  PositiveInfinity     Never
+  NegativeInfinity     Never
+  String               Holds(> "a")
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Never
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           Never
+  ObjectArray          Never
+  AnyOneValue          SomeElement
+
+x<="a"
+  Number               Never
+  NotANumber           Never
+  PositiveInfinity     Never
+  NegativeInfinity     Never
+  String               Holds(<= "a")
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Never
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           Never
+  ObjectArray          Never
+  AnyOneValue          SomeElement
+
+x>2024-01-15T00:00:00Z
+  Number               Never
+  NotANumber           Never
+  PositiveInfinity     Never
+  NegativeInfinity     Never
+  String               Never
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Holds(> 2024-01-15T00:00:00Z)
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           Never
+  ObjectArray          Never
+  AnyOneValue          SomeElement
+
+x<2024-01-15
+  Number               Never
+  NotANumber           Never
+  PositiveInfinity     Never
+  NegativeInfinity     Never
+  String               Never
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Never
+  Date                 Holds(< 2024-01-15)
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           Never
+  ObjectArray          Never
+  AnyOneValue          SomeElement
+
+x>=12:00:00Z
+  Number               Never
+  NotANumber           Never
+  PositiveInfinity     Never
+  NegativeInfinity     Never
+  String               Never
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Never
+  Date                 Never
+  Time                 Holds(>= 12:00:00Z)
+  Null                 Never
+  Object               Never
+  ValueArray           Never
+  ObjectArray          Never
+  AnyOneValue          SomeElement

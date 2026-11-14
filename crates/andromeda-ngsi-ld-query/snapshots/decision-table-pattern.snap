@@ -1,0 +1,36 @@
+---
+source: crates/andromeda-ngsi-ld-query/src/filter/reading/decision_table_tests.rs
+---
+x~="a.*"
+  Number               Never
+  NotANumber           Never
+  PositiveInfinity     Never
+  NegativeInfinity     Never
+  String               Holds(matches "a.*")
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Never
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           Never
+  ObjectArray          Never
+  AnyOneValue          SomeElement
+
+x!~="a.*"
+  Number               Never
+  NotANumber           Never
+  PositiveInfinity     Never
+  NegativeInfinity     Never
+  String               HoldsNot(matches "a.*")
+  RelationshipObject   Never
+  Boolean              Never
+  DateTime             Never
+  Date                 Never
+  Time                 Never
+  Null                 Never
+  Object               Never
+  ValueArray           Never
+  ObjectArray          Never
+  AnyOneValue          NoElement                          ruling: no value of a languageMap satisfies the asserted test

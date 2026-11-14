@@ -40,13 +40,14 @@ pub fn statement_snapshot(statement: &impl Statement) -> String {
 /// Assert that the statement `$statement` matches the snapshot `$name` of the
 /// calling crate, as [`statement_snapshot`] renders it.
 ///
-/// Expands to [`assert_named_snapshot!`](crate::assert_named_snapshot), so the
+/// Expands to `andromeda_architecture_checks::assert_named_snapshot!`, so the
 /// snapshot is named and placed as every snapshot of the workspace is, and
-/// the calling crate takes `insta` as a dev-dependency.
+/// the calling crate takes `insta` and `andromeda-architecture-checks` as
+/// dev-dependencies.
 #[macro_export]
 macro_rules! assert_statement_snapshot {
     ($name:expr, $statement:expr $(,)?) => {
-        $crate::assert_named_snapshot!($name, $crate::statement_snapshot::statement_snapshot(&$statement))
+        ::andromeda_architecture_checks::assert_named_snapshot!($name, $crate::statement_snapshot::statement_snapshot(&$statement))
     };
 }
 

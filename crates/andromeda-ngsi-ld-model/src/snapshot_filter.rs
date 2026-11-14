@@ -21,11 +21,15 @@ use andromeda_ngsi_ld_lexicon::{duration::Iso8601Duration, identifier::Identifie
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::{
     error::QueryError,
-    filter::{expression::Expr, path::QueryPath},
+    filter::{
+        expression::Expr,
+        path::QueryPath,
+        reading::family_reading::{MultiValueReading, TargetOrigin},
+    },
 };
 use andromeda_ngsi_ld_query_evaluation::q::{
     eval::evaluate_members,
-    target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue},
+    target_value::{ResolvedTarget, TargetValue},
 };
 use std::{borrow::Cow, str::FromStr};
 use strum::{Display as StrumDisplay, EnumString};

@@ -2,16 +2,21 @@
 
 use crate::{
     q::{
-        family_target::{TerminalKeyword, family_target, first_family_value},
-        target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue},
+        family_target::{family_target, first_family_value, terminal_value},
+        target_value::{ResolvedTarget, TargetValue},
     },
     queried_entity::{
         attribute_reading::{QueriedInstance, QueriedValueNode},
         value_item::ValueItem,
     },
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
-use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, path::AttrPath, target_language::LanguageSelector};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_query::filter::{
+    instance_metadata::InstanceMetadata,
+    path::AttrPath,
+    reading::family_reading::{MultiValueReading, TargetOrigin, TerminalKeyword, ValueKeys, family_reading},
+    target_language::LanguageSelector,
+};
 
 /// Where a walk down the `.` axis stands.
 ///
@@ -59,7 +64,7 @@ impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
     /// [`AttrPath::target_language`]).
     pub(crate) fn target_language<'p>(&self, path: &'p AttrPath) -> Option<(I, LanguageSelector<'p>)> {
         match self {
-            AxisPosition::Instance(instance) if instance.family() == AttributeType::LanguageProperty => {
+            AxisPosition::Instance(instance) if family_reading(instance.family()).keys == ValueKeys::Languages => {
                 path.target_language().map(|language| (*instance, language))
             }
             AxisPosition::Instance(_) | AxisPosition::Value(_) | AxisPosition::Metadata(..) => None,
@@ -79,7 +84,7 @@ impl<'a, I: QueriedInstance<'a>> AxisPosition<'a, I> {
     pub(crate) fn terminal(self) -> Option<ResolvedTarget<'a>> {
         let value = match self {
             AxisPosition::Instance(instance) => return family_target(instance),
-            AxisPosition::Value(item) => TerminalKeyword::Identifier.read(item)?,
+            AxisPosition::Value(item) => terminal_value(TerminalKeyword::Identifier, item)?,
             AxisPosition::Metadata(value) => value,
         };
         Some(ResolvedTarget {

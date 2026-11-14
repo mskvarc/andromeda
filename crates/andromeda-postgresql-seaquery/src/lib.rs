@@ -61,8 +61,6 @@ pub mod literal;
 pub mod lock_wait_bound;
 pub mod ltree;
 pub mod maintenance;
-#[cfg(feature = "test-support")]
-pub mod named_snapshot;
 pub mod numeric_special;
 pub mod open_instant;
 pub mod operator;

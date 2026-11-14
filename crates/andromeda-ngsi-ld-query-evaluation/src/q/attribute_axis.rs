@@ -195,10 +195,7 @@ fn resolve_position_value<'a, I: QueriedInstance<'a>>(
 #[cfg(test)]
 mod tests {
     use crate::{
-        q::{
-            attribute_axis::{addresses_element, resolve_targets},
-            target_value::TargetOrigin,
-        },
+        q::attribute_axis::{addresses_element, resolve_targets},
         queried_entity::{
             expanded_fixture::{FixtureEntity, target_json},
             linked_entities::NoLinkedEntities,
@@ -208,6 +205,7 @@ mod tests {
     use andromeda_ngsi_ld_query::filter::{
         language_matching::LanguageMatching,
         path::{AttrPath, QueryPath},
+        reading::family_reading::TargetOrigin,
         trailing_path::{MemberPath, TrailingPath},
         value_path::parse_attribute_path,
     };

@@ -1,6 +1,9 @@
 //! The name of an entity type (ETSI GS CIM 009 clause 5.2.4, `type` member).
 
-use crate::reference::{NgsiLdReference, NgsiLdReferenceError, validate_ngsi_ld_name};
+use crate::{
+    attribute_name::AttributeName,
+    reference::{NgsiLdReference, NgsiLdReferenceError, validate_ngsi_ld_name},
+};
 use compact_str::CompactString;
 use derive_more::{AsRef, Deref, Display, Into};
 use serde::{Deserialize, Serialize};
@@ -30,9 +33,20 @@ impl From<&NgsiLdReference> for EntityTypeName {
     }
 }
 
+// Hand-written: no derive converts between two newtypes. Total, because an
+// attribute name and an entity type name are checked against one grammar
+// (`validate_ngsi_ld_name`), so the type guard of a `q` hop, which the clause
+// 4.9 grammar reads as names, is a list of type names.
+impl From<&AttributeName> for EntityTypeName {
+    fn from(name: &AttributeName) -> EntityTypeName {
+        EntityTypeName(CompactString::from(name.as_str()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
+        attribute_name::AttributeName,
         entity_type_name::EntityTypeName,
         identifier_length::IDENTIFIER_BYTE_LIMIT,
         reference::{NgsiLdReference, NgsiLdReferenceError},
@@ -57,6 +71,14 @@ mod tests {
         for raw in ["xsd:decimal", "https://example.com/Vehicle", "Building"] {
             let reference: NgsiLdReference = raw.parse().expect(raw);
             pretty_assertions::assert_eq!(EntityTypeName::from(&reference), raw.parse::<EntityTypeName>().expect(raw));
+        }
+    }
+
+    #[test]
+    fn an_attribute_name_is_the_type_name_of_the_same_text() {
+        for raw in ["ex:Store", "https://example.com/Vehicle", "Building"] {
+            let name: AttributeName = raw.parse().expect(raw);
+            pretty_assertions::assert_eq!(EntityTypeName::from(&name), raw.parse::<EntityTypeName>().expect(raw));
         }
     }
 
