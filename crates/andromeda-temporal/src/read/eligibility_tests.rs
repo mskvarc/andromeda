@@ -5,17 +5,7 @@ use crate::{
     merged_parts::LocalPart,
     outcome::TemporalEntityIdOutcome,
     port::{
-        history_reader::{
-            AggregationPushdown,
-            HistoryVisibility,
-            RecordedAttributeShape,
-            RecordedValueKind,
-            ShapeHolders,
-            TemporalAggregationOutcome,
-            TemporalHistoryOutcome,
-            TemporalHistoryReader,
-            TemporalReaderCapabilities,
-        },
+        history_reader::{RecordedAttributeShape, RecordedValueKind, ShapeHolders, TemporalAggregationOutcome, TemporalHistoryOutcome, TemporalHistoryReader},
         in_effect_reads::InEffectReads,
         read_scope::{ScopeReach, TemporalReadScope, UnrecordedHistory},
     },
@@ -96,13 +86,6 @@ impl ShapedReader {
 
 #[async_trait]
 impl TemporalHistoryReader for ShapedReader {
-    fn capabilities(&self) -> TemporalReaderCapabilities {
-        TemporalReaderCapabilities {
-            aggregation: AggregationPushdown::OnTheFly,
-            history_visibility: HistoryVisibility::Immediate,
-        }
-    }
-
     async fn read_scope<'a>(&self, target: &'a ContextTarget, _reach: ScopeReach<'_>) -> Result<TemporalReadScope<'a>, TemporalError> {
         Ok(TemporalReadScope::new(target, UnrecordedHistory::Absent))
     }

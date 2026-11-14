@@ -5,9 +5,8 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     entity_snapshot::EntitySnapshot,
     error::EntityError,
-    port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
+    port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity},
     query_outcome::QueryOutcome,
-    storage_profile::StorageProfile,
 };
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -102,21 +101,17 @@ impl EntityReader for HeldEntities {
 
 #[async_trait]
 impl EntityQueryStore for HeldEntities {
-    fn profile(&self) -> &StorageProfile {
-        &StorageProfile::POSTGIS_LTREE
-    }
-
     async fn query_compiled(
         &self,
         _target: &ContextTarget,
         _compiled: &CompiledEntityQuery,
         _window: &PageWindow,
         _count: CountPolicy,
-    ) -> Result<QueryOutcome<StoredEntry<RetrievedEntity>>, EntityError> {
+    ) -> Result<QueryOutcome, EntityError> {
         Err(EntityError::StoreUnavailable)
     }
 
-    async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery, _window: &PageWindow) -> Result<QueryOutcome<Identifier>, EntityError> {
+    async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery, _window: &PageWindow) -> Result<Vec<Identifier>, EntityError> {
         Err(EntityError::StoreUnavailable)
     }
 }

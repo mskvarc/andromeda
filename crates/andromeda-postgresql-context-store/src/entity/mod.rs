@@ -29,8 +29,6 @@ pub mod params;
 mod port;
 /// One Entity a statement refused to write because it holds a later instant.
 pub mod predated_entity;
-/// Deciding what to ask PostgreSQL for, and what to hand back unanswered.
-pub mod pushdown;
 /// The statements that read one entity's current state.
 pub mod read;
 /// One Entity a delete statement removed, and when it committed.

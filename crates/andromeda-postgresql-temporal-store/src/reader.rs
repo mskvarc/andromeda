@@ -23,17 +23,7 @@ use andromeda_temporal::{
     merged_parts::LocalPart,
     outcome::TemporalEntityIdOutcome,
     port::{
-        history_reader::{
-            AggregationPushdown,
-            HistoryVisibility,
-            RecordedAttributeShape,
-            RecordedValueKind,
-            ShapeHolders,
-            TemporalAggregationOutcome,
-            TemporalHistoryOutcome,
-            TemporalHistoryReader,
-            TemporalReaderCapabilities,
-        },
+        history_reader::{RecordedAttributeShape, RecordedValueKind, ShapeHolders, TemporalAggregationOutcome, TemporalHistoryOutcome, TemporalHistoryReader},
         in_effect_reads::InEffectReads,
         read_scope::{ScopeReach, TemporalReadScope},
     },
@@ -116,17 +106,6 @@ const fn neutral_attribute_shape(stored: StoredAttributeShape) -> RecordedAttrib
 
 #[async_trait]
 impl TemporalHistoryReader for TemporalRepository {
-    fn capabilities(&self) -> TemporalReaderCapabilities {
-        TemporalReaderCapabilities {
-            // Aggregation runs over the raw hypertable. A continuous aggregate
-            // has to bucket on the partition column, which is `recorded_at`, and
-            // clause 5.2.21 admits no such Temporal Property, so a materialised
-            // aggregate would answer a question the API cannot ask.
-            aggregation: AggregationPushdown::OnTheFly,
-            history_visibility: HistoryVisibility::Immediate,
-        }
-    }
-
     async fn read_scope<'a>(&self, target: &'a ContextTarget, reach: ScopeReach<'_>) -> Result<TemporalReadScope<'a>, TemporalError> {
         self.scope_of(target, reach).await.map_err(TemporalError::from)
     }

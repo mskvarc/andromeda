@@ -394,7 +394,6 @@ dependencies = [
  "pretty_assertions",
  "serde_json",
  "serde_urlencoded",
- "strum",
  "thiserror 2.0.21",
  "tokio",
  "tracing",

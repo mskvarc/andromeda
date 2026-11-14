@@ -9,7 +9,6 @@ use crate::{
     configured_policy::{filter_complexity_limits, geometry_census_limits},
     entity_snapshot::EntitySnapshot,
     error::EntityError,
-    pagination_outcome::PaginationOutcome,
     port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
     query::{
         EntityQueryService,
@@ -17,9 +16,7 @@ use crate::{
         retrieval::RetrievalNarrowing,
     },
     query_outcome::QueryOutcome,
-    query_residual::ResidualFilter,
     spatial_acceleration::SpatialAcceleration,
-    storage_profile::StorageProfile,
 };
 use andromeda_configuration::schema::request_limits::RequestLimitsConfig;
 use andromeda_context_space::context_target::ContextTarget;
@@ -91,25 +88,20 @@ impl EntityReader for RetrievalStore {
 
 #[async_trait]
 impl EntityQueryStore for RetrievalStore {
-    fn profile(&self) -> &StorageProfile {
-        &StorageProfile::POSTGIS_LTREE
-    }
-
     async fn query_compiled(
         &self,
         _target: &ContextTarget,
         _compiled: &CompiledEntityQuery,
         _window: &PageWindow,
         _count: CountPolicy,
-    ) -> Result<QueryOutcome<StoredEntry<RetrievedEntity>>, EntityError> {
+    ) -> Result<QueryOutcome, EntityError> {
         Ok(QueryOutcome {
             rows: vec![StoredEntry::Read(self.retrieved.clone())],
-            unapplied: ResidualFilter::default(),
-            pagination: PaginationOutcome::Applied { total: None },
+            total_count: None,
         })
     }
 
-    async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery, _window: &PageWindow) -> Result<QueryOutcome<Identifier>, EntityError> {
+    async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery, _window: &PageWindow) -> Result<Vec<Identifier>, EntityError> {
         Err(unexpected("query_ids"))
     }
 }

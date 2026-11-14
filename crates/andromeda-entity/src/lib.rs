@@ -48,8 +48,6 @@ pub mod document_census;
 mod entity_admission_tests;
 /// The invariants entity policy relies on.
 pub mod entity_invariant;
-/// The concrete reasons an entity operation is unsupported by the storage backend.
-pub mod entity_operation_unsupported;
 /// Versioned entity snapshots used by optimistic writes.
 pub mod entity_snapshot;
 /// Whether a stored entity is the one a clause 4.17 type selector names.
@@ -108,27 +106,19 @@ pub mod notification_plan;
 /// A recording notification harness shared by the durable-match tests.
 #[cfg(test)]
 mod notification_recording_harness;
-/// Store-applied or policy-applied pagination state.
-pub mod pagination_outcome;
 /// Caller-shaped ports consumed by entity policy.
 pub mod port;
 /// Purging attributes from a set of entities.
 pub mod purge;
 /// Entity query and retrieval operations.
 pub mod query;
-/// Query rows and unapplied work returned by a store.
+/// The page a store answered a compiled entity query with.
 pub mod query_outcome;
-/// Structural representation of predicates left for policy evaluation.
-pub mod query_residual;
 /// Turning a read plus a computation into an optimistic write.
 pub mod read_modify_write;
 /// The ports a recording entity service is wired to.
 #[cfg(test)]
 mod recording_ports;
-/// Evaluating predicates a store declined to apply.
-pub mod residual_filter;
-/// One named query predicate a store may decline.
-pub mod residual_predicate;
 /// Work a batch write produces but need not finish before answering.
 pub mod side_effect;
 /// Bounded at-least-once drain for durable entity side effects.
@@ -155,8 +145,6 @@ pub mod spatial_watermark;
 /// Every write a broker process commits is visible to its next geo query.
 #[cfg(test)]
 mod spatial_write_visibility;
-/// Query capabilities of one entity store.
-pub mod storage_profile;
 /// Tests that the entity value limit holds for the entity a write stores.
 #[cfg(test)]
 mod stored_budget_recording;

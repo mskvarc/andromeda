@@ -8,15 +8,12 @@ use crate::{
     outcome::TemporalEntityIdOutcome,
     port::{
         history_reader::{
-            AggregationPushdown,
-            HistoryVisibility,
             RecordedAttributeShape,
             ShapeHolders,
             TemporalAggregationOutcome,
             TemporalHistoryObservation,
             TemporalHistoryOutcome,
             TemporalHistoryReader,
-            TemporalReaderCapabilities,
         },
         in_effect_reads::InEffectReads,
         mutation_barrier::TemporalMutationBarrier,
@@ -68,13 +65,6 @@ fn unsupported(method: &str) -> TemporalError {
 
 #[async_trait]
 impl TemporalHistoryReader for StubBroker {
-    fn capabilities(&self) -> TemporalReaderCapabilities {
-        TemporalReaderCapabilities {
-            aggregation: AggregationPushdown::OnTheFly,
-            history_visibility: HistoryVisibility::Immediate,
-        }
-    }
-
     async fn read_scope<'a>(&self, target: &'a ContextTarget, _reach: ScopeReach<'_>) -> Result<TemporalReadScope<'a>, TemporalError> {
         self.scope_reads.fetch_add(1, Ordering::Relaxed);
         Ok(TemporalReadScope::new(target, UnrecordedHistory::Absent))

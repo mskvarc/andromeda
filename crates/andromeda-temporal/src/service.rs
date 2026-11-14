@@ -42,7 +42,7 @@ pub struct TemporalService {
     pub(crate) mutator: Arc<dyn TemporalMutator>,
     /// Atomic semantic write boundary used by create and append operations.
     pub(crate) writes: Arc<dyn ContextCommitter>,
-    /// Base-entity reads used for type metadata and residual completion.
+    /// The current state of the Entity a Temporal Evolution write folds into.
     pub(crate) entity_reader: Arc<dyn EntityReader>,
     /// The wait between two attempts of a write a concurrent writer superseded.
     pub(crate) retry_delay: Arc<dyn RetryDelay>,

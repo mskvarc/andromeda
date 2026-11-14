@@ -26,14 +26,8 @@ pub mod notification_join;
 pub mod projection_compilation;
 /// What a clause 4.21 projection leaves of an entity.
 pub mod projection_remainder;
-/// Refusing a query the store cannot narrow at all.
-pub mod pushdown_refusal;
 /// Resolving a Linked Entity the local store does not hold (clause 4.5.23.1).
 pub mod remote_linked;
-/// Finishing a query a store did not finish.
-pub mod residual;
-/// Proof that declining a predicate does not change the answer.
-pub mod residual_conformance;
 /// The read operations themselves.
 pub mod retrieval;
 /// Clause 5.6.3 retrieval over a store holding one entity.

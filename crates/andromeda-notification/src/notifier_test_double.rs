@@ -9,13 +9,10 @@ use andromeda_entity::{
     configured_policy::{filter_complexity_limits, geometry_census_limits},
     entity_snapshot::EntitySnapshot,
     error::EntityError,
-    pagination_outcome::PaginationOutcome,
     port::{payload_pages::EntityPayloadPages, query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
     query::EntityQueryService,
     query_outcome::QueryOutcome,
-    query_residual::ResidualFilter,
     spatial_acceleration::SpatialAcceleration,
-    storage_profile::StorageProfile,
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
@@ -174,30 +171,21 @@ impl EntityReader for NoEntities {
 
 #[async_trait]
 impl EntityQueryStore for NoEntities {
-    fn profile(&self) -> &StorageProfile {
-        &StorageProfile::POSTGIS_LTREE
-    }
-
     async fn query_compiled(
         &self,
         _target: &ContextTarget,
         _compiled: &CompiledEntityQuery,
         _window: &PageWindow,
         _count: CountPolicy,
-    ) -> Result<QueryOutcome<StoredEntry<RetrievedEntity>>, EntityError> {
+    ) -> Result<QueryOutcome, EntityError> {
         Ok(QueryOutcome {
             rows: Vec::new(),
-            unapplied: ResidualFilter::default(),
-            pagination: PaginationOutcome::Applied { total: None },
+            total_count: None,
         })
     }
 
-    async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery, _window: &PageWindow) -> Result<QueryOutcome<Identifier>, EntityError> {
-        Ok(QueryOutcome {
-            rows: Vec::new(),
-            unapplied: ResidualFilter::default(),
-            pagination: PaginationOutcome::Applied { total: None },
-        })
+    async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery, _window: &PageWindow) -> Result<Vec<Identifier>, EntityError> {
+        Ok(Vec::new())
     }
 }
 

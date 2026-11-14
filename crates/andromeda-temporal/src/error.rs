@@ -4,7 +4,6 @@ use crate::{
     result_bound::ResultBound,
     temporal_invariant::TemporalInvariant,
     temporal_not_found_reason::TemporalNotFoundReason,
-    temporal_operation_unsupported::TemporalOperationUnsupported,
     temporal_validation_reason::TemporalValidationReason,
     unsettled_history::UnsettledHistory,
 };
@@ -29,9 +28,6 @@ pub enum TemporalError {
     /// The requested temporal resource does not exist.
     #[error("temporal resource not found: {0}")]
     NotFound(#[from] TemporalNotFoundReason),
-    /// The selected history capability cannot safely answer the request.
-    #[error("temporal operation is not supported: {0}")]
-    OperationNotSupported(#[from] TemporalOperationUnsupported),
     /// A temporal operation counts more than a configured bound admits.
     ///
     /// The operation is refused whole rather than partially executed: the
@@ -303,7 +299,6 @@ impl TemporalError {
             | EntityError::MemberNotFound(_)
             | EntityError::AlreadyExists { .. }
             | EntityError::Contention { .. }
-            | EntityError::OperationNotSupported(_)
             | EntityError::PayloadBudget(_)
             | EntityError::AttributeNesting(_)
             | EntityError::JsonLd(_)

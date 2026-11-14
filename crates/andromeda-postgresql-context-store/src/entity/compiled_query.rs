@@ -3,7 +3,7 @@
 
 use crate::{
     current_attribute::read::RowSelection,
-    entity::{mapper::stored_uri, pushdown, repo::EntityRepository, unreadable_entity::stored_entry},
+    entity::{mapper::stored_uri, repo::EntityRepository, unreadable_entity::stored_entry},
     error::ContextStoreError,
     store_invariant::StoreInvariant,
 };
@@ -50,13 +50,6 @@ impl EntityRepository {
     /// from-end cursor page, read descending so one index scan serves it, is
     /// reversed here.
     ///
-    /// What is sent and what is handed back are decided by this store's
-    /// [`StorageProfile`](andromeda_entity::storage_profile::StorageProfile).
-    /// With `PostGIS` and `ltree` every predicate is sent and nothing is handed
-    /// back, so the residual is always empty here, but the decision is read
-    /// off the profile rather than assumed, which is what a store without
-    /// those extensions changes.
-    ///
     /// # Errors
     ///
     /// Returns [`ContextStoreError`] when a name the query reads cannot be
@@ -69,11 +62,10 @@ impl EntityRepository {
         compiled: &CompiledEntityQuery,
         window: &PageWindow,
         count: CountPolicy,
-    ) -> Result<QueryOutcome<StoredEntry<RetrievedEntity>>, ContextStoreError> {
-        let planned = pushdown::plan(compiled, EntityRepository::PROFILE, window, count);
-        self.ensure_collations(&planned.query.ordering).await?;
-        let names = self.resolve_names(&planned.query).await?;
-        let built = entity_sql::build_query(target, &planned.query, &planned.window, planned.count, &names)?;
+    ) -> Result<QueryOutcome, ContextStoreError> {
+        self.ensure_collations(&compiled.ordering).await?;
+        let names = self.resolve_names(compiled).await?;
+        let built = entity_sql::build_query(target, compiled, window, count, &names)?;
 
         let head_rows = self.reads.acquire().await?.fetch_planned(&built.select, built.planning).await?;
         let window_count = page_total(&head_rows, matches!(built.total, EntityTotal::OnPageRows { .. }))?;
@@ -81,7 +73,7 @@ impl EntityRepository {
             EntityTotal::OnPageRows { uncounted: total } | EntityTotal::Counted(total) if total.walked.is_some() => page_step(&head_rows)?,
             EntityTotal::Omitted | EntityTotal::OnPageRows { .. } | EntityTotal::Counted(_) => None,
         };
-        let returned = ReturnedAttributes::of(&planned.query.projection, &planned.query.selection.attrs);
+        let returned = ReturnedAttributes::of(&compiled.projection, &compiled.selection.attrs);
         let selection = RowSelection::of(&returned, &names.attributes);
         let mut rows: Vec<StoredEntry<RetrievedEntity>> = self
             .entities_of_heads(PoolLane::Reads, target, &head_rows, &selection)
@@ -101,7 +93,7 @@ impl EntityRepository {
             EntityTotal::Counted(count) => Some(self.count_matches(&count.for_step(step), built.total_planning).await?),
         };
 
-        Ok(planned.outcome(rows, total_count))
+        Ok(QueryOutcome { rows, total_count })
     }
 
     /// Run a `COUNT` statement as `planning` asks, on a connection of the
@@ -121,25 +113,16 @@ impl EntityRepository {
     /// Execute a compiled query and return only the identifiers of the
     /// matching entities `window` selects, in the order they are presented.
     ///
-    /// Planned the same way [`EntityRepository::query_compiled`] is; the
-    /// statement never counts, so the outcome carries no total either way.
-    ///
     /// # Errors
     ///
     /// Returns [`ContextStoreError`] when a name the query reads cannot be
     /// resolved through the dictionaries, when the statement cannot be rendered
     /// from the compiled query, when the select fails, or when a returned
     /// identifier is no longer a valid URI.
-    pub async fn query_ids(
-        &self,
-        target: &ContextTarget,
-        compiled: &CompiledEntityQuery,
-        window: &PageWindow,
-    ) -> Result<QueryOutcome<Identifier>, ContextStoreError> {
-        let planned = pushdown::plan(compiled, EntityRepository::PROFILE, window, CountPolicy::Omit);
-        self.ensure_collations(&planned.query.ordering).await?;
-        let names = self.resolve_names(&planned.query).await?;
-        let statement = entity_sql::build_ids_query(target, &planned.query, &planned.window, &names)?;
+    pub async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery, window: &PageWindow) -> Result<Vec<Identifier>, ContextStoreError> {
+        self.ensure_collations(&compiled.ordering).await?;
+        let names = self.resolve_names(compiled).await?;
+        let statement = entity_sql::build_ids_query(target, compiled, window, &names)?;
 
         let rows = self.fetch_on(PoolLane::Reads, &statement.select).await?;
         let mut ids: Vec<Identifier> = rows
@@ -147,8 +130,7 @@ impl EntityRepository {
             .map(|row| -> Result<Identifier, ContextStoreError> { stored_uri(row.try_get("id")?) })
             .collect::<Result<_, _>>()?;
         statement.read_order.present(&mut ids);
-        let ids = ids;
-        Ok(planned.outcome(ids, None))
+        Ok(ids)
     }
 
     /// Resolve the attribute and entity type IRIs a compiled query reads by
