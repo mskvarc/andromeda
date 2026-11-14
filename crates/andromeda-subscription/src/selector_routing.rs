@@ -52,7 +52,7 @@ impl SelectorRouting {
     /// An id pattern is not indexable, so a selector carrying one is placed by
     /// its type alone (or in the wildcard when the type is not a single name);
     /// the matcher applies the pattern afterwards. A selector with a boolean
-    /// type expression and an exact id is placed by id alone, since the id is
+    /// type expression and exact ids is placed by its ids alone, since they are
     /// the more selective half and the matcher re-checks the type.
     #[must_use]
     pub fn of(compiled: &CompiledSubscription) -> SelectorRouting {
@@ -67,19 +67,24 @@ impl SelectorRouting {
                 ordinal,
                 shape,
             };
-            match (selector.type_.as_single_type(), selector.id.as_ref()) {
-                (Some(type_name), Some(id)) => {
+            // A selector listing several identifiers occupies the bucket of
+            // each, and an event hits the bucket of its own identifier.
+            match (selector.type_.as_single_type(), selector.id.as_deref().unwrap_or_default()) {
+                (Some(type_name), ids @ [_, ..]) => {
                     // clone: the index owns its bucket keys, which the compiled subscription keeps
                     routing.by_type.push((type_name.clone(), placement(SelectorShape::TypeAndId)));
-                    routing.by_entity_id.push((id.clone(), placement(SelectorShape::TypeAndId)));
+                    routing
+                        .by_entity_id
+                        .extend(ids.iter().map(|id| (id.clone(), placement(SelectorShape::TypeAndId))));
                 }
-                (Some(type_name), None) => {
+                (Some(type_name), []) => {
                     routing.by_type.push((type_name.clone(), placement(SelectorShape::TypeOnly))); // clone: the index takes an owned key while the compiled subscription keeps its own
                 }
-                (None, Some(id)) => {
-                    routing.by_entity_id.push((id.clone(), placement(SelectorShape::IdOnly))); // clone: the index takes an owned key while the compiled subscription keeps its own
+                (None, ids @ [_, ..]) => {
+                    // clone: the index takes owned keys while the compiled subscription keeps its own
+                    routing.by_entity_id.extend(ids.iter().map(|id| (id.clone(), placement(SelectorShape::IdOnly))));
                 }
-                (None, None) => routing.wildcard = true,
+                (None, []) => routing.wildcard = true,
             }
         }
         routing
@@ -108,9 +113,14 @@ mod tests {
         panic!("invalid test fixture: {}", error.to_string())
     }
 
-    fn selector(type_expression: &str, id: Option<&str>, id_pattern: Option<&str>) -> Result<EntitySelector, SubscriptionError> {
+    fn selector(type_expression: &str, ids: &[&str], id_pattern: Option<&str>) -> Result<EntitySelector, SubscriptionError> {
+        let ids = ids
+            .iter()
+            .map(|id| id.parse())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| internal(&error))?;
         Ok(EntitySelector {
-            id: id.map(str::parse).transpose().map_err(|error| internal(&error))?,
+            id: (!ids.is_empty()).then_some(ids),
             id_pattern: id_pattern.map(str::parse).transpose().map_err(|error| internal(&error))?,
             type_: type_expression.parse().map_err(|error| internal(&error))?,
         })
@@ -169,7 +179,7 @@ mod tests {
 
     #[test]
     fn a_single_type_with_an_exact_id_is_placed_in_both_buckets_with_the_conjunctive_shape() -> Result<(), SubscriptionError> {
-        let routing = SelectorRouting::of(&subscription(vec![selector("Building", Some("urn:ngsi-ld:E:1"), None)?])?);
+        let routing = SelectorRouting::of(&subscription(vec![selector("Building", &["urn:ngsi-ld:E:1"], None)?])?);
         assert!(!routing.wildcard);
         assert_eq!(routing.by_type.len(), 1);
         assert_eq!(routing.by_entity_id.len(), 1);
@@ -178,12 +188,39 @@ mod tests {
         Ok(())
     }
 
+    /// Table 5.2.33-1: a selector whose `id` lists several identifiers is
+    /// reached through the bucket of each.
+    #[test]
+    fn a_selector_listing_several_ids_is_placed_in_the_bucket_of_each() -> Result<(), SubscriptionError> {
+        let routing = SelectorRouting::of(&subscription(vec![
+            selector("Building", &["urn:ngsi-ld:E:1", "urn:ngsi-ld:E:2"], None)?,
+            selector("Building|Vehicle", &["urn:ngsi-ld:E:3", "urn:ngsi-ld:E:4"], None)?,
+        ])?);
+        assert!(!routing.wildcard);
+        assert_eq!(routing.by_type.len(), 1);
+        let placed: Vec<(&str, usize, SelectorShape)> = routing
+            .by_entity_id
+            .iter()
+            .map(|(id, placement)| (id.as_str(), placement.ordinal, placement.shape))
+            .collect();
+        assert_eq!(
+            placed,
+            [
+                ("urn:ngsi-ld:E:1", 0, SelectorShape::TypeAndId),
+                ("urn:ngsi-ld:E:2", 0, SelectorShape::TypeAndId),
+                ("urn:ngsi-ld:E:3", 1, SelectorShape::IdOnly),
+                ("urn:ngsi-ld:E:4", 1, SelectorShape::IdOnly),
+            ]
+        );
+        Ok(())
+    }
+
     #[test]
     fn an_id_pattern_does_not_index_and_a_boolean_type_falls_back_per_selector() -> Result<(), SubscriptionError> {
         let routing = SelectorRouting::of(&subscription(vec![
-            selector("Building", None, Some("urn:ngsi-ld:E:.*"))?,
-            selector("Building|Vehicle", Some("urn:ngsi-ld:E:2"), None)?,
-            selector("Building|Vehicle", None, Some(".*"))?,
+            selector("Building", &[], Some("urn:ngsi-ld:E:.*"))?,
+            selector("Building|Vehicle", &["urn:ngsi-ld:E:2"], None)?,
+            selector("Building|Vehicle", &[], Some(".*"))?,
         ])?);
         assert!(routing.wildcard, "the boolean type without an id must route every event");
         assert_eq!(routing.by_type.len(), 1);

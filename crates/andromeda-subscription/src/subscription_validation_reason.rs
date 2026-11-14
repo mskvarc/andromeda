@@ -67,6 +67,10 @@ pub enum SubscriptionValidationReason {
     /// `entities` was present but empty.
     #[error("entities must not be empty")]
     EntitiesEmpty,
+    /// An entity selector's `id` was an empty array, which names no entity
+    /// (Table 5.2.33-1).
+    #[error("the id of an entity selector must not be an empty array")]
+    SelectorIdEmpty,
     /// Neither `entities` nor `watchedAttributes` was given on a non-local
     /// subscription (clause 5.8.1.4).
     #[error("at least one of 'entities' or 'watchedAttributes' is required, unless 'localOnly' is true")]

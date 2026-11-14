@@ -140,7 +140,7 @@ fn build_subscription(ordinal: usize, desc: &SubscriptionDesc) -> Result<Compile
         .iter()
         .map(|selector| {
             Ok(EntitySelector {
-                id: selector.id.map(entity_uri).transpose()?,
+                id: selector.id.map(entity_uri).transpose()?.map(|id| vec![id]),
                 id_pattern: selector
                     .id_pattern
                     .map(|index| ID_PATTERNS[index].parse().map_err(|error| internal(&error)))
