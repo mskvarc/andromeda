@@ -7,9 +7,11 @@ use crate::{
     registration_validation_reason::RegistrationValidationReason,
 };
 use andromeda_jsonld::error::JsonLdError;
+use andromeda_linked_retrieval::admission::AdmissionError;
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryOverLimit;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_persistence_failure::{persistence_failure::PersistenceFailure, retryability::RetryCause};
 use thiserror::Error;
 
@@ -71,6 +73,15 @@ pub enum RegistrationError {
     /// An internal registration invariant could not be satisfied.
     #[error("registration invariant failed: {0}")]
     Internal(#[from] RegistrationInvariant),
+}
+
+/// Manual rather than `#[from]`: three conversions compose, which no derive
+/// states. A Linked Entity hop a discovery query refuses is a query
+/// parameter the request cannot carry.
+impl From<AdmissionError> for RegistrationError {
+    fn from(refusal: AdmissionError) -> RegistrationError {
+        RegistrationError::Validation(RegistrationValidationReason::QueryParameters(ParameterError::from(refusal)))
+    }
 }
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.

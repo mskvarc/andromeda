@@ -5,6 +5,7 @@
 use crate::{
     error::TemporalError,
     linked::TemporalLinkedJoin,
+    query_reading::QueryReading,
     remote_linked::{HeldPart, RemoteTemporalLinkedSource, TemporalLinkedWindow},
     service::TemporalService,
     stub_broker::{StubBroker, live_target, service, service_over, uri},
@@ -12,6 +13,7 @@ use crate::{
 use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_linked_retrieval::{
+    admission::{LinkedOperation, TemporalJoin},
     keyword::Keyword,
     plan::JoinPlan,
     representation::LinkedRepresentation,
@@ -20,7 +22,10 @@ use andromeda_linked_retrieval::{
 use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time_rel::TimeRel};
 use andromeda_ngsi_ld_model::temporal::{temporal_body::TemporalBody, temporal_entity::TemporalEntity, temporal_history::TemporalHistory};
-use andromeda_ngsi_ld_query::projection::{attrs_selection::AttrsAdmission, grammar::ProjectionList};
+use andromeda_ngsi_ld_query::{
+    filter::language_targeting::LanguageTargeting,
+    projection::{attrs_selection::AttrsAdmission, grammar::ProjectionList},
+};
 use andromeda_ngsi_ld_render::temporal::temporal_evolutions::TemporalEvolutions;
 use andromeda_ngsi_ld_representation::{
     join_mode::JoinMode,
@@ -204,6 +209,16 @@ async fn remote_history(body: &TemporalBody) -> TemporalHistory {
     TemporalHistory::Instances(expansion.temporal(entity).await.expect("the answer expands"))
 }
 
+/// How a temporal query under the temporal Linked Entity extension reads
+/// its text under `context`.
+const fn extended_reading(context: &ContextSpec) -> QueryReading<'_> {
+    QueryReading {
+        context,
+        language_targeting: LanguageTargeting::Specification,
+        operation: LinkedOperation::QueryTemporal(TemporalJoin::Extended),
+    }
+}
+
 /// A Linked Entity holding nothing but its identity.
 fn bare(id: &str) -> TemporalBody {
     body(&json!({"id": id, "type": "Thing"}))
@@ -212,7 +227,13 @@ fn bare(id: &str) -> TemporalBody {
 /// The join `params` asks for from `roots`.
 async fn joined(service: &TemporalService, roots: &[TemporalBody], params: &TemporalQueryParameters) -> TemporalLinkedJoin {
     service
-        .join_linked_temporal(&live_target(), roots, params, &context(), AttrsAdmission::ReifiedScopeAdmitted)
+        .join_linked_temporal(
+            &live_target(),
+            roots,
+            params,
+            extended_reading(&context()),
+            AttrsAdmission::ReifiedScopeAdmitted,
+        )
         .await
         .expect("resolves")
         .expect("the request asked for a join")
@@ -256,7 +277,13 @@ async fn no_retrieving_join_traverses_nothing() {
     params.join = Some(JoinMode::None);
     let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
     let joined = service(StubBroker::new([(uri("urn:ngsi-ld:T:B"), Vec::new())]))
-        .join_linked_temporal(&live_target(), &roots, &params, &context(), AttrsAdmission::ReifiedScopeAdmitted)
+        .join_linked_temporal(
+            &live_target(),
+            &roots,
+            &params,
+            extended_reading(&context()),
+            AttrsAdmission::ReifiedScopeAdmitted,
+        )
         .await
         .expect("resolves");
     assert!(joined.is_none());

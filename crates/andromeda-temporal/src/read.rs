@@ -53,7 +53,15 @@ impl TemporalService {
             params.validate(TemporalQueryOperation::Retrieve, self.linked_retrieval)?;
 
             let compiled = self
-                .compile_temporal_query(params, context, self.language_targeting(), AttrsAdmission::AttributeNamesOnly)
+                .compile_temporal_query(
+                    params,
+                    QueryReading {
+                        context,
+                        language_targeting: self.language_targeting(),
+                        operation: TemporalQueryOperation::Retrieve.linked(self.linked_retrieval),
+                    },
+                    AttrsAdmission::AttributeNamesOnly,
+                )
                 .await?;
             if shapes_decide_eligibility(&compiled) {
                 let every = self.reader.read_scope(target, ScopeReach::Every).await?;
@@ -174,13 +182,10 @@ impl TemporalService {
         identifiers: RequestedIdentifiers,
         filters: CandidateFilters,
     ) -> Result<Vec<Identifier>, TemporalError> {
-        let QueryReading { context, language_targeting } = reading;
         let timer = temporal::start(TemporalOperation::QueryIds);
         let result = async {
             params.validate(TemporalQueryOperation::Query, self.linked_retrieval)?;
-            let mut compiled = self
-                .compile_temporal_query(params, context, language_targeting, AttrsAdmission::ReifiedScopeAdmitted)
-                .await?;
+            let mut compiled = self.compile_temporal_query(params, reading, AttrsAdmission::ReifiedScopeAdmitted).await?;
             match identifiers {
                 RequestedIdentifiers::Narrow => {}
                 RequestedIdentifiers::Ignore => compiled.entities.without_identifier_narrowing(),

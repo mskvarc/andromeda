@@ -13,7 +13,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
-use andromeda_linked_retrieval::narrowing::list::ListInForce;
+use andromeda_linked_retrieval::{admission::LinkedOperation, narrowing::list::ListInForce};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
@@ -153,7 +153,9 @@ impl EntityQueryService {
     ) -> Result<(Vec<StoredEntry<RetrievedEntity>>, Option<i64>), EntityError> {
         let timer = entity::start(EntityOperation::Query);
         let result: Result<(Vec<StoredEntry<RetrievedEntity>>, Option<i64>), EntityError> = async {
-            let compiled = self.compile_query_cached(query, context, language_targeting).await?;
+            let compiled = self
+                .compile_query_cached(query, context, language_targeting, LinkedOperation::QueryEntities)
+                .await?;
             // The spatial index narrows only the default `location` instances,
             // so the store still evaluates the geo-query over what it narrowed.
             let narrowed = self.spatial_prefilter(target, &compiled).await;

@@ -17,11 +17,12 @@ use crate::{
     error::TemporalError,
     linked::temporal_linked_source::TemporalLinkedSource,
     port::read_scope::ScopeReach,
+    query_reading::QueryReading,
     remote_linked::TemporalLinkedWindow,
     service::TemporalService,
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_jsonld::term_expansion::ContextualExpander;
 use andromeda_linked_retrieval::{
     graph::{LinkedGraph, RootEdges},
     join::{RetrievingJoin, TraversalBounds},
@@ -98,9 +99,10 @@ impl TemporalService {
         target: &ContextTarget,
         roots: &[TemporalBody],
         params: &TemporalQueryParameters,
-        context: &ContextSpec,
+        reading: QueryReading<'_>,
         attrs_admission: AttrsAdmission,
     ) -> Result<Option<TemporalLinkedJoin>, TemporalError> {
+        let context = reading.context;
         let Some(join) = RetrievingJoin::from_mode(params.join) else {
             return Ok(None);
         };
@@ -108,8 +110,10 @@ impl TemporalService {
         let compiled = self
             .compile_temporal_query(
                 &window.to_parameters(),
-                context,
-                self.language_targeting(),
+                QueryReading {
+                    language_targeting: self.language_targeting(),
+                    ..reading
+                },
                 AttrsAdmission::ReifiedScopeAdmitted,
             )
             .await?;

@@ -22,6 +22,7 @@ use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
 use andromeda_ngsi_ld_query::temporal::window::TemporalWindow;
+use andromeda_ngsi_ld_request::query::temporal::operation::TemporalQueryOperation;
 use andromeda_temporal::{
     merged_parts::{EntityParts, LocalPart},
     query_reading::QueryReading,
@@ -164,6 +165,7 @@ impl RetrievalRound<'_> {
         let reading = QueryReading {
             context: self.request.context,
             language_targeting: self.service.language_targeting(),
+            operation: TemporalQueryOperation::Retrieve.linked(self.service.linked_retrieval()),
         };
         let parts = vec![EntityParts {
             entity_id: self.request.entity_id.clone(),

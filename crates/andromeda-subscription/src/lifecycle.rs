@@ -178,7 +178,7 @@ where
             // member initialised from the `@context` applicable to it, so by the
             // time the request is read the member reflects that initialisation.
             notification_context::initialize_notification_context(&mut request.jsonld_context, subscription_context, &self.engine).await?;
-            self.variant.expand_terms(&mut request, context).await?;
+            self.variant.expand_terms(&mut request, context, self.filter_admission).await?;
 
             let status = compute_updated_status(SubscriptionStatus::Active, &requested_status_change(&request));
             let values = SubscriptionWriteValues::from_create(request, self.variant.dataset_id_policy())?;
@@ -237,7 +237,7 @@ where
 
             self.admit_jsonld_context(request.jsonld_context.as_set()).await?;
 
-            self.variant.expand_terms(&mut request, context).await?;
+            self.variant.expand_terms(&mut request, context, self.filter_admission).await?;
 
             let deleted = DeletedMembers::of(&request);
             let existing = self.get(target, id).await?;

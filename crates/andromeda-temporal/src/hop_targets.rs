@@ -27,6 +27,7 @@ use crate::{
     hop_target::HopTarget,
     in_effect_entity::InEffectEntity,
     port::read_scope::{ScopeReach, TemporalReadScope},
+    query_reading::QueryReading,
     read::rendered_entity::HistoryPresence,
     remote_linked::TemporalLinkedWindow,
     service::TemporalService,
@@ -145,7 +146,7 @@ impl TemporalService {
         &self,
         target: &ContextTarget,
         params: &TemporalQueryParameters,
-        context: &ContextSpec,
+        query_reading: QueryReading<'_>,
         (hops, reads): (&[Vec<&AttributeName>], &[HopReads<'_>]),
         parts: &[&TemporalDocument],
     ) -> Result<HopReading, TemporalError> {
@@ -175,8 +176,10 @@ impl TemporalService {
             let compiled = self
                 .compile_temporal_query(
                     &window.to_parameters(),
-                    context,
-                    self.language_targeting(),
+                    QueryReading {
+                        language_targeting: self.language_targeting(),
+                        ..query_reading
+                    },
                     AttrsAdmission::ReifiedScopeAdmitted,
                 )
                 .await?;
@@ -186,7 +189,7 @@ impl TemporalService {
                 compiled: &compiled,
                 window: &window,
                 in_effect: level_reads.map_or(&[][..], |level| level.attributes.as_slice()),
-                context,
+                context: query_reading.context,
             };
             let level = self.read_target_level(&read, &frontier, &seen).await?;
             frontier = objects_of(level.targets.iter().chain(&level.in_effect), hops.get(depth));

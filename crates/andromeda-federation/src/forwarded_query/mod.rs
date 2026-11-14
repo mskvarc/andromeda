@@ -32,9 +32,9 @@ use andromeda_ngsi_ld_model::{
     registration::{ContextSourceRegistration, info::RegistrationInfo},
     registration_matching::entity_specification::EntitySpecification,
 };
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, entity_selector_params::EntitySelectorParams};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_request::{query::entity_selector::EntitySelectorParams, representation_parameter::WrittenValue};
+use andromeda_ngsi_ld_request::representation_parameter::WrittenValue;
 use std::num::NonZeroU32;
 use url::form_urlencoded;
 
@@ -360,11 +360,11 @@ mod tests {
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+    use andromeda_ngsi_ld_query::entity_selector_params::EntitySelectorParams;
     use andromeda_ngsi_ld_request::{
         entity::GetEntityParams,
         query::{
             entity::parameters::EntityQueryParameters,
-            entity_selector::EntitySelectorParams,
             temporal::{TemporalQueryParameters, retrieve_parameters::TemporalRetrieveParameters},
         },
     };

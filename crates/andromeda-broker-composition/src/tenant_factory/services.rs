@@ -37,7 +37,10 @@ use andromeda_federation::{FederationService, local_source::LocalSource};
 use andromeda_http_context_registry::tenant_context_hosting::TenantContextHosting;
 use andromeda_linked_retrieval::admission::TemporalJoin;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
+use andromeda_ngsi_ld_query::{
+    filter::compilation::FilterAdmission,
+    geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
+};
 use andromeda_posted_query::{retention::PostedQueryRetention, service::PostedQueryService};
 use andromeda_postgresql_context_store::jsonld_context::repo::JsonLdContextRepository;
 use andromeda_registration::{RegistrationService, entity_probe::RegisteredEntityProbe, removal_hook::RegistrationRemovalHook};
@@ -166,7 +169,16 @@ pub(super) fn construct_services(
         temporal,
         subscriptions: subscriptions.entity,
         context_hosting,
-        csr: compose_registration_service(storage, signals, subscriptions.forwarding.as_ref(), geo_query_admission(config)),
+        csr: compose_registration_service(
+            storage,
+            signals,
+            subscriptions.forwarding.as_ref(),
+            geo_query_admission(config),
+            FilterAdmission {
+                complexity: filter_complexity_limits(&config.request_limits),
+                language_targeting: EnabledExtensions::from(&config.extensions).language_targeting(),
+            },
+        ),
         csr_subscriptions: subscriptions.csource,
         forwarding,
         entity_maps: Arc::new(EntityMapService::new(Arc::clone(&storage.entity_map_store))),
@@ -340,6 +352,7 @@ fn compose_registration_service(
     signals: &TenantSignals,
     forwarding: Option<&Arc<SubscriptionForwardingService>>,
     geo_admission: GeoQueryAdmission,
+    filter_admission: FilterAdmission,
 ) -> Arc<RegistrationService> {
     let probe = Arc::new(EntityStoreRegistrationProbe::new(
         Arc::clone(&storage.entity_ports.query),
@@ -353,6 +366,7 @@ fn compose_registration_service(
         storage.engine.clone(),
         Some(Arc::new(signals.registration.clone())),
         geo_admission,
+        filter_admission,
     );
     Arc::new(match forwarding {
         Some(forwarding) => service.with_removal_hook(Arc::clone(forwarding) as Arc<dyn RegistrationRemovalHook>),

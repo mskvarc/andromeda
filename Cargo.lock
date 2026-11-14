@@ -2110,6 +2110,7 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-json-literal",
  "andromeda-jsonld",
+ "andromeda-linked-retrieval",
  "andromeda-ngsi-ld-compaction",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",

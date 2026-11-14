@@ -179,3 +179,41 @@ fn test_modules_are_not_scanned() {
     let source = "#[cfg(test)] mod tests { fn f(t: &T) { t.linked_terms(); } }";
     assert_eq!(violations(OUTSIDE, source), Vec::<String>::new());
 }
+
+#[test]
+fn a_hop_admission_outside_the_engine_is_flagged() {
+    let source = "struct Stub; impl FilterHopAdmission for Stub { type Refusal = (); fn admit_hops(&self, f: &Expr) -> Result<(), ()> { Ok(()) } }";
+    assert_eq!(violations(OUTSIDE, source).len(), 1);
+}
+
+#[test]
+fn the_engine_implements_the_hop_admission_port() {
+    let source =
+        "impl FilterHopAdmission for FilterHops { type Refusal = AdmissionError; fn admit_hops(&self, f: &Expr) -> Result<(), AdmissionError> { Ok(()) } }";
+    assert_eq!(violations("crates/andromeda-linked-retrieval/src/filter_hops.rs", source), Vec::<String>::new());
+}
+
+#[test]
+fn an_operation_admitting_every_hop_outside_its_pipeline_is_flagged() {
+    for variant in ["Subscription", "QueryRegistrations"] {
+        let source = format!("fn f() -> FilterHops {{ FilterHops::new(LinkedOperation::{variant}, None, None) }}");
+        assert_eq!(violations("crates/andromeda-entity/src/query/compilation.rs", &source).len(), 1, "{variant}");
+    }
+}
+
+#[test]
+fn an_operation_admitting_every_hop_in_its_own_pipeline_passes() {
+    for (variant, path) in [
+        ("Subscription", "crates/andromeda-subscription/src/term_expansion.rs"),
+        ("QueryRegistrations", "crates/andromeda-registration/src/query.rs"),
+    ] {
+        let source = format!("fn f() -> FilterHops {{ FilterHops::new(LinkedOperation::{variant}, None, None) }}");
+        assert_eq!(violations(path, &source), Vec::<String>::new(), "{variant}");
+    }
+}
+
+#[test]
+fn an_operation_bounding_hops_passes_anywhere() {
+    let source = "fn f() -> FilterHops { FilterHops::new(LinkedOperation::QueryEntities, None, None) }";
+    assert_eq!(violations(OUTSIDE, source), Vec::<String>::new());
+}

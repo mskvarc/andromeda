@@ -5,6 +5,7 @@ use crate::{
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_linked_retrieval::admission::{LinkedOperation, TemporalJoin};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::{
     candidate_filters::CandidateFilters,
@@ -47,6 +48,7 @@ async fn listed_under(filters: CandidateFilters) -> EntitySelection {
             QueryReading {
                 context: &context(),
                 language_targeting: LanguageTargeting::Specification,
+                operation: LinkedOperation::QueryTemporal(TemporalJoin::Spec),
             },
             RequestedIdentifiers::Narrow,
             filters,

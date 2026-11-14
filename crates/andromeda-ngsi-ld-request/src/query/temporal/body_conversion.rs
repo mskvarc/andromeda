@@ -3,12 +3,13 @@
 use crate::{
     error::ParameterError,
     pagination::parameters::PageParameters,
-    query::{deserialization::OptionalGeoQuery, entity_selector::EntitySelectorParams, temporal::TemporalQueryParameters},
+    query::{deserialization::OptionalGeoQuery, temporal::TemporalQueryParameters},
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
+    entity_selector_params::EntitySelectorParams,
     projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
 };
 

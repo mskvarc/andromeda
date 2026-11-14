@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_model::{
     received::ContextualEntity,
     registration::{ContextSourceRegistration, forwarding_mode::ForwardingMode},
 };
-use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
+use andromeda_ngsi_ld_query::entity_selector_params::EntitySelectorParams;
 
 /// The pages every source answered, each charged to `budget` as a walk charges
 /// its pages: every element the source sent as a row, and the entities it

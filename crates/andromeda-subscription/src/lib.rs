@@ -2,6 +2,8 @@
 
 /// A subscription store answering only reads, for tests.
 #[cfg(any(test, feature = "test-support"))]
+#[cfg(test)]
+mod admission_fixture;
 pub mod answering_store;
 /// Shared compiled subscription cache.
 pub mod cache;

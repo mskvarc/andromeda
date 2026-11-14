@@ -3,7 +3,7 @@
 use crate::{entity_probe::RegisteredEntityProbe, registration_census::RegistrationCensus, removal_hook::RegistrationRemovalHook, store::RegistrationStore};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
-use andromeda_ngsi_ld_query::geo::admission::GeoQueryAdmission;
+use andromeda_ngsi_ld_query::{filter::compilation::FilterAdmission, geo::admission::GeoQueryAdmission};
 use futures::future::BoxFuture;
 use std::sync::Arc;
 
@@ -71,6 +71,9 @@ pub struct RegistrationService {
     /// What a discovery geo-query is admitted under; its limits also bound
     /// a geometry the registration writes.
     geo_admission: GeoQueryAdmission,
+    /// What a discovery query's `q` is admitted under: the broker's
+    /// complexity limits (clause 5.5.6) and `q_target_languages` level.
+    filter_admission: FilterAdmission,
 }
 
 /// Publishes registration lifecycle changes without coupling policy to a runtime transport.
@@ -88,7 +91,8 @@ pub trait RegistrationChangeSink: Send + Sync + 'static {
 impl RegistrationService {
     /// Create a context-source registration service backed by the supplied
     /// store and the census of what it holds, the local-entity probe
-    /// proxied-registration admission consults, and JSON-LD processor.
+    /// proxied-registration admission consults, and JSON-LD processor, a
+    /// discovery query admitted under `geo_admission` and `filter_admission`.
     pub const fn new(
         repo: Arc<dyn RegistrationStore>,
         census: RegistrationCensus,
@@ -96,6 +100,7 @@ impl RegistrationService {
         engine: JsonLdEngine,
         change_sink: Option<Arc<dyn RegistrationChangeSink>>,
         geo_admission: GeoQueryAdmission,
+        filter_admission: FilterAdmission,
     ) -> RegistrationService {
         RegistrationService {
             repo,
@@ -105,6 +110,7 @@ impl RegistrationService {
             change_sink,
             removal_hook: None,
             geo_admission,
+            filter_admission,
         }
     }
 
@@ -137,6 +143,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-json-literal",
         "andromeda-jsonld",
+        "andromeda-linked-retrieval",
         "andromeda-ngsi-ld-compaction",
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",

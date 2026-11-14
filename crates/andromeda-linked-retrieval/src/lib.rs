@@ -15,6 +15,7 @@
 pub mod admission;
 pub mod candidate;
 pub mod edge;
+pub mod filter_hops;
 pub mod graph;
 pub mod join;
 pub mod keyword;

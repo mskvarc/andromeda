@@ -1,6 +1,7 @@
 use crate::{
     change::{CsourceSubscriptionChange, UpsertKind},
     error::SubscriptionError,
+    filter_admission::SubscriptionFilterAdmission,
     request_validation,
     term_expansion,
     variant::{DatasetIdPolicy, SubscriptionVariant},
@@ -29,8 +30,13 @@ impl CsrSubscriptionVariant {
 impl SubscriptionVariant for CsrSubscriptionVariant {
     type Change = CsourceSubscriptionChange;
 
-    async fn expand_terms(&self, request: &mut SubscriptionRequest, context: &ContextSpec) -> Result<(), SubscriptionError> {
-        term_expansion::expand_common_subscription_terms(&self.engine, request, context).await
+    async fn expand_terms(
+        &self,
+        request: &mut SubscriptionRequest,
+        context: &ContextSpec,
+        admission: SubscriptionFilterAdmission,
+    ) -> Result<(), SubscriptionError> {
+        term_expansion::expand_common_subscription_terms(&self.engine, request, context, admission).await
     }
 
     /// A Context Source Registration Subscription is served as it is stored:

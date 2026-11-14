@@ -3,6 +3,7 @@
 use crate::{entity_invariant::EntityInvariant, entity_validation_reason::EntityValidationReason};
 use andromeda_context_commit::error::CommitError;
 use andromeda_jsonld::error::JsonLdError;
+use andromeda_linked_retrieval::admission::AdmissionError;
 use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
 use andromeda_ngsi_ld_entity::{operation::mutation_error::MutationError, refusal::EntityRefusal};
 use andromeda_ngsi_ld_expansion::error::ExpansionError;
@@ -115,6 +116,15 @@ pub enum EntityError {
     /// An internal entity invariant could not be satisfied.
     #[error("entity invariant failed: {0}")]
     Internal(#[from] EntityInvariant),
+}
+
+/// Manual rather than `#[from]`: two conversions compose, which no derive
+/// states. A Linked Entity hop the operation refuses is the request
+/// parameter error its request reports, whichever stage refuses it.
+impl From<AdmissionError> for EntityError {
+    fn from(refusal: AdmissionError) -> EntityError {
+        EntityError::Request(ParameterError::from(refusal))
+    }
 }
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.

@@ -10,6 +10,7 @@ use crate::{
 use andromeda_context_commit::{error::CommitError, submission_refusal::SubmissionRefusal};
 use andromeda_entity::error::EntityError;
 use andromeda_jsonld::error::JsonLdError;
+use andromeda_linked_retrieval::admission::AdmissionError;
 use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
 use andromeda_ngsi_ld_entity::{history::current_state_fold::CurrentStateFoldError, operation::mutation_error::MutationError, refusal::EntityRefusal};
 use andromeda_ngsi_ld_expansion::error::ExpansionError;
@@ -110,6 +111,15 @@ pub enum TemporalError {
     /// An internal temporal invariant could not be satisfied.
     #[error("temporal invariant failed: {0}")]
     Internal(#[from] TemporalInvariant),
+}
+
+/// Manual rather than `#[from]`: two conversions compose, which no derive
+/// states. A Linked Entity hop the operation refuses is the request
+/// parameter error its request reports, whichever stage refuses it.
+impl From<AdmissionError> for TemporalError {
+    fn from(refusal: AdmissionError) -> TemporalError {
+        TemporalError::Request(ParameterError::from(refusal))
+    }
 }
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.

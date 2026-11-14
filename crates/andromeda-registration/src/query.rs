@@ -8,6 +8,7 @@ use crate::{
     registration_validation_reason::RegistrationValidationReason,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_linked_retrieval::{admission::LinkedOperation, filter_hops::FilterHops};
 use andromeda_ngsi_ld_compaction::name_compaction::NameCompaction;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
@@ -20,8 +21,8 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{
     csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
     filter::{
-        expansion::{apply_expand_values, expand_csf_expr, expand_q_expr},
-        json_key_attributes::JsonKeyAttributes,
+        compilation::{FilterOptIns, compile_q_filter},
+        expansion::expand_csf_expr,
         path::expanded_attribute_name,
         referenced_attributes::referenced_attributes,
     },
@@ -37,7 +38,6 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_request::query::csr::CsrQueryParameters;
 use iri_rs::IriBuf;
-use std::collections::HashSet;
 
 /// The registrations a discovery query answers with, and the pagination it
 /// reports around them (clause 5.10.2).
@@ -73,7 +73,8 @@ impl RegistrationService {
     /// Returns [`RegistrationError::Validation`] when `params` is not a
     /// well-formed discovery request or names an attribute that is not an IRI once expanded,
     /// [`RegistrationError::Query`] when the `q`, `csf`, geo or temporal
-    /// filter cannot be compiled, [`RegistrationError::JsonLd`] when `context`
+    /// filter cannot be compiled or the `q` is too complex to resolve (clause
+    /// 5.5.6) or names a target language the broker's level does not admit, [`RegistrationError::JsonLd`] when `context`
     /// cannot be loaded or a response cannot be compacted under it, and
     /// [`RegistrationError::Persistence`] when the store rejects the query.
     pub async fn query(
@@ -142,9 +143,12 @@ impl RegistrationService {
         // match registrations exactly as the `attrs` list does, so they join
         // it; the filter itself is not evaluated against a registration.
         if let Some(expression) = params.q.clone() {
-            let expanded_filter = expand_q_expr(expression, &JsonKeyAttributes::default(), &expander).await?;
-            // Discovery takes no `expandValues`, so no attribute admits a bare word.
-            let expanded_filter = apply_expand_values(expanded_filter, &HashSet::<AttributeName>::new(), &expander).await?;
+            // Clause 5.10.2.3 takes neither `jsonKeys` nor `expandValues`, so no
+            // attribute is raw JSON and none admits a bare word; and no clause
+            // bounds the hops of a discovery query.
+            let hops = FilterHops::new(LinkedOperation::QueryRegistrations, None, None);
+            let expanded_filter =
+                compile_q_filter::<RegistrationError, _, _>(expression, &FilterOptIns::default(), self.filter_admission, &hops, &expander).await?;
             for name in referenced_attributes(&expanded_filter) {
                 let iri = IriBuf::new(name.as_str().to_owned())
                     .map_err(|source| RegistrationError::Validation(RegistrationValidationReason::QNonIriAttribute { source }))?;
@@ -237,16 +241,16 @@ fn registration_matching_the_query(
 mod tests {
     use crate::{
         RegistrationService,
+        error::RegistrationError,
         fixed_store::{FixedStore, registration},
         service_fixture::{offline_engine, service_over},
         store::RegistrationStore,
     };
     use andromeda_jsonld::context_spec::ContextSpec;
-
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-
-    use andromeda_ngsi_ld_query::{page_reach::PageReach, page_window::PageWindow};
+    use andromeda_ngsi_ld_query::{error::QueryError, page_reach::PageReach, page_window::PageWindow};
     use andromeda_ngsi_ld_request::query::csr::CsrQueryParameters;
+    use iri_rs::{Iri, iri};
     use serde_json::json;
     use std::sync::Arc;
 
@@ -284,5 +288,71 @@ mod tests {
                 "urn:ngsi-ld:ContextSourceRegistration:3".parse().expect("valid URI")
             ))
         );
+    }
+
+    /// The core context's default vocabulary expands a term no other context
+    /// maps.
+    const SPEED: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/default-context/speed");
+    /// The default vocabulary's `gender`.
+    const GENDER: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/default-context/gender");
+    /// The default vocabulary's `jp`.
+    const JP: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/default-context/jp");
+
+    /// The attributes a discovery query with `q` matches registrations on,
+    /// or its refusal.
+    async fn q_attributes(q: &str) -> Result<Vec<String>, RegistrationError> {
+        let query = serde_urlencoded::to_string([("q", q)]).expect("a query string");
+        let params: CsrQueryParameters = serde_urlencoded::from_str(&query).expect("valid discovery");
+        let compiled = service(FixedStore::new(Vec::new()))
+            .compile_csr_query(&params, &[], &ContextSpec::none())
+            .await?;
+        Ok(compiled.attrs.iter().map(|iri| iri.as_str().to_owned()).collect())
+    }
+
+    /// CP-1, clause 5.10.2.4: the attributes the `q` names join the ones a
+    /// registration is matched on, expanded as every pipeline expands them.
+    #[tokio::test]
+    async fn a_discovery_q_names_its_expanded_attributes() {
+        pretty_assertions::assert_eq!(q_attributes("speed>5").await.expect("admitted"), vec![SPEED.as_str()]);
+    }
+
+    /// CP-2 and CP-9: clause 5.10.2.3 takes no `expandValues` or `jsonKeys`,
+    /// and an operand or a member never names an attribute, so a discovery
+    /// query collects the attribute alone.
+    #[tokio::test]
+    async fn a_discovery_q_collects_the_attribute_whatever_its_operand_or_member() {
+        pretty_assertions::assert_eq!(q_attributes("gender==\"Male\"").await.expect("admitted"), vec![GENDER.as_str()]);
+        pretty_assertions::assert_eq!(q_attributes("jp[value]==\"x\"").await.expect("admitted"), vec![JP.as_str()]);
+    }
+
+    /// CP-3, clause 5.5.6: a discovery `q` past the broker's comparison limit
+    /// is too complex to resolve, as in every other request pipeline.
+    #[tokio::test]
+    async fn a_discovery_q_past_the_comparison_limit_is_too_complex() {
+        let values = (0..1001).map(|value| value.to_string()).collect::<Vec<_>>().join(",");
+        let refused = q_attributes(&format!("speed=={values}")).await;
+        assert!(
+            matches!(refused, Err(RegistrationError::Query(QueryError::QTooManyComparisons { .. }))),
+            "{refused:?}"
+        );
+    }
+
+    /// CP-4, clause 4.9: a full language tag is outside the specification's
+    /// grammar, so discovery refuses it at that level as every request
+    /// pipeline does.
+    #[tokio::test]
+    async fn a_discovery_q_naming_a_full_tag_is_refused_at_the_specification_level() {
+        let refused = q_attributes("name[en-GB]==\"x\"").await;
+        assert!(
+            matches!(refused, Err(RegistrationError::Query(QueryError::LanguageTagNotAdmitted(_)))),
+            "{refused:?}"
+        );
+    }
+
+    /// Clause 5.10.2.4 bounds none of a discovery query's hops, and discovery
+    /// takes no `join`.
+    #[tokio::test]
+    async fn a_discovery_q_hop_is_admitted() {
+        q_attributes("r{a}==1").await.expect("a hop is admitted");
     }
 }

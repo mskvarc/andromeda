@@ -16,7 +16,7 @@
 
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
-use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
+use andromeda_ngsi_ld_query::entity_selector_params::EntitySelectorParams;
 
 /// Intersect a request's identifiers with the entities a live map lists,
 /// preserving the order the request wrote them in.
@@ -72,7 +72,7 @@ mod tests {
     use crate::query_scoping::{hold_selection_to_map, scope_query_ids};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity_map::EntityMap;
-    use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
+    use andromeda_ngsi_ld_query::entity_selector_params::EntitySelectorParams;
     use chrono::{TimeDelta, Utc};
 
     /// An entity identifier, as the request boundary would have validated it.

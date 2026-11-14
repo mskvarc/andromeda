@@ -2,20 +2,16 @@
 //!
 //! [`CompiledEntityQuery`]: andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery
 
-use crate::{
-    compiled_cache::CompiledQueryKey,
-    error::EntityError,
-    query::{EntityQueryService, selector_compilation::compile_entity_selectors},
-};
+use crate::{compiled_cache::CompiledQueryKey, error::EntityError, query::EntityQueryService};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander};
+use andromeda_linked_retrieval::{admission::LinkedOperation, filter_hops::FilterHops};
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::{ConsideredEntities, EntitySelection},
     filter::{
-        expansion::{apply_expand_values, expand_attr_path, expand_attribute_names, expand_json_keys, expand_q_expr},
-        expression::Expr,
+        compilation::{FilterAdmission, FilterOptIns, compile_q_filter},
+        expansion::expand_attr_path,
         json_key_attributes::JsonKeyAttributes,
         language_targeting::LanguageTargeting,
         trailing_members::TrailingMembers,
@@ -31,14 +27,16 @@ use andromeda_ngsi_ld_query::{
         expansion::expand_projection,
         projected_members::ProjectedMembers,
     },
+    selector_compilation::compile_entity_selectors,
     term_expander::TermExpander,
 };
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
 impl EntityQueryService {
     /// Compile an entity query, its target languages admitted and matched
-    /// under `language_targeting`.
+    /// under `language_targeting` and the hops of its `q` admitted for
+    /// `operation` (clause 4.5.23).
     ///
     /// The page the query answers with is no part of the compilation: it is
     /// handed to the store beside the compiled query, so every page of one
@@ -53,14 +51,16 @@ impl EntityQueryService {
     /// or `orderBy` expression is not well formed, names a target language
     /// `language_targeting` does not admit, or is too complex to resolve
     /// (clause 5.5.6), and
-    /// [`EntityError::Request`] when a query parameter cannot be interpreted.
+    /// [`EntityError::Request`] when a query parameter cannot be interpreted
+    /// or a hop of the `q` is one `operation` does not admit.
     pub async fn compile_query_public(
         &self,
         params: &EntityQueryParameters,
         context: &ContextSpec,
         language_targeting: LanguageTargeting,
+        operation: LinkedOperation,
     ) -> Result<CompiledEntityQuery, EntityError> {
-        let compiled = self.compile_query_cached(params, context, language_targeting).await?;
+        let compiled = self.compile_query_cached(params, context, language_targeting, operation).await?;
         Ok(Arc::unwrap_or_clone(compiled))
     }
 
@@ -82,43 +82,43 @@ impl EntityQueryService {
         params: &EntityQueryParameters,
         context: &ContextSpec,
         language_targeting: LanguageTargeting,
+        operation: LinkedOperation,
     ) -> Result<Arc<CompiledEntityQuery>, EntityError> {
         let prepared_context = self.engine().prepare_term_context(context);
         let processed = prepared_context.expansion(self.engine()).await?.id();
-        let key = CompiledQueryKey::from_params(params, processed, language_targeting);
+        let hops = FilterHops::new(operation, params.join, params.join_level);
+        let key = CompiledQueryKey::from_params(params, processed, language_targeting, hops);
         self.compiled_cache
-            .get_or_compile(key, || self.compile_query(params, &prepared_context, language_targeting))
+            .get_or_compile(key, || self.compile_query(params, &prepared_context, language_targeting, hops))
             .await
     }
 
     /// Compile `params` against `prepared_context` without consulting the
-    /// cache, admitting the `q` filter's complexity on the way.
+    /// cache, the `q` filter through the one compile entry of its language.
     async fn compile_query(
         &self,
         params: &EntityQueryParameters,
         prepared_context: &PreparedTermContext,
         language_targeting: LanguageTargeting,
+        hops: FilterHops,
     ) -> Result<CompiledEntityQuery, EntityError> {
-        let selectors = compile_entity_selectors(self.engine(), prepared_context, &params.selectors()).await?;
-
         let expander = ContextualExpander::new(self.engine(), prepared_context);
+        let selectors = compile_entity_selectors(&params.selectors(), &expander).await?;
         // Table 6.4.3.2-1 restricts `attrs` to "an Attribute (Property or
         // Relationship) name". A query answers in an Entity representation, where
         // clause 4.18 leaves the Scope non-reified, so `scope` names nothing the
         // row admits.
         let attrs = expand_attrs_admitted(params.attrs.as_deref().unwrap_or_default(), AttrsAdmission::AttributeNamesOnly, &expander).await?;
-        let json_keys = expand_json_keys(params.json_keys.as_deref(), &expander).await?;
-        if let Some(q) = &params.q {
-            self.filter_complexity.admit(q)?;
-        }
+        let opt_ins = FilterOptIns::expanded(params.json_keys.as_deref(), params.expand_values.as_deref(), &expander).await?;
+        let admission = FilterAdmission {
+            complexity: self.filter_complexity,
+            language_targeting,
+        };
         // Expansion consumes its AST; the cache-owned request remains immutable across lookups.
         let q_expr = match params.q.clone() {
-            Some(q_expr) => Some(compile_q_expression(q_expr, &json_keys, params.expand_values.as_deref(), &expander).await?),
+            Some(filter) => Some(compile_q_filter::<EntityError, _, _>(filter, &opt_ins, admission, &hops, &expander).await?),
             None => None,
         };
-        if let Some(q) = &q_expr {
-            language_targeting.admit(q)?;
-        }
         let geo = self.compile_geo_query(params, prepared_context).await?;
 
         let projection = expand_projection(
@@ -128,7 +128,7 @@ impl EntityQueryService {
         )
         .await?;
 
-        let order_by = compile_order_terms(params, &json_keys, &expander, language_targeting).await?;
+        let order_by = compile_order_terms(params, &opt_ins.json_keys, &expander, language_targeting).await?;
         let ordering_geometry = compile_ordering_geometry(params, self.geo_admission.limits)?;
 
         let compiled = CompiledEntityQuery::builder()
@@ -168,24 +168,6 @@ impl EntityQueryService {
     async fn compile_geo_query(&self, params: &EntityQueryParameters, context: &PreparedTermContext) -> Result<Option<GeoQuery>, EntityError> {
         Ok(geo_compile::compile_geo_query(params.geo.0.as_ref(), &ContextualExpander::new(self.engine(), context), self.geo_admission).await?)
     }
-}
-
-/// Expand a `q` filter under the request's clause 4.9 `jsonKeys`
-/// declaration, then apply the `expandValues` coercion of the attributes
-/// `expand_values` names to the result.
-pub(super) async fn compile_q_expression(
-    q_expr: Expr,
-    json_keys: &JsonKeyAttributes,
-    expand_values: Option<&[AttributeName]>,
-    expander: &impl TermExpander,
-) -> Result<Expr, EntityError> {
-    let q_expr = expand_q_expr(q_expr, json_keys, expander).await?;
-
-    let opted_in: HashSet<AttributeName> = match expand_values {
-        Some(declared) => expand_attribute_names(declared, expander).await?.into_iter().collect(),
-        None => HashSet::new(),
-    };
-    Ok(apply_expand_values(q_expr, &opted_in, expander).await?)
 }
 
 /// Compile the `orderBy` terms against the active context (clause 4.23).
@@ -267,6 +249,7 @@ mod tests {
         engine::processor::JsonLdEngine,
         loader::cache_lifetime::{CacheLifetime, ResidualLifetime},
     };
+    use andromeda_linked_retrieval::admission::LinkedOperation;
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_query::{
@@ -305,7 +288,12 @@ mod tests {
     /// most `positions` positions.
     async fn compiled(query: &str, positions: usize) -> Result<(), EntityError> {
         service_resolving(limit(positions))
-            .compile_query_public(&params(query), &ContextSpec::core_only(), LanguageTargeting::Specification)
+            .compile_query_public(
+                &params(query),
+                &ContextSpec::core_only(),
+                LanguageTargeting::Specification,
+                LinkedOperation::QueryEntities,
+            )
             .await
             .map(drop)
     }
@@ -321,7 +309,12 @@ mod tests {
     /// compiled under the core context.
     async fn ordered_members(query: &str) -> Vec<String> {
         let compiled = service_resolving(limit(5))
-            .compile_query_public(&params(query), &ContextSpec::core_only(), LanguageTargeting::Specification)
+            .compile_query_public(
+                &params(query),
+                &ContextSpec::core_only(),
+                LanguageTargeting::Specification,
+                LinkedOperation::QueryEntities,
+            )
             .await
             .expect("the query compiles");
         let path = compiled
@@ -472,6 +465,7 @@ mod tests {
                 &params("type=Vehicle&attrs=speed"),
                 &ContextSpec::from_link(stored_url()),
                 LanguageTargeting::Specification,
+                LinkedOperation::QueryEntities,
             )
             .await
     }

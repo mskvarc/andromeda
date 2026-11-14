@@ -67,10 +67,8 @@ impl TemporalService {
         reading: QueryReading<'_>,
         parts: Vec<EntityParts>,
     ) -> Result<MergedRendering, TemporalError> {
-        let QueryReading { context, language_targeting } = reading;
-        let mut compiled = self
-            .compile_temporal_query(params, context, language_targeting, AttrsAdmission::ReifiedScopeAdmitted)
-            .await?;
+        let context = reading.context;
+        let mut compiled = self.compile_temporal_query(params, reading, AttrsAdmission::ReifiedScopeAdmitted).await?;
         compiled.instances.page = compiled.instances.page.unpaged();
         let compiled = compiled;
         let entity_ids: Vec<Identifier> = parts

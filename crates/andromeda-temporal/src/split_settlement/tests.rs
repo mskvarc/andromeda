@@ -8,7 +8,10 @@ use crate::{
     stub_broker::{StubBroker, live_target, service, service_over, uri},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_linked_retrieval::source::{RemoteReach, RemoteResolution};
+use andromeda_linked_retrieval::{
+    admission::{LinkedOperation, TemporalJoin},
+    source::{RemoteReach, RemoteResolution},
+};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
@@ -28,7 +31,7 @@ use andromeda_ngsi_ld_model::temporal::{
 };
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::language_targeting::LanguageTargeting, split_filter::LeafTruths};
-use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailureKind;
+use andromeda_ngsi_ld_representation::{join_mode::JoinMode, linked_resolution_failure::LinkedResolutionFailureKind};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_persistence_failure::persistence_failure::PersistenceFailure;
 use async_trait::async_trait;
@@ -51,6 +54,10 @@ fn at(raw: &str) -> DateTime<Utc> {
 /// filtering with `q`, every name a full IRI.
 fn split_query(q: &str) -> TemporalQueryParameters {
     TemporalQueryParameters {
+        // Clause 4.5.23 under `temporal_linked_retrieval`: a hop needs a join
+        // that walks at least as deep, and the deepest hop here crosses two.
+        join: Some(JoinMode::Flat),
+        join_level: NonZeroU32::new(2),
         entity_type: Some("https://example.com/Vehicle".parse().expect("a valid type")),
         q: Some(q.parse().expect("a valid q")),
         timerel: Some(TimeRel::Between),
@@ -126,6 +133,7 @@ async fn retained(broker: StubBroker, q: &str, in_window: &[&TemporalDocument], 
             QueryReading {
                 context: &ContextSpec::none(),
                 language_targeting: LanguageTargeting::Specification,
+                operation: LinkedOperation::QueryTemporal(TemporalJoin::Extended),
             },
             &parts,
             local,
@@ -144,6 +152,7 @@ async fn local_in_effect(broker: StubBroker, q: &str) -> LocalInEffect {
             QueryReading {
                 context: &ContextSpec::none(),
                 language_targeting: LanguageTargeting::Specification,
+                operation: LinkedOperation::QueryTemporal(TemporalJoin::Extended),
             },
             &[uri(VEHICLE)],
         )
@@ -235,6 +244,7 @@ async fn a_query_without_filters_keeps_every_contributed_entity() {
             QueryReading {
                 context: &ContextSpec::none(),
                 language_targeting: LanguageTargeting::Specification,
+                operation: LinkedOperation::QueryTemporal(TemporalJoin::Extended),
             },
             &parts,
             &LocalInEffect::default(),
@@ -394,6 +404,7 @@ async fn settled_beside(broker: StubBroker, others: &Arc<OtherHolders>, q: &str,
             QueryReading {
                 context: &ContextSpec::none(),
                 language_targeting: LanguageTargeting::Specification,
+                operation: LinkedOperation::QueryTemporal(TemporalJoin::Extended),
             },
             &parts,
             &LocalInEffect::default(),

@@ -120,6 +120,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         params: &params,
         context: &context,
         language_targeting: admitted.language.targeting,
+        operation: admitted.operation,
         attrs_admission: AttrsAdmission::ReifiedScopeAdmitted,
     };
     let (local_result, local_total) = query_local_history(&read, &admitted, &local, &contributed, &uri).await?;

@@ -5,6 +5,7 @@ use crate::{
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_linked_retrieval::admission::{LinkedOperation, TemporalJoin};
 use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
 use andromeda_ngsi_ld_lexicon::{
     aggr_method::AggrMethod,
@@ -109,6 +110,7 @@ async fn aggregation_over_sources_uses_the_merged_instances() {
             QueryReading {
                 context: &context(),
                 language_targeting: LanguageTargeting::Specification,
+                operation: LinkedOperation::QueryTemporal(TemporalJoin::Spec),
             },
             vec![EntityParts {
                 entity_id: uri("urn:ngsi-ld:T:A"),
@@ -158,6 +160,7 @@ async fn an_excluded_local_part_is_left_to_the_store_and_the_answered_types_name
             QueryReading {
                 context: &context(),
                 language_targeting: LanguageTargeting::Specification,
+                operation: LinkedOperation::QueryTemporal(TemporalJoin::Spec),
             },
             vec![EntityParts {
                 entity_id: uri("urn:ngsi-ld:T:A"),
@@ -189,6 +192,7 @@ async fn an_included_local_part_is_named_by_the_local_catalogue() {
             QueryReading {
                 context: &context(),
                 language_targeting: LanguageTargeting::Specification,
+                operation: LinkedOperation::QueryTemporal(TemporalJoin::Spec),
             },
             vec![EntityParts {
                 entity_id: uri("urn:ngsi-ld:T:A"),

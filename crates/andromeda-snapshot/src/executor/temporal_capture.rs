@@ -61,7 +61,7 @@ use andromeda_ngsi_ld_query::{
     page_window::{PageStart, PageWindow},
     temporal::window::TimeInterval,
 };
-use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation};
 use andromeda_temporal::{error::TemporalError, query_reading::QueryReading, requested_identifiers::RequestedIdentifiers};
 use std::{collections::HashSet, vec::IntoIter};
 use tracing::warn;
@@ -345,6 +345,7 @@ impl SnapshotExecutor {
                 QueryReading {
                     context: capture.context,
                     language_targeting: self.sources.temporal.language_targeting(),
+                    operation: TemporalQueryOperation::Query.linked(self.sources.temporal.linked_retrieval()),
                 },
                 RequestedIdentifiers::Narrow,
                 CandidateFilters::Applied,

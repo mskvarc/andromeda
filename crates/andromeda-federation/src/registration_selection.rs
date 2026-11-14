@@ -26,8 +26,7 @@ use andromeda_ngsi_ld_model::{
         selection::{RegistrationFilters, ScopeFilter, TemporalPartition},
     },
 };
-use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::query::GeoQuery, scope::query::ScopeQuery};
-use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
+use andromeda_ngsi_ld_query::{entity_selector_params::EntitySelectorParams, filter::expression::Expr, geo::query::GeoQuery, scope::query::ScopeQuery};
 use chrono::Utc;
 use tracing::warn;
 

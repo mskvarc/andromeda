@@ -37,7 +37,6 @@ pub mod retrieval;
 #[cfg(test)]
 mod retrieval_tests;
 /// Compiling a query's entity selectors (clause 5.2.33) against the context.
-pub mod selector_compilation;
 /// The service the read-path unit tests are built on.
 #[cfg(test)]
 pub(crate) mod service_test_double;

@@ -674,7 +674,7 @@
           "additionalProperties": false
         },
         "temporal_delete_by_query": {
-          "description": "Temporal delete-by-query on `DELETE /temporal/entities`: a windowed, selector-scoped history purge the NGSI-LD temporal delete operations have no equivalent for.",
+          "description": "Temporal delete-by-query on `DELETE /temporal/entities`: a windowed, selector-scoped history purge the NGSI-LD temporal delete operations have no equivalent for. It takes no `join`, so a `q` that crosses a Relationship is refused with `400` `BadRequestData`.",
           "type": "object",
           "properties": {
             "max_matches": {

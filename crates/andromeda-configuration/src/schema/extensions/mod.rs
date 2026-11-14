@@ -150,9 +150,10 @@ pub struct ExtensionsConfig {
     ///
     /// A windowed, selector-scoped temporal history purge the NGSI-LD
     /// temporal-delete family (clauses 5.6.13, 5.6.15, 5.6.16) has no
-    /// operation for. Local-scope only; never forwarded.
+    /// operation for. Local-scope only; never forwarded. It takes no `join`,
+    /// so a `q` crossing a Relationship is refused.
     #[schemars(
-        description = "Temporal delete-by-query on `DELETE /temporal/entities`: a windowed, selector-scoped history purge the NGSI-LD temporal delete operations have no equivalent for."
+        description = "Temporal delete-by-query on `DELETE /temporal/entities`: a windowed, selector-scoped history purge the NGSI-LD temporal delete operations have no equivalent for. It takes no `join`, so a `q` that crosses a Relationship is refused with `400` `BadRequestData`."
     )]
     pub temporal_delete_by_query: TemporalDeleteByQueryConfig,
     /// Grouped temporal aggregation via `aggrGroupBy` and

@@ -12,35 +12,31 @@ use andromeda_jsonld::{
 };
 use andromeda_ngsi_ld_query::{
     csr::expanded_entity_specification::ExpandedEntitySpecification,
-    type_selection::{expansion::expand_type_expression, grammar::TypeExpr},
+    entity_selection::EntitySelector,
+    entity_selector_params::EntitySelectorParams,
+    selector_compilation::compile_entity_selectors,
 };
-use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
 
-/// The selectors of one read, each with its type expression expanded.
-pub(crate) struct ExpandedSelectors<'a> {
-    /// The selectors as the client wrote them.
-    selectors: &'a [EntitySelectorParams],
-    /// The expanded type expression of each selector, in the same order.
-    types: Vec<Option<TypeExpr>>,
+/// The selectors of one read, each compiled with its type expression expanded.
+pub(crate) struct ExpandedSelectors {
+    /// The compiled selectors, in the order the client wrote them.
+    selectors: Vec<EntitySelector>,
 }
 
-impl<'a> ExpandedSelectors<'a> {
-    /// Expand the type expression of every selector under `context`.
+impl ExpandedSelectors {
+    /// Compile every selector under `context`.
     ///
     /// # Errors
     ///
     /// Returns [`FederationError::Query`] when a type expression has a term
     /// that cannot be expanded against the request context.
-    pub(crate) async fn expand(engine: &JsonLdEngine, context: &PreparedTermContext, selectors: &'a [EntitySelectorParams]) -> Result<Self, FederationError> {
-        let expander = ContextualExpander::new(engine, context);
-        let mut types = Vec::with_capacity(selectors.len());
-        for selector in selectors {
-            types.push(match selector.type_.as_ref() {
-                Some(raw) => Some(expand_type_expression(raw, &expander).await?),
-                None => None,
-            });
-        }
-        Ok(Self { selectors, types })
+    pub(crate) async fn expand(
+        engine: &JsonLdEngine,
+        context: &PreparedTermContext,
+        selectors: &[EntitySelectorParams],
+    ) -> Result<ExpandedSelectors, FederationError> {
+        let selectors = compile_entity_selectors(selectors, &ContextualExpander::new(engine, context)).await?;
+        Ok(ExpandedSelectors { selectors })
     }
 
     /// The clause 5.12 specification each selector is: its expanded type, its
@@ -48,10 +44,9 @@ impl<'a> ExpandedSelectors<'a> {
     pub(crate) fn specifications(&self) -> Vec<ExpandedEntitySpecification<'_>> {
         self.selectors
             .iter()
-            .zip(&self.types)
-            .map(|(selector, entity_type)| ExpandedEntitySpecification {
-                entity_type: entity_type.as_ref(),
-                ids: selector.id.as_deref().unwrap_or_default(),
+            .map(|selector| ExpandedEntitySpecification {
+                entity_type: selector.type_expr.as_ref(),
+                ids: &selector.ids,
                 id_pattern: selector.id_pattern.as_ref(),
             })
             .collect()
@@ -63,8 +58,10 @@ mod tests {
     use crate::{fixed_registration_store::offline_service, selector_expansion::ExpandedSelectors};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
-    use andromeda_ngsi_ld_query::type_selection::grammar::{TypeExpr, TypeExprRaw};
-    use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
+    use andromeda_ngsi_ld_query::{
+        entity_selector_params::EntitySelectorParams,
+        type_selection::grammar::{TypeExpr, TypeExprRaw},
+    };
     use serde_json::json;
 
     fn selector(type_: &str) -> EntitySelectorParams {

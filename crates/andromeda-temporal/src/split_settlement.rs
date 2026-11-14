@@ -81,9 +81,7 @@ impl TemporalService {
         answered: &AnsweredParts<'_>,
         local: &LocalInEffect,
     ) -> Result<SplitSettlement, TemporalError> {
-        let compiled = self
-            .compile_temporal_query(params, reading.context, reading.language_targeting, AttrsAdmission::ReifiedScopeAdmitted)
-            .await?;
+        let compiled = self.compile_temporal_query(params, reading, AttrsAdmission::ReifiedScopeAdmitted).await?;
         let filter = SplitFilter::of(&compiled.entities);
         let mut parts: HashMap<&Identifier, Vec<&TemporalDocument>> = HashMap::new();
         for part in answered.in_window.iter().chain(&answered.in_effect) {
@@ -121,8 +119,7 @@ impl TemporalService {
                 .chain(answered.in_effect.iter().copied())
                 .chain(local.parts())
                 .collect();
-            self.read_hop_targets(target, params, reading.context, (&hops, &filter.hop_reads()), &reached)
-                .await?
+            self.read_hop_targets(target, params, reading, (&hops, &filter.hop_reads()), &reached).await?
         };
         let linked = HopTargets::of(&hop_reading, compiled.window);
         for part in windowed {

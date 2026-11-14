@@ -1,16 +1,15 @@
 //! Temporal query compilation policy.
 
-use crate::{error::TemporalError, instance_limits::TemporalInstanceLimits, service::TemporalService};
-use andromeda_entity::query::selector_compilation::compile_entity_selectors;
+use crate::{error::TemporalError, instance_limits::TemporalInstanceLimits, query_reading::QueryReading, service::TemporalService};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, temporal_format::TemporalFormat};
+use andromeda_linked_retrieval::filter_hops::FilterHops;
+use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
 use andromeda_ngsi_ld_query::{
     entity_selection::{ConsideredEntities, EntitySelection},
     filter::{
-        expansion::{apply_expand_values, expand_attr_path, expand_attribute_names, expand_json_keys, expand_q_expr},
-        expression::Expr,
+        compilation::{FilterAdmission, FilterOptIns, compile_q_filter},
+        expansion::expand_attr_path,
         json_key_attributes::JsonKeyAttributes,
-        language_targeting::LanguageTargeting,
         trailing_members::TrailingMembers,
     },
     geo::{compile as geo_compile, query::GeoQuery},
@@ -20,6 +19,7 @@ use andromeda_ngsi_ld_query::{
         expansion::expand_projection,
         projected_members::ProjectedMembers,
     },
+    selector_compilation::compile_entity_selectors,
     temporal::{
         aggregation_period::AggregationPeriod,
         compiled::CompiledTemporalQuery,
@@ -33,12 +33,13 @@ use andromeda_ngsi_ld_query::{
     term_expander::TermExpander,
 };
 use andromeda_ngsi_ld_request::{error::ParameterError, query::temporal::TemporalQueryParameters};
-use std::{collections::HashSet, num::NonZeroU32};
+use std::num::NonZeroU32;
 
 impl TemporalService {
-    /// Validate, expand, and compile temporal query parameters against one
-    /// JSON-LD context, the `q` target languages admitted and matched under
-    /// `language_targeting`.
+    /// Validate, expand, and compile temporal query parameters as `reading`
+    /// reads them: their terms expanded under its JSON-LD context, the `q`
+    /// target languages admitted and matched under its level, and the hops of
+    /// the `q` admitted for its operation.
     ///
     /// # Errors
     ///
@@ -47,21 +48,26 @@ impl TemporalService {
     /// too complex to resolve (clause 5.5.6), when the
     /// `timerel` / `timeAt` / `endTimeAt` triple does not describe an interval
     /// (clause 5.7.4.4), or when the ordering names something clause 5.7.4.3
-    /// does not admit, and [`TemporalError::JsonLd`] when a term cannot be
-    /// expanded against `context`.
+    /// does not admit, [`TemporalError::Request`] when a hop of the `q` is one
+    /// the operation does not admit, and [`TemporalError::JsonLd`] when a term
+    /// cannot be expanded against the context.
     pub async fn compile_temporal_query(
         &self,
         params: &TemporalQueryParameters,
-        context: &ContextSpec,
-        language_targeting: LanguageTargeting,
+        reading: QueryReading<'_>,
         attrs_admission: AttrsAdmission,
     ) -> Result<CompiledTemporalQuery, TemporalError> {
+        let QueryReading {
+            context,
+            language_targeting,
+            operation,
+        } = reading;
         let prepared_context = self.engine.prepare_term_context(context);
         let expander = ContextualExpander::new(&self.engine, &prepared_context);
         // Clause 5.2.33: a POST temporal query body's `entities[]` is a union of
         // selectors, compiled by the same helper the entity path uses so the two
         // cannot disagree on what a selection means.
-        let selectors = compile_entity_selectors(&self.engine, &prepared_context, &params.selectors()).await?;
+        let selectors = compile_entity_selectors(&params.selectors(), &expander).await?;
 
         let attr_filter = expand_attrs_admitted(params.attrs.as_deref().unwrap_or_default(), attrs_admission, &expander).await?;
         let projection = compile_projection(params, &expander).await?;
@@ -72,19 +78,22 @@ impl TemporalService {
             // The compiled query owns its selectors independently of the reusable request parameters.
             .map_or_default(ToOwned::to_owned);
 
-        let json_keys = expand_json_keys(params.json_keys.as_deref(), &expander).await?;
-        if let Some(q) = &params.q {
-            self.limits.filter_complexity.admit(q)?;
-        }
-        let q_expr = compile_q_filter(params, &json_keys, &expander).await?;
-        if let Some(q) = &q_expr {
-            language_targeting.admit(q)?;
-        }
+        let opt_ins = FilterOptIns::expanded(params.json_keys.as_deref(), params.expand_values.as_deref(), &expander).await?;
+        let admission = FilterAdmission {
+            complexity: self.limits.filter_complexity,
+            language_targeting,
+        };
+        let hops = FilterHops::new(operation, params.join, params.join_level);
+        // Expansion consumes the AST while the caller retains its request parameters.
+        let q_expr = match params.q.clone() {
+            Some(filter) => Some(compile_q_filter::<TemporalError, _, _>(filter, &opt_ins, admission, &hops, &expander).await?),
+            None => None,
+        };
         let geo = self.compile_geo_query(params, &prepared_context).await?;
 
         let format = params.parse_format()?;
         let page = compile_instance_page(params.last_n, format, params.aggr_period_duration, self.limits.instance_limits);
-        let grouping = compile_grouping(params, format, &json_keys, &expander).await?;
+        let grouping = compile_grouping(params, format, &opt_ins.json_keys, &expander).await?;
 
         Ok(CompiledTemporalQuery::builder()
             .entities(
@@ -144,28 +153,6 @@ impl TemporalService {
     async fn compile_geo_query(&self, params: &TemporalQueryParameters, context: &PreparedTermContext) -> Result<Option<GeoQuery>, TemporalError> {
         Ok(geo_compile::compile_geo_query(params.geo.0.as_ref(), &ContextualExpander::new(&self.engine, context), self.geo_admission()).await?)
     }
-}
-
-/// Expand the `q` filter under the request's clause 4.9 `jsonKeys`
-/// declaration and apply the attribute-scoped opt-ins to it.
-async fn compile_q_filter(
-    params: &TemporalQueryParameters,
-    json_keys: &JsonKeyAttributes,
-    expander: &impl TermExpander,
-) -> Result<Option<Expr>, TemporalError> {
-    // Expansion consumes the AST while the caller retains its request parameters.
-    let Some(expr) = params.q.clone() else {
-        return Ok(None);
-    };
-    let expr = expand_q_expr(expr, json_keys, expander).await?;
-
-    // `expandValues`: expand string right-hand-side values for the attributes
-    // that opted in, and refuse a bare word of any other.
-    let opted_in: HashSet<AttributeName> = match params.expand_values.as_deref() {
-        Some(attributes) => expand_attribute_names(attributes, expander).await?.into_iter().collect(),
-        None => HashSet::new(),
-    };
-    Ok(Some(apply_expand_values(expr, &opted_in, expander).await?))
 }
 
 /// Resolve `lastN` against the broker's page sizes (clause 6.3.10).
@@ -275,9 +262,11 @@ mod tests {
         compilation::{compile_grouping, compile_instance_page, compile_representation},
         error::TemporalError,
         instance_limits::TemporalInstanceLimits,
+        query_reading::QueryReading,
         stub_broker::{StubBroker, service},
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
+    use andromeda_linked_retrieval::admission::{LinkedOperation, TemporalJoin};
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat};
     use andromeda_ngsi_ld_query::{
         error::QueryError,
@@ -470,8 +459,11 @@ mod tests {
             let result = service
                 .compile_temporal_query(
                     &params,
-                    &ContextSpec::core_only(),
-                    LanguageTargeting::Specification,
+                    QueryReading {
+                        context: &ContextSpec::core_only(),
+                        language_targeting: LanguageTargeting::Specification,
+                        operation: LinkedOperation::QueryTemporal(TemporalJoin::Spec),
+                    },
                     AttrsAdmission::ReifiedScopeAdmitted,
                 )
                 .await;

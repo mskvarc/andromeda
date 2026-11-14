@@ -18,7 +18,6 @@ use crate::{
             deserialize_optional_projection_terms,
             deserialize_optional_uri_csv,
         },
-        entity_selector::EntitySelectorParams,
         temporal::deserialization::{deserialize_option_timeproperty, deserialize_option_timerel, deserialize_optional_aggr_methods},
     },
     query_parameter::{QueryParameter, QueryParameterSet},
@@ -40,6 +39,7 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     dataset::DatasetSelector,
     defined_token::deserialize_optional_token,
+    entity_selector_params::EntitySelectorParams,
     filter::expression::Expr,
     ordering::parameters::OrderingParameters,
     pattern::Pattern,
@@ -312,10 +312,7 @@ mod tests {
         error::ParameterError,
         pagination::cursor_request::CursorRequest,
         params_from_query,
-        query::{
-            entity_selector::EntitySelectorParams,
-            temporal::{TemporalQueryParameters, operation::TemporalQueryOperation},
-        },
+        query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation},
     };
     use andromeda_linked_retrieval::admission::{LinkedMember, LinkedOperation, ReachingMember, TemporalJoin};
     use andromeda_ngsi_ld_lexicon::{
@@ -327,6 +324,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         cursor::PageCursor,
+        entity_selector_params::EntitySelectorParams,
         error::QueryError,
         filter::serialize::serialize_attr_path,
         projection::exclusivity::ProjectionConflict,

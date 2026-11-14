@@ -15,7 +15,7 @@ use andromeda_linked_retrieval::plan::JoinPlan;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::temporal_body::TemporalBody;
 use andromeda_ngsi_ld_render::temporal::temporal_evolutions::TemporalEvolutions;
-use andromeda_temporal::{error::TemporalError, linked::TemporalLinkedJoin};
+use andromeda_temporal::{error::TemporalError, linked::TemporalLinkedJoin, query_reading::QueryReading};
 
 /// What the traversal of a clause 4.5.23 join reached, or nothing when the
 /// request asked for no join that retrieves.
@@ -62,7 +62,17 @@ pub(crate) async fn apply_temporal_join(
 ) -> Result<(ResolvedJoin, Vec<NgsiLdWarning>), TemporalError> {
     let joined = read
         .service
-        .join_linked_temporal(read.target, roots, read.params, read.context, read.attrs_admission)
+        .join_linked_temporal(
+            read.target,
+            roots,
+            read.params,
+            QueryReading {
+                context: read.context,
+                language_targeting: read.language_targeting,
+                operation: read.operation,
+            },
+            read.attrs_admission,
+        )
         .await?;
     let warnings = match &joined {
         Some(joined) => with_linked_resolution_warnings(warnings, joined.failures()),

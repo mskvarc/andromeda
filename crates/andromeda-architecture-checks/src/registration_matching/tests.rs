@@ -53,7 +53,7 @@ fn a_model_selector_pattern_read_is_flagged() {
 
 #[test]
 fn a_request_selector_pattern_read_passes() {
-    let source = "use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams; fn f(s: &EntitySelectorParams, id: &str) -> bool { s.id_pattern.as_ref().is_some_and(|p| p.is_match(id)) }";
+    let source = "use andromeda_ngsi_ld_query::entity_selector_params::EntitySelectorParams; fn f(s: &EntitySelectorParams, id: &str) -> bool { s.id_pattern.as_ref().is_some_and(|p| p.is_match(id)) }";
     assert_eq!(reports(OUTSIDE, source), Vec::<String>::new());
 }
 

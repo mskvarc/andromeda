@@ -1,6 +1,6 @@
-//! The four carriers a `q` travels in, for a test of a limit the broker puts on the query: Query Entities by GET,
-//! Query Entities by POST, Query Temporal Evolution of Entities and Create Subscription. A `q` the models would refuse
-//! to write is sent as written through each.
+//! The five carriers a `q` travels in, for a test of a limit the broker puts on the query: Query Entities by GET,
+//! Query Entities by POST, Query Temporal Evolution of Entities, Create Subscription and Query Context Source
+//! Registrations. A `q` the models would refuse to write is sent as written through each.
 
 use crate::{
     body_json::{json_contains_text, json_equals},
@@ -40,6 +40,19 @@ pub struct Carriers<'a> {
 }
 
 impl Carriers<'_> {
+    /// The answer to Query Context Source Registrations for the type and the `q`, which clause 5.10.2.3 reads only
+    /// to name the attributes a registration is matched on.
+    async fn discovery(&self) -> Result<Response<Bytes>> {
+        Ok(call(
+            self.broker,
+            Method::GET,
+            &target("csourceRegistrations", &[("type", self.entity_type), ("q", self.q)]),
+            &[("Accept", "application/json")],
+            None,
+        )
+        .await?)
+    }
+
     /// The Create Subscription body with the identifier `id` and the notification endpoint `endpoint`.
     fn subscription(&self, id: &SubscriptionId, endpoint: &Url) -> String {
         json!({
@@ -52,8 +65,8 @@ impl Carriers<'_> {
         .to_string()
     }
 
-    /// Requires Query Entities by GET and Query Temporal Evolution of Entities to answer 200, and Create Subscription
-    /// to answer 201.
+    /// Requires Query Entities by GET, Query Temporal Evolution of Entities and Query Context Source Registrations to
+    /// answer 200, and Create Subscription to answer 201.
     ///
     /// # Errors
     ///
@@ -86,6 +99,8 @@ impl Carriers<'_> {
         )
         .await?;
         expect_that!(temporal.status(), eq(StatusCode::OK));
+        let discovered = self.discovery().await?;
+        expect_that!(discovered.status(), eq(StatusCode::OK));
         let created = call(
             self.broker,
             Method::POST,
@@ -142,6 +157,8 @@ impl Carriers<'_> {
         )
         .await?;
         expect_too_complex(&temporal, detail);
+        let discovered = self.discovery().await?;
+        expect_too_complex(&discovered, detail);
         let created = call(
             self.broker,
             Method::POST,

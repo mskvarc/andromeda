@@ -9,9 +9,10 @@
 //! local-only: [`selection_params`](TemporalDeleteParameters::selection_params)
 //! pins the local scope, so entity resolution never forwards.
 
-use crate::{error::TemporalError, port::read_scope::ScopeReach, result_bound::ResultBound, service::TemporalService};
+use crate::{error::TemporalError, port::read_scope::ScopeReach, query_reading::QueryReading, result_bound::ResultBound, service::TemporalService};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext};
+use andromeda_linked_retrieval::admission::LinkedOperation;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
@@ -64,7 +65,15 @@ impl TemporalService {
         let selection = params.selection_params();
         // The delete selection carries no `attrs`, so the admission never sees a name.
         let compiled = self
-            .compile_temporal_query(&selection, context, self.language_targeting(), AttrsAdmission::ReifiedScopeAdmitted)
+            .compile_temporal_query(
+                &selection,
+                QueryReading {
+                    context,
+                    language_targeting: self.language_targeting(),
+                    operation: LinkedOperation::TemporalDeleteByQuery,
+                },
+                AttrsAdmission::ReifiedScopeAdmitted,
+            )
             .await?;
 
         // Stage 1 entity resolution, unpaged: the delete addresses every

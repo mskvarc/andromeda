@@ -2,6 +2,7 @@
 
 use crate::{
     handler,
+    query_creation,
     state::{EntityMapRouteState, EntityMapStateResolver},
 };
 use andromeda_extensions::enabled::EnabledExtensions;
@@ -25,10 +26,13 @@ impl EntityMapRoutes {
     pub fn new(resolver: Arc<dyn EntityMapStateResolver>, enabled: EnabledExtensions) -> EntityMapRoutes {
         let state = EntityMapRouteState::new(resolver);
         let current_routes = Router::new()
-            .route("/", get(handler::create_from_query).post(handler::create_from_query_post))
+            .route("/", get(query_creation::create_from_query).post(query_creation::create_from_query_post))
             .route("/{entity_map_id}", get(handler::get).patch(handler::update).delete(handler::delete));
         let temporal_routes = Router::new()
-            .route("/", get(handler::create_temporal_from_query).post(handler::create_temporal_from_query_post))
+            .route(
+                "/",
+                get(query_creation::create_temporal_from_query).post(query_creation::create_temporal_from_query_post),
+            )
             .layer(Extension(TemporalExtensionGate::new(enabled)));
         let router = Router::new()
             .nest("/entityMaps", current_routes)
