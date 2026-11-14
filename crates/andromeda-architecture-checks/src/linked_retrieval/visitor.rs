@@ -72,6 +72,9 @@ const ADMISSION_VARIANTS: [&str; 7] = [
 /// The engine's adapter traits.
 const ADAPTER_TRAITS: [&str; 2] = ["LinkedSource", "LinkedRepresentation"];
 
+/// The port the `q` compile entry admits a filter's hops through.
+const HOP_ADMISSION_PORT: &str = "FilterHopAdmission";
+
 /// The names every private walk so far has used.
 const WALK_NAMES: [&str; 5] = ["JoinPath", "Ancestor", "LinkedCandidate", "resolve_linked", "traverse"];
 
@@ -131,6 +134,9 @@ impl<'ast> Visit<'ast> for LinkedRetrievalVisitor {
             .map(|segment| segment.ident.to_string());
         if let Some(adapter) = trait_name.as_deref().filter(|name| ADAPTER_TRAITS.contains(name)) {
             self.flag(Rule::Adapter, format!("implements `{adapter}` outside the registered adapters"));
+        }
+        if trait_name.as_deref() == Some(HOP_ADMISSION_PORT) {
+            self.flag(Rule::HopAdmission, format!("implements `{HOP_ADMISSION_PORT}` outside the engine"));
         }
         let converts_admission = is_admission_conversion(item);
         self.admission_conversion_depth += usize::from(converts_admission);
@@ -201,6 +207,15 @@ impl<'ast> Visit<'ast> for LinkedRetrievalVisitor {
         }
         if self.pattern_depth == 0 {
             self.check_admission_variant(&segments);
+        }
+        if let [.., owner, variant] = segments.as_slice()
+            && owner == "LinkedOperation"
+            && let Some(rule) = Rule::open_operation(variant)
+        {
+            self.flag(
+                rule,
+                format!("names `LinkedOperation::{variant}`, which admits every hop, outside the pipeline that runs it"),
+            );
         }
         visit_expr_path(self, expression);
     }

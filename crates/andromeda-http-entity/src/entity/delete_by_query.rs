@@ -30,6 +30,7 @@ use andromeda_failure_classification::classified_report::ClassifiedReport;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::{context::ContextUrl, context_target, query::ValidatedQuery};
 use andromeda_jsonld::user_context_admission::{SubmittedContext, admit_user_context};
+use andromeda_linked_retrieval::admission::LinkedOperation;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::{entity_selection::ConsideredEntities, page_window::PageWindow, projection::purge::DatasetPurgeScope};
 use andromeda_ngsi_ld_request::query::entity::{
@@ -138,7 +139,7 @@ pub(crate) async fn delete_by_query(
 
     let compiled = state
         .entity_query
-        .compile_query_public(&query, &context, state.entity_query.language_targeting())
+        .compile_query_public(&query, &context, state.entity_query.language_targeting(), LinkedOperation::PurgeEntities)
         .await
         .with_entity_instance(&uri)?;
     let entity_ids: Vec<Identifier> = state

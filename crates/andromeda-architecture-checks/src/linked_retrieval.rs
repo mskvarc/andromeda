@@ -21,6 +21,12 @@
 //!   their `From<AdmissionError>` conversion;
 //! - implementing `LinkedSource` or `LinkedRepresentation` in a file not
 //!   registered as an adapter;
+//! - implementing `FilterHopAdmission`, the port every `q` compile admits
+//!   its hops through, anywhere but the engine, so each pipeline hands over
+//!   the engine's own admission;
+//! - naming an operation that admits every hop (`LinkedOperation::Subscription`,
+//!   `LinkedOperation::QueryRegistrations`) outside the one pipeline that runs
+//!   it, so no other pipeline can pass it for its own;
 //! - naming a type or function after a private walk (`JoinPath`, `Ancestor`,
 //!   `LinkedCandidate`, `resolve_linked`, `traverse`).
 

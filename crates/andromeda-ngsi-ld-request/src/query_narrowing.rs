@@ -35,9 +35,10 @@
 //! registration discovery has no execution to limit to the local scope, and it
 //! drops the "non-system Attribute" qualification from (b) and (c).
 
-use crate::{error::ParameterError, query::entity_selector::EntitySelectorParams};
+use crate::error::ParameterError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
+    entity_selector_params::EntitySelectorParams,
     filter::{expression::Expr, referenced_attributes::referenced_attributes},
     geo::input::GeoQueryInput,
     type_selection::grammar::TypeExprRaw,

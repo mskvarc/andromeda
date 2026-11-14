@@ -67,6 +67,20 @@ pub(crate) struct RetrievedHistory {
     pub(crate) entity_map_uri: Option<Identifier>,
 }
 
+impl RetrievedHistory {
+    /// What a local retrieval assembled: `result` as read, with no source
+    /// contacted to warn about and no Entity Map in use (clause 5.7.3.4).
+    pub(crate) fn local(result: TemporalReadResult) -> RetrievedHistory {
+        RetrievedHistory {
+            history: result.history,
+            range: result.range,
+            warnings: Vec::new(),
+            projection: result.projection,
+            entity_map_uri: None,
+        }
+    }
+}
+
 /// Resolve the Entity Map a distributed retrieval runs under.
 ///
 /// Clause 5.7.3.4: a referenced live map fixes the registrations the retrieval

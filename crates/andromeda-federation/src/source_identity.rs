@@ -35,7 +35,7 @@ use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use andromeda_ngsi_ld_request::query::entity_selector::EntitySelectorParams;
+use andromeda_ngsi_ld_query::entity_selector_params::EntitySelectorParams;
 use dashmap::DashMap;
 use serde::Deserialize;
 use std::time::{Duration, Instant};

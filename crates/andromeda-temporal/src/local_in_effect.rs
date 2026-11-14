@@ -73,9 +73,7 @@ impl TemporalService {
         reading: QueryReading<'_>,
         entity_ids: &[Identifier],
     ) -> Result<LocalInEffect, TemporalError> {
-        let compiled = self
-            .compile_temporal_query(params, reading.context, reading.language_targeting, AttrsAdmission::ReifiedScopeAdmitted)
-            .await?;
+        let compiled = self.compile_temporal_query(params, reading, AttrsAdmission::ReifiedScopeAdmitted).await?;
         let filter = SplitFilter::of(&compiled.entities);
         if entity_ids.is_empty() || filter.is_empty() || compiled.window.in_effect_start().is_none() {
             return Ok(LocalInEffect::default());

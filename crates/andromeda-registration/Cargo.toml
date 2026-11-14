@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 andromeda-json-literal.workspace = true
 andromeda-jsonld.workspace = true
+andromeda-linked-retrieval.workspace = true
 andromeda-ngsi-ld-compaction.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true

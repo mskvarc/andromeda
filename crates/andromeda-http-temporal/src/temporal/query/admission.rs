@@ -25,6 +25,7 @@ use andromeda_federation::{
 use andromeda_http_extraction::prefer::PreferHeader;
 use andromeda_http_headers::via::Via;
 use andromeda_jsonld::user_context_admission::AdmittedContext;
+use andromeda_linked_retrieval::admission::LinkedOperation;
 use andromeda_ngsi_ld_query::ordering::parameters::OrderingParameters;
 use andromeda_ngsi_ld_request::{error::ParameterError, query::temporal::operation::TemporalQueryOperation};
 use andromeda_temporal::query_reading::QueryReading;
@@ -48,6 +49,9 @@ pub(super) struct AdmittedQuery {
     /// languageMap keys, locally and at every source it reaches, and the
     /// warning a fallback to tag equality carries.
     pub(super) language: NegotiatedLanguageTargeting,
+    /// The operation the query is, under the broker's temporal Linked Entity
+    /// mode, which admits or refuses the hops of its `q`.
+    pub(super) operation: LinkedOperation,
 }
 
 impl AdmittedQuery {
@@ -56,6 +60,7 @@ impl AdmittedQuery {
         QueryReading {
             context,
             language_targeting: self.language.targeting,
+            operation: self.operation,
         }
     }
 }
@@ -118,6 +123,7 @@ pub(super) async fn admit_request(
         map_use,
         registration_filters,
         language,
+        operation: TemporalQueryOperation::Query.linked(state.temporal.linked_retrieval()),
     })
 }
 

@@ -7,17 +7,18 @@
 //! stay with the broker: each source answers whatever it holds, and the filters
 //! are applied here, once the local and forwarded entities have been merged.
 
-use crate::{
-    error::EntityError,
-    query::{EntityQueryService, compilation::compile_q_expression},
-};
+use crate::{error::EntityError, query::EntityQueryService};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_linked_retrieval::{admission::LinkedOperation, filter_hops::FilterHops};
 use andromeda_ngsi_ld_entity::{document::EntityDocument, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_query::{
     entity_filters::EntityFilters,
-    filter::{expansion::expand_json_keys, language_matching::LanguageMatching},
+    filter::{
+        compilation::{FilterAdmission, FilterOptIns, compile_q_filter},
+        language_targeting::LanguageTargeting,
+    },
     geo::compile::compile_geo_query,
 };
 use andromeda_ngsi_ld_query_evaluation::entity_filters::entity_filters_admit;
@@ -33,13 +34,14 @@ impl EntityQueryService {
     /// the model, so the filters, expanded under `context`, are evaluated over
     /// the document each one is. The entities a `rel{…}` hop of `q` crosses
     /// into (clause 4.9) are read from `target` as they stand now, and its
-    /// target languages select keys by `language_matching`, the mode the
-    /// request runs under.
+    /// target languages are admitted and select keys under
+    /// `language_targeting`, the level the request runs under.
     ///
     /// # Errors
     ///
     /// Returns [`EntityError::Query`] when `q` or the geoquery cannot be
-    /// compiled against `context`, and the store's [`EntityError`] when the
+    /// compiled against `context`, [`EntityError::Request`] when a hop of `q`
+    /// reaches past the request's `join`, and the store's [`EntityError`] when the
     /// entities a hop of `q` links to cannot be read.
     pub async fn retain_matching(
         &self,
@@ -47,7 +49,7 @@ impl EntityQueryService {
         entities: Vec<ReceivedState>,
         deferred: DeferredSplitFilters,
         context: &ContextSpec,
-        language_matching: LanguageMatching,
+        language_targeting: LanguageTargeting,
     ) -> Result<Vec<ReceivedState>, EntityError> {
         let DeferredSplitFilters {
             q,
@@ -55,6 +57,8 @@ impl EntityQueryService {
             scope_q,
             json_keys,
             expand_values,
+            join,
+            join_level,
         } = deferred;
         // One preparation serves the deferred `q` and the geoquery alike.
         let prepared_context = self.engine().prepare_term_context(context);
@@ -64,15 +68,21 @@ impl EntityQueryService {
                 // Clause 4.9 EXAMPLE 11: the deferred filter is expanded under
                 // the same `jsonKeys` declaration the local query used, so one
                 // request has one expansion of one filter.
-                let json_keys = expand_json_keys(json_keys.as_deref(), &expander).await?;
-                Some(compile_q_expression(q_expr, &json_keys, expand_values.as_deref(), &expander).await?)
+                let opt_ins = FilterOptIns::expanded(json_keys.as_deref(), expand_values.as_deref(), &expander).await?;
+                let admission = FilterAdmission {
+                    complexity: self.filter_complexity,
+                    language_targeting,
+                };
+                // Clause 5.7.2.4: `splitEntities` belongs to Query Entities.
+                let hops = FilterHops::new(LinkedOperation::QueryEntities, join, join_level);
+                Some(compile_q_filter::<EntityError, _, _>(q_expr, &opt_ins, admission, &hops, &expander).await?)
             }
             None => None,
         };
         let geo = compile_geo_query(geo.as_ref(), &expander, self.geo_admission).await?;
         let filters = EntityFilters {
             q: q.as_ref(),
-            language_matching,
+            language_matching: language_targeting.matching(),
             geo: geo.as_ref(),
             scope: scope_q.as_ref(),
         };
@@ -108,7 +118,7 @@ mod tests {
     use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
     use andromeda_ngsi_ld_model::entity_system_times::EntitySystemTimes;
     use andromeda_ngsi_ld_query::{
-        filter::{language_matching::LanguageMatching, parser::parse},
+        filter::{language_targeting::LanguageTargeting, parser::parse},
         scope::query::ScopeQuery,
     };
     use andromeda_ngsi_ld_request::deferred_split_filters::DeferredSplitFilters;
@@ -141,7 +151,7 @@ mod tests {
                 vec![vehicle("urn:ngsi-ld:Vehicle:fast", 80), vehicle("urn:ngsi-ld:Vehicle:slow", 40)],
                 deferred,
                 &ContextSpec::core_only(),
-                LanguageMatching::TagEquality,
+                LanguageTargeting::Specification,
             )
             .await
             .expect("the deferred filters compile")

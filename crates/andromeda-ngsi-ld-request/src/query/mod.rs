@@ -11,7 +11,6 @@
 pub mod csr;
 pub mod deserialization;
 pub mod entity;
-pub mod entity_selector;
 pub mod parameter_error;
 pub mod temporal;
 

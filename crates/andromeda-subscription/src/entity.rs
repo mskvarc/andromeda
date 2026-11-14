@@ -1,6 +1,7 @@
 use crate::{
     change::{SubscriptionChange, UpsertKind},
     error::SubscriptionError,
+    filter_admission::SubscriptionFilterAdmission,
     request_validation,
     term_expansion,
     variant::{DatasetIdPolicy, SubscriptionVariant},
@@ -29,8 +30,13 @@ impl EntitySubscriptionVariant {
 impl SubscriptionVariant for EntitySubscriptionVariant {
     type Change = SubscriptionChange;
 
-    async fn expand_terms(&self, request: &mut SubscriptionRequest, context: &ContextSpec) -> Result<(), SubscriptionError> {
-        term_expansion::expand_common_subscription_terms(&self.engine, request, context).await
+    async fn expand_terms(
+        &self,
+        request: &mut SubscriptionRequest,
+        context: &ContextSpec,
+        admission: SubscriptionFilterAdmission,
+    ) -> Result<(), SubscriptionError> {
+        term_expansion::expand_common_subscription_terms(&self.engine, request, context, admission).await
     }
 
     /// Supply the clause 5.2.12 default `notificationTrigger` a Subscription

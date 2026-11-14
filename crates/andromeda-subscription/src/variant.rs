@@ -8,7 +8,7 @@
 //! which change event the store broadcast carries. Naming those four is what
 //! lets `crate::lifecycle` be written once.
 
-use crate::{change::UpsertKind, error::SubscriptionError};
+use crate::{change::UpsertKind, error::SubscriptionError, filter_admission::SubscriptionFilterAdmission};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -31,7 +31,8 @@ pub trait SubscriptionVariant: Send + Sync {
     /// The change-event type emitted over the broadcast channel.
     type Change: Clone + Send + 'static;
 
-    /// Expand the request's terms in place under `context` (clause 5.5.7).
+    /// Expand the request's terms in place under `context` (clause 5.5.7),
+    /// its `q` admitted under `admission`.
     ///
     /// Initialising `jsonldContext` is not part of it: that is a clause 5.8.1.4
     /// creation step, and an update leaves the stored member as it is unless
@@ -40,6 +41,7 @@ pub trait SubscriptionVariant: Send + Sync {
         &'life0 self,
         request: &'life1 mut SubscriptionRequest,
         context: &'life2 ContextSpec,
+        admission: SubscriptionFilterAdmission,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
         'life0: 'async_trait,

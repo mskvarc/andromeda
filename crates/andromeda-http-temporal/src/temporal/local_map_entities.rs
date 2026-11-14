@@ -80,6 +80,7 @@ impl LocalMapEntities for LocalHistoryEntities<'_> {
                         QueryReading {
                             context: read.context,
                             language_targeting: read.language_targeting,
+                            operation: read.operation,
                         },
                         requested,
                         CandidateFilters::Applied,

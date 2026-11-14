@@ -3,6 +3,8 @@
 use crate::query::entity::parameters::EntityQueryParameters;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::input::GeoQueryInput, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_representation::join_mode::JoinMode;
+use std::num::NonZeroU32;
 
 /// The `q`, `geoQ` and `scopeQ` parameters a `splitEntities` request removes
 /// from the query it runs locally, so they can be evaluated once against the
@@ -38,6 +40,14 @@ pub struct DeferredSplitFilters {
     /// because it decides which operands are terms to expand, and so where a
     /// bare word may stand (clause 4.9 EXAMPLE 12).
     pub expand_values: Option<Vec<AttributeName>>,
+    /// The request's clause 4.5.23 `join`, which bounds the hops the
+    /// deferred `q` may take (clause 5.7.2.4). The query keeps it for its own
+    /// traversal.
+    pub join: Option<JoinMode>,
+    /// The request's clause 4.5.23 `joinLevel`, which bounds how deep a hop
+    /// of the deferred `q` may reach. The query keeps it for its own
+    /// traversal.
+    pub join_level: Option<NonZeroU32>,
 }
 
 impl EntityQueryParameters {
@@ -59,6 +69,8 @@ impl EntityQueryParameters {
             scope_q: self.scope_q.take(),
             json_keys: self.json_keys.take(),
             expand_values: self.expand_values.take(),
+            join: self.join,
+            join_level: self.join_level,
         }
     }
 }

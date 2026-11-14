@@ -31,6 +31,7 @@ use andromeda_federation::{aggregation_gathering::AggregationGathering, outcome:
 use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, WarnCode};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
+use andromeda_ngsi_ld_request::query::temporal::operation::TemporalQueryOperation;
 use andromeda_temporal::{
     merged_parts::{EntityParts, LocalPart},
     query_reading::QueryReading,
@@ -106,6 +107,7 @@ pub(crate) async fn aggregate_at_hub(
     let reading = QueryReading {
         context: query.context,
         language_targeting: query.language_targeting,
+        operation: TemporalQueryOperation::Query.linked(service.linked_retrieval()),
     };
     let (mut entities, rendering_warnings) = render_merged_instances(service, target, query.params, reading, parts, query.instance).await?;
     warnings.extend(rendering_warnings);

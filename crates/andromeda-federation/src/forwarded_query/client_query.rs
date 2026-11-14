@@ -8,10 +8,10 @@
 //! it is looking at.
 
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
-use andromeda_ngsi_ld_query::{filter::expression::Expr, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::{entity_selector_params::EntitySelectorParams, filter::expression::Expr, scope::query::ScopeQuery};
 use andromeda_ngsi_ld_request::{
     entity::GetEntityParams,
-    query::{entity::parameters::EntityQueryParameters, entity_selector::EntitySelectorParams, temporal::TemporalQueryParameters},
+    query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
 };
 use std::borrow::Cow;
 

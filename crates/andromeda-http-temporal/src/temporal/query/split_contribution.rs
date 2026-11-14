@@ -28,11 +28,13 @@ use andromeda_federation::{aggregation_gathering::AggregationGathering, split_en
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::linked_resolution_warning::with_linked_resolution_warnings;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_linked_retrieval::admission::LinkedOperation;
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::{
     filter::language_targeting::LanguageTargeting,
     temporal::contributed_entities::{ContributedEntities, ContributedRendering},
 };
+use andromeda_ngsi_ld_request::query::temporal::operation::TemporalQueryOperation;
 use andromeda_temporal::{
     error::TemporalError,
     local_in_effect::LocalInEffect,
@@ -152,6 +154,9 @@ struct SettledRequest<'r> {
     /// What the query's target languages may be and how they select
     /// languageMap keys.
     language_targeting: LanguageTargeting,
+    /// The operation the query is, which admits or refuses the hops of its
+    /// `q`.
+    operation: LinkedOperation,
     /// What the sources answered.
     forwarded: Option<&'r ForwardedHistory>,
     /// What every part holds in effect when the window opens.
@@ -164,6 +169,7 @@ impl SettledRequest<'_> {
         QueryReading {
             context: self.context,
             language_targeting: self.language_targeting,
+            operation: self.operation,
         }
     }
 }
@@ -250,6 +256,7 @@ pub(crate) async fn merge_with_contributions(
         params: merge.params,
         context: merge.context,
         language_targeting: merge.language_targeting,
+        operation: TemporalQueryOperation::Query.linked(service.linked_retrieval()),
         forwarded: forwarded.as_ref(),
         in_effect: in_effect.as_ref(),
     };

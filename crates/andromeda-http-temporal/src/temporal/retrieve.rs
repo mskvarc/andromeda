@@ -86,14 +86,7 @@ pub(crate) async fn get(
 
     let local_result = service.get(&target, &id, &params, &context).await;
     let retrieved = if is_local {
-        let result = local_result.with_instance(&uri)?;
-        RetrievedHistory {
-            history: result.history,
-            range: result.range,
-            warnings: Vec::new(),
-            projection: result.projection,
-            entity_map_uri: None,
-        }
+        RetrievedHistory::local(local_result.with_instance(&uri)?)
     } else {
         let triggering = TriggeringRequest {
             via: incoming_via.as_ref(),
@@ -132,6 +125,7 @@ pub(crate) async fn get(
         context: &context,
         // A retrieval carries no `q` (Table 6.19.3.1-1).
         language_targeting: state.temporal.language_targeting(),
+        operation: TemporalQueryOperation::Retrieve.linked(state.temporal.linked_retrieval()),
         attrs_admission: TemporalQueryOperation::Retrieve.attrs_admission(),
     };
     // The history is compacted under the request context once every holder's

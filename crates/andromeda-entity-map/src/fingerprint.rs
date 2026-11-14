@@ -23,10 +23,16 @@
 use crate::{entity_map_invariant::EntityMapInvariant, error::EntityMapError};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity_map_fingerprint::{MapRequestKind, RequestFingerprint};
-use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::input::GeoQueryInput, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_query::{
+    entity_selector_params::EntitySelectorParams,
+    filter::expression::Expr,
+    geo::input::GeoQueryInput,
+    scope::query::ScopeQuery,
+    type_selection::grammar::TypeExprRaw,
+};
 use andromeda_ngsi_ld_request::{
     entity::GetEntityParams,
-    query::{entity::parameters::EntityQueryParameters, entity_selector::EntitySelectorParams, temporal::TemporalQueryParameters},
+    query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
 };
 use sha2::{Digest, Sha256};
 

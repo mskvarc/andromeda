@@ -14,6 +14,7 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_linked_retrieval::admission::{LinkedOperation, TemporalJoin};
 use andromeda_ngsi_ld_lexicon::{
     aggr_method::AggrMethod,
     attribute_name::AttributeName,
@@ -260,6 +261,7 @@ async fn query(reader: Arc<ShapedReader>) -> Result<(), TemporalError> {
             QueryReading {
                 context: &ContextSpec::core_only(),
                 language_targeting: LanguageTargeting::Specification,
+                operation: LinkedOperation::QueryTemporal(TemporalJoin::Spec),
             },
             ContributedEntities::default(),
         )

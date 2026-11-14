@@ -11,7 +11,10 @@ use crate::{
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-use andromeda_ngsi_ld_query::geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand};
+use andromeda_ngsi_ld_query::{
+    filter::{compilation::FilterAdmission, complexity::FilterComplexityLimits, language_targeting::LanguageTargeting},
+    geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
+};
 use std::{num::NonZeroUsize, sync::Arc};
 
 /// An engine with remote context fetching disabled, so a remote context can
@@ -21,7 +24,9 @@ pub(crate) fn offline_engine() -> JsonLdEngine {
 }
 
 /// A service over `store` reading contexts through `engine`, probing no
-/// entity and publishing its change events to `sink`, with geometry limits no
+/// entity and publishing its change events to `sink`, under the broker's
+/// default `q` limits (1000 comparisons, 16 levels) and the specification's
+/// target languages, with geometry limits no
 /// fixture reaches, counting none of the store's registrations.
 pub(crate) fn service_over(store: Arc<dyn RegistrationStore>, engine: JsonLdEngine, sink: Option<Arc<dyn RegistrationChangeSink>>) -> RegistrationService {
     service_counting(store, RegistrationCensus::new(0), engine, sink)
@@ -47,5 +52,9 @@ pub(crate) fn service_counting(
             },
             NearDistanceBand::Refused,
         ),
+        FilterAdmission {
+            complexity: FilterComplexityLimits::new(NonZeroUsize::MIN.saturating_add(999), NonZeroUsize::MIN.saturating_add(15)),
+            language_targeting: LanguageTargeting::Specification,
+        },
     )
 }

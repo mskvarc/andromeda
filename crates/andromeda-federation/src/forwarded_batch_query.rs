@@ -69,7 +69,8 @@ mod tests {
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-    use andromeda_ngsi_ld_request::query::{entity::parameters::EntityQueryParameters, entity_selector::EntitySelectorParams};
+    use andromeda_ngsi_ld_query::entity_selector_params::EntitySelectorParams;
+    use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
     use serde_json::{Value, json};
 
     fn registration(information: &Value) -> ContextSourceRegistration {

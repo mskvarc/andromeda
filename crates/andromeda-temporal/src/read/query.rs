@@ -62,14 +62,12 @@ impl TemporalService {
         reading: QueryReading<'_>,
         contributed: ContributedEntities,
     ) -> Result<TemporalQueryResult, TemporalError> {
-        let QueryReading { context, language_targeting } = reading;
+        let context = reading.context;
         let timer = temporal::start(TemporalOperation::Query);
         let result = async {
             params.validate(TemporalQueryOperation::Query, self.linked_retrieval)?;
 
-            let mut compiled = self
-                .compile_temporal_query(params, context, language_targeting, AttrsAdmission::ReifiedScopeAdmitted)
-                .await?;
+            let mut compiled = self.compile_temporal_query(params, reading, AttrsAdmission::ReifiedScopeAdmitted).await?;
             compiled.contributed = contributed;
             let compiled = compiled;
 

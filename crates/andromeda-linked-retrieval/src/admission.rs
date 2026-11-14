@@ -18,6 +18,12 @@
 //!   when they follow the Core rule above.
 //! - Subscriptions admit every reference (clause 5.8.1.4 adds a Subscription
 //!   that passes the clause 5.2.12 checks, none of which bounds them).
+//! - Query Context Source Registrations admits every hop of its `q`, which
+//!   clause 5.10.2.3 reads only to name the Attributes a query is about: no
+//!   clause bounds it, and discovery takes no `join`.
+//! - The temporal delete-by-query extension refuses a hop as Purge Entities
+//!   does: it takes the entity selection of a temporal query, which bounds a
+//!   hop by a `join` the delete does not take.
 //!
 //! `@none` is the parameter's own default (clause 4.5.23 says "By default, it
 //! will be '@none'"), so writing it means no more than leaving the parameter
@@ -41,7 +47,7 @@ use typed_builder::TypedBuilder;
 
 /// Whether a temporal operation runs as the specification states it or with
 /// the `temporal_linked_retrieval` extension enabled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TemporalJoin {
     /// Clauses 5.7.3.4, 5.7.4.4 and 5.14.5.4: no Linked Entity retrieval.
     Spec,
@@ -50,7 +56,7 @@ pub enum TemporalJoin {
 }
 
 /// The operation a request is, as far as Linked Entity retrieval cares.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display)]
 pub enum LinkedOperation {
     /// Retrieve Entity (clause 5.7.1).
     #[display("Retrieve Entity")]
@@ -76,6 +82,13 @@ pub enum LinkedOperation {
     /// Create or Update Subscription (clauses 5.8.1, 5.8.2).
     #[display("Subscription")]
     Subscription,
+    /// Query Context Source Registrations (clause 5.10.2).
+    #[display("Query Context Source Registrations")]
+    QueryRegistrations,
+    /// The temporal delete-by-query extension, which deletes the history of
+    /// the entities a temporal query's selection names.
+    #[display("temporal delete-by-query")]
+    TemporalDeleteByQuery,
 }
 
 /// A request member that reaches into a Linked Entity's members.
@@ -199,18 +212,19 @@ pub enum AdmissionError {
 /// it reaches past the traversal.
 pub fn admit(operation: LinkedOperation, reference: LinkedReference, join: Option<JoinMode>, join_level: Option<NonZeroU32>) -> Result<(), AdmissionError> {
     match (operation, reference) {
-        (LinkedOperation::Subscription, _)
+        (LinkedOperation::Subscription | LinkedOperation::QueryRegistrations, _)
         | (
             LinkedOperation::RetrieveEntity
             | LinkedOperation::QueryEntities
             | LinkedOperation::EntityMapQuery
             | LinkedOperation::PurgeEntities
+            | LinkedOperation::TemporalDeleteByQuery
             | LinkedOperation::RetrieveTemporal(TemporalJoin::Extended)
             | LinkedOperation::QueryTemporal(TemporalJoin::Extended)
             | LinkedOperation::EntityMapTemporalQuery(TemporalJoin::Extended),
             LinkedReference::JoinRequest,
         ) => Ok(()),
-        (LinkedOperation::PurgeEntities, LinkedReference::Projection { .. } | LinkedReference::Filter { .. })
+        (LinkedOperation::PurgeEntities | LinkedOperation::TemporalDeleteByQuery, LinkedReference::Projection { .. } | LinkedReference::Filter { .. })
         | (
             LinkedOperation::RetrieveTemporal(TemporalJoin::Spec)
             | LinkedOperation::QueryTemporal(TemporalJoin::Spec)
@@ -297,6 +311,8 @@ const fn admit_join_level(operation: LinkedOperation, join: Option<JoinMode>, jo
             | LinkedOperation::QueryEntities
             | LinkedOperation::EntityMapQuery
             | LinkedOperation::PurgeEntities
+            | LinkedOperation::QueryRegistrations
+            | LinkedOperation::TemporalDeleteByQuery
             | LinkedOperation::RetrieveTemporal(_)
             | LinkedOperation::QueryTemporal(_)
             | LinkedOperation::EntityMapTemporalQuery(_),
@@ -323,6 +339,8 @@ const fn admit_contained_by(operation: LinkedOperation, contained_by: Option<&[I
             | LinkedOperation::QueryEntities
             | LinkedOperation::EntityMapQuery
             | LinkedOperation::PurgeEntities
+            | LinkedOperation::QueryRegistrations
+            | LinkedOperation::TemporalDeleteByQuery
             | LinkedOperation::RetrieveTemporal(_)
             | LinkedOperation::QueryTemporal(_)
             | LinkedOperation::EntityMapTemporalQuery(_),

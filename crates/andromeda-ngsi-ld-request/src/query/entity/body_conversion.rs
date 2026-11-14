@@ -3,11 +3,11 @@
 use crate::{
     error::ParameterError,
     pagination::parameters::PageParameters,
-    query::{deserialization::OptionalGeoQuery, entity::parameters::EntityQueryParameters, entity_selector::EntitySelectorParams},
+    query::{deserialization::OptionalGeoQuery, entity::parameters::EntityQueryParameters},
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_model::query::body::Query;
-use andromeda_ngsi_ld_query::count_policy::CountPolicy;
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity_selector_params::EntitySelectorParams};
 
 impl TryFrom<Query> for EntityQueryParameters {
     type Error = ParameterError;

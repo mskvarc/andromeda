@@ -20,7 +20,7 @@ use andromeda_entity_map::{
 };
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_linked_retrieval::{plan::JoinPlan, typed::TypedEntities};
+use andromeda_linked_retrieval::{admission::LinkedOperation, plan::JoinPlan, typed::TypedEntities};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, page_window::PageWindow};
 use andromeda_ngsi_ld_request::{entity::GetEntityParams, query::entity::parameters::EntityQueryParameters};
@@ -113,7 +113,10 @@ impl LocalMapEntities for LocalEntitySource<'_> {
                 join,
                 instance,
             } => {
-                let mut compiled = service.compile_query_public(query, context, targeting).await.with_entity_instance(instance)?;
+                let mut compiled = service
+                    .compile_query_public(query, context, targeting, LinkedOperation::QueryEntities)
+                    .await
+                    .with_entity_instance(instance)?;
                 match listing {
                     MapListing::Minted => {}
                     // Clause 4.3.6.7 rechecks the filters of the request the map

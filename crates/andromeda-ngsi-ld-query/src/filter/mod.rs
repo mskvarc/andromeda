@@ -8,10 +8,12 @@
 //! with it.
 
 pub mod compaction;
+pub mod compilation;
 pub mod complexity;
 pub mod expansion;
 pub mod expectation;
 pub mod expression;
+pub mod hop_admission;
 pub mod instance_metadata;
 pub mod json_key_attributes;
 pub mod json_string;

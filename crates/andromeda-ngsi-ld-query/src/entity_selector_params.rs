@@ -1,7 +1,7 @@
 //! The per-selector form of a query's entity selection (clause 5.2.11).
 
+use crate::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
 use std::borrow::Cow;
 
 /// One entity selector carried by a POST query body's `entities[]` array.
@@ -45,9 +45,8 @@ impl EntitySelectorParams {
 
 #[cfg(test)]
 mod tests {
-    use crate::query::entity_selector::EntitySelectorParams;
+    use crate::{entity_selector_params::EntitySelectorParams, pattern::Pattern, type_selection::grammar::TypeExprRaw};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
     use std::{borrow::Cow, str::FromStr};
 
     fn identifier(text: &str) -> Identifier {

@@ -6,6 +6,7 @@ mod expiry_update_refusal;
 mod forwarded_query_string;
 mod handler;
 mod membership_window;
+mod query_creation;
 pub mod routes;
 pub mod state;
 mod validation;

@@ -2,6 +2,7 @@
 
 use crate::{subscription_invariant::SubscriptionInvariant, subscription_validation_reason::SubscriptionValidationReason};
 use andromeda_jsonld::{compound_context_host::ContextHostingError, error::JsonLdError};
+use andromeda_linked_retrieval::admission::AdmissionError;
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryOverLimit;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::error::QueryError;
@@ -67,6 +68,15 @@ pub enum SubscriptionError {
     /// An internal subscription invariant could not be satisfied.
     #[error("subscription invariant failed: {0}")]
     Internal(#[from] SubscriptionInvariant),
+}
+
+/// Manual rather than `#[from]`: two conversions compose, which no derive
+/// states. A Linked Entity hop a Subscription refuses is a validation
+/// failure of the request.
+impl From<AdmissionError> for SubscriptionError {
+    fn from(refusal: AdmissionError) -> SubscriptionError {
+        SubscriptionError::Validation(SubscriptionValidationReason::from(refusal))
+    }
 }
 
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
