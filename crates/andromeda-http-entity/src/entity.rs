@@ -102,8 +102,6 @@ pub(crate) mod query_local_page;
 pub(crate) mod query_page;
 /// Assembling the response an entity query answers with.
 pub(crate) mod query_response;
-/// The filters `splitEntities` decides after the merge.
-pub(crate) mod query_split_filters;
 /// Entity replacement handling.
 pub(crate) mod replace;
 /// Attribute replacement handling.

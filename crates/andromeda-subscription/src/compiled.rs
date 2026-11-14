@@ -25,6 +25,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
     dataset::DatasetSelector,
+    entity_filters::EntityFilters,
     filter::{expression::Expr, language_matching::LanguageMatching},
     projection::compiled::Projection,
     scope::query::ScopeQuery,
@@ -201,6 +202,24 @@ impl CompiledSubscription {
     #[must_use]
     pub fn list_in_force(&self) -> ListInForce<'_> {
         ListInForce::of(Some(&self.notification_projection), &self.notification_attributes)
+    }
+
+    /// The `q`, `geoQ` and `scopeQ` an entity is filtered by (clause 5.8.6),
+    /// or `None` when the stored `geoQ` no longer compiles: a defined
+    /// geoquery the broker cannot evaluate admits no entity.
+    #[must_use]
+    pub const fn entity_filters(&self) -> Option<EntityFilters<'_>> {
+        let geo = match &self.compiled_geo_q {
+            SubscriptionGeoFilter::Unrestricted => None,
+            SubscriptionGeoFilter::Restricts(query) => Some(query),
+            SubscriptionGeoFilter::Unusable => return None,
+        };
+        Some(EntityFilters {
+            q: self.compiled_q.as_ref(),
+            language_matching: self.language_matching,
+            geo,
+            scope: self.compiled_scope_q.as_ref(),
+        })
     }
 
     /// The filters whose `rel{…}` hops cross into linked entities: the `q`

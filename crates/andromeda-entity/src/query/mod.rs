@@ -12,6 +12,9 @@ pub mod compilation;
 pub mod core_linked_source;
 /// Narrowing an entity's attribute instances by `datasetId`.
 pub mod dataset_filter;
+/// The filters `splitEntities` holds back, decided on the merged entities
+/// (clause 5.7.2.4).
+pub mod deferred_filters;
 /// Locally held entities as versions to merge, and merged versions compacted.
 pub mod entity_versions;
 /// Merging locally held entities with those a context source returned.

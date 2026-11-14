@@ -27,7 +27,6 @@ use crate::{
         query_local_page::local_versions,
         query_page::{QueryPage, requested_window},
         query_response::{QueryCollectionMetadata, query_response},
-        query_split_filters::retain_matching,
         request_entity_map::{LocalEntitySource, record_map_use},
         with_linked_resolution_warnings,
     },
@@ -222,12 +221,18 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
 
         let targeting = admitted.language.targeting;
         let local = local_versions(service, &target, &query, &page, &context, targeting, &uri).await?;
-        let merged = merge_contributions(local.versions, forwarded, request_projection.list(), &uri)?;
         let MergedEntities {
-            entities: versions,
+            entities,
             warnings,
             contributions,
-        } = retain_matching(service, &target, merged, deferred, &context, targeting.matching(), &uri).await?;
+        } = merge_contributions(local.versions, forwarded, request_projection.list(), &uri)?;
+        let versions = match deferred {
+            Some(deferred) => service
+                .retain_matching(&target, entities, deferred, &context, targeting.matching())
+                .await
+                .with_entity_instance(&uri)?,
+            None => entities,
+        };
         // Clause 6.3.17: a query evaluated by tag equality because a reached
         // source lacks extended filtering says so.
         let warnings = warnings.into_iter().chain(admitted.language.warning).collect::<Vec<_>>();

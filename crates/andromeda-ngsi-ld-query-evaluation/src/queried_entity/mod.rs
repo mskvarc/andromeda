@@ -22,3 +22,5 @@ pub mod value_item;
 pub(crate) mod expanded_fixture;
 #[cfg(test)]
 pub(crate) mod fixture_literal;
+#[cfg(test)]
+pub(crate) mod placed_fixture;

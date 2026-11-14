@@ -111,7 +111,11 @@ impl EntityQueryService {
         if let Some(q) = &params.q {
             self.filter_complexity.admit(q)?;
         }
-        let q_expr = compile_q_expression(params, &json_keys, &expander).await?;
+        // Expansion consumes its AST; the cache-owned request remains immutable across lookups.
+        let q_expr = match params.q.clone() {
+            Some(q_expr) => Some(compile_q_expression(q_expr, &json_keys, params.expand_values.as_deref(), &expander).await?),
+            None => None,
+        };
         if let Some(q) = &q_expr {
             language_targeting.admit(q)?;
         }
@@ -166,24 +170,22 @@ impl EntityQueryService {
     }
 }
 
-/// Expand the `q` filter under the request's clause 4.9 `jsonKeys`
-/// declaration, then apply the `expandValues` coercion to the result.
-async fn compile_q_expression(
-    params: &EntityQueryParameters,
+/// Expand a `q` filter under the request's clause 4.9 `jsonKeys`
+/// declaration, then apply the `expandValues` coercion of the attributes
+/// `expand_values` names to the result.
+pub(super) async fn compile_q_expression(
+    q_expr: Expr,
     json_keys: &JsonKeyAttributes,
+    expand_values: Option<&[AttributeName]>,
     expander: &impl TermExpander,
-) -> Result<Option<Expr>, EntityError> {
-    // Expansion consumes its AST; the cache-owned request remains immutable across lookups.
-    let Some(q_expr) = params.q.clone() else {
-        return Ok(None);
-    };
+) -> Result<Expr, EntityError> {
     let q_expr = expand_q_expr(q_expr, json_keys, expander).await?;
 
-    let opted_in: HashSet<AttributeName> = match params.expand_values {
-        Some(ref raw) => expand_attribute_names(raw, expander).await?.into_iter().collect(),
+    let opted_in: HashSet<AttributeName> = match expand_values {
+        Some(declared) => expand_attribute_names(declared, expander).await?.into_iter().collect(),
         None => HashSet::new(),
     };
-    Ok(Some(apply_expand_values(q_expr, &opted_in, expander).await?))
+    Ok(apply_expand_values(q_expr, &opted_in, expander).await?)
 }
 
 /// Compile the `orderBy` terms against the active context (clause 4.23).

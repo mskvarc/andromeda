@@ -171,16 +171,6 @@ impl SubscriptionGeoFilter {
             SubscriptionGeoFilter::Unrestricted | SubscriptionGeoFilter::Unusable => None,
         }
     }
-
-    /// Whether the geo condition admits an entity, given whether it lies where
-    /// the restriction asks when there is one.
-    pub fn admits(&self, restriction_met: impl FnOnce(&GeoQuery) -> bool) -> bool {
-        match self {
-            SubscriptionGeoFilter::Unrestricted => true,
-            SubscriptionGeoFilter::Restricts(query) => restriction_met(query),
-            SubscriptionGeoFilter::Unusable => false,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -350,30 +340,26 @@ mod tests {
 
     #[test]
     fn an_absent_geo_q_does_not_restrict() {
-        assert!(matches!(
-            SubscriptionGeoFilter::from_stored(None, SUBSCRIPTION),
-            SubscriptionGeoFilter::Unrestricted
-        ));
-        assert!(SubscriptionGeoFilter::Unrestricted.admits(|_| false));
+        let filter = SubscriptionGeoFilter::from_stored(None, SUBSCRIPTION);
+        assert!(matches!(filter, SubscriptionGeoFilter::Unrestricted), "got {filter:?}");
+        assert!(filter.restriction().is_none());
     }
 
-    /// Clause 5.8.6: a defined geoquery the broker cannot evaluate admits no
-    /// entity, rather than every entity as an absent one would.
+    /// Clause 5.8.6: a defined geoquery the broker cannot evaluate is no
+    /// absent one, so it is told apart from the subscription without a `geoQ`.
     #[test]
-    fn a_stored_geo_q_that_no_longer_compiles_admits_nothing() {
+    fn a_stored_geo_q_that_no_longer_compiles_is_unusable() {
         let stored = geo_q(json!({"georel": "within", "geometry": "Point", "coordinates": "[1, "}));
         let filter = SubscriptionGeoFilter::from_stored(Some(&stored), SUBSCRIPTION);
         assert!(matches!(filter, SubscriptionGeoFilter::Unusable), "got {filter:?}");
-        assert!(!filter.admits(|_| true));
         assert!(filter.restriction().is_none());
     }
 
     #[test]
-    fn a_compiled_restriction_admits_what_the_geoquery_matches() {
+    fn a_compiled_geo_q_restricts_by_its_geoquery() {
         let stored = geo_q(json!({"georel": "within", "geometry": "Point", "coordinates": [1, 2]}));
         let filter = SubscriptionGeoFilter::from_stored(Some(&stored), SUBSCRIPTION);
+        assert!(matches!(filter, SubscriptionGeoFilter::Restricts(_)), "got {filter:?}");
         assert!(filter.restriction().is_some());
-        assert!(filter.admits(|_| true));
-        assert!(!filter.admits(|_| false));
     }
 }
