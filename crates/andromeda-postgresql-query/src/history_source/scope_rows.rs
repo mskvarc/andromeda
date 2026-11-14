@@ -69,18 +69,17 @@ fn recorded_event_columns(select: &mut SelectStatement, schema: Option<&DynIden>
 #[cfg(test)]
 mod tests {
     use crate::history_source::{EvolutionColumns, HistoryBranch, HistoryOf, scope_rows::scope_rows};
-    use sea_query::{Alias, Asterisk, Expr, IntoIden, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Asterisk, Expr, IntoIden, Query, SelectStatement};
 
-    fn rendered(source: sea_query::TableRef) -> String {
-        Query::select().column(Asterisk).from(source).to_owned().to_string(PostgresQueryBuilder)
+    fn rendered(source: sea_query::TableRef) -> SelectStatement {
+        Query::select().column(Asterisk).from(source).to_owned()
     }
 
     #[test]
     fn the_live_scope_rows_union_the_queued_scope_entries() {
-        let sql = rendered(scope_rows(&HistoryBranch::live(), &HistoryOf::EveryEntity, Alias::new("sh")));
-        assert!(sql.contains(r#"FROM "scope_history" AS "rsh""#), "{sql}");
-        assert!(sql.contains(r#""pe"."scope_path"::ltree AS "scope_path""#), "{sql}");
-        assert!(sql.contains(r#""pe"."entry_kind" IN (3, 4)"#), "{sql}");
+        let statement = rendered(scope_rows(&HistoryBranch::live(), &HistoryOf::EveryEntity, Alias::new("sh")));
+        assert_statement_snapshot!("scope-rows-the-live-scope-rows-union-the-queued-scope-entries", statement);
     }
 
     /// Clause 4.18: a queued assertion of the Scope already in force sets
@@ -89,35 +88,16 @@ mod tests {
     /// Entity and the Scope entries queued before it.
     #[test]
     fn a_queued_assertion_of_the_scope_in_force_is_left_out_of_the_read() {
-        let sql = rendered(scope_rows(&HistoryBranch::live(), &HistoryOf::EveryEntity, Alias::new("sh")));
-        assert!(
-            sql.contains(
-                r#"FROM "scope_history" AS "pj" JOIN "entities" AS "pjv" ON "pjv"."entity_key" = "pj"."entity_key" WHERE "pjv"."id" = "pe"."entity_id""#
-            ),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(r#"FROM "temporal_append_entries" AS "pq" WHERE "pq"."entity_id" = "pe"."entity_id" AND "pq"."intent_key" < "pe"."intent_key" AND "pq"."entry_kind" IN (3, 4)"#),
-            "{sql}"
-        );
-        for axis in ["recorded_at", "observed_at"] {
-            assert!(
-                sql.contains(&format!(r#"WHERE "sah"."{axis}" <= "pe"."recorded_at" ORDER BY "sah"."{axis}" DESC LIMIT"#)),
-                "{axis}: {sql}"
-            );
-        }
-        assert!(
-            sql.contains(r#"FROM "temporal_append_entries" AS "pa" WHERE "pa"."intent_key" = "pe"."intent_key" AND "pa"."entry_kind" IN (4)"#),
-            "{sql}"
-        );
+        let statement = rendered(scope_rows(&HistoryBranch::live(), &HistoryOf::EveryEntity, Alias::new("sh")));
+        assert_statement_snapshot!("scope-rows-a-queued-assertion-of-the-scope-in-force-is-left-out-of-the-read", statement);
     }
 
     /// A Change, an Instance and a Removal are events whatever the history
     /// holds, so only the assertion kind is judged.
     #[test]
     fn a_queued_change_an_instance_and_a_removal_are_read_unconditionally() {
-        let sql = rendered(scope_rows(&HistoryBranch::live(), &HistoryOf::EveryEntity, Alias::new("sh")));
-        assert!(sql.contains(r#"("pe"."entry_kind" <> 4 OR (NOT ("#), "{sql}");
+        let statement = rendered(scope_rows(&HistoryBranch::live(), &HistoryOf::EveryEntity, Alias::new("sh")));
+        assert_statement_snapshot!("scope-rows-a-queued-change-an-instance-and-a-removal-are-read-unconditionally", statement);
     }
 
     fn evolution() -> HistoryOf {
@@ -131,21 +111,18 @@ mod tests {
     /// by the key each event carries, with no catalogue row read.
     #[test]
     fn the_scope_events_of_an_evolution_over_recorded_rows_are_narrowed_by_key() {
-        for (branch, events) in [
-            (HistoryBranch::live_recorded(), r#"FROM "scope_history" AS "rsh""#),
-            (
-                HistoryBranch::recorded_in(Alias::new("snap_1").into_iden()),
-                r#"FROM "snap_1"."scope_history" AS "rsh""#,
-            ),
-        ] {
-            let sql = rendered(scope_rows(&branch, &evolution(), Alias::new("sh")));
-            assert!(
-                sql.starts_with(r#"SELECT * FROM (SELECT "rsh"."entity_key" AS "entity_key", "rsh"."recorded_at""#),
-                "{sql}"
+        for (index, branch) in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(Alias::new("snap_1").into_iden())]
+            .into_iter()
+            .enumerate()
+        {
+            let statement = rendered(scope_rows(&branch, &evolution(), Alias::new("sh")));
+            assert_statement_snapshot!(
+                format!(
+                    "scope-rows-the-scope-events-of-an-evolution-over-recorded-rows-are-narrowed-by-key-{}",
+                    index + 1
+                ),
+                statement
             );
-            assert!(sql.contains(events), "{sql}");
-            assert!(sql.ends_with(r#"WHERE "rsh"."entity_key" = "e"."entity_key") AS "sh""#), "{sql}");
-            assert!(!sql.contains("entities") && !sql.contains("entity_id"), "{sql}");
         }
     }
 
@@ -162,12 +139,11 @@ mod tests {
 
     #[test]
     fn a_snapshot_reads_its_recorded_scope_events_alone() {
-        let sql = rendered(scope_rows(
+        let statement = rendered(scope_rows(
             &HistoryBranch::recorded_in(Alias::new("snap_1").into_iden()),
             &HistoryOf::EveryEntity,
             Alias::new("sh"),
         ));
-        assert!(sql.contains(r#"FROM "snap_1"."scope_history" AS "rsh""#), "{sql}");
-        assert!(!sql.contains("temporal_append"), "{sql}");
+        assert_statement_snapshot!("scope-rows-a-snapshot-reads-its-recorded-scope-events-alone", statement);
     }
 }

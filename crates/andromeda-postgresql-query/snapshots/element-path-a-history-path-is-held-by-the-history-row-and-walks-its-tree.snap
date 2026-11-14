@@ -1,0 +1,20 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/sub_attribute/element_path.rs
+---
+SELECT
+WHERE
+  "qh"."sub_attributes" IS NOT NULL
+  AND (
+    EXISTS (
+      SELECT
+        1
+      FROM
+        UNNEST("qh"."sub_attributes") AS "l0"
+      WHERE
+        "l0"."parent" = $1
+        AND "l0"."attribute_name_key" = $2
+        AND TRUE
+    )
+  )
+1: BigInt 0
+2: Int 5

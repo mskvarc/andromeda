@@ -272,19 +272,18 @@ mod tests {
     use crate::q_predicate::structured_target::carries_operand;
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_ngsi_ld_query::filter::scalar::{Scalar, parse_date, parse_date_time, parse_time};
-    use andromeda_postgresql_seaquery::literal::int_literal;
-    use sea_query::{Alias, Condition, Expr as SeaExpr, PostgresQueryBuilder, Query, SimpleExpr, Value};
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
+    use sea_query::{Alias, Condition, Expr as SeaExpr, Query, SelectStatement, SimpleExpr};
 
     /// A stand-in for the probe's `"ca"."value_object"` reference.
     fn column() -> SimpleExpr {
         SeaExpr::col(Alias::new("value_object"))
     }
 
-    /// Render one condition the way a probe would, so the assertions see the
+    /// One condition as a probe would carry it, so the snapshot shows the
     /// placeholder numbering the operands actually get.
-    fn render(condition: Condition) -> (String, Vec<Value>) {
-        let (sql, values) = Query::select().expr(int_literal(1)).cond_where(condition).build(PostgresQueryBuilder);
-        (sql, values.0)
+    fn render(condition: Condition) -> SelectStatement {
+        Query::select().expr(int_literal(1)).cond_where(condition).to_owned()
     }
 
     #[test]
@@ -292,13 +291,8 @@ mod tests {
         // Clause 4.9 names an `objectList` of bare URIs and a `valueList` of
         // value nodes as targets of the same Query Term, so one comparison has
         // to reach both element shapes.
-        let (sql, _) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Str("red".to_owned())));
-        assert!(sql.contains("\"value_object\" @> jsonb_build_array($1::text)"), "{sql}");
-        assert!(
-            sql.contains("\"value_object\" @> jsonb_build_array(jsonb_build_object('@value', $2::text))"),
-            "{sql}"
-        );
-        assert!(sql.contains(" OR "), "either shape matches: {sql}");
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Str("red".to_owned())));
+        assert_statement_snapshot!("structured-target-an-unselected-target-probes-both-element-shapes", statement);
     }
 
     #[test]
@@ -306,24 +300,19 @@ mod tests {
         // A `valueList` of numbers must not be matched by the string spelling of
         // one: clause 4.9 makes a datatype difference a non-match, and JSONB
         // containment enforces exactly that once the operand is a JSON number.
-        let (sql, binds) = render(carries_operand(
+        let statement = render(carries_operand(
             &column(),
             &value_type(),
             &family(),
             &Scalar::Number(JsonNumber::from(9_007_199_254_740_993_i64)),
         ));
-        assert!(sql.contains("$1::numeric"), "{sql}");
-        assert!(
-            matches!(&binds[0], Value::BigDecimal(Some(value)) if value.to_string() == "9007199254740993"),
-            "{binds:?}"
-        );
+        assert_statement_snapshot!("structured-target-a-number-operand-binds-numeric-so-json-compares-it-as-a-number", statement);
     }
 
     #[test]
     fn a_boolean_operand_binds_a_native_boolean() {
-        let (sql, binds) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Bool(true)));
-        assert!(sql.contains("$1::boolean"), "{sql}");
-        assert!(binds.iter().any(|bind| matches!(bind, Value::Bool(Some(true)))), "{binds:?}");
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Bool(true)));
+        assert_statement_snapshot!("structured-target-a-boolean-operand-binds-a-native-boolean", statement);
     }
 
     /// A declared number is committed as a JSON string in the canonical
@@ -332,29 +321,28 @@ mod tests {
     #[test]
     fn a_number_operand_is_probed_as_each_canonical_spelling_and_read_back() {
         let number = "1E-7".parse::<JsonNumber>().expect("a JSON number");
-        let (sql, binds) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Number(number)));
-        let texts: Vec<&str> = binds
-            .iter()
-            .filter_map(|bind| if let Value::String(Some(text)) = bind { Some(text.as_str()) } else { None })
-            .collect();
-        assert!(texts.contains(&"0.0000001") && texts.contains(&"1E-7"), "{binds:?}");
-        pretty_assertions::assert_eq!(sql.matches("\"value_object\" @> ").count(), 6, "{sql}");
-        assert!(sql.contains("jsonb_array_elements"), "{sql}");
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Number(number)));
+        assert_statement_snapshot!(
+            "structured-target-a-number-operand-is-probed-as-each-canonical-spelling-and-read-back",
+            statement
+        );
     }
 
     #[test]
     fn a_number_spelled_alike_in_both_forms_is_probed_once_as_text() {
-        let (sql, _) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Number(JsonNumber::from(4))));
-        pretty_assertions::assert_eq!(sql.matches("\"value_object\" @> ").count(), 4, "{sql}");
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Number(JsonNumber::from(4))));
+        assert_statement_snapshot!("structured-target-a-number-spelled-alike-in-both-forms-is-probed-once-as-text", statement);
     }
 
     /// Clause 4.9: a JSON string declared as another data type is no String,
     /// so containment of the text only narrows the candidates.
     #[test]
     fn a_string_operand_reads_the_members_of_a_candidate_under_their_declarations() {
-        let (sql, _) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Str("4".to_owned())));
-        assert!(sql.contains(") AND EXISTS(SELECT 1 FROM jsonb_array_elements"), "{sql}");
-        assert!(sql.contains("'http://www.w3.org/2001/XMLSchema#integer'"), "{sql}");
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Str("4".to_owned())));
+        assert_statement_snapshot!(
+            "structured-target-a-string-operand-reads-the-members-of-a-candidate-under-their-declarations",
+            statement
+        );
     }
 
     /// The column naming the datatype the row's `valueType` declares.
@@ -371,26 +359,19 @@ mod tests {
     /// operand.
     #[test]
     fn a_json_property_carries_no_operand() {
-        let (sql, _) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Number(JsonNumber::from(4))));
-        assert!(sql.starts_with(r#"SELECT 1 WHERE "attribute_kind" <> (6) AND "#), "{sql}");
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Number(JsonNumber::from(4))));
+        assert_statement_snapshot!("structured-target-a-json-property-carries-no-operand", statement);
     }
 
     /// Clause 4.5.2: the `valueType` of a Property or a `ListProperty`
     /// declares their members; no other family's does.
     #[test]
     fn only_a_property_or_a_list_property_value_type_declares_the_members() {
-        let (sql, _) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Number(JsonNumber::from(4))));
-        assert!(
-            sql.contains(r#"ON "dmt"."entity_type_name_key" = (CASE WHEN ("attribute_kind" IN (1, 7)) THEN "value_type_key" END)"#),
-            "{sql}"
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Number(JsonNumber::from(4))));
+        assert_statement_snapshot!(
+            "structured-target-only-a-property-or-a-list-property-value-type-declares-the-members",
+            statement
         );
-    }
-
-    fn json_binds(binds: &[Value]) -> Vec<&str> {
-        binds
-            .iter()
-            .filter_map(|bind| if let Value::String(Some(text)) = bind { Some(text.as_str()) } else { None })
-            .collect()
     }
 
     /// A declared member is committed in its one served spelling, so the
@@ -399,37 +380,21 @@ mod tests {
     #[test]
     fn a_date_time_operand_is_contained_once_as_a_declared_member() {
         let instant = parse_date_time("2024-01-01T00:00:00.000Z").expect("valid date-time");
-        let (sql, binds) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::DateTime(instant)));
-        pretty_assertions::assert_eq!(sql.matches("\"value_object\" @> ($").count(), 3, "{sql}");
-        assert!(
-            sql.contains(r#"THEN "value_type_key" END) = (SELECT "entity_type_name_key" FROM "entity_type_names""#),
-            "{sql}"
-        );
-        pretty_assertions::assert_eq!(
-            json_binds(&binds),
-            vec![
-                r#"[{"@value": "2024-01-01T00:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}]"#,
-                "https://uri.etsi.org/ngsi-ld/DateTime",
-                r#"["2024-01-01T00:00:00Z"]"#,
-                r#"[{"@value": "2024-01-01T00:00:00Z"}]"#,
-            ]
-        );
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::DateTime(instant)));
+        assert_statement_snapshot!("structured-target-a-date-time-operand-is-contained-once-as-a-declared-member", statement);
     }
 
     #[test]
     fn a_time_operand_is_contained_in_its_served_spelling() {
         let time = parse_time("12:00:00,5Z").expect("valid time");
-        let (_, binds) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Time(time)));
-        assert!(
-            json_binds(&binds).contains(&r#"[{"@value": "12:00:00.500Z", "@type": "https://uri.etsi.org/ngsi-ld/Time"}]"#),
-            "{binds:?}"
-        );
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Time(time)));
+        assert_statement_snapshot!("structured-target-a-time-operand-is-contained-in-its-served-spelling", statement);
     }
 
     #[test]
     fn a_date_operand_is_contained_as_its_one_text() {
         let date = parse_date("2024-01-01").expect("valid date");
-        let (_, binds) = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Date(date)));
-        assert!(json_binds(&binds).contains(&r#"["2024-01-01"]"#), "{binds:?}");
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Date(date)));
+        assert_statement_snapshot!("structured-target-a-date-operand-is-contained-as-its-one-text", statement);
     }
 }

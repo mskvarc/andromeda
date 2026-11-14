@@ -1,0 +1,17 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/information_row.rs
+---
+SELECT
+  1
+FROM
+  "context_source_registrations"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "registration_information" AS "ri"
+    WHERE
+      "ri"."registration_id" = "context_source_registrations"."id"
+      AND "ri"."entity_id" IS NULL
+  )

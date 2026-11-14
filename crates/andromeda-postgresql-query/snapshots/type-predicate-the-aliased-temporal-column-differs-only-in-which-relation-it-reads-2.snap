@@ -1,0 +1,9 @@
+---
+source: crates/andromeda-postgresql-query/src/type_predicate.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  "e"."evolution_type_name_keys" @> (ARRAY[7])

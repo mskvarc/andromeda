@@ -1,0 +1,8 @@
+---
+source: crates/andromeda-postgresql-query/src/attribute_instance_correlation.rs
+---
+SELECT
+  COALESCE(
+    "geo_instance"."value_geometry_valid",
+    "geo_instance"."value_geometry"
+  )

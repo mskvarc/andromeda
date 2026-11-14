@@ -139,10 +139,10 @@ mod tests {
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         entity_type_name_key::EntityTypeNameKey,
     };
-    use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
-    use sea_query::{PostgresQueryBuilder, Value};
+    use sea_query::SelectStatement;
 
     fn iri(value: &str) -> IriBuf {
         IriBuf::new(value.to_string()).expect("valid IRI")
@@ -168,45 +168,18 @@ mod tests {
         query
     }
 
-    fn page_sql(query: &CompiledEntityQuery, window: &PageWindow) -> (String, Vec<Value>) {
-        let built = build_query(&ContextTarget::Live, query, window, CountPolicy::Omit, &names()).expect("valid entity query");
-        let (sql, values) = built.select.build(PostgresQueryBuilder);
-        (sql, values.0)
+    fn page_select(query: &CompiledEntityQuery, window: &PageWindow) -> SelectStatement {
+        build_query(&ContextTarget::Live, query, window, CountPolicy::Omit, &names())
+            .expect("valid entity query")
+            .select
     }
 
     #[test]
     fn an_attrs_only_selection_walks_short_then_reads_the_attribute_index() {
-        let (sql, values) = page_sql(&by_attrs(&["headSign"]), &PageWindow::offset(100, 0));
-        let (ctes, branches) = sql
-            .split_once(" SELECT * FROM (SELECT * FROM \"short_walk\"")
-            .unwrap_or_else(|| panic!("a gated page: {sql}"));
-        let (short, candidates) = ctes
-            .split_once(r#", "candidates" AS  MATERIALIZED "#)
-            .unwrap_or_else(|| panic!("the carriers: {sql}"));
-        assert!(
-            short.contains(r#"FROM (SELECT "entities"."entity_key", "entities"."id" AS "sort_0" FROM "entities" WHERE "entities"."created_at" IS NOT NULL AND ("entities"."expires_at" IS NULL OR "entities"."expires_at" > NOW()) ORDER BY "sort_0" ASC LIMIT $"#),
-            "the walk visits Entities without filtering them: {short}"
+        assert_statement_snapshot!(
+            "carrier-page-an-attrs-only-selection-walks-short-then-reads-the-attribute-index",
+            page_select(&by_attrs(&["headSign"]), &PageWindow::offset(100, 0))
         );
-        assert!(
-            short.contains("WHERE EXISTS(SELECT $")
-                && short.contains(r#"FROM "entity_search" AS "probed" WHERE ("probed"."attribute_name_keys" @> (ARRAY[28])) AND "probed"."entity_key" = "walked"."entity_key")"#),
-            "each walked Entity is probed through its search row: {short}"
-        );
-        assert_eq!(
-            candidates,
-            r#"(SELECT "entity_search"."entity_key" FROM "entity_search" WHERE "entity_search"."attribute_name_keys" @> (ARRAY[28]) LIMIT $5)"#
-        );
-        assert!(
-            branches.contains(r#""entities"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#),
-            "the index step cuts the page from the carriers: {branches}"
-        );
-        assert_eq!(sql.matches("UNION ALL").count(), 2, "{sql}");
-        assert!(values.contains(&Value::BigUnsigned(Some(5_000))), "the walk visits 5,000 Entities: {values:?}");
-        assert!(
-            values.contains(&Value::BigUnsigned(Some(50_001))),
-            "the carriers are read one past their bound: {values:?}"
-        );
-        assert!(values.contains(&Value::BigUnsigned(Some(50_000))), "{values:?}");
     }
 
     #[test]
@@ -239,56 +212,42 @@ mod tests {
         let EntityTotal::OnPageRows { uncounted } = built.total else {
             panic!("a first carrier page carries its total when the carriers answer");
         };
-        let count = uncounted.count.to_string(PostgresQueryBuilder);
-        assert!(count.starts_with("SELECT COUNT(*) FROM "), "{count}");
-        assert!(count.contains(r#""entity_search"."attribute_name_keys" @> (ARRAY[28])"#), "{count}");
-        assert!(!count.contains("candidates") && !count.contains("short_walk"), "{count}");
+        assert_statement_snapshot!(
+            "carrier-page-a-counted-carrier-page-carries-its-total-on-the-carriers-branch-alone-1",
+            uncounted.count
+        );
         assert_eq!(built.total_planning, StatementPlanning::Cached);
-        let page = built.select.to_string(PostgresQueryBuilder);
-        let (answered, rest) = page.split_once(r#"AS "answered""#).expect("the short walk branch");
-        let (indexed, walk) = rest.split_once(r#"AS "indexed""#).expect("the carriers branch");
-        assert!(answered.contains(r#"SELECT *, NULL AS "total_count" FROM "short_walk""#), "{answered}");
-        assert!(indexed.contains(r#"COUNT(*) OVER () AS "total_count""#), "{indexed}");
-        assert!(walk.contains(r#"NULL AS "total_count""#) && !walk.contains("OVER ()"), "{walk}");
+        assert_statement_snapshot!(
+            "carrier-page-a-counted-carrier-page-carries-its-total-on-the-carriers-branch-alone-2",
+            built.select
+        );
     }
 
     /// Clause 5.7.2.4: an Entity carrying any one of the Attributes matches,
     /// and a name no Entity has carried selects nothing.
     #[test]
     fn the_carriers_of_several_attributes_are_read_as_one_disjunction() {
-        let (sql, _) = page_sql(&by_attrs(&["headSign", "temperature", "neverWritten"]), &PageWindow::offset(100, 0));
-        assert!(
-            sql.contains(concat!(
-                r#""candidates" AS  MATERIALIZED (SELECT "entity_search"."entity_key" FROM "entity_search" WHERE "#,
-                r#"("entity_search"."attribute_name_keys" @> (ARRAY[28])) OR ("entity_search"."attribute_name_keys" @> (ARRAY[12])) OR (FALSE) LIMIT $"#
-            )),
-            "{sql}"
+        assert_statement_snapshot!(
+            "carrier-page-the-carriers-of-several-attributes-are-read-as-one-disjunction",
+            page_select(&by_attrs(&["headSign", "temperature", "neverWritten"]), &PageWindow::offset(100, 0))
         );
     }
 
     #[test]
     fn a_cursor_page_of_carriers_walks_from_its_cursor() {
         let boundary = "urn:ngsi-ld:Trip:042".parse().expect("valid identifier");
-        let (sql, _) = page_sql(&by_attrs(&["headSign"]), &PageWindow::after(20, boundary));
-        let short = sql
-            .split_once(r#", "candidates" AS "#)
-            .map_or_else(|| panic!("a gated page: {sql}"), |(short, _)| short);
-        assert!(
-            short.contains(r#"FROM "entities" WHERE "entities"."created_at" IS NOT NULL AND ("entities"."expires_at" IS NULL OR "entities"."expires_at" > NOW()) AND "entities"."id" > $"#),
-            "{short}"
+        assert_statement_snapshot!(
+            "carrier-page-a-cursor-page-of-carriers-walks-from-its-cursor",
+            page_select(&by_attrs(&["headSign"]), &PageWindow::after(20, boundary))
         );
-        assert!(!sql.contains("OFFSET"), "a cursor page skips nothing: {sql}");
     }
 
     #[test]
     fn a_page_deeper_than_the_short_walk_visits_no_entity_before_the_carriers() {
-        let (sql, values) = page_sql(&by_attrs(&["headSign"]), &PageWindow::offset(100, 30_000));
-        assert!(
-            sql.contains(r#"FROM "entities" WHERE "entities"."created_at" IS NOT NULL AND ("entities"."expires_at" IS NULL OR "entities"."expires_at" > NOW()) ORDER BY "sort_0" ASC LIMIT $1 OFFSET $2"#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "carrier-page-a-page-deeper-than-the-short-walk-visits-no-entity-before-the-carriers",
+            page_select(&by_attrs(&["headSign"]), &PageWindow::offset(100, 30_000))
         );
-        assert_eq!(values.first(), Some(&Value::BigUnsigned(Some(0))), "{values:?}");
-        assert!(!values.contains(&Value::BigUnsigned(Some(5_000))), "{values:?}");
     }
 
     #[test]
@@ -299,9 +258,10 @@ mod tests {
                 .type_expr(Some(TypeExpr::Type(iri("https://example.com/Trip"))))
                 .build(),
         ];
-        let (sql, _) = page_sql(&query, &PageWindow::offset(100, 0));
-        assert!(!sql.contains("short_walk") && !sql.contains("candidates"), "{sql}");
-        assert!(sql.contains(r#"FROM "entity_type_members""#), "{sql}");
+        assert_statement_snapshot!(
+            "carrier-page-an-attrs-selection-beside-a-type-keeps-the-type-walk",
+            page_select(&query, &PageWindow::offset(100, 0))
+        );
     }
 
     #[test]
@@ -314,10 +274,12 @@ mod tests {
             direction: OrderDirection::Desc,
             collation: None,
         }];
-        for query in [filtered, ordered, by_attrs(&["neverWritten"])] {
+        for (index, query) in [filtered, ordered, by_attrs(&["neverWritten"])].into_iter().enumerate() {
             let built = build_query(&ContextTarget::Live, &query, &PageWindow::offset(100, 0), CountPolicy::Omit, &names()).expect("valid entity query");
-            let sql = built.select.to_string(PostgresQueryBuilder);
-            assert!(!sql.contains("short_walk") && !sql.contains("candidates"), "{sql}");
+            assert_statement_snapshot!(
+                format!("carrier-page-an-attrs-selection-filtered-further-keeps-the-plain-page-{}", index + 1),
+                built.select
+            );
             assert_eq!(built.planning, StatementPlanning::Cached);
         }
     }

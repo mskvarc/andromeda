@@ -1,0 +1,21 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/language_term.rs
+---
+SELECT
+  EXISTS (
+    SELECT
+      1
+    FROM
+      jsonb_array_elements("map") AS "ls"
+  )
+  AND (
+    NOT EXISTS (
+      SELECT
+        1
+      FROM
+        jsonb_array_elements("map") AS "ls"
+      WHERE
+        ("ls"."value" ->> ('@value')) ~ $1
+    )
+  )
+1: String '^D'

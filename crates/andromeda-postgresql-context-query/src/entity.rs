@@ -298,17 +298,17 @@ mod tests {
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, error::RenderError};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use iri_rs::IriBuf;
     use pretty_assertions::{assert_eq, assert_ne};
-    use sea_query::{PostgresQueryBuilder, Value};
+    use sea_query::{PostgresQueryBuilder, SelectStatement, Value};
     use std::str::FromStr;
 
-    /// A built entity query rendered with `$N` placeholders and its bound
-    /// values, which is what the store hands the driver.
+    /// A built entity query: the paginated statement and, when the query is
+    /// counted, the separate count the store runs beside it.
     struct Built {
-        sql: String,
-        count_sql: Option<String>,
-        bind_values: Vec<Value>,
+        select: SelectStatement,
+        count: Option<SelectStatement>,
     }
 
     /// The first offset page of 20, the window most tests read.
@@ -326,28 +326,19 @@ mod tests {
         build_paged(query, &first_offset_page(), CountPolicy::Emit, names)
     }
 
-    /// Render an entity query the way the store executes it: the paginated
-    /// statement and, when requested, its separate count, each with its own
-    /// placeholder sequence.
+    /// Build an entity query the way the store executes it: the paginated
+    /// statement and, when requested, its separate count.
     fn build_paged(query: &CompiledEntityQuery, window: &PageWindow, count: CountPolicy, names: &QueryNames) -> Built {
         let target = ContextTarget::Live;
         let entity_query = build_query(&target, query, window, count, names).expect("valid entity query");
-        let (sql, values) = entity_query.select.build(PostgresQueryBuilder);
-        let count_sql = match entity_query.total {
+        let count = match entity_query.total {
             EntityTotal::Omitted => None,
-            EntityTotal::OnPageRows { uncounted: count } | EntityTotal::Counted(count) => Some(count.count.build(PostgresQueryBuilder).0),
+            EntityTotal::OnPageRows { uncounted: count } | EntityTotal::Counted(count) => Some(count.count),
         };
         Built {
-            sql,
-            count_sql,
-            bind_values: values.0,
+            select: entity_query.select,
+            count,
         }
-    }
-
-    /// The page a head statement cuts, before the lookup that reads each kept
-    /// Entity's head, which reads the search row whatever the filters read.
-    fn page_of(sql: &str) -> &str {
-        sql.split_once(r#") AS "page""#).map_or(sql, |(page, _)| page)
     }
 
     fn ids(raw: &[&str]) -> Vec<Identifier> {
@@ -398,12 +389,8 @@ mod tests {
     fn build_empty_query_returns_base_sql() {
         let q = empty_query();
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("SELECT"));
-        assert!(built.sql.contains(r#""stored"."entity_key""#));
-        assert!(built.sql.contains("\"entities\""));
-        assert!(built.sql.contains("LIMIT"));
-        assert!(built.sql.contains("OFFSET"));
-        assert!(built.count_sql.is_none());
+        assert_statement_snapshot!("entity-build-empty-query-returns-base-sql", built.select);
+        assert!(built.count.is_none());
     }
 
     #[test]
@@ -414,8 +401,7 @@ mod tests {
         // which can repeat and skip rows between pages.
         let q = empty_query();
         let built = build(&q, &known_types());
-        assert!(built.sql.contains(r#""entities"."id" AS "sort_0""#), "{}", built.sql);
-        assert!(built.sql.contains(r#"ORDER BY "sort_0" ASC LIMIT"#), "{}", built.sql);
+        assert_statement_snapshot!("entity-build-empty-query-orders-by-id-for-stable-pagination", built.select);
     }
 
     /// A query that filters on nothing cuts its page from the identity row
@@ -425,21 +411,7 @@ mod tests {
     fn a_query_with_no_filter_joins_nothing_and_reads_the_page_heads_by_key() {
         let q = empty_query();
         let built = build_paged(&q, &PageWindow::offset(20, 5000), CountPolicy::Omit, &known_types());
-        assert_eq!(
-            built.sql,
-            concat!(
-                r#"SELECT "stored"."entity_key", "stored"."id", "stored"."entity_created_at", "stored"."entity_modified_at", "stored"."entity_write_count", "stored"."entity_expires_at", "#,
-                r#""stored"."entity_type_name_keys", "stored"."verbatim_scope_paths" "#,
-                r#"FROM (SELECT "entities"."entity_key", "entities"."id" AS "sort_0" FROM "entities" WHERE "entities"."created_at" IS NOT NULL AND ("entities"."expires_at" IS NULL OR "entities"."expires_at" > NOW()) "#,
-                r#"ORDER BY "sort_0" ASC LIMIT $1 OFFSET $2) AS "page" "#,
-                r#"INNER JOIN LATERAL (SELECT "e"."entity_key" AS "entity_key", "e"."id" AS "id", "e"."created_at" AS "entity_created_at", "#,
-                r#""e"."modified_at" AS "entity_modified_at", "e"."write_count" AS "entity_write_count", "e"."expires_at" AS "entity_expires_at", "#,
-                r#""s"."entity_type_name_keys" AS "entity_type_name_keys", "s"."verbatim_scope_paths" AS "verbatim_scope_paths" "#,
-                r#"FROM "entities" AS "e" INNER JOIN "entity_search" AS "s" ON "s"."entity_key" = "e"."entity_key" "#,
-                r#"WHERE "e"."entity_key" = "page"."entity_key" LIMIT $3) AS "stored" ON TRUE "#,
-                r#"ORDER BY "page"."sort_0" ASC"#
-            )
-        );
+        assert_statement_snapshot!("entity-a-query-with-no-filter-joins-nothing-and-reads-the-page-heads-by-key", built.select);
     }
 
     /// A `q` filter probes the rows of its attribute inside the page, which
@@ -450,14 +422,7 @@ mod tests {
         let mut q = empty_query();
         q.selection.q_expr = Some(parser::parse("\"https://example.com/temperature\">1").expect("valid q"));
         let built = build(&q, &temperature_is_known());
-        assert!(
-            built
-                .sql
-                .contains(r#"FROM "entities" WHERE "entities"."created_at" IS NOT NULL AND ("entities"."expires_at" IS NULL OR "entities"."expires_at" > NOW()) AND EXISTS(SELECT 1 FROM "current_attributes" AS "ca""#),
-            "{}",
-            built.sql
-        );
-        assert!(built.sql.starts_with(r#"SELECT "stored"."entity_key", "stored"."id","#), "{}", built.sql);
+        assert_statement_snapshot!("entity-a-q-filter-probes-inside-the-page-and-the-heads-are-read-outside-it", built.select);
     }
 
     /// Clause 4.23.1 returns the entities sorted, so every key the page is cut
@@ -472,13 +437,7 @@ mod tests {
             collation: None,
         }];
         let built = build(&q, &known_types());
-        assert!(
-            built.sql.contains(r#""entities"."modified_at" AS "sort_0", "entities"."id" AS "sort_1""#),
-            "{}",
-            built.sql
-        );
-        assert!(built.sql.contains(r#"ORDER BY "sort_0" DESC, "sort_1" ASC LIMIT"#), "{}", built.sql);
-        assert!(built.sql.ends_with(r#"ORDER BY "page"."sort_0" DESC, "page"."sort_1" ASC"#), "{}", built.sql);
+        assert_statement_snapshot!("entity-the-head-statement-restates-every-key-of-the-page-order", built.select);
     }
 
     /// The total is counted inside the page, over every matching entity before
@@ -487,8 +446,7 @@ mod tests {
     fn a_counted_query_counts_inside_the_page_and_carries_the_total_out() {
         let q = empty_query();
         let built = build_counted(&q, &known_types());
-        assert!(built.sql.contains(r#"COUNT(*) OVER () AS "total_count""#), "{}", built.sql);
-        assert!(built.sql.contains(r#""page"."total_count" AS "total_count" FROM ("#), "{}", built.sql);
+        assert_statement_snapshot!("entity-a-counted-query-counts-inside-the-page-and-carries-the-total-out", built.select);
     }
 
     /// Clause 5.5.9 `attrs` is answered by the search row's interned attribute
@@ -504,18 +462,7 @@ mod tests {
             ..QueryNames::default()
         };
         let built = build(&q, &names);
-        assert!(built.sql.contains(r#"JOIN "entity_search" ON"#), "{}", built.sql);
-        assert!(
-            built.sql.contains(r#""entity_search"."attribute_name_keys" @> (ARRAY[11])"#),
-            "the key is inlined so the planner can estimate it: {}",
-            built.sql
-        );
-        assert!(built.sql.contains(" OR (FALSE)"), "the unresolved term is unsatisfiable: {}", built.sql);
-        assert!(
-            !built.bind_values.iter().any(|bind| matches!(bind, Value::Int(Some(11)))),
-            "the key is inlined, not bound: {:?}",
-            built.bind_values
-        );
+        assert_statement_snapshot!("entity-attrs-terms-are-containment-tests-on-the-search-rows-attribute-keys", built.select);
     }
 
     /// The dictionary the projection tests resolve against: `speed` at key 11
@@ -560,13 +507,9 @@ mod tests {
                 .build(),
         );
         let built = build_counted(&q, &speed_and_scope_are_known());
-        assert!(built.sql.contains(r#"JOIN "entity_search" ON"#), "{}", built.sql);
-        assert!(built.sql.contains(r#""entity_search"."attribute_name_keys" @> (ARRAY[11])"#), "{}", built.sql);
-        let count = built.count_sql.expect("count requested");
-        assert!(
-            count.contains(r#""attribute_name_keys" @> (ARRAY[11])"#),
-            "the count selects the same entities: {count}"
-        );
+        assert_statement_snapshot!("entity-a-pick-of-attributes-selects-the-entities-carrying-one-of-them-1", built.select);
+        let count = built.count.expect("count requested");
+        assert_statement_snapshot!("entity-a-pick-of-attributes-selects-the-entities-carrying-one-of-them-2", count);
     }
 
     /// Clause 4.21: an `omit` of `id` and `type` keeps the entities carrying a
@@ -579,18 +522,7 @@ mod tests {
                 .build(),
         );
         let built = build_counted(&q, &speed_and_scope_are_known());
-        assert!(
-            built
-                .sql
-                .contains(r#"NOT ("entity_search"."attribute_name_keys" <@ (ARRAY[11, 12]::integer[]))"#),
-            "{}",
-            built.sql
-        );
-        assert!(
-            !built.sql.contains(r#""scope_paths" IS NOT NULL"#),
-            "the omitted scope keeps no entity: {}",
-            built.sql
-        );
+        assert_statement_snapshot!("entity-an-omit-of-id-and-type-selects-the-entities-carrying-another-attribute", built.select);
     }
 
     /// A projection that keeps `scope` keeps an entity through its scope paths.
@@ -598,7 +530,7 @@ mod tests {
     fn a_pick_of_scope_selects_the_scoped_entities() {
         let q = projected(&Projection::builder().pick(vec![ProjectionTerm::Scope]).build());
         let built = build_counted(&q, &speed_and_scope_are_known());
-        assert!(built.sql.contains(r#""entity_search"."scope_paths" IS NOT NULL"#), "{}", built.sql);
+        assert_statement_snapshot!("entity-a-pick-of-scope-selects-the-scoped-entities", built.select);
     }
 
     /// Every entity has an `id`, so a projection keeping it selects them all.
@@ -606,8 +538,7 @@ mod tests {
     fn a_pick_of_id_selects_every_entity() {
         let q = projected(&Projection::builder().pick(vec![ProjectionTerm::Id, speed_term()]).build());
         let built = build_counted(&q, &speed_and_scope_are_known());
-        assert!(!built.sql.contains("attribute_name_keys"), "{}", built.sql);
-        assert!(!page_of(&built.sql).contains("entity_search"), "{}", built.sql);
+        assert_statement_snapshot!("entity-a-pick-of-id-selects-every-entity", built.select);
     }
 
     #[test]
@@ -615,16 +546,7 @@ mod tests {
         let mut q = empty_query();
         q.selection.selectors = vec![EntitySelector::builder().ids(ids(&["urn:a", "urn:b"])).build()];
         let built = build(&q, &known_types());
-        assert!(
-            built.sql.contains("\"id\" = ANY("),
-            "an id set binds as one array, not a placeholder per id: {}",
-            built.sql
-        );
-        assert!(
-            built.bind_values.iter().any(|b| matches!(b, Value::Array(_, _))),
-            "the id set is one bound text[] value: {:?}",
-            built.bind_values
-        );
+        assert_statement_snapshot!("entity-build-with-ids", built.select);
     }
 
     /// Clause 5.5.14: "An `EntityMap` fixes the Entities to be considered for
@@ -637,7 +559,7 @@ mod tests {
         let mut q = empty_query();
         q.selection.considered = ConsideredEntities::NoEntity;
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("FALSE"), "the statement is unsatisfiable: {}", built.sql);
+        assert_statement_snapshot!("entity-a-query-that-considers-no-entity-renders-an-unsatisfiable-statement", built.select);
     }
 
     /// The clause 5.5.14 narrowing is conjoined with the rest of the query, so
@@ -648,8 +570,7 @@ mod tests {
         q.selection.considered = ConsideredEntities::NoEntity;
         q.selection.selectors = vec![EntitySelector::builder().ids(ids(&["urn:a"])).build()];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("FALSE"), "the statement stays unsatisfiable: {}", built.sql);
-        assert!(built.sql.contains("\"id\" = $1"), "the selector is still rendered: {}", built.sql);
+        assert_statement_snapshot!("entity-considering-no-entity-survives-beside-the-other-filters", built.select);
     }
 
     /// A request that named no identifier at all considers whatever it selects,
@@ -657,7 +578,7 @@ mod tests {
     #[test]
     fn a_query_that_named_no_identifier_renders_no_unsatisfiable_term() {
         let built = build(&empty_query(), &known_types());
-        assert!(!built.sql.contains("FALSE"), "an unconstrained query stays unconstrained: {}", built.sql);
+        assert_statement_snapshot!("entity-a-query-that-named-no-identifier-renders-no-unsatisfiable-term", built.select);
     }
 
     /// A warm spatial prefilter feeds its candidate id set into the selector,
@@ -677,14 +598,7 @@ mod tests {
             geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("\"id\" = ANY("), "id membership is a single array test: {}", built.sql);
-        assert!(built.sql.contains("ST_GeomFromEWKB"), "the near predicate is present: {}", built.sql);
-        assert_eq!(
-            built.bind_values.iter().filter(|b| matches!(b, Value::Array(_, _))).count(),
-            1,
-            "the candidate id set is exactly one bound array parameter: {:?}",
-            built.bind_values
-        );
+        assert_statement_snapshot!("entity-a-near-query-with-a-candidate-id-set-binds-one-array-beside-the-geometry", built.select);
     }
 
     #[test]
@@ -696,7 +610,7 @@ mod tests {
                 .build(),
         ];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("\"id\") COLLATE \"default\") ~"), "{}", built.sql);
+        assert_statement_snapshot!("entity-build-with-id-pattern", built.select);
     }
 
     /// Clauses 4.17 and 5.5.9: a page of one type walks that type's membership
@@ -711,21 +625,7 @@ mod tests {
                 .build(),
         ];
         let built = build(&q, &known_types());
-        assert!(
-            built.sql.contains(concat!(
-                r#"FROM (SELECT "selected"."entity_key", "selected"."id" AS "sort_0" "#,
-                r#"FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_current_member") AS "selected" "#,
-                r#"WHERE "selected"."entity_key" NOT IN (SELECT "entity_key" FROM "entities" WHERE "expires_at" <= NOW()) ORDER BY "sort_0" ASC LIMIT"#
-            )),
-            "{}",
-            built.sql
-        );
-        assert!(!page_of(&built.sql).contains("entity_search"), "the walk answers the type: {}", built.sql);
-        assert!(
-            !built.bind_values.iter().any(|bind| matches!(bind, Value::Int(Some(1)))),
-            "the resolved key is inlined, not bound: {:?}",
-            built.bind_values
-        );
+        assert_statement_snapshot!("entity-build-with-single-type", built.select);
     }
 
     /// A type the dictionary has never recorded was never carried by any
@@ -739,13 +639,7 @@ mod tests {
                 .build(),
         ];
         let built = build(&q, &known_types());
-        assert!(
-            built
-                .sql
-                .contains(r#"FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE FALSE) AS "selected""#),
-            "{}",
-            built.sql
-        );
+        assert_statement_snapshot!("entity-an-unknown-type-selector-matches-nothing", built.select);
     }
 
     /// A counted page of one type counts the walk it pages.
@@ -757,11 +651,8 @@ mod tests {
                 .type_expr(Some(TypeExpr::Type(iri("https://example.com/Vehicle"))))
                 .build(),
         ];
-        let count = build_counted(&q, &known_types()).count_sql.expect("count requested");
-        assert_eq!(
-            count,
-            r#"SELECT COUNT(*) FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_current_member") AS "selected" WHERE "selected"."entity_key" NOT IN (SELECT "entity_key" FROM "entities" WHERE "expires_at" <= NOW())"#
-        );
+        let count = build_counted(&q, &known_types()).count.expect("count requested");
+        assert_statement_snapshot!("entity-the-count-of-a-type-page-counts-the-walk", count);
     }
 
     /// Clause 5.2.33: a selector naming identifiers is answered by the
@@ -776,8 +667,7 @@ mod tests {
                 .build(),
         ];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains(r#""entity_search"."entity_type_name_keys" @> (ARRAY[1])"#), "{}", built.sql);
-        assert!(!built.sql.contains("entity_type_members"), "{}", built.sql);
+        assert_statement_snapshot!("entity-a-typed-selector-naming-identifiers-filters-the-search-row", built.select);
     }
 
     /// A geo-query's matches drive the statement and its count, so the types
@@ -803,15 +693,9 @@ mod tests {
             geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
         let built = build_counted(&q, &known_types());
-        let count = built.count_sql.expect("count requested");
-        for sql in [page_of(&built.sql), count.as_str()] {
-            assert!(
-                sql.contains(r#"("entity_search"."entity_type_name_keys" @> (ARRAY[1])) OR ("entity_search"."entity_type_name_keys" @> (ARRAY[2]))"#),
-                "{sql}"
-            );
-            assert!(sql.contains(r#""entities"."entity_key" IN ("#), "{sql}");
-            assert!(!sql.contains("entity_type_members"), "{sql}");
-        }
+        assert_statement_snapshot!("entity-a-typed-geo-query-tests-its-types-on-the-search-row-1", built.select);
+        let count = built.count.expect("count requested");
+        assert_statement_snapshot!("entity-a-typed-geo-query-tests-its-types-on-the-search-row-2", count);
     }
 
     #[test]
@@ -830,28 +714,7 @@ mod tests {
                 .build(),
         ];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains(r#"SELECT DISTINCT ON ("typed"."id")"#), "the ranges merge: {}", built.sql);
-        assert!(
-            built
-                .sql
-                .contains(r#"WHERE "entity_type_name_key" = (2) AND "is_current_member") AS "candidate""#),
-            "the conjunction walks Home: {}",
-            built.sql
-        );
-        assert!(
-            built
-                .sql
-                .contains(r#""type_member"."entity_type_name_key" = (1) AND "type_member"."id" = "candidate"."id" AND "type_member"."is_current_member""#),
-            "and narrows it to the Entities that are also a Vehicle: {}",
-            built.sql
-        );
-        assert!(
-            built
-                .sql
-                .contains(r#"UNION ALL (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (3) AND "is_current_member")"#),
-            "the Motorhome range merges in: {}",
-            built.sql
-        );
+        assert_statement_snapshot!("entity-build-with-mixed-type-expr", built.select);
     }
 
     #[test]
@@ -863,8 +726,8 @@ mod tests {
                 .build(),
         ];
         let built = build_counted(&q, &known_types());
-        assert!(built.count_sql.is_some());
-        assert!(built.count_sql.unwrap().contains("COUNT(*)"));
+        let count = built.count.expect("count requested");
+        assert_statement_snapshot!("entity-build-with-count", count);
     }
 
     #[test]
@@ -885,27 +748,7 @@ mod tests {
                 .build(),
         ];
         let built = build(&q, &known_types());
-        // Two parenthesised groups ORed together: `(A AND T1) OR (B AND T2)`,
-        // each pairing one selector's id with its own type. The type keys are
-        // bound as parameters, so the union shows in the structure, not the text.
-        assert!(built.sql.contains(") OR ("), "the two selectors must be ORed as groups: {}", built.sql);
-        assert_eq!(
-            built.sql.matches("\"id\" = $").count(),
-            2,
-            "each selector keeps its own id filter: {}",
-            built.sql
-        );
-        assert_eq!(
-            built.sql.matches("\"entity_type_name_keys\" @> (ARRAY[").count(),
-            2,
-            "each selector keeps its own type filter: {}",
-            built.sql
-        );
-        assert!(
-            built.sql.contains("ARRAY[4]") && built.sql.contains("ARRAY[5]"),
-            "both selector types survive as distinct inlined keys: {}",
-            built.sql
-        );
+        assert_statement_snapshot!("entity-a-union-of-selectors-ors-them-rather-than-cross-producting", built.select);
     }
 
     fn temperature_is_known() -> QueryNames {
@@ -921,7 +764,7 @@ mod tests {
         q.selection.q_expr = Some(parser::parse("\"https://example.com/temperature\"").unwrap());
         let built = build(&q, &temperature_is_known());
         // Row presence is existence: a deleted attribute leaves no row.
-        assert!(built.sql.contains("\"current_attributes\""), "{}", built.sql);
+        assert_statement_snapshot!("entity-build-with-q-existence", built.select);
     }
 
     #[test]
@@ -933,8 +776,7 @@ mod tests {
             rhs: Scalar::Number(50.into()),
         }));
         let built = build(&cq, &temperature_is_known());
-        assert!(built.sql.contains("EXISTS"), "{}", built.sql);
-        assert!(built.sql.contains("\"value_number\" >"), "{}", built.sql);
+        assert_statement_snapshot!("entity-build-with-q-comparison", built.select);
     }
 
     #[test]
@@ -949,7 +791,9 @@ mod tests {
             rhs: Scalar::Number(50.into()),
         }));
         let built = build_counted(&cq, &temperature_is_known());
-        let count_sql = built.count_sql.expect("count sql");
+        assert_statement_snapshot!("entity-count-sql-reuses-the-main-query-bind-vector-1", built.select);
+        let count = built.count.expect("count sql");
+        assert_statement_snapshot!("entity-count-sql-reuses-the-main-query-bind-vector-2", count);
         let placeholders = |sql: &str| {
             let mut found: Vec<String> = Vec::new();
             let bytes = sql.as_bytes();
@@ -963,20 +807,16 @@ mod tests {
             }
             found
         };
-        let main = placeholders(&built.sql);
-        let counted = placeholders(&count_sql);
+        let main = placeholders(&built.select.build(PostgresQueryBuilder).0);
+        let counted = placeholders(&count.build(PostgresQueryBuilder).0);
         assert_eq!(counted, main[..counted.len()], "count query must reuse the leading binds verbatim");
-        assert_eq!(counted, vec!["1".to_string(), "2".to_string()], "attribute id, then value: {count_sql}");
     }
 
     #[test]
     fn build_with_limit_offset() {
         let q = empty_query();
         let built = build_paged(&q, &PageWindow::offset(50, 100), CountPolicy::Omit, &known_types());
-        assert!(built.sql.contains("LIMIT"));
-        assert!(built.sql.contains("OFFSET"));
-        // sea-query parameterizes limit/offset as bind values
-        assert!(!built.bind_values.is_empty(), "should have bind values for limit/offset");
+        assert_statement_snapshot!("entity-build-with-limit-offset", built.select);
     }
 
     fn boundary(id: &str) -> Identifier {
@@ -1003,19 +843,7 @@ mod tests {
             CountPolicy::Omit,
             &known_types(),
         );
-        assert!(built.sql.contains(r#""entities"."id" > $"#), "{}", built.sql);
-        assert!(built.sql.contains(r#""entities"."id" AS "sort_0""#), "{}", built.sql);
-        assert!(built.sql.contains(r#"ORDER BY "sort_0" ASC LIMIT"#), "{}", built.sql);
-        assert!(built.sql.ends_with(r#"ORDER BY "page"."sort_0" ASC"#), "{}", built.sql);
-        assert!(!built.sql.contains("OFFSET"), "a keyset page never skips: {}", built.sql);
-        assert!(
-            built
-                .bind_values
-                .iter()
-                .any(|value| matches!(value, Value::String(Some(text)) if text.as_str() == "urn:ngsi-ld:Building:001")),
-            "the boundary id is bound, not interpolated: {:?}",
-            built.bind_values
-        );
+        assert_statement_snapshot!("entity-build-with-keyset-after-pages-forward-ascending-without-offset", built.select);
     }
 
     /// Clause 5.5.9.1: a backward cursor pages before the boundary over the
@@ -1030,10 +858,7 @@ mod tests {
             CountPolicy::Omit,
             &known_types(),
         );
-        assert!(built.sql.contains(r#""entities"."id" < $"#), "{}", built.sql);
-        assert!(built.sql.contains(r#"ORDER BY "sort_0" DESC LIMIT"#), "{}", built.sql);
-        assert!(built.sql.ends_with(r#"ORDER BY "page"."sort_0" DESC"#), "{}", built.sql);
-        assert!(!built.sql.contains("OFFSET"), "{}", built.sql);
+        assert_statement_snapshot!("entity-build-with-keyset-before-pages-backward-descending-without-offset", built.select);
     }
 
     /// Clause 5.5.9.1: the from-end cursor takes the final page (`ORDER BY id
@@ -1043,15 +868,7 @@ mod tests {
     fn build_with_keyset_end_takes_the_final_page_descending() {
         let q = empty_query();
         let built = build_paged(&q, &cursor_page(PageCursor::End), CountPolicy::Omit, &known_types());
-        assert!(built.sql.contains(r#"ORDER BY "sort_0" DESC LIMIT"#), "{}", built.sql);
-        assert!(built.sql.ends_with(r#"ORDER BY "page"."sort_0" DESC"#), "{}", built.sql);
-        assert!(
-            !built.sql.contains(r#""entities"."id" >"#) && !built.sql.contains(r#""entities"."id" <"#),
-            "no boundary predicate: {}",
-            built.sql
-        );
-        assert!(built.sql.contains("LIMIT"), "{}", built.sql);
-        assert!(!built.sql.contains("OFFSET"), "{}", built.sql);
+        assert_statement_snapshot!("entity-build-with-keyset-end-takes-the-final-page-descending", built.select);
     }
 
     /// Clause 6.3.13: a counted keyset page counts the whole selection with a
@@ -1064,16 +881,13 @@ mod tests {
         let target = ContextTarget::Live;
         let window = PageWindow::after(20, boundary("urn:ngsi-ld:Building:001"));
         let entity_query = build_query(&target, &q, &window, CountPolicy::Emit, &known_types()).expect("valid entity query");
-        let (sql, _) = entity_query.select.build(PostgresQueryBuilder);
-        assert!(!sql.contains("OVER ()"), "a keyset page carries no window count: {sql}");
+        assert_statement_snapshot!("entity-a-counted-keyset-page-counts-the-whole-selection-separately-1", entity_query.select);
         let count = match entity_query.total {
             EntityTotal::Counted(count) => Some(count),
             EntityTotal::Omitted | EntityTotal::OnPageRows { .. } => None,
         }
         .expect("a counted keyset page is counted separately");
-        let (count_sql, _) = count.count.build(PostgresQueryBuilder);
-        assert!(count_sql.contains("COUNT(*)"), "{count_sql}");
-        assert!(!count_sql.contains(r#""id" >"#), "the count carries no boundary predicate: {count_sql}");
+        assert_statement_snapshot!("entity-a-counted-keyset-page-counts-the-whole-selection-separately-2", count.count);
     }
 
     /// A counted offset page keeps carrying its total on the page rows, with
@@ -1083,8 +897,7 @@ mod tests {
         let q = empty_query();
         let target = ContextTarget::Live;
         let entity_query = build_query(&target, &q, &first_offset_page(), CountPolicy::Emit, &known_types()).expect("valid entity query");
-        let (sql, _) = entity_query.select.build(PostgresQueryBuilder);
-        assert!(sql.contains("COUNT(*) OVER ()"), "{sql}");
+        assert_statement_snapshot!("entity-a-counted-offset-page-carries-its-total-on-the-page-rows", entity_query.select);
         assert!(matches!(entity_query.total, EntityTotal::OnPageRows { .. }));
     }
 
@@ -1094,13 +907,8 @@ mod tests {
         let q = empty_query();
         let target = ContextTarget::Live;
         let window = PageWindow::after(20, boundary("urn:ngsi-ld:Building:001"));
-        let (sql, _values) = build_ids_query(&target, &q, &window, &known_types())
-            .expect("valid ids query")
-            .select
-            .build(PostgresQueryBuilder);
-        assert!(sql.contains(r#""entities"."id" > $"#), "{sql}");
-        assert!(sql.contains(r#"ORDER BY "entities"."id" ASC"#), "{sql}");
-        assert!(!sql.contains("OFFSET"), "{sql}");
+        let ids_query = build_ids_query(&target, &q, &window, &known_types()).expect("valid ids query");
+        assert_statement_snapshot!("entity-build-ids-query-pages-by-keyset", ids_query.select);
     }
 
     /// Clause 4.23.1 sorts by the attribute's value, which the statement reads
@@ -1115,15 +923,7 @@ mod tests {
             collation: None,
         }];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("ORDER BY"));
-        assert!(built.sql.contains("ASC"));
-        assert!(
-            built.sql.contains(r#"LEFT JOIN LATERAL (SELECT COALESCE("ordered"."value_number""#),
-            "{}",
-            built.sql
-        );
-        assert!(built.sql.contains(r#"FROM "current_attributes" AS "ca""#), "{}", built.sql);
-        assert!(built.sql.contains("array_position("), "the datatype rank decides first: {}", built.sql);
+        assert_statement_snapshot!("entity-build-with-order-by-asc", built.select);
     }
 
     #[test]
@@ -1135,8 +935,7 @@ mod tests {
             collation: Some(IcuCollation::parse("und-u-ks-identic").expect("valid collation")),
         }];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("COLLATE \"und-u-ks-identic\""));
-        assert!(built.sql.contains("ASC"));
+        assert_statement_snapshot!("entity-build-with-order-by-collation", built.select);
     }
 
     /// Clause 4.8 with clause 4.23: `orderBy=createdAt` sorts on the identity
@@ -1150,8 +949,7 @@ mod tests {
             collation: None,
         }];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains(r#""entities"."created_at" AS "sort_0""#), "{}", built.sql);
-        assert!(built.sql.contains(r#"ORDER BY "sort_0" ASC, "sort_1" ASC LIMIT"#), "{}", built.sql);
+        assert_statement_snapshot!("entity-build-with-order-by-created-at-reads-the-identity-column", built.select);
     }
 
     /// A descending `createdAt` reverses only the order.
@@ -1164,8 +962,7 @@ mod tests {
             collation: None,
         }];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains(r#""entities"."created_at" AS "sort_0""#), "{}", built.sql);
-        assert!(built.sql.contains(r#"ORDER BY "sort_0" DESC, "sort_1" ASC LIMIT"#), "{}", built.sql);
+        assert_statement_snapshot!("entity-build-with-order-by-created-at-desc-reverses-the-order", built.select);
     }
 
     /// Clause 4.8 `modifiedAt` is a column of the identity row that is never
@@ -1179,15 +976,14 @@ mod tests {
             collation: None,
         }];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains(r#""entities"."modified_at" AS "sort_0""#), "{}", built.sql);
-        assert!(built.sql.contains(r#"ORDER BY "sort_0" ASC, "sort_1" ASC"#), "{}", built.sql);
+        assert_statement_snapshot!("entity-build-with-order-by-modified-at-reads-the-identity-column", built.select);
     }
 
     /// Clause 4.23.2 ranks "Attribute does not exist" last, and an unscoped
     /// entity stores no scope path array.
     #[test]
     fn ordering_by_scope_ranks_an_unscoped_entity_last() {
-        for (direction, spelled) in [(OrderDirection::Asc, "ASC"), (OrderDirection::Desc, "DESC")] {
+        for (index, direction) in [OrderDirection::Asc, OrderDirection::Desc].into_iter().enumerate() {
             let mut q = empty_query();
             q.ordering.terms = vec![CompiledOrderTerm {
                 target: OrderTarget::Scope,
@@ -1195,8 +991,7 @@ mod tests {
                 collation: None,
             }];
             let built = build(&q, &known_types());
-            assert!(built.sql.contains(r#""entity_search"."scope_paths" AS "sort_0""#), "{}", built.sql);
-            assert!(built.sql.contains(&format!(r#"ORDER BY "sort_0" {spelled} NULLS LAST"#)), "{}", built.sql);
+            assert_statement_snapshot!(format!("entity-ordering-by-scope-ranks-an-unscoped-entity-last-{}", index + 1), built.select);
         }
     }
 
@@ -1251,13 +1046,7 @@ mod tests {
             collation: None,
         }];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("ST_Distance"));
-        assert!(built.sql.contains("ASC"));
-        assert!(built.sql.contains("ST_GeomFromEWKB"));
-        assert!(
-            built.bind_values.iter().any(|b| matches!(b, Value::Bytes(_))),
-            "reference geometry must be bound as EWKB bytes, not a GeoJSON string"
-        );
+        assert_statement_snapshot!("entity-build-with-order-by-dist-with-ordering-geometry", built.select);
     }
 
     #[test]
@@ -1283,12 +1072,8 @@ mod tests {
             collation: None,
         }];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("ST_Distance"));
         // Ordering geometry (Berlin) takes precedence over the geo query (Paris).
-        // Reference geometries are bound as EWKB bytes, so the bind values carry
-        // exactly one raw geometry blob for the distance expression.
-        assert!(built.sql.contains("ST_GeomFromEWKB"));
-        assert!(built.bind_values.iter().any(|b| matches!(b, Value::Bytes(_))));
+        assert_statement_snapshot!("entity-build-with-order-by-dist-ordering-geometry-takes-precedence", built.select);
     }
 
     /// Clause 4.23.1 orders on distance over the sphere (Haversine), and the
@@ -1314,17 +1099,14 @@ mod tests {
         elevated_query.ordering.terms = vec![ordering_term];
         let elevated = build(&elevated_query, &known_types());
 
-        assert_eq!(elevated.sql, flat.sql, "distance ordering must not vary with the reference dimensionality");
-        assert!(elevated.sql.contains("ST_DistanceSphere("), "{}", elevated.sql);
-        assert!(
-            !elevated.sql.contains("::geography"),
-            "the spheroidal measurement must not be used: {}",
-            elevated.sql
-        );
+        assert_statement_snapshot!("entity-a-three-dimensional-ordering-geometry-renders-the-same-distance-sql-1", flat.select);
+        assert_statement_snapshot!("entity-a-three-dimensional-ordering-geometry-renders-the-same-distance-sql-2", elevated.select);
+        let (flat_sql, flat_values) = flat.select.build(PostgresQueryBuilder);
+        let (elevated_sql, elevated_values) = elevated.select.build(PostgresQueryBuilder);
+        assert_eq!(elevated_sql, flat_sql, "distance ordering must not vary with the reference dimensionality");
 
-        let bytes = |built: &Built| -> Vec<Vec<u8>> {
-            built
-                .bind_values
+        let bytes = |values: &[Value]| -> Vec<Vec<u8>> {
+            values
                 .iter()
                 .filter_map(|value| match value {
                     Value::Bytes(Some(bytes)) => Some(bytes.clone()), // the assertion outlives the borrow of the built query
@@ -1355,7 +1137,11 @@ mod tests {
                 })
                 .collect()
         };
-        assert_ne!(bytes(&elevated), bytes(&flat), "the reference must still bind the altitude it was given");
+        assert_ne!(
+            bytes(&elevated_values.0),
+            bytes(&flat_values.0),
+            "the reference must still bind the altitude it was given"
+        );
     }
 
     #[test]
@@ -1370,14 +1156,7 @@ mod tests {
             geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
         let built = build(&q, &known_types());
-        assert!(built.sql.contains(" _ST_DWithin("), "should contain spatial predicate");
-        assert!(
-            built
-                .sql
-                .contains(r#""geo_default"."location_expires_at" IS NULL OR "geo_default"."location_expires_at" > NOW()"#),
-            "the guard reads the hoisted instance's own expiry column: {}",
-            built.sql
-        );
+        assert_statement_snapshot!("entity-geo-default-location-includes-expiration-guard", built.select);
     }
 
     #[test]
@@ -1397,25 +1176,15 @@ mod tests {
             },
         ];
 
-        for georel in variants {
+        for (index, georel) in variants.into_iter().enumerate() {
             let mut q = empty_query();
             q.selection.geo = Some(GeoQuery {
-                georel: georel.clone(),
+                georel,
                 geometry: point(&serde_json::json!([1.0, 2.0])),
                 geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
             });
             let built = build(&q, &known_types());
-            assert!(built.sql.contains("ST_GeomFromEWKB"), "{georel:?} SQL missing ST_GeomFromEWKB");
-            // Default-location path must not re-decode GeoJSON for the reference side.
-            assert!(
-                !built.sql.contains("ST_GeomFromGeoJSON"),
-                "{georel:?} SQL still contains ST_GeomFromGeoJSON: {}",
-                built.sql
-            );
-            assert!(
-                built.bind_values.iter().any(|b| matches!(b, Value::Bytes(_))),
-                "{georel:?} missing EWKB bytes bind"
-            );
+            assert_statement_snapshot!(format!("entity-georel-variants-bind-reference-geometry-as-ewkb-{}", index + 1), built.select);
         }
     }
 
@@ -1435,14 +1204,7 @@ mod tests {
             AttributeNameKey::from(42_i32),
         )]));
         let built = build(&q, &names);
-        assert!(built.sql.contains("EXISTS(SELECT 1 FROM \"current_attributes\""), "{}", built.sql);
-        assert!(built.sql.contains("\"attribute_name_key\" = "), "{}", built.sql);
-        assert!(
-            built.bind_values.iter().any(|bind| matches!(bind, Value::Int(Some(42)))),
-            "the dictionary key selects the attribute: {:?}",
-            built.bind_values
-        );
-        assert!(built.sql.contains("ST_GeomFromEWKB"), "reference side must still bind EWKB");
+        assert_statement_snapshot!("entity-a-named-geoproperty-filters-through-its-attribute-instance-rows", built.select);
     }
 
     /// Clause 4.10: an Entity that does not convey the target `GeoProperty` is
@@ -1457,7 +1219,7 @@ mod tests {
             geoproperty: "https://example.com/neverRecorded".parse().expect("valid attribute name"),
         });
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("FALSE"), "{}", built.sql);
+        assert_statement_snapshot!("entity-an-unrecorded-geoproperty-filters-everything-out-without-failing", built.select);
     }
 
     #[test]
@@ -1465,17 +1227,7 @@ mod tests {
         let mut q = empty_query();
         q.selection.scope_q = Some(ScopeQuery::parse("(/A;/B),/C/#").expect("valid scope query"));
         let built = build(&q, &known_types());
-        assert!(built.sql.contains(" AND "), "SQL should contain AND");
-        assert!(built.sql.contains(" OR "), "SQL should contain OR");
-        assert!(built.sql.contains("::lquery"), "SQL should cast to lquery");
-    }
-
-    /// Number of `'` characters in a statement. Every literal contributes an
-    /// opening and a closing quote, and a doubled apostrophe contributes two, so
-    /// a balanced statement always has an even count. An unescaped apostrophe
-    /// inside a literal makes it odd.
-    fn apostrophe_count(sql: &str) -> usize {
-        sql.matches('\'').count()
+        assert_statement_snapshot!("entity-scope-complex-generates-mixed", built.select);
     }
 
     /// A geo-query names its target `GeoProperty` by IRI, but the statement
@@ -1494,16 +1246,21 @@ mod tests {
                 min_distance: None,
             },
         ];
-        for georel in relations {
+        for (index, georel) in relations.into_iter().enumerate() {
             let mut q = empty_query();
             q.selection.geo = Some(GeoQuery {
-                georel: georel.clone(),
+                georel,
                 geometry: point(&serde_json::json!([1.0, 2.0])),
                 geoproperty: "https://example.com/o'brien".parse().expect("valid attribute name"),
             });
             let built = build(&q, &names);
-            assert!(!built.sql.contains("brien"), "{georel:?}: {}", built.sql);
-            assert_eq!(apostrophe_count(&built.sql) % 2, 0, "unbalanced SQL literal: {}", built.sql);
+            assert_statement_snapshot!(
+                format!(
+                    "entity-a-geoproperty-iri-containing-an-apostrophe-never-reaches-the-statement-text-{}",
+                    index + 1
+                ),
+                built.select
+            );
         }
     }
 
@@ -1516,8 +1273,10 @@ mod tests {
             collation: None,
         }];
         let built = build(&q, &known_types());
-        assert!(!built.sql.contains("brien"), "the attribute is read by dictionary key: {}", built.sql);
-        assert_eq!(apostrophe_count(&built.sql) % 2, 0, "unbalanced SQL literal: {}", built.sql);
+        assert_statement_snapshot!(
+            "entity-an-order-by-attribute-iri-containing-an-apostrophe-does-not-terminate-the-sql-literal",
+            built.select
+        );
     }
 
     /// A distance ordering measures through the dictionary key, and so does
@@ -1542,14 +1301,7 @@ mod tests {
             AttributeNameKey::from(9_i32),
         )]));
         let built = build(&q, &names);
-        assert!(built.sql.contains("MIN(ST_DistanceSphere("), "the nearest instance decides: {}", built.sql);
-        assert!(
-            built.sql.contains("\"attribute_name_key\" = $"),
-            "the geometry is reached by dictionary key: {}",
-            built.sql
-        );
-        assert!(!built.sql.contains("brien"), "{}", built.sql);
-        assert_eq!(apostrophe_count(&built.sql) % 2, 0, "unbalanced SQL literal: {}", built.sql);
+        assert_statement_snapshot!("entity-a-distance-ordering-reads-the-geoproperty-by-key-alone", built.select);
     }
 
     /// Clause 4.23: a requested ordering keeps its own sort keys, the `id`
@@ -1563,13 +1315,7 @@ mod tests {
             collation: None,
         }];
         let built = build_paged(&q, &PageWindow::offset(10, 30), CountPolicy::Omit, &known_types());
-        assert!(built.sql.contains("DESC"), "the requested direction stands: {}", built.sql);
-        assert!(built.sql.contains("LIMIT $1 OFFSET $2"), "{}", built.sql);
-        assert!(
-            !built.sql.contains(r#""entities"."id" >"#),
-            "an offset window carries no keyset predicate: {}",
-            built.sql
-        );
+        assert_statement_snapshot!("entity-requested-ordering-keeps-its-sort-keys-under-an-offset-window", built.select);
     }
 
     /// The first page of a counted cursor walk reads every match, so its total
@@ -1582,9 +1328,7 @@ mod tests {
             start: PageStart::Cursor(None),
         };
         let entity_query = build_query(&ContextTarget::Live, &q, &window, CountPolicy::Emit, &known_types()).expect("valid entity query");
-        let (sql, _) = entity_query.select.build(PostgresQueryBuilder);
-        assert!(sql.contains("COUNT(*) OVER ()"), "{sql}");
-        assert!(!sql.contains("OFFSET"), "{sql}");
+        assert_statement_snapshot!("entity-a-counted-fresh-cursor-page-carries-its-total-on-the-page-rows", entity_query.select);
         assert!(matches!(entity_query.total, EntityTotal::OnPageRows { .. }));
         assert_eq!(entity_query.read_order, ReadOrder::Ascending);
     }

@@ -1,0 +1,27 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/listed_period_page.rs
+---
+SELECT
+  "page_period"."bucket_start" AS "bucket_start",
+  "page_period"."bucket_end" AS "bucket_end",
+  "period_aggregate".*,
+  ROW_NUMBER() OVER (
+    ORDER BY
+      "page_period"."bucket_start" ASC) AS "period_order"
+FROM
+  (
+    SELECT
+      UNNEST("stream_edge"."period_starts") AS "bucket_start",
+      UNNEST("stream_edge"."period_ends") AS "bucket_end",
+      generate_subscripts("stream_edge"."period_starts", 1) AS "period_position"
+  ) AS "page_period"
+  JOIN LATERAL (
+    SELECT
+      COUNT(*) AS "agg_total_count"
+    FROM
+      "rows" AS "ah"
+    HAVING
+      (COUNT(*)) > (0)
+  ) AS "period_aggregate" ON TRUE
+WHERE
+  "page_period"."bucket_start" < "stream_edge"."bound"

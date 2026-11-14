@@ -1,0 +1,10 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/filter.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  "context_source_properties" ? $1
+1: String 'https://example.com/speed'

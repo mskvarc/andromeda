@@ -41,20 +41,18 @@ pub fn some_information_row(row_matches: Condition) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_query::PostgresQueryBuilder;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
 
     #[test]
     fn the_scan_is_correlated_with_the_registration_and_carries_the_row_condition() {
-        let sql = Query::select()
+        let select = Query::select()
             .expr(int_literal(1))
             .from(Csr::Table)
             .and_where(some_information_row(Condition::all().add(ri_col(RegistrationInformation::EntityId).is_null())))
-            .to_string(PostgresQueryBuilder);
-        assert!(
-            sql.contains(
-                "EXISTS(SELECT 1 FROM \"registration_information\" AS \"ri\" WHERE \"ri\".\"registration_id\" = \"context_source_registrations\".\"id\" AND \"ri\".\"entity_id\" IS NULL)"
-            ),
-            "{sql}"
+            .take();
+        assert_statement_snapshot!(
+            "information-row-the-scan-is-correlated-with-the-registration-and-carries-the-row-condition",
+            select
         );
     }
 }

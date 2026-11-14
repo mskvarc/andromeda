@@ -1,0 +1,7 @@
+---
+source: crates/andromeda-postgresql-query/src/entity_row_refs.rs
+---
+SELECT
+  "id"
+FROM
+  "snap_5"."entities"

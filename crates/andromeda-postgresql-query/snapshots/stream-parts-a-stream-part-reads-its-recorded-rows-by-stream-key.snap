@@ -1,0 +1,39 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/stream_parts.rs
+---
+SELECT
+  "st"."entity_id" AS "entity_id",
+  "st"."attribute_name_key" AS "attribute_name_key",
+  "st"."dataset_key" AS "dataset_key",
+  "rh"."recorded_at",
+  "rh"."write_id",
+  "rh"."write_ordinal",
+  "rh"."attribute_kind" AS "attribute_kind",
+  "rh"."value_kind" AS "value_kind",
+  "rh"."observed_at" AS "observed_at",
+  "rh"."created_at" AS "created_at",
+  "rh"."modified_at" AS "modified_at",
+  "rh"."deleted_at" AS "deleted_at",
+  "rh"."value_date_time" AS "value_date_time",
+  "rh"."expires_at" AS "expires_at",
+  "rh"."generated_instance_id" AS "generated_instance_id",
+  "rh"."value_type_key" AS "value_type_key",
+  "rh"."value_datatype_key" AS "value_datatype_key",
+  "rh"."unit_code_id" AS "unit_code_id",
+  "rh"."value_boolean" AS "value_boolean",
+  "rh"."verbatim_instance_id" AS "verbatim_instance_id",
+  "rh"."value_number" AS "value_number",
+  "rh"."value_string" AS "value_string",
+  "rh"."value_language" AS "value_language",
+  "rh"."value_geometry" AS "value_geometry",
+  "rh"."value_geometry_valid" AS "value_geometry_valid",
+  "rh"."value_geometry_reach" AS "value_geometry_reach",
+  "rh"."value_geometry_members" AS "value_geometry_members",
+  "rh"."value_object" AS "value_object",
+  "rh"."value_uri" AS "value_uri",
+  "rh"."object_type_keys" AS "object_type_keys",
+  "rh"."sub_attributes" AS "sub_attributes"
+FROM
+  "attribute_history" AS "rh"
+WHERE
+  "rh"."stream_key" = "st"."stream_key"

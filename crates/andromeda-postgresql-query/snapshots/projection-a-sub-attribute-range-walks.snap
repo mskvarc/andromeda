@@ -1,0 +1,49 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/projection.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        "ca"."sub_attributes" IS NOT NULL
+        AND (
+          EXISTS (
+            SELECT
+              1
+            FROM
+              UNNEST("ca"."sub_attributes") AS "l0"
+            WHERE
+              "l0"."parent" = $2
+              AND (
+                "l0"."attribute_name_key" = $3
+                AND (
+                  "l0"."expires_at" IS NULL
+                  OR "l0"."expires_at" > NOW()
+                )
+              )
+              AND (
+                "l0"."value_number" > $4
+                AND "l0"."value_number" <> ('NaN'::numeric)
+              )
+          )
+        )
+      )
+      AND "ca"."entity_key" = "entities"."entity_key" OFFSET 0
+  )
+1: Int 15
+2: BigInt 0
+3: Int 40
+4: BigDecimal 0.5

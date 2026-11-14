@@ -194,31 +194,56 @@ mod tests {
         instance_row::{ElementLevel, InstanceRow, ProbedRow},
         value_column::ValueColumn,
     };
-    use sea_query::{PostgresQueryBuilder, Query, SimpleExpr};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Query, SelectStatement, SimpleExpr};
 
-    fn render(expr: SimpleExpr) -> String {
-        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    fn render(expr: SimpleExpr) -> SelectStatement {
+        Query::select().expr(expr).to_owned()
     }
 
     #[test]
     fn a_value_field_resolves_in_the_instance_read() {
-        assert!(render(InstanceRow::Current.value(ValueColumn::LongText)).contains(r#""ca"."value_long_text""#));
-        assert!(render(InstanceRow::History.value(ValueColumn::LongText)).contains(r#""qh"."value_string""#));
-        assert!(render(InstanceRow::Element(ElementLevel::at(2)).value(ValueColumn::LongText)).contains(r#""l2"."value_string""#));
+        assert_statement_snapshot!(
+            "instance-row-a-value-field-resolves-in-the-instance-read-1",
+            render(InstanceRow::Current.value(ValueColumn::LongText))
+        );
+        assert_statement_snapshot!(
+            "instance-row-a-value-field-resolves-in-the-instance-read-2",
+            render(InstanceRow::History.value(ValueColumn::LongText))
+        );
+        assert_statement_snapshot!(
+            "instance-row-a-value-field-resolves-in-the-instance-read-3",
+            render(InstanceRow::Element(ElementLevel::at(2)).value(ValueColumn::LongText))
+        );
     }
 
     /// Every instance records its family, which is what decides whether its
     /// `value_object` is a `languageMap`.
     #[test]
     fn the_attribute_family_resolves_in_the_instance_read() {
-        assert!(render(InstanceRow::Current.attribute_family()).contains(r#""ca"."attribute_kind""#));
-        assert!(render(InstanceRow::History.attribute_family()).contains(r#""qh"."attribute_kind""#));
-        assert!(render(InstanceRow::Element(ElementLevel::at(0)).attribute_family()).contains(r#""l0"."attribute_kind""#));
+        assert_statement_snapshot!(
+            "instance-row-the-attribute-family-resolves-in-the-instance-read-1",
+            render(InstanceRow::Current.attribute_family())
+        );
+        assert_statement_snapshot!(
+            "instance-row-the-attribute-family-resolves-in-the-instance-read-2",
+            render(InstanceRow::History.attribute_family())
+        );
+        assert_statement_snapshot!(
+            "instance-row-the-attribute-family-resolves-in-the-instance-read-3",
+            render(InstanceRow::Element(ElementLevel::at(0)).attribute_family())
+        );
     }
 
     #[test]
     fn each_probed_row_offers_its_own_sub_attribute_tree() {
-        assert!(render(ProbedRow::Current.sub_attributes()).contains(r#""ca"."sub_attributes""#));
-        assert!(render(ProbedRow::History.sub_attributes()).contains(r#""qh"."sub_attributes""#));
+        assert_statement_snapshot!(
+            "instance-row-each-probed-row-offers-its-own-sub-attribute-tree-1",
+            render(ProbedRow::Current.sub_attributes())
+        );
+        assert_statement_snapshot!(
+            "instance-row-each-probed-row-offers-its-own-sub-attribute-tree-2",
+            render(ProbedRow::History.sub_attributes())
+        );
     }
 }

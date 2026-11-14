@@ -1,0 +1,56 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/statement.rs
+---
+SELECT
+  COUNT(*)
+FROM
+  "context_source_registrations"
+WHERE
+  (
+    "expires_at" IS NULL
+    OR "expires_at" > NOW()
+  )
+  AND EXISTS (
+    SELECT
+      1
+    FROM
+      "registration_information" AS "ri"
+    WHERE
+      "ri"."registration_id" = "context_source_registrations"."id"
+      AND (
+        (
+          "ri"."property_name_keys" && (
+            ARRAY (
+              SELECT
+                "an"."attribute_name_key"
+              FROM
+                "attribute_names" AS "an"
+              WHERE
+                "an"."name" = $1
+            )
+          )
+        )
+        OR (
+          "ri"."relationship_name_keys" && (
+            ARRAY (
+              SELECT
+                "an"."attribute_name_key"
+              FROM
+                "attribute_names" AS "an"
+              WHERE
+                "an"."name" = $2
+            )
+          )
+        )
+        OR (
+          "ri"."property_name_keys" IS NULL
+          AND "ri"."relationship_name_keys" IS NULL
+        )
+      )
+  )
+  AND (
+    "observation_interval_start" IS NULL
+    AND "management_interval_start" IS NULL
+  )
+1: String 'https://example.com/speed'
+2: String 'https://example.com/speed'

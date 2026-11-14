@@ -1,0 +1,14 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/temporal_partition.rs
+---
+SELECT
+  1
+FROM
+  "context_source_registrations"
+WHERE
+  "observation_interval_start" IS NOT NULL
+  AND (
+    "observation_interval_end" IS NULL
+    OR "observation_interval_end" >= $1
+  )
+1: ChronoDateTimeUtc '2020-06-01 00:00:00.000000 +00:00'

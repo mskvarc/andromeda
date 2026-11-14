@@ -1,0 +1,30 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/entity_specification.rs
+---
+SELECT
+  1
+WHERE
+  (
+    COALESCE("ri"."entity_id", '') = ANY($1)
+    OR "ri"."entity_id_pattern" IS NOT NULL
+  )
+  AND (
+    "ri"."entity_id" = ANY($2)
+    OR (
+      "ri"."entity_id" IS NULL
+      AND (
+        "ri"."entity_id_pattern_form" IS NULL
+        OR EXISTS (
+          SELECT
+            1
+          FROM
+            UNNEST($3) AS "queried"
+          WHERE
+            "queried"."queried" ~ "ri"."entity_id_pattern_form"
+        )
+      )
+    )
+  )
+1: Array ARRAY ['urn:ngsi-ld:Vehicle:1','urn:ngsi-ld:Vehicle:2','']
+2: Array ARRAY ['urn:ngsi-ld:Vehicle:1','urn:ngsi-ld:Vehicle:2']
+3: Array ARRAY ['urn:ngsi-ld:Vehicle:1','urn:ngsi-ld:Vehicle:2']

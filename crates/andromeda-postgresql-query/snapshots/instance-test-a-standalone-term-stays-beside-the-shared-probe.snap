@@ -1,0 +1,34 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/instance_test.rs
+---
+SELECT
+  $1
+WHERE
+  "flag" = TRUE
+  OR EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        (
+          "ca"."attribute_name_key" = $2
+          AND "a" = $3
+        )
+        OR (
+          "ca"."attribute_name_key" = $4
+          AND "b" = $5
+        )
+      )
+      AND "ca"."entity_key" = "entities"."entity_key"
+  )
+1: Int 1
+2: Int 3
+3: Int 1
+4: Int 4
+5: Int 2

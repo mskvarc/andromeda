@@ -244,12 +244,12 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use iri_rs::IriBuf;
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Asterisk, IntoIden, PostgresQueryBuilder, Query};
+    use sea_query::{Alias, Asterisk, IntoIden, Query, SelectStatement};
 
-    fn rendered(source: sea_query::TableRef) -> String {
-        Query::select().column(Asterisk).from(source).to_owned().to_string(PostgresQueryBuilder)
+    fn rendered(source: sea_query::TableRef) -> SelectStatement {
+        Query::select().column(Asterisk).from(source).to_owned()
     }
 
     /// Clauses 5.6.11.4 and 5.6.12.4 only add types: an Entity a queued intent
@@ -257,26 +257,8 @@ mod tests {
     /// its queued intents state, and its recorded row is left to that read.
     #[test]
     fn pending_entities_take_their_recorded_types_and_every_queued_type() {
-        let sql = rendered(entity_rows(&HistoryBranch::live(), Alias::new("e")));
-        assert!(
-            sql.contains(concat!(
-                r#"(SELECT "pv"."id" AS "id", "pv"."evolution_type_name_keys" AS "entity_type_name_keys", 0 AS "list_rank" FROM "entities" AS "pv" "#,
-                r#"WHERE "pv"."evolution_created_at" IS NOT NULL AND EXISTS(SELECT 1 FROM "temporal_append_intents" AS "pt" WHERE "pt"."entity_id" = "pv"."id""#
-            )),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(concat!(
-                r#"UNION ALL (SELECT "pt"."entity_id" AS "id", "pt"."entity_type_name_keys" AS "entity_type_name_keys", "pt"."intent_key" AS "list_rank" "#,
-                r#"FROM "temporal_append_intents" AS "pt" WHERE cardinality("pt"."entity_type_name_keys") > 0)"#
-            )),
-            "{sql}"
-        );
-        assert!(sql.contains(r#"GROUP BY "first_stated"."id""#), "{sql}");
-        assert!(
-            sql.contains(r#"WHERE "ru"."queued" OR (NOT EXISTS(SELECT 1 FROM "temporal_append_intents" AS "pt" WHERE "pt"."entity_id" = "ru"."id""#),
-            "{sql}"
-        );
+        let statement = rendered(entity_rows(&HistoryBranch::live(), Alias::new("e")));
+        assert_statement_snapshot!("entity-rows-pending-entities-take-their-recorded-types-and-every-queued-type", statement);
     }
 
     /// The recorded types of an Entity a queued intent states types for are
@@ -284,8 +266,8 @@ mod tests {
     #[test]
     fn the_recorded_types_of_a_queued_entity_are_read_in_the_branch_schema() {
         let schema = Alias::new("live_x").into_iden();
-        let sql = rendered(entity_rows(&HistoryBranch::live_in(schema), Alias::new("e")));
-        assert!(sql.contains(r#"FROM "live_x"."entities" AS "pv""#), "{sql}");
+        let statement = rendered(entity_rows(&HistoryBranch::live_in(schema), Alias::new("e")));
+        assert_statement_snapshot!("entity-rows-the-recorded-types-of-a-queued-entity-are-read-in-the-branch-schema", statement);
     }
 
     /// The recorded branch is the identity relation filtered by a plain
@@ -293,14 +275,8 @@ mod tests {
     /// and an identifier-ordered page reads the identifier index.
     #[test]
     fn the_recorded_branch_carries_only_the_evolution_condition() {
-        let sql = rendered(entity_rows(&HistoryBranch::live(), Alias::new("e")));
-        assert!(
-            sql.contains(concat!(
-                r#"(SELECT "re"."id", "re"."evolution_type_name_keys", FALSE AS "queued" FROM "entities" AS "re" "#,
-                r#"WHERE "re"."evolution_created_at" IS NOT NULL UNION ALL"#
-            )),
-            "{sql}"
-        );
+        let statement = rendered(entity_rows(&HistoryBranch::live(), Alias::new("e")));
+        assert_statement_snapshot!("entity-rows-the-recorded-branch-carries-only-the-evolution-condition", statement);
     }
 
     /// Reads count an Evolution a queued intent stating types brings into
@@ -309,31 +285,25 @@ mod tests {
     #[test]
     fn a_live_row_holds_a_visible_evolution_when_it_records_one_or_a_queued_intent_states_types() {
         let condition = holds_visible_evolution(&HistoryBranch::live(), Alias::new("te"));
-        assert_eq!(
-            Query::select().expr(condition).to_owned().to_string(PostgresQueryBuilder),
-            concat!(
-                r#"SELECT "te"."evolution_created_at" IS NOT NULL OR EXISTS(SELECT 1 FROM "temporal_append_intents" AS "pt" "#,
-                r#"WHERE "pt"."entity_id" = "te"."id" AND cardinality("pt"."entity_type_name_keys") > 0)"#
-            )
+        assert_statement_snapshot!(
+            "entity-rows-a-live-row-holds-a-visible-evolution-when-it-records-one-or-a-queued-intent-states-types",
+            Query::select().expr(condition).to_owned()
         );
     }
 
     #[test]
     fn a_snapshot_row_holds_a_visible_evolution_only_when_it_records_one() {
         let condition = holds_visible_evolution(&HistoryBranch::recorded_in(Alias::new("snap_1").into_iden()), Alias::new("te"));
-        assert_eq!(
-            Query::select().expr(condition).to_owned().to_string(PostgresQueryBuilder),
-            r#"SELECT "te"."evolution_created_at" IS NOT NULL"#
+        assert_statement_snapshot!(
+            "entity-rows-a-snapshot-row-holds-a-visible-evolution-only-when-it-records-one",
+            Query::select().expr(condition).to_owned()
         );
     }
 
     #[test]
     fn a_snapshot_reads_its_catalogue_alone() {
-        let sql = rendered(entity_rows(&HistoryBranch::recorded_in(Alias::new("snap_1").into_iden()), Alias::new("e")));
-        pretty_assertions::assert_eq!(
-            sql,
-            r#"SELECT * FROM (SELECT * FROM "snap_1"."entities" WHERE "entities"."evolution_created_at" IS NOT NULL) AS "e""#
-        );
+        let statement = rendered(entity_rows(&HistoryBranch::recorded_in(Alias::new("snap_1").into_iden()), Alias::new("e")));
+        assert_statement_snapshot!("entity-rows-a-snapshot-reads-its-catalogue-alone", statement);
     }
 
     fn vehicle() -> TypeExpr {
@@ -347,7 +317,7 @@ mod tests {
         )])
     }
 
-    fn walked(branch: &HistoryBranch, expr: &TypeExpr) -> String {
+    fn walked(branch: &HistoryBranch, expr: &TypeExpr) -> SelectStatement {
         rendered(type_member_rows(branch, Alias::new("e"), &[expr], &vehicle_is_known(), &WalkedKeys::Every).expect("the type has a range"))
     }
 
@@ -358,29 +328,17 @@ mod tests {
     /// read for those Entities alone.
     #[test]
     fn a_live_type_walk_reads_the_membership_range_beside_the_queued_typed_intents() {
-        let sql = walked(&HistoryBranch::live(), &vehicle());
-        assert!(
-            sql.contains(r#"(SELECT "rw"."id", FALSE AS "queued" FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (3) AND "is_evolution_member" ORDER BY "id" ASC) AS "rw" UNION ALL"#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#"AS "rq" WHERE "rq"."entity_type_name_keys" @> (ARRAY[3])"#), "{sql}");
-        assert!(
-            sql.contains(r#"WHERE "ru"."queued" OR (NOT EXISTS(SELECT 1 FROM "temporal_append_intents" AS "pt" WHERE "pt"."entity_id" = "ru"."id""#),
-            "{sql}"
-        );
-        assert_eq!(sql.matches(r#"FROM "entities""#).count(), 1, "{sql}");
-        assert!(
-            sql.contains(r#"FROM "entities" AS "pv" WHERE "pv"."evolution_created_at" IS NOT NULL AND EXISTS(SELECT 1 FROM "temporal_append_intents" AS "pt" WHERE "pt"."entity_id" = "pv"."id""#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "entity-rows-a-live-type-walk-reads-the-membership-range-beside-the-queued-typed-intents",
+            walked(&HistoryBranch::live(), &vehicle())
         );
     }
 
     #[test]
     fn a_snapshot_type_walk_reads_its_membership_range_alone() {
-        let sql = walked(&HistoryBranch::recorded_in(Alias::new("snap_1").into_iden()), &vehicle());
-        pretty_assertions::assert_eq!(
-            sql,
-            r#"SELECT * FROM (SELECT "entity_key", "id" FROM "snap_1"."entity_type_members" WHERE "entity_type_name_key" = (3) AND "is_evolution_member") AS "e""#
+        assert_statement_snapshot!(
+            "entity-rows-a-snapshot-type-walk-reads-its-membership-range-alone",
+            walked(&HistoryBranch::recorded_in(Alias::new("snap_1").into_iden()), &vehicle())
         );
     }
 
@@ -400,13 +358,7 @@ mod tests {
             &among_candidates(),
         )
         .expect("the type has a range");
-        pretty_assertions::assert_eq!(
-            rendered(walk),
-            concat!(
-                r#"SELECT * FROM (SELECT "entity_key", "id" FROM "snap_1"."entity_type_members" WHERE "entity_type_name_key" = (3) AND "is_evolution_member""#,
-                r#" AND "entity_key" IN (SELECT "entity_key" FROM "candidates") ORDER BY "id" ASC OFFSET 0) AS "e""#
-            )
-        );
+        assert_statement_snapshot!("entity-rows-a-narrowed-type-walk-reads-the-named-members-in-identifier-order", rendered(walk));
     }
 
     /// The wildcard selects every Evolution, so it has no range to walk.

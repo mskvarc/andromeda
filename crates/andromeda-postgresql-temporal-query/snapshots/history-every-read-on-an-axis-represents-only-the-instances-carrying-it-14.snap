@@ -1,0 +1,232 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/history.rs
+---
+SELECT
+  "read_entity"."read_entity" AS "read_entity_id",
+  "entity_rows".*
+FROM
+  UNNEST(ARRAY[$1]) AS "read_entity"
+  JOIN LATERAL (
+    SELECT
+      "page".*,
+      "stream_edge"."stream_continues" AS "stream_continues"
+    FROM
+      (
+        SELECT
+          "re"."id" AS "entity_id",
+          "rs"."attribute_name_key" AS "attribute_name_key",
+          "rs"."dataset_key" AS "dataset_key",
+          "rs"."stream_key" AS "stream_key"
+        FROM
+          "temporal_attribute_streams" AS "rs"
+          JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+        WHERE
+          "re"."id" = "read_entity"."read_entity"
+      ) AS "st"
+      JOIN "attribute_names" AS "an" ON "an"."attribute_name_key" = "st"."attribute_name_key"
+      LEFT JOIN LATERAL (
+        SELECT
+          "edge_row"."edge" AS "edge",
+          EXISTS (
+            SELECT
+              1
+            FROM
+              (
+                SELECT
+                  "st"."entity_id" AS "entity_id",
+                  "st"."attribute_name_key" AS "attribute_name_key",
+                  "st"."dataset_key" AS "dataset_key",
+                  "rh"."recorded_at",
+                  "rh"."write_id",
+                  "rh"."write_ordinal",
+                  "rh"."attribute_kind" AS "attribute_kind",
+                  "rh"."value_kind" AS "value_kind",
+                  "rh"."observed_at" AS "observed_at",
+                  "rh"."created_at" AS "created_at",
+                  "rh"."modified_at" AS "modified_at",
+                  "rh"."deleted_at" AS "deleted_at",
+                  "rh"."value_date_time" AS "value_date_time",
+                  "rh"."expires_at" AS "expires_at",
+                  "rh"."generated_instance_id" AS "generated_instance_id",
+                  "rh"."value_type_key" AS "value_type_key",
+                  "rh"."value_datatype_key" AS "value_datatype_key",
+                  "rh"."unit_code_id" AS "unit_code_id",
+                  "rh"."value_boolean" AS "value_boolean",
+                  "rh"."verbatim_instance_id" AS "verbatim_instance_id",
+                  "rh"."value_number" AS "value_number",
+                  "rh"."value_string" AS "value_string",
+                  "rh"."value_language" AS "value_language",
+                  "rh"."value_geometry" AS "value_geometry",
+                  "rh"."value_geometry_valid" AS "value_geometry_valid",
+                  "rh"."value_geometry_reach" AS "value_geometry_reach",
+                  "rh"."value_geometry_members" AS "value_geometry_members",
+                  "rh"."value_object" AS "value_object",
+                  "rh"."value_uri" AS "value_uri",
+                  "rh"."object_type_keys" AS "object_type_keys",
+                  "rh"."sub_attributes" AS "sub_attributes"
+                FROM
+                  "attribute_history" AS "rh"
+                WHERE
+                  "rh"."stream_key" = "st"."stream_key"
+              ) AS "ah"
+            WHERE
+              "ah"."deleted_at" IS NOT NULL
+              AND TRUE
+              AND TRUE
+              AND "ah"."deleted_at" > "edge_row"."edge"
+          ) AS "stream_continues"
+        FROM
+          (
+            SELECT
+              "edge_candidates"."edge"
+            FROM
+              (
+                SELECT
+                  "part".*
+                FROM
+                  (
+                    SELECT
+                      "ah"."deleted_at" AS "edge"
+                    FROM
+                      (
+                        SELECT
+                          "st"."entity_id" AS "entity_id",
+                          "st"."attribute_name_key" AS "attribute_name_key",
+                          "st"."dataset_key" AS "dataset_key",
+                          "rh"."recorded_at",
+                          "rh"."write_id",
+                          "rh"."write_ordinal",
+                          "rh"."attribute_kind" AS "attribute_kind",
+                          "rh"."value_kind" AS "value_kind",
+                          "rh"."observed_at" AS "observed_at",
+                          "rh"."created_at" AS "created_at",
+                          "rh"."modified_at" AS "modified_at",
+                          "rh"."deleted_at" AS "deleted_at",
+                          "rh"."value_date_time" AS "value_date_time",
+                          "rh"."expires_at" AS "expires_at",
+                          "rh"."generated_instance_id" AS "generated_instance_id",
+                          "rh"."value_type_key" AS "value_type_key",
+                          "rh"."value_datatype_key" AS "value_datatype_key",
+                          "rh"."unit_code_id" AS "unit_code_id",
+                          "rh"."value_boolean" AS "value_boolean",
+                          "rh"."verbatim_instance_id" AS "verbatim_instance_id",
+                          "rh"."value_number" AS "value_number",
+                          "rh"."value_string" AS "value_string",
+                          "rh"."value_language" AS "value_language",
+                          "rh"."value_geometry" AS "value_geometry",
+                          "rh"."value_geometry_valid" AS "value_geometry_valid",
+                          "rh"."value_geometry_reach" AS "value_geometry_reach",
+                          "rh"."value_geometry_members" AS "value_geometry_members",
+                          "rh"."value_object" AS "value_object",
+                          "rh"."value_uri" AS "value_uri",
+                          "rh"."object_type_keys" AS "object_type_keys",
+                          "rh"."sub_attributes" AS "sub_attributes"
+                        FROM
+                          "attribute_history" AS "rh"
+                        WHERE
+                          "rh"."stream_key" = "st"."stream_key"
+                      ) AS "ah"
+                    WHERE
+                      "ah"."deleted_at" IS NOT NULL
+                      AND TRUE
+                      AND TRUE
+                    ORDER BY
+                      "ah"."deleted_at" ASC
+                    LIMIT
+                      100
+                  ) AS "part"
+              ) AS "edge_candidates"
+            ORDER BY
+              "edge_candidates"."edge" ASC
+            LIMIT
+              1 OFFSET 99
+          ) AS "edge_row"
+      ) AS "stream_edge" ON TRUE
+      JOIN LATERAL (
+        SELECT
+          "part".*
+        FROM
+          (
+            SELECT
+              "ah"."recorded_at",
+              "ah"."attribute_kind",
+              "ah"."value_kind",
+              "ah"."observed_at",
+              "ah"."created_at",
+              "ah"."modified_at",
+              "ah"."deleted_at",
+              "ah"."generated_instance_id",
+              "ah"."verbatim_instance_id",
+              "ah"."value_number",
+              "ah"."value_string",
+              "ah"."value_language",
+              "ah"."value_boolean",
+              "ah"."value_geometry_members",
+              "ah"."value_object",
+              "ah"."value_date_time",
+              "ah"."value_uri",
+              "ah"."unit_code_id",
+              "ah"."value_type_key",
+              "ah"."value_datatype_key",
+              "ah"."object_type_keys",
+              "ah"."expires_at",
+              "ah"."sub_attributes",
+              "ah"."write_id",
+              "ah"."write_ordinal",
+              ST_AsEWKB("ah"."value_geometry") AS "value_geometry_ewkb",
+              "an"."name" AS "attribute_name",
+              "ah"."dataset_key"
+            FROM
+              (
+                SELECT
+                  "st"."entity_id" AS "entity_id",
+                  "st"."attribute_name_key" AS "attribute_name_key",
+                  "st"."dataset_key" AS "dataset_key",
+                  "rh"."recorded_at",
+                  "rh"."write_id",
+                  "rh"."write_ordinal",
+                  "rh"."attribute_kind" AS "attribute_kind",
+                  "rh"."value_kind" AS "value_kind",
+                  "rh"."observed_at" AS "observed_at",
+                  "rh"."created_at" AS "created_at",
+                  "rh"."modified_at" AS "modified_at",
+                  "rh"."deleted_at" AS "deleted_at",
+                  "rh"."value_date_time" AS "value_date_time",
+                  "rh"."expires_at" AS "expires_at",
+                  "rh"."generated_instance_id" AS "generated_instance_id",
+                  "rh"."value_type_key" AS "value_type_key",
+                  "rh"."value_datatype_key" AS "value_datatype_key",
+                  "rh"."unit_code_id" AS "unit_code_id",
+                  "rh"."value_boolean" AS "value_boolean",
+                  "rh"."verbatim_instance_id" AS "verbatim_instance_id",
+                  "rh"."value_number" AS "value_number",
+                  "rh"."value_string" AS "value_string",
+                  "rh"."value_language" AS "value_language",
+                  "rh"."value_geometry" AS "value_geometry",
+                  "rh"."value_geometry_valid" AS "value_geometry_valid",
+                  "rh"."value_geometry_reach" AS "value_geometry_reach",
+                  "rh"."value_geometry_members" AS "value_geometry_members",
+                  "rh"."value_object" AS "value_object",
+                  "rh"."value_uri" AS "value_uri",
+                  "rh"."object_type_keys" AS "object_type_keys",
+                  "rh"."sub_attributes" AS "sub_attributes"
+                FROM
+                  "attribute_history" AS "rh"
+                WHERE
+                  "rh"."stream_key" = "st"."stream_key"
+              ) AS "ah"
+            WHERE
+              "ah"."deleted_at" IS NOT NULL
+              AND TRUE
+              AND TRUE
+              AND "ah"."deleted_at" <= COALESCE("stream_edge"."edge", 'infinity'::timestamptz)
+          ) AS "part" OFFSET 0
+      ) AS "page" ON TRUE OFFSET 0
+  ) AS "entity_rows" ON TRUE
+ORDER BY
+  "read_entity"."read_entity" ASC,
+  "entity_rows"."attribute_name" ASC,
+  "entity_rows"."deleted_at" ASC,
+  "entity_rows"."write_id" ASC,
+  "entity_rows"."write_ordinal" ASC
+1: String 'urn:ngsi-ld:Vehicle:1'

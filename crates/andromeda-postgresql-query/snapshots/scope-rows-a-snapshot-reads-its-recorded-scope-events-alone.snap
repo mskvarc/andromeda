@@ -1,0 +1,23 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/scope_rows.rs
+---
+SELECT
+  *
+FROM
+  (
+    SELECT
+      "re"."id" AS "entity_id",
+      "rsh"."recorded_at",
+      "rsh"."write_id",
+      "rsh"."write_ordinal",
+      "rsh"."value_kind",
+      "rsh"."observed_at",
+      "rsh"."created_at",
+      "rsh"."modified_at",
+      "rsh"."deleted_at",
+      "rsh"."scope_path",
+      "rsh"."verbatim_scope_path"
+    FROM
+      "snap_1"."scope_history" AS "rsh"
+      JOIN "snap_1"."entities" AS "re" ON "re"."entity_key" = "rsh"."entity_key"
+  ) AS "sh"

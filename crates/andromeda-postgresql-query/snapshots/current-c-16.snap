@@ -1,0 +1,68 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/corpus_statement_tests.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        NOT COALESCE(
+          "ca"."value_boolean" = TRUE
+          OR (
+            "ca"."attribute_kind" <> (6)
+            AND (
+              (
+                (
+                  "ca"."value_object" @> jsonb_build_array(TRUE::boolean)
+                )
+                OR (
+                  "ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', TRUE::boolean))
+                )
+                OR (
+                  "ca"."value_object" @> jsonb_build_array($2::text)
+                )
+                OR (
+                  "ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $3::text))
+                )
+              )
+              AND EXISTS (
+                SELECT
+                  1
+                FROM
+                  jsonb_array_elements(
+                    (
+                      CASE
+                        WHEN (jsonb_typeof("ca"."value_object") = ('array')) THEN "ca"."value_object"
+                      END
+                    )
+                  ) AS "dm"
+                  LEFT JOIN "entity_type_names" AS "dmt" ON "dmt"."entity_type_name_key" = (
+                    CASE
+                      WHEN ("ca"."attribute_kind" IN (1, 7)) THEN "ca"."value_type_key"
+                    END
+                  )
+                WHERE
+                  (
+                    CASE
+                      WHEN (
+                        jsonb_typeof(
+                          COALESCE("dm"."value" -> ('@value'), "dm"."value")
+                        ) = ('boolean')
+                      ) THEN (
+                        COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::boolean WHEN (jsonb_typeof(COALESCE("dm"."value" -> ('@value'), "dm"."value")) = ('string') AND COALESCE("dmt"."name", "dm"."value" ->> ('@type')) = ('http://www.w3.org/2001/XMLSchema#boolean') AND pg_input_is_valid(COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'), 'boolean')) THEN (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::boolean END) = ($4::boolean)))), FALSE)) AND "ca"."entity_key" = "entities"."entity_key")
+1: Int 3
+2: String 'true'
+3: String 'true'
+4: String 'true'

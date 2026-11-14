@@ -130,56 +130,48 @@ pub fn scope_entry_values(field: impl Fn(TemporalEntry) -> SimpleExpr) -> [(Scop
 mod tests {
     use crate::history_source::entry_values::{attribute_entry_values, recorded_extent, scope_entry_values};
     use andromeda_postgresql_schema::temporal_intent::TemporalEntry;
-    use sea_query::{Alias, Expr, Iden, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Expr, Iden, Query, SelectStatement, SimpleExpr};
 
-    fn rendered(values: impl IntoIterator<Item = (String, sea_query::SimpleExpr)>) -> Vec<String> {
-        values
-            .into_iter()
-            .map(|(column, value)| format!("{column} <- {}", Query::select().expr(value).to_owned().to_string(PostgresQueryBuilder)))
-            .collect()
+    /// One statement projecting every recorded value under its column name.
+    fn rendered(values: impl IntoIterator<Item = (String, SimpleExpr)>) -> SelectStatement {
+        let mut select = Query::select();
+        for (column, value) in values {
+            select.expr_as(value, Alias::new(column));
+        }
+        select
     }
 
     #[test]
     fn an_attribute_entry_records_each_field_in_its_column_and_the_geometry_as_written_beside_its_repair() {
-        let values =
+        let statement =
             rendered(attribute_entry_values(|field: TemporalEntry| Expr::col((Alias::new("e"), field))).map(|(column, value)| (column.to_string(), value)));
-        assert!(values.contains(&r#"value_number <- SELECT "e"."value_number""#.to_owned()), "{values:?}");
-        assert!(values.contains(&r#"value_geometry <- SELECT "e"."value_geometry""#.to_owned()), "{values:?}");
-        assert!(
-            values.contains(
-                &r#"value_geometry_valid <- SELECT (CASE WHEN (ST_IsValid("e"."value_geometry")) THEN NULL ELSE ST_MakeValid("e"."value_geometry") END)"#
-                    .to_owned()
-            ),
-            "{values:?}"
+        assert_statement_snapshot!(
+            "entry-values-an-attribute-entry-records-each-field-in-its-column-and-the-geometry-as-written-beside-its-repair",
+            statement
         );
-        assert!(values.contains(&r#"sub_attributes <- SELECT "e"."sub_attributes""#.to_owned()), "{values:?}");
-        pretty_assertions::assert_eq!(values.len(), 25);
     }
 
     #[test]
     fn an_extent_grows_by_the_recorded_reach_else_the_recorded_geometry() {
         let entry = |field: TemporalEntry| Expr::col((Alias::new("e"), field));
         let values = rendered(attribute_entry_values(entry).map(|(column, value)| (column.to_string(), value)));
-        assert!(
-            values.contains(&r#"value_geometry_reach <- SELECT "e"."value_geometry_reach""#.to_owned()),
-            "{values:?}"
+        assert_statement_snapshot!("entry-values-an-extent-grows-by-the-recorded-reach-else-the-recorded-geometry-1", values);
+        assert_statement_snapshot!(
+            "entry-values-an-extent-grows-by-the-recorded-reach-else-the-recorded-geometry-2",
+            rendered([("extent".to_owned(), recorded_extent(entry))])
         );
-        let [extent] = rendered([("extent".to_owned(), recorded_extent(entry))]).try_into().expect("one rendering");
-        pretty_assertions::assert_eq!(extent, r#"extent <- SELECT COALESCE("e"."value_geometry_reach", "e"."value_geometry")"#);
     }
 
     /// Clause 4.5.6 gives the temporal Scope no `instanceId`, so a Scope row
     /// records no instance identity.
     #[test]
     fn a_scope_entry_records_its_label_path_as_an_ltree_and_no_instance_identity() {
-        let values =
+        let statement =
             rendered(scope_entry_values(|field: TemporalEntry| Expr::col((Alias::new("e"), field))).map(|(column, value)| (column.to_string(), value)));
-        assert!(values.contains(&r#"scope_path <- SELECT "e"."scope_path"::ltree"#.to_owned()), "{values:?}");
-        assert!(
-            values.contains(&r#"verbatim_scope_path <- SELECT "e"."verbatim_scope_path""#.to_owned()),
-            "{values:?}"
+        assert_statement_snapshot!(
+            "entry-values-a-scope-entry-records-its-label-path-as-an-ltree-and-no-instance-identity",
+            statement
         );
-        assert!(!values.iter().any(|value| value.contains("instance_id")), "{values:?}");
-        pretty_assertions::assert_eq!(values.len(), 7);
     }
 }

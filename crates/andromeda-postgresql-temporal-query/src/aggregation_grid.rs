@@ -181,44 +181,37 @@ impl AggregationGrid {
 mod tests {
     use crate::aggregation_grid::AggregationGrid;
     use andromeda_ngsi_ld_query::temporal::aggregation_period::AggregationPeriod;
-    use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
-    use sea_query::{Alias, Expr, PostgresQueryBuilder};
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, cast::cast, pg_type::PostgresType};
+    use sea_query::{Alias, Expr, Query, SelectStatement};
 
     fn grid(period: &str) -> AggregationGrid {
         let period = AggregationPeriod::parse(period).expect("a valid period").expect("a non-zero period");
         AggregationGrid::new(period, cast(Expr::val("2026-03-15T00:00:00Z"), PostgresType::Timestamptz))
     }
 
-    fn period_of(period: &str) -> String {
-        grid(period).period_of(Expr::col(Alias::new("t"))).to_string(PostgresQueryBuilder)
+    fn period_of(period: &str) -> SelectStatement {
+        grid(period).period_of(Expr::col(Alias::new("t")))
     }
 
     /// An exact period is `time_bucket` at the origin, its end the start plus
     /// the period.
     #[test]
     fn an_exact_period_is_the_time_bucket_at_the_origin() {
-        let sql = period_of("PT1H");
-        pretty_assertions::assert_eq!(
-            sql,
-            r#"SELECT time_bucket('PT1H'::interval, "t", '2026-03-15T00:00:00Z'::timestamptz::timestamptz) AS "bucket_start""#
-        );
-        let end = sea_query::Query::select()
-            .expr(grid("PT1H").end_under(Alias::new("p")))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        assert!(end.contains(r#""p"."bucket_start" + ('PT1H'::interval)"#), "{end}");
+        let statement = period_of("PT1H");
+        assert_statement_snapshot!("aggregation-grid-an-exact-period-is-the-time-bucket-at-the-origin-1", statement);
+        let end = Query::select().expr(grid("PT1H").end_under(Alias::new("p"))).to_owned();
+        assert_statement_snapshot!("aggregation-grid-an-exact-period-is-the-time-bucket-at-the-origin-2", end);
     }
 
     /// A calendar period is numbered from the origin in UTC and ends at the
     /// next period's start.
     #[test]
     fn a_calendar_period_is_numbered_from_the_origin_and_ends_at_the_next_start() {
-        let sql = period_of("P1M");
-        assert!(!sql.contains("time_bucket"), "{sql}");
-        assert!(sql.contains("AT TIME ZONE 'UTC'"), "{sql}");
-        assert!(sql.contains(r#"AS "bucket_start""#), "{sql}");
-        assert!(sql.contains(r#"AS "bucket_end""#), "{sql}");
-        assert!(sql.contains(r#""calendar_grid"."period_index" + (1)"#), "{sql}");
+        let statement = period_of("P1M");
+        assert_statement_snapshot!(
+            "aggregation-grid-a-calendar-period-is-numbered-from-the-origin-and-ends-at-the-next-start",
+            statement
+        );
         let keys = grid("P1M").keys_under(Alias::new("p")).len();
         pretty_assertions::assert_eq!(keys, 2);
     }

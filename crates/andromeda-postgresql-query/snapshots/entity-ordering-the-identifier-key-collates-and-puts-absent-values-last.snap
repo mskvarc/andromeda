@@ -1,0 +1,7 @@
+---
+source: crates/andromeda-postgresql-query/src/entity_ordering.rs
+---
+SELECT
+  "id"
+ORDER BY
+  ("id") COLLATE "de-u-co-phonebk" ASC NULLS LAST

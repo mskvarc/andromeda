@@ -6,6 +6,23 @@ Every module has tests, serde helpers included. A test's name describes the scen
 
 Unit tests sit beside the code they test in `#[cfg(test)]` modules. [Getting started](getting-started.md) gives the commands that run them without a live stack. A unit test never depends on timing, ordering or shared state that could make it flaky.
 
+### Snapshots
+
+A test whose expected value is a whole text, such as a SQL statement, asserts it as an [insta](https://insta.rs) snapshot rather than as substrings of it. A substring assertion still passes when a change adds text beside the fragment it names, while a snapshot shows every change as a diff to review. A statement is asserted with `andromeda_postgresql_seaquery::assert_statement_snapshot!(name, statement)`, which lays out the text the broker prepares over lines and lists every bound value with its type. Any other text is asserted with `andromeda_architecture_checks::assert_named_snapshot!(name, text)`. The name is kebab-case and unique within the crate, usually the module name followed by the test name, and the snapshot is written to `snapshots/<name>.snap` at the root of the crate.
+
+A new or changed snapshot fails the test and leaves a pending `.snap.new` file beside it. Review and accept it with `cargo insta review`, or run `cargo insta test -p <crate> --test-runner nextest --all-features --accept` once the diff is understood, and check in the `.snap` file. In CI insta never writes a snapshot, so a missing or stale one fails the job. `cargo insta test -p <crate> --test-runner nextest --all-features --check --unreferenced=reject` also fails on a snapshot no test takes any more.
+
+A file another tool or reader takes from a fixed path, such as the configuration template, is not a snapshot. It is checked in through the generated-artefact check and rewritten with `ANDROMEDA_REGENERATE=1`, as [Getting started](getting-started.md) describes.
+
+### Property tests and benchmarks
+
+Property tests use `proptest`, with the cases a strategy draws written out in the module documentation. `andromeda-ngsi-ld-query` checks that serialising a parsed `q` filter and parsing it again gives the same filter. Benchmarks use `criterion` and run on the host, with nothing else running beside them.
+
+```sh
+cargo bench -p andromeda-ngsi-ld-query --bench filter_compilation
+cargo bench -p andromeda-subscription --bench subscription_matching
+```
+
 ## Black-box test suite
 
 `tools/andromeda-test-suite` tests the running broker over the network. Black-box tests live only there, in the tree that matches the behaviour they check.

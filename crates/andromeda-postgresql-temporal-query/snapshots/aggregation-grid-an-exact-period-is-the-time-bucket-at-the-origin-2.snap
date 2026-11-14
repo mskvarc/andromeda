@@ -1,0 +1,6 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/aggregation_grid.rs
+---
+SELECT
+  "p"."bucket_start" + ($1:: interval)
+1: String 'PT1H'

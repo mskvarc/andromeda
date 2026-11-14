@@ -1,0 +1,13 @@
+---
+source: crates/andromeda-postgresql-context-query/src/entity.rs
+---
+SELECT
+  COUNT(*)
+FROM
+  "entities"
+WHERE
+  "entities"."created_at" IS NOT NULL
+  AND (
+    "entities"."expires_at" IS NULL
+    OR "entities"."expires_at" > NOW()
+  )

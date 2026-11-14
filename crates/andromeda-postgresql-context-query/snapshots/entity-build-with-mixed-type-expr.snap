@@ -1,0 +1,98 @@
+---
+source: crates/andromeda-postgresql-context-query/src/entity.rs
+---
+SELECT
+  "stored"."entity_key",
+  "stored"."id",
+  "stored"."entity_created_at",
+  "stored"."entity_modified_at",
+  "stored"."entity_write_count",
+  "stored"."entity_expires_at",
+  "stored"."entity_type_name_keys",
+  "stored"."verbatim_scope_paths"
+FROM
+  (
+    SELECT
+      "selected"."entity_key",
+      "selected"."id" AS "sort_0"
+    FROM
+      (
+        SELECT DISTINCT
+          ON ("typed"."id") "typed"."entity_key",
+          "typed"."id"
+        FROM
+          (
+            SELECT
+              "candidate"."entity_key",
+              "candidate"."id"
+            FROM
+              (
+                SELECT
+                  "entity_key",
+                  "id"
+                FROM
+                  "entity_type_members"
+                WHERE
+                  "entity_type_name_key" = (2)
+                  AND "is_current_member"
+              ) AS "candidate"
+            WHERE
+              EXISTS (
+                SELECT
+                  1
+                FROM
+                  "entity_type_members" AS "type_member"
+                WHERE
+                  "type_member"."entity_type_name_key" = (1)
+                  AND "type_member"."id" = "candidate"."id"
+                  AND "type_member"."is_current_member"
+              )
+            UNION ALL
+            (
+              SELECT
+                "entity_key",
+                "id"
+              FROM
+                "entity_type_members"
+              WHERE
+                "entity_type_name_key" = (3)
+                AND "is_current_member"
+            )
+          ) AS "typed"
+        ORDER BY
+          "typed"."id" ASC
+      ) AS "selected"
+    WHERE
+      "selected"."entity_key" NOT IN (
+        SELECT
+          "entity_key"
+        FROM
+          "entities"
+        WHERE
+          "expires_at" <= NOW()
+      )
+    ORDER BY
+      "sort_0" ASC
+    LIMIT
+      20 OFFSET 0
+  ) AS "page"
+  INNER JOIN LATERAL (
+    SELECT
+      "e"."entity_key" AS "entity_key",
+      "e"."id" AS "id",
+      "e"."created_at" AS "entity_created_at",
+      "e"."modified_at" AS "entity_modified_at",
+      "e"."write_count" AS "entity_write_count",
+      "e"."expires_at" AS "entity_expires_at",
+      "s"."entity_type_name_keys" AS "entity_type_name_keys",
+      "s"."verbatim_scope_paths" AS "verbatim_scope_paths"
+    FROM
+      "entities" AS "e"
+      INNER JOIN "entity_search" AS "s" ON "s"."entity_key" = "e"."entity_key"
+    WHERE
+      "e"."entity_key" = "page"."entity_key"
+    LIMIT
+      1
+  ) AS "stored" ON TRUE
+ORDER BY
+  "page"."sort_0" ASC

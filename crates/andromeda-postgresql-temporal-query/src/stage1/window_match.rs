@@ -93,16 +93,16 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, temporal::window::TimeInterval};
     use andromeda_postgresql_query::{dictionary::query_names::QueryNames, history_source::HistoryBranch};
-    use sea_query::{Alias, IntoIden, PostgresQueryBuilder, Value};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, IntoIden, SelectStatement};
 
     /// The stream catalogue carries the grain, so the correlation is on the
     /// surrogate entity key rather than on a repeated entity URI.
     #[test]
     fn the_stream_probe_reads_the_streams_of_the_selected_entity() {
         let compiled = minimal_compiled();
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains("\"re\".\"id\" = \"e\".\"id\""), "{sql}");
-        assert!(sql.contains("\"pe\".\"entity_id\" = \"e\".\"id\""), "{sql}");
+        let statement = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("window-match-the-stream-probe-reads-the-streams-of-the-selected-entity", statement);
     }
 
     /// Clause 4.11 defaults the selector to `observedAt` and clause 5.2.21
@@ -111,21 +111,20 @@ mod tests {
     /// the column keeps out a row that carries no instant on the axis.
     #[test]
     fn each_time_property_filters_its_own_column_with_no_fallback() {
-        let expected = [
-            (TimeProp::Observed, r#""ah"."observed_at" <"#),
-            (TimeProp::Created, r#""ah"."created_at" <"#),
-            (TimeProp::Modified, r#""ah"."modified_at" <"#),
-            (TimeProp::Deleted, r#""ah"."deleted_at" <"#),
-        ];
-        for (prop, column) in expected {
+        let before_on = |prop: TimeProp| {
             let mut compiled = minimal_compiled();
             compiled.window.timeproperty = prop;
             compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
-            let (sql, _) = built(&compiled, &QueryNames::default());
-            assert!(sql.contains(column), "{prop}: {sql}");
-            assert!(!sql.contains("COALESCE"), "{prop}: {sql}");
-            assert!(!sql.contains("\"ah\".\"recorded_at\""), "{prop}: {sql}");
-        }
+            built(&compiled, &QueryNames::default())
+        };
+        let observed = before_on(TimeProp::Observed);
+        assert_statement_snapshot!("window-match-each-time-property-filters-its-own-column-with-no-fallback-1", observed);
+        let created = before_on(TimeProp::Created);
+        assert_statement_snapshot!("window-match-each-time-property-filters-its-own-column-with-no-fallback-2", created);
+        let modified = before_on(TimeProp::Modified);
+        assert_statement_snapshot!("window-match-each-time-property-filters-its-own-column-with-no-fallback-3", modified);
+        let deleted = before_on(TimeProp::Deleted);
+        assert_statement_snapshot!("window-match-each-time-property-filters-its-own-column-with-no-fallback-4", deleted);
     }
 
     /// A bounded window is the only reason to read the hypertable, so an
@@ -133,13 +132,13 @@ mod tests {
     #[test]
     fn the_history_hypertable_is_joined_only_for_a_bounded_window() {
         let compiled = minimal_compiled();
-        let (unbounded, _) = built(&compiled, &QueryNames::default());
-        assert!(!unbounded.contains("attribute_history"), "{unbounded}");
+        let unbounded = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("window-match-the-history-hypertable-is-joined-only-for-a-bounded-window-1", unbounded);
 
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
-        let (bounded, _) = built(&compiled, &QueryNames::default());
-        assert!(bounded.contains(r#") AS "ah" WHERE"#), "{bounded}");
+        let bounded = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("window-match-the-history-hypertable-is-joined-only-for-a-bounded-window-2", bounded);
     }
 
     /// The concerned attributes are compared by dictionary key on the
@@ -151,10 +150,8 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
         compiled.instances.attr_filter = vec![iri("https://example.com/speed")];
-        let (sql, values) = built(&compiled, &speed_and_address());
-        assert!(!sql.contains("attribute_names"), "{sql}");
-        assert!(sql.contains(r#") AS "ah" WHERE "ah"."attribute_name_key" = $"#), "{sql}");
-        assert!(values.0.iter().any(|value| matches!(value, Value::Int(Some(7)))), "{values:?}");
+        let statement = built(&compiled, &speed_and_address());
+        assert_statement_snapshot!("window-match-the-attrs-selection-narrows-the-source-by-dictionary-key", statement);
     }
 
     /// An attribute the dictionary never keyed was never recorded, so a
@@ -163,8 +160,8 @@ mod tests {
     fn an_attribute_never_keyed_matches_nothing() {
         let mut compiled = minimal_compiled();
         compiled.instances.attr_filter = vec![iri("https://example.com/unknown")];
-        let (sql, _) = built(&compiled, &speed_and_address());
-        assert!(sql.contains(r#") AS "s" WHERE (FALSE"#), "{sql}");
+        let statement = built(&compiled, &speed_and_address());
+        assert_statement_snapshot!("window-match-an-attribute-never-keyed-matches-nothing", statement);
     }
 
     /// Over recorded rows alone the page's window match compares the
@@ -182,12 +179,10 @@ mod tests {
             &vehicle_is_known(),
         )
         .expect("valid temporal query");
-        let page = stage1.select.to_string(PostgresQueryBuilder);
-        assert!(page.contains(r#") AS "ah" WHERE "ah"."observed_at" < "#), "{page}");
-        assert!(page.contains(r#""ah"."entity_id" = "e"."id""#), "{page}");
-        let count = stage1.count.expect("count requested").to_string(PostgresQueryBuilder);
-        assert!(count.contains(r#""ah"."entity_key" = "e"."entity_key""#), "{count}");
-        assert!(!count.contains(r#""ah"."entity_id" = "e"."id""#), "{count}");
+        let page = stage1.select;
+        assert_statement_snapshot!("window-match-the-page-window-match-keeps-comparing-the-identifier-1", page);
+        let count = stage1.count.expect("count requested");
+        assert_statement_snapshot!("window-match-the-page-window-match-keeps-comparing-the-identifier-2", count);
     }
 
     /// Clause 5.7.4: on the live branch an entity is selected by its queued
@@ -196,10 +191,8 @@ mod tests {
     fn a_live_stage_one_reads_the_pending_entries_beside_the_history() {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        let history = sql.split(r#") AS "ah" JOIN "attribute_names""#).next().expect("the history source");
-        assert!(history.contains(r#"UNION ALL (SELECT "pe"."entity_id" AS "entity_id""#), "{sql}");
-        assert!(history.contains(r#"FROM "temporal_append_entries" AS "pe""#), "{sql}");
+        let statement = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("window-match-a-live-stage-one-reads-the-pending-entries-beside-the-history", statement);
     }
 
     /// A Snapshot branch records its history in the write's own transaction
@@ -217,31 +210,22 @@ mod tests {
             &QueryNames::default(),
         )
         .expect("valid temporal query");
-        for sql in [
-            stage1.select.to_string(PostgresQueryBuilder),
-            stage1.count.expect("count requested").to_string(PostgresQueryBuilder),
-        ] {
-            assert!(!sql.contains("temporal_append"), "{sql}");
-            assert!(
-                sql.contains(r#"FROM (SELECT * FROM "snap_7"."entities" WHERE "entities"."evolution_created_at" IS NOT NULL) AS "e""#),
-                "{sql}"
-            );
-        }
+        let page = stage1.select;
+        assert_statement_snapshot!("window-match-a-snapshot-stage-one-reads-no-pending-entry-1", page);
+        let count = stage1.count.expect("count requested");
+        assert_statement_snapshot!("window-match-a-snapshot-stage-one-reads-no-pending-entry-2", count);
     }
 
     /// The page and the count of a stage 1 over `branch` for a window opening
     /// at `opening`, or never closing when `opening` is `None`.
-    fn page_and_count(branch: &HistoryBranch, opening: Option<&str>) -> [String; 2] {
+    fn page_and_count(branch: &HistoryBranch, opening: Option<&str>) -> [SelectStatement; 2] {
         let mut compiled = minimal_compiled();
         if let Some(opening) = opening {
             compiled.window.interval = TimeInterval::After(instant(opening));
         }
         let stage1 =
             build_stage1_entity_ids(branch, &compiled, &PageWindow::offset(20, 0), CountPolicy::Emit, &QueryNames::default()).expect("valid temporal query");
-        [
-            stage1.select.to_string(PostgresQueryBuilder),
-            stage1.count.expect("count requested").to_string(PostgresQueryBuilder),
-        ]
+        [stage1.select, stage1.count.expect("count requested")]
     }
 
     /// The page's matches carry the identifier it walks the Evolutions in;
@@ -249,37 +233,49 @@ mod tests {
     /// and reads no catalogue row of the Evolutions it holds.
     #[test]
     fn a_window_match_over_an_empty_queue_compares_the_page_by_identifier_and_the_count_by_key() {
-        for branch in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(Alias::new("snap_7").into_iden())] {
-            let [page, count] = page_and_count(&branch, Some("2024-01-01T00:00:00Z"));
-            assert!(
-                page.contains(r#") AS "ah" WHERE "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00' AND "ah"."entity_id" = "e"."id")"#),
-                "{page}"
-            );
-            assert!(!page.contains(r#""re"."id" = "e"."id""#), "{page}");
-            assert!(
-                count.contains(r#") AS "ah" WHERE "ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00' AND "ah"."entity_key" = "e"."entity_key")"#),
-                "{count}"
-            );
-            assert!(!count.contains(r#"AS "re""#), "{count}");
-        }
+        let [recorded_page, recorded_count] = page_and_count(&HistoryBranch::live_recorded(), Some("2024-01-01T00:00:00Z"));
+        assert_statement_snapshot!(
+            "window-match-a-window-match-over-an-empty-queue-compares-the-page-by-identifier-and-the-count-by-key-1",
+            recorded_page
+        );
+        assert_statement_snapshot!(
+            "window-match-a-window-match-over-an-empty-queue-compares-the-page-by-identifier-and-the-count-by-key-2",
+            recorded_count
+        );
+        let snapshot = HistoryBranch::recorded_in(Alias::new("snap_7").into_iden());
+        let [snapshot_page, snapshot_count] = page_and_count(&snapshot, Some("2024-01-01T00:00:00Z"));
+        assert_statement_snapshot!(
+            "window-match-a-window-match-over-an-empty-queue-compares-the-page-by-identifier-and-the-count-by-key-3",
+            snapshot_page
+        );
+        assert_statement_snapshot!(
+            "window-match-a-window-match-over-an-empty-queue-compares-the-page-by-identifier-and-the-count-by-key-4",
+            snapshot_count
+        );
     }
 
     #[test]
     fn a_stream_match_over_an_empty_queue_compares_the_page_by_identifier_and_the_count_by_key() {
         let [page, count] = page_and_count(&HistoryBranch::live_recorded(), None);
-        assert!(page.contains(r#") AS "s" WHERE TRUE AND "s"."entity_id" = "e"."id")"#), "{page}");
-        assert!(count.contains(r#") AS "s" WHERE TRUE AND "s"."entity_key" = "e"."entity_key")"#), "{count}");
-        assert!(!count.contains(r#"AS "re""#), "{count}");
+        assert_statement_snapshot!(
+            "window-match-a-stream-match-over-an-empty-queue-compares-the-page-by-identifier-and-the-count-by-key-1",
+            page
+        );
+        assert_statement_snapshot!(
+            "window-match-a-stream-match-over-an-empty-queue-compares-the-page-by-identifier-and-the-count-by-key-2",
+            count
+        );
     }
 
     /// PostgreSQL pushes a restriction into the branches of a union, never a
     /// join clause, so a source reading the queue names the Evolution in both.
     #[test]
     fn a_window_match_reading_the_queue_takes_the_evolution_inside_both_branches() {
-        for sql in page_and_count(&HistoryBranch::live(), Some("2024-01-01T00:00:00Z")) {
-            assert!(sql.contains(r#""re"."id" = "e"."id""#), "{sql}");
-            assert!(sql.contains(r#""pe"."entity_id" = "e"."id""#), "{sql}");
-            assert!(!sql.contains(r#""ah"."entity_id" = "e"."id""#), "{sql}");
-        }
+        let [page, count] = page_and_count(&HistoryBranch::live(), Some("2024-01-01T00:00:00Z"));
+        assert_statement_snapshot!("window-match-a-window-match-reading-the-queue-takes-the-evolution-inside-both-branches-1", page);
+        assert_statement_snapshot!(
+            "window-match-a-window-match-reading-the-queue-takes-the-evolution-inside-both-branches-2",
+            count
+        );
     }
 }

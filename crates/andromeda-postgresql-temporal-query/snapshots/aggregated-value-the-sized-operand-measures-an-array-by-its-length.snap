@@ -1,0 +1,47 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/aggregated_value.rs
+---
+SELECT
+  (
+    CASE
+      WHEN ("ah"."attribute_kind" NOT IN (2, 8, 4)) THEN COALESCE(
+        (
+          CASE
+            WHEN (
+              "ah"."value_number" NOT IN (
+                'NaN'::numeric,
+                'Infinity'::numeric,
+                '-Infinity'::numeric
+              )
+            ) THEN "ah"."value_number"
+          END
+        ),
+        "ah"."value_boolean"::integer::numeric,
+        (
+          CASE
+            WHEN (
+              jsonb_typeof(
+                COALESCE(
+                  (
+                    CASE
+                      WHEN (("ah"."value_object" ->> ('@type')) = ('@json')) THEN "ah"."value_object" -> ('@value')
+                    END
+                  ),
+                  "ah"."value_object"
+                )
+              ) = ('array')
+            ) THEN jsonb_array_length(
+              COALESCE(
+                (
+                  CASE
+                    WHEN (("ah"."value_object" ->> ('@type')) = ('@json')) THEN "ah"."value_object" -> ('@value')
+                  END
+                ),
+                "ah"."value_object"
+              )
+            )::numeric
+          END
+        )
+      )
+    END
+  )

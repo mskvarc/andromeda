@@ -3,7 +3,7 @@
 use andromeda_test_suite::{
     broker,
     namespace::Namespace,
-    q_parity::{QCase, expect_query_and_subscription_alike},
+    q_parity::{QCase, QRequest, expect_query_and_subscription_alike},
     value::object,
 };
 use cefact_units::UnitCode;
@@ -66,110 +66,140 @@ async fn n_qry_qlg_9083_a_q_corpus_selects_alike_in_a_query_and_a_subscription()
     let parked_text = format!("isParked==\"{parking_id}\"");
     let both: &[_] = &[&fast_id, &slow_id];
     let cases = [
-        QCase { q: "speed", selects: both },
+        QCase {
+            q: "speed",
+            selects: both,
+            request: QRequest::PLAIN,
+        },
         QCase {
             q: "speed>60",
             selects: &[&fast_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "speed<=50",
             selects: &[&slow_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "speed==50..90",
             selects: both,
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "speed!=50..60",
             selects: &[&fast_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "speed!=50",
             selects: &[&fast_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "speed==50,80",
             selects: both,
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "speed==\"80\"",
             selects: &[],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "speed!=\"80\"",
             selects: both,
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "brandName==\"Mercedes\"",
             selects: &[&fast_id, &bare_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "brandName==\"BMW\",\"Audi\"",
             selects: &[&slow_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "brandName>\"C\"",
             selects: &[&fast_id, &bare_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "brandName~=\"^Merc\"",
             selects: &[&fast_id, &bare_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "brandName!~=\"^Merc\"",
             selects: &[&slow_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: &parked_uri,
             selects: &[&fast_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: &parked_text,
             selects: &[&fast_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "isParked~=\"Parking\"",
             selects: &[],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "active==true",
             selects: &[&fast_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "active!=true",
             selects: &[&slow_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "address[city]==\"Berlin\"",
             selects: &[&fast_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "speed.accuracy<0.6",
             selects: &[&fast_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "speed.unitCode==\"KMH\"",
             selects: &[&fast_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "speed.observedAt>2024-01-01T00:00:00Z",
             selects: &[&fast_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "speed.expiresAt>2150-01-01T00:00:00Z",
             selects: &[&fast_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "speed>60|brandName==\"BMW\"",
             selects: both,
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "speed>60;brandName==\"BMW\"",
             selects: &[],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "(speed<60|active==true);brandName==\"Mercedes\"",
             selects: &[&fast_id],
+            request: QRequest::PLAIN,
         },
     ];
     expect_query_and_subscription_alike(&broker, &namespace, &vehicle_type, &entities, &cases).await

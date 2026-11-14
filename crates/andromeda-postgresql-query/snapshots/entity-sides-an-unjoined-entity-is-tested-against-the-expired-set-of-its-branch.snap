@@ -1,0 +1,12 @@
+---
+source: crates/andromeda-postgresql-query/src/entity_sides.rs
+---
+SELECT
+  "selected"."entity_key" NOT IN (
+    SELECT
+      "entity_key"
+    FROM
+      "snapshot_1"."entities"
+    WHERE
+      "expires_at" <= NOW()
+  )

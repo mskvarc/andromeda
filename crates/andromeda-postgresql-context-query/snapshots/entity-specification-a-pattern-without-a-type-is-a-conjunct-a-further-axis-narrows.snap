@@ -1,0 +1,12 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/entity_specification.rs
+---
+SELECT
+  1
+WHERE
+  (
+    COALESCE("ri"."entity_id", '') = ('')
+    OR ((("ri"."entity_id") COLLATE "default") ~ $1)
+  )
+  AND "ri"."property_name_keys" IS NOT NULL
+1: String 'urn:ngsi-ld:Fleet.*'

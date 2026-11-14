@@ -68,8 +68,8 @@ mod tests {
         entity_row_refs::EntityRowRefs,
         q_predicate::keyed_branches::{branch, language_property_rows, union_of},
     };
-    use pretty_assertions::assert_eq;
-    use sea_query::{Condition, PostgresQueryBuilder, SelectStatement, SimpleExpr};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Condition, SelectStatement, SimpleExpr};
 
     fn rows_branch(held: Option<SimpleExpr>) -> SelectStatement {
         branch(&EntityRowRefs::unaliased(None), AttributeNameKey::from(4), held, Condition::all())
@@ -77,30 +77,21 @@ mod tests {
 
     #[test]
     fn a_branch_reads_the_standing_rows_of_its_attribute() {
-        let sql = rows_branch(None).to_string(PostgresQueryBuilder);
-        assert_eq!(
-            sql,
-            r#"SELECT "ca"."entity_key" FROM "current_attributes" AS "ca" WHERE "ca"."attribute_name_key" = 4 AND ("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW())"#
-        );
+        assert_statement_snapshot!("keyed-branches-a-branch-reads-the-standing-rows-of-its-attribute", rows_branch(None));
     }
 
     #[test]
     fn a_language_branch_names_the_language_property_rows() {
-        let sql = rows_branch(Some(language_property_rows())).to_string(PostgresQueryBuilder);
-        assert!(
-            sql.ends_with(r#"AND ("ca"."attribute_kind" = (5) AND "ca"."value_object" IS NOT NULL)"#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "keyed-branches-a-language-branch-names-the-language-property-rows",
+            rows_branch(Some(language_property_rows()))
         );
     }
 
     #[test]
     fn the_branches_are_read_as_one_union_all() {
-        let sql = union_of([rows_branch(None), rows_branch(None), rows_branch(None)])
-            .expect("three branches")
-            .to_string(PostgresQueryBuilder);
-        assert!(sql.starts_with(r#"SELECT "entity_key" FROM (SELECT "ca"."entity_key""#), "{sql}");
-        assert_eq!(sql.matches("UNION ALL").count(), 2, "{sql}");
-        assert!(sql.ends_with(r#") AS "matches""#), "{sql}");
+        let statement = union_of([rows_branch(None), rows_branch(None), rows_branch(None)]).expect("three branches");
+        assert_statement_snapshot!("keyed-branches-the-branches-are-read-as-one-union-all", statement);
     }
 
     #[test]

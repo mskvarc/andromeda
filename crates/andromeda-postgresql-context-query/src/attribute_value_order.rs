@@ -235,8 +235,8 @@ mod tests {
         ordering::sort_direction::SortDirection,
     };
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_row_refs::EntityRowRefs};
-    use andromeda_postgresql_seaquery::collation::PostgresCollation;
-    use sea_query::{PostgresQueryBuilder, Query, SimpleExpr};
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, collation::PostgresCollation};
+    use sea_query::{Query, SelectStatement, SimpleExpr};
 
     fn names() -> ResolvedNames<AttributeName> {
         ResolvedNames::from_pairs(
@@ -255,45 +255,42 @@ mod tests {
         local.clone()
     }
 
-    fn lateral(text: &str) -> String {
-        AttributeValue::at(0)
-            .lateral(&EntityRowRefs::unaliased(None), &path(text), &names())
-            .to_string(PostgresQueryBuilder)
+    fn lateral(text: &str) -> SelectStatement {
+        AttributeValue::at(0).lateral(&EntityRowRefs::unaliased(None), &path(text), &names())
     }
 
-    fn render(expr: SimpleExpr) -> String {
-        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    fn render(expr: SimpleExpr) -> SelectStatement {
+        Query::select().expr(expr).to_owned()
     }
 
     /// The entity orders by the first instance of the attribute in written
     /// order, read without a document, from the typed columns.
     #[test]
     fn an_attribute_value_is_read_from_its_first_row_in_written_order() {
-        let sql = lateral("\"https://example.com/speed\"");
-        assert!(
-            sql.contains(r#"FROM "current_attributes" AS "ca" WHERE "ca"."entity_key" = "entities"."entity_key""#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "attribute-value-order-an-attribute-value-is-read-from-its-first-row-in-written-order",
+            lateral("\"https://example.com/speed\"")
         );
-        assert!(sql.contains(r#""ca"."attribute_name_key" = 7"#), "{sql}");
-        assert!(sql.contains(r#"ORDER BY "ca"."ordinal" ASC LIMIT 1"#), "{sql}");
-        assert!(sql.contains(r#""ordered"."value_number""#), "{sql}");
     }
 
     /// A sub-attribute path orders by the first element at its end, read
     /// through the same chain recheck a `q` term uses.
     #[test]
     fn a_sub_attribute_value_is_read_from_the_first_element_of_the_chain() {
-        let sql = lateral("\"https://example.com/temperature\".\"https://example.com/accuracy\"");
-        assert!(sql.contains(r#"(SELECT "l0" FROM UNNEST("ca"."sub_attributes") AS "l0""#), "{sql}");
-        assert!(sql.contains(r#"("ordered"."element")."value_number""#), "{sql}");
+        assert_statement_snapshot!(
+            "attribute-value-order-a-sub-attribute-value-is-read-from-the-first-element-of-the-chain",
+            lateral("\"https://example.com/temperature\".\"https://example.com/accuracy\"")
+        );
     }
 
     /// Clause 4.23.3 EXAMPLE 5: `orderBy=name.observedAt` orders by a member
     /// of the attribute, which its row holds as a typed field.
     #[test]
     fn a_member_of_the_attribute_orders_by_its_field() {
-        let sql = lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/observedAt\"");
-        assert!(sql.contains(r#""ordered"."observed_at" AS "value_date_time""#), "{sql}");
+        assert_statement_snapshot!(
+            "attribute-value-order-a-member-of-the-attribute-orders-by-its-field",
+            lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/observedAt\"")
+        );
     }
 
     /// Clause 4.5.2 makes `unitCode` a String: the attribute's own orders by the
@@ -301,26 +298,32 @@ mod tests {
     /// like any other String.
     #[test]
     fn an_attribute_unit_code_orders_by_the_text_of_its_code() {
-        let sql = lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/unitCode\"");
-        assert!(sql.contains(r#"'] )[ "ordered"."unit_code_id" ] AS "value_text""#), "{sql}");
-        assert!(sql.contains("( ARRAY ['10',") && sql.contains("'HM',"), "the listed code texts: {sql}");
-        assert!(sql.contains(r#"NULL::timestamptz AS "value_date_time""#), "{sql}");
+        assert_statement_snapshot!(
+            "attribute-value-order-an-attribute-unit-code-orders-by-the-text-of-its-code",
+            lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/unitCode\"")
+        );
     }
 
     #[test]
     fn a_sub_attribute_unit_code_orders_by_the_text_of_its_code() {
-        let sql = lateral("\"https://example.com/temperature\".\"https://example.com/accuracy\".\"https://uri.etsi.org/ngsi-ld/unitCode\"");
-        assert!(sql.contains(r#"'] )[ ("ordered"."element")."unit_code_id" ] AS "value_text""#), "{sql}");
+        assert_statement_snapshot!(
+            "attribute-value-order-a-sub-attribute-unit-code-orders-by-the-text-of-its-code",
+            lateral("\"https://example.com/temperature\".\"https://example.com/accuracy\".\"https://uri.etsi.org/ngsi-ld/unitCode\"")
+        );
     }
 
     /// A `datasetId` orders by the URI of the dataset, the default instance
     /// having none.
     #[test]
     fn a_dataset_id_orders_by_the_uri_of_the_dataset() {
-        let sql = lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/datasetId\"");
-        assert!(sql.contains(r#"nullif("ordered"."dataset_key", '') AS "value_text""#), "{sql}");
-        let element = lateral("\"https://example.com/temperature\".\"https://example.com/accuracy\".\"https://uri.etsi.org/ngsi-ld/datasetId\"");
-        assert!(element.contains(r#"("ordered"."element")."dataset_id" AS "value_text""#), "{element}");
+        assert_statement_snapshot!(
+            "attribute-value-order-a-dataset-id-orders-by-the-uri-of-the-dataset-1",
+            lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/datasetId\"")
+        );
+        assert_statement_snapshot!(
+            "attribute-value-order-a-dataset-id-orders-by-the-uri-of-the-dataset-2",
+            lateral("\"https://example.com/temperature\".\"https://example.com/accuracy\".\"https://uri.etsi.org/ngsi-ld/datasetId\"")
+        );
     }
 
     /// A `valueType` and a single `objectType` order by the expanded IRI their
@@ -328,40 +331,41 @@ mod tests {
     /// order by.
     #[test]
     fn a_declared_type_orders_by_the_iri_its_key_names() {
-        let value_type = lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/hasValueType\"");
-        assert!(
-            value_type.contains(r#""mt"."entity_type_name_key" = "ordered"."value_type_key""#),
-            "{value_type}"
+        assert_statement_snapshot!(
+            "attribute-value-order-a-declared-type-orders-by-the-iri-its-key-names-1",
+            lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/hasValueType\"")
         );
-        let object_type = lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/hasObjectType\"");
-        assert!(
-            object_type.contains(r#"CASE WHEN (cardinality("ordered"."object_type_keys") = (1))"#),
-            "{object_type}"
+        assert_statement_snapshot!(
+            "attribute-value-order-a-declared-type-orders-by-the-iri-its-key-names-2",
+            lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/hasObjectType\"")
         );
     }
 
     /// No stored instance holds an `instanceId`.
     #[test]
     fn an_instance_id_orders_as_absent() {
-        let sql = lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/instanceId\"");
-        assert!(sql.contains(r#"NULL::text AS "value_text""#), "{sql}");
+        assert_statement_snapshot!(
+            "attribute-value-order-an-instance-id-orders-as-absent",
+            lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/instanceId\"")
+        );
     }
 
     #[test]
     fn an_instant_member_orders_by_its_instant_and_no_text() {
-        let sql = lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/observedAt\"");
-        assert!(sql.contains(r#"NULL::text AS "value_text""#), "{sql}");
-        assert!(!sql.contains("unit_code_id"), "{sql}");
+        assert_statement_snapshot!(
+            "attribute-value-order-an-instant-member-orders-by-its-instant-and-no-text",
+            lateral("\"https://example.com/speed\".\"https://uri.etsi.org/ngsi-ld/observedAt\"")
+        );
     }
 
     /// Clause 4.23.3 EXAMPLE 4: `orderBy=address[city]` orders by a member of
     /// the compound value, read under each spelling clause 4.9 gives it.
     #[test]
     fn a_trailing_member_reads_every_shape_clause_4_9_gives_the_spelling() {
-        let sql = lateral("\"https://example.com/address\"[city]");
-        assert!(sql.contains(r#"'$."city"[*]."@value"'"#), "{sql}");
-        assert!(sql.contains(r#"'$."city"'"#), "{sql}");
-        assert!(sql.contains(r#"'$[*] ? (@."@language" like_regex "^[Cc][Ii][Tt][Yy]$")."@value"'"#), "{sql}");
+        assert_statement_snapshot!(
+            "attribute-value-order-a-trailing-member-reads-every-shape-clause-4-9-gives-the-spelling",
+            lateral("\"https://example.com/address\"[city]")
+        );
     }
 
     /// Annex C.5.13.2: `orderBy=name[en-GB]` orders by the string of that
@@ -369,52 +373,66 @@ mod tests {
     /// 2.1.1); no member name spells the tag.
     #[test]
     fn a_hyphenated_target_language_orders_by_that_languages_string_alone() {
-        let sql = lateral("\"https://example.com/name\"[en-GB]");
-        assert!(sql.contains(r#"'$[*] ? (@."@language" like_regex "^[Ee][Nn]-[Gg][Bb]$")."@value"'"#), "{sql}");
-        assert!(!sql.contains(r#"[*]."@value"'"#), "no compound-member reading: {sql}");
+        assert_statement_snapshot!(
+            "attribute-value-order-a-hyphenated-target-language-orders-by-that-languages-string-alone",
+            lateral("\"https://example.com/name\"[en-GB]")
+        );
     }
 
     /// A Property stores the JSON literal `null` expanded and a `JsonProperty`
     /// stores it bare; both rank as clause 4.23.2 Null.
     #[test]
     fn an_attribute_value_reads_either_stored_json_null_as_null() {
-        let sql = lateral("\"https://example.com/speed\"");
-        assert!(
-            sql.contains(r#""ordered"."value_object" IN (jsonb_build_object('@value', NULL::jsonb, '@type', '@json'), 'null'::jsonb)) THEN 'null'"#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "attribute-value-order-an-attribute-value-reads-either-stored-json-null-as-null",
+            lateral("\"https://example.com/speed\"")
         );
     }
 
     #[test]
     fn an_unrecorded_attribute_reads_no_instance() {
-        assert!(lateral("\"https://example.com/never\"").contains("FALSE"));
+        assert_statement_snapshot!(
+            "attribute-value-order-an-unrecorded-attribute-reads-no-instance",
+            lateral("\"https://example.com/never\"")
+        );
     }
 
     #[test]
     fn each_ordering_term_names_its_own_projection() {
-        let first = render(AttributeValue::at(0).numeric_key());
-        let second = render(AttributeValue::at(1).numeric_key());
-        assert!(first.contains("\"order_value_0\""), "{first}");
-        assert!(second.contains("\"order_value_1\""), "{second}");
+        assert_statement_snapshot!(
+            "attribute-value-order-each-ordering-term-names-its-own-projection-1",
+            render(AttributeValue::at(0).numeric_key())
+        );
+        assert_statement_snapshot!(
+            "attribute-value-order-each-ordering-term-names-its-own-projection-2",
+            render(AttributeValue::at(1).numeric_key())
+        );
     }
 
     #[test]
     fn every_key_reads_the_one_projected_datatype() {
         let value = AttributeValue::at(0);
-        for key in [
+        for (index, key) in [
             value.datatype_rank(SortDirection::Ascending),
             value.numeric_key(),
             value.instant_key(),
             value.text_key(&PostgresCollation::new("und-x-icu")),
-        ] {
-            assert!(render(key).contains("\"order_value_0\".\"value_datatype\""));
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_statement_snapshot!(
+                format!("attribute-value-order-every-key-reads-the-one-projected-datatype-{}", index + 1),
+                render(key)
+            );
         }
     }
 
     #[test]
     fn the_text_key_is_collated_and_reads_the_first_element_of_an_array() {
-        let sql = render(AttributeValue::at(0).text_key(&PostgresCollation::new("und-x-icu")));
-        assert!(sql.contains(r#"COLLATE "und-x-icu""#), "{sql}");
-        assert!(sql.contains(r#"("order_value_0"."value_object" -> (0)) ->> ('@value')"#), "{sql}");
+        assert_statement_snapshot!(
+            "attribute-value-order-the-text-key-is-collated-and-reads-the-first-element-of-an-array",
+            render(AttributeValue::at(0).text_key(&PostgresCollation::new("und-x-icu")))
+        );
     }
 }

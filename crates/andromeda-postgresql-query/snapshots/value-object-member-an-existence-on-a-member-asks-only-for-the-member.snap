@@ -1,0 +1,47 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/value_object_member.rs
+---
+SELECT
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      (
+        SELECT
+          jsonb_path_query_array(
+            "member"."member",
+            'lax $[*] ? (exists(@."@value"))'
+          ) AS "member"
+        FROM
+          jsonb_path_query(
+            "ca"."value_object",
+            'strict $."city"',
+            '{}',
+            TRUE
+          ) AS "member"
+      ) AS "member"
+    WHERE
+      TRUE
+  )
+  OR (
+    "ca"."attribute_kind" = (6)
+    AND EXISTS (
+      SELECT
+        1
+      FROM
+        (
+          SELECT
+            "member"."member" AS "member"
+          FROM
+            jsonb_path_query(
+              "ca"."value_object",
+              'strict $."city"',
+              '{}',
+              TRUE
+            ) AS "member"
+        ) AS "member"
+      WHERE
+        TRUE
+    )
+  )

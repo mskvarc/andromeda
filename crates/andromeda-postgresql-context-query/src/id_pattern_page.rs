@@ -149,10 +149,10 @@ mod tests {
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         entity_type_name_key::EntityTypeNameKey,
     };
-    use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
-    use sea_query::{PostgresQueryBuilder, Value};
+    use sea_query::SelectStatement;
 
     fn names() -> QueryNames {
         QueryNames {
@@ -184,62 +184,39 @@ mod tests {
         build_query(&ContextTarget::Live, query, &PageWindow::offset(100, 0), count, &names()).expect("valid entity query")
     }
 
-    fn page_sql(query: &CompiledEntityQuery) -> (String, Vec<Value>) {
-        let (sql, values) = built(query, CountPolicy::Omit).select.build(PostgresQueryBuilder);
-        (sql, values.0)
+    fn page_select(query: &CompiledEntityQuery) -> SelectStatement {
+        built(query, CountPolicy::Omit).select
     }
 
     #[test]
     fn an_unanchored_id_pattern_beside_a_type_reads_the_identifier_trigrams() {
         let built = built(&by_pattern(".*_1196287$"), CountPolicy::Omit);
         assert_eq!(built.planning, StatementPlanning::GatedBranches);
-        let (sql, values) = built.select.build(PostgresQueryBuilder);
-        let candidates = sql
-            .split(r#""candidates" AS  MATERIALIZED ("#)
-            .nth(1)
-            .and_then(|rest| rest.split(" LIMIT $").next())
-            .unwrap_or_else(|| panic!("the index path: {sql}"));
-        assert_eq!(
-            candidates,
-            r#"SELECT "entities"."entity_key" FROM "entities" WHERE ((("entities"."id") COLLATE "default") ~ $5) AND ("entities"."created_at" IS NOT NULL AND ("entities"."expires_at" IS NULL OR "entities"."expires_at" > NOW()))"#
+        assert_statement_snapshot!(
+            "id-pattern-page-an-unanchored-id-pattern-beside-a-type-reads-the-identifier-trigrams",
+            built.select
         );
-        assert!(
-            values.0.contains(&Value::BigUnsigned(Some(5_000))),
-            "the walk tests 5,000 members: {:?}",
-            values.0
-        );
-        assert!(values.0.contains(&Value::BigUnsigned(Some(1_001))), "{:?}", values.0);
-        assert!(values.0.contains(&Value::BigUnsigned(Some(1_000))), "{:?}", values.0);
     }
 
     #[test]
     fn the_short_walk_tests_the_members_and_the_full_walk_keeps_the_pattern() {
-        let (sql, _) = page_sql(&by_pattern(".*_1196287$"));
-        let (short, _) = sql.split_once(r#", "candidates" AS "#).unwrap_or_else(|| panic!("a gated page: {sql}"));
-        assert!(
-            short.contains(r#"FROM "entity_type_members" WHERE "entity_type_name_key" = (18) AND "is_current_member") AS "selected" WHERE "selected"."entity_key" NOT IN (SELECT "entity_key" FROM "entities" WHERE "expires_at" <= NOW())"#),
-            "{short}"
+        assert_statement_snapshot!(
+            "id-pattern-page-the-short-walk-tests-the-members-and-the-full-walk-keeps-the-pattern",
+            page_select(&by_pattern(".*_1196287$"))
         );
-        assert!(
-            short.contains(r#"AS "walked" WHERE "walked"."sort_0" ~ $"#),
-            "the walk tests the identifier it projects: {short}"
-        );
-        let after_short = sql.split(r#"AS "answered""#).nth(1).expect("the index branch follows the short walk");
-        let (indexed, walk) = after_short.split_once(r#"AS "indexed""#).expect("the index branch");
-        assert!(
-            indexed.contains(r#""selected"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#),
-            "{indexed}"
-        );
-        assert!(!indexed.contains(r#"("selected"."id") COLLATE"#), "the matches answer the pattern: {indexed}");
-        assert!(walk.contains(r#"("selected"."id") COLLATE "default") ~ $"#), "{walk}");
     }
 
     #[test]
     fn an_anchored_id_pattern_keeps_the_type_range() {
-        for pattern in ["^urn:ngsi-ld:StopTime:99.*", "^urn:ngsi-ld:StopTime:1012_03_478_1196287$"] {
+        for (index, pattern) in ["^urn:ngsi-ld:StopTime:99.*", "^urn:ngsi-ld:StopTime:1012_03_478_1196287$"]
+            .into_iter()
+            .enumerate()
+        {
             let built = built(&by_pattern(pattern), CountPolicy::Omit);
-            let sql = built.select.to_string(PostgresQueryBuilder);
-            assert!(!sql.contains("short_walk") && !sql.contains("candidates"), "{pattern}: {sql}");
+            assert_statement_snapshot!(
+                format!("id-pattern-page-an-anchored-id-pattern-keeps-the-type-range-{}", index + 1),
+                built.select
+            );
             assert_eq!(built.planning, StatementPlanning::Cached, "{pattern}");
         }
     }
@@ -250,8 +227,7 @@ mod tests {
     fn an_id_pattern_without_a_type_keeps_the_plain_page() {
         let mut query = by_pattern(".*_1196287$");
         query.selection.selectors = vec![selector(None, ".*_1196287$")];
-        let (sql, _) = page_sql(&query);
-        assert!(!sql.contains("short_walk") && !sql.contains("entity_type_members"), "{sql}");
+        assert_statement_snapshot!("id-pattern-page-an-id-pattern-without-a-type-keeps-the-plain-page", page_select(&query));
     }
 
     #[test]
@@ -268,10 +244,12 @@ mod tests {
         }];
         let mut paired = by_pattern(".*_1196287$");
         paired.selection.selectors.push(selector(Some("Trip"), ".*_1$"));
-        for query in [filtered, by_attrs, ordered, paired] {
+        for (index, query) in [filtered, by_attrs, ordered, paired].into_iter().enumerate() {
             let built = built(&query, CountPolicy::Omit);
-            let sql = built.select.to_string(PostgresQueryBuilder);
-            assert!(!sql.contains("short_walk") && !sql.contains("candidates"), "{sql}");
+            assert_statement_snapshot!(
+                format!("id-pattern-page-an-id-pattern-filtered-further-or-ordered-keeps-the-plain-page-{}", index + 1),
+                built.select
+            );
             assert_eq!(built.planning, StatementPlanning::Cached);
         }
     }
@@ -286,32 +264,19 @@ mod tests {
         let EntityTotal::OnPageRows { uncounted } = built.total else {
             panic!("a first gated page carries its total when the matches answer");
         };
-        let page = built.select.to_string(PostgresQueryBuilder);
-        assert!(page.contains(r#"COUNT(*) OVER () AS "total_count""#), "{page}");
-        assert!(page.contains(r#""page"."gated_step" AS "gated_step""#), "{page}");
-        let walked_at_once = uncounted
-            .walked
-            .expect("a page the short walk filled is counted by walking")
-            .select
-            .to_string(PostgresQueryBuilder);
-        assert!(
-            walked_at_once.contains(r#"("selected"."id") COLLATE "default") ~ "#) && !walked_at_once.contains("candidates"),
-            "{walked_at_once}"
+        assert_statement_snapshot!(
+            "id-pattern-page-a-counted-id-pattern-page-counts-the-members-among-the-matches-under-the-rechecked-bound-1",
+            built.select
         );
-        let (sql, values) = uncounted.count.build(PostgresQueryBuilder);
-        assert!(
-            sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (SELECT "entities"."entity_key" FROM "entities" WHERE ((("entities"."id") COLLATE "default") ~ $1) AND ("entities"."created_at" IS NOT NULL AND ("entities"."expires_at" IS NULL OR "entities"."expires_at" > NOW())) LIMIT $2)"#),
-            "{sql}"
+        let walked_at_once = uncounted.walked.expect("a page the short walk filled is counted by walking").select;
+        assert_statement_snapshot!(
+            "id-pattern-page-a-counted-id-pattern-page-counts-the-members-among-the-matches-under-the-rechecked-bound-2",
+            walked_at_once
         );
-        let (_, arms) = sql.split_once(" THEN ").unwrap_or_else(|| panic!("a gated count: {sql}"));
-        let (indexed, walked) = arms.split_once(" ELSE ").unwrap_or_else(|| panic!("a walk past the bound: {sql}"));
-        assert!(
-            indexed.contains(r#""selected"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#),
-            "{indexed}"
+        assert_statement_snapshot!(
+            "id-pattern-page-a-counted-id-pattern-page-counts-the-members-among-the-matches-under-the-rechecked-bound-3",
+            uncounted.count
         );
-        assert!(!indexed.contains(r#"("selected"."id") COLLATE"#), "{indexed}");
-        assert!(walked.contains(r#"("selected"."id") COLLATE "default") ~ $"#), "{walked}");
-        assert!(values.0.contains(&Value::BigUnsigned(Some(10_001))), "{:?}", values.0);
         assert_eq!(built.total_planning, StatementPlanning::BoundValues);
     }
 }

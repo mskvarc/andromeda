@@ -1,0 +1,6 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/shape_mask.rs
+---
+SELECT
+  get_bit("shape_mask", 1) = $1
+1: Int 1

@@ -32,6 +32,8 @@ pub mod path;
 pub mod predicate;
 pub mod quoting;
 pub mod referenced_attributes;
+#[cfg(test)]
+mod round_trip_tests;
 pub mod scalar;
 pub mod serialize;
 pub mod string_order;

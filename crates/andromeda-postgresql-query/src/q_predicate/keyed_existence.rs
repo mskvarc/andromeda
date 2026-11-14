@@ -59,8 +59,9 @@ mod tests {
         q_predicate::keyed_existence::existence_candidates,
     };
     use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, IntoIden, PostgresQueryBuilder};
+    use sea_query::{Alias, IntoIden, SelectStatement};
 
     fn names() -> QueryNames {
         QueryNames {
@@ -73,14 +74,14 @@ mod tests {
         }
     }
 
-    fn candidates_in(q: &str, rows: &EntityRowRefs) -> Option<String> {
+    fn candidates_in(q: &str, rows: &EntityRowRefs) -> Option<SelectStatement> {
         let Expr::Pred(pred) = parse(q).expect("parse q") else {
             panic!("a single predicate");
         };
-        existence_candidates(&pred, rows, &names()).map(|select| select.to_string(PostgresQueryBuilder))
+        existence_candidates(&pred, rows, &names())
     }
 
-    fn candidates(q: &str) -> Option<String> {
+    fn candidates(q: &str) -> Option<SelectStatement> {
         candidates_in(q, &EntityRowRefs::unaliased(None))
     }
 
@@ -88,25 +89,18 @@ mod tests {
     /// carrier, so the probe keeps only the standing instances.
     #[test]
     fn a_bare_existence_reads_the_carriers_each_probed_for_a_standing_instance() {
-        let sql = candidates("\"https://example.com/speed\"").expect("keyed");
-        assert_eq!(
-            sql,
-            concat!(
-                r#"SELECT "entity_search"."entity_key" FROM "entity_search" "#,
-                r#"WHERE ("entity_search"."attribute_name_keys" @> (ARRAY[7])) "#,
-                r#"AND EXISTS(SELECT 1 FROM "current_attributes" AS "ca" WHERE "ca"."attribute_name_key" = 7 "#,
-                r#"AND ("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW()) "#,
-                r#"AND "ca"."entity_key" = "entity_search"."entity_key")"#,
-            )
+        let statement = candidates("\"https://example.com/speed\"").expect("keyed");
+        assert_statement_snapshot!(
+            "keyed-existence-a-bare-existence-reads-the-carriers-each-probed-for-a-standing-instance",
+            statement
         );
     }
 
     #[test]
     fn the_carriers_are_read_in_the_branch_schema_of_the_statement() {
         let rows = EntityRowRefs::unaliased(Some(Alias::new("snapshot_1").into_iden()));
-        let sql = candidates_in("\"https://example.com/speed\"", &rows).expect("keyed");
-        assert!(sql.contains(r#"FROM "snapshot_1"."entity_search""#), "{sql}");
-        assert!(sql.contains(r#"FROM "snapshot_1"."current_attributes" AS "ca""#), "{sql}");
+        let statement = candidates_in("\"https://example.com/speed\"", &rows).expect("keyed");
+        assert_statement_snapshot!("keyed-existence-the-carriers-are-read-in-the-branch-schema-of-the-statement", statement);
     }
 
     #[test]

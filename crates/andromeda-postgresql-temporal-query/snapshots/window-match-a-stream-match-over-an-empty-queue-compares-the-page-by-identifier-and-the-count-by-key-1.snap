@@ -1,0 +1,37 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/stage1/window_match.rs
+---
+SELECT
+  "e"."id" AS "entity_id"
+FROM
+  (
+    SELECT
+      *
+    FROM
+      "entities"
+    WHERE
+      "entities"."evolution_created_at" IS NOT NULL
+  ) AS "e"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      (
+        SELECT
+          "re"."id" AS "entity_id",
+          "rs"."attribute_name_key" AS "attribute_name_key",
+          "rs"."dataset_key" AS "dataset_key",
+          "rs"."stream_key" AS "stream_key"
+        FROM
+          "temporal_attribute_streams" AS "rs"
+          JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+      ) AS "s"
+    WHERE
+      TRUE
+      AND "s"."entity_id" = "e"."id"
+  )
+ORDER BY
+  "e"."id" ASC
+LIMIT
+  20 OFFSET 0

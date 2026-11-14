@@ -139,26 +139,38 @@ impl EntityRowRefs {
 mod tests {
     use crate::entity_row_refs::EntityRowRefs;
     use andromeda_postgresql_schema::current::{Entities, EntitySearch};
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, IntoIden, PostgresQueryBuilder, Query, SimpleExpr};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, IntoIden, Query, SelectStatement, SimpleExpr};
 
-    fn render(expr: SimpleExpr) -> String {
-        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    fn render(expr: SimpleExpr) -> SelectStatement {
+        Query::select().expr(expr).to_owned()
     }
 
     #[test]
     fn unaliased_references_qualify_by_the_table_names() {
         let rows = EntityRowRefs::unaliased(None);
-        assert!(render(rows.entity_key_column()).contains(r#""entities"."entity_key""#));
-        assert!(render(rows.identity_column(Entities::Id)).contains(r#""entities"."id""#));
-        assert!(render(rows.search_column(EntitySearch::EntityTypeNameKeys)).contains(r#""entity_search"."entity_type_name_keys""#));
+        assert_statement_snapshot!(
+            "entity-row-refs-unaliased-references-qualify-by-the-table-names-1",
+            render(rows.entity_key_column())
+        );
+        assert_statement_snapshot!(
+            "entity-row-refs-unaliased-references-qualify-by-the-table-names-2",
+            render(rows.identity_column(Entities::Id))
+        );
+        assert_statement_snapshot!(
+            "entity-row-refs-unaliased-references-qualify-by-the-table-names-3",
+            render(rows.search_column(EntitySearch::EntityTypeNameKeys))
+        );
     }
 
     #[test]
     fn aliased_references_qualify_by_the_aliases() {
         let rows = EntityRowRefs::aliased(None, Alias::new("ce"), Alias::new("cs"));
-        assert!(render(rows.entity_key_column()).contains(r#""ce"."entity_key""#));
-        assert!(render(rows.search_column(EntitySearch::Location)).contains(r#""cs"."location""#));
+        assert_statement_snapshot!("entity-row-refs-aliased-references-qualify-by-the-aliases-1", render(rows.entity_key_column()));
+        assert_statement_snapshot!(
+            "entity-row-refs-aliased-references-qualify-by-the-aliases-2",
+            render(rows.search_column(EntitySearch::Location))
+        );
     }
 
     /// A statement driven by the type-membership walk reads `entity_key` and
@@ -167,9 +179,18 @@ mod tests {
     #[test]
     fn a_statement_keyed_by_its_driver_reads_the_key_and_the_identifier_from_it() {
         let rows = EntityRowRefs::unaliased(None).keyed_by(Alias::new("selected"));
-        assert_eq!(render(rows.entity_key_column()), r#"SELECT "selected"."entity_key""#);
-        assert_eq!(render(rows.identity_column(Entities::Id)), r#"SELECT "selected"."id""#);
-        assert_eq!(render(rows.identity_column(Entities::CreatedAt)), r#"SELECT "entities"."created_at""#);
+        assert_statement_snapshot!(
+            "entity-row-refs-a-statement-keyed-by-its-driver-reads-the-key-and-the-identifier-from-it-1",
+            render(rows.entity_key_column())
+        );
+        assert_statement_snapshot!(
+            "entity-row-refs-a-statement-keyed-by-its-driver-reads-the-key-and-the-identifier-from-it-2",
+            render(rows.identity_column(Entities::Id))
+        );
+        assert_statement_snapshot!(
+            "entity-row-refs-a-statement-keyed-by-its-driver-reads-the-key-and-the-identifier-from-it-3",
+            render(rows.identity_column(Entities::CreatedAt))
+        );
     }
 
     /// A Snapshot branch schema qualifies the tables a fragment reaches through
@@ -177,19 +198,20 @@ mod tests {
     #[test]
     fn a_branch_schema_qualifies_the_tables_a_fragment_reaches() {
         let rows = EntityRowRefs::unaliased(Some(Alias::new("snap_5").into_iden()));
-        let from = Query::select()
-            .column(Entities::Id)
-            .from(rows.table(Entities::Table))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        assert!(from.contains(r#"FROM "snap_5"."entities""#), "{from}");
+        let from = Query::select().column(Entities::Id).from(rows.table(Entities::Table)).to_owned();
+        assert_statement_snapshot!("entity-row-refs-a-branch-schema-qualifies-the-tables-a-fragment-reaches", from);
     }
 
     #[test]
     fn no_reference_is_left_unqualified() {
-        for rows in [EntityRowRefs::unaliased(None), EntityRowRefs::aliased(None, Alias::new("e"), Alias::new("s"))] {
-            let sql = render(rows.entity_key_column());
-            assert!(!sql.contains(r#"SELECT "entity_key""#), "{sql}");
+        for (index, rows) in [EntityRowRefs::unaliased(None), EntityRowRefs::aliased(None, Alias::new("e"), Alias::new("s"))]
+            .into_iter()
+            .enumerate()
+        {
+            assert_statement_snapshot!(
+                format!("entity-row-refs-no-reference-is-left-unqualified-{}", index + 1),
+                render(rows.entity_key_column())
+            );
         }
     }
 }

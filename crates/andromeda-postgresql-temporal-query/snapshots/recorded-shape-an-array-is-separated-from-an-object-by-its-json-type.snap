@@ -1,0 +1,30 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/recorded_shape.rs
+---
+SELECT
+  (
+    CASE
+      WHEN (
+        "ah"."value_kind" = (5)
+        AND jsonb_typeof(
+          COALESCE(
+            (
+              CASE
+                WHEN (("ah"."value_object" ->> ('@type')) = ('@json')) THEN "ah"."value_object" -> ('@value')
+              END
+            ),
+            "ah"."value_object"
+          )
+        ) = ('array')
+      ) THEN 6::smallint
+      WHEN ("ah"."value_kind" = (5)) THEN 5::smallint
+      WHEN ("ah"."value_kind" = (9)) THEN 9::smallint
+      WHEN ("ah"."value_kind" = (8)) THEN 8::smallint
+      WHEN ("ah"."value_kind" = (2)) THEN 2::smallint
+      WHEN ("ah"."value_kind" IN (1, 10)) THEN 1::smallint
+      WHEN ("ah"."value_kind" IN (3, 11)) THEN 3::smallint
+      WHEN ("ah"."value_kind" = (4)) THEN 4::smallint
+      WHEN ("ah"."value_kind" = (6)) THEN 7::smallint
+      WHEN ("ah"."value_kind" = (7)) THEN 10::smallint
+    END
+  )

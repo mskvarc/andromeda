@@ -1,0 +1,470 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/stage1/candidate_step.rs
+---
+WITH
+"short_walk" AS MATERIALIZED (
+  SELECT
+    "e"."id" AS "entity_id"
+  FROM
+    (
+      SELECT
+        *
+      FROM
+        (
+          SELECT
+            "entity_key",
+            "id"
+          FROM
+            "entity_type_members"
+          WHERE
+            "entity_type_name_key" = (1)
+            AND "is_evolution_member"
+        ) AS "e"
+      ORDER BY
+        "e"."id" ASC
+      LIMIT
+        200 OFFSET 0
+    ) AS "e"
+  WHERE
+    EXISTS (
+      SELECT
+        $1
+      FROM
+        (
+          SELECT
+            "rsh"."entity_key" AS "entity_key",
+            "rsh"."recorded_at",
+            "rsh"."write_id",
+            "rsh"."write_ordinal",
+            "rsh"."value_kind",
+            "rsh"."observed_at",
+            "rsh"."created_at",
+            "rsh"."modified_at",
+            "rsh"."deleted_at",
+            "rsh"."scope_path",
+            "rsh"."verbatim_scope_path"
+          FROM
+            "scope_history" AS "rsh"
+          WHERE
+            "rsh"."entity_key" = "e"."entity_key"
+        ) AS "sh"
+      WHERE
+        "sh"."modified_at" IS NOT NULL
+        AND ("sh"."scope_path" ~ ($2::lquery))
+        AND (
+          NOT EXISTS (
+            SELECT
+              $3
+            FROM
+              (
+                SELECT
+                  "rsh"."entity_key" AS "entity_key",
+                  "rsh"."recorded_at",
+                  "rsh"."write_id",
+                  "rsh"."write_ordinal",
+                  "rsh"."value_kind",
+                  "rsh"."observed_at",
+                  "rsh"."created_at",
+                  "rsh"."modified_at",
+                  "rsh"."deleted_at",
+                  "rsh"."scope_path",
+                  "rsh"."verbatim_scope_path"
+                FROM
+                  "scope_history" AS "rsh"
+                WHERE
+                  "rsh"."entity_key" = "sh"."entity_key"
+              ) AS "sh_next"
+            WHERE
+              "sh_next"."modified_at" > "sh"."modified_at"
+              AND "sh_next"."modified_at" <= $4
+          )
+        )
+    )
+    AND EXISTS (
+      SELECT
+        1
+      FROM
+        (
+          SELECT
+            "re"."id" AS "entity_id",
+            "rs"."attribute_name_key" AS "attribute_name_key",
+            "rs"."dataset_key" AS "dataset_key",
+            "rh"."recorded_at",
+            "rh"."write_id",
+            "rh"."write_ordinal",
+            "rh"."attribute_kind",
+            "rh"."value_kind",
+            "rh"."observed_at",
+            "rh"."created_at",
+            "rh"."modified_at",
+            "rh"."deleted_at",
+            "rh"."value_date_time",
+            "rh"."expires_at",
+            "rh"."generated_instance_id",
+            "rh"."value_type_key",
+            "rh"."value_datatype_key",
+            "rh"."unit_code_id",
+            "rh"."value_boolean",
+            "rh"."verbatim_instance_id",
+            "rh"."value_number",
+            "rh"."value_string",
+            "rh"."value_language",
+            "rh"."value_geometry",
+            "rh"."value_geometry_valid",
+            "rh"."value_geometry_reach",
+            "rh"."value_geometry_members",
+            "rh"."value_object",
+            "rh"."value_uri",
+            "rh"."object_type_keys",
+            "rh"."sub_attributes"
+          FROM
+            "attribute_history" AS "rh"
+            JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+            JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+        ) AS "ah"
+      WHERE
+        "ah"."modified_at" >= $5
+        AND "ah"."entity_id" = "e"."id"
+    )
+  ORDER BY
+    "e"."id" ASC
+  LIMIT
+    20
+),
+"candidates" AS MATERIALIZED (
+  SELECT
+    "scope_history"."entity_key"
+  FROM
+    "scope_history"
+  WHERE
+    "scope_history"."value_kind" = $6
+    AND ("scope_history"."scope_path" ~ ($7::lquery))
+  LIMIT
+    10001
+)
+SELECT
+  *
+FROM
+  (
+    SELECT
+      *
+    FROM
+      "short_walk"
+    WHERE
+      (
+        SELECT
+          COUNT(*)
+        FROM
+          "short_walk"
+      ) >= $8
+    ORDER BY
+      "entity_id" ASC
+    LIMIT
+      20 OFFSET 0
+  ) AS "answered"
+UNION ALL
+(
+  SELECT
+    *
+  FROM
+    (
+      SELECT
+        "e"."id" AS "entity_id"
+      FROM
+        (
+          SELECT
+            "entity_key",
+            "id"
+          FROM
+            "entity_type_members"
+          WHERE
+            "entity_type_name_key" = (1)
+            AND "is_evolution_member"
+            AND "entity_key" IN (
+              SELECT
+                "entity_key"
+              FROM
+                "candidates"
+            )
+          ORDER BY
+            "id" ASC OFFSET 0
+        ) AS "e"
+      WHERE
+        EXISTS (
+          SELECT
+            $9
+          FROM
+            (
+              SELECT
+                "rsh"."entity_key" AS "entity_key",
+                "rsh"."recorded_at",
+                "rsh"."write_id",
+                "rsh"."write_ordinal",
+                "rsh"."value_kind",
+                "rsh"."observed_at",
+                "rsh"."created_at",
+                "rsh"."modified_at",
+                "rsh"."deleted_at",
+                "rsh"."scope_path",
+                "rsh"."verbatim_scope_path"
+              FROM
+                "scope_history" AS "rsh"
+              WHERE
+                "rsh"."entity_key" = "e"."entity_key"
+            ) AS "sh"
+          WHERE
+            "sh"."modified_at" IS NOT NULL
+            AND ("sh"."scope_path" ~ ($10::lquery))
+            AND (
+              NOT EXISTS (
+                SELECT
+                  $11
+                FROM
+                  (
+                    SELECT
+                      "rsh"."entity_key" AS "entity_key",
+                      "rsh"."recorded_at",
+                      "rsh"."write_id",
+                      "rsh"."write_ordinal",
+                      "rsh"."value_kind",
+                      "rsh"."observed_at",
+                      "rsh"."created_at",
+                      "rsh"."modified_at",
+                      "rsh"."deleted_at",
+                      "rsh"."scope_path",
+                      "rsh"."verbatim_scope_path"
+                    FROM
+                      "scope_history" AS "rsh"
+                    WHERE
+                      "rsh"."entity_key" = "sh"."entity_key"
+                  ) AS "sh_next"
+                WHERE
+                  "sh_next"."modified_at" > "sh"."modified_at"
+                  AND "sh_next"."modified_at" <= $12
+              )
+            )
+        )
+        AND (
+          SELECT
+            COUNT(*)
+          FROM
+            "short_walk"
+        ) < $13
+        AND (
+          SELECT
+            COUNT(*)
+          FROM
+            "candidates"
+        ) <= $14
+        AND EXISTS (
+          SELECT
+            1
+          FROM
+            (
+              SELECT
+                "re"."id" AS "entity_id",
+                "rs"."attribute_name_key" AS "attribute_name_key",
+                "rs"."dataset_key" AS "dataset_key",
+                "rh"."recorded_at",
+                "rh"."write_id",
+                "rh"."write_ordinal",
+                "rh"."attribute_kind",
+                "rh"."value_kind",
+                "rh"."observed_at",
+                "rh"."created_at",
+                "rh"."modified_at",
+                "rh"."deleted_at",
+                "rh"."value_date_time",
+                "rh"."expires_at",
+                "rh"."generated_instance_id",
+                "rh"."value_type_key",
+                "rh"."value_datatype_key",
+                "rh"."unit_code_id",
+                "rh"."value_boolean",
+                "rh"."verbatim_instance_id",
+                "rh"."value_number",
+                "rh"."value_string",
+                "rh"."value_language",
+                "rh"."value_geometry",
+                "rh"."value_geometry_valid",
+                "rh"."value_geometry_reach",
+                "rh"."value_geometry_members",
+                "rh"."value_object",
+                "rh"."value_uri",
+                "rh"."object_type_keys",
+                "rh"."sub_attributes"
+              FROM
+                "attribute_history" AS "rh"
+                JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+                JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+            ) AS "ah"
+          WHERE
+            "ah"."modified_at" >= $15
+            AND "ah"."entity_id" = "e"."id"
+        )
+      ORDER BY
+        "e"."id" ASC
+      LIMIT
+        20 OFFSET 0
+    ) AS "indexed"
+)
+UNION ALL
+(
+  SELECT
+    *
+  FROM
+    (
+      SELECT
+        "e"."id" AS "entity_id"
+      FROM
+        (
+          SELECT
+            "entity_key",
+            "id"
+          FROM
+            "entity_type_members"
+          WHERE
+            "entity_type_name_key" = (1)
+            AND "is_evolution_member"
+        ) AS "e"
+      WHERE
+        EXISTS (
+          SELECT
+            $16
+          FROM
+            (
+              SELECT
+                "rsh"."entity_key" AS "entity_key",
+                "rsh"."recorded_at",
+                "rsh"."write_id",
+                "rsh"."write_ordinal",
+                "rsh"."value_kind",
+                "rsh"."observed_at",
+                "rsh"."created_at",
+                "rsh"."modified_at",
+                "rsh"."deleted_at",
+                "rsh"."scope_path",
+                "rsh"."verbatim_scope_path"
+              FROM
+                "scope_history" AS "rsh"
+              WHERE
+                "rsh"."entity_key" = "e"."entity_key"
+            ) AS "sh"
+          WHERE
+            "sh"."modified_at" IS NOT NULL
+            AND ("sh"."scope_path" ~ ($17::lquery))
+            AND (
+              NOT EXISTS (
+                SELECT
+                  $18
+                FROM
+                  (
+                    SELECT
+                      "rsh"."entity_key" AS "entity_key",
+                      "rsh"."recorded_at",
+                      "rsh"."write_id",
+                      "rsh"."write_ordinal",
+                      "rsh"."value_kind",
+                      "rsh"."observed_at",
+                      "rsh"."created_at",
+                      "rsh"."modified_at",
+                      "rsh"."deleted_at",
+                      "rsh"."scope_path",
+                      "rsh"."verbatim_scope_path"
+                    FROM
+                      "scope_history" AS "rsh"
+                    WHERE
+                      "rsh"."entity_key" = "sh"."entity_key"
+                  ) AS "sh_next"
+                WHERE
+                  "sh_next"."modified_at" > "sh"."modified_at"
+                  AND "sh_next"."modified_at" <= $19
+              )
+            )
+        )
+        AND (
+          SELECT
+            COUNT(*)
+          FROM
+            "short_walk"
+        ) < $20
+        AND (
+          SELECT
+            COUNT(*)
+          FROM
+            "candidates"
+        ) > $21
+        AND EXISTS (
+          SELECT
+            1
+          FROM
+            (
+              SELECT
+                "re"."id" AS "entity_id",
+                "rs"."attribute_name_key" AS "attribute_name_key",
+                "rs"."dataset_key" AS "dataset_key",
+                "rh"."recorded_at",
+                "rh"."write_id",
+                "rh"."write_ordinal",
+                "rh"."attribute_kind",
+                "rh"."value_kind",
+                "rh"."observed_at",
+                "rh"."created_at",
+                "rh"."modified_at",
+                "rh"."deleted_at",
+                "rh"."value_date_time",
+                "rh"."expires_at",
+                "rh"."generated_instance_id",
+                "rh"."value_type_key",
+                "rh"."value_datatype_key",
+                "rh"."unit_code_id",
+                "rh"."value_boolean",
+                "rh"."verbatim_instance_id",
+                "rh"."value_number",
+                "rh"."value_string",
+                "rh"."value_language",
+                "rh"."value_geometry",
+                "rh"."value_geometry_valid",
+                "rh"."value_geometry_reach",
+                "rh"."value_geometry_members",
+                "rh"."value_object",
+                "rh"."value_uri",
+                "rh"."object_type_keys",
+                "rh"."sub_attributes"
+              FROM
+                "attribute_history" AS "rh"
+                JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+                JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+            ) AS "ah"
+          WHERE
+            "ah"."modified_at" >= $22
+            AND "ah"."entity_id" = "e"."id"
+        )
+      ORDER BY
+        "e"."id" ASC
+      LIMIT
+        20 OFFSET 0
+    ) AS "walk"
+)
+1: Int 1
+2: String 'city.moved1'
+3: Int 1
+4: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
+5: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
+6: SmallInt 1
+7: String 'city.moved1'
+8: BigUnsigned 20
+9: Int 1
+10: String 'city.moved1'
+11: Int 1
+12: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
+13: BigUnsigned 20
+14: BigUnsigned 10000
+15: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
+16: Int 1
+17: String 'city.moved1'
+18: Int 1
+19: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
+20: BigUnsigned 20
+21: BigUnsigned 10000
+22: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'

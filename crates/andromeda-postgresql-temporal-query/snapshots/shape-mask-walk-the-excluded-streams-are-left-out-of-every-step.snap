@@ -1,0 +1,61 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/shape_mask_walk.rs
+---
+WITH
+RECURSIVE "held" ("attribute_name_key", "shape_mask") AS (
+  SELECT
+    "step"."attribute_name_key",
+    "step"."shape_mask"
+  FROM
+    "attribute_names" AS "an"
+    JOIN LATERAL (
+      SELECT
+        "ms"."attribute_name_key",
+        "ms"."shape_mask"
+      FROM
+        "temporal_attribute_streams" AS "ms"
+      WHERE
+        "ms"."attribute_name_key" = "an"."attribute_name_key"
+        AND "ms"."stream_key" NOT IN (
+          SELECT
+            $1)
+      ORDER BY
+        "ms"."shape_mask" ASC
+      LIMIT
+        1
+    ) AS "step" ON TRUE
+  WHERE
+    "an"."attribute_name_key" = $2
+  UNION ALL
+  (
+    SELECT
+      "step"."attribute_name_key",
+      "step"."shape_mask"
+    FROM
+      "held"
+      JOIN LATERAL (
+        SELECT
+          "ms"."attribute_name_key",
+          "ms"."shape_mask"
+        FROM
+          "temporal_attribute_streams" AS "ms"
+        WHERE
+          "ms"."attribute_name_key" = "held"."attribute_name_key"
+          AND "ms"."shape_mask" > "held"."shape_mask"
+          AND "ms"."stream_key" NOT IN (
+            SELECT
+              $3)
+        ORDER BY
+          "ms"."shape_mask" ASC
+        LIMIT
+          1
+      ) AS "step" ON TRUE
+  )
+)
+SELECT
+  *
+FROM
+  "held"
+1: Int 4
+2: Int 7
+3: Int 4

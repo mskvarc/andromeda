@@ -112,7 +112,7 @@ mod tests {
     use crate::stage1::{
         build_stage1_entity_ids,
         extent_candidates::ExtentRead,
-        query_fixture::{CountParts, PageBranches, geo_query, ids, near_query, opened, point, recorded_stage1, sensor_names, stage1_on},
+        query_fixture::{geo_query, ids, near_query, opened, point, recorded_stage1, sensor_names, stage1_on},
     };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, great_circle::great_circle_bounds, near_envelope::NearEnvelope, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_query::{
@@ -128,26 +128,14 @@ mod tests {
         entity_type_name_key::EntityTypeNameKey,
         history_source::HistoryBranch,
     };
-    use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, IntoIden, PostgresQueryBuilder, Value, Values};
+    use sea_query::{Alias, IntoIden, PostgresQueryBuilder, SelectStatement, Value, Values};
     use std::str::FromStr;
 
-    /// The candidates' comparison of the `GeoProperty`'s key, up to its
-    /// placeholder.
-    const GEOPROPERTY_KEY: &str = r#""rs"."attribute_name_key" = $"#;
-
-    /// The rendered page of `query` over the `Sensor` walk.
-    fn type_page(query: &CompiledTemporalQuery) -> String {
-        recorded_stage1(query).select.to_string(PostgresQueryBuilder)
-    }
-
-    /// The value bound to the placeholder right after the first `fragment`.
-    fn bound_after(sql: &str, values: &Values, fragment: &str) -> Option<Value> {
-        let start = sql.find(fragment)? + fragment.len();
-        let digits: String = sql[start..].chars().take_while(char::is_ascii_digit).collect();
-        let position = digits.parse::<usize>().ok()?.checked_sub(1)?;
-        values.0.get(position).cloned()
+    /// The page of `query` over the `Sensor` walk.
+    fn type_page(query: &CompiledTemporalQuery) -> SelectStatement {
+        recorded_stage1(query).select
     }
 
     /// The doubles `values` binds, in order.
@@ -174,58 +162,45 @@ mod tests {
     fn a_near_query_over_a_type_walk_reads_the_stream_extents() {
         let stage1 = recorded_stage1(&near_query(4.5, "2000"));
         assert_eq!(stage1.planning, StatementPlanning::GenericGatedBranches);
-        let (sql, values) = stage1.select.build(PostgresQueryBuilder);
-        let candidates = PageBranches::of(&sql).candidates;
-        assert!(
-            candidates.starts_with(r#"SELECT "rs"."entity_key" FROM "temporal_attribute_streams" AS "rs" WHERE "rs"."attribute_name_key" = $"#),
-            "{candidates}"
-        );
-        assert_eq!(bound_after(candidates, &values, GEOPROPERTY_KEY), Some(Value::Int(Some(2))), "{sql}");
-        assert!(candidates.contains(r#" AND ("rs"."value_extent" && ST_MakeEnvelope("#), "{candidates}");
-        assert!(values.0.contains(&Value::BigUnsigned(Some(10_001))), "{:?}", values.0);
+        let statement = stage1.select;
+        assert_statement_snapshot!("extent-candidates-a-near-query-over-a-type-walk-reads-the-stream-extents", statement);
     }
 
     #[test]
     fn the_near_envelope_is_the_entity_geo_querys() {
-        for (longitude, rectangles) in [(4.5, 1), (179.99, 2)] {
-            let compiled = near_query(longitude, "2000");
-            let read = ExtentRead::of(&compiled, &sensor_names()).expect("renders").expect("a near box");
-            let (sql, values) = read.candidates(&HistoryBranch::live_recorded()).build(PostgresQueryBuilder);
-            assert_eq!(doubles(&values), envelope_bounds(longitude, "2000"), "{longitude}: {sql}");
-            assert_eq!(sql.matches(r#""rs"."value_extent" && ST_MakeEnvelope("#).count(), rectangles, "{sql}");
-            if rectangles == 2 {
-                assert!(sql.contains(r#")) OR ("rs"."value_extent" && ST_MakeEnvelope("#), "{sql}");
-            }
-        }
+        let compiled = near_query(4.5, "2000");
+        let read = ExtentRead::of(&compiled, &sensor_names()).expect("renders").expect("a near box");
+        let single = read.candidates(&HistoryBranch::live_recorded());
+        assert_statement_snapshot!("extent-candidates-the-near-envelope-is-the-entity-geo-querys-1", single);
+        let (_, values) = single.build(PostgresQueryBuilder);
+        assert_eq!(doubles(&values), envelope_bounds(4.5, "2000"));
+
+        let compiled = near_query(179.99, "2000");
+        let read = ExtentRead::of(&compiled, &sensor_names()).expect("renders").expect("a near box");
+        let split = read.candidates(&HistoryBranch::live_recorded());
+        assert_statement_snapshot!("extent-candidates-the-near-envelope-is-the-entity-geo-querys-2", split);
+        let (_, values) = split.build(PostgresQueryBuilder);
+        assert_eq!(doubles(&values), envelope_bounds(179.99, "2000"));
     }
 
     #[test]
     fn the_extent_test_names_the_indexed_expression() {
-        let sql = type_page(&near_query(4.5, "2000"));
-        let candidates = PageBranches::of(&sql).candidates;
-        assert!(candidates.contains(r#" AND ("rs"."value_extent" && ST_MakeEnvelope("#), "{candidates}");
-        assert!(
-            !candidates.contains("::box2d") && !candidates.contains(r#"("rs"."value_extent")"#),
-            "{candidates}"
-        );
+        let statement = type_page(&near_query(4.5, "2000"));
+        assert_statement_snapshot!("extent-candidates-the-extent-test-names-the-indexed-expression", statement);
     }
 
     #[test]
     fn an_area_relation_reads_the_reference_bounding_box() {
-        for (name, georel) in [
-            ("within", GeoRel::Within),
-            ("intersects", GeoRel::Intersects),
-            ("contains", GeoRel::Contains),
-            ("overlaps", GeoRel::Overlaps),
-            ("equals", GeoRel::Equals),
-        ] {
-            let sql = type_page(&geo_query(georel, &serde_json::json!([4.5, 52.5])));
-            let candidates = PageBranches::of(&sql).candidates;
-            assert!(
-                candidates.contains(r#" AND ("rs"."value_extent" && ST_MakeValid(ST_GeomFromEWKB("#),
-                "{name}: {candidates}"
-            );
-        }
+        let within = type_page(&geo_query(GeoRel::Within, &serde_json::json!([4.5, 52.5])));
+        assert_statement_snapshot!("extent-candidates-an-area-relation-reads-the-reference-bounding-box-1", within);
+        let intersects = type_page(&geo_query(GeoRel::Intersects, &serde_json::json!([4.5, 52.5])));
+        assert_statement_snapshot!("extent-candidates-an-area-relation-reads-the-reference-bounding-box-2", intersects);
+        let contains = type_page(&geo_query(GeoRel::Contains, &serde_json::json!([4.5, 52.5])));
+        assert_statement_snapshot!("extent-candidates-an-area-relation-reads-the-reference-bounding-box-3", contains);
+        let overlaps = type_page(&geo_query(GeoRel::Overlaps, &serde_json::json!([4.5, 52.5])));
+        assert_statement_snapshot!("extent-candidates-an-area-relation-reads-the-reference-bounding-box-4", overlaps);
+        let equals = type_page(&geo_query(GeoRel::Equals, &serde_json::json!([4.5, 52.5])));
+        assert_statement_snapshot!("extent-candidates-an-area-relation-reads-the-reference-bounding-box-5", equals);
     }
 
     /// Neither relation admits a box, so the query takes the step of the
@@ -240,25 +215,16 @@ mod tests {
             },
             &serde_json::json!([4.5, 52.5]),
         );
-        for compiled in [opened(geo_query(GeoRel::Disjoint, &serde_json::json!([4.5, 52.5]))), opened(far)] {
-            let sql = type_page(&compiled);
-            let branches = PageBranches::of(&sql);
-            assert!(!sql.contains("value_extent"), "{sql}");
-            assert!(branches.candidates.contains(r#""evolution_active_until" >= "#), "{sql}");
-            assert!(branches.indexed.contains(r#""qh"."value_geometry""#), "{sql}");
-        }
+        let disjoint = type_page(&opened(geo_query(GeoRel::Disjoint, &serde_json::json!([4.5, 52.5]))));
+        assert_statement_snapshot!("extent-candidates-a-disjoint-or-minimum-distance-query-reads-no-extents-1", disjoint);
+        let minimum = type_page(&opened(far));
+        assert_statement_snapshot!("extent-candidates-a-disjoint-or-minimum-distance-query-reads-no-extents-2", minimum);
     }
 
     #[test]
     fn the_exact_relation_stays_the_residual() {
-        let sql = type_page(&near_query(4.5, "2000"));
-        let branches = PageBranches::of(&sql);
-        for residual in [branches.short(), branches.indexed, branches.walk] {
-            assert!(
-                residual.contains(r#" _ST_DWithin(COALESCE("qh"."value_geometry_valid", "qh"."value_geometry")::geography"#),
-                "{residual}"
-            );
-        }
+        let statement = type_page(&near_query(4.5, "2000"));
+        assert_statement_snapshot!("extent-candidates-the-exact-relation-stays-the-residual", statement);
     }
 
     /// No stream records a `GeoProperty` the dictionary never keyed, so the
@@ -281,62 +247,31 @@ mod tests {
             &types_alone,
         )
         .expect("valid temporal query");
-        let sql = stage1.select.to_string(PostgresQueryBuilder);
-        assert!(!sql.contains("value_extent"), "{sql}");
-        assert!(PageBranches::of(&sql).candidates.contains(r#""evolution_active_until" >= "#), "{sql}");
+        let statement = stage1.select;
+        assert_statement_snapshot!("extent-candidates-an-unrecorded-geoproperty-reads-no-extents", statement);
     }
 
     #[test]
     fn a_geo_page_walks_fifty_evolutions_first() {
-        let sql = type_page(&near_query(4.5, "2000"));
-        let branches = PageBranches::of(&sql);
-        assert!(branches.short().contains("LIMIT 50 OFFSET 0"), "{}", branches.short());
-        assert!(branches.walk.contains(r#"(SELECT COUNT(*) FROM "candidates") > 10000"#), "{}", branches.walk);
+        let statement = type_page(&near_query(4.5, "2000"));
+        assert_statement_snapshot!("extent-candidates-a-geo-page-walks-fifty-evolutions-first", statement);
     }
 
     #[test]
     fn a_queued_branch_admits_every_queued_entity_for_its_geometry() {
-        let sql = stage1_on(&HistoryBranch::live(), &near_query(4.5, "2000"), &PageWindow::offset(20, 0))
-            .select
-            .to_string(PostgresQueryBuilder);
-        let branches = PageBranches::of(&sql);
-        assert!(
-            branches.candidates.starts_with(concat!(
-                r#"SELECT "ri"."id" FROM "temporal_attribute_streams" AS "rs" JOIN "entities" AS "ri" ON "ri"."entity_key" = "rs"."entity_key" "#,
-                r#"WHERE "rs"."attribute_name_key" = 2 AND"#
-            )),
-            "{}",
-            branches.candidates
-        );
-        assert!(
-            branches
-                .candidates
-                .ends_with(r#" UNION ALL (SELECT "entity_id" FROM "temporal_append_intents")"#),
-            "{}",
-            branches.candidates
-        );
-        assert!(
-            branches.indexed.contains(r#""e"."id" IN (SELECT "id" FROM "candidates")"#),
-            "{}",
-            branches.indexed
-        );
+        let statement = stage1_on(&HistoryBranch::live(), &near_query(4.5, "2000"), &PageWindow::offset(20, 0)).select;
+        assert_statement_snapshot!("extent-candidates-a-queued-branch-admits-every-queued-entity-for-its-geometry", statement);
     }
 
     #[test]
     fn a_snapshot_reads_its_own_extent_index() {
-        let sql = stage1_on(
+        let statement = stage1_on(
             &HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()),
             &near_query(4.5, "2000"),
             &PageWindow::offset(20, 0),
         )
-        .select
-        .to_string(PostgresQueryBuilder);
-        assert!(
-            PageBranches::of(&sql)
-                .candidates
-                .contains(r#"FROM "snap_7"."temporal_attribute_streams" AS "rs" WHERE"#),
-            "{sql}"
-        );
+        .select;
+        assert_statement_snapshot!("extent-candidates-a-snapshot-reads-its-own-extent-index", statement);
     }
 
     /// Clause 5.7.4.4 applies the geoquery of a split query only to the
@@ -346,44 +281,15 @@ mod tests {
     fn a_contributed_entity_is_a_candidate_whatever_its_geometry() {
         let mut compiled = near_query(4.5, "2000");
         compiled.contributed = ContributedEntities::new(ids(&["urn:ngsi-ld:Sensor:000009"]), ContributedRendering::Local);
-        let sql = type_page(&compiled);
-        let branches = PageBranches::of(&sql);
-        assert!(
-            branches.candidates.ends_with(concat!(
-                r#" UNION ALL (SELECT "entities"."entity_key" FROM "entities""#,
-                r#" WHERE "entities"."id" = 'urn:ngsi-ld:Sensor:000009' AND "entities"."evolution_created_at" IS NOT NULL)"#
-            )),
-            "{}",
-            branches.candidates
-        );
-        assert!(
-            branches.indexed.contains(r#" OR "e"."id" = 'urn:ngsi-ld:Sensor:000009'"#),
-            "{}",
-            branches.indexed
-        );
+        let statement = type_page(&compiled);
+        assert_statement_snapshot!("extent-candidates-a-contributed-entity-is-a-candidate-whatever-its-geometry", statement);
     }
 
     #[test]
     fn a_counted_geo_query_counts_under_the_count_bound() {
         let stage1 = recorded_stage1(&near_query(4.5, "2000"));
         assert_eq!(stage1.count_planning, StatementPlanning::BoundValues);
-        let (sql, values) = stage1.count.expect("count requested").build(PostgresQueryBuilder);
-        assert!(
-            sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (SELECT "rs"."entity_key" FROM "temporal_attribute_streams" AS "rs""#),
-            "{sql}"
-        );
-        assert!(values.0.contains(&Value::BigUnsigned(Some(10_001))), "{:?}", values.0);
-        assert!(values.0.contains(&Value::BigUnsigned(Some(10_000))), "{:?}", values.0);
-        let parts = CountParts::of(&sql);
-        assert!(
-            parts.indexed.contains(r#""entity_key" IN (SELECT "entity_key" FROM "candidates")"#),
-            "{}",
-            parts.indexed
-        );
-        assert!(parts.walked.contains(r#"(SELECT COUNT(*) FROM "candidates") > $"#), "{}", parts.walked);
-        assert_eq!(parts.walked.matches("candidates").count(), 2, "the two gates alone: {}", parts.walked);
-        assert!(parts.filtered.contains(" _ST_DWithin("), "{}", parts.filtered);
-        assert!(!parts.indexed.contains("ST_DWithin(") && !parts.walked.contains("ST_DWithin("), "{sql}");
-        assert!(!sql.contains("CASE WHEN"), "{sql}");
+        let statement = stage1.count.expect("count requested");
+        assert_statement_snapshot!("extent-candidates-a-counted-geo-query-counts-under-the-count-bound", statement);
     }
 }

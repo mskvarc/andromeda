@@ -1,0 +1,7 @@
+---
+source: crates/andromeda-postgresql-context-query/src/entity_total.rs
+---
+SELECT
+  "x"
+FROM
+  "counted"

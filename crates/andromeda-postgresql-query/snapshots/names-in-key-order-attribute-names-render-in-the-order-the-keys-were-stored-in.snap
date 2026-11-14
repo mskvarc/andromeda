@@ -1,0 +1,17 @@
+---
+source: crates/andromeda-postgresql-query/src/dictionary/names_in_key_order.rs
+---
+SELECT
+  ARRAY (
+    SELECT
+      "attribute_names"."name"
+    FROM
+      "attribute_names"
+    WHERE
+      "attribute_names"."attribute_name_key" = ANY("watched_attributes")
+    ORDER BY
+      array_position(
+        "watched_attributes",
+        "attribute_names"."attribute_name_key"
+      ) ASC
+  )

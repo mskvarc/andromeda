@@ -1,0 +1,78 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/coverage.rs
+---
+SELECT
+  1
+FROM
+  "context_source_registrations"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "registration_information" AS "ri"
+    WHERE
+      "ri"."registration_id" = "context_source_registrations"."id"
+      AND (
+        (COALESCE("ri"."entity_types", '{*}') && $1)
+        AND (
+          (
+            COALESCE("ri"."entity_id", '') = ANY($2)
+            OR "ri"."entity_id_pattern" IS NOT NULL
+          )
+          AND (
+            "ri"."entity_id" = $3
+            OR (
+              "ri"."entity_id" IS NULL
+              AND (
+                "ri"."entity_id_pattern_form" IS NULL
+                OR EXISTS (
+                  SELECT
+                    1
+                  FROM
+                    UNNEST($4) AS "queried"
+                  WHERE
+                    "queried"."queried" ~ "ri"."entity_id_pattern_form"
+                )
+              )
+            )
+          )
+        )
+      )
+      AND (
+        (
+          "ri"."property_name_keys" && (
+            ARRAY (
+              SELECT
+                "an"."attribute_name_key"
+              FROM
+                "attribute_names" AS "an"
+              WHERE
+                "an"."name" = $5
+            )
+          )
+        )
+        OR (
+          "ri"."relationship_name_keys" && (
+            ARRAY (
+              SELECT
+                "an"."attribute_name_key"
+              FROM
+                "attribute_names" AS "an"
+              WHERE
+                "an"."name" = $6
+            )
+          )
+        )
+        OR (
+          "ri"."property_name_keys" IS NULL
+          AND "ri"."relationship_name_keys" IS NULL
+        )
+      )
+  )
+1: Array ARRAY ['https://example.com/Vehicle','*']
+2: Array ARRAY ['urn:ngsi-ld:Vehicle:1','']
+3: String 'urn:ngsi-ld:Vehicle:1'
+4: Array ARRAY ['urn:ngsi-ld:Vehicle:1']
+5: String 'https://example.com/speed'
+6: String 'https://example.com/speed'

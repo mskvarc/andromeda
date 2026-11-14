@@ -1,0 +1,39 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/projection.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND EXISTS (
+        SELECT
+          1
+        FROM
+          jsonb_array_elements(
+            (
+              CASE
+                WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+              END
+            )
+          ) AS "ls"
+        WHERE
+          LOWER(("ls"."value" ->> ('@language')) COLLATE "C") = LOWER(($2::text) COLLATE "C")
+          AND (("ls"."value" ->> ('@value')) COLLATE "C") = $3
+      )
+      AND "ca"."entity_key" = "entities"."entity_key"
+  )
+1: Int 13
+2: String 'en-GB'
+3: String 'red'

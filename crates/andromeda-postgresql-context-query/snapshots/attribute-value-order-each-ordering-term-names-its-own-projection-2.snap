@@ -1,0 +1,9 @@
+---
+source: crates/andromeda-postgresql-context-query/src/attribute_value_order.rs
+---
+SELECT
+  (
+    CASE
+      WHEN ("order_value_1"."value_datatype" = ('number')) THEN "order_value_1"."value_number"
+    END
+  )

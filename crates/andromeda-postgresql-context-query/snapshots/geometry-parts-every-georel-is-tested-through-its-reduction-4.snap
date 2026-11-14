@@ -1,0 +1,16 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/geometry_parts.rs
+---
+SELECT
+  "id"
+FROM
+  "context_source_registrations"
+WHERE
+  "location" IS NOT NULL
+  AND (
+    NOT _ST_Within(
+      COALESCE("location_valid", "location"),
+      ST_MakeValid(ST_GeomFromEWKB($1))
+    )
+  )
+1: Bytes '\x0101000020E6100000000000000000F03F0000000000000040'

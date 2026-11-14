@@ -151,16 +151,9 @@ pub fn box_test(georel: &GeoRel, reference: &Geometry, subject: &GeometryBox, in
 #[cfg(test)]
 mod tests {
     use crate::stored_geometry::{BoxIndexing, GeometryBox, StoredGeometry, box_test};
-    use andromeda_ngsi_ld_geometry::{
-        geo_rel::GeoRel,
-        geometry::Geometry,
-        great_circle::great_circle_bounds,
-        near_envelope::NearEnvelope,
-        positive_distance::PositiveDistance,
-    };
-    use andromeda_postgresql_encoding::ewkb::encode;
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr, Value, Values};
+    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Expr, Query, SelectStatement, SimpleExpr};
     use std::str::FromStr;
 
     fn point(longitude: f64, latitude: f64) -> Geometry {
@@ -182,70 +175,62 @@ mod tests {
         StoredGeometry::written(column("value_geometry_reach"), column("value_geometry_valid"), column("value_geometry"))
     }
 
-    fn render(expression: SimpleExpr) -> (String, Values) {
-        Query::select().expr(expression).build(PostgresQueryBuilder)
-    }
-
-    fn doubles(values: &Values) -> Vec<f64> {
-        values
-            .0
-            .iter()
-            .filter_map(|value| if let Value::Double(Some(double)) = value { Some(*double) } else { None })
-            .collect()
+    fn render(expression: SimpleExpr) -> SelectStatement {
+        Query::select().expr(expression).to_owned()
     }
 
     #[test]
     fn a_written_geometry_judges_its_repair_and_keys_its_reach_first() {
         let stored = instance();
-        assert_eq!(
-            render(stored.planar()).0,
-            r#"SELECT COALESCE("g"."value_geometry_valid", "g"."value_geometry")"#
+        assert_statement_snapshot!(
+            "stored-geometry-a-written-geometry-judges-its-repair-and-keys-its-reach-first-1",
+            render(stored.planar())
         );
-        assert_eq!(
-            render(stored.geographic()).0,
-            r#"SELECT COALESCE("g"."value_geometry_valid", "g"."value_geometry")::geography"#
+        assert_statement_snapshot!(
+            "stored-geometry-a-written-geometry-judges-its-repair-and-keys-its-reach-first-2",
+            render(stored.geographic())
         );
-        let (sql, _) = render(
-            box_test(&GeoRel::Within, &point(1.0, 2.0), &stored.indexed_box(), BoxIndexing::Indexed)
-                .expect("renders")
-                .expect("a box"),
-        );
-        assert_eq!(
-            sql,
-            r#"SELECT COALESCE("g"."value_geometry_reach", "g"."value_geometry_valid", "g"."value_geometry") && ST_MakeValid(ST_GeomFromEWKB($1))"#
+        assert_statement_snapshot!(
+            "stored-geometry-a-written-geometry-judges-its-repair-and-keys-its-reach-first-3",
+            render(
+                box_test(&GeoRel::Within, &point(1.0, 2.0), &stored.indexed_box(), BoxIndexing::Indexed)
+                    .expect("renders")
+                    .expect("a box"),
+            )
         );
     }
 
     #[test]
     fn a_valid_geometry_judges_itself_and_keys_its_reach_first() {
         let stored = StoredGeometry::valid(column("location_reach"), column("location"));
-        assert_eq!(render(stored.planar()).0, r#"SELECT "g"."location""#);
-        let (sql, _) = render(
-            box_test(&near(Some("1000"), None), &point(0.0, 63.43), &stored.indexed_box(), BoxIndexing::Indexed)
-                .expect("renders")
-                .expect("a box"),
+        assert_statement_snapshot!(
+            "stored-geometry-a-valid-geometry-judges-itself-and-keys-its-reach-first-1",
+            render(stored.planar())
         );
-        assert!(
-            sql.starts_with(r#"SELECT COALESCE("g"."location_reach", "g"."location") && ST_MakeEnvelope("#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "stored-geometry-a-valid-geometry-judges-itself-and-keys-its-reach-first-2",
+            render(
+                box_test(&near(Some("1000"), None), &point(0.0, 63.43), &stored.indexed_box(), BoxIndexing::Indexed)
+                    .expect("renders")
+                    .expect("a box"),
+            )
         );
     }
 
     #[test]
     fn every_area_relation_admits_the_reference_box() {
-        for georel in [GeoRel::Within, GeoRel::Contains, GeoRel::Intersects, GeoRel::Overlaps, GeoRel::Equals] {
-            let reference = point(1.0, 2.0);
-            let (_, values) = render(
-                box_test(&georel, &reference, &instance().indexed_box(), BoxIndexing::Indexed)
-                    .expect("renders")
-                    .expect("an area box"),
+        for (index, georel) in [GeoRel::Within, GeoRel::Contains, GeoRel::Intersects, GeoRel::Overlaps, GeoRel::Equals]
+            .into_iter()
+            .enumerate()
+        {
+            assert_statement_snapshot!(
+                format!("stored-geometry-every-area-relation-admits-the-reference-box-{}", index + 1),
+                render(
+                    box_test(&georel, &point(1.0, 2.0), &instance().indexed_box(), BoxIndexing::Indexed)
+                        .expect("renders")
+                        .expect("an area box"),
+                )
             );
-            let bytes: Vec<Vec<u8>> = values
-                .0
-                .iter()
-                .filter_map(|value| if let Value::Bytes(Some(bytes)) = value { Some(bytes.clone()) } else { None })
-                .collect();
-            assert_eq!(bytes, [encode(reference.form()).expect("encodes").to_vec()], "{georel:?}");
         }
     }
 
@@ -264,36 +249,31 @@ mod tests {
     #[test]
     fn a_near_box_is_the_near_envelope_of_the_reference() {
         let reference = point(4.5, 52.5);
-        let (_, values) = render(
-            box_test(&near(Some("2000"), None), &reference, &instance().indexed_box(), BoxIndexing::Indexed)
-                .expect("renders")
-                .expect("a box"),
+        assert_statement_snapshot!(
+            "stored-geometry-a-near-box-is-the-near-envelope-of-the-reference",
+            render(
+                box_test(&near(Some("2000"), None), &reference, &instance().indexed_box(), BoxIndexing::Indexed)
+                    .expect("renders")
+                    .expect("a box"),
+            )
         );
-        let NearEnvelope::Single(rect) = NearEnvelope::around(
-            great_circle_bounds(&reference.planar()).expect("a point has bounds"),
-            PositiveDistance::from_str("2000").expect("positive distance"),
-        ) else {
-            panic!("a reference far from the antimeridian has one rectangle");
-        };
-        assert_eq!(doubles(&values), [rect.min().x, rect.min().y, rect.max().x, rect.max().y]);
     }
 
     #[test]
     fn a_near_box_across_the_antimeridian_tests_both_halves() {
-        let (sql, values) = render(
-            box_test(
-                &near(Some("300"), None),
-                &point(179.999, -17.0),
-                &instance().indexed_box(),
-                BoxIndexing::Indexed,
+        assert_statement_snapshot!(
+            "stored-geometry-a-near-box-across-the-antimeridian-tests-both-halves",
+            render(
+                box_test(
+                    &near(Some("300"), None),
+                    &point(179.999, -17.0),
+                    &instance().indexed_box(),
+                    BoxIndexing::Indexed,
+                )
+                .expect("renders")
+                .expect("a box"),
             )
-            .expect("renders")
-            .expect("a box"),
         );
-        assert_eq!(sql.matches(r#""g"."value_geometry") && ST_MakeEnvelope("#).count(), 2, "{sql}");
-        assert!(sql.contains(" OR "), "{sql}");
-        let doubles = doubles(&values);
-        assert!(doubles.contains(&180.0) && doubles.contains(&-180.0), "{doubles:?}");
     }
 
     /// `near` is measured on the spheroid, where 5 000 m due north of the
@@ -301,41 +281,42 @@ mod tests {
     /// the sphere would reach.
     #[test]
     fn a_near_box_covers_the_spheroidal_reach_of_the_reference() {
-        let (_, values) = render(
-            box_test(&near(Some("5000"), None), &point(0.0, 0.0), &instance().indexed_box(), BoxIndexing::Indexed)
-                .expect("renders")
-                .expect("a box"),
+        assert_statement_snapshot!(
+            "stored-geometry-a-near-box-covers-the-spheroidal-reach-of-the-reference",
+            render(
+                box_test(&near(Some("5000"), None), &point(0.0, 0.0), &instance().indexed_box(), BoxIndexing::Indexed)
+                    .expect("renders")
+                    .expect("a box"),
+            )
         );
-        let north = doubles(&values).into_iter().fold(f64::NEG_INFINITY, f64::max);
-        assert!(north >= 0.045_218, "the box reaches latitude {north}");
     }
 
     #[test]
     fn an_unindexed_box_compares_box2d_values() {
-        let (sql, _) = render(
-            box_test(&near(Some("2000"), None), &point(4.5, 52.5), &instance().indexed_box(), BoxIndexing::Unindexed)
-                .expect("renders")
-                .expect("a box"),
+        assert_statement_snapshot!(
+            "stored-geometry-an-unindexed-box-compares-box2d-values",
+            render(
+                box_test(&near(Some("2000"), None), &point(4.5, 52.5), &instance().indexed_box(), BoxIndexing::Unindexed)
+                    .expect("renders")
+                    .expect("a box"),
+            )
         );
-        assert!(
-            sql.starts_with(r#"SELECT COALESCE("g"."value_geometry_reach", "g"."value_geometry_valid", "g"."value_geometry")::box2d && ST_MakeEnvelope("#),
-            "{sql}"
-        );
-        assert!(sql.ends_with(")::box2d"), "{sql}");
     }
 
     #[test]
     fn a_stream_extent_is_tested_bare() {
-        let (sql, _) = render(
-            box_test(
-                &GeoRel::Intersects,
-                &point(1.0, 2.0),
-                &GeometryBox::stream_extent(column("value_extent")),
-                BoxIndexing::Indexed,
+        assert_statement_snapshot!(
+            "stored-geometry-a-stream-extent-is-tested-bare",
+            render(
+                box_test(
+                    &GeoRel::Intersects,
+                    &point(1.0, 2.0),
+                    &GeometryBox::stream_extent(column("value_extent")),
+                    BoxIndexing::Indexed,
+                )
+                .expect("renders")
+                .expect("a box"),
             )
-            .expect("renders")
-            .expect("a box"),
         );
-        assert_eq!(sql, r#"SELECT "g"."value_extent" && ST_MakeValid(ST_GeomFromEWKB($1))"#);
     }
 }

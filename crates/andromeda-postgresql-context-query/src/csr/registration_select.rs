@@ -100,72 +100,38 @@ pub fn registration_select() -> SelectStatement {
 #[cfg(test)]
 mod tests {
     use crate::csr::registration_select::registration_select;
-    use sea_query::PostgresQueryBuilder;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
 
     #[test]
     fn the_projection_left_joins_the_delivery_state_on_the_registration_key() {
-        let sql = registration_select().to_string(PostgresQueryBuilder);
-        assert!(
-            sql.contains(
-                "FROM \"context_source_registrations\" LEFT JOIN \"registration_delivery_state\" ON \"registration_delivery_state\".\"registration_id\" = \"context_source_registrations\".\"id\""
-            ),
-            "{sql}"
+        assert_statement_snapshot!(
+            "registration-select-the-projection-left-joins-the-delivery-state-on-the-registration-key",
+            registration_select()
         );
-        for health in ["status", "times_sent", "times_failed", "last_success", "last_failure"] {
-            assert!(
-                sql.contains(&format!("\"registration_delivery_state\".\"{health}\"")),
-                "{health} is read from the delivery state: {sql}"
-            );
-        }
     }
 
     /// One statement reads a registration and its information rows, so the
     /// two come from one snapshot without a transaction around them.
     #[test]
     fn the_information_rows_travel_on_the_registration_row() {
-        let sql = registration_select().to_string(PostgresQueryBuilder);
-        assert!(
-            sql.contains(concat!(
-                r#"ARRAY (SELECT "info" FROM "registration_information" AS "info" WHERE "info"."registration_id" = "context_source_registrations"."id" "#,
-                r#"ORDER BY "info"."item_ordinal" ASC, "info"."selector_ordinal" ASC) AS "information_rows""#
-            )),
-            "{sql}"
-        );
+        assert_statement_snapshot!("registration-select-the-information-rows-travel-on-the-registration-row", registration_select());
     }
 
     #[test]
     fn the_projection_reads_codes_and_written_scopes_and_no_type_column() {
-        let sql = registration_select().to_string(PostgresQueryBuilder);
-        assert!(!sql.contains("\"type\""), "no registration type column remains: {sql}");
-        assert!(
-            sql.contains("\"context_source_registrations\".\"mode\","),
-            "the mode is read as its code: {sql}"
+        assert_statement_snapshot!(
+            "registration-select-the-projection-reads-codes-and-written-scopes-and-no-type-column",
+            registration_select()
         );
-        assert!(sql.contains("\"context_source_registrations\".\"verbatim_scope_paths\""), "{sql}");
-        assert!(!sql.contains("\"scope_paths\"::text[]"), "a Scope is never rebuilt from its label path: {sql}");
-        assert!(!sql.contains("::csr_"), "no enum cast remains: {sql}");
     }
 
     /// The interval, `management` and `contextSourceInfo` members are read
     /// from their columns, and `information` from its rows, not from this one.
     #[test]
     fn the_projection_reads_the_member_columns_and_no_information_document() {
-        let sql = registration_select().to_string(PostgresQueryBuilder);
-        for column in [
-            "observation_interval_start",
-            "observation_interval_end",
-            "management_interval_start",
-            "management_interval_end",
-            "is_management_declared",
-            "management_cache_duration",
-            "management_cooldown",
-            "management_local_only",
-            "management_timeout",
-            "context_source_info_keys",
-            "context_source_info_values",
-        ] {
-            assert!(sql.contains(&format!("\"context_source_registrations\".\"{column}\"")), "{column}: {sql}");
-        }
-        assert!(!sql.contains("\"information\""), "{sql}");
+        assert_statement_snapshot!(
+            "registration-select-the-projection-reads-the-member-columns-and-no-information-document",
+            registration_select()
+        );
     }
 }

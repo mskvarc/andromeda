@@ -1,0 +1,5 @@
+---
+source: crates/andromeda-postgresql-query/src/entity_sides.rs
+---
+SELECT
+  "e"."created_at" IS NOT NULL

@@ -1,0 +1,9 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/aggregated_value.rs
+---
+SELECT
+  (
+    CASE
+      WHEN ("ah"."attribute_kind" NOT IN (2, 8, 4)) THEN "ah"."value_date_time"
+    END
+  )

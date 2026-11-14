@@ -1,0 +1,27 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/projection.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        "ca"."value_string" > $2
+        AND nullif("ca"."value_kind" = (9), FALSE)
+      )
+      AND "ca"."entity_key" = "entities"."entity_key"
+  )
+1: Int 11
+2: String '09:30:00.500000Z'

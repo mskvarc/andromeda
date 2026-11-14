@@ -1,0 +1,17 @@
+---
+source: crates/andromeda-postgresql-query/src/dictionary/names_in_key_order.rs
+---
+SELECT
+  ARRAY (
+    SELECT
+      "entity_type_names"."name"
+    FROM
+      "entity_type_names"
+    WHERE
+      "entity_type_names"."entity_type_name_key" = ANY("entity_type_name_keys")
+    ORDER BY
+      array_position(
+        "entity_type_name_keys",
+        "entity_type_names"."entity_type_name_key"
+      ) ASC
+  )

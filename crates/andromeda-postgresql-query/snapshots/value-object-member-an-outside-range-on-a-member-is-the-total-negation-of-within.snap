@@ -1,0 +1,39 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/value_object_member.rs
+---
+SELECT
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      (
+        SELECT
+          jsonb_path_query_array(
+            "member"."member",
+            'lax $[*] ? (exists(@."@value"))'
+          ) AS "member"
+        FROM
+          jsonb_path_query(
+            "ca"."value_object",
+            'strict $."floor"',
+            '{}',
+            TRUE
+          ) AS "member"
+      ) AS "member"
+    WHERE
+      jsonb_array_length("member"."member") >= (1)
+      AND (
+        NOT COALESCE(
+          jsonb_array_length("member"."member") = (1)
+          AND (
+            (
+              CASE
+                WHEN (
+                  jsonb_typeof(("member"."member" -> (0)) -> ('@value')) = ('number')
+                ) THEN (
+                  (("member"."member" -> (0)) -> ('@value')) #>> ('{}'))::numeric WHEN (jsonb_typeof(("member"."member" -> (0)) -> ('@value')) = ('string') AND (("member"."member" -> (0)) ->> ('@type')) IN ('http://www.w3.org/2001/XMLSchema#decimal', 'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', 'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', 'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', 'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', 'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') AND ((("member"."member" -> (0)) -> ('@value')) #>> ('{}')) <> ('NaN') AND pg_input_is_valid((("member"."member" -> (0)) -> ('@value')) #>> ('{}'), 'numeric')) THEN ((("member"."member" -> (0)) -> ('@value')) #>> ('{}'))::numeric END) >= $1 AND (CASE WHEN (jsonb_typeof(("member"."member" -> (0)) -> ('@value')) = ('number')) THEN ((("member"."member" -> (0)) -> ('@value')) #>> ('{}'))::numeric WHEN (jsonb_typeof(("member"."member" -> (0)) -> ('@value')) = ('string') AND (("member"."member" -> (0)) ->> ('@type')) IN ('http://www.w3.org/2001/XMLSchema#decimal', 'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', 'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', 'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', 'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', 'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') AND ((("member"."member" -> (0)) -> ('@value')) #>> ('{}')) <> ('NaN') AND pg_input_is_valid((("member"."member" -> (0)) -> ('@value')) #>> ('{}'), 'numeric')) THEN ((("member"."member" -> (0)) -> ('@value')) #>> ('{}'))::numeric END) <= $2), FALSE))) OR ("ca"."attribute_kind" = (6) AND EXISTS(SELECT 1 FROM (SELECT "member"."member" AS "member" FROM jsonb_path_query("ca"."value_object", 'strict $."floor"', '{}', TRUE) AS "member") AS "member" WHERE (TRUE) AND (NOT COALESCE((NOT jsonb_typeof("member"."member") = ('array')) AND ((CASE WHEN (jsonb_typeof("member"."member") = ('number')) THEN ("member"."member" #>> ('{}'))::numeric WHEN (jsonb_typeof("member"."member") = ('string') AND (NULL::text) IN ('http://www.w3.org/2001/XMLSchema#decimal', 'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', 'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', 'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', 'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', 'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') AND ("member"."member" #>> ('{}')) <> ('NaN') AND pg_input_is_valid("member"."member" #>> ('{}'), 'numeric')) THEN ("member"."member" #>> ('{}'))::numeric END) >= $3 AND (CASE WHEN (jsonb_typeof("member"."member") = ('number')) THEN ("member"."member" #>> ('{}'))::numeric WHEN (jsonb_typeof("member"."member") = ('string') AND (NULL::text) IN ('http://www.w3.org/2001/XMLSchema#decimal', 'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', 'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', 'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', 'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', 'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') AND ("member"."member" #>> ('{}')) <> ('NaN') AND pg_input_is_valid("member"."member" #>> ('{}'), 'numeric')) THEN ("member"."member" #>> ('{}'))::numeric END) <= $4), FALSE))))
+1: BigDecimal 1
+2: BigDecimal 5
+3: BigDecimal 1
+4: BigDecimal 5

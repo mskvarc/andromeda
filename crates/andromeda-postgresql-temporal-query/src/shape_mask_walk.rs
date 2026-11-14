@@ -98,45 +98,35 @@ fn next_mask(branch: &HistoryBranch, attribute_key: SimpleExpr, after: Option<Dy
 mod tests {
     use crate::shape_mask_walk::{HeldMasks, held_masks};
     use andromeda_postgresql_query::history_source::HistoryBranch;
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Asterisk, Expr, IntoIden, PostgresQueryBuilder, Query, SelectStatement};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Asterisk, Expr, IntoIden, Query, SelectStatement};
 
-    fn rendered(branch: &HistoryBranch, excluded: Option<&SelectStatement>) -> String {
+    fn rendered(branch: &HistoryBranch, excluded: Option<&SelectStatement>) -> SelectStatement {
         Query::select()
             .column(Asterisk)
             .from(HeldMasks)
             .with_cte(held_masks(branch, &[7], excluded))
-            .to_string(PostgresQueryBuilder)
+            .to_owned()
     }
 
     /// Each step is one descent of the attribute's index range, ordered by
     /// the index key, rather than a read of every stream of the attribute.
     #[test]
     fn the_catalogue_is_walked_one_distinct_mask_at_a_time() {
-        let sql = rendered(&HistoryBranch::live_recorded(), None);
-        assert_eq!(
-            sql,
-            concat!(
-                r#"WITH RECURSIVE "held" ("attribute_name_key", "shape_mask") AS (SELECT "step"."attribute_name_key", "step"."shape_mask" FROM "attribute_names" AS "an""#,
-                r#" JOIN LATERAL (SELECT "ms"."attribute_name_key", "ms"."shape_mask" FROM "temporal_attribute_streams" AS "ms" WHERE "ms"."attribute_name_key" = "an"."attribute_name_key" ORDER BY "ms"."shape_mask" ASC LIMIT 1) AS "step" ON TRUE"#,
-                r#" WHERE "an"."attribute_name_key" = 7"#,
-                r#" UNION ALL (SELECT "step"."attribute_name_key", "step"."shape_mask" FROM "held""#,
-                r#" JOIN LATERAL (SELECT "ms"."attribute_name_key", "ms"."shape_mask" FROM "temporal_attribute_streams" AS "ms" WHERE "ms"."attribute_name_key" = "held"."attribute_name_key" AND "ms"."shape_mask" > "held"."shape_mask" ORDER BY "ms"."shape_mask" ASC LIMIT 1) AS "step" ON TRUE))"#,
-                r#" SELECT * FROM "held""#
-            )
-        );
+        let statement = rendered(&HistoryBranch::live_recorded(), None);
+        assert_statement_snapshot!("shape-mask-walk-the-catalogue-is-walked-one-distinct-mask-at-a-time", statement);
     }
 
     #[test]
     fn a_snapshot_branch_walks_its_own_catalogue() {
-        let sql = rendered(&HistoryBranch::recorded_in(Alias::new("snap_1").into_iden()), None);
-        assert_eq!(sql.matches(r#"FROM "snap_1"."temporal_attribute_streams" AS "ms""#).count(), 2, "{sql}");
+        let statement = rendered(&HistoryBranch::recorded_in(Alias::new("snap_1").into_iden()), None);
+        assert_statement_snapshot!("shape-mask-walk-a-snapshot-branch-walks-its-own-catalogue", statement);
     }
 
     #[test]
     fn the_excluded_streams_are_left_out_of_every_step() {
         let excluded = Query::select().expr(Expr::val(4)).to_owned();
-        let sql = rendered(&HistoryBranch::live_recorded(), Some(&excluded));
-        assert_eq!(sql.matches(r#""ms"."stream_key" NOT IN (SELECT 4)"#).count(), 2, "{sql}");
+        let statement = rendered(&HistoryBranch::live_recorded(), Some(&excluded));
+        assert_statement_snapshot!("shape-mask-walk-the-excluded-streams-are-left-out-of-every-step", statement);
     }
 }

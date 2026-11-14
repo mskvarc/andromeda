@@ -33,10 +33,11 @@ impl OwnValueArms {
 #[cfg(test)]
 mod tests {
     use crate::q_predicate::own_value_arms::OwnValueArms;
-    use sea_query::{Alias, Condition, Expr, ExprTrait, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Condition, Expr, ExprTrait, Query, SelectStatement};
 
-    fn render(arms: OwnValueArms) -> String {
-        Query::select().cond_where(arms.either()).to_owned().to_string(PostgresQueryBuilder)
+    fn render(arms: OwnValueArms) -> SelectStatement {
+        Query::select().cond_where(arms.either()).to_owned()
     }
 
     #[test]
@@ -45,7 +46,7 @@ mod tests {
             typed: Condition::all().add(Expr::col(Alias::new("t")).gt(1)),
             language: Some(Expr::col(Alias::new("l")).gt(2)),
         };
-        assert!(render(arms).ends_with(r#"WHERE "t" > 1 OR "l" > 2"#));
+        assert_statement_snapshot!("own-value-arms-both-readings-are-disjoined", render(arms));
     }
 
     #[test]
@@ -54,6 +55,6 @@ mod tests {
             typed: Condition::all().add(Expr::col(Alias::new("t")).gt(1)),
             language: None,
         };
-        assert!(render(arms).ends_with(r#"WHERE "t" > 1"#));
+        assert_statement_snapshot!("own-value-arms-an-operand-no-string-compares-with-reads-the-typed-column-alone", render(arms));
     }
 }

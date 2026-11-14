@@ -85,8 +85,8 @@ pub fn select_head(select: &mut SelectStatement, entities: impl IntoIden, search
 mod tests {
     use crate::entity_head::select_head;
     use andromeda_postgresql_schema::current::{E, EntitySearch};
-    use pretty_assertions::assert_eq;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::Query;
 
     /// The Entity's instants are read under names a row's own instants
     /// cannot shadow.
@@ -94,13 +94,6 @@ mod tests {
     fn the_head_reads_the_entity_members_under_names_of_their_own() {
         let mut select = Query::select();
         select_head(&mut select, E, EntitySearch::Table);
-        assert_eq!(
-            select.to_string(PostgresQueryBuilder),
-            concat!(
-                r#"SELECT "e"."entity_key" AS "entity_key", "e"."id" AS "id", "e"."created_at" AS "entity_created_at", "#,
-                r#""e"."modified_at" AS "entity_modified_at", "e"."write_count" AS "entity_write_count", "e"."expires_at" AS "entity_expires_at", "#,
-                r#""entity_search"."entity_type_name_keys" AS "entity_type_name_keys", "entity_search"."verbatim_scope_paths" AS "verbatim_scope_paths""#
-            )
-        );
+        assert_statement_snapshot!("entity-head-the-head-reads-the-entity-members-under-names-of-their-own", select);
     }
 }

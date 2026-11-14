@@ -1,0 +1,17 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/attribute_rows.rs
+---
+SELECT
+  *
+FROM
+  (
+    SELECT
+      "rs"."entity_key" AS "entity_key",
+      "rs"."attribute_name_key" AS "attribute_name_key",
+      "rs"."dataset_key" AS "dataset_key",
+      "rs"."stream_key" AS "stream_key"
+    FROM
+      "snap_1"."temporal_attribute_streams" AS "rs"
+    WHERE
+      "rs"."entity_key" = "e"."entity_key"
+  ) AS "qs"

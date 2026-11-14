@@ -192,8 +192,9 @@ mod tests {
         attribute_name_key::AttributeNameKey,
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     };
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, PostgresQueryBuilder, Query, SelectStatement};
+    use sea_query::{Alias, Query, SelectStatement};
 
     fn from(table: &str) -> SelectStatement {
         Query::select().column(Alias::new("x")).from(Alias::new(table)).take()
@@ -206,25 +207,20 @@ mod tests {
         }
     }
 
-    fn table_of(count: &SelectStatement) -> String {
-        count.to_string(PostgresQueryBuilder)
-    }
-
     #[test]
     fn a_page_its_short_walk_answered_is_counted_by_walking() {
-        assert_eq!(
-            table_of(&gated(&[GatedStep::ShortWalk]).for_step(Some(GatedStep::ShortWalk))),
-            r#"SELECT "x" FROM "walked""#
+        assert_statement_snapshot!(
+            "entity-total-a-page-its-short-walk-answered-is-counted-by-walking",
+            gated(&[GatedStep::ShortWalk]).for_step(Some(GatedStep::ShortWalk))
         );
     }
 
     #[test]
     fn a_page_another_step_answered_or_an_empty_page_reads_the_candidates() {
-        for step in [Some(GatedStep::Candidates), Some(GatedStep::FullWalk), None] {
-            assert_eq!(
-                table_of(&gated(&[GatedStep::ShortWalk]).for_step(step)),
-                r#"SELECT "x" FROM "counted""#,
-                "{step:?}"
+        for (index, step) in [Some(GatedStep::Candidates), Some(GatedStep::FullWalk), None].into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!("entity-total-a-page-another-step-answered-or-an-empty-page-reads-the-candidates-{}", index + 1),
+                gated(&[GatedStep::ShortWalk]).for_step(step)
             );
         }
     }
@@ -232,8 +228,14 @@ mod tests {
     #[test]
     fn a_page_its_full_walk_answered_is_walked_when_the_walk_follows_it() {
         let after = &[GatedStep::ShortWalk, GatedStep::FullWalk];
-        assert_eq!(table_of(&gated(after).for_step(Some(GatedStep::FullWalk))), r#"SELECT "x" FROM "walked""#);
-        assert_eq!(table_of(&gated(after).for_step(Some(GatedStep::Candidates))), r#"SELECT "x" FROM "counted""#);
+        assert_statement_snapshot!(
+            "entity-total-a-page-its-full-walk-answered-is-walked-when-the-walk-follows-it-1",
+            gated(after).for_step(Some(GatedStep::FullWalk))
+        );
+        assert_statement_snapshot!(
+            "entity-total-a-page-its-full-walk-answered-is-walked-when-the-walk-follows-it-2",
+            gated(after).for_step(Some(GatedStep::Candidates))
+        );
     }
 
     fn after_of(q: &str, attribute: &str) -> &'static [GatedStep] {
@@ -272,7 +274,10 @@ mod tests {
             count: from("counted"),
             walked: None,
         };
-        assert_eq!(table_of(&count.for_step(Some(GatedStep::ShortWalk))), r#"SELECT "x" FROM "counted""#);
+        assert_statement_snapshot!(
+            "entity-total-a-count-without-a-walk-runs-whatever-the-step",
+            count.for_step(Some(GatedStep::ShortWalk))
+        );
     }
 
     #[test]

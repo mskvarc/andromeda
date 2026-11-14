@@ -1,0 +1,9 @@
+---
+source: crates/andromeda-postgresql-query/src/one_time_gate.rs
+---
+SELECT
+  "candidates"
+FROM
+  "candidates"
+LIMIT
+  1001

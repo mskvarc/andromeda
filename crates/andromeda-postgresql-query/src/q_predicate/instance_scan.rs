@@ -101,7 +101,8 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
-    use sea_query::{Alias, Condition, Expr, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Condition, Expr, Query, SelectStatement};
 
     fn history() -> HistoryWindow {
         HistoryWindow::builder()
@@ -113,20 +114,15 @@ mod tests {
             .build()
     }
 
-    fn render(condition: Condition) -> String {
-        Query::select()
-            .expr(Expr::val(1))
-            .cond_where(condition)
-            .to_owned()
-            .to_string(PostgresQueryBuilder)
+    fn render(condition: Condition) -> SelectStatement {
+        Query::select().expr(Expr::val(1)).cond_where(condition).to_owned()
     }
 
     #[test]
     fn presence_over_history_is_an_in_window_instance_of_the_attribute() {
         let window = history();
-        let sql = render(InstanceScan::History(&window).exists(AttributeNameKey::from(3), Condition::all()));
-        assert!(sql.contains(r#""qh"."attribute_name_key" = 3"#), "{sql}");
-        assert!(sql.contains(r#""qh"."value_kind" <> "#), "{sql}");
+        let statement = render(InstanceScan::History(&window).exists(AttributeNameKey::from(3), Condition::all()));
+        assert_statement_snapshot!("instance-scan-presence-over-history-is-an-in-window-instance-of-the-attribute", statement);
     }
 
     /// Tests that share a probe keep their own attribute keys inside it, over
@@ -147,14 +143,11 @@ mod tests {
         };
         let rows = EntityRowRefs::unaliased(None);
         let window = history();
-        for (scan, key) in [
-            (InstanceScan::Current(&rows), r#""ca"."attribute_name_key""#),
-            (InstanceScan::History(&window), r#""qh"."attribute_name_key""#),
-        ] {
-            let sql = render(scan.exists_any(tests()).expect("two tests make a probe"));
-            assert_eq!(sql.matches("SELECT 1 WHERE EXISTS").count(), 1, "{sql}");
-            assert!(!sql.contains(") OR EXISTS(SELECT 1 FROM (SELECT"), "{sql}");
-            assert!(sql.contains(&format!("{key} = 3")) && sql.contains(&format!("{key} = 4")), "{sql}");
+        for (index, scan) in [InstanceScan::Current(&rows), InstanceScan::History(&window)].into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!("instance-scan-several-tests-share-one-probe-over-either-scan-{}", index + 1),
+                render(scan.exists_any(tests()).expect("two tests make a probe"))
+            );
         }
     }
 

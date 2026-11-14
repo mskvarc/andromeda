@@ -361,13 +361,14 @@ pub(crate) fn typed_entity_rows(schema: Option<&DynIden>) -> SelectStatement {
 #[cfg(test)]
 mod tests {
     use crate::history_source::{HistoryOf, pending::attribute_rows};
-    use sea_query::PostgresQueryBuilder;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{PostgresQueryBuilder, SelectStatement};
 
     /// The view the entries are read from.
     const MIGRATION: &str = include_str!("../../../../migrations/tenant/0024_temporal_append_intents.sql");
 
-    fn rendered() -> String {
-        attribute_rows(None, &HistoryOf::EveryEntity).to_string(PostgresQueryBuilder)
+    fn statement() -> SelectStatement {
+        attribute_rows(None, &HistoryOf::EveryEntity)
     }
 
     /// Clause 5.6.16 deletes a Temporal Evolution and records no later end of
@@ -376,12 +377,7 @@ mod tests {
     /// evolution or a typed intent no later than its own.
     #[test]
     fn a_pending_tombstone_of_an_entity_without_evolution_is_not_visible() {
-        let sql = rendered();
-        assert!(
-            sql.contains(r#"EXISTS(SELECT 1 FROM "entities" AS "pv" WHERE "pv"."id" = "pe"."entity_id" AND "pv"."evolution_created_at" IS NOT NULL) OR EXISTS(SELECT 1 FROM "temporal_append_intents" AS "pt""#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#"("pe"."entry_kind" <> (2) OR "pt"."intent_key" <= "pe"."intent_key")"#), "{sql}");
+        assert_statement_snapshot!("pending-a-pending-tombstone-of-an-entity-without-evolution-is-not-visible", statement());
     }
 
     /// Clause 4.5.1 makes a type part of every Entity: an observation of an
@@ -389,12 +385,7 @@ mod tests {
     /// refused by the application and stays queued, so it is not visible.
     #[test]
     fn an_untyped_observation_of_an_entity_without_evolution_is_not_visible() {
-        let sql = rendered();
-        assert!(
-            sql.contains(r#"WHERE "pe"."entry_kind" IN (1, 2) AND (EXISTS(SELECT 1 FROM "entities" AS "pv""#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#"cardinality("pt"."entity_type_name_keys") > 0"#), "{sql}");
+        assert_statement_snapshot!("pending-an-untyped-observation-of-an-entity-without-evolution-is-not-visible", statement());
     }
 
     /// Every column a pending read takes from `temporal_append_entries` is one
@@ -402,7 +393,7 @@ mod tests {
     /// of the queue as it reaches history.
     #[test]
     fn every_column_a_pending_read_takes_is_one_the_view_declares() {
-        let sql = rendered();
+        let sql = statement().to_string(PostgresQueryBuilder);
         let (_, view) = MIGRATION.split_once("create view temporal_append_entries as").expect("the view");
         let (projection, _) = view.split_once("\nfrom\n").expect("its projection");
         let declared: Vec<&str> = projection
@@ -414,7 +405,7 @@ mod tests {
             .skip(1)
             .filter_map(|rest| rest.strip_prefix('"')?.split('"').next())
             .collect();
-        assert!(read.contains(&"value_datatype_key") && read.contains(&"value_language"), "{sql}");
+        assert_statement_snapshot!("pending-every-column-a-pending-read-takes-is-one-the-view-declares", statement());
         for column in read {
             assert!(declared.contains(&column), "{column} is not a column of temporal_append_entries: {projection}");
         }
@@ -425,14 +416,7 @@ mod tests {
     /// counted from 0, so ties order as they will once it is recorded.
     #[test]
     fn pending_entries_carry_their_write_identity_for_ordering() {
-        let sql = rendered();
-        for fragment in [
-            r#""pe"."recorded_at" AS "recorded_at""#,
-            r#""pe"."write_id" AS "write_id""#,
-            r#""pe"."write_ordinal" AS "write_ordinal""#,
-        ] {
-            assert!(sql.contains(fragment), "{fragment} missing: {sql}");
-        }
+        assert_statement_snapshot!("pending-pending-entries-carry-their-write-identity-for-ordering", statement());
         assert!(
             MIGRATION.contains("(i.base_ordinal + e.ordinality - 1)::integer as write_ordinal"),
             "{MIGRATION}"
@@ -448,11 +432,6 @@ mod tests {
     /// entry without one whose write identity is recorded lands on nothing.
     #[test]
     fn a_queued_entry_is_visible_only_as_the_row_its_instance_ends_up_as() {
-        let sql = rendered();
-        assert!(sql.contains(r#""pr"."intent_key" > "pe"."intent_key""#), "{sql}");
-        assert!(
-            sql.contains(r#"FROM "attribute_history" AS "pd" WHERE "pd"."recorded_at" = "pe"."recorded_at""#),
-            "{sql}"
-        );
+        assert_statement_snapshot!("pending-a-queued-entry-is-visible-only-as-the-row-its-instance-ends-up-as", statement());
     }
 }

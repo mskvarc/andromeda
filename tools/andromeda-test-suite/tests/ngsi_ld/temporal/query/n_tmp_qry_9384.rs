@@ -59,7 +59,10 @@ async fn n_tmp_qry_9384_a_temporal_q_and_a_geo_query_narrow_the_represented_inst
         .await?;
     expect_that!(by_speed.items(), len(eq(1)));
     expect_that!(by_speed.items(), nth(0, has_id(&vehicle_id)));
-    expect_that!(by_speed.items(), nth(0, has_evolution("speed", all!(len(eq(1)), nth(0, any_attribute().value(60))))));
+    expect_that!(
+        by_speed.items(),
+        nth(0, has_evolution("speed", all!(len(eq(1)), nth(0, any_attribute().value(60)))))
+    );
     expect_that!(by_speed.items(), nth(0, has_evolution("brandName", len(eq(2)))));
     expect_that!(by_speed.items(), nth(0, has_evolution("location", len(eq(2)))));
     let by_location = broker

@@ -100,6 +100,8 @@
 //! Value of such instances").
 
 pub mod attribute_names;
+#[cfg(test)]
+mod corpus_statement_tests;
 pub mod declared_member;
 pub mod equality_term;
 pub mod extended_filter_pattern;

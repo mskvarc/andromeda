@@ -1,0 +1,11 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/instance_replacement.rs
+---
+SELECT DISTINCT
+  "pr"."entity_id" AS "entity_id",
+  "pr"."attribute_name_key" AS "attribute_name_key"
+FROM
+  "temporal_append_entries" AS "pr"
+WHERE
+  "pr"."verbatim_instance_id" IS NOT NULL
+  AND "pr"."entry_kind" IN (1, 2)

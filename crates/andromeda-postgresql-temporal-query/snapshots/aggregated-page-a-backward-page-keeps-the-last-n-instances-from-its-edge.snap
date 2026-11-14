@@ -1,0 +1,657 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/aggregated_page.rs
+---
+SELECT
+  "an"."name" AS "attribute_name",
+  "st"."dataset_key" AS "dataset_key",
+  "page".*,
+  $1::timestamptz AS "period_origin",
+  "stream_edge"."stream_continues" AS "stream_continues"
+FROM
+  (
+    SELECT
+      "re"."id" AS "entity_id",
+      "rs"."attribute_name_key" AS "attribute_name_key",
+      "rs"."dataset_key" AS "dataset_key",
+      "rs"."stream_key" AS "stream_key"
+    FROM
+      "temporal_attribute_streams" AS "rs"
+      JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+    WHERE
+      "re"."id" = $2
+  ) AS "st"
+  JOIN "attribute_names" AS "an" ON "an"."attribute_name_key" = "st"."attribute_name_key"
+  JOIN LATERAL (
+    SELECT
+      "edge_bound"."cut" AS "cut",
+      "edge_bound"."bound",
+      "edge_bound"."cut" IS NOT NULL
+      AND (
+        NOT EXISTS (
+          SELECT
+            "found"."instant"
+          FROM
+            (
+              SELECT
+                "part".*
+              FROM
+                (
+                  SELECT
+                    "ah"."observed_at" AS "instant"
+                  FROM
+                    (
+                      SELECT
+                        "st"."entity_id" AS "entity_id",
+                        "st"."attribute_name_key" AS "attribute_name_key",
+                        "st"."dataset_key" AS "dataset_key",
+                        "rh"."recorded_at",
+                        "rh"."write_id",
+                        "rh"."write_ordinal",
+                        "rh"."attribute_kind" AS "attribute_kind",
+                        "rh"."value_kind" AS "value_kind",
+                        "rh"."observed_at" AS "observed_at",
+                        "rh"."created_at" AS "created_at",
+                        "rh"."modified_at" AS "modified_at",
+                        "rh"."deleted_at" AS "deleted_at",
+                        "rh"."value_date_time" AS "value_date_time",
+                        "rh"."expires_at" AS "expires_at",
+                        "rh"."generated_instance_id" AS "generated_instance_id",
+                        "rh"."value_type_key" AS "value_type_key",
+                        "rh"."value_datatype_key" AS "value_datatype_key",
+                        "rh"."unit_code_id" AS "unit_code_id",
+                        "rh"."value_boolean" AS "value_boolean",
+                        "rh"."verbatim_instance_id" AS "verbatim_instance_id",
+                        "rh"."value_number" AS "value_number",
+                        "rh"."value_string" AS "value_string",
+                        "rh"."value_language" AS "value_language",
+                        "rh"."value_geometry" AS "value_geometry",
+                        "rh"."value_geometry_valid" AS "value_geometry_valid",
+                        "rh"."value_geometry_reach" AS "value_geometry_reach",
+                        "rh"."value_geometry_members" AS "value_geometry_members",
+                        "rh"."value_object" AS "value_object",
+                        "rh"."value_uri" AS "value_uri",
+                        "rh"."object_type_keys" AS "object_type_keys",
+                        "rh"."sub_attributes" AS "sub_attributes"
+                      FROM
+                        "attribute_history" AS "rh"
+                      WHERE
+                        "rh"."stream_key" = "st"."stream_key"
+                    ) AS "ah"
+                  WHERE
+                    "ah"."observed_at" IS NOT NULL
+                    AND "ah"."observed_at" >= "edge_bound"."bound"
+                  ORDER BY
+                    "ah"."observed_at" DESC
+                  LIMIT
+                    5000
+                ) AS "part"
+            ) AS "found"
+          ORDER BY
+            "found"."instant" DESC
+          LIMIT
+            1 OFFSET 4999
+        )
+      ) AS "stream_continues"
+    FROM
+      (
+        SELECT
+          "edge_cut"."cut",
+          COALESCE("edge_cut"."cut", '-infinity'::timestamptz) AS "bound"
+        FROM
+          (
+            WITH
+            RECURSIVE "probes" ("probe", "period_start", "period_end") AS (
+              SELECT
+                1 AS "probe",
+                "found_period"."bucket_start" AS "period_start",
+                "found_period"."bucket_start" + ($3:: interval) AS "period_end"
+              FROM
+                (
+                  SELECT
+                    "found"."instant"
+                  FROM
+                    (
+                      SELECT
+                        "part".*
+                      FROM
+                        (
+                          SELECT
+                            "ah"."observed_at" AS "instant"
+                          FROM
+                            (
+                              SELECT
+                                "st"."entity_id" AS "entity_id",
+                                "st"."attribute_name_key" AS "attribute_name_key",
+                                "st"."dataset_key" AS "dataset_key",
+                                "rh"."recorded_at",
+                                "rh"."write_id",
+                                "rh"."write_ordinal",
+                                "rh"."attribute_kind" AS "attribute_kind",
+                                "rh"."value_kind" AS "value_kind",
+                                "rh"."observed_at" AS "observed_at",
+                                "rh"."created_at" AS "created_at",
+                                "rh"."modified_at" AS "modified_at",
+                                "rh"."deleted_at" AS "deleted_at",
+                                "rh"."value_date_time" AS "value_date_time",
+                                "rh"."expires_at" AS "expires_at",
+                                "rh"."generated_instance_id" AS "generated_instance_id",
+                                "rh"."value_type_key" AS "value_type_key",
+                                "rh"."value_datatype_key" AS "value_datatype_key",
+                                "rh"."unit_code_id" AS "unit_code_id",
+                                "rh"."value_boolean" AS "value_boolean",
+                                "rh"."verbatim_instance_id" AS "verbatim_instance_id",
+                                "rh"."value_number" AS "value_number",
+                                "rh"."value_string" AS "value_string",
+                                "rh"."value_language" AS "value_language",
+                                "rh"."value_geometry" AS "value_geometry",
+                                "rh"."value_geometry_valid" AS "value_geometry_valid",
+                                "rh"."value_geometry_reach" AS "value_geometry_reach",
+                                "rh"."value_geometry_members" AS "value_geometry_members",
+                                "rh"."value_object" AS "value_object",
+                                "rh"."value_uri" AS "value_uri",
+                                "rh"."object_type_keys" AS "object_type_keys",
+                                "rh"."sub_attributes" AS "sub_attributes"
+                              FROM
+                                "attribute_history" AS "rh"
+                              WHERE
+                                "rh"."stream_key" = "st"."stream_key"
+                            ) AS "ah"
+                          WHERE
+                            "ah"."observed_at" IS NOT NULL
+                          ORDER BY
+                            "ah"."observed_at" DESC
+                          LIMIT
+                            1
+                        ) AS "part"
+                    ) AS "found"
+                  ORDER BY
+                    "found"."instant" DESC
+                  LIMIT
+                    1 OFFSET 0
+                ) AS "found"
+                JOIN LATERAL (
+                  SELECT
+                    time_bucket($4:: interval, "found"."instant", $5::timestamptz) AS "bucket_start"
+                ) AS "found_period" ON TRUE
+              UNION ALL
+              (
+                SELECT
+                  "probes"."probe" + (1) AS "probe",
+                  "found_period"."bucket_start" AS "period_start",
+                  "found_period"."bucket_start" + ($6:: interval) AS "period_end"
+                FROM
+                  "probes"
+                  JOIN LATERAL (
+                    SELECT
+                      COALESCE(
+                        (
+                          SELECT
+                            "found"."instant"
+                          FROM
+                            (
+                              SELECT
+                                "part".*
+                              FROM
+                                (
+                                  SELECT
+                                    "ah"."observed_at" AS "instant"
+                                  FROM
+                                    (
+                                      SELECT
+                                        "st"."entity_id" AS "entity_id",
+                                        "st"."attribute_name_key" AS "attribute_name_key",
+                                        "st"."dataset_key" AS "dataset_key",
+                                        "rh"."recorded_at",
+                                        "rh"."write_id",
+                                        "rh"."write_ordinal",
+                                        "rh"."attribute_kind" AS "attribute_kind",
+                                        "rh"."value_kind" AS "value_kind",
+                                        "rh"."observed_at" AS "observed_at",
+                                        "rh"."created_at" AS "created_at",
+                                        "rh"."modified_at" AS "modified_at",
+                                        "rh"."deleted_at" AS "deleted_at",
+                                        "rh"."value_date_time" AS "value_date_time",
+                                        "rh"."expires_at" AS "expires_at",
+                                        "rh"."generated_instance_id" AS "generated_instance_id",
+                                        "rh"."value_type_key" AS "value_type_key",
+                                        "rh"."value_datatype_key" AS "value_datatype_key",
+                                        "rh"."unit_code_id" AS "unit_code_id",
+                                        "rh"."value_boolean" AS "value_boolean",
+                                        "rh"."verbatim_instance_id" AS "verbatim_instance_id",
+                                        "rh"."value_number" AS "value_number",
+                                        "rh"."value_string" AS "value_string",
+                                        "rh"."value_language" AS "value_language",
+                                        "rh"."value_geometry" AS "value_geometry",
+                                        "rh"."value_geometry_valid" AS "value_geometry_valid",
+                                        "rh"."value_geometry_reach" AS "value_geometry_reach",
+                                        "rh"."value_geometry_members" AS "value_geometry_members",
+                                        "rh"."value_object" AS "value_object",
+                                        "rh"."value_uri" AS "value_uri",
+                                        "rh"."object_type_keys" AS "object_type_keys",
+                                        "rh"."sub_attributes" AS "sub_attributes"
+                                      FROM
+                                        "attribute_history" AS "rh"
+                                      WHERE
+                                        "rh"."stream_key" = "st"."stream_key"
+                                    ) AS "ah"
+                                  WHERE
+                                    "ah"."observed_at" IS NOT NULL
+                                    AND (
+                                      "ah"."observed_at" < "probes"."period_start"
+                                      AND "ah"."observed_at" >= "probes"."period_start" - ($7:: interval)
+                                    )
+                                  ORDER BY
+                                    "ah"."observed_at" DESC
+                                  LIMIT
+                                    1
+                                ) AS "part"
+                            ) AS "found"
+                          ORDER BY
+                            "found"."instant" DESC
+                          LIMIT
+                            1 OFFSET 0
+                        ),
+                        (
+                          SELECT
+                            "found"."instant"
+                          FROM
+                            (
+                              SELECT
+                                "part".*
+                              FROM
+                                (
+                                  SELECT
+                                    "ah"."observed_at" AS "instant"
+                                  FROM
+                                    (
+                                      SELECT
+                                        "st"."entity_id" AS "entity_id",
+                                        "st"."attribute_name_key" AS "attribute_name_key",
+                                        "st"."dataset_key" AS "dataset_key",
+                                        "rh"."recorded_at",
+                                        "rh"."write_id",
+                                        "rh"."write_ordinal",
+                                        "rh"."attribute_kind" AS "attribute_kind",
+                                        "rh"."value_kind" AS "value_kind",
+                                        "rh"."observed_at" AS "observed_at",
+                                        "rh"."created_at" AS "created_at",
+                                        "rh"."modified_at" AS "modified_at",
+                                        "rh"."deleted_at" AS "deleted_at",
+                                        "rh"."value_date_time" AS "value_date_time",
+                                        "rh"."expires_at" AS "expires_at",
+                                        "rh"."generated_instance_id" AS "generated_instance_id",
+                                        "rh"."value_type_key" AS "value_type_key",
+                                        "rh"."value_datatype_key" AS "value_datatype_key",
+                                        "rh"."unit_code_id" AS "unit_code_id",
+                                        "rh"."value_boolean" AS "value_boolean",
+                                        "rh"."verbatim_instance_id" AS "verbatim_instance_id",
+                                        "rh"."value_number" AS "value_number",
+                                        "rh"."value_string" AS "value_string",
+                                        "rh"."value_language" AS "value_language",
+                                        "rh"."value_geometry" AS "value_geometry",
+                                        "rh"."value_geometry_valid" AS "value_geometry_valid",
+                                        "rh"."value_geometry_reach" AS "value_geometry_reach",
+                                        "rh"."value_geometry_members" AS "value_geometry_members",
+                                        "rh"."value_object" AS "value_object",
+                                        "rh"."value_uri" AS "value_uri",
+                                        "rh"."object_type_keys" AS "object_type_keys",
+                                        "rh"."sub_attributes" AS "sub_attributes"
+                                      FROM
+                                        "attribute_history" AS "rh"
+                                      WHERE
+                                        "rh"."stream_key" = "st"."stream_key"
+                                    ) AS "ah"
+                                  WHERE
+                                    "ah"."observed_at" IS NOT NULL
+                                    AND "ah"."observed_at" < "probes"."period_start" - ($8:: interval)
+                                  ORDER BY
+                                    "ah"."observed_at" DESC
+                                  LIMIT
+                                    1
+                                ) AS "part"
+                            ) AS "found"
+                          ORDER BY
+                            "found"."instant" DESC
+                          LIMIT
+                            1 OFFSET 0
+                        )
+                      ) AS "instant" OFFSET 0
+                  ) AS "found" ON TRUE
+                  JOIN LATERAL (
+                    SELECT
+                      time_bucket(
+                        $9:: interval,
+                        "found"."instant",
+                        $10::timestamptz
+                      ) AS "bucket_start"
+                  ) AS "found_period" ON TRUE
+                WHERE
+                  "probes"."probe" <= (1000)
+                  AND "found"."instant" IS NOT NULL
+              )
+            )
+            SELECT
+              GREATEST(
+                (
+                  SELECT
+                    "probes"."period_end"
+                  FROM
+                    "probes"
+                  WHERE
+                    "probes"."probe" = (1001)
+                ),
+                (
+                  SELECT
+                    LEAST(
+                      "found_period"."bucket_start" + ($11:: interval),
+                      (
+                        SELECT
+                          "probes"."period_start"
+                        FROM
+                          "probes"
+                        WHERE
+                          "probes"."probe" = (1)
+                      )
+                    )
+                  FROM
+                    (
+                      SELECT
+                        COALESCE(
+                          (
+                            SELECT
+                              "probes"."period_end"
+                            FROM
+                              "probes"
+                            WHERE
+                              "probes"."probe" = (1001)
+                          ),
+                          '-infinity'::timestamptz
+                        ) AS "bound" OFFSET 0
+                    ) AS "budget_bound"
+                    JOIN LATERAL (
+                      SELECT
+                        "found"."instant"
+                      FROM
+                        (
+                          SELECT
+                            "part".*
+                          FROM
+                            (
+                              SELECT
+                                "ah"."observed_at" AS "instant"
+                              FROM
+                                (
+                                  SELECT
+                                    "st"."entity_id" AS "entity_id",
+                                    "st"."attribute_name_key" AS "attribute_name_key",
+                                    "st"."dataset_key" AS "dataset_key",
+                                    "rh"."recorded_at",
+                                    "rh"."write_id",
+                                    "rh"."write_ordinal",
+                                    "rh"."attribute_kind" AS "attribute_kind",
+                                    "rh"."value_kind" AS "value_kind",
+                                    "rh"."observed_at" AS "observed_at",
+                                    "rh"."created_at" AS "created_at",
+                                    "rh"."modified_at" AS "modified_at",
+                                    "rh"."deleted_at" AS "deleted_at",
+                                    "rh"."value_date_time" AS "value_date_time",
+                                    "rh"."expires_at" AS "expires_at",
+                                    "rh"."generated_instance_id" AS "generated_instance_id",
+                                    "rh"."value_type_key" AS "value_type_key",
+                                    "rh"."value_datatype_key" AS "value_datatype_key",
+                                    "rh"."unit_code_id" AS "unit_code_id",
+                                    "rh"."value_boolean" AS "value_boolean",
+                                    "rh"."verbatim_instance_id" AS "verbatim_instance_id",
+                                    "rh"."value_number" AS "value_number",
+                                    "rh"."value_string" AS "value_string",
+                                    "rh"."value_language" AS "value_language",
+                                    "rh"."value_geometry" AS "value_geometry",
+                                    "rh"."value_geometry_valid" AS "value_geometry_valid",
+                                    "rh"."value_geometry_reach" AS "value_geometry_reach",
+                                    "rh"."value_geometry_members" AS "value_geometry_members",
+                                    "rh"."value_object" AS "value_object",
+                                    "rh"."value_uri" AS "value_uri",
+                                    "rh"."object_type_keys" AS "object_type_keys",
+                                    "rh"."sub_attributes" AS "sub_attributes"
+                                  FROM
+                                    "attribute_history" AS "rh"
+                                  WHERE
+                                    "rh"."stream_key" = "st"."stream_key"
+                                ) AS "ah"
+                              WHERE
+                                "ah"."observed_at" IS NOT NULL
+                                AND "ah"."observed_at" >= "budget_bound"."bound"
+                              ORDER BY
+                                "ah"."observed_at" DESC
+                              LIMIT
+                                1000001
+                            ) AS "part"
+                        ) AS "found"
+                      ORDER BY
+                        "found"."instant" DESC
+                      LIMIT
+                        1 OFFSET 1000000
+                    ) AS "found" ON TRUE
+                    JOIN LATERAL (
+                      SELECT
+                        time_bucket(
+                          $12:: interval,
+                          "found"."instant",
+                          $13::timestamptz
+                        ) AS "bucket_start"
+                    ) AS "found_period" ON TRUE
+                )
+              ) AS "cut"
+          ) AS "edge_cut" OFFSET 0
+      ) AS "edge_bound"
+  ) AS "stream_edge" ON TRUE
+  JOIN LATERAL (
+    SELECT
+      MIN("ah"."attribute_kind") AS "attribute_kind_lowest",
+      MAX("ah"."attribute_kind") AS "attribute_kind_highest",
+      MIN(
+        (
+          CASE
+            WHEN (
+              "ah"."value_kind" = (5)
+              AND jsonb_typeof(
+                COALESCE(
+                  (
+                    CASE
+                      WHEN (("ah"."value_object" ->> ('@type')) = ('@json')) THEN "ah"."value_object" -> ('@value')
+                    END
+                  ),
+                  "ah"."value_object"
+                )
+              ) = ('array')
+            ) THEN 6::smallint
+            WHEN ("ah"."value_kind" = (5)) THEN 5::smallint
+            WHEN ("ah"."value_kind" = (9)) THEN 9::smallint
+            WHEN ("ah"."value_kind" = (8)) THEN 8::smallint
+            WHEN ("ah"."value_kind" = (2)) THEN 2::smallint
+            WHEN ("ah"."value_kind" IN (1, 10)) THEN 1::smallint
+            WHEN ("ah"."value_kind" IN (3, 11)) THEN 3::smallint
+            WHEN ("ah"."value_kind" = (4)) THEN 4::smallint
+            WHEN ("ah"."value_kind" = (6)) THEN 7::smallint
+            WHEN ("ah"."value_kind" = (7)) THEN 10::smallint
+          END
+        )
+      ) AS "recorded_shape_lowest",
+      MAX(
+        (
+          CASE
+            WHEN (
+              "ah"."value_kind" = (5)
+              AND jsonb_typeof(
+                COALESCE(
+                  (
+                    CASE
+                      WHEN (("ah"."value_object" ->> ('@type')) = ('@json')) THEN "ah"."value_object" -> ('@value')
+                    END
+                  ),
+                  "ah"."value_object"
+                )
+              ) = ('array')
+            ) THEN 6::smallint
+            WHEN ("ah"."value_kind" = (5)) THEN 5::smallint
+            WHEN ("ah"."value_kind" = (9)) THEN 9::smallint
+            WHEN ("ah"."value_kind" = (8)) THEN 8::smallint
+            WHEN ("ah"."value_kind" = (2)) THEN 2::smallint
+            WHEN ("ah"."value_kind" IN (1, 10)) THEN 1::smallint
+            WHEN ("ah"."value_kind" IN (3, 11)) THEN 3::smallint
+            WHEN ("ah"."value_kind" = (4)) THEN 4::smallint
+            WHEN ("ah"."value_kind" = (6)) THEN 7::smallint
+            WHEN ("ah"."value_kind" = (7)) THEN 10::smallint
+          END
+        )
+      ) AS "recorded_shape_highest",
+      MIN("ah"."unit_code_id") AS "unit_code_id_lowest",
+      MAX("ah"."unit_code_id") AS "unit_code_id_highest",
+      BOOL_OR("ah"."unit_code_id" IS NULL) AS "any_unitless",
+      COUNT(*) AS "agg_total_count",
+      SUM(
+        (
+          CASE
+            WHEN ("ah"."attribute_kind" NOT IN (2, 8, 4)) THEN COALESCE(
+              (
+                CASE
+                  WHEN (
+                    "ah"."value_number" NOT IN (
+                      'NaN'::numeric,
+                      'Infinity'::numeric,
+                      '-Infinity'::numeric
+                    )
+                  ) THEN "ah"."value_number"
+                END
+              ),
+              "ah"."value_boolean"::integer::numeric,
+              (
+                CASE
+                  WHEN (
+                    jsonb_typeof(
+                      COALESCE(
+                        (
+                          CASE
+                            WHEN (("ah"."value_object" ->> ('@type')) = ('@json')) THEN "ah"."value_object" -> ('@value')
+                          END
+                        ),
+                        "ah"."value_object"
+                      )
+                    ) = ('array')
+                  ) THEN jsonb_array_length(
+                    COALESCE(
+                      (
+                        CASE
+                          WHEN (("ah"."value_object" ->> ('@type')) = ('@json')) THEN "ah"."value_object" -> ('@value')
+                        END
+                      ),
+                      "ah"."value_object"
+                    )
+                  )::numeric
+                END
+              )
+            )
+          END
+        )
+      ) AS "agg_sum",
+      "bucket"."bucket_start" AS "bucket_start",
+      "bucket"."bucket_start" + ($14:: interval) AS "bucket_end",
+      ROW_NUMBER() OVER (
+        ORDER BY
+          "bucket"."bucket_start" ASC) AS "period_order"
+    FROM
+      (
+        SELECT
+          "latest".*
+        FROM
+          (
+            SELECT
+              "part".*
+            FROM
+              (
+                SELECT
+                  "ah".*
+                FROM
+                  (
+                    SELECT
+                      "st"."entity_id" AS "entity_id",
+                      "st"."attribute_name_key" AS "attribute_name_key",
+                      "st"."dataset_key" AS "dataset_key",
+                      "rh"."recorded_at",
+                      "rh"."write_id",
+                      "rh"."write_ordinal",
+                      "rh"."attribute_kind" AS "attribute_kind",
+                      "rh"."value_kind" AS "value_kind",
+                      "rh"."observed_at" AS "observed_at",
+                      "rh"."created_at" AS "created_at",
+                      "rh"."modified_at" AS "modified_at",
+                      "rh"."deleted_at" AS "deleted_at",
+                      "rh"."value_date_time" AS "value_date_time",
+                      "rh"."expires_at" AS "expires_at",
+                      "rh"."generated_instance_id" AS "generated_instance_id",
+                      "rh"."value_type_key" AS "value_type_key",
+                      "rh"."value_datatype_key" AS "value_datatype_key",
+                      "rh"."unit_code_id" AS "unit_code_id",
+                      "rh"."value_boolean" AS "value_boolean",
+                      "rh"."verbatim_instance_id" AS "verbatim_instance_id",
+                      "rh"."value_number" AS "value_number",
+                      "rh"."value_string" AS "value_string",
+                      "rh"."value_language" AS "value_language",
+                      "rh"."value_geometry" AS "value_geometry",
+                      "rh"."value_geometry_valid" AS "value_geometry_valid",
+                      "rh"."value_geometry_reach" AS "value_geometry_reach",
+                      "rh"."value_geometry_members" AS "value_geometry_members",
+                      "rh"."value_object" AS "value_object",
+                      "rh"."value_uri" AS "value_uri",
+                      "rh"."object_type_keys" AS "object_type_keys",
+                      "rh"."sub_attributes" AS "sub_attributes"
+                    FROM
+                      "attribute_history" AS "rh"
+                    WHERE
+                      "rh"."stream_key" = "st"."stream_key"
+                  ) AS "ah"
+                WHERE
+                  "ah"."value_kind" <> (0)
+                  AND "ah"."observed_at" >= "stream_edge"."bound"
+                ORDER BY
+                  "ah"."observed_at" DESC,
+                  "ah"."write_id" DESC,
+                  "ah"."write_ordinal" DESC
+                LIMIT
+                  5000
+              ) AS "part"
+          ) AS "latest"
+        ORDER BY
+          "latest"."observed_at" DESC,
+          "latest"."write_id" DESC,
+          "latest"."write_ordinal" DESC
+        LIMIT
+          5000
+      ) AS "ah"
+      JOIN LATERAL (
+        SELECT
+          time_bucket(
+            $15:: interval,
+            "ah"."observed_at",
+            $16::timestamptz
+          ) AS "bucket_start"
+      ) AS "bucket" ON TRUE
+    GROUP BY
+      "bucket"."bucket_start"
+  ) AS "page" ON TRUE
+1: ChronoDateTimeUtc '2026-01-01 00:00:00.000000 +00:00'
+2: String 'urn:ngsi-ld:Vehicle:1'
+3: String 'PT1H'
+4: String 'PT1H'
+5: ChronoDateTimeUtc '2026-01-01 00:00:00.000000 +00:00'
+6: String 'PT1H'
+7: String 'PT1H'
+8: String 'PT1H'
+9: String 'PT1H'
+10: ChronoDateTimeUtc '2026-01-01 00:00:00.000000 +00:00'
+11: String 'PT1H'
+12: String 'PT1H'
+13: ChronoDateTimeUtc '2026-01-01 00:00:00.000000 +00:00'
+14: String 'PT1H'
+15: String 'PT1H'
+16: ChronoDateTimeUtc '2026-01-01 00:00:00.000000 +00:00'

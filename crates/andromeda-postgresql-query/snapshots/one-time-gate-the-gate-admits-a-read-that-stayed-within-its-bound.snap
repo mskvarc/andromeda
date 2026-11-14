@@ -1,0 +1,11 @@
+---
+source: crates/andromeda-postgresql-query/src/one_time_gate.rs
+---
+SELECT
+  (
+    SELECT
+      COUNT(*)
+    FROM
+      "candidates"
+  ) <= $1
+1: BigUnsigned 1000

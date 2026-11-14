@@ -1,0 +1,11 @@
+---
+source: crates/andromeda-postgresql-query/src/page_window.rs
+---
+SELECT
+  "id"
+FROM
+  "items"
+ORDER BY
+  "id" ASC
+LIMIT
+  10

@@ -1,0 +1,19 @@
+---
+source: crates/andromeda-postgresql-query/src/type_membership.rs
+---
+SELECT
+  "candidate"."entity_key",
+  "candidate"."id"
+FROM
+  (
+    SELECT
+      "entity_key",
+      "id"
+    FROM
+      "entity_type_members"
+    WHERE
+      "entity_type_name_key" = (1)
+      AND "is_current_member"
+  ) AS "candidate"
+WHERE
+  TRUE

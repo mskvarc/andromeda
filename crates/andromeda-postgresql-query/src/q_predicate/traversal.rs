@@ -386,7 +386,8 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
-    use sea_query::{Alias, Condition, Expr, ExprTrait, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Condition, Expr, ExprTrait, Query};
 
     /// Clause 5.7.4.4 with clause 4.11: a hop in a temporal `q` follows every
     /// target the Relationship named while valid within the window, the one in
@@ -410,12 +411,8 @@ mod tests {
             &InstanceScan::History(&window),
             inner,
         );
-        let sql = Query::select().expr(Expr::val(1)).cond_where(probe).to_owned().to_string(PostgresQueryBuilder);
-        assert_eq!(sql.matches(r#"AS "qh_ln1""#).count(), 2, "{sql}");
-        for fragment in [r#") AS "le1" ON "le1"."id" = "lo1""#, r#""le1"."entity_key" = 5"#] {
-            assert_eq!(sql.matches(fragment).count(), 2, "{fragment}: {sql}");
-        }
-        assert!(sql.contains(r#"AS "qe_ln1") AS "qh_ln1" ON TRUE"#), "{sql}");
+        let statement = Query::select().expr(Expr::val(1)).cond_where(probe).to_owned();
+        assert_statement_snapshot!("traversal-a-windowed-hop-probes-both-the-window-and-the-instance-in-effect", statement);
     }
 
     /// Clause 4.9: a hop's type guard names the types the linked entity
@@ -440,13 +437,8 @@ mod tests {
             &InstanceScan::History(&window),
             Condition::all(),
         );
-        let sql = Query::select().expr(Expr::val(1)).cond_where(probe).to_owned().to_string(PostgresQueryBuilder);
-        assert!(
-            sql.contains(r#"(SELECT * FROM "entities" WHERE "entities"."evolution_created_at" IS NOT NULL) AS "le1""#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#""le1"."evolution_type_name_keys""#), "{sql}");
-        assert!(!sql.contains("entity_search"), "{sql}");
+        let statement = Query::select().expr(Expr::val(1)).cond_where(probe).to_owned();
+        assert_statement_snapshot!("traversal-a-windowed-hop-guards-types-from-the-temporal-catalogue", statement);
     }
 
     /// Clause 4.9: a temporal hop follows every object a history instance
@@ -470,13 +462,7 @@ mod tests {
             &InstanceScan::History(&window),
             Condition::all(),
         );
-        let sql = Query::select().expr(Expr::val(1)).cond_where(probe).to_owned().to_string(PostgresQueryBuilder);
-        for fragment in [
-            r#"JOIN jsonb_array_elements_text(COALESCE("qh_ln1"."value_object", jsonb_build_array("qh_ln1"."value_uri"))) AS "lo1" ON TRUE"#,
-            r#""qh_ln1"."attribute_kind" IN (2, 8)"#,
-        ] {
-            assert_eq!(sql.matches(fragment).count(), 2, "{fragment}: {sql}");
-        }
-        assert!(!sql.contains(r#""le1"."id" = "qh_ln1"."value_uri""#), "{sql}");
+        let statement = Query::select().expr(Expr::val(1)).cond_where(probe).to_owned();
+        assert_statement_snapshot!("traversal-a-windowed-hop-follows-every-object-of-a-history-instance", statement);
     }
 }

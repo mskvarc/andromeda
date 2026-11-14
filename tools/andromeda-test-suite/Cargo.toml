@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
+andromeda-q-corpus.workspace = true
 bytes = "1.12.1"
 cefact-units = "1.0.0"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
@@ -31,7 +32,8 @@ mediatype = "0.23.0"
 ngsi-ld = { version = "2.1.0", default-features = false, features = ["chrono", "reqwest", "reqwest-http2", "reqwest-rustls"] }
 percent-encoding = "2.3.2"
 prometheus-parse = "0.2.5"
-quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
+proptest = "1.12.0"
+quinn ={ version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
 rand = { version = "0.10.3", default-features = false, features = ["std", "std_rng"] }
 regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["http2", "http3", "rustls"] }

@@ -1,0 +1,117 @@
+---
+source: crates/andromeda-postgresql-query/src/scope_assertion.rs
+---
+SELECT
+  $1
+WHERE
+  (
+    (
+      ARRAY (
+        SELECT
+          "sas"."verbatim_scope_path"
+        FROM
+          (
+            SELECT
+              "recorded_at",
+              "observed_at",
+              "verbatim_scope_path"
+            FROM
+              "scope_history"
+            WHERE
+              "entity_key" = "te"."entity_key"
+          ) AS "sas"
+        WHERE
+          "sas"."verbatim_scope_path" IS NOT NULL
+          AND "sas"."recorded_at" = (
+            SELECT
+              "sah"."recorded_at"
+            FROM
+              (
+                SELECT
+                  "recorded_at",
+                  "observed_at",
+                  "verbatim_scope_path"
+                FROM
+                  "scope_history"
+                WHERE
+                  "entity_key" = "te"."entity_key"
+              ) AS "sah"
+            WHERE
+              "sah"."recorded_at" <= "at"
+            ORDER BY
+              "sah"."recorded_at" DESC
+            LIMIT
+              1
+          )
+        ORDER BY
+          ("sas"."verbatim_scope_path") COLLATE "C" ASC
+      )
+    ) COLLATE "C"
+  ) = (
+    (
+      ARRAY (
+        SELECT
+          "verbatim_scope_path"
+        FROM
+          "asserted"
+        ORDER BY
+          ("verbatim_scope_path") COLLATE "C" ASC
+      )
+    ) COLLATE "C"
+  )
+  AND (
+    (
+      ARRAY (
+        SELECT
+          "sas"."verbatim_scope_path"
+        FROM
+          (
+            SELECT
+              "recorded_at",
+              "observed_at",
+              "verbatim_scope_path"
+            FROM
+              "scope_history"
+            WHERE
+              "entity_key" = "te"."entity_key"
+          ) AS "sas"
+        WHERE
+          "sas"."verbatim_scope_path" IS NOT NULL
+          AND "sas"."observed_at" = (
+            SELECT
+              "sah"."observed_at"
+            FROM
+              (
+                SELECT
+                  "recorded_at",
+                  "observed_at",
+                  "verbatim_scope_path"
+                FROM
+                  "scope_history"
+                WHERE
+                  "entity_key" = "te"."entity_key"
+              ) AS "sah"
+            WHERE
+              "sah"."observed_at" <= "at"
+            ORDER BY
+              "sah"."observed_at" DESC
+            LIMIT
+              1
+          )
+        ORDER BY
+          ("sas"."verbatim_scope_path") COLLATE "C" ASC
+      )
+    ) COLLATE "C"
+  ) = (
+    (
+      ARRAY (
+        SELECT
+          "verbatim_scope_path"
+        FROM
+          "asserted"
+        ORDER BY
+          ("verbatim_scope_path") COLLATE "C" ASC
+      )
+    ) COLLATE "C"
+  )
+1: Int 1

@@ -1,0 +1,16 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/statement.rs
+---
+SELECT
+  COUNT(*)
+FROM
+  "context_source_registrations"
+WHERE
+  (
+    "expires_at" IS NULL
+    OR "expires_at" > NOW()
+  )
+  AND (
+    "observation_interval_start" IS NULL
+    AND "management_interval_start" IS NULL
+  )

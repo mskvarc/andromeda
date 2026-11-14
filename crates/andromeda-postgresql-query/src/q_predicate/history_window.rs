@@ -338,8 +338,9 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use chrono::{DateTime, Utc};
-    use sea_query::{Alias, Condition, Expr, ExprTrait, IntoIden, PostgresQueryBuilder, Query, SelectStatement};
+    use sea_query::{Alias, Condition, Expr, ExprTrait, IntoIden, Query, SelectStatement};
 
     fn instant(raw: &str) -> DateTime<Utc> {
         raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
@@ -359,27 +360,19 @@ mod tests {
         window_on(HistoryBranch::live(), TimeProp::Observed, interval)
     }
 
-    fn render(condition: Condition) -> String {
-        Query::select()
-            .expr(Expr::val(1))
-            .cond_where(condition)
-            .to_owned()
-            .to_string(PostgresQueryBuilder)
-    }
-
-    fn statement(probe: &SelectStatement) -> String {
-        probe.to_string(PostgresQueryBuilder)
+    fn render(condition: Condition) -> SelectStatement {
+        Query::select().expr(Expr::val(1)).cond_where(condition).to_owned()
     }
 
     /// The probe over the instances inside the window and, when there is one,
-    /// the probe over the instance in effect when it opens, rendered apart.
-    fn probes_of(window: &HistoryWindow, value: Condition) -> (String, Option<String>) {
+    /// the probe over the instance in effect when it opens, apart.
+    fn probes_of(window: &HistoryWindow, value: Condition) -> (SelectStatement, Option<SelectStatement>) {
         let aliases = HistoryAliases::top_level();
         let test = Condition::all()
             .add(HistoryWindow::of_attribute(AttributeNameKey::from(7), &aliases))
             .add_option(non_empty(value));
         let probes = window.probes(test, HistoryWindow::streams_of(AttributeNameKey::from(7), &aliases), &aliases);
-        (statement(&probes.inside), probes.in_effect.as_ref().map(statement))
+        (probes.inside, probes.in_effect)
     }
 
     fn after_2019() -> TimeInterval {
@@ -395,21 +388,11 @@ mod tests {
     /// instances inside the window are one index range, with no disjunction.
     #[test]
     fn the_probe_reads_the_in_window_instances_of_the_attribute() {
-        let sql = render(window(after_2019()).exists(AttributeNameKey::from(7), above_100(), &HistoryAliases::top_level()));
-        for fragment in [
-            r#"FROM "attribute_history" AS "rh""#,
-            r#""re"."id" = "e"."id""#,
-            r#""pe"."entity_id" = "e"."id""#,
-            r#") AS "qh" WHERE "qh"."attribute_name_key" = 7"#,
-            r#""qh"."value_kind" <> "#,
-            r#""qh"."observed_at" >= '2019-01-01"#,
-            r#""qh"."value_number" > 100"#,
-        ] {
-            assert!(sql.contains(fragment), "{fragment} missing: {sql}");
-        }
+        let statement = render(window(after_2019()).exists(AttributeNameKey::from(7), above_100(), &HistoryAliases::top_level()));
+        assert_statement_snapshot!("history-window-the-probe-reads-the-in-window-instances-of-the-attribute-1", statement);
         let snapshot = window_on(HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()), TimeProp::Observed, after_2019());
         let (inside, _) = probes_of(&snapshot, above_100());
-        assert!(!inside.contains(" OR "), "{inside}");
+        assert_statement_snapshot!("history-window-the-probe-reads-the-in-window-instances-of-the-attribute-2", inside);
     }
 
     /// Clause 4.11 with Annex C clause C.5.5: an interval with a start also
@@ -420,23 +403,18 @@ mod tests {
         // Beside another conjunct, so the disjunction of the two probes has to
         // keep its parentheses.
         let probes = window(after_2019()).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level());
-        let sql = render(Condition::all().add(Expr::col(Alias::new("flag")).eq(true)).add(probes));
-        assert!(sql.contains(r#""flag" = TRUE AND (EXISTS(SELECT 1 FROM (SELECT"#), "{sql}");
-        assert!(sql.contains(r") OR EXISTS(SELECT 1 FROM (SELECT"), "{sql}");
-        assert!(sql.contains(r#"AS "qs" JOIN LATERAL"#), "{sql}");
+        let statement = render(Condition::all().add(Expr::col(Alias::new("flag")).eq(true)).add(probes));
+        assert_statement_snapshot!(
+            "history-window-an-interval-with-a-start-admits-the-instance-in-effect-when-it-opens-1",
+            statement
+        );
         let (inside, in_effect) = probes_of(&window(after_2019()), Condition::all());
-        assert!(inside.contains(r#""qh"."observed_at" >= '2019-01-01"#), "{inside}");
-        assert!(!inside.contains(r#""qe""#), "{inside}");
+        assert_statement_snapshot!("history-window-an-interval-with-a-start-admits-the-instance-in-effect-when-it-opens-2", inside);
         let in_effect = in_effect.expect("an interval with a start has an in-effect probe");
-        for fragment in [
-            r#"FETCH FIRST 1 ROW WITH TIES) AS "qe") AS "qh" ON TRUE"#,
-            r#""qs"."attribute_name_key" = 7"#,
-            r#""qh"."placed" < '2019-01-01"#,
-            r#""qh"."value_kind" <> "#,
-        ] {
-            assert!(in_effect.contains(fragment), "{fragment} missing: {in_effect}");
-        }
-        assert!(!in_effect.contains("MAX(") && !in_effect.contains("GREATEST("), "{in_effect}");
+        assert_statement_snapshot!(
+            "history-window-an-interval-with-a-start-admits-the-instance-in-effect-when-it-opens-3",
+            in_effect
+        );
     }
 
     /// Clause 4.11 bounds `between` above exclusively, and only the instances
@@ -449,9 +427,9 @@ mod tests {
             to: instant("2019-02-01T00:00:00Z"),
         };
         let (inside, in_effect) = probes_of(&window(between), Condition::all());
-        assert!(inside.contains(r#""qh"."observed_at" < '2019-02-01"#), "{inside}");
+        assert_statement_snapshot!("history-window-a-between-interval-bounds-only-the-window-probe-above-1", inside);
         let in_effect = in_effect.expect("an interval with a start has an in-effect probe");
-        assert!(!in_effect.contains("2019-02-01"), "{in_effect}");
+        assert_statement_snapshot!("history-window-a-between-interval-bounds-only-the-window-probe-above-2", in_effect);
     }
 
     /// Clause 4.5.7: an instance with no instant on the axis is represented by
@@ -459,9 +437,12 @@ mod tests {
     /// interval either.
     #[test]
     fn the_inside_probe_reads_only_instances_placed_on_the_axis() {
-        for interval in [TimeInterval::Unbounded, after_2019()] {
+        for (index, interval) in [TimeInterval::Unbounded, after_2019()].into_iter().enumerate() {
             let (inside, _) = probes_of(&window(interval), Condition::all());
-            assert!(inside.contains(r#""qh"."observed_at" IS NOT NULL"#), "{inside}");
+            assert_statement_snapshot!(
+                format!("history-window-the-inside-probe-reads-only-instances-placed-on-the-axis-{}", index + 1),
+                inside
+            );
         }
     }
 
@@ -477,7 +458,7 @@ mod tests {
             .reach(WindowReach::Inside)
             .build();
         let (inside, in_effect) = probes_of(&window, Condition::all());
-        assert!(inside.contains(r#""qh"."observed_at" >= '2019-01-01"#), "{inside}");
+        assert_statement_snapshot!("history-window-an-inside-reach-renders-no-in-effect-probe", inside);
         assert!(in_effect.is_none(), "{in_effect:?}");
     }
 
@@ -489,17 +470,7 @@ mod tests {
         let rows = window(after_2019())
             .in_effect_rows(&[AttributeNameKey::from(7), AttributeNameKey::from(9)])
             .expect("an interval with a start has in-effect rows");
-        let sql = statement(&rows);
-        for fragment in [
-            r#"SELECT "qh".* FROM"#,
-            r#""qs"."attribute_name_key" = ANY(ARRAY [7,9])"#,
-            r#""qh"."placed" < '2019-01-01"#,
-            r#""qi"."observed_at" <= '2019-01-01"#,
-            r#""qi"."deleted_at" <= '2019-01-01"#,
-        ] {
-            assert!(sql.contains(fragment), "{fragment} missing: {sql}");
-        }
-        assert!(!sql.contains(r#""qh"."value_kind" <> "#), "{sql}");
+        assert_statement_snapshot!("history-window-the-in-effect-rows-keep-deletions-of-the-named-streams", rows);
         assert!(window(TimeInterval::Unbounded).in_effect_rows(&[AttributeNameKey::from(7)]).is_none());
     }
 
@@ -507,12 +478,14 @@ mod tests {
     /// and an unbounded one admits everything, so neither seeks a prior one.
     #[test]
     fn an_interval_without_a_start_seeks_no_prior_instance() {
-        for interval in [TimeInterval::Before(instant("2019-01-01T00:00:00Z")), TimeInterval::Unbounded] {
-            let sql = render(window(interval).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()));
-            assert!(!sql.contains(") OR EXISTS(SELECT 1 FROM (SELECT"), "{sql}");
-            for alias in [r#""qe""#, r#""qi""#, r#""qs""#] {
-                assert!(!sql.contains(alias), "{alias}: {sql}");
-            }
+        for (index, interval) in [TimeInterval::Before(instant("2019-01-01T00:00:00Z")), TimeInterval::Unbounded]
+            .into_iter()
+            .enumerate()
+        {
+            assert_statement_snapshot!(
+                format!("history-window-an-interval-without-a-start-seeks-no-prior-instance-{}", index + 1),
+                render(window(interval).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()))
+            );
         }
     }
 
@@ -521,8 +494,8 @@ mod tests {
     #[test]
     fn a_deleted_at_interval_renders_no_in_effect_probe() {
         let window = window_on(HistoryBranch::live(), TimeProp::Deleted, after_2019());
-        let sql = render(window.exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()));
-        assert!(!sql.contains(r#""qe""#) && !sql.contains(r#""qs""#), "{sql}");
+        let statement = render(window.exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()));
+        assert_statement_snapshot!("history-window-a-deleted-at-interval-renders-no-in-effect-probe", statement);
     }
 
     /// Both probes test their instances alike and read the same Entity in
@@ -530,9 +503,8 @@ mod tests {
     #[test]
     fn both_probes_carry_the_same_value_test() {
         let snapshot = window_on(HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()), TimeProp::Observed, after_2019());
-        let sql = render(snapshot.exists(AttributeNameKey::from(7), above_100(), &HistoryAliases::top_level()));
-        pretty_assertions::assert_eq!(sql.matches(r#""qh"."value_number" > 100"#).count(), 2, "{sql}");
-        pretty_assertions::assert_eq!(sql.matches(r#""re"."id" = "e"."id""#).count(), 2, "{sql}");
+        let statement = render(snapshot.exists(AttributeNameKey::from(7), above_100(), &HistoryAliases::top_level()));
+        assert_statement_snapshot!("history-window-both-probes-carry-the-same-value-test", statement);
     }
 
     /// The terms of a disjunction share each probe, each arm keeping its own
@@ -550,42 +522,34 @@ mod tests {
                 value: Condition::all().add(Expr::col((Alias::new("qh"), Alias::new("value_string"))).eq("x")),
             },
         ];
-        let sql = render(window(after_2019()).exists_any(tests, &HistoryAliases::top_level()));
-        let arms = r#"(("qh"."attribute_name_key" = 7 AND "qh"."value_number" > 100) OR ("qh"."attribute_name_key" = 9 AND "qh"."value_string" = 'x'))"#;
-        pretty_assertions::assert_eq!(sql.matches(arms).count(), 2, "{sql}");
-        pretty_assertions::assert_eq!(sql.matches(r#""qs"."attribute_name_key" = ANY(ARRAY [7,9])"#).count(), 1, "{sql}");
-        let in_effect = sql.find("JOIN LATERAL").expect("the in-effect probe is rendered");
-        let narrowing = sql.find(r#""qs"."attribute_name_key" = ANY(ARRAY [7,9])"#).expect("the narrowing is rendered");
-        assert!(in_effect < narrowing, "the narrowing belongs to the in-effect probe: {sql}");
+        let statement = render(window(after_2019()).exists_any(tests, &HistoryAliases::top_level()));
+        assert_statement_snapshot!("history-window-the-terms-of-an-or-share-each-probe", statement);
     }
 
     /// A nested hop seeks its prior instance under its own alias.
     #[test]
     fn a_hop_seeks_its_prior_instance_under_its_own_alias() {
-        let sql = render(window(after_2019()).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::at_depth(2)));
-        for alias in [r#"AS "qi_ln2""#, r#"AS "qe_ln2""#, r#"AS "qh_ln2""#] {
-            assert!(sql.contains(alias), "{alias} missing: {sql}");
-        }
+        let statement = render(window(after_2019()).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::at_depth(2)));
+        assert_statement_snapshot!("history-window-a-hop-seeks-its-prior-instance-under-its-own-alias", statement);
     }
 
     /// Clause 5.7.4.4 checks `q` at step S2, before the `datasetId` parameter
     /// filters instances at step S8, so neither probe narrows by dataset.
     #[test]
     fn the_probe_reads_the_instances_of_every_dataset() {
-        for interval in [TimeInterval::Unbounded, after_2019()] {
-            let sql = render(window(interval).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()));
-            assert!(!sql.contains(r#""qh"."dataset_key" ="#) && !sql.contains(r#""qh"."dataset_key" IN"#), "{sql}");
+        for (index, interval) in [TimeInterval::Unbounded, after_2019()].into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!("history-window-the-probe-reads-the-instances-of-every-dataset-{}", index + 1),
+                render(window(interval).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()))
+            );
         }
     }
 
     /// A nested hop's probe takes its own aliases.
     #[test]
     fn a_hop_probe_takes_aliases_of_its_own() {
-        let sql = render(window(after_2019()).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::at_depth(1)));
-        assert!(
-            sql.contains(r#"AS "qs_ln1""#) && sql.contains(r#"AS "qh_ln1""#) && sql.contains(r#"AS "qi_ln1""#),
-            "{sql}"
-        );
+        let statement = render(window(after_2019()).exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::at_depth(1)));
+        assert_statement_snapshot!("history-window-a-hop-probe-takes-aliases-of-its-own", statement);
     }
 
     /// Read for an Evolution by key over recorded rows alone, every source of
@@ -602,15 +566,8 @@ mod tests {
             .interval(after_2019())
             .reach(WindowReach::InsideAndInEffect)
             .build();
-        let sql = render(window.exists(AttributeNameKey::from(7), above_100(), &HistoryAliases::top_level()));
-        for alias in ["qh", "qs"] {
-            assert!(
-                sql.contains(&format!(r#""rs"."entity_key" = "e"."entity_key") AS "{alias}""#)),
-                "{alias}: {sql}"
-            );
-        }
-        assert!(sql.contains(r#""qs"."entity_key" AS "entity_key""#), "{sql}");
-        assert!(!sql.contains("entities") && !sql.contains("entity_id"), "{sql}");
+        let statement = render(window.exists(AttributeNameKey::from(7), above_100(), &HistoryAliases::top_level()));
+        assert_statement_snapshot!("history-window-both-probes-read-an-evolution-by-key-over-recorded-rows", statement);
     }
 
     /// A Snapshot reads its own branch: every history relation of both probes,
@@ -619,11 +576,7 @@ mod tests {
     #[test]
     fn both_probes_are_qualified_with_the_branch_schema() {
         let window = window_on(HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()), TimeProp::Observed, after_2019());
-        let sql = render(window.exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()));
-        pretty_assertions::assert_eq!(sql.matches(r#""attribute_history""#).count(), 3, "{sql}");
-        pretty_assertions::assert_eq!(sql.matches(r#""snap_7"."attribute_history""#).count(), 3, "{sql}");
-        pretty_assertions::assert_eq!(sql.matches(r#""temporal_attribute_streams""#).count(), 2, "{sql}");
-        pretty_assertions::assert_eq!(sql.matches(r#""snap_7"."temporal_attribute_streams""#).count(), 2, "{sql}");
-        assert!(!sql.contains("temporal_append"), "{sql}");
+        let statement = render(window.exists(AttributeNameKey::from(7), Condition::all(), &HistoryAliases::top_level()));
+        assert_statement_snapshot!("history-window-both-probes-are-qualified-with-the-branch-schema", statement);
     }
 }

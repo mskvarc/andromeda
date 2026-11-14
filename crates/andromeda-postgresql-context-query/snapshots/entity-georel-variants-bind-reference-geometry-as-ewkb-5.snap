@@ -1,0 +1,81 @@
+---
+source: crates/andromeda-postgresql-context-query/src/entity.rs
+---
+SELECT
+  "stored"."entity_key",
+  "stored"."id",
+  "stored"."entity_created_at",
+  "stored"."entity_modified_at",
+  "stored"."entity_write_count",
+  "stored"."entity_expires_at",
+  "stored"."entity_type_name_keys",
+  "stored"."verbatim_scope_paths"
+FROM
+  (
+    SELECT
+      "entities"."entity_key",
+      "entities"."id" AS "sort_0"
+    FROM
+      "entities"
+      JOIN "entity_search" ON "entity_search"."entity_key" = "entities"."entity_key"
+    WHERE
+      "entities"."created_at" IS NOT NULL
+      AND (
+        "entities"."expires_at" IS NULL
+        OR "entities"."expires_at" > NOW()
+      )
+      AND "entities"."entity_key" IN (
+        SELECT DISTINCT
+          "geo_matched"."entity_key"
+        FROM
+          (
+            SELECT
+              "geo_default"."entity_key"
+            FROM
+              "entity_search" AS "geo_default"
+            WHERE
+              (
+                "geo_default"."location_expires_at" IS NULL
+                OR "geo_default"."location_expires_at" > NOW()
+              )
+              AND (
+                COALESCE(
+                  "geo_default"."location_reach",
+                  "geo_default"."location"
+                ) && ST_MakeValid(ST_GeomFromEWKB($1))
+              )
+              AND _ST_Equals(
+                "geo_default"."location",
+                ST_MakeValid(ST_GeomFromEWKB($2))
+              )
+          ) AS "geo_matched"
+        ORDER BY
+          "geo_matched"."entity_key" ASC
+      )
+    ORDER BY
+      "sort_0" ASC
+    LIMIT
+      20 OFFSET 0
+  ) AS "page"
+  INNER JOIN LATERAL (
+    SELECT
+      "e"."entity_key" AS "entity_key",
+      "e"."id" AS "id",
+      "e"."created_at" AS "entity_created_at",
+      "e"."modified_at" AS "entity_modified_at",
+      "e"."write_count" AS "entity_write_count",
+      "e"."expires_at" AS "entity_expires_at",
+      "s"."entity_type_name_keys" AS "entity_type_name_keys",
+      "s"."verbatim_scope_paths" AS "verbatim_scope_paths"
+    FROM
+      "entities" AS "e"
+      INNER JOIN "entity_search" AS "s" ON "s"."entity_key" = "e"."entity_key"
+    WHERE
+      "e"."entity_key" = "page"."entity_key"
+    LIMIT
+      1
+  ) AS "stored" ON TRUE
+ORDER BY
+  "page"."sort_0" ASC
+1: Bytes '\x0101000020E6100000000000000000F03F0000000000000040'
+2: Bytes '\x0101000020E6100000000000000000F03F0000000000000040'

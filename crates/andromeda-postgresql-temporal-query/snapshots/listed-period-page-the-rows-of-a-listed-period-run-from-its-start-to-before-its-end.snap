@@ -1,0 +1,9 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/listed_period_page.rs
+---
+SELECT
+  $1
+WHERE
+  "ah"."observed_at" >= "page_period"."bucket_start"
+  AND "ah"."observed_at" < "page_period"."bucket_end"
+1: Int 1

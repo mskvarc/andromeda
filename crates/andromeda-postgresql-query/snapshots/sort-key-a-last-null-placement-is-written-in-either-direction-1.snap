@@ -1,0 +1,7 @@
+---
+source: crates/andromeda-postgresql-query/src/sort_key.rs
+---
+SELECT
+  "id"
+ORDER BY
+  "id" ASC NULLS LAST

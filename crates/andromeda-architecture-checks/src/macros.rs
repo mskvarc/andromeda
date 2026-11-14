@@ -158,6 +158,15 @@ macro_rules! workspace_architecture {
                 $crate::registration_matching::assert_registration_matching_has_one_owner(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
+            /// The meaning of a `q` term is read in the language crate only, beyond the shrinking baseline.
+            #[test]
+            fn q_reading_has_one_owner() {
+                $crate::q_reading::assert_q_reading_has_one_owner(
+                    concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root),
+                    $crate::q_reading::Q_READING_BASELINE,
+                );
+            }
+
             /// No production source lets a string stand in for a typed error.
             #[test]
             fn errors_carry_typed_values_not_strings() {

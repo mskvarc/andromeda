@@ -3,7 +3,7 @@
 use andromeda_test_suite::{
     broker,
     namespace::Namespace,
-    q_parity::{QCase, expect_query_and_subscription_alike},
+    q_parity::{QCase, QRequest, expect_query_and_subscription_alike},
 };
 use googletest::prelude::*;
 use ngsi_ld::model::{Entity, Property};
@@ -37,10 +37,12 @@ async fn n_qry_qlg_9084_a_pattern_skips_a_declared_date_in_a_query_and_a_subscri
         QCase {
             q: "d~=\"2024.*\"",
             selects: &[&text_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "d!~=\"1999.*\"",
             selects: &[&text_id],
+            request: QRequest::PLAIN,
         },
     ];
     expect_query_and_subscription_alike(&broker, &namespace, &diary_type, &entities, &cases).await

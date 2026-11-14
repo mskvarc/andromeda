@@ -1,0 +1,312 @@
+---
+source: crates/andromeda-postgresql-context-query/src/keyed_page.rs
+---
+SELECT
+  "stored"."entity_key",
+  "stored"."id",
+  "stored"."entity_created_at",
+  "stored"."entity_modified_at",
+  "stored"."entity_write_count",
+  "stored"."entity_expires_at",
+  "stored"."entity_type_name_keys",
+  "stored"."verbatim_scope_paths"
+FROM
+  (
+    WITH
+    "short_walk" AS MATERIALIZED (
+      SELECT
+        "walked".*
+      FROM
+        (
+          SELECT
+            "entities"."entity_key",
+            "entities"."id" AS "sort_0"
+          FROM
+            "entities"
+          WHERE
+            "entities"."created_at" IS NOT NULL
+            AND (
+              "entities"."expires_at" IS NULL
+              OR "entities"."expires_at" > NOW()
+            )
+          ORDER BY
+            "sort_0" ASC
+          LIMIT
+            200 OFFSET 0
+        ) AS "walked"
+      WHERE
+        EXISTS (
+          SELECT
+            1
+          FROM
+            "current_attributes" AS "ca"
+          WHERE
+            "ca"."attribute_name_key" = $1
+            AND (
+              "ca"."expires_at" IS NULL
+              OR "ca"."expires_at" > NOW()
+            )
+            AND (
+              ((("ca"."value_string") COLLATE "default") ~ $2)
+              OR (
+                (("ca"."value_long_text") COLLATE "default") ~ $3
+              )
+              OR EXISTS (
+                SELECT
+                  1
+                FROM
+                  jsonb_array_elements(
+                    (
+                      CASE
+                        WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                      END
+                    )
+                  ) AS "ls"
+                WHERE
+                  ("ls"."value" ->> ('@value')) ~ $4
+              )
+            )
+            AND "ca"."entity_key" = "walked"."entity_key"
+        )
+      ORDER BY
+        "walked"."sort_0" ASC
+      LIMIT
+        100
+    ),
+    "candidates" AS MATERIALIZED (
+      SELECT
+        "entity_key"
+      FROM
+        (
+          SELECT
+            "ca"."entity_key"
+          FROM
+            "current_attributes" AS "ca"
+          WHERE
+            "ca"."attribute_name_key" = $5
+            AND (
+              "ca"."expires_at" IS NULL
+              OR "ca"."expires_at" > NOW()
+            )
+            AND ((("ca"."value_string") COLLATE "default") ~ $6)
+          UNION ALL
+          (
+            SELECT
+              "ca"."entity_key"
+            FROM
+              "current_attributes" AS "ca"
+            WHERE
+              "ca"."attribute_name_key" = $7
+              AND (
+                "ca"."expires_at" IS NULL
+                OR "ca"."expires_at" > NOW()
+              )
+              AND (
+                (("ca"."value_long_text") COLLATE "default") ~ $8
+              )
+          )
+          UNION ALL
+          (
+            SELECT
+              "ca"."entity_key"
+            FROM
+              "current_attributes" AS "ca"
+            WHERE
+              "ca"."attribute_name_key" = $9
+              AND (
+                "ca"."expires_at" IS NULL
+                OR "ca"."expires_at" > NOW()
+              )
+              AND (
+                "ca"."attribute_kind" = (5)
+                AND "ca"."value_object" IS NOT NULL
+              )
+              AND EXISTS (
+                SELECT
+                  1
+                FROM
+                  jsonb_array_elements(
+                    (
+                      CASE
+                        WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                      END
+                    )
+                  ) AS "ls"
+                WHERE
+                  ("ls"."value" ->> ('@value')) ~ $10
+              )
+          )
+        ) AS "matches"
+      LIMIT
+        1001
+    )
+    SELECT
+      *
+    FROM
+      (
+        SELECT
+          *
+        FROM
+          "short_walk"
+        WHERE
+          (
+            SELECT
+              COUNT(*)
+            FROM
+              "short_walk"
+          ) >= $11
+        ORDER BY
+          "sort_0" ASC
+        LIMIT
+          100 OFFSET 0
+      ) AS "answered"
+    UNION ALL
+    (
+      SELECT
+        *
+      FROM
+        (
+          SELECT
+            "entities"."entity_key",
+            "entities"."id" AS "sort_0"
+          FROM
+            "entities"
+          WHERE
+            "entities"."created_at" IS NOT NULL
+            AND (
+              "entities"."expires_at" IS NULL
+              OR "entities"."expires_at" > NOW()
+            )
+            AND TRUE
+            AND "entities"."entity_key" IN (
+              SELECT
+                "entity_key"
+              FROM
+                "candidates"
+            )
+            AND (
+              SELECT
+                COUNT(*)
+              FROM
+                "short_walk"
+            ) < $12
+            AND (
+              SELECT
+                COUNT(*)
+              FROM
+                "candidates"
+            ) <= $13
+          ORDER BY
+            "sort_0" ASC
+          LIMIT
+            100 OFFSET 0
+        ) AS "indexed"
+    )
+    UNION ALL
+    (
+      SELECT
+        *
+      FROM
+        (
+          SELECT
+            "entities"."entity_key",
+            "entities"."id" AS "sort_0"
+          FROM
+            "entities"
+          WHERE
+            "entities"."created_at" IS NOT NULL
+            AND (
+              "entities"."expires_at" IS NULL
+              OR "entities"."expires_at" > NOW()
+            )
+            AND EXISTS (
+              SELECT
+                1
+              FROM
+                "current_attributes" AS "ca"
+              WHERE
+                "ca"."attribute_name_key" = $14
+                AND (
+                  "ca"."expires_at" IS NULL
+                  OR "ca"."expires_at" > NOW()
+                )
+                AND (
+                  ((("ca"."value_string") COLLATE "default") ~ $15)
+                  OR (
+                    (("ca"."value_long_text") COLLATE "default") ~ $16
+                  )
+                  OR EXISTS (
+                    SELECT
+                      1
+                    FROM
+                      jsonb_array_elements(
+                        (
+                          CASE
+                            WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                          END
+                        )
+                      ) AS "ls"
+                    WHERE
+                      ("ls"."value" ->> ('@value')) ~ $17
+                  )
+                )
+                AND "ca"."entity_key" = "entities"."entity_key"
+            )
+            AND (
+              SELECT
+                COUNT(*)
+              FROM
+                "short_walk"
+            ) < $18
+            AND (
+              SELECT
+                COUNT(*)
+              FROM
+                "candidates"
+            ) > $19
+          ORDER BY
+            "sort_0" ASC
+          LIMIT
+            100 OFFSET 0
+        ) AS "walk"
+    )
+  ) AS "page"
+  INNER JOIN LATERAL (
+    SELECT
+      "e"."entity_key" AS "entity_key",
+      "e"."id" AS "id",
+      "e"."created_at" AS "entity_created_at",
+      "e"."modified_at" AS "entity_modified_at",
+      "e"."write_count" AS "entity_write_count",
+      "e"."expires_at" AS "entity_expires_at",
+      "s"."entity_type_name_keys" AS "entity_type_name_keys",
+      "s"."verbatim_scope_paths" AS "verbatim_scope_paths"
+    FROM
+      "entities" AS "e"
+      INNER JOIN "entity_search" AS "s" ON "s"."entity_key" = "e"."entity_key"
+    WHERE
+      "e"."entity_key" = "page"."entity_key"
+    LIMIT
+      1
+  ) AS "stored" ON TRUE
+ORDER BY
+  "page"."sort_0" ASC
+1: Int 12
+2: String 'text-71.*'
+3: String 'text-71.*'
+4: String 'text-71.*'
+5: Int 12
+6: String 'text-71.*'
+7: Int 12
+8: String 'text-71.*'
+9: Int 12
+10: String 'text-71.*'
+11: BigUnsigned 100
+12: BigUnsigned 100
+13: BigUnsigned 1000
+14: Int 12
+15: String 'text-71.*'
+16: String 'text-71.*'
+17: String 'text-71.*'
+18: BigUnsigned 100
+19: BigUnsigned 1000

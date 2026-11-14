@@ -1,0 +1,24 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/keyed_ordering.rs
+---
+SELECT
+  "entity_key"
+FROM
+  (
+    SELECT
+      "ca"."entity_key"
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        "ca"."value_string" <= $2
+        AND nullif("ca"."value_kind" = (8), FALSE)
+      )
+  ) AS "matches"
+1: Int 21
+2: String '2024-01-15'

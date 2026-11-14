@@ -1,0 +1,9 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/axis.rs
+---
+SELECT
+WHERE
+  "ah"."modified_at" >= $1
+  AND "ah"."modified_at" < $2
+1: ChronoDateTimeUtc '2026-01-01 00:00:00.000000 +00:00'
+2: ChronoDateTimeUtc '2026-02-01 00:00:00.000000 +00:00'

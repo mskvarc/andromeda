@@ -1,0 +1,13 @@
+---
+source: crates/andromeda-postgresql-query/src/type_predicate.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  (
+    ("entity_type_name_keys" @> (ARRAY[1]))
+    AND ("entity_type_name_keys" @> (ARRAY[2]))
+  )
+  OR (FALSE)

@@ -120,32 +120,32 @@ impl CandidateBound {
 mod tests {
     use crate::one_time_gate::{Candidates, beyond, bounded, column_of, within};
     use andromeda_postgresql_schema::current::Entities;
-    use pretty_assertions::assert_eq;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::Query;
 
     #[test]
     fn a_bounded_read_takes_one_row_past_its_bound() {
         let read = bounded(Query::select().column(Candidates).from(Candidates).take(), 1000);
-        assert_eq!(read.to_string(PostgresQueryBuilder), r#"SELECT "candidates" FROM "candidates" LIMIT 1001"#);
+        assert_statement_snapshot!("one-time-gate-a-bounded-read-takes-one-row-past-its-bound", read);
     }
 
     #[test]
     fn the_gate_admits_a_read_that_stayed_within_its_bound() {
         let gate = Query::select().expr(within(Candidates, 1000)).take();
-        assert_eq!(gate.to_string(PostgresQueryBuilder), r#"SELECT (SELECT COUNT(*) FROM "candidates") <= 1000"#);
+        assert_statement_snapshot!("one-time-gate-the-gate-admits-a-read-that-stayed-within-its-bound", gate);
     }
 
     #[test]
     fn the_gate_past_the_bound_admits_a_read_that_stopped_short() {
         let gate = Query::select().expr(beyond(Candidates, 1000)).take();
-        assert_eq!(gate.to_string(PostgresQueryBuilder), r#"SELECT (SELECT COUNT(*) FROM "candidates") > 1000"#);
+        assert_statement_snapshot!("one-time-gate-the-gate-past-the-bound-admits-a-read-that-stopped-short", gate);
     }
 
     #[test]
     fn the_candidate_column_is_the_one_the_caller_names() {
-        assert_eq!(
-            column_of(Candidates, Entities::EntityKey).to_string(PostgresQueryBuilder),
-            r#"SELECT "entity_key" FROM "candidates""#
+        assert_statement_snapshot!(
+            "one-time-gate-the-candidate-column-is-the-one-the-caller-names",
+            column_of(Candidates, Entities::EntityKey)
         );
     }
 }

@@ -109,8 +109,9 @@ fn position() -> SimpleExpr {
 mod tests {
     use crate::shape_mask::{SHAPE_MASK_WIDTH, SHAPES_PER_FAMILY, combination_position, held_combinations, holds_combination, recorded_combination};
     use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
+    use sea_query::{Alias, Expr, Query};
     use std::collections::HashSet;
 
     /// The positions are computed from the codes, so the codes have to count
@@ -138,38 +139,27 @@ mod tests {
 
     #[test]
     fn membership_reads_the_bit_of_the_combination() {
-        let sql = Query::select()
+        let statement = Query::select()
             .expr(holds_combination(
                 Expr::col(Alias::new("shape_mask")),
                 AttributeKind::Property,
                 RecordedShape::String,
             ))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        assert_eq!(sql, r#"SELECT get_bit("shape_mask", 1) = 1"#);
+            .to_owned();
+        assert_statement_snapshot!("shape-mask-membership-reads-the-bit-of-the-combination", statement);
     }
 
     /// The bit is read off the same refined shape an aggregation projects, so
     /// the mask names exactly the shapes the rows carry.
     #[test]
     fn a_recorded_row_sets_the_bit_of_its_family_and_refined_shape() {
-        let sql = Query::select().expr(recorded_combination()).to_owned().to_string(PostgresQueryBuilder);
-        assert!(
-            sql.starts_with(r#"SELECT (B'1'::bit(80) >> ((("ah"."attribute_kind" - 1) * (10)) + ((CASE"#),
-            "{sql}"
-        );
-        assert!(sql.ends_with("END) - 1)))"), "{sql}");
+        let statement = Query::select().expr(recorded_combination()).to_owned();
+        assert_statement_snapshot!("shape-mask-a-recorded-row-sets-the-bit-of-its-family-and-refined-shape", statement);
     }
 
     #[test]
     fn a_mask_decodes_to_one_row_per_held_combination() {
-        let sql = held_combinations(Expr::col(Alias::new("shape_mask"))).to_string(PostgresQueryBuilder);
-        assert_eq!(
-            sql,
-            concat!(
-                r#"SELECT (("position" / (10)) + 1)::smallint AS "attribute_kind", (("position" % (10)) + 1)::smallint AS "recorded_shape""#,
-                r#" FROM generate_series(0, 79) AS "position" WHERE get_bit("shape_mask", "position") = 1"#
-            )
-        );
+        let statement = held_combinations(Expr::col(Alias::new("shape_mask")));
+        assert_statement_snapshot!("shape-mask-a-mask-decodes-to-one-row-per-held-combination", statement);
     }
 }

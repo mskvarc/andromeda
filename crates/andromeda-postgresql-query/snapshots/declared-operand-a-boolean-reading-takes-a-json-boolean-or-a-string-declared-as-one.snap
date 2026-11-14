@@ -1,0 +1,8 @@
+---
+source: crates/andromeda-postgresql-query/src/declared_operand.rs
+---
+SELECT
+  (
+    CASE
+      WHEN (jsonb_typeof("stored") = ('boolean')) THEN (
+        "stored" #>> ('{}'))::boolean WHEN (jsonb_typeof("stored") = ('string') AND "datatype" = ('http://www.w3.org/2001/XMLSchema#boolean') AND pg_input_is_valid("stored" #>> ('{}'), 'boolean')) THEN ("stored" #>> ('{}'))::boolean END)

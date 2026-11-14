@@ -1,0 +1,27 @@
+---
+source: crates/andromeda-postgresql-context-query/src/id_pattern_page.rs
+---
+SELECT
+  COUNT(*)
+FROM
+  (
+    SELECT
+      "entity_key",
+      "id"
+    FROM
+      "entity_type_members"
+    WHERE
+      "entity_type_name_key" = (18)
+      AND "is_current_member"
+  ) AS "selected"
+WHERE
+  "selected"."entity_key" NOT IN (
+    SELECT
+      "entity_key"
+    FROM
+      "entities"
+    WHERE
+      "expires_at" <= NOW()
+  )
+  AND ((("selected"."id") COLLATE "default") ~ $1)
+1: String '.*_1196287$'

@@ -99,19 +99,19 @@ fn window_instant(instant: DateTime<Utc>) -> SimpleExpr {
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
-    use andromeda_postgresql_seaquery::literal::int_literal;
-    use sea_query::{Alias, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
+    use sea_query::{Alias, Query, SelectStatement};
 
     fn dt(s: &str) -> DateTime<Utc> {
         s.parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
-    fn render(temporal: Option<&CompiledCsrTemporalFilter>) -> String {
+    fn render(temporal: Option<&CompiledCsrTemporalFilter>) -> SelectStatement {
         Query::select()
             .expr(int_literal(1))
             .from(Alias::new("context_source_registrations"))
             .cond_where(temporal_partition(temporal))
-            .to_string(PostgresQueryBuilder)
+            .take()
     }
 
     fn filter(interval: TimeInterval, timeproperty: Option<TimeProp>) -> CompiledCsrTemporalFilter {
@@ -122,10 +122,9 @@ mod tests {
     /// registrations, those declaring no interval at all, are considered.
     #[test]
     fn no_temporal_query_admits_only_registrations_without_any_interval() {
-        let sql = render(None);
-        assert!(
-            sql.contains("\"observation_interval_start\" IS NULL AND \"management_interval_start\" IS NULL"),
-            "{sql}"
+        assert_statement_snapshot!(
+            "temporal-partition-no-temporal-query-admits-only-registrations-without-any-interval",
+            render(None)
         );
     }
 
@@ -133,25 +132,30 @@ mod tests {
     /// present; a registration that lacks it does not match.
     #[test]
     fn a_temporal_query_requires_the_relevant_interval_to_be_present() {
-        let sql = render(Some(&filter(TimeInterval::After(dt("2020-06-01T00:00:00Z")), None)));
-        assert!(sql.contains("\"observation_interval_start\" IS NOT NULL"), "{sql}");
-        assert!(!sql.contains("\"observation_interval_start\" IS NULL"), "{sql}");
+        assert_statement_snapshot!(
+            "temporal-partition-a-temporal-query-requires-the-relevant-interval-to-be-present",
+            render(Some(&filter(TimeInterval::After(dt("2020-06-01T00:00:00Z")), None)))
+        );
     }
 
     /// Clause 5.2.9: `observedAt` reads `observationInterval`; `createdAt`,
     /// `modifiedAt` and `deletedAt` read `managementInterval`.
     #[test]
     fn the_timeproperty_selects_the_interval() {
-        for (timeproperty, interval) in [
-            (None, "observation_interval"),
-            (Some(TimeProp::Observed), "observation_interval"),
-            (Some(TimeProp::Created), "management_interval"),
-            (Some(TimeProp::Modified), "management_interval"),
-            (Some(TimeProp::Deleted), "management_interval"),
-        ] {
-            let sql = render(Some(&filter(TimeInterval::After(dt("2020-06-01T00:00:00Z")), timeproperty)));
-            assert!(sql.contains(&format!("\"{interval}_start\" IS NOT NULL")), "{timeproperty:?}: {sql}");
-            assert!(sql.contains(&format!("\"{interval}_end\" IS NULL OR")), "{timeproperty:?}: {sql}");
+        for (index, timeproperty) in [
+            None,
+            Some(TimeProp::Observed),
+            Some(TimeProp::Created),
+            Some(TimeProp::Modified),
+            Some(TimeProp::Deleted),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_statement_snapshot!(
+                format!("temporal-partition-the-timeproperty-selects-the-interval-{}", index + 1),
+                render(Some(&filter(TimeInterval::After(dt("2020-06-01T00:00:00Z")), timeproperty)))
+            );
         }
     }
 
@@ -160,9 +164,10 @@ mod tests {
     /// out of reach.
     #[test]
     fn before_tests_only_the_interval_start() {
-        let sql = render(Some(&filter(TimeInterval::Before(dt("2020-06-01T00:00:00Z")), None)));
-        assert!(sql.contains("\"observation_interval_start\" <= '2020-06-01 00:00:00.000000 +00:00'"), "{sql}");
-        assert!(!sql.contains("\"observation_interval_end\""), "{sql}");
+        assert_statement_snapshot!(
+            "temporal-partition-before-tests-only-the-interval-start",
+            render(Some(&filter(TimeInterval::Before(dt("2020-06-01T00:00:00Z")), None)))
+        );
     }
 
     /// Clause 5.10.2.4: `after` describes everything from its instant onwards,
@@ -170,25 +175,22 @@ mod tests {
     /// admitted whatever the instant (Table 5.2.11-1).
     #[test]
     fn after_tests_only_the_interval_end_and_admits_an_open_one() {
-        let sql = render(Some(&filter(TimeInterval::After(dt("2020-06-01T00:00:00Z")), None)));
-        assert!(
-            sql.contains("\"observation_interval_end\" IS NULL OR \"observation_interval_end\" >= '2020-06-01 00:00:00.000000 +00:00'"),
-            "{sql}"
+        assert_statement_snapshot!(
+            "temporal-partition-after-tests-only-the-interval-end-and-admits-an-open-one",
+            render(Some(&filter(TimeInterval::After(dt("2020-06-01T00:00:00Z")), None)))
         );
-        assert!(!sql.contains("\"observation_interval_start\" <="), "{sql}");
     }
 
     /// Clause 5.10.2.4: `between` matches when the two intervals overlap.
     #[test]
     fn between_tests_for_overlap() {
-        let sql = render(Some(&filter(
+        let select = render(Some(&filter(
             TimeInterval::Between {
                 from: dt("2020-06-01T00:00:00Z"),
                 to: dt("2020-09-01T00:00:00Z"),
             },
             None,
         )));
-        assert!(sql.contains("\"observation_interval_start\" <= '2020-09-01 00:00:00.000000 +00:00'"), "{sql}");
-        assert!(sql.contains("\"observation_interval_end\" >= '2020-06-01 00:00:00.000000 +00:00'"), "{sql}");
+        assert_statement_snapshot!("temporal-partition-between-tests-for-overlap", select);
     }
 }

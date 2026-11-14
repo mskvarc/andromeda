@@ -1,0 +1,58 @@
+---
+source: crates/andromeda-postgresql-context-query/src/entity.rs
+---
+SELECT
+  COUNT(*)
+FROM
+  "entities"
+  JOIN "entity_search" ON "entity_search"."entity_key" = "entities"."entity_key"
+WHERE
+  "entities"."created_at" IS NOT NULL
+  AND (
+    "entities"."expires_at" IS NULL
+    OR "entities"."expires_at" > NOW()
+  )
+  AND (
+    (
+      "entity_search"."entity_type_name_keys" @> (ARRAY[1])
+    )
+    OR (
+      "entity_search"."entity_type_name_keys" @> (ARRAY[2])
+    )
+  )
+  AND "entities"."entity_key" IN (
+    SELECT DISTINCT
+      "geo_matched"."entity_key"
+    FROM
+      (
+        SELECT
+          "geo_default"."entity_key"
+        FROM
+          "entity_search" AS "geo_default"
+        WHERE
+          (
+            "geo_default"."location_expires_at" IS NULL
+            OR "geo_default"."location_expires_at" > NOW()
+          )
+          AND (
+            COALESCE(
+              "geo_default"."location_reach",
+              "geo_default"."location"
+            ) && ST_MakeEnvelope($1, $2, $3, $4, $5)
+          )
+          AND _ST_DWithin(
+            "geo_default"."location"::geography,
+            ST_MakeValid(ST_GeomFromEWKB($6))::geography,
+            $7
+          )
+      ) AS "geo_matched"
+    ORDER BY
+      "geo_matched"."entity_key" ASC
+  )
+1: Double 13.385140049735467
+2: Double 52.49095530522908
+3: Double 13.414859950264534
+4: Double 52.50904469477092
+5: Int 4326
+6: Bytes '\x0101000020E6100000CDCCCCCCCCCC2A400000000000404A40'
+7: Double 1000

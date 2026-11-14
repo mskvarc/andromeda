@@ -77,27 +77,30 @@ impl SortKey {
 mod tests {
     use crate::sort_key::{KeyOrder, NullPlacement, SortKey};
     use andromeda_ngsi_ld_query::ordering::sort_direction::SortDirection;
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Expr, Query, SelectStatement};
 
-    fn ordered(key: SortKey) -> String {
+    fn ordered(key: SortKey) -> SelectStatement {
         let mut select = Query::select();
         select.expr(Expr::col(Alias::new("id")));
         key.order_by(&mut select);
-        select.to_string(PostgresQueryBuilder)
+        select
     }
 
     #[test]
     fn an_unstated_null_placement_leaves_it_to_the_direction() {
         let key = SortKey::new(Expr::col(Alias::new("id")), KeyOrder::new(SortDirection::Descending, NullPlacement::Unstated));
-        assert_eq!(ordered(key), r#"SELECT "id" ORDER BY "id" DESC"#);
+        assert_statement_snapshot!("sort-key-an-unstated-null-placement-leaves-it-to-the-direction", ordered(key));
     }
 
     #[test]
     fn a_last_null_placement_is_written_in_either_direction() {
-        for (direction, spelled) in [(SortDirection::Ascending, "ASC"), (SortDirection::Descending, "DESC")] {
+        for (index, direction) in [SortDirection::Ascending, SortDirection::Descending].into_iter().enumerate() {
             let key = SortKey::new(Expr::col(Alias::new("id")), KeyOrder::new(direction, NullPlacement::Last));
-            assert_eq!(ordered(key), format!(r#"SELECT "id" ORDER BY "id" {spelled} NULLS LAST"#));
+            assert_statement_snapshot!(
+                format!("sort-key-a-last-null-placement-is-written-in-either-direction-{}", index + 1),
+                ordered(key)
+            );
         }
     }
 
@@ -109,9 +112,6 @@ mod tests {
         let mut select = Query::select();
         select.expr_as(expression, Alias::new("sort_0"));
         order.order_by(&mut select, Expr::col((Alias::new("page"), Alias::new("sort_0"))));
-        assert_eq!(
-            select.to_string(PostgresQueryBuilder),
-            r#"SELECT "id" AS "sort_0" ORDER BY "page"."sort_0" ASC NULLS LAST"#
-        );
+        assert_statement_snapshot!("sort-key-a-key-taken-apart-orders-another-reference-the-same-way", select);
     }
 }

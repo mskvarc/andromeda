@@ -1,0 +1,93 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/value_filters.rs
+---
+SELECT
+  "e"."id",
+  EXISTS (
+    SELECT
+      1
+    FROM
+      (
+        SELECT
+          "re"."id" AS "entity_id",
+          "rs"."attribute_name_key" AS "attribute_name_key",
+          "rs"."dataset_key" AS "dataset_key",
+          "rh"."recorded_at",
+          "rh"."write_id",
+          "rh"."write_ordinal",
+          "rh"."attribute_kind",
+          "rh"."value_kind",
+          "rh"."observed_at",
+          "rh"."created_at",
+          "rh"."modified_at",
+          "rh"."deleted_at",
+          "rh"."value_date_time",
+          "rh"."expires_at",
+          "rh"."generated_instance_id",
+          "rh"."value_type_key",
+          "rh"."value_datatype_key",
+          "rh"."unit_code_id",
+          "rh"."value_boolean",
+          "rh"."verbatim_instance_id",
+          "rh"."value_number",
+          "rh"."value_string",
+          "rh"."value_language",
+          "rh"."value_geometry",
+          "rh"."value_geometry_valid",
+          "rh"."value_geometry_reach",
+          "rh"."value_geometry_members",
+          "rh"."value_object",
+          "rh"."value_uri",
+          "rh"."object_type_keys",
+          "rh"."sub_attributes"
+        FROM
+          "attribute_history" AS "rh"
+          JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+          JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+        WHERE
+          "re"."id" = "e"."id"
+      ) AS "qh"
+    WHERE
+      "qh"."attribute_name_key" = $1
+      AND (
+        (
+          COALESCE(
+            "qh"."value_geometry_reach",
+            "qh"."value_geometry_valid",
+            "qh"."value_geometry"
+          )::box2d && ST_MakeEnvelope($2, $3, $4, $5, $6)::box2d
+        )
+        AND _ST_DWithin(
+          COALESCE(
+            "qh"."value_geometry_valid",
+            "qh"."value_geometry"
+          )::geography,
+          ST_MakeValid(ST_GeomFromEWKB($7))::geography,
+          $8
+        )
+      )
+      AND "qh"."value_kind" <> (0)
+      AND "qh"."observed_at" IS NOT NULL
+      AND "qh"."observed_at" < $9
+  ) AS "leaf_0"
+FROM
+  (
+    SELECT
+      *
+    FROM
+      "entities"
+    WHERE
+      "entities"."evolution_created_at" IS NOT NULL
+  ) AS "e"
+WHERE
+  "e"."id" = ANY($10)
+1: Int 2
+2: Double 4.4702749827517545
+3: Double 52.48191161045816
+4: Double 4.5297250172482455
+5: Double 52.51808838954184
+6: Int 4326
+7: Bytes '\x0101000020E610000000000000000012400000000000404A40'
+8: Double 2000
+9: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+10: Array ARRAY ['urn:ngsi-ld:Sensor:000001','urn:ngsi-ld:Sensor:000002']

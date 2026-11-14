@@ -1,0 +1,25 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/keyed_term.rs
+---
+SELECT
+  "entity_search"."entity_key"
+FROM
+  "entity_search"
+WHERE
+  (
+    "entity_search"."attribute_name_keys" @> (ARRAY[2])
+  )
+  AND EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND "ca"."entity_key" = "entity_search"."entity_key"
+  )
+1: Int 2

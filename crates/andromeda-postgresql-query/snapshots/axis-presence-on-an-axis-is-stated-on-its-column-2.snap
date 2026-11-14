@@ -1,0 +1,6 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/axis.rs
+---
+SELECT
+WHERE
+  "ah"."deleted_at" IS NOT NULL

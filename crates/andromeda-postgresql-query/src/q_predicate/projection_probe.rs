@@ -126,33 +126,24 @@ mod tests {
         },
     };
     use andromeda_postgresql_schema::current::{CurrentAttributes, Entities};
-    use pretty_assertions::assert_eq;
-    use sea_query::{Condition, ExprTrait, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Condition, ExprTrait, Query, SelectStatement};
 
-    fn render(condition: Condition) -> String {
-        let (sql, _) = Query::select()
-            .column(Entities::Id)
-            .from(Entities::Table)
-            .cond_where(condition)
-            .build(PostgresQueryBuilder);
-        sql
+    fn render(condition: Condition) -> SelectStatement {
+        Query::select().column(Entities::Id).from(Entities::Table).cond_where(condition).to_owned()
     }
 
     /// A presence test carries no value condition at all, so the probe stays on
     /// the grain constraint's leading columns.
     #[test]
     fn a_presence_probe_tests_the_attribute_key_and_the_correlation_and_nothing_else() {
-        assert_eq!(
+        assert_statement_snapshot!(
+            "projection-probe-a-presence-probe-tests-the-attribute-key-and-the-correlation-and-nothing-else",
             render(exists_on_projection(
                 AttributeNameKey::from(7),
                 Condition::all(),
                 &EntityRowRefs::unaliased(None)
-            )),
-            concat!(
-                r#"SELECT "id" FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attributes" AS "ca" "#,
-                r#"WHERE "ca"."attribute_name_key" = $1 AND ("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW()) "#,
-                r#"AND "ca"."entity_key" = "entities"."entity_key")"#,
-            )
+            ))
         );
     }
 
@@ -161,12 +152,10 @@ mod tests {
     #[test]
     fn a_value_probe_places_its_condition_between_the_attribute_key_and_the_correlation() {
         let value = Condition::all().add(projection_column(CurrentAttributes::ValueString).eq("red"));
-        let sql = render(exists_on_projection(AttributeNameKey::from(7), value, &EntityRowRefs::unaliased(None)));
-        assert!(
-            sql.contains(
-                r#""ca"."attribute_name_key" = $1 AND ("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW()) AND "ca"."value_string" = $2 AND "ca"."entity_key""#
-            ),
-            "{sql}"
+        let statement = render(exists_on_projection(AttributeNameKey::from(7), value, &EntityRowRefs::unaliased(None)));
+        assert_statement_snapshot!(
+            "projection-probe-a-value-probe-places-its-condition-between-the-attribute-key-and-the-correlation",
+            statement
         );
     }
 
@@ -174,18 +163,13 @@ mod tests {
     /// it up into a semi-join.
     #[test]
     fn a_walked_probe_carries_an_offset() {
-        let (sql, values) = Query::select()
-            .column(Entities::Id)
-            .from(Entities::Table)
-            .cond_where(probe(
-                AttributeNameKey::from(7),
-                Condition::all(),
-                &EntityRowRefs::unaliased(None),
-                ProbeShape::Walked,
-            ))
-            .build(PostgresQueryBuilder);
-        assert!(sql.contains(r#""ca"."entity_key" = "entities"."entity_key" OFFSET $2)"#), "{sql}");
-        assert_eq!(values.0.len(), 2, "{sql}");
+        let statement = render(probe(
+            AttributeNameKey::from(7),
+            Condition::all(),
+            &EntityRowRefs::unaliased(None),
+            ProbeShape::Walked,
+        ));
+        assert_statement_snapshot!("projection-probe-a-walked-probe-carries-an-offset", statement);
     }
 
     /// A shared probe tests expiry once and then each attribute key beside its
@@ -197,17 +181,12 @@ mod tests {
             attribute: AttributeNameKey::from(attribute),
             value: Condition::all().add(projection_column(CurrentAttributes::ValueUri).eq(value)),
         };
-        assert_eq!(
+        assert_statement_snapshot!(
+            "projection-probe-a-shared-probe-pairs-each-attribute-key-with-its-own-value",
             render(exists_any_on_projection(
                 vec![test(7, "urn:a"), test(8, "urn:b")],
                 &EntityRowRefs::unaliased(None)
-            )),
-            concat!(
-                r#"SELECT "id" FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attributes" AS "ca" "#,
-                r#"WHERE ("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW()) "#,
-                r#"AND (("ca"."attribute_name_key" = $1 AND "ca"."value_uri" = $2) OR ("ca"."attribute_name_key" = $3 AND "ca"."value_uri" = $4)) "#,
-                r#"AND "ca"."entity_key" = "entities"."entity_key")"#,
-            )
+            ))
         );
     }
 }

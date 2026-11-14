@@ -31,20 +31,17 @@ mod tests {
     use crate::time_interval_predicate::within_interval;
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use chrono::{DateTime, Utc};
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
+    use sea_query::{Alias, Expr, Query, SelectStatement, SimpleExpr};
 
     fn instant(raw: &str) -> DateTime<Utc> {
         raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
     }
 
-    fn render(interval: &TimeInterval) -> String {
+    fn render(interval: &TimeInterval) -> SelectStatement {
         let column: SimpleExpr = Expr::col((Alias::new("h"), Alias::new("observed_at")));
-        Query::select()
-            .expr(Expr::val(1))
-            .cond_where(within_interval(&column, interval))
-            .to_owned()
-            .to_string(PostgresQueryBuilder)
+        Query::select().expr(Expr::val(1)).cond_where(within_interval(&column, interval)).to_owned()
     }
 
     /// Clause 4.11: `before` excludes its bound, `after` includes it, and
@@ -53,16 +50,25 @@ mod tests {
     fn each_relation_renders_the_bounds_clause_4_11_gives_it() {
         let at = instant("2024-01-01T00:00:00Z");
         let end = instant("2024-02-01T00:00:00Z");
-        assert!(render(&TimeInterval::Before(at)).contains(r#""h"."observed_at" < '2024-01-01"#));
-        assert!(render(&TimeInterval::After(at)).contains(r#""h"."observed_at" >= '2024-01-01"#));
-        let between = render(&TimeInterval::Between { from: at, to: end });
-        assert!(between.contains(r#""h"."observed_at" >= '2024-01-01"#), "{between}");
-        assert!(between.contains(r#""h"."observed_at" < '2024-02-01"#), "{between}");
+        assert_statement_snapshot!(
+            "time-interval-predicate-each-relation-renders-the-bounds-clause-4-11-gives-it-1",
+            render(&TimeInterval::Before(at))
+        );
+        assert_statement_snapshot!(
+            "time-interval-predicate-each-relation-renders-the-bounds-clause-4-11-gives-it-2",
+            render(&TimeInterval::After(at))
+        );
+        assert_statement_snapshot!(
+            "time-interval-predicate-each-relation-renders-the-bounds-clause-4-11-gives-it-3",
+            render(&TimeInterval::Between { from: at, to: end })
+        );
     }
 
     #[test]
     fn an_unbounded_interval_constrains_no_column() {
-        let sql = render(&TimeInterval::Unbounded);
-        assert!(!sql.contains("observed_at"), "{sql}");
+        assert_statement_snapshot!(
+            "time-interval-predicate-an-unbounded-interval-constrains-no-column",
+            render(&TimeInterval::Unbounded)
+        );
     }
 }

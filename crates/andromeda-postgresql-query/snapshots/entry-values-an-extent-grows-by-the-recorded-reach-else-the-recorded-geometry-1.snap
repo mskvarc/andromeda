@@ -1,0 +1,34 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/entry_values.rs
+---
+SELECT
+  "e"."attribute_kind" AS "attribute_kind",
+  "e"."value_kind" AS "value_kind",
+  "e"."observed_at" AS "observed_at",
+  "e"."created_at" AS "created_at",
+  "e"."modified_at" AS "modified_at",
+  "e"."deleted_at" AS "deleted_at",
+  "e"."value_date_time" AS "value_date_time",
+  "e"."expires_at" AS "expires_at",
+  "e"."generated_instance_id" AS "generated_instance_id",
+  "e"."value_type_key" AS "value_type_key",
+  "e"."value_datatype_key" AS "value_datatype_key",
+  "e"."unit_code_id" AS "unit_code_id",
+  "e"."value_boolean" AS "value_boolean",
+  "e"."verbatim_instance_id" AS "verbatim_instance_id",
+  "e"."value_number" AS "value_number",
+  "e"."value_string" AS "value_string",
+  "e"."value_language" AS "value_language",
+  "e"."value_geometry" AS "value_geometry",
+  (
+    CASE
+      WHEN (ST_IsValid("e"."value_geometry")) THEN NULL
+      ELSE ST_MakeValid("e"."value_geometry")
+    END
+  ) AS "value_geometry_valid",
+  "e"."value_geometry_reach" AS "value_geometry_reach",
+  "e"."value_geometry_members" AS "value_geometry_members",
+  "e"."value_object" AS "value_object",
+  "e"."value_uri" AS "value_uri",
+  "e"."object_type_keys" AS "object_type_keys",
+  "e"."sub_attributes" AS "sub_attributes"

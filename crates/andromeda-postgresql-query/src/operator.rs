@@ -94,11 +94,12 @@ pub fn pattern(target: SimpleExpr, polarity: PatternPolarity, pattern: &Pattern,
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_query::filter::predicate::{OrderingOp, SetMembership};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use sea_query::{Query, SelectStatement};
 
-    fn render(expr: SimpleExpr) -> String {
-        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    fn render(expr: SimpleExpr) -> SelectStatement {
+        Query::select().expr(expr).to_owned()
     }
 
     fn operands() -> (SimpleExpr, SimpleExpr) {
@@ -108,44 +109,60 @@ mod tests {
     #[test]
     fn equality_is_the_one_operator_sql_spells_differently_from_clause_4_9() {
         let (lhs, rhs) = operands();
-        assert!(render(compare(lhs, SetMembership::Within.as_cmp_op(), rhs)).contains(" = "));
+        assert_statement_snapshot!(
+            "operator-equality-is-the-one-operator-sql-spells-differently-from-clause-4-9",
+            render(compare(lhs, SetMembership::Within.as_cmp_op(), rhs))
+        );
         assert_eq!(SetMembership::Within.ngsi_token(), "==");
     }
 
     #[test]
     fn inequality_keeps_the_bang_equals_spelling() {
         let (lhs, rhs) = operands();
-        assert!(render(compare(lhs, SetMembership::Outside.as_cmp_op(), rhs)).contains(" != "));
+        assert_statement_snapshot!(
+            "operator-inequality-keeps-the-bang-equals-spelling",
+            render(compare(lhs, SetMembership::Outside.as_cmp_op(), rhs))
+        );
     }
 
     #[test]
     fn each_ordering_operator_renders_its_own_token() {
-        for (op, token) in [
-            (OrderingOp::Greater, " > "),
-            (OrderingOp::GreaterEq, " >= "),
-            (OrderingOp::Less, " < "),
-            (OrderingOp::LessEq, " <= "),
-        ] {
+        for (index, op) in [OrderingOp::Greater, OrderingOp::GreaterEq, OrderingOp::Less, OrderingOp::LessEq]
+            .into_iter()
+            .enumerate()
+        {
             let (lhs, rhs) = operands();
-            assert!(render(compare(lhs, op.as_cmp_op(), rhs)).contains(token), "{op:?}");
+            assert_statement_snapshot!(
+                format!("operator-each-ordering-operator-renders-its-own-token-{}", index + 1),
+                render(compare(lhs, op.as_cmp_op(), rhs))
+            );
         }
     }
 
-    fn pattern_on_stored(raw: &str, polarity: PatternPolarity, indexes: PatternIndexes) -> String {
+    fn pattern_on_stored(raw: &str, polarity: PatternPolarity, indexes: PatternIndexes) -> SelectStatement {
         let parsed = Pattern::parse(raw).expect("valid pattern");
         render(pattern(Expr::col(sea_query::Alias::new("stored")), polarity, &parsed, indexes))
     }
 
     #[test]
     fn a_pattern_predicate_renders_the_posix_operator_of_its_polarity() {
-        assert!(pattern_on_stored("abc", PatternPolarity::Match, PatternIndexes::None).contains(r#""stored" ~ 'abc'"#));
-        assert!(pattern_on_stored("abc", PatternPolarity::NotMatch, PatternIndexes::None).contains(r#""stored" !~ 'abc'"#));
+        assert_statement_snapshot!(
+            "operator-a-pattern-predicate-renders-the-posix-operator-of-its-polarity-1",
+            pattern_on_stored("abc", PatternPolarity::Match, PatternIndexes::None)
+        );
+        assert_statement_snapshot!(
+            "operator-a-pattern-predicate-renders-the-posix-operator-of-its-polarity-2",
+            pattern_on_stored("abc", PatternPolarity::NotMatch, PatternIndexes::None)
+        );
     }
 
     /// The store runs the restatement, never the client's text.
     #[test]
     fn a_pattern_predicate_tests_the_portable_restatement() {
-        assert!(pattern_on_stored("(?i)čer", PatternPolarity::Match, PatternIndexes::None).ends_with(" ~ '[Čč][Ee][Rr]'"));
+        assert_statement_snapshot!(
+            "operator-a-pattern-predicate-tests-the-portable-restatement",
+            pattern_on_stored("(?i)čer", PatternPolarity::Match, PatternIndexes::None)
+        );
     }
 
     const OPEN: [&str; 5] = ["^(O|Č)", "Nám\\. Ľ.*a", "LJE ŽP$", "[OČ]abc", "(?i)^č"];
@@ -159,10 +176,16 @@ mod tests {
             .iter()
             .map(|raw| (*raw, PatternIndexes::TrigramsAndByteOrder))
             .chain(OPEN.iter().chain(&FIXED).map(|raw| (*raw, PatternIndexes::Trigrams)));
-        for (raw, indexes) in answered {
-            for polarity in [PatternPolarity::Match, PatternPolarity::NotMatch] {
-                let sql = pattern_on_stored(raw, polarity, indexes);
-                assert!(sql.contains(r#"(("stored") COLLATE "default") "#), "{raw} {indexes:?}: {sql}");
+        for (index, (raw, indexes)) in answered.enumerate() {
+            for (side, polarity) in [PatternPolarity::Match, PatternPolarity::NotMatch].into_iter().enumerate() {
+                assert_statement_snapshot!(
+                    format!(
+                        "operator-a-pattern-a-trigram-index-answers-is-tested-under-the-database-default-{}-{}",
+                        index + 1,
+                        side + 1
+                    ),
+                    pattern_on_stored(raw, polarity, indexes)
+                );
             }
         }
     }
@@ -171,18 +194,23 @@ mod tests {
     /// `"C"` collation.
     #[test]
     fn a_pattern_fixing_the_start_of_byte_ordered_text_keeps_the_column_collation() {
-        for raw in FIXED {
-            let sql = pattern_on_stored(raw, PatternPolarity::Match, PatternIndexes::TrigramsAndByteOrder);
-            assert!(sql.contains(r#""stored" ~ '^"#) && !sql.contains("COLLATE"), "{raw}: {sql}");
+        for (index, raw) in FIXED.into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!(
+                    "operator-a-pattern-fixing-the-start-of-byte-ordered-text-keeps-the-column-collation-{}",
+                    index + 1
+                ),
+                pattern_on_stored(raw, PatternPolarity::Match, PatternIndexes::TrigramsAndByteOrder)
+            );
         }
     }
 
     #[test]
     fn a_pattern_no_index_answers_keeps_the_target_collation() {
-        for raw in OPEN.iter().chain(&FIXED) {
-            assert!(
-                !pattern_on_stored(raw, PatternPolarity::Match, PatternIndexes::None).contains("COLLATE"),
-                "{raw}"
+        for (index, raw) in OPEN.iter().chain(&FIXED).enumerate() {
+            assert_statement_snapshot!(
+                format!("operator-a-pattern-no-index-answers-keeps-the-target-collation-{}", index + 1),
+                pattern_on_stored(raw, PatternPolarity::Match, PatternIndexes::None)
             );
         }
     }

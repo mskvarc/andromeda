@@ -1,0 +1,7 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/stage1/queued_candidates.rs
+---
+SELECT
+  "entity_id"
+FROM
+  "temporal_append_intents"

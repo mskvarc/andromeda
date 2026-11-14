@@ -94,50 +94,39 @@ mod tests {
     use crate::walked_column::WalkedColumn;
     use andromeda_ngsi_ld_query::ordering::sort_direction::SortDirection;
     use andromeda_postgresql_query::entity_ordering::ordering_collation;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Query, SelectStatement};
 
-    fn rendered(column: WalkedColumn, direction: SortDirection) -> String {
+    fn rendered(column: WalkedColumn, direction: SortDirection) -> SelectStatement {
         let value = column.ranked_value(direction, &ordering_collation(None));
-        Query::select()
-            .expr(value.rank)
-            .expr(value.number)
-            .expr(value.instant)
-            .expr(value.text)
-            .take()
-            .to_string(PostgresQueryBuilder)
+        Query::select().expr(value.rank).expr(value.number).expr(value.instant).expr(value.text).take()
     }
 
     #[test]
     fn a_walked_number_projects_its_value_as_the_number_key() {
-        let sql = rendered(WalkedColumn::Number, SortDirection::Ascending);
-        assert!(
-            sql.ends_with(r#"'number'), "ca"."value_number", NULL::timestamptz, (NULL::text) COLLATE "und-x-icu""#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "walked-column-a-walked-number-projects-its-value-as-the-number-key",
+            rendered(WalkedColumn::Number, SortDirection::Ascending)
         );
-        assert!(sql.starts_with("SELECT array_position("), "{sql}");
     }
 
     #[test]
     fn a_walked_date_time_projects_its_instant_as_the_instant_key() {
-        let sql = rendered(WalkedColumn::DateTime, SortDirection::Ascending);
-        assert!(
-            sql.ends_with(r#"'https://uri.etsi.org/ngsi-ld/DateTime'), NULL::numeric, "ca"."value_date_time", (NULL::text) COLLATE "und-x-icu""#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "walked-column-a-walked-date-time-projects-its-instant-as-the-instant-key",
+            rendered(WalkedColumn::DateTime, SortDirection::Ascending)
         );
-        assert!(sql.starts_with("SELECT array_position("), "{sql}");
     }
 
     /// Clause 4.23.2 reverses the datatype order for a descending term and
     /// keeps Null last.
     #[test]
     fn a_descending_walk_ranks_on_the_reversed_sequence() {
-        for column in WalkedColumn::ALL {
-            let sql = rendered(column, SortDirection::Descending);
-            assert!(
-                sql.contains("ARRAY ['https://uri.etsi.org/ngsi-ld/DateTime','https://uri.etsi.org/ngsi-ld/Date',"),
-                "{column:?}: {sql}"
+        for (index, column) in WalkedColumn::ALL.into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!("walked-column-a-descending-walk-ranks-on-the-reversed-sequence-{}", index + 1),
+                rendered(column, SortDirection::Descending)
             );
-            assert!(sql.contains("'string','number','null']::text[]"), "{column:?}: {sql}");
         }
     }
 }

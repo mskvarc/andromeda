@@ -1,0 +1,14 @@
+---
+source: crates/andromeda-postgresql-context-query/src/entity_relations.rs
+---
+SELECT
+  "entities"."id"
+FROM
+  "entities"
+  JOIN "entity_search" ON "entity_search"."entity_key" = "entities"."entity_key"
+WHERE
+  "entities"."created_at" IS NOT NULL
+  AND (
+    "entities"."expires_at" IS NULL
+    OR "entities"."expires_at" > NOW()
+  )

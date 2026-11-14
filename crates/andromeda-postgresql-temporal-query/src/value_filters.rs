@@ -170,25 +170,15 @@ mod tests {
         history_source::HistoryBranch,
         window_reach::WindowReach,
     };
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use chrono::{DateTime, Utc};
     use iri_rs::IriBuf;
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Expr, IntoIden, PostgresQueryBuilder, Query, Value, Values};
+    use sea_query::{Alias, Expr, IntoIden, Query, SelectStatement};
     use std::str::FromStr;
 
     const TEMPERATURE: &str = "https://uri.etsi.org/ngsi-ld/default-context/temperature";
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
     const SENSOR: &str = "https://uri.etsi.org/ngsi-ld/default-context/Sensor";
-
-    /// A probe's source compared beside nothing: narrowed inside to the
-    /// Evolution's surrogate key.
-    const BY_KEY: &str = r#""rs"."entity_key" = "e"."entity_key""#;
-    /// The Scope source narrowed inside to the Evolution's surrogate key.
-    const SCOPE_BY_KEY: &str = r#""rsh"."entity_key" = "e"."entity_key""#;
-    /// A recorded source narrowed inside to the Evolution's identifier.
-    const BY_IDENTIFIER: &str = r#""re"."id" = "e"."id""#;
-    /// The geo probe's comparison of the `GeoProperty`'s dictionary key.
-    const GEO_KEY: &str = r#""qh"."attribute_name_key" = $"#;
 
     fn instant(raw: &str) -> DateTime<Utc> {
         raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
@@ -277,34 +267,22 @@ mod tests {
     }
 
     /// The value, geo and scope filters stage 1 conjoins, alone.
-    fn filters(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> String {
+    fn filters(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> SelectStatement {
         let condition = value_filter_condition(branch, compiled, &names()).expect("renders").expect("a filter");
-        Query::select()
-            .expr(Expr::val(1))
-            .cond_where(condition)
-            .to_owned()
-            .to_string(PostgresQueryBuilder)
+        Query::select().expr(Expr::val(1)).cond_where(condition).to_owned()
     }
 
-    /// The geo filter of `compiled` alone, with its bound values.
-    fn geo_filter(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> (String, Values) {
+    /// The geo filter of `compiled` alone.
+    fn geo_filter(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> SelectStatement {
         let condition = temporal_geo_existential(branch, compiled, names, &stage1_evolution(), WindowReach::InsideAndInEffect)
             .expect("renders")
             .expect("a geo query");
-        Query::select().expr(Expr::val(1)).cond_where(condition).to_owned().build(PostgresQueryBuilder)
+        Query::select().expr(Expr::val(1)).cond_where(condition).to_owned()
     }
 
-    /// The geo probe stage 1 conjoins, with its bound values.
-    fn geo_probe(branch: &HistoryBranch, names: &QueryNames) -> (String, Values) {
+    /// The geo probe stage 1 conjoins.
+    fn geo_probe(branch: &HistoryBranch, names: &QueryNames) -> SelectStatement {
         geo_filter(branch, &near(compiled(before_2030())), names)
-    }
-
-    /// The value bound to the placeholder right after the first `fragment`.
-    fn bound_after(sql: &str, values: &Values, fragment: &str) -> Option<Value> {
-        let start = sql.find(fragment)? + fragment.len();
-        let digits: String = sql[start..].chars().take_while(char::is_ascii_digit).collect();
-        let position = digits.parse::<usize>().ok()?.checked_sub(1)?;
-        values.0.get(position).cloned()
     }
 
     fn vehicles() -> Vec<Identifier> {
@@ -320,40 +298,24 @@ mod tests {
 
     #[test]
     fn the_geo_probe_compares_the_geoproperty_by_dictionary_key() {
-        let (sql, values) = geo_probe(&HistoryBranch::live_recorded(), &names());
-        assert_eq!(bound_after(&sql, &values, GEO_KEY), Some(Value::Int(Some(2))), "{sql}");
-        assert!(!sql.contains("attribute_names"), "{sql}");
+        let statement = geo_probe(&HistoryBranch::live_recorded(), &names());
+        assert_statement_snapshot!("value-filters-the-geo-probe-compares-the-geoproperty-by-dictionary-key", statement);
     }
 
     #[test]
     fn the_temporal_near_probe_prefilters_by_an_unindexed_box() {
-        let (sql, _) = geo_probe(&HistoryBranch::live_recorded(), &names());
-        let unindexed = sql
-            .find(r#"COALESCE("qh"."value_geometry_reach", "qh"."value_geometry_valid", "qh"."value_geometry")::box2d && ST_MakeEnvelope("#)
-            .expect("the unindexed box");
-        let distance = sql.find(" _ST_DWithin(").expect("the distance");
-        assert!(unindexed < distance, "{sql}");
-        assert!(
-            sql[distance..].starts_with(r#" _ST_DWithin(COALESCE("qh"."value_geometry_valid", "qh"."value_geometry")::geography, "#),
-            "{sql}"
-        );
-        assert!(sql[unindexed..distance].contains(")::box2d"), "{sql}");
-        assert!(!sql.contains(r#""qh"."value_geometry") && ST_MakeEnvelope("#), "{sql}");
+        let statement = geo_probe(&HistoryBranch::live_recorded(), &names());
+        assert_statement_snapshot!("value-filters-the-temporal-near-probe-prefilters-by-an-unindexed-box", statement);
     }
 
     /// An area relation is prefiltered too, by the reference's box against
     /// the rows' reach box, which no geometry index serves on this probe.
     #[test]
     fn an_area_relation_carries_an_unindexed_box_prefilter() {
-        for georel in [GeoRel::Within, GeoRel::Intersects] {
-            let (sql, _) = geo_filter(&HistoryBranch::live_recorded(), &area(georel, compiled(before_2030())), &names());
-            assert!(
-                sql.contains(
-                    r#"COALESCE("qh"."value_geometry_reach", "qh"."value_geometry_valid", "qh"."value_geometry")::box2d && ST_MakeValid(ST_GeomFromEWKB("#
-                ),
-                "{sql}"
-            );
-        }
+        let within = geo_filter(&HistoryBranch::live_recorded(), &area(GeoRel::Within, compiled(before_2030())), &names());
+        assert_statement_snapshot!("value-filters-an-area-relation-carries-an-unindexed-box-prefilter-1", within);
+        let intersects = geo_filter(&HistoryBranch::live_recorded(), &area(GeoRel::Intersects, compiled(before_2030())), &names());
+        assert_statement_snapshot!("value-filters-an-area-relation-carries-an-unindexed-box-prefilter-2", intersects);
     }
 
     /// A `GeoProperty` the dictionary never keyed has no history, so the
@@ -361,18 +323,14 @@ mod tests {
     /// never keyed.
     #[test]
     fn an_unrecorded_geoproperty_matches_no_instance() {
-        let (sql, _) = geo_probe(&HistoryBranch::live_recorded(), &QueryNames::default());
-        assert!(sql.ends_with("WHERE FALSE"), "{sql}");
-        assert!(!sql.contains("attribute_names") && !sql.contains(r#""qh""#), "{sql}");
+        let statement = geo_probe(&HistoryBranch::live_recorded(), &QueryNames::default());
+        assert_statement_snapshot!("value-filters-an-unrecorded-geoproperty-matches-no-instance", statement);
     }
 
     #[test]
     fn a_split_geo_leaf_compares_by_dictionary_key() {
-        let (sql, values) = build_filter_leaf_truths(&HistoryBranch::live_recorded(), &near(compiled(before_2030())), &vehicles(), &names())
-            .expect("renders")
-            .build(PostgresQueryBuilder);
-        assert_eq!(bound_after(&sql, &values, GEO_KEY), Some(Value::Int(Some(2))), "{sql}");
-        assert!(!sql.contains("attribute_names"), "{sql}");
+        let statement = build_filter_leaf_truths(&HistoryBranch::live_recorded(), &near(compiled(before_2030())), &vehicles(), &names()).expect("renders");
+        assert_statement_snapshot!("value-filters-a-split-geo-leaf-compares-by-dictionary-key", statement);
     }
 
     /// The key is compared once on the source's own grain column, above the
@@ -380,21 +338,14 @@ mod tests {
     /// restriction on a derived table into every branch of it.
     #[test]
     fn a_queued_branch_compares_the_key_inside_each_part() {
-        let (sql, values) = geo_probe(&HistoryBranch::live(), &names());
-        let recorded = sql.find(r#"FROM "attribute_history" AS "rh""#).expect("the recorded part");
-        let queued = sql.find(r#"FROM "temporal_append_entries" AS "pe""#).expect("the queued part");
-        let key = sql.find(&format!(r#") AS "qh" WHERE {GEO_KEY}"#)).expect("the key comparison on the source");
-        assert!(recorded < queued && queued < key, "{sql}");
-        assert_eq!(sql.matches(GEO_KEY).count(), 1, "{sql}");
-        assert_eq!(bound_after(&sql, &values, GEO_KEY), Some(Value::Int(Some(2))), "{sql}");
-        assert!(!sql.contains("attribute_names"), "{sql}");
+        let statement = geo_probe(&HistoryBranch::live(), &names());
+        assert_statement_snapshot!("value-filters-a-queued-branch-compares-the-key-inside-each-part", statement);
     }
 
     #[test]
     fn a_recorded_branch_correlates_the_q_probe_by_evolution_key() {
-        let sql = filters(&HistoryBranch::live_recorded(), &rare_q(compiled(before_2030())));
-        assert!(sql.contains(&format!(r#"{BY_KEY}) AS "qh""#)), "{sql}");
-        assert!(!sql.contains(BY_IDENTIFIER) && !sql.contains("entities"), "{sql}");
+        let statement = filters(&HistoryBranch::live_recorded(), &rare_q(compiled(before_2030())));
+        assert_statement_snapshot!("value-filters-a-recorded-branch-correlates-the-q-probe-by-evolution-key", statement);
     }
 
     /// Clause 4.11 with Annex C clause C.5.5: an `after` window also reads the
@@ -402,20 +353,14 @@ mod tests {
     /// by the key and the rows of each stream read by its stream key.
     #[test]
     fn a_recorded_branch_correlates_the_in_effect_instance_by_evolution_key() {
-        let sql = filters(&HistoryBranch::live_recorded(), &rare_q(compiled(after_2019())));
-        for alias in ["qh", "qs"] {
-            assert!(sql.contains(&format!(r#"{BY_KEY}) AS "{alias}""#)), "{alias}: {sql}");
-        }
-        assert!(sql.contains(r#""rh"."stream_key" = "qs"."stream_key") AS "qi""#), "{sql}");
-        assert!(sql.contains(r#""qs"."entity_key" AS "entity_key""#), "{sql}");
-        assert!(!sql.contains(BY_IDENTIFIER) && !sql.contains("entities"), "{sql}");
+        let statement = filters(&HistoryBranch::live_recorded(), &rare_q(compiled(after_2019())));
+        assert_statement_snapshot!("value-filters-a-recorded-branch-correlates-the-in-effect-instance-by-evolution-key", statement);
     }
 
     #[test]
     fn a_recorded_branch_correlates_the_geo_probe_by_evolution_key() {
-        let sql = filters(&HistoryBranch::live_recorded(), &near(compiled(before_2030())));
-        assert!(sql.contains(&format!(r#"{BY_KEY}) AS "qh""#)), "{sql}");
-        assert!(!sql.contains(BY_IDENTIFIER) && !sql.contains("entities"), "{sql}");
+        let statement = filters(&HistoryBranch::live_recorded(), &near(compiled(before_2030())));
+        assert_statement_snapshot!("value-filters-a-recorded-branch-correlates-the-geo-probe-by-evolution-key", statement);
     }
 
     /// Clause 5.7.4.4 steps S2 and S3 read the same instances: for one window,
@@ -425,52 +370,33 @@ mod tests {
     #[test]
     fn q_and_georel_read_the_same_window_instances() {
         let q = filters(&HistoryBranch::live_recorded(), &rare_q(compiled(after_2019())));
-        let (geo, _) = geo_filter(&HistoryBranch::live_recorded(), &near(compiled(after_2019())), &names());
-        for (filter, sql) in [("q", &q), ("georel", &geo)] {
-            assert!(sql.contains(r#" AS "qi""#), "{filter} reads the instance in effect: {sql}");
-            assert!(sql.contains(r#""qh"."observed_at" >"#), "{filter} reads the instances inside: {sql}");
-            assert!(sql.contains(r#""qh"."value_kind" <> "#), "{filter} skips a deletion: {sql}");
-        }
+        assert_statement_snapshot!("value-filters-q-and-georel-read-the-same-window-instances-1", q);
+        let geo = geo_filter(&HistoryBranch::live_recorded(), &near(compiled(after_2019())), &names());
+        assert_statement_snapshot!("value-filters-q-and-georel-read-the-same-window-instances-2", geo);
     }
 
     /// Clause 4.18: an `after` window also asks whether a later event of the
     /// same Evolution superseded the Scope, which names it by the key too.
     #[test]
     fn a_recorded_branch_correlates_the_scope_probe_by_evolution_key() {
-        let sql = filters(&HistoryBranch::live_recorded(), &moved(compiled(before_2030())));
-        assert!(sql.contains(&format!(r#"{SCOPE_BY_KEY}) AS "sh""#)), "{sql}");
-        assert!(!sql.contains("entities") && !sql.contains("entity_id"), "{sql}");
+        let before = filters(&HistoryBranch::live_recorded(), &moved(compiled(before_2030())));
+        assert_statement_snapshot!("value-filters-a-recorded-branch-correlates-the-scope-probe-by-evolution-key-1", before);
         let after = filters(&HistoryBranch::live_recorded(), &moved(compiled(after_2019())));
-        assert!(after.contains(r#""rsh"."entity_key" = "sh"."entity_key") AS "sh_next""#), "{after}");
-        assert!(!after.contains("entities") && !after.contains("entity_id"), "{after}");
+        assert_statement_snapshot!("value-filters-a-recorded-branch-correlates-the-scope-probe-by-evolution-key-2", after);
     }
 
     #[test]
     fn a_snapshot_branch_correlates_by_evolution_key() {
-        let sql = filters(&snapshot(), &moved(near(rare_q(compiled(before_2030())))));
-        for (relation, correlation) in [
-            (r#""snap_7"."attribute_history" AS "rh""#, format!(r#"{BY_KEY}) AS "qh""#)),
-            (r#""snap_7"."scope_history" AS "rsh""#, format!(r#"{SCOPE_BY_KEY}) AS "sh""#)),
-        ] {
-            assert!(sql.contains(relation), "{relation}: {sql}");
-            assert!(sql.contains(&correlation), "{correlation}: {sql}");
-        }
-        assert!(!sql.contains(BY_IDENTIFIER) && !sql.contains("entities"), "{sql}");
+        let statement = filters(&snapshot(), &moved(near(rare_q(compiled(before_2030())))));
+        assert_statement_snapshot!("value-filters-a-snapshot-branch-correlates-by-evolution-key", statement);
     }
 
     /// A queued entry carries no surrogate key, so a branch reading its queue
     /// narrows every part of every probe's source by the identifier.
     #[test]
     fn a_queued_branch_keeps_the_identifier_correlation() {
-        let sql = filters(&HistoryBranch::live(), &moved(near(rare_q(compiled(after_2019())))));
-        assert_eq!(
-            sql.matches(BY_IDENTIFIER).count(),
-            5,
-            "the inside and stream sources of q and of the geo-query, and the Scope source: {sql}"
-        );
-        assert!(sql.contains(r#""pe"."entity_id" = "e"."id""#), "{sql}");
-        assert!(sql.contains(r#""re"."id" = "sh"."entity_id""#), "{sql}");
-        assert!(!sql.contains(r#""entity_key" = "e"."entity_key""#), "{sql}");
+        let statement = filters(&HistoryBranch::live(), &moved(near(rare_q(compiled(after_2019())))));
+        assert_statement_snapshot!("value-filters-a-queued-branch-keeps-the-identifier-correlation", statement);
     }
 
     /// A split query reads its leaves for a list of identifiers, so every
@@ -478,15 +404,13 @@ mod tests {
     /// too.
     #[test]
     fn a_split_leaf_keeps_the_identifier() {
-        let sql = build_filter_leaf_truths(
+        let statement = build_filter_leaf_truths(
             &HistoryBranch::live_recorded(),
             &moved(near(rare_q(compiled(before_2030())))),
             &vehicles(),
             &names(),
         )
-        .expect("renders")
-        .to_string(PostgresQueryBuilder);
-        assert_eq!(sql.matches(BY_IDENTIFIER).count(), 3, "the q, geo and Scope leaves: {sql}");
-        assert!(!sql.contains(r#""entity_key" = "e"."entity_key""#), "{sql}");
+        .expect("renders");
+        assert_statement_snapshot!("value-filters-a-split-leaf-keeps-the-identifier", statement);
     }
 }

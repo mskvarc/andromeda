@@ -1,0 +1,48 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/stage1/scope_candidates.rs
+---
+SELECT
+  "e"."id",
+  EXISTS (
+    SELECT
+      $1
+    FROM
+      (
+        SELECT
+          "re"."id" AS "entity_id",
+          "rsh"."recorded_at",
+          "rsh"."write_id",
+          "rsh"."write_ordinal",
+          "rsh"."value_kind",
+          "rsh"."observed_at",
+          "rsh"."created_at",
+          "rsh"."modified_at",
+          "rsh"."deleted_at",
+          "rsh"."scope_path",
+          "rsh"."verbatim_scope_path"
+        FROM
+          "scope_history" AS "rsh"
+          JOIN "entities" AS "re" ON "re"."entity_key" = "rsh"."entity_key"
+        WHERE
+          "re"."id" = "e"."id"
+      ) AS "sh"
+    WHERE
+      "sh"."observed_at" IS NOT NULL
+      AND ("sh"."scope_path" ~ ($2::lquery))
+      AND "sh"."observed_at" < $3
+  ) AS "leaf_0"
+FROM
+  (
+    SELECT
+      *
+    FROM
+      "entities"
+    WHERE
+      "entities"."evolution_created_at" IS NOT NULL
+  ) AS "e"
+WHERE
+  "e"."id" = $4
+1: Int 1
+2: String 'city.moved1'
+3: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+4: String 'urn:ngsi-ld:Sensor:000001'

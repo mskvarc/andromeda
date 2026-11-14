@@ -102,14 +102,11 @@ mod tests {
             instance_test::{CompiledTerm, Disjunction, InstanceTest},
         },
     };
-    use sea_query::{Alias, Condition, Expr, ExprTrait, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Condition, Expr, ExprTrait, PostgresQueryBuilder, Query, SelectStatement};
 
-    fn render(condition: Condition) -> String {
-        Query::select()
-            .expr(Expr::val(1))
-            .cond_where(condition)
-            .to_owned()
-            .to_string(PostgresQueryBuilder)
+    fn render(condition: Condition) -> SelectStatement {
+        Query::select().expr(Expr::val(1)).cond_where(condition).to_owned()
     }
 
     fn test_of(attribute: i32, column: &str, value: i32) -> CompiledTerm {
@@ -123,10 +120,8 @@ mod tests {
     fn every_instance_test_of_a_disjunction_shares_one_probe() {
         let rows = EntityRowRefs::unaliased(None);
         let scan = InstanceScan::Current(&rows);
-        let sql = render(Disjunction::default().with(test_of(3, "a", 1)).with(test_of(4, "b", 2)).into_condition(&scan));
-        assert_eq!(sql.matches("EXISTS").count(), 1, "{sql}");
-        assert!(sql.contains(r#""ca"."attribute_name_key" = 3"#), "{sql}");
-        assert!(sql.contains(r#""ca"."attribute_name_key" = 4"#), "{sql}");
+        let statement = render(Disjunction::default().with(test_of(3, "a", 1)).with(test_of(4, "b", 2)).into_condition(&scan));
+        assert_statement_snapshot!("instance-test-every-instance-test-of-a-disjunction-shares-one-probe", statement);
     }
 
     #[test]
@@ -134,15 +129,14 @@ mod tests {
         let rows = EntityRowRefs::unaliased(None);
         let scan = InstanceScan::Current(&rows);
         let standalone = CompiledTerm::Standalone(Condition::all().add(Expr::col(Alias::new("flag")).eq(true)));
-        let sql = render(
+        let statement = render(
             Disjunction::default()
                 .with(test_of(3, "a", 1))
                 .with(standalone)
                 .with(test_of(4, "b", 2))
                 .into_condition(&scan),
         );
-        assert_eq!(sql.matches("EXISTS").count(), 1, "{sql}");
-        assert!(sql.contains(r#""flag" = TRUE OR EXISTS"#), "{sql}");
+        assert_statement_snapshot!("instance-test-a-standalone-term-stays-beside-the-shared-probe", statement);
     }
 
     #[test]
@@ -151,6 +145,6 @@ mod tests {
         let scan = InstanceScan::Current(&rows);
         let lone = render(Disjunction::default().with(test_of(3, "a", 1)).into_condition(&scan));
         let direct = render(test_of(3, "a", 1).into_condition(&scan));
-        assert_eq!(lone, direct);
+        assert_eq!(lone.to_string(PostgresQueryBuilder), direct.to_string(PostgresQueryBuilder));
     }
 }

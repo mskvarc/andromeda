@@ -1,0 +1,11 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/entry_values.rs
+---
+SELECT
+  "e"."value_kind" AS "value_kind",
+  "e"."observed_at" AS "observed_at",
+  "e"."created_at" AS "created_at",
+  "e"."modified_at" AS "modified_at",
+  "e"."deleted_at" AS "deleted_at",
+  "e"."scope_path"::ltree AS "scope_path",
+  "e"."verbatim_scope_path" AS "verbatim_scope_path"

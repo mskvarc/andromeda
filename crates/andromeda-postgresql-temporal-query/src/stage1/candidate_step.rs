@@ -200,7 +200,7 @@ impl<'q> CandidateStep<'q> {
 mod tests {
     use crate::stage1::{
         build_stage1_entity_ids,
-        query_fixture::{PageBranches, id_pattern, instant, near_query, opened, recorded_stage1, sensor_names, sensors},
+        query_fixture::{id_pattern, instant, near_query, opened, recorded_stage1, sensor_names, sensors},
     };
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::{
@@ -211,9 +211,8 @@ mod tests {
         temporal::window::TimeInterval,
     };
     use andromeda_postgresql_query::history_source::HistoryBranch;
-    use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
     use pretty_assertions::assert_eq;
-    use sea_query::PostgresQueryBuilder;
 
     /// Clause 5.7.4.4 refuses a query without a temporal query, so a `q`
     /// query always carries a window, and the window's step is the one it
@@ -230,41 +229,27 @@ mod tests {
             &sensor_names(),
         )
         .expect("valid temporal query");
-        let page = stage1.select.to_string(PostgresQueryBuilder);
-        let branches = PageBranches::of(&page);
-        assert!(branches.candidates.contains(r#""evolution_active_until" >= "#), "{page}");
-        assert!(!branches.candidates.contains("value_number"), "{page}");
-        assert!(branches.indexed.contains("value_number"), "{page}");
-        let count = stage1.count.expect("count requested").to_string(PostgresQueryBuilder);
-        assert!(!count.contains("candidates"), "{count}");
         assert_eq!(stage1.planning, StatementPlanning::GenericGatedBranches);
+        let page = stage1.select;
+        assert_statement_snapshot!("candidate-step-a-q-filter-takes-no-step-of-its-own-1", page);
+        let count = stage1.count.expect("count requested");
+        assert_statement_snapshot!("candidate-step-a-q-filter-takes-no-step-of-its-own-2", count);
     }
 
     #[test]
     fn the_identifier_pattern_takes_precedence_over_the_scope_paths() {
         let mut compiled = id_pattern(Some("Sensor"), ".*:0123.*");
         compiled.entities.scope_q = Some(ScopeQuery::parse("/city/moved1").expect("valid scope query"));
-        let sql = recorded_stage1(&compiled).select.to_string(PostgresQueryBuilder);
-        let branches = PageBranches::of(&sql);
-        assert!(
-            branches
-                .candidates
-                .contains(r#"FROM "entities" WHERE ((("entities"."id") COLLATE "default") ~"#),
-            "{sql}"
-        );
-        assert!(!branches.candidates.contains("scope_history"), "{sql}");
-        assert!(branches.indexed.contains(r#"FROM "scope_history" AS "rsh""#), "{sql}");
+        let statement = recorded_stage1(&compiled).select;
+        assert_statement_snapshot!("candidate-step-the-identifier-pattern-takes-precedence-over-the-scope-paths", statement);
     }
 
     #[test]
     fn the_scope_paths_take_precedence_over_the_geometry_extents() {
         let mut compiled = near_query(4.5, "2000");
         compiled.entities.scope_q = Some(ScopeQuery::parse("/city/moved1").expect("valid scope query"));
-        let sql = recorded_stage1(&compiled).select.to_string(PostgresQueryBuilder);
-        let branches = PageBranches::of(&sql);
-        assert!(branches.candidates.contains(r#"FROM "scope_history" WHERE"#), "{sql}");
-        assert!(!branches.candidates.contains("value_extent"), "{sql}");
-        assert!(branches.indexed.contains(" _ST_DWithin("), "{sql}");
+        let statement = recorded_stage1(&compiled).select;
+        assert_statement_snapshot!("candidate-step-the-scope-paths-take-precedence-over-the-geometry-extents", statement);
     }
 
     #[test]
@@ -273,10 +258,7 @@ mod tests {
         compiled.window.timeproperty = TimeProp::Modified;
         compiled.window.interval = TimeInterval::After(instant("2026-10-18T03:00:00Z"));
         compiled.entities.scope_q = Some(ScopeQuery::parse("/city/moved1").expect("valid scope query"));
-        let sql = recorded_stage1(&compiled).select.to_string(PostgresQueryBuilder);
-        let branches = PageBranches::of(&sql);
-        assert!(branches.candidates.contains(r#"FROM "scope_history" WHERE"#), "{sql}");
-        assert!(!branches.candidates.contains("attribute_history"), "{sql}");
-        assert!(branches.indexed.contains(r#""ah"."modified_at" >= "#), "{sql}");
+        let statement = recorded_stage1(&compiled).select;
+        assert_statement_snapshot!("candidate-step-another-step-takes-precedence-over-the-window", statement);
     }
 }

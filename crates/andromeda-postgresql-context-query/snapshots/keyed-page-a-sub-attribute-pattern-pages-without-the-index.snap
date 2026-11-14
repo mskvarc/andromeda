@@ -1,0 +1,109 @@
+---
+source: crates/andromeda-postgresql-context-query/src/keyed_page.rs
+---
+SELECT
+  "stored"."entity_key",
+  "stored"."id",
+  "stored"."entity_created_at",
+  "stored"."entity_modified_at",
+  "stored"."entity_write_count",
+  "stored"."entity_expires_at",
+  "stored"."entity_type_name_keys",
+  "stored"."verbatim_scope_paths"
+FROM
+  (
+    SELECT
+      "entities"."entity_key",
+      "entities"."id" AS "sort_0"
+    FROM
+      "entities"
+    WHERE
+      "entities"."created_at" IS NOT NULL
+      AND (
+        "entities"."expires_at" IS NULL
+        OR "entities"."expires_at" > NOW()
+      )
+      AND EXISTS (
+        SELECT
+          1
+        FROM
+          "current_attributes" AS "ca"
+        WHERE
+          "ca"."attribute_name_key" = $1
+          AND (
+            "ca"."expires_at" IS NULL
+            OR "ca"."expires_at" > NOW()
+          )
+          AND (
+            "ca"."sub_attributes" IS NOT NULL
+            AND (
+              EXISTS (
+                SELECT
+                  1
+                FROM
+                  UNNEST("ca"."sub_attributes") AS "l0"
+                WHERE
+                  "l0"."parent" = $2
+                  AND (
+                    "l0"."attribute_name_key" = $3
+                    AND (
+                      "l0"."expires_at" IS NULL
+                      OR "l0"."expires_at" > NOW()
+                    )
+                  )
+                  AND (
+                    ("l0"."value_string" ~ $4)
+                    OR EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        jsonb_array_elements(
+                          (
+                            CASE
+                              WHEN ("l0"."attribute_kind" = (5)) THEN sub_attribute_value_object(
+                                "l0"."value_kind",
+                                "l0"."value_object",
+                                "l0"."value_proof"
+                              )
+                            END
+                          )
+                        ) AS "ls"
+                      WHERE
+                        ("ls"."value" ->> ('@value')) ~ $5
+                    )
+                  )
+              )
+            )
+          )
+          AND "ca"."entity_key" = "entities"."entity_key" OFFSET 0
+      )
+    ORDER BY
+      "sort_0" ASC
+    LIMIT
+      100 OFFSET 0
+  ) AS "page"
+  INNER JOIN LATERAL (
+    SELECT
+      "e"."entity_key" AS "entity_key",
+      "e"."id" AS "id",
+      "e"."created_at" AS "entity_created_at",
+      "e"."modified_at" AS "entity_modified_at",
+      "e"."write_count" AS "entity_write_count",
+      "e"."expires_at" AS "entity_expires_at",
+      "s"."entity_type_name_keys" AS "entity_type_name_keys",
+      "s"."verbatim_scope_paths" AS "verbatim_scope_paths"
+    FROM
+      "entities" AS "e"
+      INNER JOIN "entity_search" AS "s" ON "s"."entity_key" = "e"."entity_key"
+    WHERE
+      "e"."entity_key" = "page"."entity_key"
+    LIMIT
+      1
+  ) AS "stored" ON TRUE
+ORDER BY
+  "page"."sort_0" ASC
+1: Int 12
+2: BigInt 0
+3: Int 13
+4: String '^sensor-4[0-9]$'
+5: String '^sensor-4[0-9]$'

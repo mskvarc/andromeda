@@ -89,6 +89,8 @@ pub mod spherical_distance;
 pub mod statement;
 mod statement_arguments;
 pub mod statement_planning;
+#[cfg(feature = "test-support")]
+pub mod statement_snapshot;
 mod statement_text;
 pub mod statistics_object;
 pub mod structured_value;

@@ -121,8 +121,9 @@ mod tests {
         q_predicate::keyed_term::{CandidateRead, keyed_candidates},
     };
     use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
-    use sea_query::PostgresQueryBuilder;
+    use sea_query::SelectStatement;
 
     fn names() -> QueryNames {
         QueryNames {
@@ -135,10 +136,9 @@ mod tests {
         }
     }
 
-    fn candidates(q: &str) -> Option<String> {
+    fn candidates(q: &str) -> Option<SelectStatement> {
         let expr = parse(q).expect("parse q");
-        keyed_candidates(&expr, &EntityRowRefs::unaliased(None), &names(), LanguageMatching::TagEquality)
-            .map(|keyed| keyed.select.to_string(PostgresQueryBuilder))
+        keyed_candidates(&expr, &EntityRowRefs::unaliased(None), &names(), LanguageMatching::TagEquality).map(|keyed| keyed.select)
     }
 
     fn read(q: &str) -> Option<CandidateRead> {
@@ -168,16 +168,19 @@ mod tests {
 
     #[test]
     fn the_candidate_statement_reads_every_candidate() {
-        for q in [
+        for (index, q) in [
             "\"https://example.com/name\".\"https://example.com/source\"==\"sensor-43\"",
             "\"https://example.com/name\"~=\"text-71.*\"",
             "\"https://example.com/observedOn\">2024-01-15T12:00:00Z",
             "\"https://example.com/observedOn\"==2024-01-01..2024-02-01",
             "\"https://example.com/count\"",
             "\"https://example.com/hasTrip\"{\"https://example.com/name\"}==\"x\"",
-        ] {
-            let sql = candidates(q).unwrap_or_else(|| panic!("keyed: {q}"));
-            assert!(!sql.contains("LIMIT"), "{q}: {sql}");
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let statement = candidates(q).unwrap_or_else(|| panic!("keyed: {q}"));
+            assert_statement_snapshot!(format!("keyed-term-the-candidate-statement-reads-every-candidate-{}", index + 1), statement);
         }
     }
 
@@ -196,30 +199,29 @@ mod tests {
 
     #[test]
     fn the_first_keyed_conjunct_is_the_one_the_index_answers() {
-        let sql = candidates(
+        let statement = candidates(
             "\"https://example.com/count\">1;\"https://example.com/name\"~=\"text-71.*\";\"https://example.com/name\".\"https://example.com/source\"==\"s\"",
         )
         .expect("keyed");
-        assert!(sql.contains(r#"("ca"."value_string") COLLATE "default") ~ "#), "{sql}");
-        assert!(!sql.contains("sub_eq_keys"), "{sql}");
+        assert_statement_snapshot!("keyed-term-the-first-keyed-conjunct-is-the-one-the-index-answers", statement);
     }
 
     #[test]
     fn an_existence_conjunct_is_keyed_after_an_unkeyed_one() {
-        let sql = candidates("\"https://example.com/count\">1;\"https://example.com/name\"").expect("keyed");
-        assert!(sql.contains(r#""entity_search"."attribute_name_keys" @> (ARRAY[2])"#), "{sql}");
+        let statement = candidates("\"https://example.com/count\">1;\"https://example.com/name\"").expect("keyed");
+        assert_statement_snapshot!("keyed-term-an-existence-conjunct-is-keyed-after-an-unkeyed-one", statement);
     }
 
     #[test]
     fn a_hop_conjunct_is_keyed_after_an_unkeyed_one() {
-        let sql = candidates("\"https://example.com/count\">1;\"https://example.com/hasTrip\"{\"https://example.com/name\"}==\"x\"").expect("keyed");
-        assert!(sql.contains(r#""ca_ln1"."value_uri" = "le1"."id""#), "{sql}");
+        let statement = candidates("\"https://example.com/count\">1;\"https://example.com/hasTrip\"{\"https://example.com/name\"}==\"x\"").expect("keyed");
+        assert_statement_snapshot!("keyed-term-a-hop-conjunct-is-keyed-after-an-unkeyed-one", statement);
     }
 
     #[test]
     fn a_date_ordering_conjunct_is_keyed_after_an_unkeyed_one() {
-        let sql = candidates("\"https://example.com/count\">1;\"https://example.com/observedOn\"<2024-01-15").expect("keyed");
-        assert!(sql.contains(r#""ca"."value_string" < '2024-01-15'"#), "{sql}");
+        let statement = candidates("\"https://example.com/count\">1;\"https://example.com/observedOn\"<2024-01-15").expect("keyed");
+        assert_statement_snapshot!("keyed-term-a-date-ordering-conjunct-is-keyed-after-an-unkeyed-one", statement);
     }
 
     #[test]

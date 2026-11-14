@@ -1,0 +1,13 @@
+---
+source: crates/andromeda-postgresql-query/src/scope_validity.rs
+---
+SELECT
+  $1
+FROM
+  "scope_history" AS "sh"
+WHERE
+  "sh"."observed_at" < $2
+  AND "sh"."observed_at" >= $3
+1: Int 1
+2: ChronoDateTimeUtc '2018-08-01 13:00:00.000000 +00:00'
+3: ChronoDateTimeUtc '2018-08-01 12:00:00.000000 +00:00'

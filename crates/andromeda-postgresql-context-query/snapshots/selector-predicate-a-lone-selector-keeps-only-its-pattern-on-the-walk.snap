@@ -1,0 +1,9 @@
+---
+source: crates/andromeda-postgresql-context-query/src/selector_predicate.rs
+---
+SELECT
+  $1
+WHERE
+  (("selected"."id") COLLATE "default") ~ $2
+1: Int 1
+2: String 'urn:a.*'

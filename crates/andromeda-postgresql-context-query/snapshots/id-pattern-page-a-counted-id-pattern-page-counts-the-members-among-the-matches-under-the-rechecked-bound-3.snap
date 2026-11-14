@@ -1,0 +1,91 @@
+---
+source: crates/andromeda-postgresql-context-query/src/id_pattern_page.rs
+---
+WITH
+"candidates" AS MATERIALIZED (
+  SELECT
+    "entities"."entity_key"
+  FROM
+    "entities"
+  WHERE
+    ((("entities"."id") COLLATE "default") ~ $1)
+    AND (
+      "entities"."created_at" IS NOT NULL
+      AND (
+        "entities"."expires_at" IS NULL
+        OR "entities"."expires_at" > NOW()
+      )
+    )
+  LIMIT
+    10001
+)
+SELECT
+  (
+    CASE
+      WHEN (
+        (
+          SELECT
+            COUNT(*)
+          FROM
+            "candidates"
+        ) <= $2
+      ) THEN (
+        SELECT
+          COUNT(*)
+        FROM
+          (
+            SELECT
+              "entity_key",
+              "id"
+            FROM
+              "entity_type_members"
+            WHERE
+              "entity_type_name_key" = (18)
+              AND "is_current_member"
+          ) AS "selected"
+        WHERE
+          "selected"."entity_key" NOT IN (
+            SELECT
+              "entity_key"
+            FROM
+              "entities"
+            WHERE
+              "expires_at" <= NOW()
+          )
+          AND "selected"."entity_key" IN (
+            SELECT
+              "entity_key"
+            FROM
+              "candidates"
+          )
+      )
+      ELSE (
+        SELECT
+          COUNT(*)
+        FROM
+          (
+            SELECT
+              "entity_key",
+              "id"
+            FROM
+              "entity_type_members"
+            WHERE
+              "entity_type_name_key" = (18)
+              AND "is_current_member"
+          ) AS "selected"
+        WHERE
+          "selected"."entity_key" NOT IN (
+            SELECT
+              "entity_key"
+            FROM
+              "entities"
+            WHERE
+              "expires_at" <= NOW()
+          )
+          AND ((("selected"."id") COLLATE "default") ~ $3)
+      )
+    END
+  )
+1: String '.*_1196287$'
+2: BigUnsigned 10000
+3: String '.*_1196287$'

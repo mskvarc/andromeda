@@ -154,8 +154,8 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_postgresql_schema::temporal::AttributeHistory;
-    use andromeda_postgresql_seaquery::aggregate::count_all;
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+    use andromeda_postgresql_seaquery::{aggregate::count_all, assert_statement_snapshot};
+    use sea_query::{Alias, Expr, Query, SelectStatement, SimpleExpr};
 
     /// `SELECT COUNT(*) AS "agg_total_count" FROM "rows" AS "ah"`.
     fn aggregate() -> SelectStatement {
@@ -173,20 +173,8 @@ mod tests {
     /// lateral read, and only the periods before the page's edge are kept.
     #[test]
     fn each_listed_period_before_the_edge_is_aggregated_by_its_own_read() {
-        let sql = each_listed_period(aggregate(), Vec::new()).to_string(PostgresQueryBuilder);
-        assert!(
-            sql.contains(r#"FROM (SELECT UNNEST("stream_edge"."period_starts") AS "bucket_start", UNNEST("stream_edge"."period_ends") AS "bucket_end", generate_subscripts("stream_edge"."period_starts", 1) AS "period_position") AS "page_period""#),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(r#"JOIN LATERAL (SELECT COUNT(*) AS "agg_total_count" FROM "rows" AS "ah""#),
-            "{sql}"
-        );
-        assert!(sql.ends_with(r#"WHERE "page_period"."bucket_start" < "stream_edge"."bound""#), "{sql}");
-        assert!(
-            sql.starts_with(r#"SELECT "page_period"."bucket_start" AS "bucket_start", "page_period"."bucket_end" AS "bucket_end", "period_aggregate".*"#),
-            "{sql}"
-        );
+        let statement = each_listed_period(aggregate(), Vec::new());
+        assert_statement_snapshot!("listed-period-page-each-listed-period-before-the-edge-is-aggregated-by-its-own-read", statement);
     }
 
     /// An aggregate without a group key answers one row over no rows, so a
@@ -194,11 +182,10 @@ mod tests {
     /// grouping alone answers no row over no rows.
     #[test]
     fn a_listed_period_with_nothing_to_aggregate_has_no_row() {
-        let sql = each_listed_period(aggregate(), Vec::new()).to_string(PostgresQueryBuilder);
-        assert!(sql.contains("HAVING (COUNT(*)) > (0)"), "{sql}");
-        let grouped = each_listed_period(aggregate(), vec![unit_key()]).to_string(PostgresQueryBuilder);
-        assert!(!grouped.contains("HAVING"), "{grouped}");
-        assert!(grouped.contains(r#"GROUP BY "ah"."unit_code_id""#), "{grouped}");
+        let ungrouped = each_listed_period(aggregate(), Vec::new());
+        assert_statement_snapshot!("listed-period-page-a-listed-period-with-nothing-to-aggregate-has-no-row-1", ungrouped);
+        let grouped = each_listed_period(aggregate(), vec![unit_key()]);
+        assert_statement_snapshot!("listed-period-page-a-listed-period-with-nothing-to-aggregate-has-no-row-2", grouped);
     }
 
     /// The periods are numbered by the `aggrGroupBy` keys first, projected
@@ -206,12 +193,8 @@ mod tests {
     /// periods stay contiguous.
     #[test]
     fn the_periods_are_numbered_by_their_group_keys_then_by_their_start() {
-        let sql = each_listed_period(aggregate(), vec![unit_key()]).to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#""ah"."unit_code_id" AS "group_order_0""#), "{sql}");
-        assert!(
-            sql.contains(r#"ROW_NUMBER() OVER (  ORDER BY "period_aggregate"."group_order_0" ASC, "page_period"."bucket_start" ASC ) AS "period_order""#),
-            "{sql}"
-        );
+        let statement = each_listed_period(aggregate(), vec![unit_key()]);
+        assert_statement_snapshot!("listed-period-page-the-periods-are-numbered-by-their-group-keys-then-by-their-start", statement);
     }
 
     /// A kept instance is placed by binary search among the listed starts, the
@@ -219,22 +202,8 @@ mod tests {
     /// each group is joined to the listed period at that position.
     #[test]
     fn a_kept_instance_is_placed_by_the_position_of_its_listed_start() {
-        let sql = placed_among_listed_periods(aggregate(), vec![unit_key()], AttributeHistory::ObservedAt).to_string(PostgresQueryBuilder);
-        assert!(
-            sql.contains(r#"width_bucket("ah"."observed_at", "stream_edge"."period_starts") AS "period_position""#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#"WHERE "ah"."observed_at" IS NOT NULL"#), "{sql}");
-        assert!(
-            sql.contains(r#"GROUP BY "ah"."unit_code_id", width_bucket("ah"."observed_at", "stream_edge"."period_starts")"#),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(r#"ON "page_period"."period_position" = "period_aggregate"."period_position""#),
-            "{sql}"
-        );
-        assert!(!sql.contains("HAVING"), "{sql}");
-        assert!(!sql.contains(r#""stream_edge"."bound""#), "{sql}");
+        let statement = placed_among_listed_periods(aggregate(), vec![unit_key()], AttributeHistory::ObservedAt);
+        assert_statement_snapshot!("listed-period-page-a-kept-instance-is-placed-by-the-position-of-its-listed-start", statement);
     }
 
     /// The rows of the listed period start at its start and stop before its
@@ -242,17 +211,7 @@ mod tests {
     /// starts there.
     #[test]
     fn the_rows_of_a_listed_period_run_from_its_start_to_before_its_end() {
-        let sql = Query::select()
-            .expr(Expr::val(1))
-            .cond_where(within_page_period(TimeProp::Observed))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        assert!(
-            sql.ends_with(concat!(
-                r#"WHERE "ah"."observed_at" >= "page_period"."bucket_start" "#,
-                r#"AND "ah"."observed_at" < "page_period"."bucket_end""#
-            )),
-            "{sql}"
-        );
+        let statement = Query::select().expr(Expr::val(1)).cond_where(within_page_period(TimeProp::Observed)).to_owned();
+        assert_statement_snapshot!("listed-period-page-the-rows-of-a-listed-period-run-from-its-start-to-before-its-end", statement);
     }
 }

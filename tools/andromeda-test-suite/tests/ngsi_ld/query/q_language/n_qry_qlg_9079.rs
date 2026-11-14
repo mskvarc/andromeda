@@ -3,7 +3,7 @@
 use andromeda_test_suite::{
     broker,
     namespace::Namespace,
-    q_parity::{QCase, expect_query_and_subscription_alike},
+    q_parity::{QCase, QRequest, expect_query_and_subscription_alike},
 };
 use googletest::prelude::*;
 use ngsi_ld::model::{Entity, Property, VocabTerm};
@@ -49,22 +49,27 @@ async fn n_qry_qlg_9079_a_q_on_value_type_selects_by_the_declared_type_in_a_quer
         QCase {
             q: &equal,
             selects: &[&text_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: &unequal,
             selects: &[&count_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "reading.valueType",
             selects: &[&text_id, &count_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: &listed,
             selects: &[&text_id, &count_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: &pattern,
             selects: &[&text_id],
+            request: QRequest::PLAIN,
         },
     ];
     expect_query_and_subscription_alike(&broker, &namespace, &sensor_type, &entities, &cases).await

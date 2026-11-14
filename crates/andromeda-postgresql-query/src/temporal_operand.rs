@@ -90,8 +90,9 @@ pub fn declared_time(text: SimpleExpr, datatype: SimpleExpr) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::temporal_operand::{STORED_TIME_TEMPLATE, declared_date, declared_date_time, declared_time};
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
+    use crate::temporal_operand::{declared_date, declared_date_time, declared_time};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Expr, Query, SelectStatement, SimpleExpr};
 
     fn text() -> SimpleExpr {
         Expr::col(Alias::new("text"))
@@ -101,50 +102,62 @@ mod tests {
         Expr::col(Alias::new("datatype"))
     }
 
-    fn render(expr: SimpleExpr) -> String {
-        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    fn render(expr: SimpleExpr) -> SelectStatement {
+        Query::select().expr(expr).to_owned()
     }
 
     /// Annex C.6: a value is a time value only when it is declared as one, so
     /// each lift reads the declaration and no regular expression.
     #[test]
     fn each_lift_is_guarded_by_the_declared_datatype_of_its_form() {
-        for (sql, iri) in [
-            (render(declared_date_time(text(), datatype())), "https://uri.etsi.org/ngsi-ld/DateTime"),
-            (render(declared_date(text(), datatype())), "https://uri.etsi.org/ngsi-ld/Date"),
-            (render(declared_time(text(), datatype())), "https://uri.etsi.org/ngsi-ld/Time"),
-        ] {
-            assert!(sql.contains(&format!(r#""datatype" = ('{iri}')"#)), "{sql}");
-            assert!(!sql.contains('~'), "no regular expression: {sql}");
+        for (index, statement) in [
+            render(declared_date_time(text(), datatype())),
+            render(declared_date(text(), datatype())),
+            render(declared_time(text(), datatype())),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_statement_snapshot!(
+                format!("temporal-operand-each-lift-is-guarded-by-the-declared-datatype-of-its-form-{}", index + 1),
+                statement
+            );
         }
     }
 
     #[test]
     fn a_date_time_lift_validates_before_it_casts() {
-        let sql = render(declared_date_time(text(), datatype()));
-        assert!(sql.contains(r#"pg_input_is_valid("text", 'timestamptz')"#), "{sql}");
-        assert!(sql.contains(r#"THEN ("text")::timestamptz"#), "{sql}");
+        assert_statement_snapshot!(
+            "temporal-operand-a-date-time-lift-validates-before-it-casts",
+            render(declared_date_time(text(), datatype()))
+        );
     }
 
     #[test]
     fn a_time_lift_renders_the_fixed_width_storage_encoding() {
-        let sql = render(declared_time(text(), datatype()));
-        let anchored = sql.rfind("'1970-01-01T'").expect("the time of day is anchored");
-        let utc = sql.find("AT TIME ZONE ('UTC')").expect("the instant is read in UTC");
-        let rendered = sql.find(&format!("'{STORED_TIME_TEMPLATE}'")).expect("only the time of day survives");
-        assert!(anchored < utc && utc < rendered, "{sql}");
-        assert!(sql.contains("|| ('Z')"), "{sql}");
+        assert_statement_snapshot!(
+            "temporal-operand-a-time-lift-renders-the-fixed-width-storage-encoding",
+            render(declared_time(text(), datatype()))
+        );
     }
 
     #[test]
     fn every_lift_returns_null_rather_than_failing_on_an_undeclared_value() {
-        for sql in [
+        for (index, statement) in [
             render(declared_date_time(text(), datatype())),
             render(declared_date(text(), datatype())),
             render(declared_time(text(), datatype())),
-        ] {
-            assert!(!sql.contains("ELSE"), "{sql}");
-            assert!(sql.contains("END"), "{sql}");
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_statement_snapshot!(
+                format!(
+                    "temporal-operand-every-lift-returns-null-rather-than-failing-on-an-undeclared-value-{}",
+                    index + 1
+                ),
+                statement
+            );
         }
     }
 }

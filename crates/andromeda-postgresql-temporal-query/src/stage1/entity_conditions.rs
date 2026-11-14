@@ -124,7 +124,7 @@ fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<
 mod tests {
     use crate::stage1::{
         build_stage1_entity_ids,
-        query_fixture::{PageBranches, built, built_count, ids, instant, minimal_compiled, point, speed_and_address},
+        query_fixture::{built, built_count, ids, instant, minimal_compiled, point, speed_and_address},
     };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
@@ -146,6 +146,7 @@ mod tests {
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         history_source::HistoryBranch,
     };
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::{PostgresQueryBuilder, Value};
     use std::str::FromStr;
 
@@ -157,7 +158,7 @@ mod tests {
         let raw: Vec<String> = (0..70_000).map(|index| format!("urn:ngsi-ld:Vehicle:{index}")).collect();
         let mut compiled = minimal_compiled();
         compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&raw.iter().map(String::as_str).collect::<Vec<_>>())).build()];
-        let (sql, values) = built(&compiled, &speed_and_address());
+        let (sql, values) = built(&compiled, &speed_and_address()).build(PostgresQueryBuilder);
         assert!(sql.contains(r#""e"."id" = ANY($"#), "{sql}");
         assert!(values.0.len() < 100, "{} parameters", values.0.len());
         assert!(
@@ -182,9 +183,8 @@ mod tests {
     fn stage1_includes_scope_q_filter() {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid/Gardens").expect("valid scope query"));
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains("scope_history"), "SQL should reference scope_history table: {sql}");
-        assert!(sql.contains("lquery"), "SQL should contain lquery cast: {sql}");
+        let statement = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("entity-conditions-stage1-includes-scope-q-filter", statement);
     }
 
     /// Over the queue the Scope probe compares the identifier a queued Scope
@@ -193,18 +193,16 @@ mod tests {
     fn scope_history_over_the_queue_correlates_on_the_identifier() {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid").expect("valid scope query"));
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains("\"rsh\""), "{sql}");
-        assert!(sql.contains("\"re\".\"id\" = \"e\".\"id\""), "{sql}");
+        let statement = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("entity-conditions-scope-history-over-the-queue-correlates-on-the-identifier", statement);
     }
 
     #[test]
     fn stage1_scope_q_with_or_and_semantics() {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("(/A;/B),/C").expect("valid scope query"));
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains("AND"), "SQL should contain AND for semicolon-separated scopes: {sql}");
-        assert!(sql.contains("OR"), "SQL should contain OR for comma-separated scopes: {sql}");
+        let statement = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("entity-conditions-stage1-scope-q-with-or-and-semantics", statement);
     }
 
     #[test]
@@ -215,9 +213,8 @@ mod tests {
             from: instant("2024-01-01T00:00:00Z"),
             to: instant("2024-06-01T00:00:00Z"),
         };
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains(">="), "Between should bound the scope probe from below: {sql}");
-        assert!(sql.contains('<'), "Between should bound the scope probe from above: {sql}");
+        let statement = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("entity-conditions-temporal-scope-q-between", statement);
     }
 
     #[test]
@@ -225,18 +222,8 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("(/A;/B),/C").expect("valid scope query"));
         compiled.window.interval = TimeInterval::Before(instant("2024-06-01T00:00:00Z"));
-        let (page, _) = built(&compiled, &QueryNames::default());
-        let sql = PageBranches::of(&page).walk;
-        // /A;/B -> AND, ,/C -> OR
-        assert!(sql.contains("AND"), "Semicolon scopes produce AND: {sql}");
-        assert!(sql.contains("OR"), "Comma scopes produce OR: {sql}");
-        // Each scope term has its own EXISTS subquery among the entity
-        // conditions, beside the stream catalogue EXISTS predicate rather than
-        // inside it: the scope probe correlates on the temporal entity alone.
-        pretty_assertions::assert_eq!(sql.matches(r#") AS "sh" WHERE"#).count(), 3, "three scope predicates: {sql}");
-        let catalogue = sql.find(r#") AS "ah" WHERE"#).expect("the catalogue predicate");
-        let scope = sql.find("scope_history").expect("a scope predicate");
-        assert!(scope < catalogue, "the scope predicates precede the catalogue predicate: {sql}");
+        let statement = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("entity-conditions-temporal-scope-q-compound", statement);
     }
 
     /// Two identifiers a Context Source contributed to a split query (clause
@@ -278,22 +265,8 @@ mod tests {
             &speed_and_address(),
         )
         .expect("valid temporal query")
-        .select
-        .to_string(PostgresQueryBuilder);
-        let sql = PageBranches::of(&page).walk;
-        let exemption = sql.find(r#" OR "e"."id" = ANY("#).expect("the contributed identifiers are exempt");
-        let selector = sql.find(r#""e"."id" = 'urn:ngsi-ld:Vehicle:9'"#).expect("the selector");
-        let q = sql.find(r#"AS "qh""#).expect("the q probe");
-        let geo = sql.find(r#"AS "qh""#).expect("the geo probe");
-        let scope = sql.find("scope_history").expect("the scope probe");
-        let catalogue = sql.find(r#") AS "ah" WHERE"#).expect("the window match");
-        assert!(selector < q && q < exemption && geo < exemption && scope < exemption, "{sql}");
-        assert!(catalogue > exemption, "the window match stays outside the exemption: {sql}");
-        pretty_assertions::assert_eq!(
-            sql.matches("'urn:ngsi-ld:Vehicle:").count(),
-            3,
-            "the selector id and the two contributed ids: {sql}"
-        );
+        .select;
+        assert_statement_snapshot!("entity-conditions-contributed-identifiers-exempt-only-the-value-filters", page);
     }
 
     /// Without a contributed entity the statement is exactly the one a query
@@ -301,11 +274,13 @@ mod tests {
     #[test]
     fn no_contributed_identifier_leaves_the_statement_as_it_was() {
         let compiled = filtered_compiled();
-        let (sql, _) = built(&compiled, &speed_and_address());
-        assert!(!sql.contains(r#" OR "e"."id" = "#), "{sql}");
+        let statement = built(&compiled, &speed_and_address());
+        assert_statement_snapshot!("entity-conditions-no-contributed-identifier-leaves-the-statement-as-it-was-1", statement);
         let mut contributed_elsewhere = filtered_compiled();
         contributed_elsewhere.contributed = ContributedEntities::default();
-        pretty_assertions::assert_eq!(built(&contributed_elsewhere, &speed_and_address()).0, sql);
+        let elsewhere = built(&contributed_elsewhere, &speed_and_address());
+        assert_statement_snapshot!("entity-conditions-no-contributed-identifier-leaves-the-statement-as-it-was-2", elsewhere);
+        pretty_assertions::assert_eq!(elsewhere, statement);
     }
 
     /// Clause 5.7.4.4 S2: a temporal `q` "shall be checked against all the
@@ -317,23 +292,8 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">100").unwrap());
-        let (sql, _) = built(&compiled, &speed_and_address());
-        for fragment in [
-            r#") AS "qh" WHERE "qh"."attribute_name_key" ="#,
-            r#""qh"."value_kind" <> "#,
-            r#""qh"."observed_at" >="#,
-            r#""qh"."value_number" >"#,
-            r#""re"."id" = "e"."id""#,
-            r#") AS "qs" JOIN LATERAL"#,
-        ] {
-            assert!(sql.contains(fragment), "{fragment} missing: {sql}");
-        }
-        assert_eq!(
-            sql.matches(r#""current_attributes""#).count(),
-            sql.matches(r#""current_attributes" AS "ca""#).count(),
-            "a temporal q reads a current row only as the latest instance it holds: {sql}"
-        );
-        assert!(!sql.contains(r#""entity_search""#), "{sql}");
+        let statement = built(&compiled, &speed_and_address());
+        assert_statement_snapshot!("entity-conditions-stage1-q-filter-probes-the-in-window-history-instances", statement);
     }
 
     /// Clause 5.5.9: the count totals the same entities the page selects, so
@@ -345,9 +305,7 @@ mod tests {
         compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">100").unwrap());
         let count = built_count(&compiled, &speed_and_address());
-        assert!(count.contains("JOIN LATERAL"), "{count}");
-        assert!(count.contains(r#""qh"."placed" <"#), "{count}");
-        pretty_assertions::assert_eq!(count.matches(r#"AS "qh""#).count(), 2, "{count}");
+        assert_statement_snapshot!("entity-conditions-the-count-carries-the-same-two-probes", count);
     }
 
     /// The window a `q` term reads is on the requested Temporal Property.
@@ -357,8 +315,8 @@ mod tests {
         compiled.window.timeproperty = TimeProp::Modified;
         compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\"==1").unwrap());
-        let (sql, _) = built(&compiled, &speed_and_address());
-        assert!(sql.contains(r#""qh"."modified_at" <"#), "{sql}");
+        let statement = built(&compiled, &speed_and_address());
+        assert_statement_snapshot!("entity-conditions-stage1-q-filter-reads-the-window-on-the-requested-timeproperty", statement);
     }
 
     /// The Query Terms of an OR share one windowed existential, each arm
@@ -368,21 +326,16 @@ mod tests {
     fn the_terms_of_an_or_share_one_windowed_existential() {
         let mut compiled = minimal_compiled();
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">100|\"https://example.com/speed\"<10").unwrap());
-        let (sql, _) = built(&compiled, &speed_and_address());
-        pretty_assertions::assert_eq!(sql.matches(r#"AS "qh""#).count(), 1, "{sql}");
-        assert!(
-            sql.contains(r#"(("qh"."attribute_name_key" = $1 AND ("qh"."value_number" > $2 AND "qh"."value_number" <> ('NaN'::numeric))) OR ("qh"."attribute_name_key" = $3 AND ("qh"."value_number" < $4 AND "qh"."value_number" <> ('NaN'::numeric))))"#),
-            "{sql}"
-        );
-        assert!(!sql.contains(") OR EXISTS(SELECT 1 FROM (SELECT"), "{sql}");
+        let statement = built(&compiled, &speed_and_address());
+        assert_statement_snapshot!("entity-conditions-the-terms-of-an-or-share-one-windowed-existential", statement);
     }
 
     #[test]
     fn stage1_q_filter_on_an_unknown_attribute_is_unsatisfiable() {
         let mut compiled = minimal_compiled();
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/never-written\">50").unwrap());
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains("FALSE"), "{sql}");
+        let statement = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("entity-conditions-stage1-q-filter-on-an-unknown-attribute-is-unsatisfiable", statement);
     }
 
     /// The attributes and sub-attributes the temporal `q` shapes below name.
@@ -401,44 +354,6 @@ mod tests {
         }
     }
 
-    /// Whether every `jsonb_build_object` of `sql` is built from operands and
-    /// literals alone, never from a column of the history row a probe reads,
-    /// which is what rebuilding that row as a document would take.
-    fn builds_no_object_from_a_history_row(sql: &str) -> bool {
-        sql.match_indices("jsonb_build_object(").all(|(start, call)| {
-            let arguments = &sql[start + call.len()..];
-            let end = arguments
-                .char_indices()
-                .scan(1_usize, |depth, (at, character)| {
-                    *depth = if character == '(' {
-                        *depth + 1
-                    } else if character == ')' {
-                        *depth - 1
-                    } else {
-                        *depth
-                    };
-                    Some((at, *depth))
-                })
-                .find_map(|(at, depth)| (depth == 0).then_some(at))
-                .unwrap_or(arguments.len());
-            !arguments[..end].contains(r#""qh"."#)
-        })
-    }
-
-    /// Whether every jsonpath function of `sql` reads a stored `value_object`,
-    /// an element's structured value read through
-    /// `sub_attribute_value_object`, or the compound member a jsonpath read off
-    /// one.
-    fn reads_jsonpath_only_over_stored_values(sql: &str) -> bool {
-        sql.split("jsonb_path_").skip(1).all(|call| {
-            call.split_once('(')
-                .and_then(|(_, arguments)| arguments.split_once(','))
-                .is_some_and(|(target, _)| {
-                    target.ends_with(r#"."value_object""#) || target == r#""member"."member""# || target.starts_with("sub_attribute_value_object(")
-                })
-        })
-    }
-
     /// Clause 4.9 reads a compound member as a `MemberExpression` of the target
     /// value, which a history row holds in `value_object` as current state
     /// does, so the member is read off the stored value.
@@ -446,11 +361,8 @@ mod tests {
     fn a_q_predicate_on_a_compound_value_reads_the_value_object() {
         let mut compiled = minimal_compiled();
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/address\"[city]==\"Berlin\"").unwrap());
-        let (sql, _) = built(&compiled, &speed_and_address());
-        assert!(sql.contains(r#"jsonb_path_query("qh"."value_object""#), "{sql}");
-        assert!(builds_no_object_from_a_history_row(&sql), "{sql}");
-        assert!(!sql.contains("jsonb_strip_nulls"), "{sql}");
-        assert!(reads_jsonpath_only_over_stored_values(&sql), "{sql}");
+        let statement = built(&compiled, &speed_and_address());
+        assert_statement_snapshot!("entity-conditions-a-q-predicate-on-a-compound-value-reads-the-value-object", statement);
     }
 
     /// Clause 5.7.4.4 S2 checks every shape of Query Term against the stored
@@ -458,7 +370,7 @@ mod tests {
     /// in columns and elements, so no shape rebuilds an instance as a document.
     #[test]
     fn no_temporal_statement_rebuilds_a_history_instance_document() {
-        for q in [
+        let queries = [
             "\"https://example.com/speed\"==1",
             "\"https://example.com/speed\"!=1",
             "\"https://example.com/speed\">1",
@@ -482,14 +394,14 @@ mod tests {
             "\"https://example.com/speed\".\"https://example.com/label\"~=\"^fa\"",
             "\"https://example.com/isParkedIn\"{\"https://example.com/address\"[city]}==\"Bern\"",
             "\"https://example.com/speed\">1|\"https://example.com/address\"[city]==\"Bern\"",
-        ] {
+        ];
+        for (index, q) in queries.into_iter().enumerate() {
             let mut compiled = minimal_compiled();
             compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
             compiled.entities.q_expr = Some(parser::parse(q).expect("parse q"));
-            let (sql, _) = built(&compiled, &speed_address_and_their_sub_attributes());
-            assert!(builds_no_object_from_a_history_row(&sql), "{q}: {sql}");
-            assert!(!sql.contains("jsonb_strip_nulls") && !sql.contains("to_jsonb("), "{q}: {sql}");
-            assert!(reads_jsonpath_only_over_stored_values(&sql), "{q}: {sql}");
+            let statement = built(&compiled, &speed_address_and_their_sub_attributes());
+            let name = format!("entity-conditions-no-temporal-statement-rebuilds-a-history-instance-document-{}", index + 1);
+            assert_statement_snapshot!(name, statement);
         }
     }
 
@@ -507,11 +419,8 @@ mod tests {
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         });
-        let (sql, _) = built(&compiled, &geoproperty_is_known("https://uri.etsi.org/ngsi-ld/location"));
-        assert!(sql.contains(r#") AS "qh" WHERE "qh"."attribute_name_key" = $"#), "{sql}");
-        assert!(sql.contains(r#""qh"."value_geometry""#), "{sql}");
-        assert!(sql.contains(r#""re"."id" = "e"."id""#), "correlated to the temporal entity: {sql}");
-        assert!(!sql.contains("entity_search"), "the geo restriction no longer reads current state: {sql}");
+        let statement = built(&compiled, &geoproperty_is_known("https://uri.etsi.org/ngsi-ld/location"));
+        assert_statement_snapshot!("entity-conditions-a-default-location-geo-query-reads-the-windowed-history-instances", statement);
     }
 
     /// Clause 5.7.4.4 S3 restricts the geo instances to the temporal window, so
@@ -529,16 +438,15 @@ mod tests {
             geometry: point(&serde_json::json!([-8.503, 41.202])),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         });
-        let (sql, _) = built(&compiled, &geoproperty_is_known("https://uri.etsi.org/ngsi-ld/location"));
-        assert!(sql.contains(r#""qh"."observed_at""#), "the window is applied to the geo instances: {sql}");
-        assert!(sql.contains(" _ST_DWithin("), "near renders a distance relation on the geo instances: {sql}");
+        let statement = built(&compiled, &geoproperty_is_known("https://uri.etsi.org/ngsi-ld/location"));
+        assert_statement_snapshot!("entity-conditions-a-temporal-geo-query-restricts-the-geo-instances-to-the-window", statement);
     }
 
     #[test]
     fn no_scope_q_unchanged() {
         let compiled = minimal_compiled();
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(!sql.contains("scope_history"), "No scope_history reference without scopeQ: {sql}");
+        let statement = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("entity-conditions-no-scope-q-unchanged", statement);
     }
 
     /// Clause 5.7.4.4 S3 applies to a named `GeoProperty` exactly as to the
@@ -554,18 +462,10 @@ mod tests {
             geometry: point(&serde_json::json!([1.0, 2.0])),
             geoproperty: "https://example.com/customGeo".parse().expect("valid attribute name"),
         });
-        let (sql, values) = built(&compiled, &geoproperty_is_known("https://example.com/customGeo"));
-        assert!(
-            sql.contains(r#") AS "qh" WHERE "qh"."attribute_name_key" = $"#),
-            "the target GeoProperty is compared by its dictionary key: {sql}"
-        );
-        assert!(values.0.contains(&Value::Int(Some(9))), "{values:?}");
-        assert!(!sql.contains("attribute_names"), "{sql}");
-        assert!(sql.contains(r#""qh"."value_geometry""#), "{sql}");
-        assert_eq!(
-            sql.matches(r#""current_attributes""#).count(),
-            sql.matches(r#""current_attributes" AS "ca""#).count(),
-            "a temporal geo query reads a current row only as the latest instance it holds: {sql}"
+        let statement = built(&compiled, &geoproperty_is_known("https://example.com/customGeo"));
+        assert_statement_snapshot!(
+            "entity-conditions-a-temporal-geo-query-on-a-named-geoproperty-reads-the-windowed-history-instances",
+            statement
         );
     }
 
@@ -587,10 +487,7 @@ mod tests {
             types: ResolvedNames::default(),
             ..QueryNames::default()
         };
-        let (sql, _) = built(&compiled, &names);
-        assert!(!sql.contains("brien"), "{sql}");
-        // Every literal contributes a balanced pair of quotes, so the total is
-        // even unless a literal was terminated early.
-        assert_eq!(sql.matches('\'').count() % 2, 0, "unbalanced SQL literal: {sql}");
+        let statement = built(&compiled, &names);
+        assert_statement_snapshot!("entity-conditions-a-temporal-geoproperty-iri-never-reaches-the-statement-text", statement);
     }
 }

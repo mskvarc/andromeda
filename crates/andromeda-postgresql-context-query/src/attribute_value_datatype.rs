@@ -147,10 +147,10 @@ fn declares(datatype: &SimpleExpr, iri: &str) -> SimpleExpr {
 mod tests {
     use crate::attribute_value_datatype::{OrderedValue, datatype_rank, datatype_token};
     use andromeda_ngsi_ld_query::ordering::sort_direction::SortDirection;
-    use andromeda_postgresql_seaquery::literal::int_literal;
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
+    use sea_query::{Alias, Expr, Query, SelectStatement};
 
-    fn rendered_token() -> String {
+    fn rendered_token() -> SelectStatement {
         let column = |name: &str| Expr::col(Alias::new(name));
         let value = OrderedValue {
             number: column("n"),
@@ -161,35 +161,26 @@ mod tests {
             object: column("o"),
             json_null: column("j"),
         };
-        Query::select().expr(datatype_token(&value)).to_owned().to_string(PostgresQueryBuilder)
+        Query::select().expr(datatype_token(&value)).to_owned()
     }
 
     /// Clause 4.23.2: Numbers, Strings, Object, Array, Boolean, Time, Date,
     /// `DateTime`, Null. The rank is the token's position in that sequence.
     #[test]
     fn the_ascending_rank_reads_the_clause_4_23_2_sequence_in_order() {
-        let sql = Query::select()
-            .expr(datatype_rank(int_literal(1), SortDirection::Ascending))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        assert!(sql.contains("array_position("), "{sql}");
-        let sequence = "'number','string','object','array','boolean','https://uri.etsi.org/ngsi-ld/Time','https://uri.etsi.org/ngsi-ld/Date','https://uri.etsi.org/ngsi-ld/DateTime','null'";
-        assert!(sql.contains(sequence), "{sql}");
+        let select = Query::select().expr(datatype_rank(int_literal(1), SortDirection::Ascending)).to_owned();
+        assert_statement_snapshot!("attribute-value-datatype-the-ascending-rank-reads-the-clause-4-23-2-sequence-in-order", select);
     }
 
     /// A descending sort reverses the datatype order but leaves Null where
     /// clause 4.23.2 pins it: last.
     #[test]
     fn the_descending_rank_reverses_the_datatypes_and_still_ends_with_null() {
-        let sql = Query::select()
-            .expr(datatype_rank(int_literal(1), SortDirection::Descending))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        let null_at = sql.find("'null'").expect("the null token is ranked");
-        let number_at = sql.find("'number'").expect("the number token is ranked");
-        let date_time_at = sql.find("'https://uri.etsi.org/ngsi-ld/DateTime'").expect("the DateTime token is ranked");
-        assert!(date_time_at < number_at, "the datatypes reverse: {sql}");
-        assert!(number_at < null_at, "null stays last: {sql}");
+        let select = Query::select().expr(datatype_rank(int_literal(1), SortDirection::Descending)).to_owned();
+        assert_statement_snapshot!(
+            "attribute-value-datatype-the-descending-rank-reverses-the-datatypes-and-still-ends-with-null",
+            select
+        );
     }
 
     /// Annex C.6: a value is a `DateTime`, a `Date` or a `Time` only when it is
@@ -197,20 +188,10 @@ mod tests {
     /// no regular expression.
     #[test]
     fn a_declared_time_value_ranks_by_its_datatype_before_a_string() {
-        let sql = rendered_token();
-        let mut last = 0;
-        for iri in [
-            "https://uri.etsi.org/ngsi-ld/DateTime",
-            "https://uri.etsi.org/ngsi-ld/Date",
-            "https://uri.etsi.org/ngsi-ld/Time",
-        ] {
-            let at = sql.find(&format!("\"d\" = ('{iri}')")).unwrap_or_else(|| panic!("{iri} is not read: {sql}"));
-            assert!(at > last, "{sql}");
-            last = at;
-        }
-        let fallback = sql.find("\"s\" IS NOT NULL) THEN 'string'").expect("the plain-string reading is present");
-        assert!(last < fallback, "{sql}");
-        assert!(!sql.contains('~'), "{sql}");
+        assert_statement_snapshot!(
+            "attribute-value-datatype-a-declared-time-value-ranks-by-its-datatype-before-a-string",
+            rendered_token()
+        );
     }
 
     /// Clause 4.9 defines a `ListProperty`'s target value as "the valueList
@@ -218,10 +199,10 @@ mod tests {
     /// under Array, ahead of the Object every other structure is.
     #[test]
     fn an_array_or_a_list_ranks_as_an_array_rather_than_an_object() {
-        let sql = rendered_token();
-        let list_test = sql.find("? ('@list')").expect("the list keyword is tested");
-        let structured_fallback = sql.find("\"o\" IS NOT NULL) THEN 'object'").expect("the structured-value reading is present");
-        assert!(list_test < structured_fallback, "{sql}");
+        assert_statement_snapshot!(
+            "attribute-value-datatype-an-array-or-a-list-ranks-as-an-array-rather-than-an-object",
+            rendered_token()
+        );
     }
 
     /// Clause 4.23.2 ranks Null after `DateTime`. A Property holds the JSON
@@ -229,11 +210,9 @@ mod tests {
     /// and Object readings would claim it.
     #[test]
     fn a_json_null_ranks_as_null_ahead_of_the_array_and_object_readings() {
-        let sql = rendered_token();
-        let null_at = sql.find("\"j\") THEN 'null'").expect("the null reading is present");
-        let list_at = sql.find("? ('@list')").expect("the list keyword is tested");
-        let object_at = sql.find("\"o\" IS NOT NULL) THEN 'object'").expect("the structured-value reading is present");
-        assert!(null_at < list_at, "{sql}");
-        assert!(null_at < object_at, "{sql}");
+        assert_statement_snapshot!(
+            "attribute-value-datatype-a-json-null-ranks-as-null-ahead-of-the-array-and-object-readings",
+            rendered_token()
+        );
     }
 }

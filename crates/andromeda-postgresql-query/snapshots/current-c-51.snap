@@ -1,0 +1,83 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/corpus_statement_tests.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        EXISTS (
+          SELECT
+            1
+          FROM
+            jsonb_array_elements(
+              (
+                CASE
+                  WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                END
+              )
+            ) AS "ls"
+          WHERE
+            LOWER(("ls"."value" ->> ('@language')) COLLATE "C") = LOWER(($2::text) COLLATE "C")
+        )
+        OR (
+          EXISTS (
+            SELECT
+              1
+            FROM
+              (
+                SELECT
+                  jsonb_path_query_array(
+                    "member"."member",
+                    'lax $[*] ? (exists(@."@value"))'
+                  ) AS "member"
+                FROM
+                  jsonb_path_query(
+                    "ca"."value_object",
+                    'strict $."https://example.com/missing"',
+                    '{}',
+                    TRUE
+                  ) AS "member"
+              ) AS "member"
+            WHERE
+              TRUE
+          )
+          OR (
+            "ca"."attribute_kind" = (6)
+            AND EXISTS (
+              SELECT
+                1
+              FROM
+                (
+                  SELECT
+                    "member"."member" AS "member"
+                  FROM
+                    jsonb_path_query(
+                      "ca"."value_object",
+                      'strict $."missing"',
+                      '{}',
+                      TRUE
+                    ) AS "member"
+                ) AS "member"
+              WHERE
+                TRUE
+            )
+          )
+        )
+      )
+      AND "ca"."entity_key" = "entities"."entity_key"
+  )
+1: Int 15
+2: String 'missing'

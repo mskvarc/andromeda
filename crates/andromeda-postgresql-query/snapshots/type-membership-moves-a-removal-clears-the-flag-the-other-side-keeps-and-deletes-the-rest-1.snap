@@ -1,0 +1,22 @@
+---
+source: crates/andromeda-postgresql-query/src/type_membership_moves.rs
+---
+UPDATE
+  "entity_type_members"
+SET
+  "is_current_member" = FALSE
+WHERE
+  ("entity_type_name_key", "id") IN (
+    SELECT
+      "carried"."entity_type_name_key",
+      "written"."id"
+    FROM
+      "written"
+      INNER JOIN LATERAL (
+        SELECT
+          UNNEST("written"."old_types") AS "entity_type_name_key"
+      ) AS "carried" ON TRUE
+    WHERE
+      NOT "carried"."entity_type_name_key" = ANY("written"."new_types")
+  )
+  AND "is_evolution_member"

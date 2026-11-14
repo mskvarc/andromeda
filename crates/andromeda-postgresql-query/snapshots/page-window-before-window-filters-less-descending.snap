@@ -1,0 +1,14 @@
+---
+source: crates/andromeda-postgresql-query/src/page_window.rs
+---
+SELECT
+  "id"
+FROM
+  "items"
+WHERE
+  "id" < $1
+ORDER BY
+  "id" DESC
+LIMIT
+  10
+1: String 'urn:e:5'

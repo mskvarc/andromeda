@@ -240,10 +240,11 @@ mod tests {
         HistoryOf,
         attribute_rows::{anonymous_attribute_rows, attribute_rows, entity_attribute_rows, entity_stream_rows, stream_rows},
     };
-    use sea_query::{Alias, Asterisk, DynIden, Expr, IntoIden, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Asterisk, DynIden, Expr, IntoIden, Query, SelectStatement};
 
-    fn rendered(source: sea_query::TableRef) -> String {
-        Query::select().column(Asterisk).from(source).to_owned().to_string(PostgresQueryBuilder)
+    fn rendered(source: sea_query::TableRef) -> SelectStatement {
+        Query::select().column(Asterisk).from(source).to_owned()
     }
 
     fn snapshot() -> DynIden {
@@ -252,50 +253,42 @@ mod tests {
 
     #[test]
     fn the_live_attribute_rows_union_the_queued_entries_with_the_recorded_rows() {
-        let sql = rendered(attribute_rows(&HistoryBranch::live(), &HistoryOf::EveryEntity, Alias::new("ah")));
-        assert!(sql.contains(r#"FROM "attribute_history" AS "rh""#), "{sql}");
-        assert!(sql.contains(r#"UNION ALL (SELECT "pe"."entity_id" AS "entity_id""#), "{sql}");
-        assert!(sql.contains(r#"FROM "temporal_append_entries" AS "pe""#), "{sql}");
+        let statement = rendered(attribute_rows(&HistoryBranch::live(), &HistoryOf::EveryEntity, Alias::new("ah")));
+        assert_statement_snapshot!(
+            "attribute-rows-the-live-attribute-rows-union-the-queued-entries-with-the-recorded-rows",
+            statement
+        );
     }
 
     #[test]
     fn a_recorded_row_a_queued_entry_replaces_is_left_out() {
-        let sql = rendered(attribute_rows(&HistoryBranch::live(), &HistoryOf::EveryEntity, Alias::new("ah")));
-        assert!(
-            sql.contains(
-                r#"WHERE "rh"."verbatim_instance_id" IS NULL OR (NOT EXISTS(SELECT 1 FROM "temporal_append_entries" AS "pr" WHERE "pr"."entity_id" = "re"."id""#
-            ),
-            "{sql}"
-        );
+        let statement = rendered(attribute_rows(&HistoryBranch::live(), &HistoryOf::EveryEntity, Alias::new("ah")));
+        assert_statement_snapshot!("attribute-rows-a-recorded-row-a-queued-entry-replaces-is-left-out", statement);
     }
 
     #[test]
     fn the_entity_a_source_is_read_for_narrows_both_branches() {
         let of = HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id"))));
-        let sql = rendered(attribute_rows(&HistoryBranch::live(), &of, Alias::new("ah")));
-        assert!(sql.contains(r#""re"."id" = "e"."id""#), "{sql}");
-        assert!(sql.contains(r#""pe"."entity_id" = "e"."id""#), "{sql}");
+        let statement = rendered(attribute_rows(&HistoryBranch::live(), &of, Alias::new("ah")));
+        assert_statement_snapshot!("attribute-rows-the-entity-a-source-is-read-for-narrows-both-branches", statement);
     }
 
     /// Over an empty queue the live branch reads its recorded rows alone,
     /// unqualified.
     #[test]
     fn the_live_branch_over_an_empty_queue_reads_its_recorded_rows_alone() {
-        let sql = rendered(attribute_rows(&HistoryBranch::live_recorded(), &HistoryOf::EveryEntity, Alias::new("ah")));
-        assert!(sql.contains(r#"FROM "attribute_history" AS "rh""#), "{sql}");
-        assert!(!sql.contains("temporal_append") && !sql.contains("UNION"), "{sql}");
+        let statement = rendered(attribute_rows(&HistoryBranch::live_recorded(), &HistoryOf::EveryEntity, Alias::new("ah")));
+        assert_statement_snapshot!("attribute-rows-the-live-branch-over-an-empty-queue-reads-its-recorded-rows-alone", statement);
     }
 
     #[test]
     fn a_snapshot_reads_its_recorded_rows_alone() {
-        let sql = rendered(attribute_rows(
+        let statement = rendered(attribute_rows(
             &HistoryBranch::recorded_in(snapshot()),
             &HistoryOf::EveryEntity,
             Alias::new("ah"),
         ));
-        assert!(sql.contains(r#"FROM "snap_1"."attribute_history" AS "rh""#), "{sql}");
-        assert!(!sql.contains("temporal_append"), "{sql}");
-        assert!(!sql.contains("UNION"), "{sql}");
+        assert_statement_snapshot!("attribute-rows-a-snapshot-reads-its-recorded-rows-alone", statement);
     }
 
     fn read_for(branch: &HistoryBranch, compared: BesideComparison) -> EntityHistory {
@@ -312,31 +305,25 @@ mod tests {
     /// recorded rows need no catalogue row of their Evolution.
     #[test]
     fn the_rows_read_for_an_evolution_beside_name_it_by_key_without_the_catalogue() {
-        for (branch, history) in [
-            (HistoryBranch::live_recorded(), r#"FROM "attribute_history" AS "rh""#),
-            (HistoryBranch::recorded_in(snapshot()), r#"FROM "snap_1"."attribute_history" AS "rh""#),
-        ] {
-            let sql = rendered(entity_attribute_rows(&branch, &read_for(&branch, BesideComparison::Key), Alias::new("ah")));
-            assert!(
-                sql.starts_with(r#"SELECT * FROM (SELECT "rs"."entity_key" AS "entity_key", "rs"."attribute_name_key" AS "attribute_name_key""#),
-                "{sql}"
+        for (index, branch) in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(snapshot())].into_iter().enumerate() {
+            let statement = rendered(entity_attribute_rows(&branch, &read_for(&branch, BesideComparison::Key), Alias::new("ah")));
+            assert_statement_snapshot!(
+                format!(
+                    "attribute-rows-the-rows-read-for-an-evolution-beside-name-it-by-key-without-the-catalogue-{}",
+                    index + 1
+                ),
+                statement
             );
-            assert!(sql.contains(history), "{sql}");
-            assert!(sql.contains(r#""rs"."stream_key" = "rh"."stream_key""#), "{sql}");
-            assert!(!sql.contains("entities") && !sql.contains("entity_id"), "{sql}");
         }
     }
 
     #[test]
     fn the_streams_read_for_an_evolution_beside_name_it_by_key_without_the_catalogue() {
         let branch = HistoryBranch::recorded_in(snapshot());
-        let sql = rendered(entity_stream_rows(&branch, &read_for(&branch, BesideComparison::Key), Alias::new("s")));
-        pretty_assertions::assert_eq!(
-            sql,
-            concat!(
-                r#"SELECT * FROM (SELECT "rs"."entity_key" AS "entity_key", "rs"."attribute_name_key" AS "attribute_name_key", "#,
-                r#""rs"."dataset_key" AS "dataset_key", "rs"."stream_key" AS "stream_key" FROM "snap_1"."temporal_attribute_streams" AS "rs") AS "s""#
-            )
+        let statement = rendered(entity_stream_rows(&branch, &read_for(&branch, BesideComparison::Key), Alias::new("s")));
+        assert_statement_snapshot!(
+            "attribute-rows-the-streams-read-for-an-evolution-beside-name-it-by-key-without-the-catalogue",
+            statement
         );
     }
 
@@ -344,18 +331,15 @@ mod tests {
     /// its Evolution by the key its stream carries, with no catalogue row.
     #[test]
     fn every_recorded_row_read_without_an_identifier_names_its_evolution_by_key() {
-        for (branch, history) in [
-            (HistoryBranch::live_recorded(), r#"FROM "attribute_history" AS "rh""#),
-            (HistoryBranch::recorded_in(snapshot()), r#"FROM "snap_1"."attribute_history" AS "rh""#),
-        ] {
-            let sql = rendered(anonymous_attribute_rows(&branch, Alias::new("ah")));
-            assert!(
-                sql.starts_with(r#"SELECT * FROM (SELECT "rs"."entity_key" AS "entity_key", "rs"."attribute_name_key" AS "attribute_name_key""#),
-                "{sql}"
+        for (index, branch) in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(snapshot())].into_iter().enumerate() {
+            let statement = rendered(anonymous_attribute_rows(&branch, Alias::new("ah")));
+            assert_statement_snapshot!(
+                format!(
+                    "attribute-rows-every-recorded-row-read-without-an-identifier-names-its-evolution-by-key-{}",
+                    index + 1
+                ),
+                statement
             );
-            assert!(sql.contains(history), "{sql}");
-            assert!(sql.ends_with(r#"ON "rs"."stream_key" = "rh"."stream_key") AS "ah""#), "{sql}");
-            assert!(!sql.contains("entities") && !sql.contains("entity_id"), "{sql}");
         }
     }
 
@@ -417,19 +401,23 @@ mod tests {
     /// catalogue row read.
     #[test]
     fn the_history_of_an_evolution_over_recorded_rows_is_narrowed_by_key() {
-        for (branch, history) in [
-            (HistoryBranch::live_recorded(), r#"FROM "attribute_history" AS "rh""#),
-            (HistoryBranch::recorded_in(snapshot()), r#"FROM "snap_1"."attribute_history" AS "rh""#),
-        ] {
+        for (index, branch) in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(snapshot())].into_iter().enumerate() {
             let rows = rendered(attribute_rows(&branch, &evolution(), Alias::new("ah")));
-            assert!(rows.contains(history), "{rows}");
-            assert!(rows.ends_with(r#"WHERE "rs"."entity_key" = "e"."entity_key") AS "ah""#), "{rows}");
+            assert_statement_snapshot!(
+                format!(
+                    "attribute-rows-the-history-of-an-evolution-over-recorded-rows-is-narrowed-by-key-{}-1",
+                    index + 1
+                ),
+                rows
+            );
             let streams = rendered(stream_rows(&branch, &evolution(), Alias::new("qs")));
-            assert!(streams.ends_with(r#"WHERE "rs"."entity_key" = "e"."entity_key") AS "qs""#), "{streams}");
-            for sql in [rows, streams] {
-                assert!(sql.contains(r#""rs"."entity_key" AS "entity_key""#), "{sql}");
-                assert!(!sql.contains("entities") && !sql.contains("entity_id"), "{sql}");
-            }
+            assert_statement_snapshot!(
+                format!(
+                    "attribute-rows-the-history-of-an-evolution-over-recorded-rows-is-narrowed-by-key-{}-2",
+                    index + 1
+                ),
+                streams
+            );
         }
     }
 
@@ -451,10 +439,15 @@ mod tests {
 
     #[test]
     fn the_queued_grains_without_a_recorded_stream_join_the_streams_with_no_key() {
-        let sql = rendered(stream_rows(&HistoryBranch::live(), &HistoryOf::EveryEntity, Alias::new("qs")));
-        assert!(sql.contains(r#"NULL::bigint AS "stream_key""#), "{sql}");
-        assert!(sql.contains(r#"NOT EXISTS(SELECT 1 FROM "temporal_attribute_streams" AS "ps""#), "{sql}");
-        let snapshot = rendered(stream_rows(&HistoryBranch::recorded_in(snapshot()), &HistoryOf::EveryEntity, Alias::new("qs")));
-        assert!(!snapshot.contains("temporal_append"), "{snapshot}");
+        let live = rendered(stream_rows(&HistoryBranch::live(), &HistoryOf::EveryEntity, Alias::new("qs")));
+        assert_statement_snapshot!(
+            "attribute-rows-the-queued-grains-without-a-recorded-stream-join-the-streams-with-no-key-1",
+            live
+        );
+        let recorded = rendered(stream_rows(&HistoryBranch::recorded_in(snapshot()), &HistoryOf::EveryEntity, Alias::new("qs")));
+        assert_statement_snapshot!(
+            "attribute-rows-the-queued-grains-without-a-recorded-stream-join-the-streams-with-no-key-2",
+            recorded
+        );
     }
 }

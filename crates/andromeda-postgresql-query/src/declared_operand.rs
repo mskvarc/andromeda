@@ -93,7 +93,8 @@ pub fn string_reading(stored: SimpleExpr, datatype: SimpleExpr) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::declared_operand::{boolean_reading, number_reading, string_reading};
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Expr, Query, SelectStatement, SimpleExpr};
 
     fn stored() -> SimpleExpr {
         Expr::col(Alias::new("stored"))
@@ -103,36 +104,31 @@ mod tests {
         Expr::col(Alias::new("datatype"))
     }
 
-    fn render(expr: SimpleExpr) -> String {
-        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    fn render(expr: SimpleExpr) -> SelectStatement {
+        Query::select().expr(expr).to_owned()
     }
 
     #[test]
     fn a_number_reading_takes_a_json_number_or_a_string_declared_as_one() {
-        let sql = render(number_reading(stored(), datatype()));
-        assert!(
-            sql.contains(r#"WHEN (jsonb_typeof("stored") = ('number')) THEN ("stored" #>> ('{}'))::numeric"#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "declared-operand-a-number-reading-takes-a-json-number-or-a-string-declared-as-one",
+            render(number_reading(stored(), datatype()))
         );
-        assert!(sql.contains("'http://www.w3.org/2001/XMLSchema#integer'"), "{sql}");
-        assert!(sql.contains("'http://www.w3.org/2001/XMLSchema#double'"), "{sql}");
-        assert!(sql.contains(r#"("stored" #>> ('{}')) <> ('NaN')"#), "{sql}");
-        assert!(sql.contains("pg_input_is_valid"), "{sql}");
     }
 
     #[test]
     fn a_boolean_reading_takes_a_json_boolean_or_a_string_declared_as_one() {
-        let sql = render(boolean_reading(stored(), datatype()));
-        assert!(sql.contains(r#"WHEN (jsonb_typeof("stored") = ('boolean'))"#), "{sql}");
-        assert!(sql.contains(r#""datatype" = ('http://www.w3.org/2001/XMLSchema#boolean')"#), "{sql}");
+        assert_statement_snapshot!(
+            "declared-operand-a-boolean-reading-takes-a-json-boolean-or-a-string-declared-as-one",
+            render(boolean_reading(stored(), datatype()))
+        );
     }
 
     #[test]
     fn a_string_reading_leaves_out_every_string_declared_as_another_data_type() {
-        let sql = render(string_reading(stored(), datatype()));
-        assert!(sql.contains("NOT"), "{sql}");
-        assert!(sql.contains("https://uri.etsi.org/ngsi-ld/DateTime"), "{sql}");
-        assert!(sql.contains("'http://www.w3.org/2001/XMLSchema#decimal'"), "{sql}");
-        assert!(sql.contains("'http://www.w3.org/2001/XMLSchema#boolean'"), "{sql}");
+        assert_statement_snapshot!(
+            "declared-operand-a-string-reading-leaves-out-every-string-declared-as-another-data-type",
+            render(string_reading(stored(), datatype()))
+        );
     }
 }

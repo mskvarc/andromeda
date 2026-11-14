@@ -65,7 +65,8 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_query::geo::query::GeoQuery;
     use andromeda_postgresql_schema::csr::Csr;
-    use sea_query::{Condition, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Condition, PostgresQueryBuilder, Query, SelectStatement};
     use std::str::FromStr;
 
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
@@ -85,15 +86,11 @@ mod tests {
         }
     }
 
-    fn render(condition: Condition) -> String {
-        Query::select()
-            .column(Csr::Id)
-            .from(Csr::Table)
-            .cond_where(condition)
-            .to_string(PostgresQueryBuilder)
+    fn render(condition: Condition) -> SelectStatement {
+        Query::select().column(Csr::Id).from(Csr::Table).cond_where(condition).take()
     }
 
-    fn parts(geo: &GeoQuery) -> (String, String) {
+    fn parts(geo: &GeoQuery) -> (SelectStatement, SelectStatement) {
         let GeometryParts { absent, present } = geometry_parts(geo).expect("renders").expect("constrains the geometry");
         (render(absent), render(present))
     }
@@ -103,26 +100,23 @@ mod tests {
     #[test]
     fn a_registration_without_the_geometry_forms_its_own_part() {
         let (absent, present) = parts(&query(GeoRel::Within, LOCATION, &serde_json::json!([1.0, 2.0])));
-        assert!(absent.ends_with(r#"WHERE "location" IS NULL"#), "{absent}");
-        assert!(present.contains(r#""location" IS NOT NULL AND "#), "{present}");
-        assert!(
-            present.contains(r#"))) AND _ST_Intersects(COALESCE("location_valid", "location")"#),
-            "{present}"
-        );
-        assert!(!present.contains(" OR "), "the parts are separate statements, not alternatives: {present}");
+        assert_statement_snapshot!("geometry-parts-a-registration-without-the-geometry-forms-its-own-part-1", absent);
+        assert_statement_snapshot!("geometry-parts-a-registration-without-the-geometry-forms-its-own-part-2", present);
     }
 
     #[test]
     fn each_space_is_split_on_its_own_column() {
-        for (iri, column) in [
-            ("https://uri.etsi.org/ngsi-ld/observationSpace", "observation_space"),
-            ("https://uri.etsi.org/ngsi-ld/operationSpace", "operation_space"),
-            ("https://example.com/customGeo", "location"),
-        ] {
+        for (index, iri) in [
+            "https://uri.etsi.org/ngsi-ld/observationSpace",
+            "https://uri.etsi.org/ngsi-ld/operationSpace",
+            "https://example.com/customGeo",
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let (absent, present) = parts(&query(GeoRel::Intersects, iri, &serde_json::json!([1.0, 2.0])));
-            assert!(absent.ends_with(&format!(r#"WHERE "{column}" IS NULL"#)), "{iri}: {absent}");
-            assert!(present.contains(&format!(r#""{column}" IS NOT NULL"#)), "{iri}: {present}");
-            assert!(present.contains(&format!(r#"COALESCE("{column}_valid", "{column}")"#)), "{iri}: {present}");
+            assert_statement_snapshot!(format!("geometry-parts-each-space-is-split-on-its-own-column-{}", index * 2 + 1), absent);
+            assert_statement_snapshot!(format!("geometry-parts-each-space-is-split-on-its-own-column-{}", index * 2 + 2), present);
         }
     }
 
@@ -132,18 +126,18 @@ mod tests {
     #[test]
     fn every_georel_is_tested_through_its_reduction() {
         let cases = [
-            (GeoRel::Within, " _ST_Intersects("),
-            (GeoRel::Contains, " _ST_Contains("),
-            (GeoRel::Intersects, " _ST_Intersects("),
-            (GeoRel::Disjoint, "NOT _ST_Within("),
-            (GeoRel::Equals, " _ST_Contains("),
-            (GeoRel::Overlaps, " _ST_Intersects("),
-            (near(Some("500"), Some("100")), " _ST_DWithin("),
+            GeoRel::Within,
+            GeoRel::Contains,
+            GeoRel::Intersects,
+            GeoRel::Disjoint,
+            GeoRel::Equals,
+            GeoRel::Overlaps,
+            near(Some("500"), Some("100")),
         ];
-        for (georel, function) in cases {
+        for (index, georel) in cases.into_iter().enumerate() {
             let geo = query(georel, LOCATION, &serde_json::json!([1.0, 2.0]));
             let (_, present) = parts(&geo);
-            assert!(present.contains(function), "{:?}: {present}", geo.georel);
+            assert_statement_snapshot!(format!("geometry-parts-every-georel-is-tested-through-its-reduction-{}", index + 1), present);
         }
     }
 
@@ -152,7 +146,7 @@ mod tests {
     #[test]
     fn a_near_relation_is_tested_against_its_maximum_distance_only() {
         let (_, bounded) = parts(&query(near(Some("500"), Some("100")), LOCATION, &serde_json::json!([13.4, 52.5])));
-        assert!(!bounded.contains("ST_Distance"), "{bounded}");
+        assert_statement_snapshot!("geometry-parts-a-near-relation-is-tested-against-its-maximum-distance-only", bounded);
         assert!(
             geometry_parts(&query(near(None, Some("100")), LOCATION, &serde_json::json!([13.4, 52.5])))
                 .expect("renders")
@@ -167,11 +161,7 @@ mod tests {
     #[test]
     fn a_near_relation_is_prefiltered_by_the_reach_box_the_spatial_index_keys() {
         let (_, present) = parts(&query(near(Some("500"), None), LOCATION, &serde_json::json!([13.4, 52.5])));
-        assert!(
-            present.contains(r#"COALESCE("location_reach", "location_valid", "location") && ST_MakeEnvelope("#),
-            "{present}"
-        );
-        assert!(present.contains(r#"COALESCE("location_valid", "location")::geography"#), "{present}");
+        assert_statement_snapshot!("geometry-parts-a-near-relation-is-prefiltered-by-the-reach-box-the-spatial-index-keys", present);
     }
 
     /// The reduced relation reads the judged geometry, which the index does
@@ -180,12 +170,9 @@ mod tests {
     #[test]
     fn a_topological_relation_is_prefiltered_by_its_reduced_relations_box() {
         let (_, within) = parts(&query(GeoRel::Within, LOCATION, &serde_json::json!([13.4, 52.5])));
-        assert!(
-            within.contains(r#"COALESCE("location_reach", "location_valid", "location") && ST_MakeValid(ST_GeomFromEWKB("#),
-            "{within}"
-        );
+        assert_statement_snapshot!("geometry-parts-a-topological-relation-is-prefiltered-by-its-reduced-relations-box-1", within);
         let (_, disjoint) = parts(&query(GeoRel::Disjoint, LOCATION, &serde_json::json!([13.4, 52.5])));
-        assert!(!disjoint.contains("&&"), "{disjoint}");
+        assert_statement_snapshot!("geometry-parts-a-topological-relation-is-prefiltered-by-its-reduced-relations-box-2", disjoint);
     }
 
     /// Clause 4.10 defines every `georel` on the horizontal plane, so an

@@ -321,7 +321,8 @@ impl HistoryStream {
 #[cfg(test)]
 mod tests {
     use crate::history_source::{BesideComparison, EntityHistory, EvolutionColumns, HistoryBranch, HistoryOf};
-    use sea_query::{Alias, Expr, IntoIden, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Expr, IntoIden, Query, SelectStatement};
 
     fn evolution() -> EvolutionColumns {
         EvolutionColumns {
@@ -330,17 +331,23 @@ mod tests {
         }
     }
 
-    fn rendered(expr: sea_query::SimpleExpr) -> String {
-        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    fn rendered(expr: sea_query::SimpleExpr) -> SelectStatement {
+        Query::select().expr(expr).to_owned()
     }
 
     #[test]
     fn a_branch_reading_its_queue_takes_the_evolution_inside_its_source_by_identifier() {
-        for compared in [BesideComparison::Identifier, BesideComparison::Key] {
+        for (index, compared) in [BesideComparison::Identifier, BesideComparison::Key].into_iter().enumerate() {
             let read = HistoryBranch::live().entity_history(evolution(), compared);
-            assert!(
-                matches!(&read, EntityHistory::Inside(HistoryOf::Entity(id)) if rendered(id.clone()) == r#"SELECT "e"."id""#),
-                "{read:?}"
+            let EntityHistory::Inside(HistoryOf::Entity(id)) = &read else {
+                panic!("the evolution is taken inside the source by identifier: {read:?}")
+            };
+            assert_statement_snapshot!(
+                format!(
+                    "history-source-a-branch-reading-its-queue-takes-the-evolution-inside-its-source-by-identifier-{}",
+                    index + 1
+                ),
+                rendered(id.clone())
             );
             assert!(read.compared_beside(&Alias::new("ah").into_iden()).is_none(), "{read:?}");
         }
@@ -348,13 +355,24 @@ mod tests {
 
     #[test]
     fn a_branch_without_a_queue_compares_the_evolution_beside_its_source_by_what_is_asked() {
-        for branch in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(Alias::new("snap_1").into_iden())] {
-            for (compared, comparison) in [
-                (BesideComparison::Identifier, r#"SELECT "ah"."entity_id" = "e"."id""#),
-                (BesideComparison::Key, r#"SELECT "ah"."entity_key" = "e"."entity_key""#),
-            ] {
+        for (branch_index, branch) in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(Alias::new("snap_1").into_iden())]
+            .into_iter()
+            .enumerate()
+        {
+            for (compared_index, compared) in [BesideComparison::Identifier, BesideComparison::Key].into_iter().enumerate() {
                 let read = branch.entity_history(evolution(), compared);
-                pretty_assertions::assert_eq!(read.compared_beside(&Alias::new("ah").into_iden()).map(rendered).as_deref(), Some(comparison));
+                let comparison = read
+                    .compared_beside(&Alias::new("ah").into_iden())
+                    .map(rendered)
+                    .expect("the evolution is compared beside the source");
+                assert_statement_snapshot!(
+                    format!(
+                        "history-source-a-branch-without-a-queue-compares-the-evolution-beside-its-source-by-what-is-asked-{}-{}",
+                        branch_index + 1,
+                        compared_index + 1
+                    ),
+                    comparison
+                );
             }
         }
     }

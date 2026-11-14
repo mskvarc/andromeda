@@ -238,7 +238,8 @@ mod tests {
     };
     use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::query_names::QueryNames, history_source::HistoryBranch};
-    use sea_query::{Alias, IntoIden, PostgresQueryBuilder};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, IntoIden, SelectStatement};
 
     /// A `String` recorded as a `Property` under the attribute keyed 7.
     fn string_load() -> ShapeCombination {
@@ -267,11 +268,10 @@ mod tests {
         names: &QueryNames,
         compiled: &CompiledTemporalQuery,
         combinations: &[ShapeCombination],
-    ) -> String {
+    ) -> SelectStatement {
         build_held_shapes_query(branch, holders, compiled, names, combinations)
             .expect("renderable")
             .expect("a combination to look for")
-            .to_string(PostgresQueryBuilder)
     }
 
     #[test]
@@ -291,39 +291,28 @@ mod tests {
     /// names inside the window, so no catalogue of any other Entity is read.
     #[test]
     fn a_retrieval_looks_among_the_instances_of_its_entity_inside_the_window() {
-        let sql = rendered(
+        let statement = rendered(
             &HistoryBranch::live_recorded(),
             ShapeHolders::Entity(&truck()),
             &QueryNames::default(),
             &after_2024(TimeProp::Observed),
             &[string_load()],
         );
-        assert!(sql.starts_with(r#"SELECT 0 AS "combination" WHERE EXISTS(SELECT 1 FROM"#), "{sql}");
-        assert!(sql.contains(r#""re"."id" = 'urn:ngsi-ld:Truck:1'"#), "{sql}");
-        assert!(sql.contains(r#""ah"."observed_at" >= '2024-01-01 00:00:00.000000 +00:00'"#), "{sql}");
-        assert!(sql.contains(r#""ah"."attribute_name_key" = 7"#), "{sql}");
-        assert!(sql.contains(r#""ah"."attribute_kind" = 1"#), "{sql}");
-        assert!(sql.contains(r#""ah"."value_kind" <> (0)"#), "a tombstone carries no shape: {sql}");
-        assert!(
-            sql.contains("jsonb_typeof(") && sql.contains("END) = 2"),
-            "the shape is the refined one the aggregation reads: {sql}"
-        );
-        assert!(!sql.contains("shape_mask") && !sql.contains("candidates"), "{sql}");
+        assert_statement_snapshot!("held-shapes-a-retrieval-looks-among-the-instances-of-its-entity-inside-the-window", statement);
     }
 
     /// Clause 5.2.21 places an instance on the axis the request names, so the
     /// window is read on that axis alone.
     #[test]
     fn the_window_is_read_on_the_requested_axis() {
-        let sql = rendered(
+        let statement = rendered(
             &HistoryBranch::live_recorded(),
             ShapeHolders::Entity(&truck()),
             &QueryNames::default(),
             &after_2024(TimeProp::Modified),
             &[string_load()],
         );
-        assert!(sql.contains(r#""ah"."modified_at" >= "#), "{sql}");
-        assert!(!sql.contains(r#""ah"."observed_at" >= "#), "{sql}");
+        assert_statement_snapshot!("held-shapes-the-window-is-read-on-the-requested-axis", statement);
     }
 
     #[test]
@@ -332,16 +321,14 @@ mod tests {
             shape: RecordedShape::Array,
             ..string_load()
         };
-        let sql = rendered(
+        let statement = rendered(
             &HistoryBranch::live_recorded(),
             ShapeHolders::Entity(&truck()),
             &QueryNames::default(),
             &after_2024(TimeProp::Observed),
             &[string_load(), array],
         );
-        assert!(sql.contains(r#"SELECT 0 AS "combination""#), "{sql}");
-        assert!(sql.contains(r#"UNION ALL (SELECT 1 AS "combination""#), "{sql}");
-        assert_eq!(sql.matches("UNION ALL (SELECT").count(), 1, "{sql}");
+        assert_statement_snapshot!("held-shapes-each-combination-answers-its-own-position", statement);
     }
 
     /// Clause 5.7.4.4 judges the Entities the query selects: the selection is
@@ -349,7 +336,7 @@ mod tests {
     /// under every filter stage 1 applies, and unpaginated.
     #[test]
     fn a_query_looks_among_the_selected_holders_of_the_combination() {
-        let sql = rendered(
+        let statement = rendered(
             &HistoryBranch::live_recorded(),
             ShapeHolders::Selected,
             &vehicle_is_known(),
@@ -360,25 +347,7 @@ mod tests {
             },
             &[string_load()],
         );
-        assert!(
-            sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (WITH RECURSIVE "held" ("attribute_name_key", "shape_mask") AS ("#),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(concat!(
-                r#" SELECT "rs"."entity_key" FROM "held""#,
-                r#" JOIN "temporal_attribute_streams" AS "rs" ON "rs"."attribute_name_key" = "held"."attribute_name_key" AND "rs"."shape_mask" = "held"."shape_mask""#,
-                r#" WHERE "held"."attribute_name_key" = 7 AND get_bit("held"."shape_mask", 1) = 1 AND TRUE)"#
-            )),
-            "{sql}"
-        );
-        assert!(sql.contains(r#"IN (SELECT "entity_key" FROM "candidates")"#), "{sql}");
-        assert!(sql.contains("entity_type_members"), "the type selection applies: {sql}");
-        assert_eq!(
-            sql.matches("LIMIT").count(),
-            2,
-            "only the mask walk's own steps are limited, the selection is not paginated: {sql}"
-        );
+        assert_statement_snapshot!("held-shapes-a-query-looks-among-the-selected-holders-of-the-combination", statement);
     }
 
     /// Clause 5.7.4.4 step S8: the instances of the datasets `datasetId` names
@@ -388,15 +357,14 @@ mod tests {
     fn the_dataset_parameter_narrows_the_candidates_and_the_instances() {
         let mut compiled = after_2024(TimeProp::Observed);
         compiled.instances.dataset_id_filter = vec![DatasetSelector::parse("urn:ngsi-ld:Dataset:one").expect("a valid dataset selector")];
-        let sql = rendered(
+        let statement = rendered(
             &HistoryBranch::live_recorded(),
             ShapeHolders::Selected,
             &QueryNames::default(),
             &compiled,
             &[string_load()],
         );
-        assert!(sql.contains(r#""rs"."dataset_key" = 'urn:ngsi-ld:Dataset:one'"#), "{sql}");
-        assert!(sql.contains(r#""ah"."dataset_key" = 'urn:ngsi-ld:Dataset:one'"#), "{sql}");
+        assert_statement_snapshot!("held-shapes-the-dataset-parameter-narrows-the-candidates-and-the-instances", statement);
     }
 
     /// No catalogue row holds a queued entry yet, so every Entity a queued
@@ -404,34 +372,26 @@ mod tests {
     /// entries the application would write.
     #[test]
     fn a_queued_branch_adds_every_queued_entity_to_the_candidates() {
-        let sql = rendered(
+        let statement = rendered(
             &HistoryBranch::live(),
             ShapeHolders::Selected,
             &QueryNames::default(),
             &after_2024(TimeProp::Observed),
             &[string_load()],
         );
-        assert!(
-            sql.contains(r#" SELECT "ri"."id" FROM "held" JOIN "temporal_attribute_streams" AS "rs""#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#"UNION ALL (SELECT "entity_id" FROM "temporal_append_intents")"#), "{sql}");
-        assert!(sql.contains(r#"IN (SELECT "id" FROM "candidates")"#), "{sql}");
-        assert!(sql.contains("temporal_append_entries"), "{sql}");
+        assert_statement_snapshot!("held-shapes-a-queued-branch-adds-every-queued-entity-to-the-candidates", statement);
     }
 
     #[test]
     fn a_snapshot_branch_reads_its_own_catalogue() {
         let snapshot = HistoryBranch::recorded_in(Alias::new("snap_1").into_iden());
-        let sql = rendered(
+        let statement = rendered(
             &snapshot,
             ShapeHolders::Selected,
             &QueryNames::default(),
             &after_2024(TimeProp::Observed),
             &[string_load()],
         );
-        assert!(sql.contains(r#"FROM "snap_1"."temporal_attribute_streams" AS "ms""#), "{sql}");
-        assert!(sql.contains(r#"JOIN "snap_1"."temporal_attribute_streams" AS "rs""#), "{sql}");
-        assert!(!sql.contains("temporal_append"), "{sql}");
+        assert_statement_snapshot!("held-shapes-a-snapshot-branch-reads-its-own-catalogue", statement);
     }
 }

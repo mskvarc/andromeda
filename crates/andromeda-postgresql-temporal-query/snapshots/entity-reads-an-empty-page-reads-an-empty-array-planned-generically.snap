@@ -1,0 +1,18 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/entity_reads.rs
+---
+SELECT
+  "read_entity"."read_entity" AS "read_entity_id"
+FROM
+  UNNEST($1) AS "read_entity"
+  JOIN LATERAL (
+    SELECT
+      *
+    FROM
+      "t"
+    WHERE
+      "id" = "read_entity"."read_entity" OFFSET 0
+  ) AS "h" ON TRUE
+ORDER BY
+  "read_entity"."read_entity" ASC
+1: Array '{}'

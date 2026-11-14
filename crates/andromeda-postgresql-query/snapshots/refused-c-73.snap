@@ -1,0 +1,5 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/corpus_statement_tests.rs
+---
+tm>2024-01-01T00:00:00,5Z
+q expression: invalid date-time literal: NGSI-LD DateTime value is not written in the complete form its type defines

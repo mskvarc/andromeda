@@ -1,0 +1,6 @@
+---
+source: crates/andromeda-postgresql-context-query/src/attribute_value_datatype.rs
+---
+SELECT
+  array_position($1::text[], 1)
+1: Array ARRAY ['https://uri.etsi.org/ngsi-ld/DateTime','https://uri.etsi.org/ngsi-ld/Date','https://uri.etsi.org/ngsi-ld/Time','boolean','array','object','string','number','null']

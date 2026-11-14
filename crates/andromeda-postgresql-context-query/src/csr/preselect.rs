@@ -140,10 +140,11 @@ pub fn attribute_name_candidate<N: fmt::Display>(attribute_names: &[N]) -> Simpl
 mod tests {
     use super::*;
     use andromeda_postgresql_seaquery::{
+        assert_statement_snapshot,
         collation::{PostgresCollation, collate},
         literal::int_literal,
     };
-    use sea_query::{PostgresQueryBuilder, Query};
+    use sea_query::{PostgresQueryBuilder, Query, SelectStatement};
 
     /// The migration that declares the indexes the tests here must hit.
     const MIGRATION: &str = include_str!("../../../../migrations/tenant/0011_registration_information.sql");
@@ -159,6 +160,10 @@ mod tests {
     fn render(expression: SimpleExpr) -> String {
         let sql = Query::select().expr(expression).to_string(PostgresQueryBuilder);
         sql.trim_start_matches("SELECT ").to_owned()
+    }
+
+    fn statement(expression: SimpleExpr) -> SelectStatement {
+        Query::select().expr(expression).take()
     }
 
     /// The comparable spelling of an expression: case, layout, quoting,
@@ -227,10 +232,10 @@ mod tests {
     #[test]
     fn the_pattern_test_names_the_identifier_sentinel_beside_the_match_on_the_trigram_indexed_column() {
         let pattern = Pattern::parse("urn:ngsi-ld:Fleet.*").expect("valid pattern");
-        let sql = render(entity_id_pattern_candidate(&pattern));
-        pretty_assertions::assert_eq!(
-            sql,
-            "COALESCE(\"ri\".\"entity_id\", '') = ('') OR (((\"ri\".\"entity_id\") COLLATE \"default\") ~ 'urn:ngsi-ld:Fleet.*')"
+        let select = statement(entity_id_pattern_candidate(&pattern));
+        assert_statement_snapshot!(
+            "preselect-the-pattern-test-names-the-identifier-sentinel-beside-the-match-on-the-trigram-indexed-column",
+            select
         );
     }
 
@@ -239,34 +244,33 @@ mod tests {
     #[test]
     fn the_pattern_test_matches_the_portable_restatement_not_the_written_pattern() {
         let pattern = Pattern::parse("(?i)urn:ngsi-ld:fleet.*").expect("valid pattern");
-        let sql = render(entity_id_pattern_candidate(&pattern));
-        assert!(!sql.contains("(?i)"), "{sql}");
-        assert!(sql.contains(pattern.portable().as_str()), "{sql}");
+        let select = statement(entity_id_pattern_candidate(&pattern));
+        assert_statement_snapshot!("preselect-the-pattern-test-matches-the-portable-restatement-not-the-written-pattern", select);
     }
 
     #[test]
     fn the_type_test_overlaps_the_requested_types_beside_the_wildcard_sentinel() {
-        let (sql, values) = Query::select()
+        let select = Query::select()
             .expr(int_literal(1))
             .and_where(entity_type_candidate(&[iri("https://example.com/Vehicle")]))
-            .build(PostgresQueryBuilder);
-        assert!(sql.contains("COALESCE(\"ri\".\"entity_types\", '{*}') && $1"), "{sql}");
-        pretty_assertions::assert_eq!(values.0.len(), 1, "the type and the sentinel cross as one array: {sql}");
-        let rendered = render(entity_type_candidate(&[iri("https://example.com/Vehicle")]));
-        assert!(rendered.contains("ARRAY ['https://example.com/Vehicle','*']"), "{rendered}");
+            .take();
+        assert_statement_snapshot!("preselect-the-type-test-overlaps-the-requested-types-beside-the-wildcard-sentinel-1", select);
+        let expression = statement(entity_type_candidate(&[iri("https://example.com/Vehicle")]));
+        assert_statement_snapshot!(
+            "preselect-the-type-test-overlaps-the-requested-types-beside-the-wildcard-sentinel-2",
+            expression
+        );
     }
 
     /// Clause 4.9 regular expressions are decided by the residual over the
     /// stored restatement: a pattern row is a candidate whatever it holds.
     #[test]
     fn the_identifier_test_names_the_identifiers_beside_the_sentinel_and_admits_pattern_rows_unevaluated() {
-        let sql = render(entity_id_candidate(&[uri("urn:ngsi-ld:Vehicle:1"), uri("urn:ngsi-ld:Vehicle:2")]));
-        assert!(
-            sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ANY(ARRAY ['urn:ngsi-ld:Vehicle:1','urn:ngsi-ld:Vehicle:2',''])"),
-            "{sql}"
+        let select = statement(entity_id_candidate(&[uri("urn:ngsi-ld:Vehicle:1"), uri("urn:ngsi-ld:Vehicle:2")]));
+        assert_statement_snapshot!(
+            "preselect-the-identifier-test-names-the-identifiers-beside-the-sentinel-and-admits-pattern-rows-unevaluated",
+            select
         );
-        assert!(sql.contains("OR \"ri\".\"entity_id_pattern\" IS NOT NULL"), "{sql}");
-        assert!(!sql.contains(" ~ "), "the identifier test runs no regular expression: {sql}");
     }
 
     /// Clause 5.12: an item naming no property and no relationship matches any
@@ -274,26 +278,16 @@ mod tests {
     /// nothing.
     #[test]
     fn each_axis_overlaps_the_requested_keys_as_stored_beside_the_branch_for_an_item_declaring_no_name() {
-        let sql = render(attribute_name_candidate(&[iri("https://example.com/speed")]));
-        for axis in ["property_name_keys", "relationship_name_keys"] {
-            assert!(sql.contains(&format!("\"ri\".\"{axis}\" && (ARRAY (SELECT")), "{axis}: {sql}");
-        }
-        assert!(
-            sql.ends_with(" OR (\"ri\".\"property_name_keys\" IS NULL AND \"ri\".\"relationship_name_keys\" IS NULL)"),
-            "{sql}"
-        );
-        assert!(
-            !sql.contains("CASE"),
-            "each branch is an indexed column or the partial index's predicate: {sql}"
+        let select = statement(attribute_name_candidate(&[iri("https://example.com/speed")]));
+        assert_statement_snapshot!(
+            "preselect-each-axis-overlaps-the-requested-keys-as-stored-beside-the-branch-for-an-item-declaring-no-name",
+            select
         );
     }
 
     #[test]
     fn the_attribute_test_resolves_names_through_the_dictionary_once_per_overlap() {
-        let sql = render(attribute_name_candidate(&[iri("https://example.com/speed"), iri("https://example.com/temp")]));
-        assert!(sql.contains("FROM \"attribute_names\" AS \"an\" WHERE \"an\".\"name\" = ANY("), "{sql}");
-        pretty_assertions::assert_eq!(sql.matches("'https://example.com/speed'").count(), 2, "{sql}");
-        pretty_assertions::assert_eq!(sql.matches("'https://example.com/temp'").count(), 2, "{sql}");
-        assert!(!sql.contains('$'), "every placeholder is bound: {sql}");
+        let select = statement(attribute_name_candidate(&[iri("https://example.com/speed"), iri("https://example.com/temp")]));
+        assert_statement_snapshot!("preselect-the-attribute-test-resolves-names-through-the-dictionary-once-per-overlap", select);
     }
 }

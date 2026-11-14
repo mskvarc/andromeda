@@ -1,0 +1,30 @@
+---
+source: crates/andromeda-postgresql-query/src/type_membership.rs
+---
+SELECT DISTINCT
+  ON ("typed"."id") "typed"."entity_key",
+  "typed"."id"
+FROM
+  (
+    SELECT
+      "entity_key",
+      "id"
+    FROM
+      "entity_type_members"
+    WHERE
+      "entity_type_name_key" = (1)
+      AND "is_current_member"
+    UNION ALL
+    (
+      SELECT
+        "entity_key",
+        "id"
+      FROM
+        "entity_type_members"
+      WHERE
+        "entity_type_name_key" = (2)
+        AND "is_current_member"
+    )
+  ) AS "typed"
+ORDER BY
+  "typed"."id" ASC

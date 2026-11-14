@@ -282,11 +282,11 @@ mod tests {
             holder_rows::{attribute_holder_rows, attribute_holder_rows_by_key},
         },
     };
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Asterisk, IntoIden, PostgresQueryBuilder, Query, TableRef};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Asterisk, IntoIden, Query, SelectStatement, TableRef};
 
-    fn rendered(source: TableRef) -> String {
-        Query::select().column(Asterisk).from(source).to_owned().to_string(PostgresQueryBuilder)
+    fn rendered(source: TableRef) -> SelectStatement {
+        Query::select().column(Asterisk).from(source).to_owned()
     }
 
     fn among_candidates() -> WalkedKeys {
@@ -308,12 +308,12 @@ mod tests {
         ])
     }
 
-    fn holders_among(branch: &HistoryBranch, keys: &[i32], walked: &WalkedKeys) -> String {
+    fn holders_among(branch: &HistoryBranch, keys: &[i32], walked: &WalkedKeys) -> SelectStatement {
         let keys: Vec<AttributeNameKey> = keys.iter().copied().map(AttributeNameKey::from).collect();
         rendered(attribute_holder_rows(branch, Alias::new("e"), &keys, &census(), walked))
     }
 
-    fn holders(branch: &HistoryBranch, keys: &[i32]) -> String {
+    fn holders(branch: &HistoryBranch, keys: &[i32]) -> SelectStatement {
         holders_among(branch, keys, &WalkedKeys::Every)
     }
 
@@ -323,25 +323,10 @@ mod tests {
     /// attribute; the probe is a scalar subquery limited to one row.
     #[test]
     fn a_dense_attribute_walks_the_evolution_members_of_each_holding_type() {
-        let sql = holders(&HistoryBranch::live_recorded(), &[7]);
-        for type_key in [3, 4] {
-            assert!(
-                sql.contains(&format!(
-                    concat!(
-                        r#"(SELECT "hw"."id", "hw"."entity_key" FROM "entity_type_members" AS "hw" WHERE "hw"."entity_type_name_key" = ({}) AND "hw"."is_evolution_member" "#,
-                        r#"AND (SELECT 1 FROM "temporal_attribute_streams" AS "hs" WHERE "hs"."entity_key" = "hw"."entity_key" AND "hs"."attribute_name_key" = (7) LIMIT 1) IS NOT NULL "#,
-                        r#"ORDER BY "hw"."id" ASC)"#
-                    ),
-                    type_key
-                )),
-                "{sql}"
-            );
-        }
-        assert!(
-            sql.starts_with(r#"SELECT * FROM (SELECT DISTINCT ON ("held"."id") "held"."id", "held"."entity_key" FROM ("#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "holder-rows-a-dense-attribute-walks-the-evolution-members-of-each-holding-type",
+            holders(&HistoryBranch::live_recorded(), &[7])
         );
-        assert!(sql.ends_with(r#") AS "held" ORDER BY "held"."id" ASC) AS "e""#), "{sql}");
     }
 
     /// An attribute whose census counts few streams is read whole from its
@@ -349,25 +334,20 @@ mod tests {
     /// walking the members of its types.
     #[test]
     fn a_sparse_attribute_reads_its_holders_whole_and_sorts_them_by_identifier() {
-        let sql = holders(&HistoryBranch::live_recorded(), &[9]);
-        assert!(
-            sql.contains(concat!(
-                r#"(SELECT "hi"."id", "hs"."entity_key" FROM "temporal_attribute_streams" AS "hs" "#,
-                r#"JOIN "entities" AS "hi" ON "hi"."entity_key" = "hs"."entity_key" WHERE "hs"."attribute_name_key" = (9) ORDER BY "hi"."id" ASC)"#
-            )),
-            "{sql}"
+        assert_statement_snapshot!(
+            "holder-rows-a-sparse-attribute-reads-its-holders-whole-and-sorts-them-by-identifier",
+            holders(&HistoryBranch::live_recorded(), &[9])
         );
-        assert!(!sql.contains("entity_type_members"), "{sql}");
     }
 
     /// The ranges of several attributes merge in identifier order with each
     /// Evolution once, however many streams or types it holds.
     #[test]
     fn several_attributes_merge_their_ranges_with_each_holder_once() {
-        let sql = holders(&HistoryBranch::live_recorded(), &[7, 9]);
-        assert_eq!(sql.matches(r#"FROM "entity_type_members" AS "hw""#).count(), 2, "{sql}");
-        assert_eq!(sql.matches(r#"JOIN "entities" AS "hi""#).count(), 1, "{sql}");
-        assert_eq!(sql.matches("UNION ALL").count(), 2, "{sql}");
+        assert_statement_snapshot!(
+            "holder-rows-several-attributes-merge-their-ranges-with-each-holder-once",
+            holders(&HistoryBranch::live_recorded(), &[7, 9])
+        );
     }
 
     /// On the live branch an Entity whose queued entries extend a grain of the
@@ -375,26 +355,18 @@ mod tests {
     /// own; an attribute the census names no type for has no recorded range.
     #[test]
     fn a_live_attribute_walk_merges_the_grains_the_queued_entries_extend() {
-        let sql = holders(&HistoryBranch::live(), &[11]);
-        assert!(
-            sql.contains(r#"(SELECT "hq"."id", NULL::bigint AS "entity_key" FROM (SELECT "hg"."entity_id" AS "id" FROM (SELECT DISTINCT "pe"."entity_id""#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "holder-rows-a-live-attribute-walk-merges-the-grains-the-queued-entries-extend",
+            holders(&HistoryBranch::live(), &[11])
         );
-        assert!(sql.contains(r#"FROM "temporal_append_entries" AS "pe""#), "{sql}");
-        assert!(
-            sql.contains(r#") AS "hg" WHERE "hg"."attribute_name_key" = 11 ORDER BY "id" ASC) AS "hq""#),
-            "{sql}"
-        );
-        assert!(!sql.contains(r#""temporal_attribute_streams" AS "hs""#), "{sql}");
     }
 
     #[test]
     fn a_snapshot_attribute_walk_reads_its_own_memberships_and_streams() {
-        let sql = holders(&HistoryBranch::recorded_in(Alias::new("snap_1").into_iden()), &[7, 9]);
-        assert!(sql.contains(r#"FROM "snap_1"."entity_type_members" AS "hw""#), "{sql}");
-        assert!(sql.contains(r#"FROM "snap_1"."temporal_attribute_streams" AS "hs""#), "{sql}");
-        assert!(sql.contains(r#"JOIN "snap_1"."entities" AS "hi""#), "{sql}");
-        assert!(!sql.contains("temporal_append_entries"), "{sql}");
+        assert_statement_snapshot!(
+            "holder-rows-a-snapshot-attribute-walk-reads-its-own-memberships-and-streams",
+            holders(&HistoryBranch::recorded_in(Alias::new("snap_1").into_iden()), &[7, 9])
+        );
     }
 
     /// An attribute the dictionary never keyed was never recorded, and one the
@@ -402,10 +374,18 @@ mod tests {
     /// yields a row.
     #[test]
     fn an_attribute_walk_of_no_key_or_no_holder_yields_no_row() {
-        let none = r#"SELECT * FROM (SELECT "id", "entity_key" FROM "entities" WHERE FALSE) AS "e""#;
-        pretty_assertions::assert_eq!(holders(&HistoryBranch::live(), &[]), none);
-        pretty_assertions::assert_eq!(holders(&HistoryBranch::live_recorded(), &[11]), none);
-        pretty_assertions::assert_eq!(rendered(attribute_holder_rows_by_key(&HistoryBranch::live(), Alias::new("e"), &[])), none);
+        assert_statement_snapshot!(
+            "holder-rows-an-attribute-walk-of-no-key-or-no-holder-yields-no-row-1",
+            holders(&HistoryBranch::live(), &[])
+        );
+        assert_statement_snapshot!(
+            "holder-rows-an-attribute-walk-of-no-key-or-no-holder-yields-no-row-2",
+            holders(&HistoryBranch::live_recorded(), &[11])
+        );
+        assert_statement_snapshot!(
+            "holder-rows-an-attribute-walk-of-no-key-or-no-holder-yields-no-row-3",
+            rendered(attribute_holder_rows_by_key(&HistoryBranch::live(), Alias::new("e"), &[]))
+        );
     }
 
     /// For a count, each holder once, read from the holder index in the order
@@ -413,33 +393,16 @@ mod tests {
     #[test]
     fn a_holder_walk_by_key_reads_the_holder_index_in_key_order() {
         let keys = [AttributeNameKey::from(7), AttributeNameKey::from(9)];
-        let sql = rendered(attribute_holder_rows_by_key(&HistoryBranch::live(), Alias::new("e"), &keys));
-        assert!(
-            sql.starts_with(concat!(
-                r#"SELECT * FROM (SELECT "hm"."id" FROM (SELECT DISTINCT ON ("hs"."entity_key") "hi"."id", "hs"."entity_key" FROM "temporal_attribute_streams" AS "hs" "#,
-                r#"JOIN "entities" AS "hi" ON "hi"."entity_key" = "hs"."entity_key" WHERE "hs"."attribute_name_key" = ANY(ARRAY [7,9]) ORDER BY "hs"."entity_key" ASC) AS "hm""#
-            )),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(r#"UNION ALL (SELECT "hq"."id", NULL::bigint AS "entity_key" FROM (SELECT "hg"."entity_id" AS "id""#),
-            "{sql}"
-        );
+        let statement = rendered(attribute_holder_rows_by_key(&HistoryBranch::live(), Alias::new("e"), &keys));
+        assert_statement_snapshot!("holder-rows-a-holder-walk-by-key-reads-the-holder-index-in-key-order", statement);
     }
 
     /// Narrowed, each range of a holder walk reads the named holders alone.
     #[test]
     fn a_narrowed_holder_walk_reads_the_named_holders_alone() {
-        let sql = holders_among(&HistoryBranch::live_recorded(), &[7, 9], &among_candidates());
-        assert_eq!(
-            sql.matches(r#""hw"."entity_key" IN (SELECT "entity_key" FROM "candidates") ORDER BY "hw"."id" ASC"#)
-                .count(),
-            2,
-            "{sql}"
-        );
-        assert!(
-            sql.contains(r#""hs"."entity_key" IN (SELECT "entity_key" FROM "candidates") ORDER BY "hi"."id" ASC"#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "holder-rows-a-narrowed-holder-walk-reads-the-named-holders-alone",
+            holders_among(&HistoryBranch::live_recorded(), &[7, 9], &among_candidates())
         );
     }
 }

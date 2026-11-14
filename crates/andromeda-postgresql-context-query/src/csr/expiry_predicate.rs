@@ -22,16 +22,16 @@ pub fn not_expired() -> Condition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_postgresql_seaquery::literal::int_literal;
-    use sea_query::{Alias, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
+    use sea_query::{Alias, Query};
 
     #[test]
     fn an_expired_registration_is_excluded_and_one_without_expiry_is_kept() {
-        let sql = Query::select()
+        let select = Query::select()
             .expr(int_literal(1))
             .from(Alias::new("context_source_registrations"))
             .cond_where(not_expired())
-            .to_string(PostgresQueryBuilder);
-        assert!(sql.contains("\"expires_at\" IS NULL OR \"expires_at\" > NOW()"), "{sql}");
+            .take();
+        assert_statement_snapshot!("expiry-predicate-an-expired-registration-is-excluded-and-one-without-expiry-is-kept", select);
     }
 }

@@ -1,0 +1,424 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/aggregation_grid.rs
+---
+SELECT
+  CASE
+    WHEN (
+      extract(year
+        from
+          ("calendar_grid"."period")) * 12 + extract(month
+        from
+          ("calendar_grid"."period"))
+    )::integer = 0 THEN (("calendar_grid"."origin") AT TIME ZONE 'UTC') + ("calendar_grid"."period_index") * ("calendar_grid"."period")
+    ELSE (
+      date_trunc(
+        'month',
+        ("calendar_grid"."origin") AT TIME ZONE 'UTC'
+      ) + make_interval(
+        months => ("calendar_grid"."period_index")::integer * (
+          extract(year
+            from
+              ("calendar_grid"."period")) * 12 + extract(month
+            from
+              ("calendar_grid"."period"))
+        )::integer
+      ) + make_interval(
+        days => (
+          CASE
+            WHEN extract(
+              day
+              from
+                (
+                  (("calendar_grid"."origin") AT TIME ZONE 'UTC') + interval '1 day'
+                )
+            ) = 1 THEN extract(
+              day
+              from
+                (
+                  date_trunc(
+                    'month',
+                    ("calendar_grid"."origin") AT TIME ZONE 'UTC'
+                  ) + make_interval(
+                    months => ("calendar_grid"."period_index")::integer * (
+                      extract(year
+                        from
+                          ("calendar_grid"."period")) * 12 + extract(month
+                        from
+                          ("calendar_grid"."period"))
+                    )::integer
+                  ) + interval '1 month' - interval '1 day'
+                )
+            )
+            ELSE least(
+              extract(
+                day
+                from
+                  (("calendar_grid"."origin") AT TIME ZONE 'UTC')
+              ),
+              extract(
+                day
+                from
+                  (
+                    date_trunc(
+                      'month',
+                      ("calendar_grid"."origin") AT TIME ZONE 'UTC'
+                    ) + make_interval(
+                      months => ("calendar_grid"."period_index")::integer * (
+                        extract(year
+                          from
+                            ("calendar_grid"."period")) * 12 + extract(month
+                          from
+                            ("calendar_grid"."period"))
+                      )::integer
+                    ) + interval '1 month' - interval '1 day'
+                  )
+              )
+            )
+          END - 1
+        )::integer
+      ) + (
+        ("calendar_grid"."origin") AT TIME ZONE 'UTC' - date_trunc(
+          'day',
+          ("calendar_grid"."origin") AT TIME ZONE 'UTC'
+        )
+      ) + ("calendar_grid"."period_index") * (
+        ("calendar_grid"."period") - make_interval(
+          months => (
+            extract(year
+              from
+                ("calendar_grid"."period")) * 12 + extract(month
+              from
+                ("calendar_grid"."period"))
+          )::integer
+        )
+      )
+    )
+  END AT TIME ZONE 'UTC' AS "bucket_start",
+  CASE
+    WHEN (
+      extract(year
+        from
+          ("calendar_grid"."period")) * 12 + extract(month
+        from
+          ("calendar_grid"."period"))
+    )::integer = 0 THEN (("calendar_grid"."origin") AT TIME ZONE 'UTC') + ("calendar_grid"."period_index" + (1)) * ("calendar_grid"."period")
+    ELSE (
+      date_trunc(
+        'month',
+        ("calendar_grid"."origin") AT TIME ZONE 'UTC'
+      ) + make_interval(
+        months => ("calendar_grid"."period_index" + (1))::integer * (
+          extract(year
+            from
+              ("calendar_grid"."period")) * 12 + extract(month
+            from
+              ("calendar_grid"."period"))
+        )::integer
+      ) + make_interval(
+        days => (
+          CASE
+            WHEN extract(
+              day
+              from
+                (
+                  (("calendar_grid"."origin") AT TIME ZONE 'UTC') + interval '1 day'
+                )
+            ) = 1 THEN extract(
+              day
+              from
+                (
+                  date_trunc(
+                    'month',
+                    ("calendar_grid"."origin") AT TIME ZONE 'UTC'
+                  ) + make_interval(
+                    months => ("calendar_grid"."period_index" + (1))::integer * (
+                      extract(year
+                        from
+                          ("calendar_grid"."period")) * 12 + extract(month
+                        from
+                          ("calendar_grid"."period"))
+                    )::integer
+                  ) + interval '1 month' - interval '1 day'
+                )
+            )
+            ELSE least(
+              extract(
+                day
+                from
+                  (("calendar_grid"."origin") AT TIME ZONE 'UTC')
+              ),
+              extract(
+                day
+                from
+                  (
+                    date_trunc(
+                      'month',
+                      ("calendar_grid"."origin") AT TIME ZONE 'UTC'
+                    ) + make_interval(
+                      months => ("calendar_grid"."period_index" + (1))::integer * (
+                        extract(year
+                          from
+                            ("calendar_grid"."period")) * 12 + extract(month
+                          from
+                            ("calendar_grid"."period"))
+                      )::integer
+                    ) + interval '1 month' - interval '1 day'
+                  )
+              )
+            )
+          END - 1
+        )::integer
+      ) + (
+        ("calendar_grid"."origin") AT TIME ZONE 'UTC' - date_trunc(
+          'day',
+          ("calendar_grid"."origin") AT TIME ZONE 'UTC'
+        )
+      ) + ("calendar_grid"."period_index" + (1)) * (
+        ("calendar_grid"."period") - make_interval(
+          months => (
+            extract(year
+              from
+                ("calendar_grid"."period")) * 12 + extract(month
+              from
+                ("calendar_grid"."period"))
+          )::integer
+        )
+      )
+    )
+  END AT TIME ZONE 'UTC' AS "bucket_end"
+FROM
+  (
+    SELECT
+      "calendar_grid"."period",
+      "calendar_grid"."origin",
+      ("calendar_grid"."period_estimate") - (
+        (
+          CASE
+            WHEN (
+              extract(year
+                from
+                  ("calendar_grid"."period")) * 12 + extract(month
+                from
+                  ("calendar_grid"."period"))
+            )::integer = 0 THEN (("calendar_grid"."origin") AT TIME ZONE 'UTC') + ("calendar_grid"."period_estimate") * ("calendar_grid"."period")
+            ELSE (
+              date_trunc(
+                'month',
+                ("calendar_grid"."origin") AT TIME ZONE 'UTC'
+              ) + make_interval(
+                months => ("calendar_grid"."period_estimate")::integer * (
+                  extract(year
+                    from
+                      ("calendar_grid"."period")) * 12 + extract(month
+                    from
+                      ("calendar_grid"."period"))
+                )::integer
+              ) + make_interval(
+                days => (
+                  CASE
+                    WHEN extract(
+                      day
+                      from
+                        (
+                          (("calendar_grid"."origin") AT TIME ZONE 'UTC') + interval '1 day'
+                        )
+                    ) = 1 THEN extract(
+                      day
+                      from
+                        (
+                          date_trunc(
+                            'month',
+                            ("calendar_grid"."origin") AT TIME ZONE 'UTC'
+                          ) + make_interval(
+                            months => ("calendar_grid"."period_estimate")::integer * (
+                              extract(year
+                                from
+                                  ("calendar_grid"."period")) * 12 + extract(month
+                                from
+                                  ("calendar_grid"."period"))
+                            )::integer
+                          ) + interval '1 month' - interval '1 day'
+                        )
+                    )
+                    ELSE least(
+                      extract(
+                        day
+                        from
+                          (("calendar_grid"."origin") AT TIME ZONE 'UTC')
+                      ),
+                      extract(
+                        day
+                        from
+                          (
+                            date_trunc(
+                              'month',
+                              ("calendar_grid"."origin") AT TIME ZONE 'UTC'
+                            ) + make_interval(
+                              months => ("calendar_grid"."period_estimate")::integer * (
+                                extract(year
+                                  from
+                                    ("calendar_grid"."period")) * 12 + extract(month
+                                  from
+                                    ("calendar_grid"."period"))
+                              )::integer
+                            ) + interval '1 month' - interval '1 day'
+                          )
+                      )
+                    )
+                  END - 1
+                )::integer
+              ) + (
+                ("calendar_grid"."origin") AT TIME ZONE 'UTC' - date_trunc(
+                  'day',
+                  ("calendar_grid"."origin") AT TIME ZONE 'UTC'
+                )
+              ) + ("calendar_grid"."period_estimate") * (
+                ("calendar_grid"."period") - make_interval(
+                  months => (
+                    extract(year
+                      from
+                        ("calendar_grid"."period")) * 12 + extract(month
+                      from
+                        ("calendar_grid"."period"))
+                  )::integer
+                )
+              )
+            )
+          END AT TIME ZONE 'UTC'
+        ) > ("t")
+      )::integer + (
+        (
+          CASE
+            WHEN (
+              extract(year
+                from
+                  ("calendar_grid"."period")) * 12 + extract(month
+                from
+                  ("calendar_grid"."period"))
+            )::integer = 0 THEN (("calendar_grid"."origin") AT TIME ZONE 'UTC') + ("calendar_grid"."period_estimate" + 1) * ("calendar_grid"."period")
+            ELSE (
+              date_trunc(
+                'month',
+                ("calendar_grid"."origin") AT TIME ZONE 'UTC'
+              ) + make_interval(
+                months => ("calendar_grid"."period_estimate" + 1)::integer * (
+                  extract(year
+                    from
+                      ("calendar_grid"."period")) * 12 + extract(month
+                    from
+                      ("calendar_grid"."period"))
+                )::integer
+              ) + make_interval(
+                days => (
+                  CASE
+                    WHEN extract(
+                      day
+                      from
+                        (
+                          (("calendar_grid"."origin") AT TIME ZONE 'UTC') + interval '1 day'
+                        )
+                    ) = 1 THEN extract(
+                      day
+                      from
+                        (
+                          date_trunc(
+                            'month',
+                            ("calendar_grid"."origin") AT TIME ZONE 'UTC'
+                          ) + make_interval(
+                            months => ("calendar_grid"."period_estimate" + 1)::integer * (
+                              extract(year
+                                from
+                                  ("calendar_grid"."period")) * 12 + extract(month
+                                from
+                                  ("calendar_grid"."period"))
+                            )::integer
+                          ) + interval '1 month' - interval '1 day'
+                        )
+                    )
+                    ELSE least(
+                      extract(
+                        day
+                        from
+                          (("calendar_grid"."origin") AT TIME ZONE 'UTC')
+                      ),
+                      extract(
+                        day
+                        from
+                          (
+                            date_trunc(
+                              'month',
+                              ("calendar_grid"."origin") AT TIME ZONE 'UTC'
+                            ) + make_interval(
+                              months => ("calendar_grid"."period_estimate" + 1)::integer * (
+                                extract(year
+                                  from
+                                    ("calendar_grid"."period")) * 12 + extract(month
+                                  from
+                                    ("calendar_grid"."period"))
+                              )::integer
+                            ) + interval '1 month' - interval '1 day'
+                          )
+                      )
+                    )
+                  END - 1
+                )::integer
+              ) + (
+                ("calendar_grid"."origin") AT TIME ZONE 'UTC' - date_trunc(
+                  'day',
+                  ("calendar_grid"."origin") AT TIME ZONE 'UTC'
+                )
+              ) + ("calendar_grid"."period_estimate" + 1) * (
+                ("calendar_grid"."period") - make_interval(
+                  months => (
+                    extract(year
+                      from
+                        ("calendar_grid"."period")) * 12 + extract(month
+                      from
+                        ("calendar_grid"."period"))
+                  )::integer
+                )
+              )
+            )
+          END AT TIME ZONE 'UTC'
+        ) <= ("t")
+      )::integer AS "period_index"
+    FROM
+      (
+        SELECT
+          "calendar_grid"."period",
+          "calendar_grid"."origin",
+          floor(
+            extract(
+              epoch
+              from
+                (
+                  (("t") AT TIME ZONE 'UTC') - (("calendar_grid"."origin") AT TIME ZONE 'UTC')
+                )
+            ) /(
+              (
+                extract(year
+                  from
+                    "calendar_grid"."period") * 12 + extract(month
+                  from
+                    "calendar_grid"."period")
+              ) * 2629746 + extract(day
+                from
+                  "calendar_grid"."period") * 86400 + extract(hour
+                from
+                  "calendar_grid"."period") * 3600 + extract(minute
+                from
+                  "calendar_grid"."period") * 60 + extract(second
+                from
+                  "calendar_grid"."period")
+            )
+          )::bigint AS "period_estimate"
+        FROM
+          (
+            SELECT
+              $1:: interval AS "period",
+              $2::timestamptz::timestamptz AS "origin"
+          ) AS "calendar_grid"
+      ) AS "calendar_grid"
+  ) AS "calendar_grid"
+1: String 'P1M'
+2: String '2026-03-15T00:00:00Z'

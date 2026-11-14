@@ -1,0 +1,32 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/structured_target.rs
+---
+SELECT
+  1
+WHERE
+  "attribute_kind" <> (6)
+  AND (
+    ("value_object" @> ($1::jsonb))
+    OR (
+      (
+        CASE
+          WHEN ("attribute_kind" IN (1, 7)) THEN "value_type_key"
+        END
+      ) = (
+        SELECT
+          "entity_type_name_key"
+        FROM
+          "entity_type_names"
+        WHERE
+          "name" = $2
+      )
+      AND (
+        ("value_object" @> ($3::jsonb))
+        OR ("value_object" @> ($4::jsonb))
+      )
+    )
+  )
+1: String '[{"@value": "2024-01-01T00:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}]'
+2: String 'https://uri.etsi.org/ngsi-ld/DateTime'
+3: String '["2024-01-01T00:00:00Z"]'
+4: String '[{"@value": "2024-01-01T00:00:00Z"}]'

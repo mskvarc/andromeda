@@ -1,0 +1,55 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/history_window.rs
+---
+SELECT
+  1
+FROM
+  (
+    SELECT
+      "re"."id" AS "entity_id",
+      "rs"."attribute_name_key" AS "attribute_name_key",
+      "rs"."dataset_key" AS "dataset_key",
+      "rh"."recorded_at",
+      "rh"."write_id",
+      "rh"."write_ordinal",
+      "rh"."attribute_kind",
+      "rh"."value_kind",
+      "rh"."observed_at",
+      "rh"."created_at",
+      "rh"."modified_at",
+      "rh"."deleted_at",
+      "rh"."value_date_time",
+      "rh"."expires_at",
+      "rh"."generated_instance_id",
+      "rh"."value_type_key",
+      "rh"."value_datatype_key",
+      "rh"."unit_code_id",
+      "rh"."value_boolean",
+      "rh"."verbatim_instance_id",
+      "rh"."value_number",
+      "rh"."value_string",
+      "rh"."value_language",
+      "rh"."value_geometry",
+      "rh"."value_geometry_valid",
+      "rh"."value_geometry_reach",
+      "rh"."value_geometry_members",
+      "rh"."value_object",
+      "rh"."value_uri",
+      "rh"."object_type_keys",
+      "rh"."sub_attributes"
+    FROM
+      "snap_7"."attribute_history" AS "rh"
+      JOIN "snap_7"."temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+      JOIN "snap_7"."entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+    WHERE
+      "re"."id" = "e"."id"
+  ) AS "qh"
+WHERE
+  "qh"."attribute_name_key" = $1
+  AND "qh"."value_number" > $2
+  AND "qh"."value_kind" <> (0)
+  AND "qh"."observed_at" IS NOT NULL
+  AND "qh"."observed_at" >= $3
+1: Int 7
+2: Int 100
+3: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'

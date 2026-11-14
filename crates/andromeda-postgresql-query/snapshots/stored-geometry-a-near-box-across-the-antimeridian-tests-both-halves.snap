@@ -1,0 +1,28 @@
+---
+source: crates/andromeda-postgresql-query/src/stored_geometry.rs
+---
+SELECT
+  (
+    COALESCE(
+      "g"."value_geometry_reach",
+      "g"."value_geometry_valid",
+      "g"."value_geometry"
+    ) && ST_MakeEnvelope($1, $2, $3, $4, $5)
+  )
+  OR (
+    COALESCE(
+      "g"."value_geometry_reach",
+      "g"."value_geometry_valid",
+      "g"."value_geometry"
+    ) && ST_MakeEnvelope($6, $7, $8, $9, $10)
+  )
+1: Double 179.99616188378724
+2: Double -17.002714108431277
+3: Double 180
+4: Double -16.997285891568723
+5: Int 4326
+6: Double -180
+7: Double -17.002714108431277
+8: Double -179.99816188378725
+9: Double -16.997285891568723
+10: Int 4326

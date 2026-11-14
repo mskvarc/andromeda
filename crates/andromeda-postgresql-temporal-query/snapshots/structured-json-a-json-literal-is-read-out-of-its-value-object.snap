@@ -1,0 +1,12 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/structured_json.rs
+---
+SELECT
+  COALESCE(
+    (
+      CASE
+        WHEN (("ah"."value_object" ->> ('@type')) = ('@json')) THEN "ah"."value_object" -> ('@value')
+      END
+    ),
+    "ah"."value_object"
+  )

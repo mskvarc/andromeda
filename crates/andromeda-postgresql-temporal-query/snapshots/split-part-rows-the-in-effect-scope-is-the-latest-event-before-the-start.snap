@@ -1,0 +1,92 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/split_part_rows.rs
+---
+SELECT
+  "sh"."recorded_at",
+  "sh"."write_id",
+  "sh"."write_ordinal",
+  "sh"."value_kind",
+  "sh"."observed_at",
+  "sh"."created_at",
+  "sh"."modified_at",
+  "sh"."deleted_at",
+  "sh"."verbatim_scope_path",
+  "sh"."observed_at" AS "scope_event_at",
+  "e"."id" AS "read_entity_id"
+FROM
+  (
+    SELECT
+      *
+    FROM
+      "entities"
+    WHERE
+      "entities"."evolution_created_at" IS NOT NULL
+  ) AS "e"
+  JOIN LATERAL (
+    SELECT
+      "sh".*
+    FROM
+      (
+        SELECT
+          "re"."id" AS "entity_id",
+          "rsh"."recorded_at",
+          "rsh"."write_id",
+          "rsh"."write_ordinal",
+          "rsh"."value_kind",
+          "rsh"."observed_at",
+          "rsh"."created_at",
+          "rsh"."modified_at",
+          "rsh"."deleted_at",
+          "rsh"."scope_path",
+          "rsh"."verbatim_scope_path"
+        FROM
+          "scope_history" AS "rsh"
+          JOIN "entities" AS "re" ON "re"."entity_key" = "rsh"."entity_key"
+        WHERE
+          "re"."id" = "e"."id"
+      ) AS "sh"
+    WHERE
+      "sh"."observed_at" IS NOT NULL
+      AND "sh"."observed_at" < $1
+      AND (
+        NOT EXISTS (
+          SELECT
+            $2
+          FROM
+            (
+              SELECT
+                "re"."id" AS "entity_id",
+                "rsh"."recorded_at",
+                "rsh"."write_id",
+                "rsh"."write_ordinal",
+                "rsh"."value_kind",
+                "rsh"."observed_at",
+                "rsh"."created_at",
+                "rsh"."modified_at",
+                "rsh"."deleted_at",
+                "rsh"."scope_path",
+                "rsh"."verbatim_scope_path"
+              FROM
+                "scope_history" AS "rsh"
+                JOIN "entities" AS "re" ON "re"."entity_key" = "rsh"."entity_key"
+              WHERE
+                "re"."id" = "sh"."entity_id"
+            ) AS "sh_next"
+          WHERE
+            "sh_next"."observed_at" > "sh"."observed_at"
+            AND "sh_next"."observed_at" <= $3
+        )
+      )
+  ) AS "sh" ON TRUE
+WHERE
+  "e"."id" = $4
+ORDER BY
+  "e"."id" ASC,
+  "sh"."observed_at" ASC,
+  "sh"."recorded_at" ASC,
+  "sh"."write_id" ASC,
+  "sh"."write_ordinal" ASC
+1: ChronoDateTimeUtc '2020-08-01 12:00:00.000000 +00:00'
+2: Int 1
+3: ChronoDateTimeUtc '2020-08-01 12:00:00.000000 +00:00'
+4: String 'urn:ngsi-ld:Vehicle:1'

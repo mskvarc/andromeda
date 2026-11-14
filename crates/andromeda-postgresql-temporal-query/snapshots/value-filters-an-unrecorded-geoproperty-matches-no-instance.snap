@@ -1,0 +1,8 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/value_filters.rs
+---
+SELECT
+  $1
+WHERE
+  FALSE
+1: Int 1

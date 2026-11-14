@@ -1,0 +1,118 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/corpus_statement_tests.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        (
+          EXISTS (
+            SELECT
+              1
+            FROM
+              jsonb_array_elements(
+                (
+                  CASE
+                    WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                  END
+                )
+              ) AS "ls"
+          )
+          AND (
+            NOT EXISTS (
+              SELECT
+                1
+              FROM
+                jsonb_array_elements(
+                  (
+                    CASE
+                      WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                    END
+                  )
+                ) AS "ls"
+              WHERE
+                LOWER(("ls"."value" ->> ('@language')) COLLATE "C") = LOWER(($2::text) COLLATE "C")
+                AND (("ls"."value" ->> ('@value')) COLLATE "C") = $3
+            )
+          )
+        )
+        OR (
+          EXISTS (
+            SELECT
+              1
+            FROM
+              (
+                SELECT
+                  jsonb_path_query_array(
+                    "member"."member",
+                    'lax $[*] ? (exists(@."@value"))'
+                  ) AS "member"
+                FROM
+                  jsonb_path_query(
+                    "ca"."value_object",
+                    'strict $."https://example.com/de"',
+                    '{}',
+                    TRUE
+                  ) AS "member"
+              ) AS "member"
+            WHERE
+              jsonb_array_length("member"."member") >= (1)
+              AND (
+                NOT COALESCE(
+                  (
+                    jsonb_array_length("member"."member") = (1)
+                    AND (
+                      CASE
+                        WHEN (
+                          jsonb_typeof(("member"."member" -> (0)) -> ('@value')) = ('string')
+                          AND (
+                            NOT COALESCE(
+                              (("member"."member" -> (0)) ->> ('@type')) IN (
+                                'https://uri.etsi.org/ngsi-ld/DateTime',
+                                'https://uri.etsi.org/ngsi-ld/Date',
+                                'https://uri.etsi.org/ngsi-ld/Time'
+                              )
+                              OR (("member"."member" -> (0)) ->> ('@type')) IN (
+                                'http://www.w3.org/2001/XMLSchema#decimal',
+                                'http://www.w3.org/2001/XMLSchema#integer',
+                                'http://www.w3.org/2001/XMLSchema#long',
+                                'http://www.w3.org/2001/XMLSchema#int',
+                                'http://www.w3.org/2001/XMLSchema#short',
+                                'http://www.w3.org/2001/XMLSchema#byte',
+                                'http://www.w3.org/2001/XMLSchema#nonNegativeInteger',
+                                'http://www.w3.org/2001/XMLSchema#positiveInteger',
+                                'http://www.w3.org/2001/XMLSchema#nonPositiveInteger',
+                                'http://www.w3.org/2001/XMLSchema#negativeInteger',
+                                'http://www.w3.org/2001/XMLSchema#unsignedLong',
+                                'http://www.w3.org/2001/XMLSchema#unsignedInt',
+                                'http://www.w3.org/2001/XMLSchema#unsignedShort',
+                                'http://www.w3.org/2001/XMLSchema#unsignedByte',
+                                'http://www.w3.org/2001/XMLSchema#float',
+                                'http://www.w3.org/2001/XMLSchema#double'
+                              )
+                              OR (("member"."member" -> (0)) ->> ('@type')) = ('http://www.w3.org/2001/XMLSchema#boolean'),
+                              FALSE
+                            )
+                          )
+                        ) THEN (
+                          (("member"."member" -> (0)) -> ('@value')) #>> ('{}'))::text END) = $4) OR (jsonb_array_length("member"."member") >= (2) AND EXISTS(SELECT 1 FROM jsonb_path_query("member"."member", 'strict $[*]') AS "element" WHERE (CASE WHEN (jsonb_typeof("element"."element" -> ('@value')) = ('string') AND (NOT COALESCE(("element"."element" ->> ('@type')) IN ('https://uri.etsi.org/ngsi-ld/DateTime', 'https://uri.etsi.org/ngsi-ld/Date', 'https://uri.etsi.org/ngsi-ld/Time') OR ("element"."element" ->> ('@type')) IN ('http://www.w3.org/2001/XMLSchema#decimal', 'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', 'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', 'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', 'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', 'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') OR ("element"."element" ->> ('@type')) = ('http://www.w3.org/2001/XMLSchema#boolean'), FALSE))) THEN (("element"."element" -> ('@value')) #>> ('{}'))::text END) = $5)), FALSE))) OR ("ca"."attribute_kind" = (6) AND EXISTS(SELECT 1 FROM (SELECT "member"."member" AS "member" FROM jsonb_path_query("ca"."value_object", 'strict $."de"', '{}', TRUE) AS "member") AS "member" WHERE (TRUE) AND (NOT COALESCE(((NOT jsonb_typeof("member"."member") = ('array')) AND (CASE WHEN (jsonb_typeof("member"."member") = ('string') AND (NOT COALESCE((NULL::text) IN ('https://uri.etsi.org/ngsi-ld/DateTime', 'https://uri.etsi.org/ngsi-ld/Date', 'https://uri.etsi.org/ngsi-ld/Time') OR (NULL::text) IN ('http://www.w3.org/2001/XMLSchema#decimal', 'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', 'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', 'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', 'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', 'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') OR (NULL::text) = ('http://www.w3.org/2001/XMLSchema#boolean'), FALSE))) THEN ("member"."member" #>> ('{}'))::text END) = $6) OR (jsonb_typeof("member"."member") = ('array') AND EXISTS(SELECT 1 FROM jsonb_path_query("member"."member", 'strict $[*]') AS "element" WHERE (CASE WHEN (jsonb_typeof("element"."element") = ('string') AND (NOT COALESCE((NULL::text) IN ('https://uri.etsi.org/ngsi-ld/DateTime', 'https://uri.etsi.org/ngsi-ld/Date', 'https://uri.etsi.org/ngsi-ld/Time') OR (NULL::text) IN ('http://www.w3.org/2001/XMLSchema#decimal', 'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', 'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', 'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', 'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', 'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') OR (NULL::text) = ('http://www.w3.org/2001/XMLSchema#boolean'), FALSE))) THEN ("element"."element" #>> ('{}'))::text END) = $7)), FALSE)))))) AND "ca"."entity_key" = "entities"."entity_key")
+1: Int 7
+2: String 'de'
+3: String 'red'
+4: String 'red'
+5: String 'red'
+6: String 'red'
+7: String 'red'

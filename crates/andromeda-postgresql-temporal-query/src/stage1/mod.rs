@@ -224,7 +224,7 @@ fn counted_ids(evolutions: TableRef, conditions: Condition, window_match: Select
 mod tests {
     use crate::stage1::{
         build_stage1_entity_ids,
-        query_fixture::{PageBranches, built, built_count, built_windowed, ids, instant, minimal_compiled, point, sensor_names, sensors, speed_and_address},
+        query_fixture::{built, built_count, built_windowed, ids, instant, minimal_compiled, point, sensor_names, sensors, speed_and_address, walk_of},
     };
     use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -240,22 +240,16 @@ mod tests {
         temporal::{compiled::CompiledTemporalQuery, ordering::TemporalEntityOrdering, window::TimeInterval},
     };
     use andromeda_postgresql_query::{dictionary::query_names::QueryNames, history_source::HistoryBranch};
-    use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
     use pretty_assertions::assert_eq;
-    use sea_query::{PostgresQueryBuilder, Value, Values};
+    use sea_query::{PostgresQueryBuilder, SelectStatement};
 
     /// The count statement of a counted query over the page `window` selects.
-    fn built_windowed_count(compiled: &CompiledTemporalQuery, window: &PageWindow, names: &QueryNames) -> String {
+    fn built_windowed_count(compiled: &CompiledTemporalQuery, window: &PageWindow, names: &QueryNames) -> SelectStatement {
         build_stage1_entity_ids(&HistoryBranch::live(), compiled, window, CountPolicy::Emit, names)
             .expect("valid temporal query")
             .count
             .expect("count requested")
-            .build(PostgresQueryBuilder)
-            .0
-    }
-
-    fn has_timestamp(values: &Values) -> bool {
-        values.0.iter().any(|value| matches!(value, Value::ChronoDateTimeUtc(_)))
     }
 
     /// A requested ordering cuts the page in an order no candidates are read
@@ -281,15 +275,15 @@ mod tests {
         // The driving temporal catalogue emits one row per id, and ordered
         // paging keeps clause 5.5.9 result pages stable.
         let compiled = minimal_compiled();
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains("ORDER BY \"e\".\"id\""), "{sql}");
+        let statement = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("stage1-entity-id-selection-orders-by-id-for-stable-pagination", statement);
     }
 
     #[test]
     fn stage1_projects_the_entity_uri_as_entity_id() {
         let compiled = minimal_compiled();
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains("\"e\".\"id\" AS \"entity_id\""), "{sql}");
+        let statement = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("stage1-stage1-projects-the-entity-uri-as-entity-id", statement);
     }
 
     #[test]
@@ -298,14 +292,8 @@ mod tests {
         compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"])).build()];
         compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
 
-        let (sql, values) = built(&compiled, &QueryNames::default());
-
-        assert!(
-            !sql.contains("< $1"),
-            "time placeholder must not collide with earlier id-filter placeholders: {sql}"
-        );
-        assert!(!sql.contains("::timestamptz"), "{sql}");
-        assert!(has_timestamp(&values), "the window instant is bound: {values:?}");
+        let statement = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("stage1-stage1-timerel-placeholder-is-offset-after-id-filters", statement);
     }
 
     #[test]
@@ -314,13 +302,10 @@ mod tests {
         compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1"])).build()];
         compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
 
-        let (_, values) = built(&compiled, &QueryNames::default());
-        let count_sql = built_count(&compiled, &QueryNames::default());
-
-        assert!(count_sql.contains("EXISTS(SELECT"), "{count_sql}");
-        assert!(count_sql.contains("$1"), "{count_sql}");
-        assert!(count_sql.contains("$2"), "{count_sql}");
-        assert!(has_timestamp(&values), "the window instant is bound: {values:?}");
+        let page = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("stage1-stage1-count-reuses-the-result-predicate-bind-order-1", page);
+        let count = built_count(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("stage1-stage1-count-reuses-the-result-predicate-bind-order-2", count);
     }
 
     /// Clause 5.7.4.4: the `datasetId` parameter is step S8, which filters
@@ -330,7 +315,7 @@ mod tests {
     /// parameter.
     #[test]
     fn no_selection_step_narrows_by_the_dataset_parameter() {
-        for selectors in [&["@none"][..], &["urn:ngsi-ld:Dataset:one"], &["@none", "urn:ngsi-ld:Dataset:one"]] {
+        let compiled_for = |selectors: &[&str]| {
             let mut compiled = minimal_compiled();
             compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
             compiled.instances.dataset_id_filter = selectors
@@ -343,17 +328,23 @@ mod tests {
                 geometry: point(&serde_json::json!([1.0, 2.0])),
                 geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
             });
-            let (sql, _) = built(&compiled, &speed_and_address());
-            assert!(
-                !sql.contains(r#""dataset_id" IN"#) && !sql.contains(r#""dataset_id" IS NULL"#),
-                "{selectors:?}: {sql}"
-            );
-            let count = built_count(&compiled, &speed_and_address());
-            assert!(
-                !count.contains(r#""dataset_id" IN"#) && !count.contains(r#""dataset_id" IS NULL"#),
-                "{selectors:?}: {count}"
-            );
-        }
+            compiled
+        };
+        let none = compiled_for(&["@none"]);
+        let none_page = built(&none, &speed_and_address());
+        assert_statement_snapshot!("stage1-no-selection-step-narrows-by-the-dataset-parameter-1", none_page);
+        let none_count = built_count(&none, &speed_and_address());
+        assert_statement_snapshot!("stage1-no-selection-step-narrows-by-the-dataset-parameter-2", none_count);
+        let one = compiled_for(&["urn:ngsi-ld:Dataset:one"]);
+        let one_page = built(&one, &speed_and_address());
+        assert_statement_snapshot!("stage1-no-selection-step-narrows-by-the-dataset-parameter-3", one_page);
+        let one_count = built_count(&one, &speed_and_address());
+        assert_statement_snapshot!("stage1-no-selection-step-narrows-by-the-dataset-parameter-4", one_count);
+        let both = compiled_for(&["@none", "urn:ngsi-ld:Dataset:one"]);
+        let both_page = built(&both, &speed_and_address());
+        assert_statement_snapshot!("stage1-no-selection-step-narrows-by-the-dataset-parameter-5", both_page);
+        let both_count = built_count(&both, &speed_and_address());
+        assert_statement_snapshot!("stage1-no-selection-step-narrows-by-the-dataset-parameter-6", both_count);
     }
 
     /// Clause 5.7.4.5: "If Entity ordering is specified (see clause 4.23), then
@@ -369,8 +360,8 @@ mod tests {
             direction: SortDirection::Ascending,
             collation: Some(IcuCollation::parse("de-u-co-phonebk").expect("valid collation")),
         });
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains(r#"("e"."id") COLLATE "de-u-co-phonebk" ASC NULLS LAST"#), "{sql}");
+        let statement = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("stage1-a-requested-ordering-collates-the-identifier-key", statement);
     }
 
     /// Clause 4.23.1 makes ICU "root" (`und-x-icu`) the default collation
@@ -380,8 +371,8 @@ mod tests {
     fn an_ordering_without_a_collation_compares_under_the_icu_root_order() {
         let mut compiled = minimal_compiled();
         compiled.ordering = Some(TemporalEntityOrdering::builder().direction(SortDirection::Ascending).build());
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains(r#"("e"."id") COLLATE "und-x-icu" ASC NULLS LAST"#), "{sql}");
+        let statement = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("stage1-an-ordering-without-a-collation-compares-under-the-icu-root-order", statement);
     }
 
     /// Table 6.18.3.2-1 gives `desc` as one of the two sorting styles.
@@ -389,8 +380,8 @@ mod tests {
     fn a_descending_ordering_reverses_the_identifier_key() {
         let mut compiled = minimal_compiled();
         compiled.ordering = Some(TemporalEntityOrdering::builder().direction(SortDirection::Descending).build());
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(sql.contains(r#"("e"."id") COLLATE "und-x-icu" DESC NULLS LAST"#), "{sql}");
+        let statement = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("stage1-a-descending-ordering-reverses-the-identifier-key", statement);
     }
 
     /// The clause 5.5.9 tiebreaker survives an explicit ordering, so a page
@@ -399,10 +390,8 @@ mod tests {
     fn the_stable_identifier_tiebreaker_follows_a_requested_ordering() {
         let mut compiled = minimal_compiled();
         compiled.ordering = Some(TemporalEntityOrdering::builder().direction(SortDirection::Descending).build());
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        let collated = sql.find("COLLATE").expect("the requested key is written");
-        let tiebreaker = sql.rfind(r#""e"."id" ASC"#).expect("the stable key is written");
-        assert!(collated < tiebreaker, "{sql}");
+        let statement = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("stage1-the-stable-identifier-tiebreaker-follows-a-requested-ordering", statement);
     }
 
     /// Table 6.18.3.2-1 makes `collation` "part of Entity ordering", so a query
@@ -411,9 +400,8 @@ mod tests {
     #[test]
     fn a_query_that_requested_no_ordering_keeps_the_stable_identifier_order() {
         let compiled = minimal_compiled();
-        let (sql, _) = built(&compiled, &QueryNames::default());
-        assert!(!sql.contains("COLLATE"), "{sql}");
-        assert!(sql.contains(r#"ORDER BY "e"."id" ASC"#), "{sql}");
+        let statement = built(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("stage1-a-query-that-requested-no-ordering-keeps-the-stable-identifier-order", statement);
     }
 
     /// The count answers "how many", which no ordering changes, so clause 5.5.9
@@ -422,9 +410,8 @@ mod tests {
     fn the_count_statement_carries_no_ordering() {
         let mut compiled = minimal_compiled();
         compiled.ordering = Some(TemporalEntityOrdering::builder().direction(SortDirection::Ascending).build());
-        let sql = built_count(&compiled, &QueryNames::default());
-        let outer = sql.rsplit(r#") AS "e""#).next().expect("the statement past its entity source");
-        assert!(!outer.contains("ORDER BY"), "{sql}");
+        let statement = built_count(&compiled, &QueryNames::default());
+        assert_statement_snapshot!("stage1-the-count-statement-carries-no-ordering", statement);
     }
 
     fn boundary(id: &str) -> Identifier {
@@ -445,10 +432,8 @@ mod tests {
     #[test]
     fn stage1_keyset_after_pages_forward_ascending_without_offset() {
         let compiled = minimal_compiled();
-        let (sql, _) = built_windowed(&compiled, &PageWindow::after(20, boundary("urn:ngsi-ld:Vehicle:001")), &QueryNames::default());
-        assert!(sql.contains(r#""e"."id" > $"#), "{sql}");
-        assert!(sql.contains(r#"ORDER BY "e"."id" ASC"#), "{sql}");
-        assert!(!sql.contains("OFFSET"), "a keyset page never skips: {sql}");
+        let statement = built_windowed(&compiled, &PageWindow::after(20, boundary("urn:ngsi-ld:Vehicle:001")), &QueryNames::default());
+        assert_statement_snapshot!("stage1-stage1-keyset-after-pages-forward-ascending-without-offset", statement);
     }
 
     /// Clause 5.5.9.1: a backward cursor pages before the boundary over the
@@ -457,14 +442,12 @@ mod tests {
     #[test]
     fn stage1_keyset_before_pages_backward_descending_without_offset() {
         let compiled = minimal_compiled();
-        let (sql, _) = built_windowed(
+        let statement = built_windowed(
             &compiled,
             &cursor_page(PageCursor::Before(boundary("urn:ngsi-ld:Vehicle:042"))),
             &QueryNames::default(),
         );
-        assert!(sql.contains(r#""e"."id" < $"#), "{sql}");
-        assert!(sql.contains(r#"ORDER BY "e"."id" DESC"#), "{sql}");
-        assert!(!sql.contains("OFFSET"), "{sql}");
+        assert_statement_snapshot!("stage1-stage1-keyset-before-pages-backward-descending-without-offset", statement);
     }
 
     /// Clause 5.5.9.1: the from-end cursor takes the final page (`ORDER BY id
@@ -472,10 +455,8 @@ mod tests {
     #[test]
     fn stage1_keyset_end_takes_the_final_page_descending() {
         let compiled = minimal_compiled();
-        let (sql, _) = built_windowed(&compiled, &cursor_page(PageCursor::End), &QueryNames::default());
-        assert!(sql.contains(r#"ORDER BY "e"."id" DESC"#), "{sql}");
-        assert!(!sql.contains(r#""e"."id" >"#) && !sql.contains(r#""e"."id" <"#), "no boundary predicate: {sql}");
-        assert!(!sql.contains("OFFSET"), "{sql}");
+        let statement = built_windowed(&compiled, &cursor_page(PageCursor::End), &QueryNames::default());
+        assert_statement_snapshot!("stage1-stage1-keyset-end-takes-the-final-page-descending", statement);
     }
 
     /// The count statement ignores the keyset, so a counted cursor page still
@@ -483,8 +464,8 @@ mod tests {
     #[test]
     fn a_keyset_count_still_counts_the_whole_collection() {
         let compiled = minimal_compiled();
-        let sql = built_windowed_count(&compiled, &PageWindow::after(20, boundary("urn:ngsi-ld:Vehicle:001")), &QueryNames::default());
-        assert!(!sql.contains(r#""e"."id" >"#), "the count is not narrowed by the cursor: {sql}");
+        let statement = built_windowed_count(&compiled, &PageWindow::after(20, boundary("urn:ngsi-ld:Vehicle:001")), &QueryNames::default());
+        assert_statement_snapshot!("stage1-a-keyset-count-still-counts-the-whole-collection", statement);
     }
 
     /// Clause 6.3.13: the count is the number of entities the page is taken
@@ -502,9 +483,13 @@ mod tests {
             &QueryNames::default(),
         )
         .expect("valid temporal query");
-        let page = stage1.select.to_string(PostgresQueryBuilder);
-        let count = stage1.count.expect("count requested").to_string(PostgresQueryBuilder);
-        let walk = PageBranches::of(&page).walk.replace(
+        let page_statement = stage1.select;
+        let count_statement = stage1.count.expect("count requested");
+        assert_statement_snapshot!("stage1-the-count-reads-the-same-source-as-the-page-1", page_statement);
+        assert_statement_snapshot!("stage1-the-count-reads-the-same-source-as-the-page-2", count_statement);
+        let page = page_statement.to_string(PostgresQueryBuilder);
+        let count = count_statement.to_string(PostgresQueryBuilder);
+        let walk = walk_of(&page).replace(
             r#"(CASE WHEN ((SELECT COUNT(*) FROM "short_walk") >= 20) THEN FALSE WHEN ((SELECT COUNT(*) FROM "short_walk") >= 3) THEN TRUE ELSE (SELECT COUNT(*) FROM "candidates") > 10000 END) AND "#,
             "",
         );

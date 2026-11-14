@@ -1,0 +1,55 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/filter.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  (
+    SELECT
+      (
+        CASE
+          WHEN (("j" ->> ('type')) = ('Property')) THEN "j" -> ('value')
+          ELSE "j"
+        END
+      )
+    FROM
+      (
+        SELECT
+          "context_source_properties" -> ('https://example.com/name') AS "j"
+      ) AS "s"
+  ) IS NOT NULL
+  AND jsonb_typeof(
+    (
+      SELECT
+        (
+          CASE
+            WHEN (("j" ->> ('type')) = ('Property')) THEN "j" -> ('value')
+            ELSE "j"
+          END
+        )
+      FROM
+        (
+          SELECT
+            "context_source_properties" -> ('https://example.com/name') AS "j"
+        ) AS "s"
+    )
+  ) = ('string')
+  AND (
+    (
+      (
+        SELECT
+          (
+            CASE
+              WHEN (("j" ->> ('type')) = ('Property')) THEN "j" -> ('value')
+              ELSE "j"
+            END
+          )
+        FROM
+          (
+            SELECT
+              "context_source_properties" -> ('https://example.com/name') AS "j"
+          ) AS "s"
+      ) #>> ('{}')) !~ $1)
+1: String '^A.*'

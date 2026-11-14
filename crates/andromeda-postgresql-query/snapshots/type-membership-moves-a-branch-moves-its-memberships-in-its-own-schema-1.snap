@@ -1,0 +1,27 @@
+---
+source: crates/andromeda-postgresql-query/src/type_membership_moves.rs
+---
+INSERT INTO
+  "snap_5"."entity_type_members" (
+    "entity_key",
+    "entity_type_name_key",
+    "id",
+    "is_current_member",
+    "is_evolution_member"
+  )
+SELECT
+  "written"."entity_key",
+  "carried"."entity_type_name_key",
+  "written"."id",
+  FALSE,
+  TRUE
+FROM
+  "written"
+  INNER JOIN LATERAL (
+    SELECT
+      UNNEST("written"."new_types") AS "entity_type_name_key"
+  ) AS "carried" ON TRUE
+ON CONFLICT
+  ("entity_type_name_key", "id")
+DO UPDATE SET
+  "is_evolution_member" = TRUE

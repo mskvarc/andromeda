@@ -1,0 +1,208 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/statement.rs
+---
+SELECT
+  (
+    SELECT
+      COUNT(*)
+    FROM
+      "context_source_registrations"
+    WHERE
+      (
+        "expires_at" IS NULL
+        OR "expires_at" > NOW()
+      )
+      AND EXISTS (
+        SELECT
+          1
+        FROM
+          "registration_information" AS "ri"
+        WHERE
+          "ri"."registration_id" = "context_source_registrations"."id"
+          AND (
+            (COALESCE("ri"."entity_types", '{*}') && $1)
+            AND (
+              "ri"."entity_types" IS NULL
+              OR ("ri"."entity_types" @> $2)
+            )
+            AND (
+              (
+                COALESCE("ri"."entity_id", '') = ANY($3)
+                OR "ri"."entity_id_pattern" IS NOT NULL
+              )
+              AND (
+                "ri"."entity_id" = $4
+                OR (
+                  "ri"."entity_id" IS NULL
+                  AND (
+                    "ri"."entity_id_pattern_form" IS NULL
+                    OR EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        UNNEST($5) AS "queried"
+                      WHERE
+                        "queried"."queried" ~ "ri"."entity_id_pattern_form"
+                    )
+                  )
+                )
+              )
+            )
+          )
+          AND (
+            (
+              "ri"."property_name_keys" && (
+                ARRAY (
+                  SELECT
+                    "an"."attribute_name_key"
+                  FROM
+                    "attribute_names" AS "an"
+                  WHERE
+                    "an"."name" = $6
+                )
+              )
+            )
+            OR (
+              "ri"."relationship_name_keys" && (
+                ARRAY (
+                  SELECT
+                    "an"."attribute_name_key"
+                  FROM
+                    "attribute_names" AS "an"
+                  WHERE
+                    "an"."name" = $7
+                )
+              )
+            )
+            OR (
+              "ri"."property_name_keys" IS NULL
+              AND "ri"."relationship_name_keys" IS NULL
+            )
+          )
+      )
+      AND (
+        "context_source_registrations"."scope_paths" ~ ($8::lquery)
+      )
+      AND (
+        "observation_interval_start" IS NOT NULL
+        AND "observation_interval_start" <= $9
+      )
+      AND "location" IS NULL
+  ) + (
+    SELECT
+      COUNT(*)
+    FROM
+      "context_source_registrations"
+    WHERE
+      (
+        "expires_at" IS NULL
+        OR "expires_at" > NOW()
+      )
+      AND EXISTS (
+        SELECT
+          1
+        FROM
+          "registration_information" AS "ri"
+        WHERE
+          "ri"."registration_id" = "context_source_registrations"."id"
+          AND (
+            (COALESCE("ri"."entity_types", '{*}') && $10)
+            AND (
+              "ri"."entity_types" IS NULL
+              OR ("ri"."entity_types" @> $11)
+            )
+            AND (
+              (
+                COALESCE("ri"."entity_id", '') = ANY($12)
+                OR "ri"."entity_id_pattern" IS NOT NULL
+              )
+              AND (
+                "ri"."entity_id" = $13
+                OR (
+                  "ri"."entity_id" IS NULL
+                  AND (
+                    "ri"."entity_id_pattern_form" IS NULL
+                    OR EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        UNNEST($14) AS "queried"
+                      WHERE
+                        "queried"."queried" ~ "ri"."entity_id_pattern_form"
+                    )
+                  )
+                )
+              )
+            )
+          )
+          AND (
+            (
+              "ri"."property_name_keys" && (
+                ARRAY (
+                  SELECT
+                    "an"."attribute_name_key"
+                  FROM
+                    "attribute_names" AS "an"
+                  WHERE
+                    "an"."name" = $15
+                )
+              )
+            )
+            OR (
+              "ri"."relationship_name_keys" && (
+                ARRAY (
+                  SELECT
+                    "an"."attribute_name_key"
+                  FROM
+                    "attribute_names" AS "an"
+                  WHERE
+                    "an"."name" = $16
+                )
+              )
+            )
+            OR (
+              "ri"."property_name_keys" IS NULL
+              AND "ri"."relationship_name_keys" IS NULL
+            )
+          )
+      )
+      AND (
+        "context_source_registrations"."scope_paths" ~ ($17::lquery)
+      )
+      AND (
+        "observation_interval_start" IS NOT NULL
+        AND "observation_interval_start" <= $18
+      )
+      AND (
+        "location" IS NOT NULL
+        AND (
+          (
+            COALESCE("location_reach", "location_valid", "location") && ST_MakeValid(ST_GeomFromEWKB($19))
+          )
+          AND _ST_Intersects(
+            COALESCE("location_valid", "location"),
+            ST_MakeValid(ST_GeomFromEWKB($20))
+          )
+        )
+      )
+  )
+1: Array ARRAY ['https://example.com/Vehicle','https://example.com/Boat','*']
+2: Array ARRAY ['https://example.com/Vehicle','https://example.com/Boat']
+3: Array ARRAY ['urn:ngsi-ld:Vehicle:1','']
+4: String 'urn:ngsi-ld:Vehicle:1'
+5: Array ARRAY ['urn:ngsi-ld:Vehicle:1']
+6: String 'https://example.com/speed'
+7: String 'https://example.com/speed'
+8: String 'Madrid.*'
+9: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
+10: Array ARRAY ['https://example.com/Vehicle','https://example.com/Boat','*']
+11: Array ARRAY ['https://example.com/Vehicle','https://example.com/Boat']
+12: Array ARRAY ['urn:ngsi-ld:Vehicle:1','']
+13: String 'urn:ngsi-ld:Vehicle:1'
+14: Array ARRAY ['urn:ngsi-ld:Vehicle:1']
+15: String 'https://example.com/speed'
+16: String 'https://example.com/speed'
+17: String 'Madrid.*'
+18: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
+19: Bytes '\x0101000020E6100000000000000000F03F0000000000000040'
+20: Bytes '\x0101000020E6100000000000000000F03F0000000000000040'

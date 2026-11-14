@@ -1,0 +1,6 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/typed_column.rs
+---
+SELECT
+  "ca"."value_number" = $1
+1: BigDecimal 3

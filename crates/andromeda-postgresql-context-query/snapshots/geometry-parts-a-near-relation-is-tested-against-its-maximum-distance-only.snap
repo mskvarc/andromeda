@@ -1,0 +1,26 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/geometry_parts.rs
+---
+SELECT
+  "id"
+FROM
+  "context_source_registrations"
+WHERE
+  "location" IS NOT NULL
+  AND (
+    (
+      COALESCE("location_reach", "location_valid", "location") && ST_MakeEnvelope($1, $2, $3, $4, $5)
+    )
+    AND _ST_DWithin(
+      COALESCE("location_valid", "location")::geography,
+      ST_MakeValid(ST_GeomFromEWKB($6))::geography,
+      $7
+    )
+  )
+1: Double 13.39257028915225
+2: Double 52.49547715261454
+3: Double 13.407429710847751
+4: Double 52.50452284738546
+5: Int 4326
+6: Bytes '\x0101000020E6100000CDCCCCCCCCCC2A400000000000404A40'
+7: Double 500

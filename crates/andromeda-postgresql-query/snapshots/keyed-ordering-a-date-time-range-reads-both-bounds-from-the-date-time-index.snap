@@ -1,0 +1,23 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/keyed_ordering.rs
+---
+SELECT
+  "entity_key"
+FROM
+  (
+    SELECT
+      "ca"."entity_key"
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND "ca"."value_date_time" >= $2
+      AND "ca"."value_date_time" <= $3
+  ) AS "matches"
+1: Int 21
+2: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
+3: ChronoDateTimeUtc '2024-02-01 00:00:00.000000 +00:00'

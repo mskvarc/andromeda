@@ -1,0 +1,9 @@
+---
+source: crates/andromeda-postgresql-query/src/time_interval_predicate.rs
+---
+SELECT
+  $1
+WHERE
+  "h"."observed_at" < $2
+1: Int 1
+2: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'

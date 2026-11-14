@@ -1,0 +1,54 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/corpus_statement_tests.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        "ca"."value_date_time" = $2
+        OR (
+          "ca"."attribute_kind" <> (6)
+          AND (
+            ("ca"."value_object" @> ($3::jsonb))
+            OR (
+              (
+                CASE
+                  WHEN ("ca"."attribute_kind" IN (1, 7)) THEN "ca"."value_type_key"
+                END
+              ) = (
+                SELECT
+                  "entity_type_name_key"
+                FROM
+                  "entity_type_names"
+                WHERE
+                  "name" = $4
+              )
+              AND (
+                ("ca"."value_object" @> ($5::jsonb))
+                OR ("ca"."value_object" @> ($6::jsonb))
+              )
+            )
+          )
+        )
+      )
+      AND "ca"."entity_key" = "entities"."entity_key"
+  )
+1: Int 9
+2: ChronoDateTimeUtc '2024-01-15 12:00:00.000000 +00:00'
+3: String '[{"@value": "2024-01-15T12:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/DateTime"}]'
+4: String 'https://uri.etsi.org/ngsi-ld/DateTime'
+5: String '["2024-01-15T12:00:00Z"]'
+6: String '[{"@value": "2024-01-15T12:00:00Z"}]'

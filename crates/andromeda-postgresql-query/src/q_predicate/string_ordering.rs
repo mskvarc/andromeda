@@ -47,24 +47,24 @@ mod tests {
         predicate::CmpOp,
         scalar::{Scalar, parse_date, parse_time},
     };
-    use andromeda_postgresql_seaquery::collation::PostgresCollation;
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, collation::PostgresCollation};
+    use sea_query::{Alias, Expr, Query, SelectStatement};
 
-    fn render(scalar: &Scalar, op: CmpOp) -> String {
-        Query::select()
-            .expr(ordered_string(Expr::col(Alias::new("s")), scalar, op))
-            .to_owned()
-            .to_string(PostgresQueryBuilder)
+    fn render(scalar: &Scalar, op: CmpOp) -> SelectStatement {
+        Query::select().expr(ordered_string(Expr::col(Alias::new("s")), scalar, op)).to_owned()
     }
 
     /// Clause 4.9 recommends the UCA for comparing text strings, and clause
     /// 4.23.1 makes the ICU root collation the default string order.
     #[test]
     fn a_string_ordering_compares_under_the_icu_root_collation() {
-        for op in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq] {
+        for (index, op) in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq].into_iter().enumerate() {
             let collation = string_ordering_collation(&Scalar::Str("a".to_owned()), op).expect("a String ordering collates");
             assert_eq!(collation, PostgresCollation::new("und-x-icu"), "{op:?}");
-            assert!(render(&Scalar::Str("a".to_owned()), op).contains(r#"("s") COLLATE "und-x-icu""#), "{op:?}");
+            assert_statement_snapshot!(
+                format!("string-ordering-a-string-ordering-compares-under-the-icu-root-collation-{}", index + 1),
+                render(&Scalar::Str("a".to_owned()), op)
+            );
         }
     }
 
@@ -72,9 +72,12 @@ mod tests {
     /// collation must not loosen.
     #[test]
     fn a_string_equality_is_not_collated() {
-        for op in [CmpOp::Equal, CmpOp::Unequal] {
+        for (index, op) in [CmpOp::Equal, CmpOp::Unequal].into_iter().enumerate() {
             assert!(string_ordering_collation(&Scalar::Str("a".to_owned()), op).is_none(), "{op:?}");
-            assert!(!render(&Scalar::Str("a".to_owned()), op).contains("COLLATE"), "{op:?}");
+            assert_statement_snapshot!(
+                format!("string-ordering-a-string-equality-is-not-collated-{}", index + 1),
+                render(&Scalar::Str("a".to_owned()), op)
+            );
         }
     }
 

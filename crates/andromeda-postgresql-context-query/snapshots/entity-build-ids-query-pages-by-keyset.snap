@@ -1,0 +1,19 @@
+---
+source: crates/andromeda-postgresql-context-query/src/entity.rs
+---
+SELECT
+  "entities"."id" AS "id"
+FROM
+  "entities"
+WHERE
+  "entities"."created_at" IS NOT NULL
+  AND (
+    "entities"."expires_at" IS NULL
+    OR "entities"."expires_at" > NOW()
+  )
+  AND "entities"."id" > $1
+ORDER BY
+  "entities"."id" ASC
+LIMIT
+  20
+1: String 'urn:ngsi-ld:Building:001'

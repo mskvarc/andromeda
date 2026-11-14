@@ -67,9 +67,9 @@ mod tests {
     use super::*;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExpr};
-    use andromeda_postgresql_seaquery::literal::int_literal;
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
     use iri_rs::IriBuf;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use sea_query::{Query, SelectStatement};
 
     fn iri(value: &str) -> IriBuf {
         IriBuf::new(value.to_string()).expect("valid IRI")
@@ -79,15 +79,15 @@ mod tests {
         value.parse().expect("valid URI")
     }
 
-    fn render(coverage: &Coverage<'_>) -> String {
+    fn render(coverage: &Coverage<'_>) -> SelectStatement {
         Query::select()
             .expr(int_literal(1))
             .from(sea_query::Alias::new("context_source_registrations"))
             .and_where(coverage.predicate().expect("something is asked"))
-            .to_string(PostgresQueryBuilder)
+            .take()
     }
 
-    fn entities(coverage: ExpandedEntitySpecification<'_>) -> String {
+    fn entities(coverage: ExpandedEntitySpecification<'_>) -> SelectStatement {
         render(&Coverage {
             entities: coverage,
             attributes: &[],
@@ -108,14 +108,12 @@ mod tests {
                 ..ExpandedEntitySpecification::default()
             },
         ];
-        let sql = Query::select()
+        let select = Query::select()
             .expr(int_literal(1))
             .from(sea_query::Alias::new("context_source_registrations"))
             .and_where(Coverage::any_of(&specifications, &[]).expect("something is asked"))
-            .to_string(PostgresQueryBuilder);
-        pretty_assertions::assert_eq!(sql.matches("EXISTS(").count(), 2, "{sql}");
-        assert!(sql.contains("https://example.com/Alpha") && sql.contains("https://example.com/Beta"), "{sql}");
-        assert!(sql.contains(") OR "), "{sql}");
+            .take();
+        assert_statement_snapshot!("coverage-any-of-joins-one-row-existence-check-per-specification", select);
     }
 
     #[test]
@@ -135,14 +133,11 @@ mod tests {
     #[test]
     fn type_coverage_admits_a_row_without_entities_and_a_row_declaring_the_type() {
         let vehicle = TypeExpr::Type(iri("https://example.com/Vehicle"));
-        let sql = entities(ExpandedEntitySpecification {
+        let select = entities(ExpandedEntitySpecification {
             entity_type: Some(&vehicle),
             ..ExpandedEntitySpecification::default()
         });
-        assert!(
-            sql.contains("COALESCE(\"ri\".\"entity_types\", '{*}') && ARRAY ['https://example.com/Vehicle','*']"),
-            "{sql}"
-        );
+        assert_statement_snapshot!("coverage-type-coverage-admits-a-row-without-entities-and-a-row-declaring-the-type", select);
     }
 
     /// Clause 5.12, first to third bullets: a row constraining the identifier
@@ -152,22 +147,13 @@ mod tests {
     #[test]
     fn id_coverage_admits_an_exact_id_an_unconstrained_row_and_a_matching_pattern_only() {
         let ids = [uri("urn:ngsi-ld:Vehicle:1")];
-        let sql = entities(ExpandedEntitySpecification {
+        let select = entities(ExpandedEntitySpecification {
             ids: &ids,
             ..ExpandedEntitySpecification::default()
         });
-        assert!(
-            sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ANY(ARRAY ['urn:ngsi-ld:Vehicle:1',''])"),
-            "{sql}"
-        );
-        assert!(sql.contains("\"ri\".\"entity_id\" = 'urn:ngsi-ld:Vehicle:1'"), "{sql}");
-        assert!(
-            sql.contains("\"ri\".\"entity_id\" IS NULL AND (\"ri\".\"entity_id_pattern_form\" IS NULL OR EXISTS("),
-            "{sql}"
-        );
-        assert!(
-            !sql.contains("\"entity_id_pattern\" ~"),
-            "the registered pattern is evaluated as its stored restatement: {sql}"
+        assert_statement_snapshot!(
+            "coverage-id-coverage-admits-an-exact-id-an-unconstrained-row-and-a-matching-pattern-only",
+            select
         );
     }
 
@@ -176,15 +162,11 @@ mod tests {
     #[test]
     fn id_coverage_names_every_identifier_the_request_names() {
         let ids = [uri("urn:ngsi-ld:Vehicle:1"), uri("urn:ngsi-ld:Vehicle:2")];
-        let sql = entities(ExpandedEntitySpecification {
+        let select = entities(ExpandedEntitySpecification {
             ids: &ids,
             ..ExpandedEntitySpecification::default()
         });
-        assert!(
-            sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ANY(ARRAY ['urn:ngsi-ld:Vehicle:1','urn:ngsi-ld:Vehicle:2',''])"),
-            "{sql}"
-        );
-        assert!(sql.contains("UNNEST(ARRAY ['urn:ngsi-ld:Vehicle:1','urn:ngsi-ld:Vehicle:2'])"), "{sql}");
+        assert_statement_snapshot!("coverage-id-coverage-names-every-identifier-the-request-names", select);
     }
 
     /// Clause 5.12, fourth and fifth bullets: the pattern is matched against
@@ -194,16 +176,12 @@ mod tests {
     fn pattern_coverage_matches_the_registered_id_and_admits_a_row_without_one() {
         let pattern = Pattern::parse("urn:ngsi-ld:Vehicle:1.*").expect("valid pattern");
         let vehicle = TypeExpr::Type(iri("https://example.com/Vehicle"));
-        let sql = entities(ExpandedEntitySpecification {
+        let select = entities(ExpandedEntitySpecification {
             entity_type: Some(&vehicle),
             id_pattern: Some(&pattern),
             ..ExpandedEntitySpecification::default()
         });
-        assert!(
-            sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ('') OR (((\"ri\".\"entity_id\") COLLATE \"default\") ~ 'urn:ngsi-ld:Vehicle:1.*')"),
-            "{sql}"
-        );
-        assert!(sql.contains("\"entity_types\""), "{sql}");
+        assert_statement_snapshot!("coverage-pattern-coverage-matches-the-registered-id-and-admits-a-row-without-one", select);
     }
 
     /// Clause 5.12: the type, the identifier and the attributes are decided
@@ -213,7 +191,7 @@ mod tests {
         let vehicle = TypeExpr::Type(iri("https://example.com/Vehicle"));
         let ids = [uri("urn:ngsi-ld:Vehicle:1")];
         let attributes = ["https://example.com/speed".parse::<AttributeName>().expect("valid attribute name")];
-        let sql = render(&Coverage {
+        let select = render(&Coverage {
             entities: ExpandedEntitySpecification {
                 entity_type: Some(&vehicle),
                 ids: &ids,
@@ -221,11 +199,7 @@ mod tests {
             },
             attributes: &attributes,
         });
-        pretty_assertions::assert_eq!(sql.matches("FROM \"registration_information\"").count(), 1, "{sql}");
-        assert!(sql.contains("\"entity_types\""), "{sql}");
-        assert!(sql.contains("\"entity_id_pattern_form\""), "{sql}");
-        assert!(sql.contains("\"property_name_keys\""), "{sql}");
-        assert!(!sql.contains("jsonb"), "{sql}");
+        assert_statement_snapshot!("coverage-every-axis-asked-is-decided-on-one-information-row", select);
     }
 
     #[test]

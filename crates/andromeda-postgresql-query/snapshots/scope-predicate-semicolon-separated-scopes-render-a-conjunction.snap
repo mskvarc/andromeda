@@ -1,0 +1,12 @@
+---
+source: crates/andromeda-postgresql-query/src/scope_predicate.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  ("entity_search"."scope_paths" ~ ($1::lquery))
+  AND ("entity_search"."scope_paths" ~ ($2::lquery))
+1: String 'A'
+2: String 'B'
