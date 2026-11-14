@@ -159,7 +159,6 @@ andromeda-posted-query = { path = "crates/andromeda-posted-query" }
 andromeda-postgresql-atomic-write = { path = "crates/andromeda-postgresql-atomic-write" }
 andromeda-postgresql-attribute-instance = { path = "crates/andromeda-postgresql-attribute-instance" }
 andromeda-postgresql-branch = { path = "crates/andromeda-postgresql-branch" }
-andromeda-postgresql-codes = { path = "crates/andromeda-postgresql-codes" }
 andromeda-postgresql-collation = { path = "crates/andromeda-postgresql-collation" }
 andromeda-postgresql-context-query = { path = "crates/andromeda-postgresql-context-query" }
 andromeda-postgresql-context-store = { path = "crates/andromeda-postgresql-context-store" }
@@ -170,6 +169,8 @@ andromeda-postgresql-pool = { path = "crates/andromeda-postgresql-pool" }
 andromeda-postgresql-query = { path = "crates/andromeda-postgresql-query" }
 andromeda-postgresql-schema = { path = "crates/andromeda-postgresql-schema" }
 andromeda-postgresql-seaquery = { path = "crates/andromeda-postgresql-seaquery" }
+andromeda-postgresql-stored-form = { path = "crates/andromeda-postgresql-stored-form" }
+andromeda-postgresql-stored-values = { path = "crates/andromeda-postgresql-stored-values" }
 andromeda-postgresql-temporal-query = { path = "crates/andromeda-postgresql-temporal-query" }
 andromeda-postgresql-temporal-store = { path = "crates/andromeda-postgresql-temporal-store" }
 andromeda-q-corpus = { path = "crates/andromeda-q-corpus" }

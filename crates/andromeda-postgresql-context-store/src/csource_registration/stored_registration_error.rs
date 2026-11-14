@@ -17,8 +17,8 @@ use andromeda_ngsi_ld_lexicon::{
     tenant::InvalidTenantName,
 };
 use andromeda_ngsi_ld_query::error::QueryError;
-use andromeda_postgresql_codes::registry::UnknownCompactCode;
 use andromeda_postgresql_encoding::ewkb::EwkbError;
+use andromeda_postgresql_stored_values::registry::UnknownCompactCode;
 use mediatype::MediaTypeError;
 use thiserror::Error;
 

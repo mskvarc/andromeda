@@ -14,7 +14,7 @@
 //! carried, so counting is answered over any span at all.
 
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName};
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
 use cefact_units::UnitCode;
 use thiserror::Error;
 
@@ -241,7 +241,7 @@ mod tests {
         mixing_sensitivity,
     };
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName};
-    use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
+    use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
     use cefact_units::UnitCode;
 
     const WEIGHT: &str = "https://uri.etsi.org/ngsi-ld/default-context/weight";

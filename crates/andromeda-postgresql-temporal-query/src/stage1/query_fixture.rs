@@ -20,14 +20,13 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_postgresql_query::{
-    attribute_name_key::AttributeNameKey,
-    dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-    entity_type_name_key::EntityTypeNameKey,
     history_source::{
         HistoryBranch,
         attribute_holders::{AttributeHolders, HolderType},
     },
+    query_names::QueryNames,
 };
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use sea_query::SelectStatement;

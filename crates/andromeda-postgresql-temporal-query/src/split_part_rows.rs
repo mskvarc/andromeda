@@ -26,14 +26,12 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, window::TimeInterval};
 use andromeda_postgresql_query::{
-    attribute_name_key::AttributeNameKey,
     history_source::{
         HistoryBranch,
         HistoryOf,
         attribute_rows::attribute_rows,
         axis::{axis_present, axis_window},
         entity_rows::entity_rows,
-        grain::HistoryGrain,
         scope_rows::scope_rows,
     },
     scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis},
@@ -41,6 +39,8 @@ use andromeda_postgresql_query::{
 };
 use andromeda_postgresql_schema::current::{E, Entities};
 use andromeda_postgresql_seaquery::pg_array::is_any_of;
+use andromeda_postgresql_stored_form::history_grain::HistoryGrain;
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Alias, Asterisk, Expr as SeaExpr, ExprTrait, Iden, JoinType, Order, Query, SelectStatement, SimpleExpr};
 
 /// Build the statement reading, for every entity of `entity_ids` this broker
@@ -163,8 +163,9 @@ mod tests {
         },
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, history_source::HistoryBranch};
+    use andromeda_postgresql_query::history_source::HistoryBranch;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 
     fn compiled(interval: TimeInterval) -> CompiledTemporalQuery {
         CompiledTemporalQuery::builder()

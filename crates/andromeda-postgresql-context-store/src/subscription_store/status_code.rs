@@ -6,8 +6,8 @@
 //! number is decided.
 
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
-use andromeda_postgresql_codes::subscription_status::SubscriptionStatusCode;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
+use andromeda_postgresql_stored_values::subscription_status::SubscriptionStatusCode;
 use sea_query::{Expr, ExprTrait, SimpleExpr};
 
 /// The registry member the store persists for a lifecycle state.
@@ -44,7 +44,7 @@ pub(crate) fn status_is_not(status: SubscriptionStatus) -> SimpleExpr {
 mod tests {
     use crate::subscription_store::status_code::{status_is, status_is_not, status_of, stored_status};
     use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
-    use andromeda_postgresql_codes::subscription_status::SubscriptionStatusCode;
+    use andromeda_postgresql_stored_values::subscription_status::SubscriptionStatusCode;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Query};
     use strum::IntoEnumIterator;

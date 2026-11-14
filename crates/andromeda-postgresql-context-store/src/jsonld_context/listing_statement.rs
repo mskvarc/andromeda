@@ -6,9 +6,9 @@
 use crate::jsonld_context::statement::identity_matches;
 use andromeda_context_registry::detail_level::ContextDetailLevel;
 use andromeda_ngsi_ld_query::{page_window::PageWindow, read_order::ReadOrder};
-use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
 use andromeda_postgresql_query::page_window::apply_identifier_window;
 use andromeda_postgresql_schema::jsonld::JsonldContexts;
+use andromeda_postgresql_stored_values::jsonld_context_kind::JsonldContextKindCode;
 use sea_query::{Alias, Asterisk, Expr, ExprTrait, Query, SelectStatement, SimpleExpr};
 
 /// The full metadata projection, aliased to the metadata row's field names.
@@ -87,7 +87,7 @@ mod tests {
         page_window::{PageStart, PageWindow},
         read_order::ReadOrder,
     };
-    use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
+    use andromeda_postgresql_stored_values::jsonld_context_kind::JsonldContextKindCode;
     use pretty_assertions::assert_eq;
     use sea_query::PostgresQueryBuilder;
 

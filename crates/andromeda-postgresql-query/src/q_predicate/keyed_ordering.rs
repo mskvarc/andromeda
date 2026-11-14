@@ -15,7 +15,6 @@
 //! which the byte-ordered `idx_ca_value_string` cannot range over.
 
 use crate::{
-    dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
     q_predicate::{
         equality_term::range_arms,
@@ -25,6 +24,7 @@ use crate::{
         ordering_term::ordering_arms,
         own_value_arms::OwnValueArms,
     },
+    query_names::QueryNames,
 };
 use andromeda_ngsi_ld_query::filter::{
     path::QueryPath,
@@ -103,14 +103,10 @@ pub(crate) fn ordering_candidates(pred: &Predicate, rows: &EntityRowRefs, names:
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        entity_row_refs::EntityRowRefs,
-        q_predicate::keyed_ordering::ordering_candidates,
-    };
+    use crate::{entity_row_refs::EntityRowRefs, q_predicate::keyed_ordering::ordering_candidates, query_names::QueryNames};
     use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::assert_eq;
     use sea_query::SelectStatement;
 

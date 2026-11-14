@@ -9,8 +9,6 @@
 //! Every writer and decoder of the key converts through here.
 
 use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
-use andromeda_postgresql_seaquery::literal::text_literal;
-use sea_query::{ExprTrait, SimpleExpr};
 
 /// The stored key of the default instance.
 const DEFAULT_INSTANCE: &str = "";
@@ -18,6 +16,11 @@ const DEFAULT_INSTANCE: &str = "";
 /// One instance's `datasetId` as its grain key holds it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DatasetKey<'a>(&'a str);
+
+impl DatasetKey<'static> {
+    /// The key of the default instance, which carries no `datasetId`.
+    pub const DEFAULT: DatasetKey<'static> = DatasetKey(DEFAULT_INSTANCE);
+}
 
 impl<'a> DatasetKey<'a> {
     /// The key of the instance `dataset_id` names, the default instance when
@@ -53,29 +56,10 @@ impl<'a> DatasetKey<'a> {
     }
 }
 
-/// Whether the grain key `column` is the default instance's, the empty string
-/// written inline so a partial index predicate on it is provable.
-#[must_use]
-pub fn is_default_instance(column: impl Into<SimpleExpr>) -> SimpleExpr {
-    column.into().eq(text_literal(DEFAULT_INSTANCE))
-}
-
-/// Whether the grain key `column` is a named instance's.
-#[must_use]
-pub fn is_named_instance(column: impl Into<SimpleExpr>) -> SimpleExpr {
-    column.into().ne(text_literal(DEFAULT_INSTANCE))
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::dataset_key::{DatasetKey, is_default_instance, is_named_instance};
+    use crate::dataset_key::DatasetKey;
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use andromeda_postgresql_seaquery::assert_statement_snapshot;
-    use sea_query::{Alias, Expr, Query, SelectStatement, SimpleExpr};
-
-    fn render(expression: SimpleExpr) -> SelectStatement {
-        Query::select().expr(expression).to_owned()
-    }
 
     #[test]
     fn the_default_instance_is_stored_as_the_empty_string_and_reads_back_as_none() {
@@ -100,18 +84,5 @@ mod tests {
     #[test]
     fn a_stored_key_that_is_no_identifier_is_refused() {
         assert!(DatasetKey::stored("not an identifier").dataset_id().is_err());
-    }
-
-    #[test]
-    fn the_default_and_named_tests_compare_the_key_with_the_inline_empty_string() {
-        let column = || Expr::col((Alias::new("s"), Alias::new("dataset_key")));
-        assert_statement_snapshot!(
-            "dataset-key-the-default-and-named-tests-compare-the-key-with-the-inline-empty-string-1",
-            render(is_default_instance(column()))
-        );
-        assert_statement_snapshot!(
-            "dataset-key-the-default-and-named-tests-compare-the-key-with-the-inline-empty-string-2",
-            render(is_named_instance(column()))
-        );
     }
 }

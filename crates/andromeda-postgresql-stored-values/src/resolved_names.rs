@@ -1,6 +1,6 @@
 //! The dictionary keys a statement is rendered against.
 
-use crate::dictionary::interned_name::InternedName;
+use crate::interned_name::InternedName;
 use std::collections::HashMap;
 
 /// Dictionary keys for the names a compiled query mentions, hits only.
@@ -73,7 +73,7 @@ impl<N: InternedName> ResolvedNames<N> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
+    use crate::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 
     #[test]

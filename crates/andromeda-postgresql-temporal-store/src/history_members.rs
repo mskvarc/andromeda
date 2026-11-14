@@ -20,7 +20,7 @@ use andromeda_postgresql_attribute_instance::{
     name_keys::{HeldKeys, KeyNames, MentionedNames, NameKeys},
     sub_attribute::SubAttributeElement,
 };
-use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use andromeda_postgresql_stored_values::entity_type_name_key::EntityTypeNameKey;
 use cefact_units::UnitCode;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
@@ -151,11 +151,7 @@ mod tests {
         name_resolution::distinct,
         stored_value::StoredValue,
     };
-    use andromeda_postgresql_query::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::resolved_names::ResolvedNames,
-        entity_type_name_key::EntityTypeNameKey,
-    };
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use serde_json::{Value, json};
 
     fn ngsi(term: &str) -> String {

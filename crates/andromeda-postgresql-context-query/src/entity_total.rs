@@ -10,12 +10,12 @@ use crate::{
 };
 use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery};
 use andromeda_postgresql_query::{
-    dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
     error::RenderError,
     id_pattern_trigrams::ID_PATTERN_CANDIDATE_BOUND,
     one_time_gate::CandidateBound,
     q_predicate::keyed_term::{CandidateRead, KeyedCandidates},
+    query_names::QueryNames,
 };
 use sea_query::{Asterisk, Condition, DynIden, Expr, Func, Query, SelectStatement};
 
@@ -188,11 +188,9 @@ mod tests {
         filter::parser::parse,
         page_window::PageWindow,
     };
-    use andromeda_postgresql_query::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-    };
+    use andromeda_postgresql_query::query_names::QueryNames;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Query, SelectStatement};
 

@@ -24,7 +24,6 @@ use crate::{
     error::MaintenanceError,
     repack::version::{RepackSupport, RepackVersion},
 };
-use andromeda_postgresql_codes::maintenance_inspection_result::MaintenanceInspectionResultCode;
 use andromeda_postgresql_context_store::schema_contract::server_requirements::PostgresVersion;
 use andromeda_postgresql_seaquery::{
     introspection::{current_role_is_superuser, server_version_num},
@@ -38,6 +37,7 @@ use andromeda_postgresql_seaquery::{
     repack::repack_version,
     statement::Statement,
 };
+use andromeda_postgresql_stored_values::maintenance_inspection_result::MaintenanceInspectionResultCode;
 use sea_query::{Alias, Expr, ExprTrait, Query, SelectStatement, SimpleExpr};
 use sqlx::PgConnection;
 use strum::IntoStaticStr;

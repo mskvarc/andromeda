@@ -9,9 +9,11 @@
 //! about which rows a `GeoProperty` lives in would silently order by a geometry
 //! they did not filter on.
 
-use crate::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs, expiry::unexpired, stored_geometry::StoredGeometry};
+use crate::{entity_row_refs::EntityRowRefs, stored_geometry::StoredGeometry};
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::{literal::int_literal, postgis::judged_geometry};
+use andromeda_postgresql_stored_form::expiry::unexpired;
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Alias, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
 
 /// A `current_attributes` scan selecting one entity's geometry-valued
@@ -81,10 +83,10 @@ pub fn existence_marker() -> SimpleExpr {
 mod tests {
     use crate::{
         attribute_instance_correlation::{existence_marker, geometry_instances_of, instance_geometry_column},
-        attribute_name_key::AttributeNameKey,
         entity_row_refs::EntityRowRefs,
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
     use sea_query::{Alias, Query, SelectStatement, SimpleExpr};
 
     /// One correlated scan, given the `SELECT 1` marker each real caller

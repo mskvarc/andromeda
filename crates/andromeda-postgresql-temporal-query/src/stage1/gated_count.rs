@@ -24,10 +24,10 @@ use crate::stage1::{
 };
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_query::{
-    dictionary::query_names::QueryNames,
     error::RenderError,
     history_source::{BesideComparison, HistoryBranch, entity_rows::entity_rows},
     one_time_gate::{Candidates, beyond, bounded, materialized, within},
+    query_names::QueryNames,
 };
 use andromeda_postgresql_schema::current::{E, Entities};
 use sea_query::{Asterisk, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, TableRef, UnionType, WithClause};

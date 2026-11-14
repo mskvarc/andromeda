@@ -21,7 +21,6 @@
 //! combination again.
 
 use crate::{error::TemporalStoreError, repo::TemporalRepository, statement_timeout_allowance::allow_unbounded_statements};
-use andromeda_postgresql_query::{entity_sides::holds_evolution, tombstone::carries_a_value};
 use andromeda_postgresql_schema::{
     current::Entities,
     temporal::{AttributeHistory, TemporalAttributeStreams},
@@ -34,6 +33,7 @@ use andromeda_postgresql_seaquery::{
     scalar_subquery::scalar_subquery,
     statement::Statement,
 };
+use andromeda_postgresql_stored_form::{entity_sides::holds_evolution, tombstone::carries_a_value};
 use andromeda_postgresql_temporal_query::{
     alias::Ah,
     shape_mask::{held_positions, no_shapes, position_mask, recorded_combination},

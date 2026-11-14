@@ -193,8 +193,8 @@ mod tests {
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_postgresql_query::{
-        dictionary::query_names::QueryNames,
         history_source::{HistoryBranch, HistoryOf},
+        query_names::QueryNames,
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::{Condition, Expr, SelectStatement};

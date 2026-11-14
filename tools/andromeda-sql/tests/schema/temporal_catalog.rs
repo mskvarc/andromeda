@@ -9,7 +9,7 @@
 //! attribute. The declared text of all three is pinned here.
 
 use crate::repository::{PinError, constraint, constraint_definition, index_definition, schema, written};
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
 use andromeda_sql::declared_schema::constraint::ConstraintKind;
 use pretty_assertions::assert_eq;
 

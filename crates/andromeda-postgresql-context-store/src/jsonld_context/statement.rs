@@ -6,9 +6,9 @@
 //! place.
 
 use andromeda_json_literal::JsonLiteral;
-use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
 use andromeda_postgresql_schema::jsonld::JsonldContexts;
 use andromeda_postgresql_seaquery::{cast::cast, clock::after_transaction_start, pg_type::PostgresType};
+use andromeda_postgresql_stored_values::jsonld_context_kind::JsonldContextKindCode;
 use sea_query::{
     Alias,
     Condition,
@@ -301,7 +301,7 @@ mod tests {
         stored_context_query,
     };
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
+    use andromeda_postgresql_stored_values::jsonld_context_kind::JsonldContextKindCode;
     use sea_query::{PostgresQueryBuilder, error::Error as SeaQueryError};
 
     #[test]

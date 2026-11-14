@@ -10,13 +10,13 @@
 use crate::current_attribute::row_edit::{EditReach, InstanceGrain, RowEdit};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_postgresql_attribute_instance::{flatten::FlattenError, name_keys::NameKeys};
-use andromeda_postgresql_query::dataset_key::DatasetKey;
 use andromeda_postgresql_schema::current::{CurrentAttributes, Entities};
 use andromeda_postgresql_seaquery::{
     pg_array::{nullable_array, text_array},
     pg_type::PostgresType,
     unnest::{UnnestAliased, UnnestColumn, unnest_call},
 };
+use andromeda_postgresql_stored_values::dataset_key::DatasetKey;
 use sea_query::{CommonTableExpression, Expr, Iden, Query, SimpleExpr};
 
 /// The grain staging alias, `g`.
@@ -153,8 +153,8 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
     use andromeda_postgresql_seaquery::unnest::UnnestAliased;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use sea_query::{PostgresQueryBuilder, Query, WithClause};
 
     fn name(raw: &str) -> AttributeName {

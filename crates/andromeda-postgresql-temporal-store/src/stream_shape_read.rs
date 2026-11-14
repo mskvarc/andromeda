@@ -19,17 +19,11 @@
 
 use crate::{error::TemporalStoreError, repo::TemporalRepository, stored_attribute_shape::StoredAttributeShape, stored_catalog_error::StoredCatalogError};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
-use andromeda_postgresql_query::{
-    attribute_name_key::AttributeNameKey,
-    history_source::{
-        HistoryBranch,
-        HistoryOf,
-        attribute_rows::pending_attribute_rows,
-        grain::HistoryGrain,
-        instance_replacement::{kept_beside_pending, queued_instance_replacements},
-    },
-    tombstone::carries_a_value,
+use andromeda_postgresql_query::history_source::{
+    HistoryBranch,
+    HistoryOf,
+    attribute_rows::pending_attribute_rows,
+    instance_replacement::{kept_beside_pending, queued_instance_replacements},
 };
 use andromeda_postgresql_schema::{
     current::Entities,
@@ -37,6 +31,8 @@ use andromeda_postgresql_schema::{
     temporal::{AttributeHistory, TemporalAttributeStreams},
 };
 use andromeda_postgresql_seaquery::{branch::qualified, pg_array::is_any_of, statement::Statement};
+use andromeda_postgresql_stored_form::{history_grain::HistoryGrain, tombstone::carries_a_value};
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, attribute_name_key::AttributeNameKey, recorded_shape::RecordedShape};
 use andromeda_postgresql_temporal_query::{
     alias::{Ah, An},
     recorded_shape::{RecordedShapeColumn, recorded_shape},

@@ -13,7 +13,7 @@
 
 use crate::dictionary_relation::DictionaryRelation;
 use andromeda_configuration::schema::database::name_cache::NameCacheConfig;
-use andromeda_postgresql_query::dictionary::interned_name::InternedName;
+use andromeda_postgresql_stored_values::interned_name::InternedName;
 use andromeda_telemetry::name_dictionary::{DictionaryEviction, NameDictionary, record_eviction};
 use moka::{notification::RemovalCause, sync::Cache};
 use std::sync::Arc;
@@ -105,7 +105,7 @@ mod tests {
         },
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+    use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
     use andromeda_telemetry::{name_dictionary::DictionaryEviction, names::NAME_DICTIONARY_EVICTIONS_TOTAL, recorder::TelemetryRecorder};
     use moka::notification::RemovalCause;
     use pretty_assertions::assert_eq;

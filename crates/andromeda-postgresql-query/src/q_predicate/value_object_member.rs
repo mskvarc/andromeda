@@ -35,7 +35,6 @@ use andromeda_ngsi_ld_query::filter::{
     trailing_path::MemberPath,
 };
 use andromeda_ngsi_ld_vocabulary::keyword;
-use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_seaquery::{
     cast::typed_null,
     json_type::{JsonType, jsonb_type_is},
@@ -44,6 +43,7 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
+use andromeda_postgresql_stored_values::attribute_kind::AttributeKind;
 use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
 
 /// The alias the member a path reaches is read under, which is also the name

@@ -34,12 +34,12 @@ use crate::{
     statement_timeout_allowance::allow_unbounded_statements,
     stream_census::counted_stream_removal,
 };
-use andromeda_postgresql_query::entity_sides::holds_evolution;
 use andromeda_postgresql_schema::{
     current::Entities,
     temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams},
 };
 use andromeda_postgresql_seaquery::{pg_array::is_any_of, statement::Statement, timescale::drop_chunks};
+use andromeda_postgresql_stored_form::entity_sides::holds_evolution;
 use andromeda_postgresql_temporal_query::alias::{Ah, S};
 use chrono::{DateTime, TimeDelta, Utc};
 use sea_query::{Condition, DeleteStatement, Expr, ExprTrait, Iden, LockType, Query, SelectStatement};

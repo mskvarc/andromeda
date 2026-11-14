@@ -9,7 +9,6 @@
 //! comparison once and this decides which rows it runs over.
 
 use crate::{
-    attribute_name_key::AttributeNameKey,
     entity_row_refs::EntityRowRefs,
     q_predicate::{
         history_aliases::HistoryAliases,
@@ -19,6 +18,7 @@ use crate::{
         projection_probe::{ProbeShape, exists_any_on_projection, exists_on_projection, probe},
     },
 };
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Condition, DynIden};
 
 /// The stored instances a compiled `q` reads.
@@ -93,7 +93,6 @@ impl InstanceScan<'_> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        attribute_name_key::AttributeNameKey,
         entity_row_refs::EntityRowRefs,
         history_source::{HistoryBranch, HistoryOf},
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, instance_test::InstanceTest},
@@ -102,6 +101,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
     use sea_query::{Alias, Condition, Expr, Query, SelectStatement};
 
     fn history() -> HistoryWindow {

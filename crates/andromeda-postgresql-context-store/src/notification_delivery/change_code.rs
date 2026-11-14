@@ -11,7 +11,7 @@
 
 use andromeda_ngsi_ld_entity::reads::attribute_change::AttributeChangeKind;
 use andromeda_ngsi_ld_model::entity_change::EntityLifecycle;
-use andromeda_postgresql_codes::{attribute_change_kind::AttributeChangeKindCode, entity_lifecycle::EntityLifecycleCode};
+use andromeda_postgresql_stored_values::{attribute_change_kind::AttributeChangeKindCode, entity_lifecycle::EntityLifecycleCode};
 
 /// The registry member the schema persists for a lifecycle transition.
 #[must_use]
@@ -58,7 +58,7 @@ mod tests {
     use crate::notification_delivery::change_code::{change_kind_of, lifecycle_of, stored_change_kind, stored_lifecycle};
     use andromeda_ngsi_ld_entity::reads::attribute_change::AttributeChangeKind;
     use andromeda_ngsi_ld_model::entity_change::EntityLifecycle;
-    use andromeda_postgresql_codes::{attribute_change_kind::AttributeChangeKindCode, entity_lifecycle::EntityLifecycleCode};
+    use andromeda_postgresql_stored_values::{attribute_change_kind::AttributeChangeKindCode, entity_lifecycle::EntityLifecycleCode};
 
     #[test]
     fn every_lifecycle_transition_survives_a_round_trip_through_its_stored_number() {

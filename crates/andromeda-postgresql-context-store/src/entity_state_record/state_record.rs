@@ -5,7 +5,7 @@ use crate::{current_attribute::flatten::flatten, entity_state_record::instance_r
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, scope::path::ScopePath, time::date_time::NgsiLdDateTime};
 use andromeda_postgresql_attribute_instance::{flatten::FlattenError, name_keys::NameKeys, stored_members::RowColumnsError};
-use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use andromeda_postgresql_stored_values::entity_type_name_key::EntityTypeNameKey;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 

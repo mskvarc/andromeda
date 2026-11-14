@@ -8,7 +8,7 @@
 //! failure and is reported as one, naming the column itself.
 
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, reference::NgsiLdReferenceError};
-use andromeda_postgresql_codes::{entity_key::EntityKeyOutOfRange, registry::UnknownCompactCode, stream_key::StreamKeyOutOfRange};
+use andromeda_postgresql_stored_values::{entity_key::EntityKeyOutOfRange, registry::UnknownCompactCode, stream_key::StreamKeyOutOfRange};
 use thiserror::Error;
 
 /// A stored temporal catalogue value that does not parse back into its domain

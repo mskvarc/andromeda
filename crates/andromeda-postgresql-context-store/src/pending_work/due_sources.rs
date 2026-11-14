@@ -17,7 +17,6 @@ use crate::{
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_model::{snapshot::SnapshotStatus, subscription::SubscriptionStatus};
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
 use andromeda_postgresql_schema::{
     csr::Csr,
     current::Entities,
@@ -31,6 +30,7 @@ use andromeda_postgresql_schema::{
     subscriptions::Subscriptions,
 };
 use andromeda_postgresql_seaquery::{clock::now, queue::claimable_at};
+use andromeda_postgresql_stored_values::jsonld_context_kind::JsonldContextKindCode;
 use sea_query::{
     Alias,
     CaseStatement,
@@ -280,7 +280,7 @@ fn scalar(select: SelectStatement) -> SimpleExpr {
 mod tests {
     use crate::pending_work::due_sources::{branch_delivery_due_select, least_due_select};
     use andromeda_context_space::{context_target::ContextTarget, snapshot_key::SnapshotKey, snapshot_target::SnapshotTarget};
-    use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
+    use andromeda_postgresql_stored_values::jsonld_context_kind::JsonldContextKindCode;
     use sea_query::PostgresQueryBuilder;
 
     fn least_sql() -> String {

@@ -17,7 +17,6 @@
 use crate::{error::TemporalStoreError, stored_catalog_error::StoredCatalogError, temporal_entry_record::TemporalIntentRecord};
 use andromeda_context_commit::write_record::WriteRecord;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_postgresql_codes::{temporal_entry_kind::TemporalEntryKind, temporal_intent_reach::TemporalIntentReach};
 use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents, temporal_intent::TemporalEntry};
 use andromeda_postgresql_seaquery::{
     branch::qualified,
@@ -29,6 +28,7 @@ use andromeda_postgresql_seaquery::{
     statement::Statement,
     unnest::{Ordinality, unnest_of},
 };
+use andromeda_postgresql_stored_values::{temporal_entry_kind::TemporalEntryKind, temporal_intent_reach::TemporalIntentReach};
 use sea_query::{Asterisk, CaseStatement, DynIden, Expr, ExprTrait, Func, Iden, IntoIden, Query, SelectStatement, SimpleExpr, WindowStatement};
 use sqlx::PgConnection;
 

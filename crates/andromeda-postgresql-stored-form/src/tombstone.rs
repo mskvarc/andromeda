@@ -10,9 +10,9 @@
 //! are the broker's own constants, so they render inline and shift no
 //! placeholder of the statement they join.
 
-use andromeda_postgresql_codes::{temporal_entry_kind::TemporalEntryKind, value_kind::ValueKind};
 use andromeda_postgresql_schema::{temporal::AttributeHistory, temporal_intent::TemporalEntry};
 use andromeda_postgresql_seaquery::literal::int_literal;
+use andromeda_postgresql_stored_values::{temporal_entry_kind::TemporalEntryKind, value_kind::ValueKind};
 use sea_query::{Expr, ExprTrait, IntoIden, SimpleExpr};
 
 /// Whether the attribute history row under `row` carries a value, which is

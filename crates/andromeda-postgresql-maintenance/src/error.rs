@@ -3,8 +3,8 @@
 use crate::{candidate::MaintenanceTarget, catalog_counter::CatalogCounter, repack::version::RepackVersionError, state::FleetLock};
 use andromeda_context_space::snapshot_key::{SnapshotKey, SnapshotKeyError};
 use andromeda_ngsi_ld_lexicon::tenant::InvalidTenantName;
-use andromeda_postgresql_codes::{maintenance_target::MaintenanceTargetCode, registry::UnknownCompactCode};
 use andromeda_postgresql_context_store::{error::ContextStoreError, schema_contract::error::SchemaContractError};
+use andromeda_postgresql_stored_values::{maintenance_target::MaintenanceTargetCode, registry::UnknownCompactCode};
 use sea_query::error::Error as SeaQueryError;
 use thiserror::Error;
 

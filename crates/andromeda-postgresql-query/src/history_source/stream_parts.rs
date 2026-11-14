@@ -11,13 +11,12 @@ use crate::history_source::{
     HistoryStream,
     PendingEntries,
     attribute_rows::{IDENTITY_COLUMNS, RecordedRow},
-    entry_values::attribute_value_columns,
-    grain::HistoryGrain,
     instance_replacement::kept_beside_pending,
     pending,
 };
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::branch::qualified;
+use andromeda_postgresql_stored_form::{history_entry_values::attribute_value_columns, history_grain::HistoryGrain};
 use sea_query::{DynIden, Expr, ExprTrait, Query, SelectStatement};
 
 /// The recorded rows of the one stream `stream` names in the branch `schema`

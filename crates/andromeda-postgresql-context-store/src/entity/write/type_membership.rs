@@ -26,15 +26,15 @@ use crate::{
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_branch::schema_iden;
-use andromeda_postgresql_query::{
-    type_membership::Memberships,
-    type_membership_moves::{Member, MembershipRemoval, carried_among, membership_insert, membership_removal},
-};
 use andromeda_postgresql_schema::{
     current::{Entities, EntitySearch},
     type_membership::MembershipSide,
 };
 use andromeda_postgresql_seaquery::literal::false_literal;
+use andromeda_postgresql_stored_form::{
+    memberships::Memberships,
+    type_membership_moves::{Member, MembershipRemoval, carried_among, membership_insert, membership_removal},
+};
 use sea_query::{DynIden, Expr, ExprTrait, Iden, InsertStatement, Query};
 
 /// The membership CTE of a create or an update, `mbrs`, whose only purpose is

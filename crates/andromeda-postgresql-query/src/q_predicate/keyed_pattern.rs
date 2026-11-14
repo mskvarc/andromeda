@@ -12,7 +12,6 @@
 //! tested.
 
 use crate::{
-    dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
     q_predicate::{
         instance_row::InstanceRow,
@@ -20,6 +19,7 @@ use crate::{
         local_target::{LocalTarget, local_target},
         pattern_term::{PatternTarget, pattern_on, pattern_targets},
     },
+    query_names::QueryNames,
 };
 use andromeda_ngsi_ld_query::filter::{
     path::QueryPath,
@@ -70,14 +70,10 @@ fn holds_target(target: PatternTarget) -> Option<SimpleExpr> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        entity_row_refs::EntityRowRefs,
-        q_predicate::keyed_pattern::pattern_candidates,
-    };
+    use crate::{entity_row_refs::EntityRowRefs, q_predicate::keyed_pattern::pattern_candidates, query_names::QueryNames};
     use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::assert_eq;
     use sea_query::SelectStatement;
 

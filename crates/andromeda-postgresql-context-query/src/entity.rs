@@ -21,17 +21,18 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_query::{
-    dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     entity_row_refs::EntityRowRefs,
     error::RenderError,
     geo_predicate as geo_sql,
     page_window::bound_to_window,
     q_predicate::{instance_scan::InstanceScan, projection as q_filter},
+    query_names::QueryNames,
     scope_predicate::{ScopeTarget, condition as scope_condition},
     sort_key::{KeyOrder, NullPlacement, SortKey},
 };
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{literal::false_literal, statement_planning::StatementPlanning};
+use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
 use sea_query::{Condition, Query, SelectStatement};
 
 /// A compiled entity query: the paginated result statement and how the total
@@ -297,8 +298,9 @@ mod tests {
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, error::RenderError};
+    use andromeda_postgresql_query::error::RenderError;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
     use iri_rs::IriBuf;
     use pretty_assertions::{assert_eq, assert_ne};
     use sea_query::{PostgresQueryBuilder, SelectStatement, Value};

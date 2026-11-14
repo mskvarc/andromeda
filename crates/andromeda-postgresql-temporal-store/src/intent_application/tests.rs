@@ -14,7 +14,7 @@ use andromeda_context_commit::{write_id::WriteId, write_record::WriteRecord};
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier, instance_identity::InstanceIdentity, scope::path::ScopePath};
 use andromeda_ngsi_ld_model::temporal::TemporalValue;
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
+use andromeda_postgresql_stored_values::temporal_intent_reach::TemporalIntentReach;
 use andromeda_temporal::{
     append_intent::{TemporalAppendEntry, TemporalAppendIntent},
     scope_entry_kind::ScopeEntryKind,

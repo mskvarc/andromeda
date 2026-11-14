@@ -4,13 +4,12 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_query::{
     attribute_instance_correlation::{geometry_instances_of, instance_geometry_column},
-    attribute_name_key::AttributeNameKey,
-    dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
-    expiry::unexpired,
 };
 use andromeda_postgresql_schema::current::EntitySearch;
 use andromeda_postgresql_seaquery::{postgis::validated_geom_from_ewkb, spherical_distance::st_distance_sphere};
+use andromeda_postgresql_stored_form::expiry::unexpired;
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
 use sea_query::{CaseStatement, Expr as SeaExpr, Func, Keyword, QueryStatementBuilder, SimpleExpr};
 
 /// The expression measuring an entity's distance to the reference geometry a
@@ -102,8 +101,9 @@ mod tests {
     use crate::order_geography::geo_order_distance;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_row_refs::EntityRowRefs};
+    use andromeda_postgresql_query::entity_row_refs::EntityRowRefs;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use sea_query::{Alias, Query, SelectStatement, SimpleExpr};
 
     const CUSTOM_GEOPROPERTY: &str = "https://example.com/customGeo";

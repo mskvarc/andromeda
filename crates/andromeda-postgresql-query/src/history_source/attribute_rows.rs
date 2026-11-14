@@ -7,21 +7,13 @@
 //! alike. Ordering ties keep breaking on the write identity, which a queued
 //! entry carries exactly as its recorded row will.
 
-use crate::history_source::{
-    EntityHistory,
-    HistoryBranch,
-    HistoryOf,
-    PendingEntries,
-    entry_values::attribute_value_columns,
-    grain::HistoryGrain,
-    instance_replacement::kept_beside_pending,
-    pending,
-};
+use crate::history_source::{EntityHistory, HistoryBranch, HistoryOf, PendingEntries, instance_replacement::kept_beside_pending, pending};
 use andromeda_postgresql_schema::{
     current::Entities,
     temporal::{AttributeHistory, TemporalAttributeStreams},
 };
 use andromeda_postgresql_seaquery::branch::qualified;
+use andromeda_postgresql_stored_form::{history_entry_values::attribute_value_columns, history_grain::HistoryGrain};
 use sea_query::{DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
 
 /// Alias `rh`: a recorded history row.

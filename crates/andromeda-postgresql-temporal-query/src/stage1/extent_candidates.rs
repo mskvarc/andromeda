@@ -24,14 +24,14 @@ use crate::{
 };
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, contributed_entities::ContributedEntities};
 use andromeda_postgresql_query::{
-    attribute_name_key::AttributeNameKey,
-    dictionary::query_names::QueryNames,
     error::RenderError,
     history_source::{HistoryBranch, PendingEntries},
+    query_names::QueryNames,
     stored_geometry::{BoxIndexing, GeometryBox, box_test},
 };
 use andromeda_postgresql_schema::temporal::TemporalAttributeStreams;
 use andromeda_postgresql_seaquery::branch::qualified;
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Expr, ExprTrait, Query, SelectStatement, SimpleExpr, UnionType};
 
 /// How many Evolutions a geo page walks before it reads the candidates: an
@@ -123,12 +123,9 @@ mod tests {
             contributed_entities::{ContributedEntities, ContributedRendering},
         },
     };
-    use andromeda_postgresql_query::{
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        entity_type_name_key::EntityTypeNameKey,
-        history_source::HistoryBranch,
-    };
+    use andromeda_postgresql_query::{history_source::HistoryBranch, query_names::QueryNames};
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
+    use andromeda_postgresql_stored_values::{entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, IntoIden, PostgresQueryBuilder, SelectStatement, Value, Values};
     use std::str::FromStr;

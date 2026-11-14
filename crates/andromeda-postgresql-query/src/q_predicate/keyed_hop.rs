@@ -9,9 +9,9 @@
 //! as it is read.
 
 use crate::{
-    dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
     q_predicate::{keyed_branches::union_of, projection::linked_condition, traversal::LinkedHop},
+    query_names::QueryNames,
 };
 use andromeda_ngsi_ld_query::filter::{
     language_matching::LanguageMatching,
@@ -70,15 +70,10 @@ const fn enumerates_linked_matches(pred: &Predicate, inner: &QueryPath) -> bool 
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        entity_row_refs::EntityRowRefs,
-        entity_type_name_key::EntityTypeNameKey,
-        q_predicate::keyed_hop::hop_candidates,
-    };
+    use crate::{entity_row_refs::EntityRowRefs, q_predicate::keyed_hop::hop_candidates, query_names::QueryNames};
     use andromeda_ngsi_ld_query::filter::{expression::Expr, language_matching::LanguageMatching, parser::parse};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, IntoIden, SelectStatement};
 

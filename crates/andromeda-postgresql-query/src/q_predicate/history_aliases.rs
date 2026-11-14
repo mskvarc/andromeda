@@ -5,8 +5,8 @@
 //! window opens from, each under an alias of its own, and a probe nested inside another
 //! takes a suffix so neither shadows the other.
 
-use crate::history_source::grain::HistoryGrain;
 use andromeda_postgresql_schema::temporal::AttributeHistory;
+use andromeda_postgresql_stored_form::history_grain::HistoryGrain;
 use sea_query::{Alias, Expr as SeaExpr, SimpleExpr};
 
 /// The relations one history probe scans, under the names it gives them.

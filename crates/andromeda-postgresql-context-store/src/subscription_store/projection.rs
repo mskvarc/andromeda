@@ -13,9 +13,10 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{page_window::PageWindow, read_order::ReadOrder};
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_query::{dictionary::names_in_key_order::attribute_names_of, page_window::apply_identifier_window};
+use andromeda_postgresql_query::page_window::apply_identifier_window;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
 use andromeda_postgresql_seaquery::{aggregate::count_all, statement::Statement};
+use andromeda_postgresql_stored_form::names_in_key_order::attribute_names_of;
 use andromeda_subscription::error::SubscriptionError;
 use sea_query::{CaseStatement, Expr, ExprTrait, Keyword, Query, SelectStatement, SimpleExpr};
 

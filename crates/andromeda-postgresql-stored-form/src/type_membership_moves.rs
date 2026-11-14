@@ -1,8 +1,7 @@
 //! The rows a write adds to and removes from one side of the type-membership
 //! relation.
 //!
-//! A type selection walks the membership relation ([`crate::type_membership`]),
-//! so every write that sets the types of an Entity's current state or of its
+//! A type selection walks the membership relation, so every write that sets the types of an Entity's current state or of its
 //! Temporal Evolution states them there too, in the same statement as the
 //! identity row: a create lands one row per type, and a write that changes the
 //! types moves only those that changed. Each statement hands over the rows it
@@ -14,7 +13,7 @@
 //! from a side clears the flag where the other side holds the type and deletes
 //! the row where it does not, so no row is left belonging to neither.
 
-use crate::type_membership::Memberships;
+use crate::memberships::Memberships;
 use andromeda_postgresql_schema::{current::EntityTypeMembers, type_membership::MembershipSide};
 use andromeda_postgresql_seaquery::{
     literal::{false_literal, true_literal},
@@ -188,7 +187,7 @@ fn carried_type_key() -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::{
-        type_membership::Memberships,
+        memberships::Memberships,
         type_membership_moves::{Member, carried_among, membership_insert, membership_removal, side_departure},
     };
     use andromeda_postgresql_schema::type_membership::MembershipSide;

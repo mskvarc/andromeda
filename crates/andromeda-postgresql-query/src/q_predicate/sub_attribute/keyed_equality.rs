@@ -9,7 +9,6 @@
 //! element condition the term compiles to.
 
 use crate::{
-    dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
     q_predicate::{
         equality_term::equality_value,
@@ -18,7 +17,8 @@ use crate::{
         projection_probe::{Ca, of_attribute, projection_column, standing},
         sub_attribute::element_path::ElementPath,
     },
-    sub_attribute_key::{key::SubAttributeKey, operand_keys::operand_keys},
+    query_names::QueryNames,
+    sub_attribute_operand_keys::operand_keys,
 };
 use andromeda_ngsi_ld_query::filter::{
     path::QueryPath,
@@ -27,6 +27,7 @@ use andromeda_ngsi_ld_query::filter::{
 };
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::{operator::hash_key_array, pg_operator::PgBinaryOperator};
+use andromeda_postgresql_stored_values::sub_attribute_key::key::SubAttributeKey;
 use sea_query::{Query, SelectStatement};
 
 /// `SELECT "ca"."entity_key"` over the rows whose sub-attribute tree holds the
@@ -71,14 +72,10 @@ pub(crate) fn equality_candidates(pred: &Predicate, rows: &EntityRowRefs, names:
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        entity_row_refs::EntityRowRefs,
-        q_predicate::keyed_term::keyed_candidates,
-    };
+    use crate::{entity_row_refs::EntityRowRefs, q_predicate::keyed_term::keyed_candidates, query_names::QueryNames};
     use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, SelectStatement};
 

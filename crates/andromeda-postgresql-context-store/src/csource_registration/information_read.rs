@@ -15,9 +15,8 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
-use andromeda_postgresql_codes::entity_type_shape::EntityTypeShapeCode;
 use andromeda_postgresql_context_query::csr::registration_select::InformationRows;
-use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_shape::EntityTypeShapeCode};
 use sea_query::Iden;
 use sqlx::{Row, postgres::PgRow};
 use std::{collections::HashMap, hash::BuildHasher};

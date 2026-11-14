@@ -30,12 +30,6 @@ use crate::{
     },
     stream_shape_growth::shape_growth_statement,
 };
-use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
-use andromeda_postgresql_query::{
-    entity_sides::holds_evolution,
-    evolution_horizon::horizon_of,
-    history_source::entry_values::{attribute_entry_values, recorded_extent, scope_entry_values},
-};
 use andromeda_postgresql_schema::{
     current::Entities,
     queue::TemporalAppendIntents,
@@ -46,6 +40,12 @@ use andromeda_postgresql_seaquery::{
     branch::qualified,
     postgis::{bounding_box_contains, st_collect, st_collect_rows, st_envelope},
 };
+use andromeda_postgresql_stored_form::{
+    entity_sides::holds_evolution,
+    evolution_horizon::horizon_of,
+    history_entry_values::{attribute_entry_values, recorded_extent, scope_entry_values},
+};
+use andromeda_postgresql_stored_values::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_temporal_query::alias::{Ah, S, Te};
 use sea_query::{
     Condition,

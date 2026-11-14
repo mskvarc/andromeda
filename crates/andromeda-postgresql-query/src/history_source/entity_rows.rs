@@ -29,11 +29,8 @@
 //! yielded rather than from every member.
 
 use crate::{
-    dictionary::resolved_names::ResolvedNames,
-    entity_sides::holds_evolution,
     history_source::{HistoryBranch, PendingEntries, pending},
-    type_list_union::TypeListColumn,
-    type_membership::{Memberships, members_of_any},
+    type_membership::members_of_any,
     type_predicate::condition as type_condition,
 };
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
@@ -43,6 +40,8 @@ use andromeda_postgresql_schema::{
     type_membership::MembershipSide,
 };
 use andromeda_postgresql_seaquery::branch::qualified;
+use andromeda_postgresql_stored_form::{entity_sides::holds_evolution, memberships::Memberships, type_list_union::TypeListColumn};
+use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
 use sea_query::{Asterisk, Condition, Expr, ExprTrait, Iden, IntoIden, Order, Query, SelectStatement, SimpleExpr, TableRef, UnionType};
 
 /// Alias `re`: a recorded Temporal Evolution.
@@ -234,17 +233,14 @@ fn unretyped(mut rows: SelectStatement) -> SelectStatement {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        dictionary::resolved_names::ResolvedNames,
-        entity_type_name_key::EntityTypeNameKey,
-        history_source::{
-            HistoryBranch,
-            entity_rows::{WalkedKeys, entity_rows, holds_visible_evolution, type_member_rows},
-        },
+    use crate::history_source::{
+        HistoryBranch,
+        entity_rows::{WalkedKeys, entity_rows, holds_visible_evolution, type_member_rows},
     };
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use iri_rs::IriBuf;
     use sea_query::{Alias, Asterisk, IntoIden, Query, SelectStatement};
 

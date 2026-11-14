@@ -6,7 +6,7 @@
 //! none (clause 4.5.6).
 
 use crate::temporal_entry_record::TemporalEntryRecord;
-use andromeda_postgresql_codes::{temporal_entry_kind::TemporalEntryKind, temporal_intent_reach::TemporalIntentReach};
+use andromeda_postgresql_stored_values::{temporal_entry_kind::TemporalEntryKind, temporal_intent_reach::TemporalIntentReach};
 
 /// The entry codes a Scope entry is stored under: an event, or an assertion
 /// of the Scope in force.

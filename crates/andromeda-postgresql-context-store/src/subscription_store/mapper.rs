@@ -32,8 +32,8 @@ use andromeda_ngsi_ld_model::{
     },
 };
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, scope::query::ScopeQuery};
-use andromeda_postgresql_codes::{notification_trigger::NotificationTriggerCode, subscription_status::SubscriptionStatusCode};
 use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
+use andromeda_postgresql_stored_values::{notification_trigger::NotificationTriggerCode, subscription_status::SubscriptionStatusCode};
 use andromeda_subscription::{notifying_since::NotifyingSince, stored_subscription::StoredSubscription};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;

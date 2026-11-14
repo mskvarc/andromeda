@@ -19,8 +19,8 @@ use crate::{
     },
 };
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, tenant_database_name::TenantDatabaseName};
-use andromeda_postgresql_codes::tenant_status::TenantStatusCode;
 use andromeda_postgresql_seaquery::statement::Statement;
+use andromeda_postgresql_stored_values::tenant_status::TenantStatusCode;
 use andromeda_tenancy::provisional::{Establishment, Retirement};
 use chrono::{DateTime, Utc};
 use sqlx::{Postgres, Row, Transaction};

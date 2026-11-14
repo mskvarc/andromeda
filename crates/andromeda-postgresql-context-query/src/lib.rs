@@ -38,11 +38,12 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-postgresql-branch",
-        "andromeda-postgresql-codes",
         "andromeda-postgresql-encoding",
         "andromeda-postgresql-query",
         "andromeda-postgresql-schema",
         "andromeda-postgresql-seaquery",
+        "andromeda-postgresql-stored-form",
+        "andromeda-postgresql-stored-values",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-geometry",

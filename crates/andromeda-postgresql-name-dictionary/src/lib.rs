@@ -32,9 +32,9 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-lexicon",
         "andromeda-persistence-failure",
         "andromeda-postgresql-pool",
-        "andromeda-postgresql-query",
         "andromeda-postgresql-schema",
         "andromeda-postgresql-seaquery",
+        "andromeda-postgresql-stored-values",
         "andromeda-telemetry",
     ],
     allow_workspace_dev_dependencies: [
@@ -46,7 +46,7 @@ andromeda_architecture_checks::dependency_boundary! {
 mod port_contract_tests {
     use crate::{name_cache::NameCache, name_lookup::NameLookup};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
-    use andromeda_postgresql_query::dictionary::interned_name::InternedName;
+    use andromeda_postgresql_stored_values::interned_name::InternedName;
 
     /// Compiles only for a type that implements the dictionary port for `N`.
     fn assert_name_lookup<N: InternedName, T: NameLookup<N>>() {}

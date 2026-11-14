@@ -12,7 +12,7 @@
 use crate::{flatten::scalar_literal, stored_members::InstanceMembers, stored_value::StoredValue, sub_attribute::SubAttributeElement};
 use andromeda_ngsi_ld_entity::{attributes::Attributes, family_value::FamilyValue};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, reference::NgsiLdReference};
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
 use std::{collections::HashMap, sync::OnceLock};
 
 /// The keys of the names an Entity's attributes mention.
@@ -195,7 +195,7 @@ impl KeyNames {
 mod tests {
     use crate::name_keys::NameKeys;
     use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, reference::NgsiLdReference};
-    use andromeda_postgresql_query::{dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
+    use andromeda_postgresql_stored_values::{entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
 
     #[test]
     fn a_resolved_type_key_names_its_type_iri() {

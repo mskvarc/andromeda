@@ -38,8 +38,8 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::{predicate::CmpOp, scalar::Scalar};
-use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_seaquery::{literal::false_literal, numeric_special::is_not_nan};
+use andromeda_postgresql_stored_values::value_kind::ValueKind;
 use sea_query::{Expr as SeaExpr, ExprTrait, SimpleExpr};
 
 /// Compare one scalar against the typed column that holds values of its kind.

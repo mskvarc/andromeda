@@ -5,7 +5,7 @@
 //! number is decided.
 
 use andromeda_ngsi_ld_model::registration::status::CsrStatus;
-use andromeda_postgresql_codes::csr_status::CsrStatusCode;
+use andromeda_postgresql_stored_values::csr_status::CsrStatusCode;
 
 /// The registry member the store persists for a health status.
 #[must_use]
@@ -29,7 +29,7 @@ pub const fn status_of(code: CsrStatusCode) -> CsrStatus {
 mod tests {
     use crate::csource_registration::status_code::{status_of, stored_status};
     use andromeda_ngsi_ld_model::registration::status::CsrStatus;
-    use andromeda_postgresql_codes::csr_status::CsrStatusCode;
+    use andromeda_postgresql_stored_values::csr_status::CsrStatusCode;
     use pretty_assertions::assert_eq;
     use strum::IntoEnumIterator;
 

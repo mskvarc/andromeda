@@ -14,10 +14,10 @@
 //! source.
 
 use crate::intent_application::intent_source::{I, StagedSource, entry, intent, source_intents_as};
-use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
-use andromeda_postgresql_query::scope_assertion::{EVENT_COLUMNS, held_in_force, path_set};
 use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents, temporal::ScopeHistory, temporal_intent::TemporalEntry};
 use andromeda_postgresql_seaquery::{branch::qualified, unnest::unnest_of};
+use andromeda_postgresql_stored_form::scope_assertion::{EVENT_COLUMNS, held_in_force, path_set};
+use andromeda_postgresql_stored_values::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_temporal_query::alias::Te;
 use sea_query::{Condition, DynIden, Expr, ExprTrait, Iden, Query, SelectStatement, SimpleExpr, UnionType};
 
@@ -94,7 +94,7 @@ mod tests {
         intent_source::{EntryReads, IntentSource, StagedSource},
         scope_judgement::recorded_scope_entry,
     };
-    use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
+    use andromeda_postgresql_stored_values::temporal_intent_reach::TemporalIntentReach;
     use sea_query::{Alias, Asterisk, DynIden, IntoIden, PostgresQueryBuilder, Query};
 
     fn rendered(source: &IntentSource<'_>, schema: Option<&DynIden>) -> String {

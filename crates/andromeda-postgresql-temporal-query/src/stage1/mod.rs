@@ -60,11 +60,11 @@ use andromeda_ngsi_ld_query::{
     temporal::compiled::CompiledTemporalQuery,
 };
 use andromeda_postgresql_query::{
-    dictionary::query_names::QueryNames,
     entity_ordering::{entity_identifier_key, ordering_collation},
     error::RenderError,
     history_source::{BesideComparison, HistoryBranch},
     page_window::apply_identifier_window,
+    query_names::QueryNames,
 };
 use andromeda_postgresql_schema::current::{E, Entities};
 use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
@@ -239,7 +239,7 @@ mod tests {
         page_window::{PageStart, PageWindow},
         temporal::{compiled::CompiledTemporalQuery, ordering::TemporalEntityOrdering, window::TimeInterval},
     };
-    use andromeda_postgresql_query::{dictionary::query_names::QueryNames, history_source::HistoryBranch};
+    use andromeda_postgresql_query::{history_source::HistoryBranch, query_names::QueryNames};
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, SelectStatement};

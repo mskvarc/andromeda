@@ -32,9 +32,9 @@ use crate::{
         branch_rows::{branch_of_stored_key, branch_rows},
     },
 };
-use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
 use andromeda_postgresql_schema::maintenance::PostgresqlMaintenanceTargets;
 use andromeda_postgresql_seaquery::statement::Statement;
+use andromeda_postgresql_stored_values::maintenance_target::MaintenanceTargetCode;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, Iden, Order, Query, SelectStatement, UpdateStatement};
 use sqlx::{PgConnection, Row};

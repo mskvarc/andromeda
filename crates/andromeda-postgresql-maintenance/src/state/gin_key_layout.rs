@@ -17,9 +17,9 @@ use crate::{
         target_record::TARGET_GRAIN,
     },
 };
-use andromeda_postgresql_codes::maintenance_target::MaintenanceTargetCode;
 use andromeda_postgresql_schema::maintenance::PostgresqlMaintenanceTargets;
 use andromeda_postgresql_seaquery::statement::Statement;
+use andromeda_postgresql_stored_values::maintenance_target::MaintenanceTargetCode;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, Iden, InsertStatement, OnConflict, Query, Value};
 use sqlx::{PgConnection, Row, postgres::PgRow};

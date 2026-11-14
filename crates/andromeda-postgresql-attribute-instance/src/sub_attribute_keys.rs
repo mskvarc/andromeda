@@ -22,9 +22,9 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, time::value::TimeValue};
 use andromeda_ngsi_ld_number::declared_number::DeclaredNumber;
-use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_encoding::array_literal::IntegerArrayLiteral;
-use andromeda_postgresql_query::{
+use andromeda_postgresql_stored_values::{
+    attribute_kind::AttributeKind,
     attribute_name_key::AttributeNameKey,
     entity_type_name_key::EntityTypeNameKey,
     sub_attribute_key::{
@@ -181,11 +181,11 @@ mod tests {
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_number::JsonNumber;
-    use andromeda_postgresql_codes::attribute_kind::AttributeKind;
-    use andromeda_postgresql_query::{
+    use andromeda_postgresql_stored_values::{
+        attribute_kind::AttributeKind,
         attribute_name_key::AttributeNameKey,
-        dictionary::resolved_names::ResolvedNames,
         entity_type_name_key::EntityTypeNameKey,
+        resolved_names::ResolvedNames,
         sub_attribute_key::{
             key::{KeyedValue, SubAttributeKey, TextKind},
             path_hash::PathHash,

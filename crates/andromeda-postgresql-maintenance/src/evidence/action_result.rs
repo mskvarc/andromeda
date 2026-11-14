@@ -1,7 +1,7 @@
 //! How one maintenance action ended.
 
 use crate::action_policy::ActionVerdict;
-use andromeda_postgresql_codes::maintenance_action_result::MaintenanceActionResultCode;
+use andromeda_postgresql_stored_values::maintenance_action_result::MaintenanceActionResultCode;
 use strum::EnumIter;
 
 /// How the last maintenance action on a target ended.
@@ -49,7 +49,7 @@ impl ActionResult {
 #[cfg(test)]
 mod tests {
     use crate::evidence::action_result::ActionResult;
-    use andromeda_postgresql_codes::maintenance_action_result::MaintenanceActionResultCode;
+    use andromeda_postgresql_stored_values::maintenance_action_result::MaintenanceActionResultCode;
     use pretty_assertions::assert_eq;
     use strum::IntoEnumIterator;
 

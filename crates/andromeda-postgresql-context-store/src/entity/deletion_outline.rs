@@ -25,14 +25,13 @@ use andromeda_ngsi_ld_entity::reads::attribute_instance_key::AttributeInstanceKe
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::notification::{NotificationTrigger, effective_notification_triggers};
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_codes::{subscription_kind::SubscriptionKindCode, subscription_status::SubscriptionStatusCode};
-use andromeda_postgresql_query::dataset_key::DatasetKey;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, E, Entities, EntitySearch},
     name_dictionary::AttributeNames,
     subscriptions::Subscriptions,
 };
 use andromeda_postgresql_seaquery::{pg_operator::PgBinaryOperator, statement::Statement};
+use andromeda_postgresql_stored_values::{dataset_key::DatasetKey, subscription_kind::SubscriptionKindCode, subscription_status::SubscriptionStatusCode};
 use sea_query::{Expr, ExprTrait, Iden, JoinType, Query, SelectStatement, SimpleExpr};
 use sqlx::Row;
 use strum::IntoEnumIterator;

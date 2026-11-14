@@ -7,7 +7,7 @@ use crate::jsonld_context::{
 use andromeda_jsonld::context_cache::StoredDocumentSource;
 use andromeda_ngsi_ld_lexicon::identifier::{Identifier, IdentifierParseError};
 use andromeda_ngsi_ld_model::jsonld_context::ContextMetadata;
-use andromeda_postgresql_codes::{jsonld_context_kind::JsonldContextKindCode, registry::UnknownCompactCode};
+use andromeda_postgresql_stored_values::{jsonld_context_kind::JsonldContextKindCode, registry::UnknownCompactCode};
 use iri_rs::{InvalidIri, IriBuf};
 use thiserror::Error;
 use url::Url;
@@ -129,7 +129,7 @@ pub(crate) fn page_boundary<T>(rows: &[T], local_id: impl Fn(&T) -> &str) -> Res
 mod tests {
     use crate::jsonld_context::mapper::{ContextMapperError, page_boundary, row_document_source};
     use andromeda_jsonld::context_cache::StoredDocumentSource;
-    use andromeda_postgresql_codes::jsonld_context_kind::JsonldContextKindCode;
+    use andromeda_postgresql_stored_values::jsonld_context_kind::JsonldContextKindCode;
     use iri_rs::IriBuf;
 
     /// A download reads back with the URL it was finally read from, which is

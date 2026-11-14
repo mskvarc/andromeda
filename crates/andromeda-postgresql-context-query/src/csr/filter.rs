@@ -280,13 +280,13 @@ mod tests {
     use super::*;
     use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser};
     use andromeda_postgresql_query::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         entity_row_refs::EntityRowRefs,
         q_predicate::{instance_scan::InstanceScan, projection::compile},
+        query_names::QueryNames,
     };
     use andromeda_postgresql_schema::current::Entities;
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use andromeda_q_corpus::conformance::{COLOR, CONFORMANCE, NAME, SPEED};
     use sea_query::{Alias, Condition, PostgresQueryBuilder, Query, SelectStatement};
 

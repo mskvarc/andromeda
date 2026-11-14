@@ -14,10 +14,9 @@ use andromeda_postgresql_attribute_instance::{
     sub_attribute::{SubAttributeElement, SubAttributeRecord},
 };
 use andromeda_postgresql_branch::table_of;
-use andromeda_postgresql_codes::entity_key::EntityKey;
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dataset_key::DatasetKey, dictionary::resolved_names::ResolvedNames};
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::pg_array::{is_any_of, is_none_of};
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, dataset_key::DatasetKey, entity_key::EntityKey, resolved_names::ResolvedNames};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use sea_query::{Expr, Func, Iden, Query, SelectStatement, SimpleExpr};
@@ -195,8 +194,7 @@ mod tests {
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::projection::returned_attributes::ReturnedAttributes;
-    use andromeda_postgresql_codes::entity_key::EntityKey;
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_key::EntityKey, resolved_names::ResolvedNames};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use sea_query::{PostgresQueryBuilder, Value};

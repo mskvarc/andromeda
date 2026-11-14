@@ -32,7 +32,7 @@ use andromeda_postgresql_attribute_instance::{
 };
 use andromeda_postgresql_context_store::notification_delivery::{event_insert::insert_events_in_tx, rows::NewNotificationEvent};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sqlx::{Postgres, Transaction};
 
 /// One change, and every subscription the matcher found for it.
@@ -185,7 +185,7 @@ mod tests {
         notification::SysAttrsSnapshot,
     };
     use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames};
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use chrono::Utc;
     use serde_json::json;
     use std::{ptr, sync::Arc};

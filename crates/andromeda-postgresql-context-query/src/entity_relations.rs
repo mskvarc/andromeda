@@ -28,16 +28,19 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_query::{
-    dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
-    entity_sides::{holds_standing_state, not_expired},
-    type_membership::{Memberships, drives, members_of_any},
+    type_membership::{drives, members_of_any},
 };
 use andromeda_postgresql_schema::{
     current::{Entities, EntitySearch},
     type_membership::MembershipSide,
 };
 use andromeda_postgresql_seaquery::branch::qualified;
+use andromeda_postgresql_stored_form::{
+    entity_sides::{holds_standing_state, not_expired},
+    memberships::Memberships,
+};
+use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
 use sea_query::{DynIden, Expr, ExprTrait, Iden, IntoIden, JoinType, SelectStatement, SimpleExpr, TableRef};
 
 /// The type-membership walk a type-driven statement reads, `selected`.
@@ -262,9 +265,9 @@ mod tests {
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
-    use andromeda_postgresql_query::{dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
     use andromeda_postgresql_schema::current::Entities;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use sea_query::{Query, SelectStatement};

@@ -56,7 +56,7 @@ pub const Q_READING_BASELINE: &[(&str, usize)] = &[
     ("crates/andromeda-postgresql-query/src/q_predicate/sub_attribute/member_field.rs", 51),
     ("crates/andromeda-postgresql-query/src/q_predicate/typed_column.rs", 25),
     ("crates/andromeda-postgresql-query/src/q_predicate/value_object_member.rs", 10),
-    ("crates/andromeda-postgresql-query/src/sub_attribute_key/operand_keys.rs", 7),
+    ("crates/andromeda-postgresql-query/src/sub_attribute_operand_keys.rs", 7),
 ];
 
 /// Every production site outside the owner that matches on a `q` term's

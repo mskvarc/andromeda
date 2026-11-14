@@ -17,9 +17,8 @@ use andromeda_ngsi_ld_query::{
     temporal::compiled::CompiledTemporalQuery,
 };
 use andromeda_postgresql_query::{
-    attribute_name_key::AttributeNameKey,
-    dictionary::query_names::QueryNames,
-    history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, grain::HistoryGrain, scope_rows::scope_rows},
+    history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, scope_rows::scope_rows},
+    query_names::QueryNames,
     scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis},
     window_reach::WindowReach,
 };
@@ -28,6 +27,8 @@ use andromeda_postgresql_seaquery::{
     literal::int_literal,
     pg_array::{is_any_of, is_none_of},
 };
+use andromeda_postgresql_stored_form::history_grain::HistoryGrain;
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Condition, Expr, Query, SelectStatement, SimpleExpr};
 
 /// The condition an entity of the stage 1 `e` relation has to satisfy for the
@@ -104,12 +105,9 @@ mod tests {
         },
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_postgresql_query::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        history_source::HistoryBranch,
-    };
+    use andromeda_postgresql_query::{history_source::HistoryBranch, query_names::QueryNames};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use iri_rs::IriBuf;
     use sea_query::{Query, SelectStatement};
 

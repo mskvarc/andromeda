@@ -24,7 +24,6 @@
 
 use crate::{
     attribute_instance_correlation::{existence_marker, geometry_instances_of, instance_stored_geometry},
-    dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
     error::RenderError,
     location_instances::any_location_instance,
@@ -54,6 +53,7 @@ use andromeda_postgresql_seaquery::{
         validated_geom_from_ewkb,
     },
 };
+use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
 
 /// Render a geo query over the entity `rows` the enclosing statement filters.
@@ -206,13 +206,7 @@ fn near_expression(geo_col: SimpleExpr, ref_geom: SimpleExpr, max_distance: Opti
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::resolved_names::ResolvedNames,
-        entity_row_refs::EntityRowRefs,
-        error::RenderError,
-        geo_predicate::condition,
-    };
+    use crate::{entity_row_refs::EntityRowRefs, error::RenderError, geo_predicate::condition};
     use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
@@ -222,6 +216,7 @@ mod tests {
     use andromeda_postgresql_encoding::ewkb::encode;
     use andromeda_postgresql_schema::current::Entities;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::{assert_eq, assert_ne};
     use sea_query::{Alias, Condition, PostgresQueryBuilder, Query, SelectStatement, Value, Values};
     use std::{str::FromStr, sync::LazyLock};

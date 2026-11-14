@@ -5,7 +5,7 @@
 //! read back as an API: a query is read through the API that asks for it.
 
 use andromeda_posted_query::posted_query::PostedQueryKind;
-use andromeda_postgresql_codes::posted_query_kind::PostedQueryKindCode;
+use andromeda_postgresql_stored_values::posted_query_kind::PostedQueryKindCode;
 
 /// The registry member the store persists for a posted query's API.
 #[must_use]
@@ -20,7 +20,7 @@ pub const fn stored_kind(kind: PostedQueryKind) -> PostedQueryKindCode {
 mod tests {
     use crate::posted_query::kind_code::stored_kind;
     use andromeda_posted_query::posted_query::PostedQueryKind;
-    use andromeda_postgresql_codes::posted_query_kind::PostedQueryKindCode;
+    use andromeda_postgresql_stored_values::posted_query_kind::PostedQueryKindCode;
     use pretty_assertions::assert_eq;
     use strum::IntoEnumIterator;
 

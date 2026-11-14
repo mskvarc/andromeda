@@ -5,7 +5,7 @@
 //! number is decided.
 
 use andromeda_ngsi_ld_model::snapshot::SnapshotStatus;
-use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
+use andromeda_postgresql_stored_values::snapshot_status::SnapshotStatusCode;
 
 /// The registry member the store persists for a Snapshot status.
 #[must_use]
@@ -35,7 +35,7 @@ pub const fn status_of(code: SnapshotStatusCode) -> SnapshotStatus {
 mod tests {
     use crate::snapshot::status_code::{status_of, stored_status};
     use andromeda_ngsi_ld_model::snapshot::SnapshotStatus;
-    use andromeda_postgresql_codes::snapshot_status::SnapshotStatusCode;
+    use andromeda_postgresql_stored_values::snapshot_status::SnapshotStatusCode;
     use pretty_assertions::assert_eq;
     use strum::IntoEnumIterator;
 

@@ -1,7 +1,7 @@
 //! The value one scope-history row carries.
 
 use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
-use andromeda_postgresql_codes::scope_value_kind::ScopeValueKind;
+use andromeda_postgresql_stored_values::scope_value_kind::ScopeValueKind;
 use chrono::{DateTime, Utc};
 
 /// What one scope-history row records.
@@ -55,7 +55,7 @@ impl ScopeHistoryValue {
 mod tests {
     use crate::scope_history_value::ScopeHistoryValue;
     use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
-    use andromeda_postgresql_codes::scope_value_kind::ScopeValueKind;
+    use andromeda_postgresql_stored_values::scope_value_kind::ScopeValueKind;
     use chrono::{TimeZone, Utc};
 
     #[test]

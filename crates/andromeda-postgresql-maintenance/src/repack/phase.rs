@@ -1,6 +1,6 @@
 //! The phases one repack runs through.
 
-use andromeda_postgresql_codes::maintenance_repack_phase::MaintenanceRepackPhaseCode;
+use andromeda_postgresql_stored_values::maintenance_repack_phase::MaintenanceRepackPhaseCode;
 use andromeda_telemetry::maintenance::RepackPhaseLabel;
 
 /// One phase of a repack, in the order a run reaches them.
@@ -68,7 +68,7 @@ impl RepackPhase {
 #[cfg(test)]
 mod tests {
     use crate::repack::phase::RepackPhase;
-    use andromeda_postgresql_codes::maintenance_repack_phase::MaintenanceRepackPhaseCode;
+    use andromeda_postgresql_stored_values::maintenance_repack_phase::MaintenanceRepackPhaseCode;
     use pretty_assertions::assert_eq;
     use strum::IntoEnumIterator;
 

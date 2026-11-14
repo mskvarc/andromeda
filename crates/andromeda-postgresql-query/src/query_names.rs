@@ -1,8 +1,9 @@
 //! The dictionary keys and the catalogue facts one query resolves before it
 //! can be rendered.
 
-use crate::{dictionary::resolved_names::ResolvedNames, history_source::attribute_holders::AttributeHolders};
+use crate::history_source::attribute_holders::AttributeHolders;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
 
 /// Every dictionary key a compiled query renders against.
 ///

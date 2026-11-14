@@ -23,7 +23,7 @@ use andromeda_ngsi_ld_lexicon::time::time_of_day::NgsiLdTime;
 use andromeda_ngsi_ld_model::temporal::{AggregationAverage, AggregationMinMax, TemporalAggregationRow};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_attribute_instance::stored_number::StoredNumber;
-use andromeda_postgresql_codes::{
+use andromeda_postgresql_stored_values::{
     attribute_kind::AttributeKind,
     attribute_kind_code::attribute_type_of,
     recorded_shape::RecordedShape,
@@ -300,7 +300,7 @@ mod tests {
     use andromeda_ngsi_ld_model::temporal::AggregationMinMax;
     use andromeda_ngsi_ld_number::{JsonNumber, JsonNumberError, declared_number::NonFinite};
     use andromeda_postgresql_attribute_instance::stored_number::StoredNumber;
-    use andromeda_postgresql_codes::recorded_shape::RecordedShape;
+    use andromeda_postgresql_stored_values::recorded_shape::RecordedShape;
     use bigdecimal::BigDecimal;
     use std::str::FromStr;
 

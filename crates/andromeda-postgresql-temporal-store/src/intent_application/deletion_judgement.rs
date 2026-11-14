@@ -23,8 +23,8 @@
 //! that cost.
 
 use crate::intent_application::intent_source::{FirstTypedIntent, I, StagedSource, entry, intent};
-use andromeda_postgresql_codes::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_schema::{current::Entities, queue::TemporalAppendIntents, temporal_intent::TemporalEntry};
+use andromeda_postgresql_stored_values::temporal_entry_kind::TemporalEntryKind;
 use andromeda_postgresql_temporal_query::alias::Te;
 use sea_query::{Expr, ExprTrait, SimpleExpr};
 
@@ -56,7 +56,7 @@ mod tests {
         temporal_entry_record::tests::recorded_at,
     };
     use andromeda_context_commit::{write_id::WriteId, write_record::WriteRecord};
-    use andromeda_postgresql_codes::temporal_intent_reach::TemporalIntentReach;
+    use andromeda_postgresql_stored_values::temporal_intent_reach::TemporalIntentReach;
     use sea_query::{Asterisk, PostgresQueryBuilder, Query};
 
     fn rendered(source: &IntentSource<'_>, created: &[i64]) -> String {

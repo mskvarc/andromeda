@@ -9,19 +9,19 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_query::{
-    attribute_name_key::AttributeNameKey,
-    dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     history_source::{
         BesideComparison,
         EvolutionColumns,
         HistoryBranch,
         attribute_rows::{entity_attribute_rows, entity_stream_rows},
         axis::axis_window,
-        grain::HistoryGrain,
     },
+    query_names::QueryNames,
 };
 use andromeda_postgresql_schema::current::{E, Entities};
 use andromeda_postgresql_seaquery::{literal::int_literal, pg_array::is_any_of};
+use andromeda_postgresql_stored_form::history_grain::HistoryGrain;
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
 use sea_query::{Condition, DynIden, Expr as SeaExpr, IntoIden, SelectStatement};
 
 /// Build the correlated stream or history predicate shared by result and
@@ -92,7 +92,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::{count_policy::CountPolicy, page_window::PageWindow, temporal::window::TimeInterval};
-    use andromeda_postgresql_query::{dictionary::query_names::QueryNames, history_source::HistoryBranch};
+    use andromeda_postgresql_query::{history_source::HistoryBranch, query_names::QueryNames};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::{Alias, IntoIden, SelectStatement};
 

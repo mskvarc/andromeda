@@ -11,14 +11,15 @@ use andromeda_ngsi_ld_query::{
     temporal::compiled::CompiledTemporalQuery,
 };
 use andromeda_postgresql_query::{
-    dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     error::RenderError,
     history_source::HistoryBranch,
     operator::{PatternIndexes, pattern as pattern_predicate},
+    query_names::QueryNames,
     type_predicate::condition as type_condition,
 };
 use andromeda_postgresql_schema::current::{E, Entities};
 use andromeda_postgresql_seaquery::{literal::false_literal, pg_array::is_any_of};
+use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
 use sea_query::{Condition, Expr as SeaExpr};
 
 /// Whether the selectors' identifier patterns are tested on the Evolutions.
@@ -141,12 +142,9 @@ mod tests {
             window::TimeInterval,
         },
     };
-    use andromeda_postgresql_query::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-        history_source::HistoryBranch,
-    };
+    use andromeda_postgresql_query::{history_source::HistoryBranch, query_names::QueryNames};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use sea_query::{PostgresQueryBuilder, Value};
     use std::str::FromStr;
 

@@ -22,11 +22,11 @@ use andromeda_ngsi_ld_query::{
     temporal::{compiled::CompiledTemporalQuery, contributed_entities::ContributedEntities},
 };
 use andromeda_postgresql_query::{
-    dictionary::query_names::QueryNames,
     error::RenderError,
     history_source::HistoryBranch,
     id_pattern_trigrams::{ID_PATTERN_CANDIDATE_BOUND, ID_PATTERN_SHORT_WALK, trigram_pattern},
     one_time_gate::COUNT_CANDIDATE_BOUND,
+    query_names::QueryNames,
 };
 use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use sea_query::SelectStatement;

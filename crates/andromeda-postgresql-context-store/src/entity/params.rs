@@ -16,9 +16,8 @@ use crate::{
 };
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_encoding::array_literal::IntegerArrayLiteral;
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
 use chrono::{DateTime, Utc};
 use sqlx::types::Json;
 

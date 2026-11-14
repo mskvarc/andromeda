@@ -25,7 +25,6 @@ use crate::q_predicate::{
 };
 use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, target_language::LanguageSelector};
 use andromeda_ngsi_ld_vocabulary::keyword;
-use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_seaquery::{
     cast::cast,
     collation::{PostgresCollation, collate},
@@ -34,6 +33,7 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
+use andromeda_postgresql_stored_values::attribute_kind::AttributeKind;
 use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Func, Query, SelectStatement, SimpleExpr};
 
 /// The alias one unnested `languageMap` entry is read under.

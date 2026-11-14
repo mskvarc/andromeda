@@ -26,12 +26,13 @@ use andromeda_postgresql_attribute_instance::{
     stored_number::StoredNumber,
     sub_attribute::{EwkbGeometry, SubAttributeRecord},
 };
-use andromeda_postgresql_codes::{
+use andromeda_postgresql_stored_values::{
     attribute_kind_code::stored_attribute_kind,
+    entity_type_name_key::EntityTypeNameKey,
+    stored_scope_path::StoredScopePath,
     temporal_entry_kind::TemporalEntryKind,
     temporal_intent_reach::TemporalIntentReach,
 };
-use andromeda_postgresql_query::{entity_type_name_key::EntityTypeNameKey, ltree::StoredScopePath};
 use andromeda_temporal::{
     append_intent::{TemporalAppendEntry, TemporalAppendIntent},
     scope_observation::ScopeObservation,

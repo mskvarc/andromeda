@@ -31,8 +31,7 @@ use andromeda_ngsi_ld_lexicon::{
     uri::Uri,
 };
 use andromeda_ngsi_ld_model::temporal::structured_value::StructuredValue;
-use andromeda_postgresql_codes::value_kind::ValueKind;
-use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use andromeda_postgresql_stored_values::{entity_type_name_key::EntityTypeNameKey, value_kind::ValueKind};
 use cefact_units::UnitCode;
 
 /// The members only some families define, as stored.

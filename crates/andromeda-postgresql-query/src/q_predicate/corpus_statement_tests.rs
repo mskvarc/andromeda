@@ -7,18 +7,17 @@
 //! is fixed as its refusal.
 
 use crate::{
-    attribute_name_key::AttributeNameKey,
-    dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     entity_row_refs::EntityRowRefs,
-    entity_type_name_key::EntityTypeNameKey,
     history_source::{HistoryBranch, HistoryOf},
     q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, projection::compile},
+    query_names::QueryNames,
     window_reach::WindowReach,
 };
 use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{filter::language_matching::LanguageMatching, temporal::window::TimeInterval, term_expander::TermExpander};
 use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_seaquery::{assert_named_snapshot, assert_statement_snapshot};
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
 use andromeda_q_corpus::{
     case_filter::expanded_filter,
     corpus::CORPUS,

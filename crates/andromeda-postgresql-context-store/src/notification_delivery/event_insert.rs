@@ -417,12 +417,8 @@ mod tests {
         notification::SysAttrsSnapshot,
     };
     use andromeda_postgresql_attribute_instance::name_keys::NameKeys;
-    use andromeda_postgresql_query::{
-        attribute_name_key::AttributeNameKey,
-        dictionary::resolved_names::ResolvedNames,
-        entity_type_name_key::EntityTypeNameKey,
-    };
     use andromeda_postgresql_seaquery::external_arguments::ExternalArguments;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use chrono::{TimeZone, Utc};
     use sea_query::PostgresQueryBuilder;
 

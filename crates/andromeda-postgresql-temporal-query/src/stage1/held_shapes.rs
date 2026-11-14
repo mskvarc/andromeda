@@ -33,21 +33,20 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{dataset::DatasetFilter, temporal::compiled::CompiledTemporalQuery};
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
 use andromeda_postgresql_query::{
-    attribute_name_key::AttributeNameKey,
     dataset_predicate::dataset_condition,
-    dictionary::query_names::QueryNames,
     error::RenderError,
-    history_source::{BesideComparison, EvolutionColumns, HistoryBranch, HistoryOf, PendingEntries, attribute_rows::attribute_rows, grain::HistoryGrain},
+    history_source::{BesideComparison, EvolutionColumns, HistoryBranch, HistoryOf, PendingEntries, attribute_rows::attribute_rows},
     one_time_gate::{Candidates, materialized},
-    tombstone::carries_a_value,
+    query_names::QueryNames,
 };
 use andromeda_postgresql_schema::{
     current::{E, Entities},
     temporal::{AttributeHistory, TemporalAttributeStreams},
 };
 use andromeda_postgresql_seaquery::{branch::qualified, literal::int_literal};
+use andromeda_postgresql_stored_form::{history_grain::HistoryGrain, tombstone::carries_a_value};
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, attribute_name_key::AttributeNameKey, recorded_shape::RecordedShape};
 use sea_query::{Condition, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement, UnionType, WithClause};
 
 /// The name the statement projects the position of a carried combination
@@ -236,9 +235,9 @@ mod tests {
         dataset::DatasetSelector,
         temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
     };
-    use andromeda_postgresql_codes::{attribute_kind::AttributeKind, recorded_shape::RecordedShape};
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::query_names::QueryNames, history_source::HistoryBranch};
+    use andromeda_postgresql_query::{history_source::HistoryBranch, query_names::QueryNames};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, attribute_name_key::AttributeNameKey, recorded_shape::RecordedShape};
     use sea_query::{Alias, IntoIden, SelectStatement};
 
     /// A `String` recorded as a `Property` under the attribute keyed 7.

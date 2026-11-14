@@ -8,7 +8,7 @@
 
 use crate::{entity::stored_entity_error::StoredEntityError, error::ContextStoreError};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName, identifier::Identifier};
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, attribute_kind_code::attribute_type_of, entity_key::EntityKey};
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, attribute_kind_code::attribute_type_of, entity_key::EntityKey};
 use std::str::FromStr;
 
 /// Parse a stored entity identifier into a [`Identifier`].

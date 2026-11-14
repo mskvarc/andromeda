@@ -12,12 +12,12 @@ use andromeda_ngsi_ld_model::{
     time_interval::TimeInterval,
 };
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
-use andromeda_postgresql_query::ltree::StoredScopePath;
 use andromeda_postgresql_schema::csr::{Csr, RegistrationDeliveryState};
 use andromeda_postgresql_seaquery::{
     clock::now,
     postgis::{repaired_when_invalid, st_geom_from_ewkb},
 };
+use andromeda_postgresql_stored_values::stored_scope_path::StoredScopePath;
 use andromeda_registration::{error::RegistrationError, store::forwarding_outcome::ForwardingOutcome};
 use chrono::{DateTime, Utc};
 use sea_query::{Expr as SeaExpr, ExprTrait, InsertStatement, Query, SimpleExpr, UpdateStatement};

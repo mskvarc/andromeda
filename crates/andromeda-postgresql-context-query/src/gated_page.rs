@@ -40,10 +40,10 @@ use andromeda_ngsi_ld_query::{
     read_order::ReadOrder,
 };
 use andromeda_postgresql_query::{
-    dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
     error::RenderError,
     one_time_gate::{CandidateBound, Candidates, ShortWalkMatches, column_of, count_of, materialized, within, wrapped},
+    query_names::QueryNames,
 };
 use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_seaquery::aggregate::count_over_all;

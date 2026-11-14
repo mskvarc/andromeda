@@ -17,13 +17,13 @@
 
 use crate::stage1::{contributed_candidates::contributed_candidates, queued_candidates::queued_candidates};
 use andromeda_ngsi_ld_query::{scope::query::ScopeQuery, temporal::contributed_entities::ContributedEntities};
-use andromeda_postgresql_codes::scope_value_kind::ScopeValueKind;
 use andromeda_postgresql_query::{
     history_source::{HistoryBranch, PendingEntries},
     scope_predicate::{ScopeTarget, pattern_condition},
 };
 use andromeda_postgresql_schema::{current::Entities, temporal::ScopeHistory};
 use andromeda_postgresql_seaquery::branch::qualified;
+use andromeda_postgresql_stored_values::scope_value_kind::ScopeValueKind;
 use sea_query::{Condition, Expr, ExprTrait, JoinType, Query, SelectStatement, UnionType};
 
 /// How many Evolutions a Scope page walks before it reads the candidates:

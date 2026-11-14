@@ -18,9 +18,13 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_model::temporal::structured_value_codec::StoredValueError;
 use andromeda_ngsi_ld_number::JsonNumberError;
 use andromeda_postgresql_attribute_instance::{assemble::AssemblyError, stored_members::StoredInstanceError};
-use andromeda_postgresql_codes::{registry::UnknownCompactCode, stored_unit_code::UnknownStoredUnitCode, value_kind::ValueKind};
 use andromeda_postgresql_encoding::ewkb::EwkbError;
-use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use andromeda_postgresql_stored_values::{
+    entity_type_name_key::EntityTypeNameKey,
+    registry::UnknownCompactCode,
+    stored_unit_code::UnknownStoredUnitCode,
+    value_kind::ValueKind,
+};
 use langtag::InvalidLangTag;
 use strum::{Display, IntoStaticStr};
 use thiserror::Error;

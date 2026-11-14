@@ -33,8 +33,12 @@ use andromeda_ngsi_ld_lexicon::{
     },
 };
 use andromeda_ngsi_ld_model::temporal::structured_value_codec::StoredValueError;
-use andromeda_postgresql_codes::{attribute_kind_code::attribute_type_of, value_kind::ValueKind};
-use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
+use andromeda_postgresql_stored_values::{
+    attribute_kind_code::attribute_type_of,
+    attribute_name_key::AttributeNameKey,
+    entity_type_name_key::EntityTypeNameKey,
+    value_kind::ValueKind,
+};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use thiserror::Error;

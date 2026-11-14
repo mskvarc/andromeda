@@ -9,11 +9,11 @@
 use crate::history_source::{
     HistoryBranch,
     PendingEntries,
-    grain::HistoryGrain,
     pending::{ATTRIBUTE_KINDS, entry_kind_in},
 };
 use andromeda_postgresql_schema::{queue::TemporalAppendEntries, temporal_intent::TemporalEntry};
 use andromeda_postgresql_seaquery::literal::int_literal;
+use andromeda_postgresql_stored_form::history_grain::HistoryGrain;
 use sea_query::{Condition, Expr, ExprTrait, Iden, Query, SelectStatement, SimpleExpr};
 
 /// Alias `pr`: a queued entry that replaces another row.

@@ -26,14 +26,13 @@
 //! another kind closes a walk, which keeps the probes on their indexes. The
 //! probes run once, in a materialised CTE every gate of the statement reads.
 
-use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_query::{
-    attribute_name_key::AttributeNameKey,
     entity_row_refs::EntityRowRefs,
     q_predicate::projection_probe::{Ca, of_attribute, projection_column},
 };
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::literal::int_literal;
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, value_kind::ValueKind};
 use sea_query::{Condition, Expr, ExprTrait, Iden, Order, Query, SelectStatement, SimpleExpr};
 
 /// The CTE holding, for each value column, whether an instance of the
@@ -172,9 +171,9 @@ fn occupied_probe(rows: &EntityRowRefs, attribute: AttributeNameKey, column: Hel
 #[cfg(test)]
 mod tests {
     use crate::occupied_columns::{HeldColumn, Probe, held_alone, occupied_columns};
-    use andromeda_postgresql_codes::value_kind::ValueKind;
-    use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs};
+    use andromeda_postgresql_query::entity_row_refs::EntityRowRefs;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, value_kind::ValueKind};
     use pretty_assertions::assert_eq;
     use sea_query::{Query, SelectStatement};
 

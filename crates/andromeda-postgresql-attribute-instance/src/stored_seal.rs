@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_entity::{
 };
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, reference::NgsiLdReference};
 use andromeda_ngsi_ld_model::temporal::structured_value::StructuredValue;
-use andromeda_postgresql_codes::value_kind::ValueKind;
+use andromeda_postgresql_stored_values::value_kind::ValueKind;
 use cefact_units::UnitCode;
 use indexmap::IndexMap;
 

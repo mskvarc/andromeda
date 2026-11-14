@@ -1,7 +1,7 @@
 //! The Scopes one entity's search row is matched by and read back from.
 
 use andromeda_ngsi_ld_lexicon::scope::path::ScopePath;
-use andromeda_postgresql_query::ltree::StoredScopePath;
+use andromeda_postgresql_stored_values::stored_scope_path::StoredScopePath;
 use sqlx::types::Json;
 
 /// One entity's Scopes as its search row stores them (clause 4.18): the

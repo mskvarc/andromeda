@@ -21,10 +21,10 @@ use andromeda_ngsi_ld_query::{
     read_order::ReadOrder,
 };
 use andromeda_postgresql_query::{
-    dictionary::query_names::QueryNames,
     entity_row_refs::EntityRowRefs,
     error::RenderError,
     q_predicate::keyed_term::{KeyedCandidates, keyed_candidates},
+    query_names::QueryNames,
 };
 use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
 use sea_query::{Condition, DynIden, Query, SelectStatement};

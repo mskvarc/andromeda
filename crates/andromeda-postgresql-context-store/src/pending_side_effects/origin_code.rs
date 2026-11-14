@@ -6,7 +6,7 @@
 //! fails to compile here, where its stored number is decided.
 
 use andromeda_ngsi_ld_model::notification::ChangeOrigin;
-use andromeda_postgresql_codes::change_origin::ChangeOriginCode;
+use andromeda_postgresql_stored_values::change_origin::ChangeOriginCode;
 
 /// The registry member the schema persists for an origin.
 #[must_use]
@@ -30,7 +30,7 @@ pub(crate) const fn origin_of(code: ChangeOriginCode) -> ChangeOrigin {
 mod tests {
     use crate::pending_side_effects::origin_code::{origin_of, stored_origin};
     use andromeda_ngsi_ld_model::notification::ChangeOrigin;
-    use andromeda_postgresql_codes::change_origin::ChangeOriginCode;
+    use andromeda_postgresql_stored_values::change_origin::ChangeOriginCode;
 
     #[test]
     fn every_change_origin_survives_a_round_trip_through_its_stored_number() {

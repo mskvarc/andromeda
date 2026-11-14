@@ -19,10 +19,9 @@ use andromeda_ngsi_ld_query::{
     identifier_axis::IdentifierAxis,
 };
 use andromeda_postgresql_query::{
-    dictionary::resolved_names::ResolvedNames,
     entity_row_refs::EntityRowRefs,
     operator::{PatternIndexes, pattern as pattern_predicate},
-    type_membership::{Memberships, membership},
+    type_membership::membership,
     type_predicate::condition as type_condition,
 };
 use andromeda_postgresql_schema::{
@@ -30,6 +29,8 @@ use andromeda_postgresql_schema::{
     type_membership::MembershipSide,
 };
 use andromeda_postgresql_seaquery::pg_array::is_any_of;
+use andromeda_postgresql_stored_form::memberships::Memberships;
+use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
 use sea_query::Condition;
 
 /// How a selector's type is tested.
@@ -122,8 +123,9 @@ mod tests {
         pattern::Pattern,
         type_selection::grammar::TypeExpr,
     };
-    use andromeda_postgresql_query::{dictionary::resolved_names::ResolvedNames, entity_row_refs::EntityRowRefs, entity_type_name_key::EntityTypeNameKey};
+    use andromeda_postgresql_query::entity_row_refs::EntityRowRefs;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::{entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use iri_rs::IriBuf;
     use sea_query::{Alias, Condition, Expr, Query, SelectStatement};
 

@@ -9,7 +9,8 @@
 //! it can drive from a bitmap over every term's index, while a disjunction of
 //! separate `EXISTS` can only be evaluated as a filter over every entity row.
 
-use crate::{attribute_name_key::AttributeNameKey, q_predicate::instance_scan::InstanceScan};
+use crate::q_predicate::instance_scan::InstanceScan;
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Condition, SimpleExpr};
 
 /// One Query Term as a condition over one instance of one attribute.
@@ -95,7 +96,6 @@ impl Disjunction {
 #[cfg(test)]
 mod tests {
     use crate::{
-        attribute_name_key::AttributeNameKey,
         entity_row_refs::EntityRowRefs,
         q_predicate::{
             instance_scan::InstanceScan,
@@ -103,6 +103,7 @@ mod tests {
         },
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
     use sea_query::{Alias, Condition, Expr, ExprTrait, PostgresQueryBuilder, Query, SelectStatement};
 
     fn render(condition: Condition) -> SelectStatement {

@@ -1,5 +1,5 @@
 [package]
-name = "andromeda-postgresql-codes"
+name = "andromeda-postgresql-stored-values"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,7 +7,7 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 publish.workspace = true
-description = "The encodings Andromeda's PostgreSQL schema persists rows by"
+description = "The codes, keys and encodings Andromeda's PostgreSQL schema persists rows by"
 
 [lints]
 workspace = true
@@ -15,11 +15,14 @@ workspace = true
 [dependencies]
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-postgresql-schema.workspace = true
+bigdecimal = "0.4.11"
 cefact-units = "1.0.0"
-derive_more = { version = "2.1.1", features = ["display"] }
+chrono = "0.4.45"
+derive_more = { version = "2.1.1", features = ["display", "from"] }
 semver = "1.0.28"
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.21"
+xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

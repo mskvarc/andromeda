@@ -45,15 +45,17 @@ use andromeda_postgresql_attribute_instance::{
     stored_number::StoredNumber,
     sub_attribute::{SubAttributeElement, SubAttributeRecord},
 };
-use andromeda_postgresql_codes::{
+use andromeda_postgresql_encoding::ewkb::Ewkb;
+use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
+use andromeda_postgresql_stored_form::history_grain::HistoryGrain;
+use andromeda_postgresql_stored_values::{
     attribute_kind::AttributeKind,
     attribute_kind_code::attribute_type_of,
+    dataset_key::DatasetKey,
+    entity_type_name_key::EntityTypeNameKey,
     stored_unit_code::unit_code_from_stored,
     value_kind::ValueKind,
 };
-use andromeda_postgresql_encoding::ewkb::Ewkb;
-use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
-use andromeda_postgresql_query::{dataset_key::DatasetKey, entity_type_name_key::EntityTypeNameKey, history_source::grain::HistoryGrain};
 use andromeda_temporal::port::history_reader::TemporalHistoryObservation;
 use cefact_units::UnitCode;
 use langtag::LangTagBuf;
@@ -409,11 +411,13 @@ mod tests {
         stored_value::StoredValue,
         sub_attribute::SubAttributeElement,
     };
-    use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stored_unit_code::UnknownStoredUnitCode};
     use andromeda_postgresql_name_dictionary::name_lookup::{NameLookup, NameLookupError};
-    use andromeda_postgresql_query::{
+    use andromeda_postgresql_stored_values::{
+        attribute_kind::AttributeKind,
         attribute_name_key::AttributeNameKey,
-        dictionary::{interned_name::InternedName, resolved_names::ResolvedNames},
+        interned_name::InternedName,
+        resolved_names::ResolvedNames,
+        stored_unit_code::UnknownStoredUnitCode,
     };
     use andromeda_temporal::port::history_reader::TemporalHistoryObservation;
     use chrono::{TimeZone, Utc};

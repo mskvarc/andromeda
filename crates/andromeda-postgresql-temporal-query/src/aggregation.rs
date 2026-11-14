@@ -36,10 +36,8 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::aggr_method::AggrMethod;
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, window::TimeInterval};
 use andromeda_postgresql_query::{
-    dataset_key::is_default_instance,
-    dictionary::query_names::QueryNames,
-    history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, axis::axis_column, grain::HistoryGrain},
-    tombstone::carries_a_value,
+    history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, axis::axis_column},
+    query_names::QueryNames,
 };
 use andromeda_postgresql_schema::{name_dictionary::AttributeNames, temporal::AttributeHistory};
 use andromeda_postgresql_seaquery::{
@@ -48,6 +46,7 @@ use andromeda_postgresql_seaquery::{
     literal::int_literal,
     pg_type::PostgresType,
 };
+use andromeda_postgresql_stored_form::{default_instance::is_default_instance, history_grain::HistoryGrain, tombstone::carries_a_value};
 use sea_query::{
     Alias,
     Asterisk,
@@ -406,8 +405,8 @@ mod tests {
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_postgresql_query::{
-        dictionary::query_names::QueryNames,
         history_source::{HistoryBranch, HistoryOf},
+        query_names::QueryNames,
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use chrono::{DateTime, Utc};

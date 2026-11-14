@@ -11,8 +11,7 @@ use andromeda_ngsi_ld_lexicon::{
     time::date_time::NgsiLdDateTimeError,
 };
 use andromeda_postgresql_attribute_instance::{assemble::AssemblyError, stored_members::StoredInstanceError};
-use andromeda_postgresql_codes::{entity_key::EntityKeyOutOfRange, registry::UnknownCompactCode};
-use andromeda_postgresql_query::entity_type_name_key::EntityTypeNameKey;
+use andromeda_postgresql_stored_values::{entity_key::EntityKeyOutOfRange, entity_type_name_key::EntityTypeNameKey, registry::UnknownCompactCode};
 use thiserror::Error;
 
 /// A stored Entity or census column that does not parse back into its domain

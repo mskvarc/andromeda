@@ -68,7 +68,6 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_number::declared_number::DeclaredNumber;
 use andromeda_ngsi_ld_query::filter::scalar::Scalar;
 use andromeda_ngsi_ld_vocabulary::keyword;
-use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_schema::name_dictionary::EntityTypeNames;
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -77,6 +76,7 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
+use andromeda_postgresql_stored_values::attribute_kind::AttributeKind;
 use sea_query::{CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Query, QueryStatementBuilder, SimpleExpr};
 
 /// Whether the structured value in `column` carries `scalar` as its clause 4.9

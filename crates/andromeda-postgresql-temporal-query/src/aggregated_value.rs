@@ -21,7 +21,6 @@
 //! or a maximum that was never observed.
 
 use crate::{alias::Ah, structured_json::structured_json, value_text::value_text};
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
 use andromeda_postgresql_schema::temporal::AttributeHistory;
 use andromeda_postgresql_seaquery::{
     cast::cast,
@@ -31,6 +30,7 @@ use andromeda_postgresql_seaquery::{
     numeric_special::finite_numeric,
     pg_type::PostgresType,
 };
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, value_kind::ValueKind};
 use sea_query::{CaseStatement, Expr, ExprTrait, Func, SimpleExpr};
 
 /// The families whose every value-derived aggregate the tables mark N/A.

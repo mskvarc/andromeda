@@ -21,8 +21,7 @@ use andromeda_ngsi_ld_query::{
     pattern::Pattern,
     portable_pattern::{PortablePattern, RenderingRevision},
 };
-use andromeda_postgresql_codes::entity_type_shape::EntityTypeShapeCode;
-use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_shape::EntityTypeShapeCode};
 use indexmap::IndexSet;
 use std::{collections::HashMap, hash::BuildHasher};
 
@@ -322,8 +321,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::registration::info::RegistrationInfo;
     use andromeda_ngsi_ld_query::portable_pattern::PortablePattern;
-    use andromeda_postgresql_codes::entity_type_shape::EntityTypeShapeCode;
-    use andromeda_postgresql_query::attribute_name_key::AttributeNameKey;
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_shape::EntityTypeShapeCode};
     use pretty_assertions::assert_eq;
     use serde_json::{Value, json};
     use std::collections::HashMap;

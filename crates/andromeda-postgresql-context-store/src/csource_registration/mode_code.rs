@@ -5,7 +5,7 @@
 //! decided.
 
 use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
-use andromeda_postgresql_codes::csr_mode::CsrModeCode;
+use andromeda_postgresql_stored_values::csr_mode::CsrModeCode;
 
 /// The registry member the store persists for a forwarding mode.
 #[must_use]
@@ -33,7 +33,7 @@ pub const fn mode_of(code: CsrModeCode) -> ForwardingMode {
 mod tests {
     use crate::csource_registration::mode_code::{mode_of, stored_mode};
     use andromeda_ngsi_ld_model::registration::forwarding_mode::ForwardingMode;
-    use andromeda_postgresql_codes::csr_mode::CsrModeCode;
+    use andromeda_postgresql_stored_values::csr_mode::CsrModeCode;
     use pretty_assertions::assert_eq;
     use strum::IntoEnumIterator;
 

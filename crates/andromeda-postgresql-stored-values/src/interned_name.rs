@@ -49,7 +49,7 @@ impl InternedName for EntityTypeName {
 
 #[cfg(test)]
 mod tests {
-    use crate::{attribute_name_key::AttributeNameKey, dictionary::interned_name::InternedName, entity_type_name_key::EntityTypeNameKey};
+    use crate::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, interned_name::InternedName};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 
     #[test]

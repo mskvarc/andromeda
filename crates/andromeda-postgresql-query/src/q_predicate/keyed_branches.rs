@@ -8,13 +8,12 @@
 //! a bounded read stops at the first branches that fill the bound.
 
 use crate::{
-    attribute_name_key::AttributeNameKey,
     entity_row_refs::EntityRowRefs,
     q_predicate::projection_probe::{Ca, of_attribute, projection_column, standing},
 };
-use andromeda_postgresql_codes::attribute_kind::AttributeKind;
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::literal::int_literal;
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, attribute_name_key::AttributeNameKey};
 use sea_query::{Alias, Condition, ExprTrait, Query, SelectStatement, SimpleExpr, UnionType};
 
 /// The name the union of the branches is read under.
@@ -64,11 +63,11 @@ pub(crate) fn union_of(branches: impl IntoIterator<Item = SelectStatement>) -> O
 #[cfg(test)]
 mod tests {
     use crate::{
-        attribute_name_key::AttributeNameKey,
         entity_row_refs::EntityRowRefs,
         q_predicate::keyed_branches::{branch, language_property_rows, union_of},
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
     use sea_query::{Condition, SelectStatement, SimpleExpr};
 
     fn rows_branch(held: Option<SimpleExpr>) -> SelectStatement {

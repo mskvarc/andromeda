@@ -8,7 +8,7 @@ use crate::notification_delivery::change_code::{change_kind_of, lifecycle_of};
 use andromeda_ngsi_ld_entity::reads::{attribute_change::AttributeChange, attribute_instance_key::AttributeInstanceKey};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::IdentifierParseError};
 use andromeda_ngsi_ld_model::{entity_change::EntityChange, notification::SysAttrsSnapshot};
-use andromeda_postgresql_codes::{attribute_change_kind::AttributeChangeKindCode, entity_lifecycle::EntityLifecycleCode, registry::UnknownCompactCode};
+use andromeda_postgresql_stored_values::{attribute_change_kind::AttributeChangeKindCode, entity_lifecycle::EntityLifecycleCode, registry::UnknownCompactCode};
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 

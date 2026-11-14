@@ -25,12 +25,9 @@ use andromeda_postgresql_context_query::{
     entity_total::EntityTotal,
 };
 use andromeda_postgresql_pool::pool_share::PoolLane;
-use andromeda_postgresql_query::{
-    dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
-    projected_attribute_names::projected_attribute_names,
-    projected_type_names::projected_type_names,
-};
+use andromeda_postgresql_query::{projected_attribute_names::projected_attribute_names, projected_type_names::projected_type_names, query_names::QueryNames};
 use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
+use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
 use iri_rs::IriBuf;
 use sea_query::SelectStatement;
 use sqlx::{Row, postgres::PgRow};
