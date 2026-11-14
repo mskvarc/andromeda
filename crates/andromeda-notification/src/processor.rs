@@ -545,7 +545,7 @@ mod tests {
         let sub = make_sub(
             "sub1",
             vec![EntitySelector {
-                id: Some("urn:ngsi-ld:Vehicle:A1".parse().expect("valid id")),
+                id: Some(vec!["urn:ngsi-ld:Vehicle:A1".parse().expect("valid id")]),
                 id_pattern: Some("urn:ngsi-ld:Parking:.*".parse().expect("valid pattern")),
                 type_: "Vehicle".parse().expect("valid type expression"),
             }],
@@ -593,7 +593,7 @@ mod tests {
         let sub = make_sub(
             "sub1",
             vec![EntitySelector {
-                id: Some("urn:ngsi-ld:Vehicle:A1".parse().expect("valid uri")),
+                id: Some(vec!["urn:ngsi-ld:Vehicle:A1".parse().expect("valid uri")]),
                 id_pattern: None,
                 type_: "Vehicle".parse().expect("valid type expression"),
             }],
@@ -609,7 +609,7 @@ mod tests {
         let sub = make_sub(
             "sub1",
             vec![EntitySelector {
-                id: Some("urn:ngsi-ld:Vehicle:B2".parse().expect("valid uri")),
+                id: Some(vec!["urn:ngsi-ld:Vehicle:B2".parse().expect("valid uri")]),
                 id_pattern: None,
                 type_: "Vehicle".parse().expect("valid type expression"),
             }],

@@ -53,10 +53,10 @@ pub struct EntitySpecification<'spec> {
 impl<'spec> EntitySpecification<'spec> {
     /// The specification a subscription's `EntitySelector` (clause 5.2.33) is.
     #[must_use]
-    pub const fn from_selector(selector: &'spec EntitySelector) -> EntitySpecification<'spec> {
+    pub fn from_selector(selector: &'spec EntitySelector) -> EntitySpecification<'spec> {
         EntitySpecification {
             types: TypeConstraint::Selector(&selector.type_),
-            ids: selector.id.as_slice(),
+            ids: selector.id.as_deref().unwrap_or_default(),
             id_pattern: selector.id_pattern.as_ref(),
         }
     }

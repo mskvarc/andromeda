@@ -24,6 +24,7 @@ use crate::{
     registration::info::RegistrationInfo,
     subscription::entity_selector::EntitySelector,
 };
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, type_selection::grammar::TypeExprRaw};
 use std::slice;
 
@@ -78,17 +79,24 @@ fn narrowed_selector(selector: &EntitySelector, info: &EntityInfo) -> Option<Ent
         // constraint, and a selector identifier the registration admits is
         // already the narrower one.
         (IdentifierAxis::Any | IdentifierAxis::Pattern(_), IdentifierAxis::Any) => (selector.id.clone(), selector.id_pattern.clone()),
+        // Of several selector identifiers, only those the registration admits
+        // reach the source.
         (IdentifierAxis::Ids(ids), registered) => {
-            if !ids.iter().any(|id| registered.admits(id)) {
+            let admitted: Vec<Identifier> = ids.iter().filter(|id| registered.admits(id)).cloned().collect();
+            if admitted.is_empty() {
                 return None;
             }
-            (selector.id.clone(), selector.id_pattern.clone())
+            (Some(admitted), selector.id_pattern.clone())
         }
         // The registered identifier is narrower than a selector constraining
         // none, or than a selector pattern matching it.
-        (IdentifierAxis::Any, IdentifierAxis::Ids(registered)) => (registered.first().cloned(), None),
+        (IdentifierAxis::Any, IdentifierAxis::Ids(registered)) => (Some(registered.to_vec()), None),
         (IdentifierAxis::Pattern(pattern), IdentifierAxis::Ids(registered)) => {
-            (Some(registered.iter().find(|id| pattern.is_match(id.as_str()))?.clone()), None)
+            let matched: Vec<Identifier> = registered.iter().filter(|id| pattern.is_match(id.as_str())).cloned().collect();
+            if matched.is_empty() {
+                return None;
+            }
+            (Some(matched), None)
         }
         (IdentifierAxis::Any | IdentifierAxis::Pattern(_), IdentifierAxis::Pattern(registered)) => (None, Some(registered.clone())),
     };
@@ -223,6 +231,29 @@ mod tests {
                 json!([{"entities": [{"type": VEHICLE, "idPattern": "^urn:ngsi-ld:Vehicle:"}]}])
             ),
             Some(json!([written]))
+        );
+    }
+
+    /// Clause 4.3.6.1: of a selector's `id` array (Table 5.2.33-1), only the
+    /// identifiers the registration admits reach the source, and a selector
+    /// whose identifiers it admits none of is not placed.
+    #[test]
+    fn an_id_array_reaches_the_source_narrowed_to_the_registered_identifiers() {
+        let subscribed = json!([{"type": VEHICLE, "id": ["urn:ngsi-ld:Vehicle:1", SEVEN, "urn:ngsi-ld:Vehicle:8"]}]);
+        pretty_assertions::assert_eq!(
+            reduced(&subscribed, json!([{"entities": [{"type": VEHICLE, "id": SEVEN}]}])),
+            Some(json!([{"type": VEHICLE, "id": SEVEN}]))
+        );
+        pretty_assertions::assert_eq!(
+            reduced(
+                &subscribed,
+                json!([{"entities": [{"type": VEHICLE, "idPattern": "^urn:ngsi-ld:Vehicle:[78]$"}]}])
+            ),
+            Some(json!([{"type": VEHICLE, "id": [SEVEN, "urn:ngsi-ld:Vehicle:8"]}]))
+        );
+        pretty_assertions::assert_eq!(
+            reduced(&subscribed, json!([{"entities": [{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:9"}]}])),
+            Some(json!([]))
         );
     }
 

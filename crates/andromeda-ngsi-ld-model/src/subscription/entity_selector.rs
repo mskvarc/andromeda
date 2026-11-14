@@ -1,19 +1,30 @@
 //! The entity selector of a subscription (ETSI GS CIM 009 clause 5.2.33) and
 //! the one reading of which entities it selects.
 
+use crate::query::entity_selector::{deserialize_optional_ids, serialize_optional_ids};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{identifier_axis::IdentifierAxis, pattern::Pattern, type_selection::grammar::TypeExprRaw};
 use serde::{Deserialize, Serialize};
 
 /// Entity selector for subscriptions (ETSI GS CIM 009 clause 5.2.33).
 ///
-/// Selects entities by type and optionally by id or id pattern.
+/// Selects entities by type and optionally by id or id pattern. Table 5.2.33-1
+/// lists every member the selector has, so a member outside them is refused.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EntitySelector {
-    /// Exact entity id to match.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<Identifier>,
+    /// The entity identifiers the selector admits.
+    ///
+    /// Table 5.2.33-1 types `id` as "String or String[]": one identifier is
+    /// read from a String and written back as one, several from and to an
+    /// array.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_ids",
+        serialize_with = "serialize_optional_ids"
+    )]
+    pub id: Option<Vec<Identifier>>,
     /// Regular expression the entity id must match (clause 5.2.33).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id_pattern: Option<Pattern>,
@@ -30,8 +41,8 @@ impl EntitySelector {
     /// What this selector constrains about the entity identifier, `id` taking
     /// precedence over `idPattern` (clauses 5.2.8 and 5.2.33).
     #[must_use]
-    pub const fn identifier_axis(&self) -> IdentifierAxis<'_> {
-        IdentifierAxis::of(self.id.as_slice(), self.id_pattern.as_ref())
+    pub fn identifier_axis(&self) -> IdentifierAxis<'_> {
+        IdentifierAxis::of(self.id.as_deref().unwrap_or_default(), self.id_pattern.as_ref())
     }
 
     /// Whether this selector selects the entity typed `types` and identified
@@ -87,5 +98,47 @@ mod tests {
         let named = selector(json!({"type": "Vehicle", "id": "urn:ngsi-ld:Vehicle:B1", "idPattern": "^urn:ngsi-ld:Vehicle:A"}));
         assert!(named.selects(&["Vehicle"], &id("urn:ngsi-ld:Vehicle:B1")));
         assert!(!named.selects(&["Vehicle"], &id("urn:ngsi-ld:Vehicle:A1")));
+    }
+
+    /// Table 5.2.33-1 types `id` as "String or String[]": an array selects
+    /// each entity it lists, and still voids an `idPattern` beside it.
+    #[test]
+    fn an_id_array_selects_each_listed_entity_and_voids_an_id_pattern() {
+        let listed = selector(json!({
+            "type": "Vehicle",
+            "id": ["urn:ngsi-ld:Vehicle:2", "urn:ngsi-ld:Vehicle:1"],
+            "idPattern": "^urn:ngsi-ld:Vehicle:3"
+        }));
+        assert!(listed.selects(&["Vehicle"], &id("urn:ngsi-ld:Vehicle:1")));
+        assert!(listed.selects(&["Vehicle"], &id("urn:ngsi-ld:Vehicle:2")));
+        assert!(!listed.selects(&["Vehicle"], &id("urn:ngsi-ld:Vehicle:3")));
+        assert!(!listed.selects(&["Building"], &id("urn:ngsi-ld:Vehicle:1")));
+    }
+
+    /// One identifier reads back as the String Table 5.2.33-1 allows, several
+    /// as the array they were written as, in their order.
+    #[test]
+    fn an_id_writes_back_as_a_string_for_one_identifier_and_an_array_for_several() {
+        let one = selector(json!({"type": "Vehicle", "id": ["urn:ngsi-ld:Vehicle:1"]}));
+        pretty_assertions::assert_eq!(
+            serde_json::to_value(&one).expect("serialisable"),
+            json!({"type": "Vehicle", "id": "urn:ngsi-ld:Vehicle:1"})
+        );
+        let several = json!({"type": "Vehicle", "id": ["urn:ngsi-ld:Vehicle:2", "urn:ngsi-ld:Vehicle:1"]});
+        pretty_assertions::assert_eq!(serde_json::to_value(selector(several.clone())).expect("serialisable"), several);
+    }
+
+    /// Table 5.2.33-1 restricts `id` to valid URIs, in either form, and lists
+    /// every member a selector has.
+    #[test]
+    fn an_id_that_is_no_uri_and_an_unknown_member_are_refused() {
+        for wire in [
+            json!({"type": "Vehicle", "id": "not a uri"}),
+            json!({"type": "Vehicle", "id": ["urn:ngsi-ld:Vehicle:1", "not a uri"]}),
+            json!({"type": "Vehicle", "id": 5}),
+            json!({"type": "Vehicle", "ids": ["urn:ngsi-ld:Vehicle:1"]}),
+        ] {
+            assert!(serde_json::from_value::<EntitySelector>(wire.clone()).is_err(), "{wire}");
+        }
     }
 }

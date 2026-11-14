@@ -180,6 +180,17 @@ pub(crate) fn validate_common_members(request: &SubscriptionRequest, admission: 
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::EntitiesEmpty));
     }
 
+    // Table 5.2.33-1 makes a selector's `id` "Valid URI(s)": an empty array
+    // names no entity, and read as no identifier constraint it would select
+    // every entity of the selector's type.
+    if request
+        .entities
+        .as_set()
+        .is_some_and(|selectors| selectors.iter().any(|selector| selector.id.as_ref().is_some_and(Vec::is_empty)))
+    {
+        return Err(SubscriptionError::Validation(SubscriptionValidationReason::SelectorIdEmpty));
+    }
+
     if let Some(notification) = &request.notification {
         validate_notification(notification, request.q.as_set())?;
     }
@@ -296,6 +307,40 @@ mod tests {
                 admission(LanguageTargeting::Specification)
             )
             .is_ok()
+        );
+    }
+
+    /// Table 5.2.33-1 types a selector's `id` as "String or String[]" of valid
+    /// URIs: an array is admitted at create and update, and an empty one,
+    /// which names no entity, is refused at both.
+    #[test]
+    fn a_selector_id_array_is_admitted_and_an_empty_one_refused() {
+        let notification = json!({"endpoint": {"uri": "https://receiver.example.com/notify"}});
+        let listed = json!({
+            "type": "Subscription",
+            "entities": [{"type": "Vehicle", "id": ["urn:ngsi-ld:Vehicle:2", "urn:ngsi-ld:Vehicle:1"]}],
+            "notification": notification
+        });
+        validate_create_request(&request(&listed), admission(LanguageTargeting::Specification)).expect("an id array is admitted");
+        validate_common_members(
+            &request(&json!({"entities": [{"type": "Vehicle", "id": ["urn:ngsi-ld:Vehicle:1"]}]})),
+            admission(LanguageTargeting::Specification),
+        )
+        .expect("an id array is admitted in an update fragment");
+
+        let unnamed = json!({"type": "Subscription", "entities": [{"type": "Vehicle", "id": []}], "notification": notification});
+        let created = validate_create_request(&request(&unnamed), admission(LanguageTargeting::Specification));
+        assert!(
+            matches!(&created, Err(SubscriptionError::Validation(SubscriptionValidationReason::SelectorIdEmpty))),
+            "got {created:?}"
+        );
+        let updated = validate_common_members(
+            &request(&json!({"entities": [{"type": "Vehicle"}, {"type": "Vehicle", "id": []}]})),
+            admission(LanguageTargeting::Specification),
+        );
+        assert!(
+            matches!(&updated, Err(SubscriptionError::Validation(SubscriptionValidationReason::SelectorIdEmpty))),
+            "got {updated:?}"
         );
     }
 
@@ -632,13 +677,15 @@ mod tests {
         }
     }
 
-    /// Tables 5.2.12-1, 5.2.14.1-1 and 5.2.15-1 define the Subscription in
-    /// full: a member outside them, at the top level, inside `notification`
-    /// or inside its `endpoint`, is refused naming it.
+    /// Tables 5.2.12-1, 5.2.14.1-1, 5.2.15-1 and 5.2.33-1 define the
+    /// Subscription in full: a member outside them, at the top level, inside
+    /// an entity selector, inside `notification` or inside its `endpoint`, is
+    /// refused naming it.
     #[test]
     fn an_unknown_member_is_refused_when_the_body_is_read() {
         for (member, body) in [
             ("watchedAtributes", json!({"watchedAtributes": ["speed"]})),
+            ("idPatern", json!({"entities": [{"type": "Vehicle", "idPatern": "^urn:ngsi-ld:Vehicle:"}]})),
             (
                 "notificaton",
                 json!({"notificaton": {"endpoint": {"uri": "https://receiver.example.com/notify"}}}),

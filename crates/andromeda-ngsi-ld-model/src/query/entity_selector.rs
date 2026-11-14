@@ -47,7 +47,15 @@ where
 }
 
 /// Accept the String-or-String-array union defined by Table 5.2.33-1.
-fn deserialize_optional_ids<'de, D>(deserializer: D) -> Result<Option<Vec<Identifier>>, D::Error>
+///
+/// The function is public for the reason [`serialize_optional_ids`] is: it is
+/// the encoding the member has.
+///
+/// # Errors
+///
+/// Returns the deserializer's refusal of a member that is neither a String nor
+/// an array, and an element's own refusal of a value that is no identifier.
+pub fn deserialize_optional_ids<'de, D>(deserializer: D) -> Result<Option<Vec<Identifier>>, D::Error>
 where
     D: Deserializer<'de>,
 {
