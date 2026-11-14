@@ -100,7 +100,7 @@ mod tests {
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         history_source::HistoryBranch,
     };
-    use sea_query::PostgresQueryBuilder;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
 
     fn compiled(q: &str, geo: Option<GeoQuery>, scope: Option<&str>) -> CompiledTemporalQuery {
         CompiledTemporalQuery::builder()
@@ -156,19 +156,8 @@ mod tests {
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         };
         let compiled = compiled("\"https://example.com/speed\">50", Some(geo), Some("/Madrid"));
-        let (sql, values) = build_filter_leaf_truths(&HistoryBranch::live(), &compiled, &ids(), &speed_known())
-            .expect("renders")
-            .build(PostgresQueryBuilder);
-        let leaf_0 = sql.find(r#"AS "leaf_0""#).expect("the Query Term");
-        let leaf_1 = sql.find(r#"AS "leaf_1""#).expect("the geo-query");
-        let leaf_2 = sql.find(r#"AS "leaf_2""#).expect("the scope requirement");
-        assert!(leaf_0 < leaf_1 && leaf_1 < leaf_2, "{sql}");
-        assert!(!sql.contains("leaf_3"), "{sql}");
-        assert!(sql[..leaf_0].contains(r#""qh"."value_number" >"#), "{sql}");
-        assert!(sql[leaf_0..leaf_1].contains(r#""qh"."value_geometry""#), "{sql}");
-        assert!(sql[leaf_1..leaf_2].contains("scope_history"), "{sql}");
-        assert!(sql.contains(r#") AS "e" WHERE "e"."id" = ANY("#), "{sql}");
-        assert!(format!("{values:?}").contains("urn:ngsi-ld:Vehicle:2"), "{values:?}");
+        let statement = build_filter_leaf_truths(&HistoryBranch::live(), &compiled, &ids(), &speed_known()).expect("renders");
+        assert_statement_snapshot!("split-filter-leaves-one-column-per-leaf-in-leaf-order", statement);
     }
 
     /// Clause 5.7.4.4 with clause 4.11: the instance in effect when the window
@@ -182,20 +171,8 @@ mod tests {
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         };
         let compiled = compiled("\"https://example.com/speed\">100", Some(geo), Some("/Madrid"));
-        let (sql, _) = build_filter_leaf_truths(&HistoryBranch::live(), &compiled, &ids(), &speed_known())
-            .expect("renders")
-            .build(PostgresQueryBuilder);
-        for fragment in [
-            r#") AS "qh" WHERE "qh"."attribute_name_key" ="#,
-            r#""qh"."observed_at" >="#,
-            r#""re"."id" = "e"."id""#,
-        ] {
-            assert!(sql.contains(fragment), "{fragment} missing: {sql}");
-        }
-        for alias in [r#""qs""#, r#""qe""#, r#""qi""#, r#""sh_next""#] {
-            assert!(!sql.contains(alias), "{alias} read: {sql}");
-        }
-        assert!(sql.contains(r#""sh"."observed_at" >="#), "{sql}");
+        let statement = build_filter_leaf_truths(&HistoryBranch::live(), &compiled, &ids(), &speed_known()).expect("renders");
+        assert_statement_snapshot!("split-filter-leaves-a-split-leaf-reads-inside-the-window-only", statement);
     }
 
     /// A hop leaf reads the local Relationship inside the window only, and
@@ -215,16 +192,8 @@ mod tests {
             types: ResolvedNames::default(),
             ..QueryNames::default()
         };
-        let sql = build_filter_leaf_truths(&HistoryBranch::live(), &compiled, &ids(), &names)
-            .expect("renders")
-            .to_string(PostgresQueryBuilder);
-        assert!(!sql.contains(r#""qe_ln1""#) && !sql.contains(r#""qe""#), "{sql}");
-        assert!(!sql.contains(r#""entities" AS "le1""#), "{sql}");
-        assert!(sql.contains(r#""re"."id" = "le1"."id""#), "the inner term reads the linked evolution: {sql}");
-        assert!(
-            sql.contains(r#""qh"."attribute_name_key" = 12"#),
-            "the inner term reads the linked history: {sql}"
-        );
+        let statement = build_filter_leaf_truths(&HistoryBranch::live(), &compiled, &ids(), &names).expect("renders");
+        assert_statement_snapshot!("split-filter-leaves-a-hop-leaf-reads-inside-the-window-and-the-linked-history", statement);
     }
 
     /// Clause 5.7.4.4: the leaves of a split query judge the part held here,
@@ -233,17 +202,7 @@ mod tests {
     #[test]
     fn the_leaf_truths_read_the_union() {
         let compiled = compiled("\"https://example.com/speed\">50", None, Some("/Madrid"));
-        let sql = build_filter_leaf_truths(&HistoryBranch::live(), &compiled, &ids(), &speed_known())
-            .expect("renders")
-            .to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#"FROM "temporal_append_intents" AS "pt""#), "{sql}");
-        assert!(
-            sql.contains(r#"FROM "temporal_append_entries" AS "pe" WHERE "pe"."entry_kind" IN (1, 2)"#),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(r#"FROM "temporal_append_entries" AS "pe" WHERE "pe"."entry_kind" IN (3, 4)"#),
-            "{sql}"
-        );
+        let statement = build_filter_leaf_truths(&HistoryBranch::live(), &compiled, &ids(), &speed_known()).expect("renders");
+        assert_statement_snapshot!("split-filter-leaves-the-leaf-truths-read-the-union", statement);
     }
 }

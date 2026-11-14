@@ -1,0 +1,527 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/stage1/extent_candidates.rs
+---
+WITH
+"short_walk" AS MATERIALIZED (
+  SELECT
+    "e"."id" AS "entity_id"
+  FROM
+    (
+      SELECT
+        *
+      FROM
+        (
+          SELECT
+            "entity_key",
+            "id"
+          FROM
+            "snap_7"."entity_type_members"
+          WHERE
+            "entity_type_name_key" = (1)
+            AND "is_evolution_member"
+        ) AS "e"
+      ORDER BY
+        "e"."id" ASC
+      LIMIT
+        50 OFFSET 0
+    ) AS "e"
+  WHERE
+    EXISTS (
+      SELECT
+        1
+      FROM
+        (
+          SELECT
+            "rs"."entity_key" AS "entity_key",
+            "rs"."attribute_name_key" AS "attribute_name_key",
+            "rs"."dataset_key" AS "dataset_key",
+            "rh"."recorded_at",
+            "rh"."write_id",
+            "rh"."write_ordinal",
+            "rh"."attribute_kind",
+            "rh"."value_kind",
+            "rh"."observed_at",
+            "rh"."created_at",
+            "rh"."modified_at",
+            "rh"."deleted_at",
+            "rh"."value_date_time",
+            "rh"."expires_at",
+            "rh"."generated_instance_id",
+            "rh"."value_type_key",
+            "rh"."value_datatype_key",
+            "rh"."unit_code_id",
+            "rh"."value_boolean",
+            "rh"."verbatim_instance_id",
+            "rh"."value_number",
+            "rh"."value_string",
+            "rh"."value_language",
+            "rh"."value_geometry",
+            "rh"."value_geometry_valid",
+            "rh"."value_geometry_reach",
+            "rh"."value_geometry_members",
+            "rh"."value_object",
+            "rh"."value_uri",
+            "rh"."object_type_keys",
+            "rh"."sub_attributes"
+          FROM
+            "snap_7"."attribute_history" AS "rh"
+            JOIN "snap_7"."temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+          WHERE
+            "rs"."entity_key" = "e"."entity_key"
+        ) AS "qh"
+      WHERE
+        "qh"."attribute_name_key" = $1
+        AND (
+          (
+            COALESCE(
+              "qh"."value_geometry_reach",
+              "qh"."value_geometry_valid",
+              "qh"."value_geometry"
+            )::box2d && ST_MakeEnvelope($2, $3, $4, $5, $6)::box2d
+          )
+          AND _ST_DWithin(
+            COALESCE(
+              "qh"."value_geometry_valid",
+              "qh"."value_geometry"
+            )::geography,
+            ST_MakeValid(ST_GeomFromEWKB($7))::geography,
+            $8
+          )
+        )
+        AND "qh"."value_kind" <> (0)
+        AND "qh"."observed_at" IS NOT NULL
+        AND "qh"."observed_at" < $9
+    )
+    AND EXISTS (
+      SELECT
+        1
+      FROM
+        (
+          SELECT
+            "re"."id" AS "entity_id",
+            "rs"."attribute_name_key" AS "attribute_name_key",
+            "rs"."dataset_key" AS "dataset_key",
+            "rh"."recorded_at",
+            "rh"."write_id",
+            "rh"."write_ordinal",
+            "rh"."attribute_kind",
+            "rh"."value_kind",
+            "rh"."observed_at",
+            "rh"."created_at",
+            "rh"."modified_at",
+            "rh"."deleted_at",
+            "rh"."value_date_time",
+            "rh"."expires_at",
+            "rh"."generated_instance_id",
+            "rh"."value_type_key",
+            "rh"."value_datatype_key",
+            "rh"."unit_code_id",
+            "rh"."value_boolean",
+            "rh"."verbatim_instance_id",
+            "rh"."value_number",
+            "rh"."value_string",
+            "rh"."value_language",
+            "rh"."value_geometry",
+            "rh"."value_geometry_valid",
+            "rh"."value_geometry_reach",
+            "rh"."value_geometry_members",
+            "rh"."value_object",
+            "rh"."value_uri",
+            "rh"."object_type_keys",
+            "rh"."sub_attributes"
+          FROM
+            "snap_7"."attribute_history" AS "rh"
+            JOIN "snap_7"."temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+            JOIN "snap_7"."entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+        ) AS "ah"
+      WHERE
+        "ah"."observed_at" < $10
+        AND "ah"."entity_id" = "e"."id"
+    )
+  ORDER BY
+    "e"."id" ASC
+  LIMIT
+    20
+),
+"candidates" AS MATERIALIZED (
+  SELECT
+    "rs"."entity_key"
+  FROM
+    "snap_7"."temporal_attribute_streams" AS "rs"
+  WHERE
+    "rs"."attribute_name_key" = $11
+    AND (
+      "rs"."value_extent" && ST_MakeEnvelope($12, $13, $14, $15, $16)
+    )
+  LIMIT
+    10001
+)
+SELECT
+  *
+FROM
+  (
+    SELECT
+      *
+    FROM
+      "short_walk"
+    WHERE
+      (
+        SELECT
+          COUNT(*)
+        FROM
+          "short_walk"
+      ) >= $17
+    ORDER BY
+      "entity_id" ASC
+    LIMIT
+      20 OFFSET 0
+  ) AS "answered"
+UNION ALL
+(
+  SELECT
+    *
+  FROM
+    (
+      SELECT
+        "e"."id" AS "entity_id"
+      FROM
+        (
+          SELECT
+            "entity_key",
+            "id"
+          FROM
+            "snap_7"."entity_type_members"
+          WHERE
+            "entity_type_name_key" = (1)
+            AND "is_evolution_member"
+            AND "entity_key" IN (
+              SELECT
+                "entity_key"
+              FROM
+                "candidates"
+            )
+          ORDER BY
+            "id" ASC OFFSET 0
+        ) AS "e"
+      WHERE
+        EXISTS (
+          SELECT
+            1
+          FROM
+            (
+              SELECT
+                "rs"."entity_key" AS "entity_key",
+                "rs"."attribute_name_key" AS "attribute_name_key",
+                "rs"."dataset_key" AS "dataset_key",
+                "rh"."recorded_at",
+                "rh"."write_id",
+                "rh"."write_ordinal",
+                "rh"."attribute_kind",
+                "rh"."value_kind",
+                "rh"."observed_at",
+                "rh"."created_at",
+                "rh"."modified_at",
+                "rh"."deleted_at",
+                "rh"."value_date_time",
+                "rh"."expires_at",
+                "rh"."generated_instance_id",
+                "rh"."value_type_key",
+                "rh"."value_datatype_key",
+                "rh"."unit_code_id",
+                "rh"."value_boolean",
+                "rh"."verbatim_instance_id",
+                "rh"."value_number",
+                "rh"."value_string",
+                "rh"."value_language",
+                "rh"."value_geometry",
+                "rh"."value_geometry_valid",
+                "rh"."value_geometry_reach",
+                "rh"."value_geometry_members",
+                "rh"."value_object",
+                "rh"."value_uri",
+                "rh"."object_type_keys",
+                "rh"."sub_attributes"
+              FROM
+                "snap_7"."attribute_history" AS "rh"
+                JOIN "snap_7"."temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+              WHERE
+                "rs"."entity_key" = "e"."entity_key"
+            ) AS "qh"
+          WHERE
+            "qh"."attribute_name_key" = $18
+            AND (
+              (
+                COALESCE(
+                  "qh"."value_geometry_reach",
+                  "qh"."value_geometry_valid",
+                  "qh"."value_geometry"
+                )::box2d && ST_MakeEnvelope($19, $20, $21, $22, $23)::box2d
+              )
+              AND _ST_DWithin(
+                COALESCE(
+                  "qh"."value_geometry_valid",
+                  "qh"."value_geometry"
+                )::geography,
+                ST_MakeValid(ST_GeomFromEWKB($24))::geography,
+                $25
+              )
+            )
+            AND "qh"."value_kind" <> (0)
+            AND "qh"."observed_at" IS NOT NULL
+            AND "qh"."observed_at" < $26
+        )
+        AND (
+          SELECT
+            COUNT(*)
+          FROM
+            "short_walk"
+        ) < $27
+        AND (
+          SELECT
+            COUNT(*)
+          FROM
+            "candidates"
+        ) <= $28
+        AND EXISTS (
+          SELECT
+            1
+          FROM
+            (
+              SELECT
+                "re"."id" AS "entity_id",
+                "rs"."attribute_name_key" AS "attribute_name_key",
+                "rs"."dataset_key" AS "dataset_key",
+                "rh"."recorded_at",
+                "rh"."write_id",
+                "rh"."write_ordinal",
+                "rh"."attribute_kind",
+                "rh"."value_kind",
+                "rh"."observed_at",
+                "rh"."created_at",
+                "rh"."modified_at",
+                "rh"."deleted_at",
+                "rh"."value_date_time",
+                "rh"."expires_at",
+                "rh"."generated_instance_id",
+                "rh"."value_type_key",
+                "rh"."value_datatype_key",
+                "rh"."unit_code_id",
+                "rh"."value_boolean",
+                "rh"."verbatim_instance_id",
+                "rh"."value_number",
+                "rh"."value_string",
+                "rh"."value_language",
+                "rh"."value_geometry",
+                "rh"."value_geometry_valid",
+                "rh"."value_geometry_reach",
+                "rh"."value_geometry_members",
+                "rh"."value_object",
+                "rh"."value_uri",
+                "rh"."object_type_keys",
+                "rh"."sub_attributes"
+              FROM
+                "snap_7"."attribute_history" AS "rh"
+                JOIN "snap_7"."temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+                JOIN "snap_7"."entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+            ) AS "ah"
+          WHERE
+            "ah"."observed_at" < $29
+            AND "ah"."entity_id" = "e"."id"
+        )
+      ORDER BY
+        "e"."id" ASC
+      LIMIT
+        20 OFFSET 0
+    ) AS "indexed"
+)
+UNION ALL
+(
+  SELECT
+    *
+  FROM
+    (
+      SELECT
+        "e"."id" AS "entity_id"
+      FROM
+        (
+          SELECT
+            "entity_key",
+            "id"
+          FROM
+            "snap_7"."entity_type_members"
+          WHERE
+            "entity_type_name_key" = (1)
+            AND "is_evolution_member"
+        ) AS "e"
+      WHERE
+        EXISTS (
+          SELECT
+            1
+          FROM
+            (
+              SELECT
+                "rs"."entity_key" AS "entity_key",
+                "rs"."attribute_name_key" AS "attribute_name_key",
+                "rs"."dataset_key" AS "dataset_key",
+                "rh"."recorded_at",
+                "rh"."write_id",
+                "rh"."write_ordinal",
+                "rh"."attribute_kind",
+                "rh"."value_kind",
+                "rh"."observed_at",
+                "rh"."created_at",
+                "rh"."modified_at",
+                "rh"."deleted_at",
+                "rh"."value_date_time",
+                "rh"."expires_at",
+                "rh"."generated_instance_id",
+                "rh"."value_type_key",
+                "rh"."value_datatype_key",
+                "rh"."unit_code_id",
+                "rh"."value_boolean",
+                "rh"."verbatim_instance_id",
+                "rh"."value_number",
+                "rh"."value_string",
+                "rh"."value_language",
+                "rh"."value_geometry",
+                "rh"."value_geometry_valid",
+                "rh"."value_geometry_reach",
+                "rh"."value_geometry_members",
+                "rh"."value_object",
+                "rh"."value_uri",
+                "rh"."object_type_keys",
+                "rh"."sub_attributes"
+              FROM
+                "snap_7"."attribute_history" AS "rh"
+                JOIN "snap_7"."temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+              WHERE
+                "rs"."entity_key" = "e"."entity_key"
+            ) AS "qh"
+          WHERE
+            "qh"."attribute_name_key" = $30
+            AND (
+              (
+                COALESCE(
+                  "qh"."value_geometry_reach",
+                  "qh"."value_geometry_valid",
+                  "qh"."value_geometry"
+                )::box2d && ST_MakeEnvelope($31, $32, $33, $34, $35)::box2d
+              )
+              AND _ST_DWithin(
+                COALESCE(
+                  "qh"."value_geometry_valid",
+                  "qh"."value_geometry"
+                )::geography,
+                ST_MakeValid(ST_GeomFromEWKB($36))::geography,
+                $37
+              )
+            )
+            AND "qh"."value_kind" <> (0)
+            AND "qh"."observed_at" IS NOT NULL
+            AND "qh"."observed_at" < $38
+        )
+        AND (
+          SELECT
+            COUNT(*)
+          FROM
+            "short_walk"
+        ) < $39
+        AND (
+          SELECT
+            COUNT(*)
+          FROM
+            "candidates"
+        ) > $40
+        AND EXISTS (
+          SELECT
+            1
+          FROM
+            (
+              SELECT
+                "re"."id" AS "entity_id",
+                "rs"."attribute_name_key" AS "attribute_name_key",
+                "rs"."dataset_key" AS "dataset_key",
+                "rh"."recorded_at",
+                "rh"."write_id",
+                "rh"."write_ordinal",
+                "rh"."attribute_kind",
+                "rh"."value_kind",
+                "rh"."observed_at",
+                "rh"."created_at",
+                "rh"."modified_at",
+                "rh"."deleted_at",
+                "rh"."value_date_time",
+                "rh"."expires_at",
+                "rh"."generated_instance_id",
+                "rh"."value_type_key",
+                "rh"."value_datatype_key",
+                "rh"."unit_code_id",
+                "rh"."value_boolean",
+                "rh"."verbatim_instance_id",
+                "rh"."value_number",
+                "rh"."value_string",
+                "rh"."value_language",
+                "rh"."value_geometry",
+                "rh"."value_geometry_valid",
+                "rh"."value_geometry_reach",
+                "rh"."value_geometry_members",
+                "rh"."value_object",
+                "rh"."value_uri",
+                "rh"."object_type_keys",
+                "rh"."sub_attributes"
+              FROM
+                "snap_7"."attribute_history" AS "rh"
+                JOIN "snap_7"."temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+                JOIN "snap_7"."entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+            ) AS "ah"
+          WHERE
+            "ah"."observed_at" < $41
+            AND "ah"."entity_id" = "e"."id"
+        )
+      ORDER BY
+        "e"."id" ASC
+      LIMIT
+        20 OFFSET 0
+    ) AS "walk"
+)
+1: Int 2
+2: Double 4.4702749827517545
+3: Double 52.48191161045816
+4: Double 4.5297250172482455
+5: Double 52.51808838954184
+6: Int 4326
+7: Bytes '\x0101000020E610000000000000000012400000000000404A40'
+8: Double 2000
+9: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+10: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+11: Int 2
+12: Double 4.4702749827517545
+13: Double 52.48191161045816
+14: Double 4.5297250172482455
+15: Double 52.51808838954184
+16: Int 4326
+17: BigUnsigned 20
+18: Int 2
+19: Double 4.4702749827517545
+20: Double 52.48191161045816
+21: Double 4.5297250172482455
+22: Double 52.51808838954184
+23: Int 4326
+24: Bytes '\x0101000020E610000000000000000012400000000000404A40'
+25: Double 2000
+26: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+27: BigUnsigned 20
+28: BigUnsigned 10000
+29: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+30: Int 2
+31: Double 4.4702749827517545
+32: Double 52.48191161045816
+33: Double 4.5297250172482455
+34: Double 52.51808838954184
+35: Int 4326
+36: Bytes '\x0101000020E610000000000000000012400000000000404A40'
+37: Double 2000
+38: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+39: BigUnsigned 20
+40: BigUnsigned 10000
+41: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'

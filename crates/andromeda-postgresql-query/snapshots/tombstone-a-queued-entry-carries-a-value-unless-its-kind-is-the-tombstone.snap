@@ -1,0 +1,6 @@
+---
+source: crates/andromeda-postgresql-query/src/tombstone.rs
+---
+SELECT
+WHERE
+  "pe"."entry_kind" <> (2)

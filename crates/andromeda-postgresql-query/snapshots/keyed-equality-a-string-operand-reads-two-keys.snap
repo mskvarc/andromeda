@@ -1,0 +1,133 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/sub_attribute/keyed_equality.rs
+---
+SELECT
+  "ca"."entity_key"
+FROM
+  "current_attributes" AS "ca"
+WHERE
+  "ca"."attribute_name_key" = $1
+  AND (
+    "ca"."expires_at" IS NULL
+    OR "ca"."expires_at" > NOW()
+  )
+  AND (
+    "ca"."sub_eq_keys" && (
+      ARRAY[-4376459576480486021, 1600772352581063862]::bigint[]
+    )
+  )
+  AND "ca"."sub_attributes" IS NOT NULL
+  AND (
+    EXISTS (
+      SELECT
+        1
+      FROM
+        UNNEST("ca"."sub_attributes") AS "l0"
+      WHERE
+        "l0"."parent" = $2
+        AND (
+          "l0"."attribute_name_key" = $3
+          AND (
+            "l0"."expires_at" IS NULL
+            OR "l0"."expires_at" > NOW()
+          )
+        )
+        AND (
+          (
+            "l0"."value_string" = $4
+            AND nullif("l0"."value_kind" = (2), FALSE)
+          )
+          OR "l0"."value_uri" = $5
+          OR (
+            "l0"."attribute_kind" <> (6)
+            AND (
+              (
+                (
+                  sub_attribute_value_object(
+                    "l0"."value_kind",
+                    "l0"."value_object",
+                    "l0"."value_proof"
+                  ) @> jsonb_build_array($6::text)
+                )
+                OR (
+                  sub_attribute_value_object(
+                    "l0"."value_kind",
+                    "l0"."value_object",
+                    "l0"."value_proof"
+                  ) @> jsonb_build_array(jsonb_build_object('@value', $7::text))
+                )
+              )
+              AND EXISTS (
+                SELECT
+                  1
+                FROM
+                  jsonb_array_elements(
+                    (
+                      CASE
+                        WHEN (
+                          jsonb_typeof(
+                            sub_attribute_value_object(
+                              "l0"."value_kind",
+                              "l0"."value_object",
+                              "l0"."value_proof"
+                            )
+                          ) = ('array')
+                        ) THEN sub_attribute_value_object(
+                          "l0"."value_kind",
+                          "l0"."value_object",
+                          "l0"."value_proof"
+                        )
+                      END
+                    )
+                  ) AS "dm"
+                  LEFT JOIN "entity_type_names" AS "dmt" ON "dmt"."entity_type_name_key" = (
+                    CASE
+                      WHEN ("l0"."attribute_kind" IN (1, 7)) THEN "l0"."value_type_key"
+                    END
+                  )
+                WHERE
+                  (
+                    CASE
+                      WHEN (
+                        jsonb_typeof(
+                          COALESCE("dm"."value" -> ('@value'), "dm"."value")
+                        ) = ('string')
+                        AND (
+                          NOT COALESCE(
+                            COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN (
+                              'https://uri.etsi.org/ngsi-ld/DateTime',
+                              'https://uri.etsi.org/ngsi-ld/Date',
+                              'https://uri.etsi.org/ngsi-ld/Time'
+                            )
+                            OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN (
+                              'http://www.w3.org/2001/XMLSchema#decimal',
+                              'http://www.w3.org/2001/XMLSchema#integer',
+                              'http://www.w3.org/2001/XMLSchema#long',
+                              'http://www.w3.org/2001/XMLSchema#int',
+                              'http://www.w3.org/2001/XMLSchema#short',
+                              'http://www.w3.org/2001/XMLSchema#byte',
+                              'http://www.w3.org/2001/XMLSchema#nonNegativeInteger',
+                              'http://www.w3.org/2001/XMLSchema#positiveInteger',
+                              'http://www.w3.org/2001/XMLSchema#nonPositiveInteger',
+                              'http://www.w3.org/2001/XMLSchema#negativeInteger',
+                              'http://www.w3.org/2001/XMLSchema#unsignedLong',
+                              'http://www.w3.org/2001/XMLSchema#unsignedInt',
+                              'http://www.w3.org/2001/XMLSchema#unsignedShort',
+                              'http://www.w3.org/2001/XMLSchema#unsignedByte',
+                              'http://www.w3.org/2001/XMLSchema#float',
+                              'http://www.w3.org/2001/XMLSchema#double'
+                            )
+                            OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) = ('http://www.w3.org/2001/XMLSchema#boolean'),
+                            FALSE
+                          )
+                        )
+                      ) THEN (
+                        COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::text END) = $8))))))
+1: Int 2
+2: BigInt 0
+3: Int 7
+4: String 'sensor-43'
+5: String 'sensor-43'
+6: String 'sensor-43'
+7: String 'sensor-43'
+8: String 'sensor-43'

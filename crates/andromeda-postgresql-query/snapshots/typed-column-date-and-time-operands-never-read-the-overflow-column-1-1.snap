@@ -1,0 +1,7 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/typed_column.rs
+---
+SELECT
+  "ca"."value_string" = $1
+  AND nullif("ca"."value_kind" = (8), FALSE)
+1: String '2024-01-15'

@@ -202,9 +202,10 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
     use andromeda_postgresql_schema::type_membership::MembershipSide;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Condition, Expr, IntoIden, PostgresQueryBuilder, Query};
+    use sea_query::{Alias, Condition, Expr, IntoIden, Query, SelectStatement};
 
     const CURRENT: Memberships<'static> = Memberships {
         side: MembershipSide::Current,
@@ -224,42 +225,30 @@ mod tests {
         }))
     }
 
-    fn stream(exprs: &[TypeExpr]) -> String {
-        members_of_any(exprs, &known(), CURRENT)
-            .expect("the selection has a range")
-            .to_string(PostgresQueryBuilder)
+    fn stream(exprs: &[TypeExpr]) -> SelectStatement {
+        members_of_any(exprs, &known(), CURRENT).expect("the selection has a range")
     }
 
     /// Clause 4.17: one type is one key range, walked in identifier order.
     #[test]
     fn one_type_is_one_key_range() {
-        assert_eq!(
-            stream(&[ty("A")]),
-            r#"SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_current_member""#
-        );
+        assert_statement_snapshot!("type-membership-one-type-is-one-key-range", stream(&[ty("A")]));
     }
 
     /// A type never interned is carried by no Entity, so its range is empty.
     #[test]
     fn an_unknown_type_has_an_empty_range() {
-        assert_eq!(stream(&[ty("Unknown")]), r#"SELECT "entity_key", "id" FROM "entity_type_members" WHERE FALSE"#);
+        assert_statement_snapshot!("type-membership-an-unknown-type-has-an-empty-range", stream(&[ty("Unknown")]));
     }
 
     /// Clause 4.17 `,`: the ranges merge in identifier order, and an Entity
     /// carrying both types is selected once.
     #[test]
     fn a_disjunction_merges_its_ranges_without_repeats() {
-        let sql = stream(&[TypeExpr::Or(vec![ty("A"), ty("B")])]);
-        assert!(
-            sql.starts_with(r#"SELECT DISTINCT ON ("typed"."id") "typed"."entity_key", "typed"."id" FROM ("#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "type-membership-a-disjunction-merges-its-ranges-without-repeats",
+            stream(&[TypeExpr::Or(vec![ty("A"), ty("B")])])
         );
-        assert!(
-            sql.contains(r#""entity_type_name_key" = (1) AND "is_current_member" UNION ALL (SELECT"#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#""entity_type_name_key" = (2) AND "is_current_member")"#), "{sql}");
-        assert!(sql.ends_with(r#") AS "typed" ORDER BY "typed"."id" ASC"#), "{sql}");
     }
 
     /// Several selectors select their union, as a disjunction does.
@@ -272,15 +261,9 @@ mod tests {
     /// type, so an Entity must carry every one.
     #[test]
     fn a_conjunction_narrows_its_first_range_by_key_probes() {
-        let sql = stream(&[TypeExpr::And(vec![ty("A"), ty("B")])]);
-        assert_eq!(
-            sql,
-            concat!(
-                r#"SELECT "candidate"."entity_key", "candidate"."id" FROM "#,
-                r#"(SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_current_member") AS "candidate" "#,
-                r#"WHERE EXISTS(SELECT 1 FROM "entity_type_members" AS "type_member" "#,
-                r#"WHERE "type_member"."entity_type_name_key" = (2) AND "type_member"."id" = "candidate"."id" AND "type_member"."is_current_member")"#
-            )
+        assert_statement_snapshot!(
+            "type-membership-a-conjunction-narrows-its-first-range-by-key-probes",
+            stream(&[TypeExpr::And(vec![ty("A"), ty("B")])])
         );
     }
 
@@ -292,12 +275,9 @@ mod tests {
         assert!(!drives(&TypeExpr::Or(vec![ty("A"), TypeExpr::Wildcard])));
         assert!(drives(&TypeExpr::And(vec![TypeExpr::Wildcard, ty("A")])));
         assert!(members_of_any([&TypeExpr::Or(vec![ty("A"), TypeExpr::Wildcard])], &known(), CURRENT).is_none());
-        assert_eq!(
-            stream(&[TypeExpr::And(vec![TypeExpr::Wildcard, ty("A")])]),
-            concat!(
-                r#"SELECT "candidate"."entity_key", "candidate"."id" FROM "#,
-                r#"(SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_current_member") AS "candidate" WHERE TRUE"#
-            )
+        assert_statement_snapshot!(
+            "type-membership-the-wildcard-has-no-range-unless-a-conjunction-names-a-type",
+            stream(&[TypeExpr::And(vec![TypeExpr::Wildcard, ty("A")])])
         );
     }
 
@@ -307,12 +287,11 @@ mod tests {
     fn the_filter_form_probes_the_membership_key_per_leaf() {
         let id = Expr::col((Alias::new("selected"), Alias::new("id")));
         let expr = TypeExpr::Or(vec![TypeExpr::And(vec![ty("A"), ty("B")]), ty("Unknown")]);
-        let sql = Query::select()
+        let statement = Query::select()
             .expr(Expr::val(1))
             .cond_where(Condition::all().add(membership(&expr, &known(), &id, CURRENT)))
-            .to_string(PostgresQueryBuilder);
-        assert_eq!(sql.matches(r#""type_member"."id" = "selected"."id""#).count(), 2, "{sql}");
-        assert!(sql.contains(") OR (FALSE)"), "{sql}");
+            .to_owned();
+        assert_statement_snapshot!("type-membership-the-filter-form-probes-the-membership-key-per-leaf", statement);
     }
 
     /// A Snapshot branch walks its own schema's memberships.
@@ -323,10 +302,8 @@ mod tests {
             side: MembershipSide::Current,
             schema: Some(&schema),
         };
-        let sql = members_of_any([&TypeExpr::And(vec![ty("A"), ty("B")])], &known(), memberships)
-            .expect("the selection has a range")
-            .to_string(PostgresQueryBuilder);
-        assert_eq!(sql.matches(r#""snap_5"."entity_type_members""#).count(), 2, "{sql}");
+        let statement = members_of_any([&TypeExpr::And(vec![ty("A"), ty("B")])], &known(), memberships).expect("the selection has a range");
+        assert_statement_snapshot!("type-membership-a-branch-walks-its-own-memberships", statement);
     }
 
     /// A Temporal Evolution's types are walked in the same relation, keeping
@@ -337,17 +314,7 @@ mod tests {
             side: MembershipSide::Evolution,
             schema: None,
         };
-        let sql = members_of_any([&TypeExpr::And(vec![ty("A"), ty("B")])], &known(), temporal)
-            .expect("the selection has a range")
-            .to_string(PostgresQueryBuilder);
-        assert_eq!(
-            sql,
-            concat!(
-                r#"SELECT "candidate"."entity_key", "candidate"."id" FROM "#,
-                r#"(SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_evolution_member") AS "candidate" "#,
-                r#"WHERE EXISTS(SELECT 1 FROM "entity_type_members" AS "type_member" "#,
-                r#"WHERE "type_member"."entity_type_name_key" = (2) AND "type_member"."id" = "candidate"."id" AND "type_member"."is_evolution_member")"#
-            )
-        );
+        let statement = members_of_any([&TypeExpr::And(vec![ty("A"), ty("B")])], &known(), temporal).expect("the selection has a range");
+        assert_statement_snapshot!("type-membership-a-temporal-selection-walks-the-evolution-memberships", statement);
     }
 }

@@ -35,15 +35,12 @@ pub fn dataset_condition(column: &SimpleExpr, filter: &DatasetFilter) -> Conditi
 mod tests {
     use crate::dataset_predicate::dataset_condition;
     use andromeda_ngsi_ld_query::dataset::DatasetFilter;
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Expr, Query, SelectStatement, SimpleExpr};
 
-    fn render(filter: &DatasetFilter) -> String {
+    fn render(filter: &DatasetFilter) -> SelectStatement {
         let column: SimpleExpr = Expr::col((Alias::new("s"), Alias::new("dataset_key")));
-        Query::select()
-            .expr(Expr::val(1))
-            .cond_where(dataset_condition(&column, filter))
-            .to_owned()
-            .to_string(PostgresQueryBuilder)
+        Query::select().expr(Expr::val(1)).cond_where(dataset_condition(&column, filter)).to_owned()
     }
 
     /// Clause 4.5.5: `@none` selects the default instance, whose grain key is
@@ -51,12 +48,15 @@ mod tests {
     #[test]
     fn each_selection_renders_its_own_test() {
         let named = vec!["urn:ngsi-ld:Dataset:one".parse().expect("a valid URI")];
-        assert!(!render(&DatasetFilter::Unfiltered).contains("dataset_key"));
-        assert!(render(&DatasetFilter::DefaultOnly).contains(r#""s"."dataset_key" = ('')"#));
-        let only = render(&DatasetFilter::NamedOnly(named.clone()));
-        assert!(only.contains(r#""s"."dataset_key" = 'urn:ngsi-ld:Dataset:one'"#), "{only}");
-        let both = render(&DatasetFilter::DefaultOrNamed(named));
-        assert!(both.contains(r#""s"."dataset_key" = ANY(ARRAY ['urn:ngsi-ld:Dataset:one',''])"#), "{both}");
-        assert!(!both.contains(" OR "), "{both}");
+        assert_statement_snapshot!("dataset-predicate-each-selection-renders-its-own-test-1", render(&DatasetFilter::Unfiltered));
+        assert_statement_snapshot!("dataset-predicate-each-selection-renders-its-own-test-2", render(&DatasetFilter::DefaultOnly));
+        assert_statement_snapshot!(
+            "dataset-predicate-each-selection-renders-its-own-test-3",
+            render(&DatasetFilter::NamedOnly(named.clone()))
+        );
+        assert_statement_snapshot!(
+            "dataset-predicate-each-selection-renders-its-own-test-4",
+            render(&DatasetFilter::DefaultOrNamed(named))
+        );
     }
 }

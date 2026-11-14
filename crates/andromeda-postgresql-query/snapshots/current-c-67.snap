@@ -1,0 +1,53 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/corpus_statement_tests.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca_ln1"
+      JOIN jsonb_array_elements_text(
+        COALESCE(
+          "ca_ln1"."value_object",
+          jsonb_build_array(
+            COALESCE("ca_ln1"."value_uri", "ca_ln1"."value_long_uri")
+          )
+        )
+      ) AS "lo1" ON TRUE
+      JOIN "entities" AS "le1" ON "le1"."id" = "lo1"
+    WHERE
+      "ca_ln1"."entity_key" = "entities"."entity_key"
+      AND "ca_ln1"."attribute_name_key" = $1
+      AND "ca_ln1"."attribute_kind" IN (2, 8)
+      AND (
+        "ca_ln1"."expires_at" IS NULL
+        OR "ca_ln1"."expires_at" > NOW()
+      )
+      AND (
+        "le1"."created_at" IS NOT NULL
+        AND (
+          "le1"."expires_at" IS NULL
+          OR "le1"."expires_at" > NOW()
+        )
+      )
+      AND EXISTS (
+        SELECT
+          1
+        FROM
+          "current_attributes" AS "ca"
+        WHERE
+          "ca"."attribute_name_key" = $2
+          AND (
+            "ca"."expires_at" IS NULL
+            OR "ca"."expires_at" > NOW()
+          )
+          AND "ca"."entity_key" = "le1"."entity_key"
+      )
+  )
+1: Int 23
+2: Int 1

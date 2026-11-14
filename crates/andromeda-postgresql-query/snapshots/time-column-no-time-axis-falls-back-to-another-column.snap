@@ -1,0 +1,7 @@
+---
+source: crates/andromeda-postgresql-query/src/time_column.rs
+---
+observed_at
+created_at
+modified_at
+deleted_at

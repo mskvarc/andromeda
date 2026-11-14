@@ -409,8 +409,9 @@ mod tests {
         dictionary::query_names::QueryNames,
         history_source::{HistoryBranch, HistoryOf},
     };
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use chrono::{DateTime, Utc};
-    use sea_query::{Condition, Expr, PostgresQueryBuilder};
+    use sea_query::{Condition, Expr, SelectStatement};
     use std::slice;
 
     fn aggregated(methods: Vec<AggrMethod>, period: Option<&str>) -> CompiledTemporalQuery {
@@ -452,48 +453,23 @@ mod tests {
         HistoryOf::Entity(Expr::val("urn:ngsi-ld:Vehicle:1"))
     }
 
-    fn sql_of(compiled: &CompiledTemporalQuery) -> String {
-        build_aggregation_query(&HistoryBranch::live(), &vehicle(), compiled, &Condition::all(), &QueryNames::default()).to_string(PostgresQueryBuilder)
-    }
-
-    fn bound_sql_of(compiled: &CompiledTemporalQuery) -> (String, sea_query::Values) {
-        build_aggregation_query(&HistoryBranch::live(), &vehicle(), compiled, &Condition::all(), &QueryNames::default()).build(PostgresQueryBuilder)
-    }
-
-    /// The keys one stream's periods are grouped by, empty when the statement
-    /// groups by none.
-    fn group_keys(sql: &str) -> &str {
-        sql.split("GROUP BY")
-            .nth(1)
-            .map_or("", |keys| keys.split(") AS \"page\"").next().unwrap_or_default().trim())
+    fn statement_of(compiled: &CompiledTemporalQuery) -> SelectStatement {
+        build_aggregation_query(&HistoryBranch::live(), &vehicle(), compiled, &Condition::all(), &QueryNames::default())
     }
 
     #[test]
     fn a_period_produces_a_bucketed_group_by() {
-        let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
-        assert!(sql.contains("time_bucket"), "{sql}");
-        assert!(sql.contains("bucket_start"), "{sql}");
+        let statement = statement_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
+        assert_statement_snapshot!("aggregation-a-period-produces-a-bucketed-group-by", statement);
     }
 
     #[test]
     fn the_bound_statement_projects_one_bucket_expression_and_reuses_its_result() {
-        let (sql, _values) = bound_sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
-        assert!(sql.contains("JOIN LATERAL (SELECT time_bucket("), "{sql}");
-        assert!(sql.contains("AS \"bucket_start\") AS \"bucket\""), "{sql}");
-        assert!(sql.contains("\"bucket\".\"bucket_start\" +"), "{sql}");
-        // Once, for the period: the represented instances, which carry an
-        // instant on the axis, arrive as the condition the caller passes.
-        pretty_assertions::assert_eq!(sql.matches("\"ah\".\"observed_at\"").count(), 1, "{sql}");
-        // The bound width, not every interval cast in the statement: an `avg`
-        // also projects the Table 4.5.19.1-2 mean time of day, which casts a
-        // time column to an interval for reasons unrelated to bucketing. A
-        // bucket width is a bound parameter, so it is the cast that follows a
-        // placeholder.
-        let bound_widths = sql
-            .match_indices("::interval")
-            .filter(|(index, _)| sql[..*index].ends_with(|character: char| character.is_ascii_digit()))
-            .count();
-        pretty_assertions::assert_eq!(bound_widths, 2, "the bucket width and bucket-end width must each be bound once: {sql}");
+        let statement = statement_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
+        assert_statement_snapshot!(
+            "aggregation-the-bound-statement-projects-one-bucket-expression-and-reuses-its-result",
+            statement
+        );
     }
 
     /// Clause 4.5.19: the bucket is computed on the same axis the window filters
@@ -502,31 +478,24 @@ mod tests {
     /// subquery measures the same axis under its own alias.
     #[test]
     fn observed_at_buckets_on_the_observation_axis_not_write_time() {
-        let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
-        assert!(sql.contains("time_bucket('PT1H'::interval, \"ah\".\"observed_at\""), "{sql}");
-        assert!(sql.contains("MIN(\"ah2\".\"observed_at\")"), "{sql}");
-        assert!(!sql.contains("\"ah\".\"recorded_at\""), "{sql}");
-        pretty_assertions::assert_eq!(sql.matches("MIN(\"ah2\"").count(), 1, "the origin is read once: {sql}");
+        let statement = statement_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
+        assert_statement_snapshot!("aggregation-observed-at-buckets-on-the-observation-axis-not-write-time", statement);
     }
 
     /// The bucket origin is measured over the same entity's streams, reached
     /// through the stream catalogue rather than through a current-state row.
     #[test]
     fn the_bucket_origin_is_measured_over_the_history_of_the_aggregated_entity() {
-        let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
-        let origin = sql.split("AS \"origin\" FROM").nth(1).expect("the origin subquery");
-        let origin = origin.split("AS \"ah2\"").next().expect("the origin source");
-        assert!(origin.contains("\"re\".\"id\" = 'urn:ngsi-ld:Vehicle:1'"), "{sql}");
-        assert!(origin.contains("\"pe\".\"entity_id\" = 'urn:ngsi-ld:Vehicle:1'"), "{sql}");
-        assert!(!sql.contains("temporal_entity_attributes"), "{sql}");
+        let statement = statement_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
+        assert_statement_snapshot!("aggregation-the-bucket-origin-is-measured-over-the-history-of-the-aggregated-entity", statement);
     }
 
     /// Clause 4.5.7: a deletion carries no value, so the rows that record one are
     /// outside every aggregate rather than counted as observations.
     #[test]
     fn tombstone_rows_are_excluded_from_every_aggregate() {
-        let sql = sql_of(&aggregated(vec![AggrMethod::TotalCount], None));
-        assert!(sql.contains("\"ah\".\"value_kind\" <> (0)"), "{sql}");
+        let statement = statement_of(&aggregated(vec![AggrMethod::TotalCount], None));
+        assert_statement_snapshot!("aggregation-tombstone-rows-are-excluded-from-every-aggregate", statement);
     }
 
     /// Clause 4.5.19 gives one aggregate value per attribute, `datasetId` and
@@ -536,17 +505,12 @@ mod tests {
     /// its own, and its rows are grouped by the period alone.
     #[test]
     fn the_group_key_is_the_attribute_the_dataset_and_the_period_alone() {
-        let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
-        assert!(sql.starts_with("WITH \"bucket_origin\""), "{sql}");
-        assert!(
-            sql.contains(r#"SELECT "an"."name" AS "attribute_name", "st"."dataset_key" AS "dataset_key", "page".*, (SELECT "bucket_origin"."origin" FROM "bucket_origin")::timestamptz AS "period_origin", FALSE AS "stream_continues" FROM"#),
-            "{sql}"
-        );
-        pretty_assertions::assert_eq!(group_keys(&sql), "\"bucket\".\"bucket_start\"", "{sql}");
+        let periodic = statement_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
+        assert_statement_snapshot!("aggregation-the-group-key-is-the-attribute-the-dataset-and-the-period-alone-1", periodic);
 
-        let sql = sql_of(&aggregated(vec![AggrMethod::Avg], None));
-        pretty_assertions::assert_eq!(group_keys(&sql), "", "{sql}");
-        assert!(sql.contains("HAVING (COUNT(*)) > (0)"), "a stream with no instance has no period: {sql}");
+        // A stream with no instance has no period.
+        let whole_range = statement_of(&aggregated(vec![AggrMethod::Avg], None));
+        assert_statement_snapshot!("aggregation-the-group-key-is-the-attribute-the-dataset-and-the-period-alone-2", whole_range);
     }
 
     /// Keying the group on the unit, the attribute family or the value shape
@@ -554,12 +518,11 @@ mod tests {
     /// none of them may appear in the key.
     #[test]
     fn no_unit_or_registry_code_keys_the_group() {
-        for period in [Some("PT1H"), None] {
-            let sql = sql_of(&aggregated(vec![AggrMethod::Avg, AggrMethod::Min, AggrMethod::TotalCount], period));
-            for column in ["unit_code_id", "value_kind", "attribute_kind"] {
-                assert!(!group_keys(&sql).contains(column), "{column} still keys the group: {sql}");
-            }
-        }
+        let methods = || vec![AggrMethod::Avg, AggrMethod::Min, AggrMethod::TotalCount];
+        let periodic = statement_of(&aggregated(methods(), Some("PT1H")));
+        assert_statement_snapshot!("aggregation-no-unit-or-registry-code-keys-the-group-1", periodic);
+        let whole_range = statement_of(&aggregated(methods(), None));
+        assert_statement_snapshot!("aggregation-no-unit-or-registry-code-keys-the-group-2", whole_range);
     }
 
     /// The family is a fact of the row rather than of the mutable catalogue, so
@@ -569,18 +532,11 @@ mod tests {
     /// code alone is too coarse to give.
     #[test]
     fn the_attribute_family_and_value_shape_are_projected_as_the_span_of_the_group() {
-        let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
-        for projection in [
-            "MIN(\"ah\".\"attribute_kind\") AS \"attribute_kind_lowest\"",
-            "MAX(\"ah\".\"attribute_kind\") AS \"attribute_kind_highest\"",
-            "AS \"recorded_shape_lowest\"",
-            "AS \"recorded_shape_highest\"",
-        ] {
-            assert!(sql.contains(projection), "{projection} missing: {sql}");
-        }
-        assert!(sql.contains("jsonb_typeof"), "the shape span separates an array from an object: {sql}");
-        assert!(!sql.contains("attribute_type"), "{sql}");
-        assert!(!sql.contains("\"ah\".\"value_type"), "{sql}");
+        let statement = statement_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
+        assert_statement_snapshot!(
+            "aggregation-the-attribute-family-and-value-shape-are-projected-as-the-span-of-the-group",
+            statement
+        );
     }
 
     /// Table 4.5.19.1-1, "JSON Array" column: `avg`, `min`, `max` and `sum` are
@@ -588,13 +544,14 @@ mod tests {
     /// measures the JSONB column by its element count.
     #[test]
     fn the_size_measuring_methods_aggregate_an_array_by_its_length() {
-        for method in [AggrMethod::Avg, AggrMethod::Min, AggrMethod::Max, AggrMethod::Sum] {
-            let sql = sql_of(&aggregated(vec![method], None));
-            assert!(
-                sql.contains("jsonb_array_length(COALESCE((CASE WHEN ((\"ah\".\"value_object\" ->> ('@type')) = ('@json'))"),
-                "{method}: {sql}"
-            );
-        }
+        let avg = statement_of(&aggregated(vec![AggrMethod::Avg], None));
+        assert_statement_snapshot!("aggregation-the-size-measuring-methods-aggregate-an-array-by-its-length-1", avg);
+        let min = statement_of(&aggregated(vec![AggrMethod::Min], None));
+        assert_statement_snapshot!("aggregation-the-size-measuring-methods-aggregate-an-array-by-its-length-2", min);
+        let max = statement_of(&aggregated(vec![AggrMethod::Max], None));
+        assert_statement_snapshot!("aggregation-the-size-measuring-methods-aggregate-an-array-by-its-length-3", max);
+        let sum = statement_of(&aggregated(vec![AggrMethod::Sum], None));
+        assert_statement_snapshot!("aggregation-the-size-measuring-methods-aggregate-an-array-by-its-length-4", sum);
     }
 
     /// Table 4.5.19.1-1 marks `stddev` and `sumsq` N/A in the "JSON Array"
@@ -602,11 +559,10 @@ mod tests {
     /// an array size in and answer a request the table refuses.
     #[test]
     fn standard_deviation_and_the_sum_of_squares_never_measure_an_array() {
-        for method in [AggrMethod::StdDev, AggrMethod::SumSq] {
-            let sql = sql_of(&aggregated(vec![method], None));
-            assert!(!sql.contains("jsonb_array_length"), "{method}: {sql}");
-            assert!(sql.contains("\"ah\".\"value_boolean\"::integer::numeric"), "{method}: {sql}");
-        }
+        let std_dev = statement_of(&aggregated(vec![AggrMethod::StdDev], None));
+        assert_statement_snapshot!("aggregation-standard-deviation-and-the-sum-of-squares-never-measure-an-array-1", std_dev);
+        let sum_sq = statement_of(&aggregated(vec![AggrMethod::SumSq], None));
+        assert_statement_snapshot!("aggregation-standard-deviation-and-the-sum-of-squares-never-measure-an-array-2", sum_sq);
     }
 
     /// Clause 4.5.2 attaches a `unitCode` to the instance, not to the attribute,
@@ -615,25 +571,21 @@ mod tests {
     /// that also held unannotated rows, and the null test is projected beside them.
     #[test]
     fn the_unit_span_carries_both_bounds_and_whether_any_row_carried_no_unit() {
-        for period in [Some("PT1H"), None] {
-            let sql = sql_of(&aggregated(vec![AggrMethod::Avg], period));
-            for projection in [
-                "MIN(\"ah\".\"unit_code_id\") AS \"unit_code_id_lowest\"",
-                "MAX(\"ah\".\"unit_code_id\") AS \"unit_code_id_highest\"",
-                "BOOL_OR(\"ah\".\"unit_code_id\" IS NULL) AS \"any_unitless\"",
-            ] {
-                assert!(sql.contains(projection), "{projection} missing: {sql}");
-            }
-        }
+        let periodic = statement_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
+        assert_statement_snapshot!("aggregation-the-unit-span-carries-both-bounds-and-whether-any-row-carried-no-unit-1", periodic);
+        let whole_range = statement_of(&aggregated(vec![AggrMethod::Avg], None));
+        assert_statement_snapshot!(
+            "aggregation-the-unit-span-carries-both-bounds-and-whether-any-row-carried-no-unit-2",
+            whole_range
+        );
     }
 
     /// An exact decimal stays exact: the aggregate reads the `NUMERIC` value
     /// column rather than widening it to binary floating point.
     #[test]
     fn numeric_values_are_aggregated_without_a_float_cast() {
-        let sql = sql_of(&aggregated(vec![AggrMethod::Min, AggrMethod::Max, AggrMethod::Avg], None));
-        assert!(!sql.contains("float8"), "{sql}");
-        assert!(sql.contains("\"ah\".\"value_boolean\"::integer::numeric"), "{sql}");
+        let statement = statement_of(&aggregated(vec![AggrMethod::Min, AggrMethod::Max, AggrMethod::Avg], None));
+        assert_statement_snapshot!("aggregation-numeric-values-are-aggregated-without-a-float-cast", statement);
     }
 
     /// Clause 4.5.19: an empty or zero period aggregates the whole range into one
@@ -642,12 +594,12 @@ mod tests {
     /// side of its period is the extreme instant the stream holds.
     #[test]
     fn an_aggregation_period_of_zero_covers_the_whole_range() {
-        for period in ["", "PT0S", "P0D"] {
-            let sql = sql_of(&aggregated(vec![AggrMethod::TotalCount], Some(period)));
-            assert!(!sql.contains("time_bucket"), "{period}: {sql}");
-            assert!(sql.contains("MIN(\"ah\".\"observed_at\") AS \"bucket_start\""), "{period}: {sql}");
-            assert!(sql.contains("MAX(\"ah\".\"observed_at\") AS \"bucket_end\""), "{period}: {sql}");
-        }
+        let empty = statement_of(&aggregated(vec![AggrMethod::TotalCount], Some("")));
+        assert_statement_snapshot!("aggregation-an-aggregation-period-of-zero-covers-the-whole-range-1", empty);
+        let zero_time = statement_of(&aggregated(vec![AggrMethod::TotalCount], Some("PT0S")));
+        assert_statement_snapshot!("aggregation-an-aggregation-period-of-zero-covers-the-whole-range-2", zero_time);
+        let zero_days = statement_of(&aggregated(vec![AggrMethod::TotalCount], Some("P0D")));
+        assert_statement_snapshot!("aggregation-an-aggregation-period-of-zero-covers-the-whole-range-3", zero_days);
     }
 
     /// Clause 4.5.19.1: the one period of a whole-range aggregation spans the
@@ -659,10 +611,8 @@ mod tests {
         let to = "2024-01-01T03:00:00Z".parse::<NgsiLdDateTime>().expect("valid instant").get();
         let mut compiled = aggregated(vec![AggrMethod::Avg], Some("PT0S"));
         compiled.window.interval = TimeInterval::Between { from, to };
-        let sql = sql_of(&compiled);
-        assert!(!sql.contains("time_bucket"), "{sql}");
-        assert!(sql.contains("'2024-01-01 00:00:00.000000 +00:00'::timestamptz AS \"bucket_start\""), "{sql}");
-        assert!(sql.contains("'2024-01-01 03:00:00.000000 +00:00'::timestamptz AS \"bucket_end\""), "{sql}");
+        let statement = statement_of(&compiled);
+        assert_statement_snapshot!("aggregation-a-whole-range-period-over-a-between-query-spans-the-query-bounds", statement);
     }
 
     /// A `before` query opens without limit, so its one period ends at
@@ -673,9 +623,11 @@ mod tests {
         let to = "2024-01-01T03:00:00Z".parse::<NgsiLdDateTime>().expect("valid instant").get();
         let mut compiled = aggregated(vec![AggrMethod::Avg], None);
         compiled.window.interval = TimeInterval::Before(to);
-        let sql = sql_of(&compiled);
-        assert!(sql.contains("MIN(\"ah\".\"observed_at\") AS \"bucket_start\""), "{sql}");
-        assert!(sql.contains("'2024-01-01 03:00:00.000000 +00:00'::timestamptz AS \"bucket_end\""), "{sql}");
+        let statement = statement_of(&compiled);
+        assert_statement_snapshot!(
+            "aggregation-a-whole-range-period-over-a-before-query-opens-at-the-least-recent-instant-its-stream-holds",
+            statement
+        );
     }
 
     fn instant(text: &str) -> DateTime<Utc> {
@@ -696,20 +648,12 @@ mod tests {
     /// at `timeAt`, its end the start plus the duration.
     #[test]
     fn an_exact_period_buckets_with_time_bucket_at_the_origin() {
-        for period in ["PT1H", "P1D", "PT1H30M"] {
-            let sql = sql_of(&from_the_fifteenth(period));
-            assert!(
-                sql.contains(&format!(
-                    "time_bucket('{period}'::interval, \"ah\".\"observed_at\", '2026-03-15 00:00:00.000000 +00:00'::timestamptz)"
-                )),
-                "{period}: {sql}"
-            );
-            assert!(
-                sql.contains(&format!("\"bucket\".\"bucket_start\" + ('{period}'::interval) AS \"bucket_end\"")),
-                "{period}: {sql}"
-            );
-            assert!(!sql.contains("calendar_grid"), "{period}: {sql}");
-        }
+        let hour = statement_of(&from_the_fifteenth("PT1H"));
+        assert_statement_snapshot!("aggregation-an-exact-period-buckets-with-time-bucket-at-the-origin-1", hour);
+        let day = statement_of(&from_the_fifteenth("P1D"));
+        assert_statement_snapshot!("aggregation-an-exact-period-buckets-with-time-bucket-at-the-origin-2", day);
+        let hour_and_a_half = statement_of(&from_the_fifteenth("PT1H30M"));
+        assert_statement_snapshot!("aggregation-an-exact-period-buckets-with-time-bucket-at-the-origin-3", hour_and_a_half);
     }
 
     /// Clause 4.5.19.1 admits a duration with a year or month part, mixed with
@@ -718,21 +662,14 @@ mod tests {
     /// in UTC instead, the period written into the statement once.
     #[test]
     fn a_calendar_period_numbers_its_periods_from_the_origin_in_utc() {
-        for period in ["P1M", "P1Y", "P1M1D", "P1MT2H"] {
-            let sql = sql_of(&from_the_fifteenth(period));
-            assert!(!sql.contains("time_bucket"), "{period}: {sql}");
-            assert!(
-                sql.contains(&format!(
-                    "SELECT '{period}'::interval AS \"period\", '2026-03-15 00:00:00.000000 +00:00'::timestamptz AS \"origin\""
-                )),
-                "{period}: {sql}"
-            );
-            pretty_assertions::assert_eq!(sql.matches(&format!("'{period}'::interval")).count(), 1, "{period}: {sql}");
-            assert!(sql.contains("* 2629746"), "{period}: {sql}");
-            assert!(sql.contains("AS \"period_estimate\""), "{period}: {sql}");
-            assert!(sql.contains("AS \"period_index\""), "{period}: {sql}");
-            assert!(sql.contains("AT TIME ZONE 'UTC'"), "{period}: {sql}");
-        }
+        let month = statement_of(&from_the_fifteenth("P1M"));
+        assert_statement_snapshot!("aggregation-a-calendar-period-numbers-its-periods-from-the-origin-in-utc-1", month);
+        let year = statement_of(&from_the_fifteenth("P1Y"));
+        assert_statement_snapshot!("aggregation-a-calendar-period-numbers-its-periods-from-the-origin-in-utc-2", year);
+        let month_and_day = statement_of(&from_the_fifteenth("P1M1D"));
+        assert_statement_snapshot!("aggregation-a-calendar-period-numbers-its-periods-from-the-origin-in-utc-3", month_and_day);
+        let month_and_hours = statement_of(&from_the_fifteenth("P1MT2H"));
+        assert_statement_snapshot!("aggregation-a-calendar-period-numbers-its-periods-from-the-origin-in-utc-4", month_and_hours);
     }
 
     /// A month-end clamp makes a period end at the next period's start rather
@@ -741,11 +678,8 @@ mod tests {
     /// projected beside the start and keys the group with it.
     #[test]
     fn a_calendar_period_ends_at_the_next_periods_start() {
-        let sql = sql_of(&from_the_fifteenth("P1M"));
-        assert!(sql.contains(r#""calendar_grid"."period_index" + (1)"#), "{sql}");
-        assert!(sql.contains(r#"AS "bucket_end""#), "{sql}");
-        assert!(sql.contains(r#""bucket"."bucket_end" AS "bucket_end""#), "{sql}");
-        pretty_assertions::assert_eq!(group_keys(&sql), "\"bucket\".\"bucket_start\", \"bucket\".\"bucket_end\"", "{sql}");
+        let statement = statement_of(&from_the_fifteenth("P1M"));
+        assert_statement_snapshot!("aggregation-a-calendar-period-ends-at-the-next-periods-start", statement);
     }
 
     /// A continuation opens on a boundary that lays its grid, so the grid is
@@ -754,57 +688,49 @@ mod tests {
     fn a_continuation_lays_its_grid_from_the_instant_its_window_opens_on() {
         let mut compiled = from_the_fifteenth("P1M");
         compiled.window.interval = TimeInterval::After(instant("2026-05-15T00:00:00Z"));
-        let sql = sql_of(&compiled);
-        assert!(
-            sql.contains("'P1M'::interval AS \"period\", '2026-05-15 00:00:00.000000 +00:00'::timestamptz AS \"origin\""),
-            "{sql}"
-        );
-        assert!(sql.contains("'2026-05-15 00:00:00.000000 +00:00'::timestamptz AS \"period_origin\""), "{sql}");
+        let statement = statement_of(&compiled);
+        assert_statement_snapshot!("aggregation-a-continuation-lays-its-grid-from-the-instant-its-window-opens-on", statement);
     }
 
     /// The origin the periods were laid from is reported beside them, read
     /// from the history when the window names none.
     #[test]
     fn every_row_reports_the_origin_of_its_grid() {
-        let sql = sql_of(&from_the_fifteenth("PT1H"));
-        assert!(sql.contains("'2026-03-15 00:00:00.000000 +00:00'::timestamptz AS \"period_origin\""), "{sql}");
-        let sql = sql_of(&aggregated(vec![AggrMethod::TotalCount], Some("P1M")));
-        assert!(
-            sql.contains("(SELECT \"bucket_origin\".\"origin\" FROM \"bucket_origin\")::timestamptz AS \"period_origin\""),
-            "{sql}"
-        );
-        let sql = sql_of(&aggregated(vec![AggrMethod::TotalCount], None));
-        assert!(!sql.contains("period_origin"), "{sql}");
+        let named = statement_of(&from_the_fifteenth("PT1H"));
+        assert_statement_snapshot!("aggregation-every-row-reports-the-origin-of-its-grid-1", named);
+        let read = statement_of(&aggregated(vec![AggrMethod::TotalCount], Some("P1M")));
+        assert_statement_snapshot!("aggregation-every-row-reports-the-origin-of-its-grid-2", read);
+        let whole_range = statement_of(&aggregated(vec![AggrMethod::TotalCount], None));
+        assert_statement_snapshot!("aggregation-every-row-reports-the-origin-of-its-grid-3", whole_range);
     }
 
     /// A retrieval without `timeAt` anchors a calendar grid where it anchors an
     /// exact one: at the earliest instant of the Entity's history on the axis.
     #[test]
     fn a_calendar_period_without_time_at_numbers_from_the_entitys_earliest_instant() {
-        let sql = sql_of(&aggregated(vec![AggrMethod::TotalCount], Some("P1M")));
-        assert!(sql.contains("MIN(\"ah2\".\"observed_at\") AS \"origin\""), "{sql}");
-        assert!(
-            sql.contains("(SELECT \"bucket_origin\".\"origin\" FROM \"bucket_origin\")::timestamptz AS \"origin\""),
-            "{sql}"
+        let statement = statement_of(&aggregated(vec![AggrMethod::TotalCount], Some("P1M")));
+        assert_statement_snapshot!(
+            "aggregation-a-calendar-period-without-time-at-numbers-from-the-entitys-earliest-instant",
+            statement
         );
     }
 
     #[test]
     fn a_statement_not_asking_for_total_count_still_counts_each_period() {
-        let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
-        pretty_assertions::assert_eq!(sql.matches(r#"AS "agg_total_count""#).count(), 1, "{sql}");
+        let statement = statement_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
+        assert_statement_snapshot!("aggregation-a-statement-not-asking-for-total-count-still-counts-each-period", statement);
     }
 
     #[test]
     fn a_statement_asking_for_total_count_counts_each_period_once() {
-        let sql = sql_of(&aggregated(vec![AggrMethod::TotalCount], Some("PT1H")));
-        pretty_assertions::assert_eq!(sql.matches(r#"AS "agg_total_count""#).count(), 1, "{sql}");
+        let statement = statement_of(&aggregated(vec![AggrMethod::TotalCount], Some("PT1H")));
+        assert_statement_snapshot!("aggregation-a-statement-asking-for-total-count-counts-each-period-once", statement);
     }
 
     #[test]
     fn an_empty_method_list_still_counts() {
-        let sql = sql_of(&aggregated(Vec::new(), None));
-        assert!(sql.contains("agg_total_count"), "{sql}");
+        let statement = statement_of(&aggregated(Vec::new(), None));
+        assert_statement_snapshot!("aggregation-an-empty-method-list-still-counts", statement);
     }
 
     /// The renderer emits one triple per row, so the rows of one attribute and
@@ -813,24 +739,15 @@ mod tests {
     /// orders by stream and number.
     #[test]
     fn the_rows_arrive_ordered_by_attribute_dataset_and_period() {
-        let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
-        assert!(
-            sql.contains(r#"ROW_NUMBER() OVER (  ORDER BY "bucket"."bucket_start" ASC ) AS "period_order""#),
-            "{sql}"
-        );
+        let aggregation = statement_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
+        assert_statement_snapshot!("aggregation-the-rows-arrive-ordered-by-attribute-dataset-and-period-1", aggregation);
         let read = build_temporal_history_query(
             &HistoryBranch::live(),
             slice::from_ref(&"urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("a valid identifier")),
             &aggregated(vec![AggrMethod::Avg], Some("PT1H")),
             &QueryNames::default(),
-        )
-        .to_string(PostgresQueryBuilder);
-        let order_by = read.rsplit("ORDER BY").next().expect("an ORDER BY clause").trim();
-        pretty_assertions::assert_eq!(
-            order_by,
-            "\"read_entity\".\"read_entity\" ASC, \"entity_rows\".\"attribute_name\" ASC, \"entity_rows\".\"dataset_key\" = ('') ASC, \"entity_rows\".\"dataset_key\" ASC, \"entity_rows\".\"period_order\" ASC",
-            "{read}"
         );
+        assert_statement_snapshot!("aggregation-the-rows-arrive-ordered-by-attribute-dataset-and-period-2", read);
     }
 
     /// `aggrGroupBy=unitCode` promotes the unit to a group key: `ah.unit_code_id`
@@ -838,10 +755,8 @@ mod tests {
     /// is unchanged.
     #[test]
     fn grouping_by_unit_code_adds_the_unit_column_to_the_group_by() {
-        let sql = sql_of(&grouped(vec![AggrMethod::Avg], None, "unitCode"));
-        assert!(group_keys(&sql).contains("\"ah\".\"unit_code_id\""), "unit_code_id must key the group: {sql}");
-        // The span projection survives so the reader still reads the group's unit.
-        assert!(sql.contains("AS \"unit_code_id_lowest\""), "{sql}");
+        let statement = statement_of(&grouped(vec![AggrMethod::Avg], None, "unitCode"));
+        assert_statement_snapshot!("aggregation-grouping-by-unit-code-adds-the-unit-column-to-the-group-by", statement);
     }
 
     /// `aggrGroupBy=observedAt;month` truncates the observation axis to a calendar
@@ -849,47 +764,38 @@ mod tests {
     /// express.
     #[test]
     fn a_calendar_bucket_truncates_the_axis_in_the_group_by() {
-        let sql = sql_of(&grouped(vec![AggrMethod::Avg], None, "observedAt;month"));
-        assert!(sql.contains("date_trunc('month', \"ah\".\"observed_at\", 'UTC')"), "{sql}");
-        assert!(group_keys(&sql).contains("date_trunc('month'"), "the bucket keys the group: {sql}");
+        let statement = statement_of(&grouped(vec![AggrMethod::Avg], None, "observedAt;month"));
+        assert_statement_snapshot!("aggregation-a-calendar-bucket-truncates-the-axis-in-the-group-by", statement);
     }
 
     /// `aggrGroupBy=observedAt;hourOfDay` folds the axis onto the hour of day,
     /// the non-contiguous cyclic bucketing.
     #[test]
     fn a_cyclic_bucket_extracts_the_axis_field_in_the_group_by() {
-        let sql = sql_of(&grouped(vec![AggrMethod::Avg], None, "observedAt;hourOfDay"));
-        assert!(sql.contains("date_part('hour', \"ah\".\"observed_at\" AT TIME ZONE ('UTC'))"), "{sql}");
+        let statement = statement_of(&grouped(vec![AggrMethod::Avg], None, "observedAt;hourOfDay"));
+        assert_statement_snapshot!("aggregation-a-cyclic-bucket-extracts-the-axis-field-in-the-group-by", statement);
     }
 
     /// A value-in-effect key correlates the attribute's value at each instant
     /// through a lateral join selecting the latest instance not after the row.
     #[test]
     fn a_value_key_joins_the_value_in_effect_through_a_lateral() {
-        let sql = sql_of(&grouped(vec![AggrMethod::Avg], None, "category"));
-        assert!(sql.contains("JOIN LATERAL"), "{sql}");
-        assert!(sql.contains("ORDER BY \"ahk0\".\"observed_at\" DESC"), "{sql}");
-        assert!(sql.contains("LIMIT 1"), "{sql}");
+        let statement = statement_of(&grouped(vec![AggrMethod::Avg], None, "category"));
+        assert_statement_snapshot!("aggregation-a-value-key-joins-the-value-in-effect-through-a-lateral", statement);
     }
 
     /// Grouping combines with `aggrPeriodDuration`: the period column stays, and
     /// the group key sits before it in the `GROUP BY`.
     #[test]
     fn grouping_combines_with_the_aggregation_period() {
-        let sql = sql_of(&grouped(vec![AggrMethod::Avg], Some("PT1H"), "unitCode"));
-        assert!(sql.contains("time_bucket"), "the period bucket survives grouping: {sql}");
-        let group_by = group_keys(&sql);
-        let unit_at = group_by.find("unit_code_id").expect("the unit keys the group");
-        let period_at = group_by.find("bucket_start").expect("the period keys the group");
-        assert!(unit_at < period_at, "the group key must precede the period: {group_by}");
+        let statement = statement_of(&grouped(vec![AggrMethod::Avg], Some("PT1H"), "unitCode"));
+        assert_statement_snapshot!("aggregation-grouping-combines-with-the-aggregation-period", statement);
     }
 
     #[test]
     fn min_and_max_project_a_typed_column_per_kind() {
-        let sql = sql_of(&aggregated(vec![AggrMethod::Min, AggrMethod::Max], None));
-        for column in ["agg_min", "agg_min_str", "agg_min_dt", "agg_max", "agg_max_str", "agg_max_dt"] {
-            assert!(sql.contains(column), "{column} missing: {sql}");
-        }
+        let statement = statement_of(&aggregated(vec![AggrMethod::Min, AggrMethod::Max], None));
+        assert_statement_snapshot!("aggregation-min-and-max-project-a-typed-column-per-kind", statement);
     }
 
     /// Clause 5.7.4: an aggregation on the live branch reads the entity's
@@ -897,13 +803,7 @@ mod tests {
     /// aggregated before the drain applies it.
     #[test]
     fn aggregation_reads_the_pending_rows() {
-        let sql = sql_of(&aggregated(vec![AggrMethod::Sum, AggrMethod::Max], None));
-        let streams = sql.split(r#") AS "st""#).next().expect("the streams");
-        assert!(streams.contains(r#"UNION ALL (SELECT DISTINCT "pe"."entity_id" AS "entity_id""#), "{sql}");
-        assert!(streams.contains(r#""pe"."entity_id" = 'urn:ngsi-ld:Vehicle:1'"#), "{sql}");
-        assert!(
-            sql.contains(r#""pe"."entity_id" = "st"."entity_id" AND "pe"."attribute_name_key" = "st"."attribute_name_key""#),
-            "the queued part of each stream: {sql}"
-        );
+        let statement = statement_of(&aggregated(vec![AggrMethod::Sum, AggrMethod::Max], None));
+        assert_statement_snapshot!("aggregation-aggregation-reads-the-pending-rows", statement);
     }
 }

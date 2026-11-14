@@ -1,0 +1,5 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/entity_rows.rs
+---
+SELECT
+  "te"."evolution_created_at" IS NOT NULL

@@ -164,7 +164,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, history_source::HistoryBranch};
-    use sea_query::PostgresQueryBuilder;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
 
     fn compiled(interval: TimeInterval) -> CompiledTemporalQuery {
         CompiledTemporalQuery::builder()
@@ -193,54 +193,25 @@ mod tests {
     /// the other parts, so the read keeps it.
     #[test]
     fn the_in_effect_read_places_a_deletion_without_axis_instant() {
-        let sql = build_in_effect_attribute_instances(&HistoryBranch::live_recorded(), &compiled(noon()), &ids(), &[AttributeNameKey::from(7)])
-            .expect("a window with a start")
-            .to_string(PostgresQueryBuilder);
-        for fragment in [
-            r#""qi"."observed_at" <= '2020-08-01 12:00:00"#,
-            r#""qh"."placed" < '2020-08-01 12:00:00"#,
-            r#""qs"."attribute_name_key" = 7"#,
-            r#") AS "ah" ON TRUE JOIN "attribute_names" AS "an""#,
-            r#"AS "read_entity_id""#,
-            r#""e"."id" = 'urn:ngsi-ld:Vehicle:1'"#,
-        ] {
-            assert!(sql.contains(fragment), "{fragment} missing: {sql}");
-        }
-        assert!(!sql.contains("value_kind\" <>"), "{sql}");
+        let statement = build_in_effect_attribute_instances(&HistoryBranch::live_recorded(), &compiled(noon()), &ids(), &[AttributeNameKey::from(7)])
+            .expect("a window with a start");
+        assert_statement_snapshot!("split-part-rows-the-in-effect-read-places-a-deletion-without-axis-instant", statement);
     }
 
     /// Clause 4.18: the Scope in force at the start is the latest event before
     /// it that nothing superseded at or before it.
     #[test]
     fn the_in_effect_scope_is_the_latest_event_before_the_start() {
-        let sql = build_in_effect_scope(&HistoryBranch::live_recorded(), &compiled(noon()), &ids())
-            .expect("a window with a start")
-            .to_string(PostgresQueryBuilder);
-        for fragment in [
-            r#""sh"."observed_at" < '2020-08-01 12:00:00"#,
-            r#""sh_next"."observed_at" <= '2020-08-01 12:00:00"#,
-            r#"AS "scope_event_at""#,
-            r#"AS "read_entity_id""#,
-        ] {
-            assert!(sql.contains(fragment), "{fragment} missing: {sql}");
-        }
+        let statement = build_in_effect_scope(&HistoryBranch::live_recorded(), &compiled(noon()), &ids()).expect("a window with a start");
+        assert_statement_snapshot!("split-part-rows-the-in-effect-scope-is-the-latest-event-before-the-start", statement);
     }
 
     /// Clause 4.5.7: the hop Relationships are read inside the window only,
     /// every instance placed on the axis.
     #[test]
     fn the_window_relationships_are_read_inside_the_window() {
-        let sql = build_window_relationship_instances(&HistoryBranch::live_recorded(), &compiled(noon()), &ids(), &[AttributeNameKey::from(4)])
-            .to_string(PostgresQueryBuilder);
-        for fragment in [
-            r#""wr"."attribute_name_key" = 4"#,
-            r#""wr"."observed_at" IS NOT NULL"#,
-            r#""wr"."observed_at" >= '2020-08-01 12:00:00"#,
-            r#"AS "read_entity_id""#,
-        ] {
-            assert!(sql.contains(fragment), "{fragment} missing: {sql}");
-        }
-        assert!(!sql.contains(r#""qe""#), "{sql}");
+        let statement = build_window_relationship_instances(&HistoryBranch::live_recorded(), &compiled(noon()), &ids(), &[AttributeNameKey::from(4)]);
+        assert_statement_snapshot!("split-part-rows-the-window-relationships-are-read-inside-the-window", statement);
     }
 
     /// Neither read has an instance in effect to find for a window with no

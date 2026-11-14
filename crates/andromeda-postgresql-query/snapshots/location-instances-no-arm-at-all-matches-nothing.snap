@@ -1,0 +1,9 @@
+---
+source: crates/andromeda-postgresql-query/src/location_instances.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  FALSE

@@ -1,0 +1,14 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/entity_rows.rs
+---
+SELECT
+  *
+FROM
+  (
+    SELECT
+      *
+    FROM
+      "snap_1"."entities"
+    WHERE
+      "entities"."evolution_created_at" IS NOT NULL
+  ) AS "e"

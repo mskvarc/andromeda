@@ -1,0 +1,10 @@
+---
+source: crates/andromeda-postgresql-query/src/type_membership.rs
+---
+SELECT
+  "entity_key",
+  "id"
+FROM
+  "entity_type_members"
+WHERE
+  FALSE

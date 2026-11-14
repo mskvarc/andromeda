@@ -78,8 +78,9 @@ mod tests {
         q_predicate::keyed_hop::hop_candidates,
     };
     use andromeda_ngsi_ld_query::filter::{expression::Expr, language_matching::LanguageMatching, parser::parse};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, IntoIden, PostgresQueryBuilder};
+    use sea_query::{Alias, IntoIden, SelectStatement};
 
     fn names() -> QueryNames {
         QueryNames {
@@ -95,14 +96,14 @@ mod tests {
         }
     }
 
-    fn candidates_in(q: &str, rows: &EntityRowRefs) -> Option<String> {
+    fn candidates_in(q: &str, rows: &EntityRowRefs) -> Option<SelectStatement> {
         let Expr::Pred(pred) = parse(q).expect("parse q") else {
             panic!("a single predicate");
         };
-        hop_candidates(&pred, rows, &names(), LanguageMatching::TagEquality).map(|select| select.to_string(PostgresQueryBuilder))
+        hop_candidates(&pred, rows, &names(), LanguageMatching::TagEquality)
     }
 
-    fn candidates(q: &str) -> Option<String> {
+    fn candidates(q: &str) -> Option<SelectStatement> {
         candidates_in(q, &EntityRowRefs::unaliased(None))
     }
 
@@ -110,51 +111,31 @@ mod tests {
 
     #[test]
     fn a_hop_reads_the_instances_naming_the_linked_entities_its_inner_term_keeps() {
-        let sql = candidates(HOP).expect("keyed");
-        assert!(sql.starts_with(r#"SELECT "entity_key" FROM (SELECT "ca_ln1"."entity_key" FROM "entities" AS "le1" JOIN "current_attributes" AS "ca_ln1" ON "ca_ln1"."attribute_name_key" = 34 AND "ca_ln1"."value_uri" = "le1"."id" "#), "{sql}");
-        assert!(sql.contains(r#"UNION ALL (SELECT "ca_ln1"."entity_key" FROM "entities" AS "le1" JOIN "current_attributes" AS "ca_ln1" ON "ca_ln1"."attribute_name_key" = 34 AND ("ca_ln1"."value_object" @> jsonb_build_array("le1"."id")) "#), "{sql}");
-        assert!(sql.ends_with(r#") AS "matches""#), "{sql}");
-        assert!(!sql.contains("value_long_uri"), "{sql}");
+        let statement = candidates(HOP).expect("keyed");
+        assert_statement_snapshot!("keyed-hop-a-hop-reads-the-instances-naming-the-linked-entities-its-inner-term-keeps", statement);
     }
 
     /// Clause 4.22: a past-due Relationship instance links nothing, and only
     /// a `Relationship` or a `ListRelationship` holds objects.
     #[test]
     fn each_branch_keeps_the_standing_relationship_instances_and_the_inner_term() {
-        let sql = candidates(HOP).expect("keyed");
-        for fragment in [
-            r#""ca_ln1"."attribute_kind" IN (2, 8)"#,
-            r#"("ca_ln1"."expires_at" IS NULL OR "ca_ln1"."expires_at" > NOW())"#,
-            r#"FROM "current_attributes" AS "ca" WHERE "ca"."attribute_name_key" = 28"#,
-            r#""ca"."entity_key" = "le1"."entity_key""#,
-        ] {
-            assert_eq!(sql.matches(fragment).count(), 2, "{fragment}: {sql}");
-        }
+        let statement = candidates(HOP).expect("keyed");
+        assert_statement_snapshot!("keyed-hop-each-branch-keeps-the-standing-relationship-instances-and-the-inner-term", statement);
     }
 
     #[test]
     fn a_type_guard_reads_the_linked_entitys_search_row_in_each_branch() {
-        let sql =
+        let statement =
             candidates(r#""https://example.com/hasTrip"{"https://example.com/Trip","https://example.com/Bus":"https://example.com/headSign"}=="Vajnory""#)
                 .expect("keyed");
-        assert_eq!(
-            sql.matches(r#"JOIN "entity_search" AS "ls1" ON "ls1"."entity_key" = "le1"."entity_key""#)
-                .count(),
-            2,
-            "{sql}"
-        );
-        assert_eq!(sql.matches(r#""ls1"."entity_type_name_keys" @> (ARRAY[10])"#).count(), 2, "{sql}");
+        assert_statement_snapshot!("keyed-hop-a-type-guard-reads-the-linked-entitys-search-row-in-each-branch", statement);
     }
 
     #[test]
     fn the_linked_entities_are_read_in_the_branch_schema_of_the_statement() {
         let rows = EntityRowRefs::unaliased(Some(Alias::new("snapshot_1").into_iden()));
-        let sql = candidates_in(HOP, &rows).expect("keyed");
-        assert!(
-            sql.contains(r#"FROM "snapshot_1"."entities" AS "le1" JOIN "snapshot_1"."current_attributes" AS "ca_ln1""#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#"FROM "snapshot_1"."current_attributes" AS "ca""#), "{sql}");
+        let statement = candidates_in(HOP, &rows).expect("keyed");
+        assert_statement_snapshot!("keyed-hop-the-linked-entities-are-read-in-the-branch-schema-of-the-statement", statement);
     }
 
     #[test]

@@ -1,0 +1,510 @@
+---
+source: crates/andromeda-postgresql-context-query/src/value_walk_page.rs
+---
+SELECT
+  "stored"."entity_key",
+  "stored"."id",
+  "stored"."entity_created_at",
+  "stored"."entity_modified_at",
+  "stored"."entity_write_count",
+  "stored"."entity_expires_at",
+  "stored"."entity_type_name_keys",
+  "stored"."verbatim_scope_paths"
+FROM
+  (
+    WITH
+    "occupied_columns" AS MATERIALIZED (
+      SELECT
+        (
+          SELECT
+            1
+          FROM
+            "current_attributes" AS "ca"
+          WHERE
+            "ca"."attribute_name_key" = $1
+            AND "ca"."value_number" IS NOT NULL
+          ORDER BY
+            "ca"."value_number" ASC
+          LIMIT
+            1
+        ) IS NOT NULL AS "value_number",
+        (
+          SELECT
+            1
+          FROM
+            "current_attributes" AS "ca"
+          WHERE
+            "ca"."attribute_name_key" = $2
+            AND "ca"."value_string" IS NOT NULL
+          ORDER BY
+            "ca"."value_string" ASC
+          LIMIT
+            1
+        ) IS NOT NULL AS "value_string",
+        EXISTS (
+          SELECT
+            1
+          FROM
+            "current_attributes" AS "ca"
+          WHERE
+            "ca"."attribute_name_key" = $3
+            AND "ca"."value_kind" = (2)
+            AND "ca"."value_long_text" IS NOT NULL
+        ) AS "value_long_text",
+        (
+          SELECT
+            1
+          FROM
+            "current_attributes" AS "ca"
+          WHERE
+            "ca"."attribute_name_key" = $4
+            AND "ca"."value_boolean" IS NOT NULL
+          ORDER BY
+            "ca"."value_boolean" ASC
+          LIMIT
+            1
+        ) IS NOT NULL AS "value_boolean",
+        (
+          SELECT
+            1
+          FROM
+            "current_attributes" AS "ca"
+          WHERE
+            "ca"."attribute_name_key" = $5
+            AND "ca"."value_geometry" IS NOT NULL
+          ORDER BY
+            "ca"."entity_key" ASC
+          LIMIT
+            1
+        ) IS NOT NULL AS "value_geometry",
+        EXISTS (
+          SELECT
+            1
+          FROM
+            "current_attributes" AS "ca"
+          WHERE
+            "ca"."attribute_name_key" = $6
+            AND "ca"."value_kind" = (5)
+            AND "ca"."value_object" IS NOT NULL
+        ) AS "value_object",
+        (
+          SELECT
+            1
+          FROM
+            "current_attributes" AS "ca"
+          WHERE
+            "ca"."attribute_name_key" = $7
+            AND "ca"."value_date_time" IS NOT NULL
+          ORDER BY
+            "ca"."value_date_time" ASC
+          LIMIT
+            1
+        ) IS NOT NULL AS "value_date_time",
+        (
+          SELECT
+            1
+          FROM
+            "current_attributes" AS "ca"
+          WHERE
+            "ca"."attribute_name_key" = $8
+            AND "ca"."value_uri" IS NOT NULL
+          ORDER BY
+            "ca"."value_uri" ASC
+          LIMIT
+            1
+        ) IS NOT NULL AS "value_uri",
+        EXISTS (
+          SELECT
+            1
+          FROM
+            "current_attributes" AS "ca"
+          WHERE
+            "ca"."attribute_name_key" = $9
+            AND "ca"."value_kind" = (7)
+            AND "ca"."value_long_uri" IS NOT NULL
+        ) AS "value_long_uri"
+    ),
+    "walked_numbers" AS MATERIALIZED (
+      SELECT
+        "selected"."entity_key",
+        array_position($10::text[], 'number') AS "sort_0",
+        "ca"."value_number" AS "sort_1",
+        NULL::timestamptz AS "sort_2",
+        (NULL::text) COLLATE "und-x-icu" AS "sort_3",
+        "selected"."id" AS "sort_4"
+      FROM
+        (
+          SELECT
+            "entity_key",
+            "id"
+          FROM
+            "entity_type_members"
+          WHERE
+            "entity_type_name_key" = (1)
+            AND "is_current_member"
+        ) AS "selected"
+        INNER JOIN "current_attributes" AS "ca" ON "ca"."entity_key" = "selected"."entity_key"
+      WHERE
+        "selected"."entity_key" NOT IN (
+          SELECT
+            "entity_key"
+          FROM
+            "entities"
+          WHERE
+            "expires_at" <= NOW()
+        )
+        AND (
+          SELECT
+            NOT (
+              "value_string"
+              OR "value_long_text"
+              OR "value_boolean"
+              OR "value_geometry"
+              OR "value_object"
+              OR "value_date_time"
+              OR "value_uri"
+              OR "value_long_uri"
+            )
+          FROM
+            "occupied_columns"
+        )
+        AND "ca"."attribute_name_key" = $11
+        AND "ca"."value_number" IS NOT NULL
+        AND (
+          "ca"."expires_at" IS NULL
+          OR "ca"."expires_at" > NOW()
+        )
+        AND (
+          NOT EXISTS (
+            SELECT
+              1
+            FROM
+              "current_attributes" AS "earlier"
+            WHERE
+              "earlier"."entity_key" = "ca"."entity_key"
+              AND "earlier"."attribute_name_key" = $12
+              AND (
+                "earlier"."expires_at" IS NULL
+                OR "earlier"."expires_at" > NOW()
+              )
+              AND "earlier"."ordinal" < "ca"."ordinal"
+          )
+        )
+      ORDER BY
+        "sort_0" ASC NULLS LAST,
+        "sort_1" DESC,
+        "sort_2" DESC,
+        "sort_3" DESC,
+        "sort_4" ASC
+      LIMIT
+        100
+    ),
+    "walked_instants" AS MATERIALIZED (
+      SELECT
+        "selected"."entity_key",
+        array_position(
+          $13::text[],
+          'https://uri.etsi.org/ngsi-ld/DateTime'
+        ) AS "sort_0",
+        NULL::numeric AS "sort_1",
+        "ca"."value_date_time" AS "sort_2",
+        (NULL::text) COLLATE "und-x-icu" AS "sort_3",
+        "selected"."id" AS "sort_4"
+      FROM
+        (
+          SELECT
+            "entity_key",
+            "id"
+          FROM
+            "entity_type_members"
+          WHERE
+            "entity_type_name_key" = (1)
+            AND "is_current_member"
+        ) AS "selected"
+        INNER JOIN "current_attributes" AS "ca" ON "ca"."entity_key" = "selected"."entity_key"
+      WHERE
+        "selected"."entity_key" NOT IN (
+          SELECT
+            "entity_key"
+          FROM
+            "entities"
+          WHERE
+            "expires_at" <= NOW()
+        )
+        AND (
+          SELECT
+            NOT (
+              "value_number"
+              OR "value_string"
+              OR "value_long_text"
+              OR "value_boolean"
+              OR "value_geometry"
+              OR "value_object"
+              OR "value_uri"
+              OR "value_long_uri"
+            )
+          FROM
+            "occupied_columns"
+        )
+        AND "ca"."attribute_name_key" = $14
+        AND "ca"."value_date_time" IS NOT NULL
+        AND (
+          "ca"."expires_at" IS NULL
+          OR "ca"."expires_at" > NOW()
+        )
+        AND (
+          NOT EXISTS (
+            SELECT
+              1
+            FROM
+              "current_attributes" AS "earlier"
+            WHERE
+              "earlier"."entity_key" = "ca"."entity_key"
+              AND "earlier"."attribute_name_key" = $15
+              AND (
+                "earlier"."expires_at" IS NULL
+                OR "earlier"."expires_at" > NOW()
+              )
+              AND "earlier"."ordinal" < "ca"."ordinal"
+          )
+        )
+      ORDER BY
+        "sort_0" ASC NULLS LAST,
+        "sort_1" DESC,
+        "sort_2" DESC,
+        "sort_3" DESC,
+        "sort_4" ASC
+      LIMIT
+        100
+    )
+    SELECT
+      *
+    FROM
+      (
+        SELECT
+          *
+        FROM
+          (
+            SELECT
+              *
+            FROM
+              "walked_numbers"
+            UNION ALL
+            (
+              SELECT
+                *
+              FROM
+                "walked_instants"
+            )
+            UNION ALL
+            (
+              SELECT
+                *
+              FROM
+                (
+                  SELECT
+                    "selected"."entity_key",
+                    NULL::integer AS "sort_0",
+                    NULL::numeric AS "sort_1",
+                    NULL::timestamptz AS "sort_2",
+                    (NULL::text) COLLATE "und-x-icu" AS "sort_3",
+                    "selected"."id" AS "sort_4"
+                  FROM
+                    (
+                      SELECT
+                        "entity_key",
+                        "id"
+                      FROM
+                        "entity_type_members"
+                      WHERE
+                        "entity_type_name_key" = (1)
+                        AND "is_current_member"
+                    ) AS "selected"
+                  WHERE
+                    "selected"."entity_key" NOT IN (
+                      SELECT
+                        "entity_key"
+                      FROM
+                        "entities"
+                      WHERE
+                        "expires_at" <= NOW()
+                    )
+                    AND (
+                      (
+                        SELECT
+                          NOT (
+                            "value_string"
+                            OR "value_long_text"
+                            OR "value_boolean"
+                            OR "value_geometry"
+                            OR "value_object"
+                            OR "value_date_time"
+                            OR "value_uri"
+                            OR "value_long_uri"
+                          )
+                        FROM
+                          "occupied_columns"
+                      )
+                      OR (
+                        SELECT
+                          NOT (
+                            "value_number"
+                            OR "value_string"
+                            OR "value_long_text"
+                            OR "value_boolean"
+                            OR "value_geometry"
+                            OR "value_object"
+                            OR "value_uri"
+                            OR "value_long_uri"
+                          )
+                        FROM
+                          "occupied_columns"
+                      )
+                    )
+                    AND (
+                      SELECT
+                        COUNT(*)
+                      FROM
+                        "walked_numbers"
+                    ) + (
+                      SELECT
+                        COUNT(*)
+                      FROM
+                        "walked_instants"
+                    ) < $16
+                    AND (
+                      NOT EXISTS (
+                        SELECT
+                          1
+                        FROM
+                          "current_attributes" AS "ca"
+                        WHERE
+                          "ca"."entity_key" = "selected"."entity_key"
+                          AND "ca"."attribute_name_key" = $17
+                          AND (
+                            "ca"."expires_at" IS NULL
+                            OR "ca"."expires_at" > NOW()
+                          )
+                      )
+                    )
+                  ORDER BY
+                    "sort_0" ASC NULLS LAST,
+                    "sort_1" DESC,
+                    "sort_2" DESC,
+                    "sort_3" DESC,
+                    "sort_4" ASC
+                  LIMIT
+                    100
+                ) AS "without"
+            )
+          ) AS "ranked"
+        ORDER BY
+          "sort_0" ASC NULLS LAST,
+          "sort_1" DESC,
+          "sort_2" DESC,
+          "sort_3" DESC,
+          "sort_4" ASC
+        LIMIT
+          100 OFFSET 0
+      ) AS "value_walk"
+    UNION ALL
+    (
+      SELECT
+        *
+      FROM
+        (
+          SELECT
+            "selected"."entity_key",
+            array_position($18::text[], "order_value_0"."value_datatype") AS "sort_0",
+            (
+              CASE
+                WHEN ("order_value_0"."value_datatype" = ('number')) THEN "order_value_0"."value_number"
+              END
+            ) AS "sort_1",
+            (
+              CASE
+                WHEN (
+                  "order_value_0"."value_datatype" = ('https://uri.etsi.org/ngsi-ld/DateTime')
+                ) THEN COALESCE(
+                  "order_value_0"."value_date_time",
+                  (
+                    CASE
+                      WHEN (
+                        "order_value_0"."value_declared_datatype" = ('https://uri.etsi.org/ngsi-ld/DateTime')
+                        AND pg_input_is_valid("order_value_0"."value_text", 'timestamptz')
+                      ) THEN ("order_value_0"."value_text")::timestamptz
+                    END
+                  )
+                )
+              END
+            ) AS "sort_2",
+            (
+              (
+                CASE
+                  WHEN (
+                    "order_value_0"."value_datatype" = ('https://uri.etsi.org/ngsi-ld/Time')
+                  ) THEN (
+                    CASE
+                      WHEN (
+                        "order_value_0"."value_declared_datatype" = ('https://uri.etsi.org/ngsi-ld/Time')
+                        AND pg_input_is_valid(
+                          ('1970-01-01T') || "order_value_0"."value_text",
+                          'timestamptz'
+                        )
+                      ) THEN to_char(
+                        (
+                          (('1970-01-01T') || "order_value_0"."value_text")::timestamptz
+                        ) AT TIME ZONE ('UTC'),
+                        'HH24:MI:SS.US'
+                      ) || ('Z')
+                    END
+                  )
+                  ELSE COALESCE(
+                    "order_value_0"."value_text",
+                    ("order_value_0"."value_object" -> (0)) ->> ('@value'),
+                    "order_value_0"."value_object" ->> (0)
+                  )
+                END
+              )
+            ) COLLATE "und-x-icu" AS "sort_3",
+            "selected"."id" AS "sort_4"
+          FROM
+            (
+              SELECT
+                "entity_key",
+                "id"
+              FROM
+                "entity_type_members"
+              WHERE
+                "entity_type_name_key" = (1)
+                AND "is_current_member"
+            ) AS "selected"
+            LEFT JOIN LATERAL (
+              SELECT
+                COALESCE(
+                  "ordered"."value_number",
+                  (
+                    CASE
+                      WHEN (
+                        jsonb_typeof("ordered"."value_object") = ('number')
+                      ) THEN (
+                        "ordered"."value_object" #>> ('{}'))::numeric END)) AS "value_number", COALESCE("ordered"."value_boolean", (CASE WHEN (jsonb_typeof("ordered"."value_object") = ('boolean')) THEN ("ordered"."value_object" #>> ('{}'))::boolean END)) AS "value_boolean", "ordered"."value_date_time" AS "value_date_time", COALESCE("ordered"."value_string", "ordered"."value_long_text", "ordered"."value_uri", "ordered"."value_long_uri", (CASE WHEN (jsonb_typeof("ordered"."value_object") = ('string')) THEN ("ordered"."value_object" #>> ('{}'))::text END)) AS "value_text", (CASE WHEN ("ordered"."value_kind" = (8)) THEN 'https://uri.etsi.org/ngsi-ld/Date' WHEN ("ordered"."value_kind" = (9)) THEN 'https://uri.etsi.org/ngsi-ld/Time' END) AS "value_declared_datatype", COALESCE((CASE WHEN (jsonb_typeof("ordered"."value_object") IN ('object', 'array')) THEN "ordered"."value_object" END), (CASE WHEN ("ordered"."value_geometry" IS NOT NULL) THEN jsonb_build_object() END)) AS "value_object", (CASE WHEN (COALESCE("ordered"."value_number", (CASE WHEN (jsonb_typeof("ordered"."value_object") = ('number')) THEN ("ordered"."value_object" #>> ('{}'))::numeric END)) IS NOT NULL) THEN 'number' WHEN (COALESCE("ordered"."value_boolean", (CASE WHEN (jsonb_typeof("ordered"."value_object") = ('boolean')) THEN ("ordered"."value_object" #>> ('{}'))::boolean END)) IS NOT NULL) THEN 'boolean' WHEN ("ordered"."value_date_time" IS NOT NULL) THEN 'https://uri.etsi.org/ngsi-ld/DateTime' WHEN ((CASE WHEN ("ordered"."value_kind" = (8)) THEN 'https://uri.etsi.org/ngsi-ld/Date' WHEN ("ordered"."value_kind" = (9)) THEN 'https://uri.etsi.org/ngsi-ld/Time' END) = ('https://uri.etsi.org/ngsi-ld/DateTime')) THEN 'https://uri.etsi.org/ngsi-ld/DateTime' WHEN ((CASE WHEN ("ordered"."value_kind" = (8)) THEN 'https://uri.etsi.org/ngsi-ld/Date' WHEN ("ordered"."value_kind" = (9)) THEN 'https://uri.etsi.org/ngsi-ld/Time' END) = ('https://uri.etsi.org/ngsi-ld/Date')) THEN 'https://uri.etsi.org/ngsi-ld/Date' WHEN ((CASE WHEN ("ordered"."value_kind" = (8)) THEN 'https://uri.etsi.org/ngsi-ld/Date' WHEN ("ordered"."value_kind" = (9)) THEN 'https://uri.etsi.org/ngsi-ld/Time' END) = ('https://uri.etsi.org/ngsi-ld/Time')) THEN 'https://uri.etsi.org/ngsi-ld/Time' WHEN (COALESCE("ordered"."value_string", "ordered"."value_long_text", "ordered"."value_uri", "ordered"."value_long_uri", (CASE WHEN (jsonb_typeof("ordered"."value_object") = ('string')) THEN ("ordered"."value_object" #>> ('{}'))::text END)) IS NOT NULL) THEN 'string' WHEN ("ordered"."value_object" IN (jsonb_build_object('@value', NULL::jsonb, '@type', '@json'), 'null'::jsonb)) THEN 'null' WHEN (jsonb_typeof(COALESCE((CASE WHEN (jsonb_typeof("ordered"."value_object") IN ('object', 'array')) THEN "ordered"."value_object" END), (CASE WHEN ("ordered"."value_geometry" IS NOT NULL) THEN jsonb_build_object() END))) = ('array') OR (COALESCE((CASE WHEN (jsonb_typeof("ordered"."value_object") IN ('object', 'array')) THEN "ordered"."value_object" END), (CASE WHEN ("ordered"."value_geometry" IS NOT NULL) THEN jsonb_build_object() END)) ? ('@list'))) THEN 'array' WHEN (COALESCE((CASE WHEN (jsonb_typeof("ordered"."value_object") IN ('object', 'array')) THEN "ordered"."value_object" END), (CASE WHEN ("ordered"."value_geometry" IS NOT NULL) THEN jsonb_build_object() END)) IS NOT NULL) THEN 'object' END) AS "value_datatype" FROM (SELECT "ca".* FROM "current_attributes" AS "ca" WHERE "ca"."entity_key" = "selected"."entity_key" AND "ca"."attribute_name_key" = $19 AND ("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW()) ORDER BY "ca"."ordinal" ASC LIMIT 1) AS "ordered") AS "order_value_0" ON TRUE WHERE "selected"."entity_key" NOT IN (SELECT "entity_key" FROM "entities" WHERE "expires_at" <= NOW()) AND (NOT (SELECT NOT ("value_string" OR "value_long_text" OR "value_boolean" OR "value_geometry" OR "value_object" OR "value_date_time" OR "value_uri" OR "value_long_uri") FROM "occupied_columns")) AND (NOT (SELECT NOT ("value_number" OR "value_string" OR "value_long_text" OR "value_boolean" OR "value_geometry" OR "value_object" OR "value_uri" OR "value_long_uri") FROM "occupied_columns")) ORDER BY "sort_0" ASC NULLS LAST, "sort_1" DESC, "sort_2" DESC, "sort_3" DESC, "sort_4" ASC LIMIT 100 OFFSET 0) AS "sorted")) AS "page" INNER JOIN LATERAL (SELECT "e"."entity_key" AS "entity_key", "e"."id" AS "id", "e"."created_at" AS "entity_created_at", "e"."modified_at" AS "entity_modified_at", "e"."write_count" AS "entity_write_count", "e"."expires_at" AS "entity_expires_at", "s"."entity_type_name_keys" AS "entity_type_name_keys", "s"."verbatim_scope_paths" AS "verbatim_scope_paths" FROM "entities" AS "e" INNER JOIN "entity_search" AS "s" ON "s"."entity_key" = "e"."entity_key" WHERE "e"."entity_key" = "page"."entity_key" LIMIT 1) AS "stored" ON TRUE ORDER BY "page"."sort_0" ASC NULLS LAST, "page"."sort_1" DESC, "page"."sort_2" DESC, "page"."sort_3" DESC, "page"."sort_4" ASC
+1: Int 7
+2: Int 7
+3: Int 7
+4: Int 7
+5: Int 7
+6: Int 7
+7: Int 7
+8: Int 7
+9: Int 7
+10: Array ARRAY ['https://uri.etsi.org/ngsi-ld/DateTime','https://uri.etsi.org/ngsi-ld/Date','https://uri.etsi.org/ngsi-ld/Time','boolean','array','object','string','number','null']
+11: Int 7
+12: Int 7
+13: Array ARRAY ['https://uri.etsi.org/ngsi-ld/DateTime','https://uri.etsi.org/ngsi-ld/Date','https://uri.etsi.org/ngsi-ld/Time','boolean','array','object','string','number','null']
+14: Int 7
+15: Int 7
+16: BigUnsigned 100
+17: Int 7
+18: Array ARRAY ['https://uri.etsi.org/ngsi-ld/DateTime','https://uri.etsi.org/ngsi-ld/Date','https://uri.etsi.org/ngsi-ld/Time','boolean','array','object','string','number','null']
+19: Int 7

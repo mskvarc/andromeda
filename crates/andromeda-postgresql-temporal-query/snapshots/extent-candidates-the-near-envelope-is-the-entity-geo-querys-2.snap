@@ -1,0 +1,28 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/stage1/extent_candidates.rs
+---
+SELECT
+  "rs"."entity_key"
+FROM
+  "temporal_attribute_streams" AS "rs"
+WHERE
+  "rs"."attribute_name_key" = $1
+  AND (
+    (
+      "rs"."value_extent" && ST_MakeEnvelope($2, $3, $4, $5, $6)
+    )
+    OR (
+      "rs"."value_extent" && ST_MakeEnvelope($7, $8, $9, $10, $11)
+    )
+  )
+1: Int 2
+2: Double 179.96027498275177
+3: Double 52.48191161045816
+4: Double 180
+5: Double 52.51808838954184
+6: Int 4326
+7: Double -180
+8: Double 52.48191161045816
+9: Double -179.98027498275175
+10: Double 52.51808838954184
+11: Int 4326

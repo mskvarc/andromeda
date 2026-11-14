@@ -1,0 +1,9 @@
+---
+source: crates/andromeda-postgresql-query/src/geo_predicate.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  FALSE

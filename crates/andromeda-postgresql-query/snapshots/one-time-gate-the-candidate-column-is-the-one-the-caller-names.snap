@@ -1,0 +1,7 @@
+---
+source: crates/andromeda-postgresql-query/src/one_time_gate.rs
+---
+SELECT
+  "entity_key"
+FROM
+  "candidates"

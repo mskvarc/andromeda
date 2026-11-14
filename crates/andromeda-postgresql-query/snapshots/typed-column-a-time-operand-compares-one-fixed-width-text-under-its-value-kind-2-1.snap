@@ -1,0 +1,7 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/typed_column.rs
+---
+SELECT
+  "l0"."value_string" = $1
+  AND nullif("l0"."value_kind" = (9), FALSE)
+1: String '12:00:00.500000Z'

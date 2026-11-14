@@ -142,6 +142,8 @@ mod n_qry_qlg_9082;
 mod n_qry_qlg_9083;
 mod n_qry_qlg_9084;
 mod n_qry_qlg_9085;
+mod n_qry_qlg_9101;
+mod n_qry_qlg_9178;
 mod o_qry_qlg_0008;
 mod o_qry_qlg_0009;
 mod o_qry_qlg_0011;

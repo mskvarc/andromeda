@@ -109,8 +109,9 @@ mod tests {
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         history_source::HistoryBranch,
     };
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use iri_rs::IriBuf;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use sea_query::{Query, SelectStatement};
 
     fn compiled(projection: &Projection) -> CompiledTemporalQuery {
         CompiledTemporalQuery::builder()
@@ -149,27 +150,23 @@ mod tests {
         }
     }
 
-    fn rendered(compiled: &CompiledTemporalQuery) -> Option<String> {
-        projected_member_condition(&HistoryBranch::live(), compiled, &names())
-            .map(|condition| Query::select().cond_where(condition).to_owned().to_string(PostgresQueryBuilder))
+    fn rendered(compiled: &CompiledTemporalQuery) -> Option<SelectStatement> {
+        projected_member_condition(&HistoryBranch::live(), compiled, &names()).map(|condition| Query::select().cond_where(condition).to_owned())
     }
 
     /// A projection that keeps `id` leaves every entity a member.
     #[test]
     fn a_projection_keeping_id_adds_no_condition() {
-        assert_eq!(rendered(&compiled(&Projection::builder().pick(vec![ProjectionTerm::Id]).build())), None);
-        assert_eq!(rendered(&compiled(&Projection::default())), None);
+        assert!(rendered(&compiled(&Projection::builder().pick(vec![ProjectionTerm::Id]).build())).is_none());
+        assert!(rendered(&compiled(&Projection::default())).is_none());
     }
 
     /// Clause 5.7.4.5: a `pick` keeps an entity only through an in-window
     /// instance of a picked Attribute.
     #[test]
     fn a_pick_probes_the_represented_instances_of_the_picked_attributes() {
-        let sql = rendered(&compiled(&Projection::builder().pick(vec![speed()]).build())).expect("a condition");
-        assert!(sql.contains(r#""ah"."attribute_name_key" = 7"#), "{sql}");
-        assert!(sql.contains(r#""re"."id" = "e"."id""#), "{sql}");
-        assert!(sql.contains(r#""ah"."observed_at" >="#), "the window bounds the instances: {sql}");
-        assert!(!sql.contains("scope_history"), "the pick does not keep the scope: {sql}");
+        let statement = rendered(&compiled(&Projection::builder().pick(vec![speed()]).build())).expect("a condition");
+        assert_statement_snapshot!("projected-members-a-pick-probes-the-represented-instances-of-the-picked-attributes", statement);
     }
 
     /// Clause 5.7.4.4 step S8 precedes the projection, so the instances the
@@ -178,20 +175,18 @@ mod tests {
     fn the_dataset_step_bounds_the_instances_that_keep_an_entity() {
         let mut query = compiled(&Projection::builder().pick(vec![speed()]).build());
         query.instances.dataset_id_filter = vec![DatasetSelector::parse("urn:ngsi-ld:Dataset:one").expect("a valid dataset selector")];
-        let sql = rendered(&query).expect("a condition");
-        assert!(sql.contains("dataset_key"), "{sql}");
+        let statement = rendered(&query).expect("a condition");
+        assert_statement_snapshot!("projected-members-the-dataset-step-bounds-the-instances-that-keep-an-entity", statement);
     }
 
     /// An `omit` of `id` and `type` keeps an entity through any other
     /// Attribute's instance, or through the scope it spares.
     #[test]
     fn an_omit_probes_every_other_attribute_and_the_spared_scope() {
-        let sql = rendered(&compiled(
+        let statement = rendered(&compiled(
             &Projection::builder().omit(vec![ProjectionTerm::Id, ProjectionTerm::Type, speed()]).build(),
         ))
         .expect("a condition");
-        assert!(sql.contains(r#""ah"."attribute_name_key" <> 7"#), "{sql}");
-        assert!(sql.contains(r#"FROM "scope_history""#), "the spared scope keeps an entity: {sql}");
-        assert!(sql.contains(" OR "), "{sql}");
+        assert_statement_snapshot!("projected-members-an-omit-probes-every-other-attribute-and-the-spared-scope", statement);
     }
 }

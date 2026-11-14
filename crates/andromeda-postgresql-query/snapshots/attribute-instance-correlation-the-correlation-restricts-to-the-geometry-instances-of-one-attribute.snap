@@ -1,0 +1,16 @@
+---
+source: crates/andromeda-postgresql-query/src/attribute_instance_correlation.rs
+---
+SELECT
+  1
+FROM
+  "current_attributes" AS "geo_order"
+WHERE
+  "geo_order"."entity_key" = "entities"."entity_key"
+  AND "geo_order"."attribute_name_key" = $1
+  AND "geo_order"."value_geometry" IS NOT NULL
+  AND (
+    "geo_order"."expires_at" IS NULL
+    OR "geo_order"."expires_at" > NOW()
+  )
+1: Int 7

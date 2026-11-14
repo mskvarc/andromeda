@@ -208,10 +208,10 @@ fn attribute_keys(
 mod tests {
     use crate::result_ordering::{RankedValue, ranked_keys};
     use andromeda_ngsi_ld_query::ordering::sort_direction::SortDirection;
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Expr, Query, SelectStatement};
 
-    fn ordered(direction: SortDirection) -> String {
+    fn ordered(direction: SortDirection) -> SelectStatement {
         let column = |name: &str| Expr::col(Alias::new(name));
         let value = RankedValue {
             rank: column("r"),
@@ -224,20 +224,20 @@ mod tests {
         for key in ranked_keys(value, direction) {
             key.order_by(&mut select);
         }
-        select.to_string(PostgresQueryBuilder)
+        select
     }
 
     /// Clause 4.23.2 pins Null and the absent Attribute last, so the rank
     /// runs ascending in both directions while the values follow the term.
     #[test]
     fn the_rank_runs_ascending_and_the_values_run_the_terms_way() {
-        assert_eq!(
-            ordered(SortDirection::Ascending),
-            r#"SELECT "id" ORDER BY "r" ASC NULLS LAST, "n" ASC, "i" ASC, "t" ASC"#
+        assert_statement_snapshot!(
+            "result-ordering-the-rank-runs-ascending-and-the-values-run-the-terms-way-1",
+            ordered(SortDirection::Ascending)
         );
-        assert_eq!(
-            ordered(SortDirection::Descending),
-            r#"SELECT "id" ORDER BY "r" ASC NULLS LAST, "n" DESC, "i" DESC, "t" DESC"#
+        assert_statement_snapshot!(
+            "result-ordering-the-rank-runs-ascending-and-the-values-run-the-terms-way-2",
+            ordered(SortDirection::Descending)
         );
     }
 }

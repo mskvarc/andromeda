@@ -97,8 +97,9 @@ mod tests {
         entity_type_name_key::EntityTypeNameKey,
         history_source::attribute_holders::{AttributeHolders, HolderType, holder_types_query},
     };
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, IntoIden, PostgresQueryBuilder};
+    use sea_query::{Alias, IntoIden};
 
     fn holder(type_key: i32, streams: u64) -> HolderType {
         HolderType {
@@ -109,20 +110,19 @@ mod tests {
 
     #[test]
     fn the_census_is_read_as_the_positive_sums_of_the_named_attributes() {
-        assert_eq!(
-            holder_types_query(None, &[AttributeNameKey::from(7)]).to_string(PostgresQueryBuilder),
-            concat!(
-                r#"SELECT "attribute_name_key", "entity_type_name_key", SUM("stream_delta")::bigint AS "streams" FROM "stream_type_census" "#,
-                r#"WHERE "attribute_name_key" = 7 GROUP BY "attribute_name_key", "entity_type_name_key" HAVING SUM("stream_delta") > (0)"#
-            )
+        assert_statement_snapshot!(
+            "attribute-holders-the-census-is-read-as-the-positive-sums-of-the-named-attributes",
+            holder_types_query(None, &[AttributeNameKey::from(7)])
         );
     }
 
     #[test]
     fn a_snapshot_branch_reads_its_own_census() {
         let schema = Alias::new("snap_2").into_iden();
-        let sql = holder_types_query(Some(&schema), &[AttributeNameKey::from(7)]).to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#"FROM "snap_2"."stream_type_census""#), "{sql}");
+        assert_statement_snapshot!(
+            "attribute-holders-a-snapshot-branch-reads-its-own-census",
+            holder_types_query(Some(&schema), &[AttributeNameKey::from(7)])
+        );
     }
 
     #[test]

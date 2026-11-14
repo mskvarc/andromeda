@@ -32,25 +32,18 @@ pub fn entry_carries_a_value(entry: impl IntoIden) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::tombstone::{carries_a_value, entry_carries_a_value};
-    use sea_query::{Alias, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Query};
 
     #[test]
     fn a_history_row_carries_a_value_unless_its_value_kind_is_the_tombstone() {
-        let (sql, values) = Query::select()
-            .and_where(carries_a_value(Alias::new("ah")))
-            .to_owned()
-            .build(PostgresQueryBuilder);
-        pretty_assertions::assert_eq!(sql, r#"SELECT  WHERE "ah"."value_kind" <> (0)"#);
-        pretty_assertions::assert_eq!(values.0, Vec::new());
+        let statement = Query::select().and_where(carries_a_value(Alias::new("ah"))).to_owned();
+        assert_statement_snapshot!("tombstone-a-history-row-carries-a-value-unless-its-value-kind-is-the-tombstone", statement);
     }
 
     #[test]
     fn a_queued_entry_carries_a_value_unless_its_kind_is_the_tombstone() {
-        let (sql, values) = Query::select()
-            .and_where(entry_carries_a_value(Alias::new("pe")))
-            .to_owned()
-            .build(PostgresQueryBuilder);
-        pretty_assertions::assert_eq!(sql, r#"SELECT  WHERE "pe"."entry_kind" <> (2)"#);
-        pretty_assertions::assert_eq!(values.0, Vec::new());
+        let statement = Query::select().and_where(entry_carries_a_value(Alias::new("pe"))).to_owned();
+        assert_statement_snapshot!("tombstone-a-queued-entry-carries-a-value-unless-its-kind-is-the-tombstone", statement);
     }
 }

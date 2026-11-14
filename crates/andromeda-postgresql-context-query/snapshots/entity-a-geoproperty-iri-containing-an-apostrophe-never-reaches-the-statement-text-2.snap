@@ -1,0 +1,88 @@
+---
+source: crates/andromeda-postgresql-context-query/src/entity.rs
+---
+SELECT
+  "stored"."entity_key",
+  "stored"."id",
+  "stored"."entity_created_at",
+  "stored"."entity_modified_at",
+  "stored"."entity_write_count",
+  "stored"."entity_expires_at",
+  "stored"."entity_type_name_keys",
+  "stored"."verbatim_scope_paths"
+FROM
+  (
+    SELECT
+      "entities"."entity_key",
+      "entities"."id" AS "sort_0"
+    FROM
+      "entities"
+      JOIN "entity_search" ON "entity_search"."entity_key" = "entities"."entity_key"
+    WHERE
+      "entities"."created_at" IS NOT NULL
+      AND (
+        "entities"."expires_at" IS NULL
+        OR "entities"."expires_at" > NOW()
+      )
+      AND EXISTS (
+        SELECT
+          1
+        FROM
+          "current_attributes" AS "geo_instance"
+        WHERE
+          "geo_instance"."entity_key" = "entities"."entity_key"
+          AND "geo_instance"."attribute_name_key" = $1
+          AND "geo_instance"."value_geometry" IS NOT NULL
+          AND (
+            "geo_instance"."expires_at" IS NULL
+            OR "geo_instance"."expires_at" > NOW()
+          )
+          AND (
+            COALESCE(
+              "geo_instance"."value_geometry_reach",
+              "geo_instance"."value_geometry_valid",
+              "geo_instance"."value_geometry"
+            ) && ST_MakeEnvelope($2, $3, $4, $5, $6)
+          )
+          AND _ST_DWithin(
+            COALESCE(
+              "geo_instance"."value_geometry_valid",
+              "geo_instance"."value_geometry"
+            )::geography,
+            ST_MakeValid(ST_GeomFromEWKB($7))::geography,
+            $8
+          )
+      )
+    ORDER BY
+      "sort_0" ASC
+    LIMIT
+      20 OFFSET 0
+  ) AS "page"
+  INNER JOIN LATERAL (
+    SELECT
+      "e"."entity_key" AS "entity_key",
+      "e"."id" AS "id",
+      "e"."created_at" AS "entity_created_at",
+      "e"."modified_at" AS "entity_modified_at",
+      "e"."write_count" AS "entity_write_count",
+      "e"."expires_at" AS "entity_expires_at",
+      "s"."entity_type_name_keys" AS "entity_type_name_keys",
+      "s"."verbatim_scope_paths" AS "verbatim_scope_paths"
+    FROM
+      "entities" AS "e"
+      INNER JOIN "entity_search" AS "s" ON "s"."entity_key" = "e"."entity_key"
+    WHERE
+      "e"."entity_key" = "page"."entity_key"
+    LIMIT
+      1
+  ) AS "stored" ON TRUE
+ORDER BY
+  "page"."sort_0" ASC
+1: Int 9
+2: Double 0.9954743838616097
+3: Double 1.9954771526145392
+4: Double 1.0045256161383902
+5: Double 2.004522847385461
+6: Int 4326
+7: Bytes '\x0101000020E6100000000000000000F03F0000000000000040'
+8: Double 500

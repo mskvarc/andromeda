@@ -131,8 +131,9 @@ mod tests {
         q_predicate::{history_aliases::HistoryAliases, in_effect_instance::InEffectInstance},
     };
     use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use chrono::{DateTime, Utc};
-    use sea_query::{Alias, Expr, IntoIden, JoinType, PostgresQueryBuilder, Query, SimpleExpr};
+    use sea_query::{Alias, Expr, IntoIden, JoinType, Query, SelectStatement, SimpleExpr};
 
     fn start() -> DateTime<Utc> {
         "2019-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("a valid instant").get()
@@ -148,7 +149,7 @@ mod tests {
 
     /// The in-effect rows joined to a stream and narrowed to those placed
     /// before the start, as the probe arranges them.
-    fn render_of(branch: &HistoryBranch, of: &HistoryOf, timeproperty: TimeProp, aliases: &HistoryAliases) -> String {
+    fn render_of(branch: &HistoryBranch, of: &HistoryOf, timeproperty: TimeProp, aliases: &HistoryAliases) -> SelectStatement {
         let instance = InEffectInstance::builder()
             .branch(branch)
             .of(of)
@@ -161,10 +162,9 @@ mod tests {
             .join_lateral(JoinType::Join, instance.rows(aliases), aliases.instance(), SimpleExpr::from(true))
             .and_where(instance.opens_before_start(aliases))
             .to_owned()
-            .to_string(PostgresQueryBuilder)
     }
 
-    fn render(branch: &HistoryBranch, timeproperty: TimeProp) -> String {
+    fn render(branch: &HistoryBranch, timeproperty: TimeProp) -> SelectStatement {
         render_of(branch, &entity(), timeproperty, &HistoryAliases::top_level())
     }
 
@@ -174,20 +174,11 @@ mod tests {
     /// and the deletions carrying none there.
     #[test]
     fn the_stream_is_read_down_from_the_start_as_two_heads_stopped_after_their_tied_rows() {
-        let sql = render(&snapshot(), TimeProp::Observed);
-        for fragment in [
-            r#"JOIN LATERAL (SELECT * FROM ((SELECT * FROM ((SELECT "qi".*, "qi"."observed_at" AS "placed" FROM (SELECT"#,
-            r#"FROM "snap_1"."attribute_history" AS "rh" WHERE "rh"."stream_key" = "qs"."stream_key") AS "qi""#,
-            r#"WHERE "qi"."observed_at" <= '2019-01-01"#,
-            r#"ORDER BY "qi"."observed_at" DESC) FETCH FIRST 1 ROW WITH TIES) AS "qe" UNION ALL (SELECT * FROM ((SELECT "qi".*, "qi"."deleted_at" AS "placed" FROM (SELECT"#,
-            r#"ORDER BY "placed" DESC) FETCH FIRST 1 ROW WITH TIES) AS "qe") AS "qh" ON TRUE"#,
-        ] {
-            assert!(sql.contains(fragment), "{fragment} missing: {sql}");
-        }
-        pretty_assertions::assert_eq!(sql.matches("FETCH FIRST 1 ROW WITH TIES").count(), 3, "{sql}");
-        for absent in ["COALESCE", "MAX(", "GREATEST(", "temporal_append"] {
-            assert!(!sql.contains(absent), "{absent}: {sql}");
-        }
+        let statement = render(&snapshot(), TimeProp::Observed);
+        assert_statement_snapshot!(
+            "in-effect-instance-the-stream-is-read-down-from-the-start-as-two-heads-stopped-after-their-tied-rows",
+            statement
+        );
     }
 
     /// Clause 4.5.7: a deletion with no instant on the axis is placed at the
@@ -195,11 +186,8 @@ mod tests {
     /// the head on the axis alone.
     #[test]
     fn a_deletion_without_an_axis_instant_is_placed_at_its_deletion() {
-        let sql = render(&snapshot(), TimeProp::Observed);
-        assert!(
-            sql.contains(r#"WHERE "qi"."deleted_at" <= '2019-01-01 00:00:00.000000 +00:00' AND "qi"."observed_at" IS NULL ORDER BY "qi"."deleted_at" DESC"#),
-            "{sql}"
-        );
+        let statement = render(&snapshot(), TimeProp::Observed);
+        assert_statement_snapshot!("in-effect-instance-a-deletion-without-an-axis-instant-is-placed-at-its-deletion", statement);
     }
 
     /// On the live branch the queued entries of the stream's grain are a part
@@ -208,40 +196,27 @@ mod tests {
     /// replaces is not read.
     #[test]
     fn the_live_read_folds_the_queued_part_by_the_same_limit() {
-        let sql = render(&HistoryBranch::live(), TimeProp::Observed);
-        for fragment in [
-            r#"UNION ALL (SELECT * FROM ((SELECT "qi".*, "qi"."observed_at" AS "placed" FROM (SELECT"#,
-            r#""pe"."entity_id" = "qs"."entity_id""#,
-            r#""pe"."dataset_key" = "qs"."dataset_key""#,
-            r#"ORDER BY "placed" DESC) FETCH FIRST 1 ROW WITH TIES) AS "qe") AS "qh" ON TRUE"#,
-            r#""rh"."verbatim_instance_id" IS NULL OR (NOT EXISTS(SELECT 1 FROM "temporal_append_entries" AS "pr" WHERE "pr"."entity_id" = "qs"."entity_id""#,
-        ] {
-            assert!(sql.contains(fragment), "{fragment} missing: {sql}");
-        }
-        pretty_assertions::assert_eq!(sql.matches("FETCH FIRST 1 ROW WITH TIES").count(), 5, "{sql}");
+        let statement = render(&HistoryBranch::live(), TimeProp::Observed);
+        assert_statement_snapshot!("in-effect-instance-the-live-read-folds-the-queued-part-by-the-same-limit", statement);
     }
 
     /// Clause 4.11 opens the interval inclusively: an instance placed at the
     /// start itself belongs to the window, so the in-effect test is strict.
     #[test]
     fn a_placement_at_the_start_itself_admits_nothing() {
-        let sql = render(&snapshot(), TimeProp::Observed);
-        assert!(sql.contains(r#"WHERE "qh"."placed" < '2019-01-01"#), "{sql}");
-        assert!(!sql.contains(r#""qh"."placed" <="#), "{sql}");
+        let statement = render(&snapshot(), TimeProp::Observed);
+        assert_statement_snapshot!("in-effect-instance-a-placement-at-the-start-itself-admits-nothing", statement);
     }
 
     /// Clause 5.2.21: each axis is placed on its own column, never on the
     /// write clock, the stream read whole.
     #[test]
     fn each_axis_places_on_its_own_column() {
-        for (timeproperty, column) in [(TimeProp::Created, "created_at"), (TimeProp::Modified, "modified_at")] {
-            let sql = render(&snapshot(), timeproperty);
-            assert!(sql.contains(&format!(r#"ORDER BY "qi"."{column}" DESC"#)), "{column}: {sql}");
-            assert!(
-                sql.contains(&format!(r#""qi"."{column}" IS NULL ORDER BY "qi"."deleted_at" DESC"#)),
-                "{column}: {sql}"
+        for (index, timeproperty) in [TimeProp::Created, TimeProp::Modified].into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!("in-effect-instance-each-axis-places-on-its-own-column-{}", index + 1),
+                render(&snapshot(), timeproperty)
             );
-            assert!(!sql.contains(r#""rh"."recorded_at" AS"#) && !sql.contains("DISTINCT FROM"), "{column}: {sql}");
         }
     }
 
@@ -253,18 +228,14 @@ mod tests {
             id: Expr::col((Alias::new("e"), Alias::new("id"))),
             key: Expr::col((Alias::new("e"), Alias::new("entity_key"))),
         });
-        let sql = render_of(&HistoryBranch::live_recorded(), &of, TimeProp::Observed, &HistoryAliases::top_level());
-        assert!(sql.contains(r#""qs"."entity_key" AS "entity_key""#), "{sql}");
-        assert!(!sql.contains("entity_id"), "{sql}");
+        let statement = render_of(&HistoryBranch::live_recorded(), &of, TimeProp::Observed, &HistoryAliases::top_level());
+        assert_statement_snapshot!("in-effect-instance-a-stream-read-by-key-names-its-evolution-by-key", statement);
     }
 
     /// A linked-entity hop places its stream under aliases of its own.
     #[test]
     fn a_hop_places_under_its_own_aliases() {
-        let sql = render_of(&HistoryBranch::live(), &entity(), TimeProp::Observed, &HistoryAliases::at_depth(2));
-        for alias in [r#"AS "qe_ln2""#, r#"AS "qi_ln2""#, r#"AS "qh_ln2""#, r#""qs_ln2"."stream_key""#] {
-            assert!(sql.contains(alias), "{alias} missing: {sql}");
-        }
-        assert!(!sql.contains(r#""qe""#) && !sql.contains(r#""qi""#), "{sql}");
+        let statement = render_of(&HistoryBranch::live(), &entity(), TimeProp::Observed, &HistoryAliases::at_depth(2));
+        assert_statement_snapshot!("in-effect-instance-a-hop-places-under-its-own-aliases", statement);
     }
 }

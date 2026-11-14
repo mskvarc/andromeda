@@ -1,0 +1,45 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/corpus_statement_tests.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        ((("ca"."value_string") COLLATE "default") ~ $2)
+        OR (
+          (("ca"."value_long_text") COLLATE "default") ~ $3
+        )
+        OR EXISTS (
+          SELECT
+            1
+          FROM
+            jsonb_array_elements(
+              (
+                CASE
+                  WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                END
+              )
+            ) AS "ls"
+          WHERE
+            ("ls"."value" ->> ('@value')) ~ $4
+        )
+      )
+      AND "ca"."entity_key" = "entities"."entity_key"
+  )
+1: Int 5
+2: String 'urn:.*'
+3: String 'urn:.*'
+4: String 'urn:.*'

@@ -1,0 +1,5 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/entry_values.rs
+---
+SELECT
+  COALESCE("e"."value_geometry_reach", "e"."value_geometry") AS "extent"

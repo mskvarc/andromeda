@@ -1,0 +1,10 @@
+---
+source: crates/andromeda-postgresql-query/src/scope_validity.rs
+---
+SELECT
+  $1
+FROM
+  "scope_history" AS "sh"
+WHERE
+  TRUE
+1: Int 1

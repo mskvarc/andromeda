@@ -1,0 +1,98 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/entity_rows.rs
+---
+SELECT
+  *
+FROM
+  (
+    SELECT
+      "ru"."id",
+      "ru"."evolution_type_name_keys"
+    FROM
+      (
+        SELECT
+          "re"."id",
+          "re"."evolution_type_name_keys",
+          FALSE AS "queued"
+        FROM
+          "live_x"."entities" AS "re"
+        WHERE
+          "re"."evolution_created_at" IS NOT NULL
+        UNION ALL
+        (
+          SELECT
+            "first_stated"."id",
+            array_agg(
+              "first_stated"."stated_key"
+              ORDER BY
+                (
+                  "first_stated"."list_rank",
+                  "first_stated"."key_position"
+                )
+            ) AS "entity_type_name_keys",
+            TRUE AS "queued"
+          FROM
+            (
+              SELECT DISTINCT
+                ON ("stated_list"."id", "stated_key"."stated_key") "stated_list"."id",
+                "stated_key"."stated_key",
+                "stated_list"."list_rank",
+                array_position(
+                  "stated_list"."entity_type_name_keys",
+                  "stated_key"."stated_key"
+                ) AS "key_position"
+              FROM
+                (
+                  SELECT
+                    "pv"."id" AS "id",
+                    "pv"."evolution_type_name_keys" AS "entity_type_name_keys",
+                    0 AS "list_rank"
+                  FROM
+                    "live_x"."entities" AS "pv"
+                  WHERE
+                    "pv"."evolution_created_at" IS NOT NULL
+                    AND EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        "temporal_append_intents" AS "pt"
+                      WHERE
+                        "pt"."entity_id" = "pv"."id"
+                        AND cardinality("pt"."entity_type_name_keys") > 0
+                    )
+                  UNION ALL
+                  (
+                    SELECT
+                      "pt"."entity_id" AS "id",
+                      "pt"."entity_type_name_keys" AS "entity_type_name_keys",
+                      "pt"."intent_key" AS "list_rank"
+                    FROM
+                      "temporal_append_intents" AS "pt"
+                    WHERE
+                      cardinality("pt"."entity_type_name_keys") > 0
+                  )
+                ) AS "stated_list",
+                UNNEST("stated_list"."entity_type_name_keys") AS "stated_key"
+              ORDER BY
+                "stated_list"."id" ASC,
+                "stated_key"."stated_key" ASC,
+                "stated_list"."list_rank" ASC
+            ) AS "first_stated"
+          GROUP BY
+            "first_stated"."id"
+        )
+      ) AS "ru"
+    WHERE
+      "ru"."queued"
+      OR (
+        NOT EXISTS (
+          SELECT
+            1
+          FROM
+            "temporal_append_intents" AS "pt"
+          WHERE
+            "pt"."entity_id" = "ru"."id"
+            AND cardinality("pt"."entity_type_name_keys") > 0
+        )
+      )
+  ) AS "e"

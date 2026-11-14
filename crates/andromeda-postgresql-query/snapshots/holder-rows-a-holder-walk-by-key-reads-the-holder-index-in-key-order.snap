@@ -1,0 +1,89 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/holder_rows.rs
+---
+SELECT
+  *
+FROM
+  (
+    SELECT
+      "hm"."id"
+    FROM
+      (
+        SELECT DISTINCT
+          ON ("hs"."entity_key") "hi"."id",
+          "hs"."entity_key"
+        FROM
+          "temporal_attribute_streams" AS "hs"
+          JOIN "entities" AS "hi" ON "hi"."entity_key" = "hs"."entity_key"
+        WHERE
+          "hs"."attribute_name_key" = ANY($1)
+        ORDER BY
+          "hs"."entity_key" ASC
+      ) AS "hm"
+    UNION ALL
+    (
+      SELECT
+        "hq"."id",
+        NULL::bigint AS "entity_key"
+      FROM
+        (
+          SELECT
+            "hg"."entity_id" AS "id"
+          FROM
+            (
+              SELECT DISTINCT
+                "pe"."entity_id" AS "entity_id",
+                "pe"."attribute_name_key" AS "attribute_name_key",
+                "pe"."dataset_key" AS "dataset_key",
+                NULL::bigint AS "stream_key"
+              FROM
+                "temporal_append_entries" AS "pe"
+              WHERE
+                "pe"."entry_kind" IN (1, 2)
+                AND (
+                  EXISTS (
+                    SELECT
+                      1
+                    FROM
+                      "entities" AS "pv"
+                    WHERE
+                      "pv"."id" = "pe"."entity_id"
+                      AND "pv"."evolution_created_at" IS NOT NULL
+                  )
+                  OR EXISTS (
+                    SELECT
+                      1
+                    FROM
+                      "temporal_append_intents" AS "pt"
+                    WHERE
+                      "pt"."entity_id" = "pe"."entity_id"
+                      AND cardinality("pt"."entity_type_name_keys") > 0
+                      AND (
+                        "pe"."entry_kind" <> (2)
+                        OR "pt"."intent_key" <= "pe"."intent_key"
+                      )
+                  )
+                )
+                AND (
+                  NOT EXISTS (
+                    SELECT
+                      1
+                    FROM
+                      "temporal_attribute_streams" AS "ps"
+                      JOIN "entities" AS "pv" ON "pv"."entity_key" = "ps"."entity_key"
+                    WHERE
+                      "pv"."id" = "pe"."entity_id"
+                      AND "ps"."attribute_name_key" = "pe"."attribute_name_key"
+                      AND "ps"."dataset_key" = "pe"."dataset_key"
+                  )
+                )
+            ) AS "hg"
+          WHERE
+            "hg"."attribute_name_key" = ANY($2)
+          ORDER BY
+            "id" ASC
+        ) AS "hq"
+    )
+  ) AS "e"
+1: Array ARRAY [7,9]
+2: Array ARRAY [7,9]

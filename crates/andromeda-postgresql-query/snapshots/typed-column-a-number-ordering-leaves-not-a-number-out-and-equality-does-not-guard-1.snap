@@ -1,0 +1,7 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/typed_column.rs
+---
+SELECT
+  "ca"."value_number" > $1
+  AND "ca"."value_number" <> ('NaN'::numeric)
+1: BigDecimal 3

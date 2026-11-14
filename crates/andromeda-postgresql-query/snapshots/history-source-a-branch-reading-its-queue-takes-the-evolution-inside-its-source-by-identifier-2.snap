@@ -1,0 +1,5 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/mod.rs
+---
+SELECT
+  "e"."id"

@@ -96,17 +96,18 @@ pub fn whole_stream_parts(branch: &HistoryBranch, stream: &HistoryStream) -> Str
 #[cfg(test)]
 mod tests {
     use crate::history_source::{EvolutionColumns, HistoryBranch, HistoryOf, HistoryStream, stream_parts::whole_stream_parts};
-    use sea_query::{Alias, DynIden, Expr, IntoIden, PostgresQueryBuilder};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, DynIden, Expr, IntoIden, SelectStatement};
     use std::iter::once;
 
     fn snapshot() -> DynIden {
         Alias::new("snap_1").into_iden()
     }
 
-    /// Every read of the stream under `st` in `branch`, rendered.
-    fn reads(branch: &HistoryBranch) -> Vec<String> {
+    /// Every read of the stream under `st` in `branch`.
+    fn reads(branch: &HistoryBranch) -> Vec<SelectStatement> {
         let (first, others) = whole_stream_parts(branch, &HistoryStream::under(Alias::new("st"))).into_reads();
-        once(first).chain(others).map(|read| read.to_string(PostgresQueryBuilder)).collect()
+        once(first).chain(others).collect()
     }
 
     /// The recorded part of one stream is narrowed by its stream key alone,
@@ -115,13 +116,10 @@ mod tests {
     #[test]
     fn a_stream_part_reads_its_recorded_rows_by_stream_key() {
         let reads = reads(&HistoryBranch::live_recorded());
-        let [sql] = reads.as_slice() else {
+        let [statement] = reads.as_slice() else {
             panic!("one recorded read and no queue: {reads:?}")
         };
-        assert!(sql.contains(r#"WHERE "rh"."stream_key" = "st"."stream_key""#), "{sql}");
-        assert!(sql.contains(r#""st"."entity_id" AS "entity_id""#), "{sql}");
-        assert!(sql.contains(r#""rh"."observed_at" AS "observed_at""#), "{sql}");
-        assert!(!sql.contains("temporal_attribute_streams"), "{sql}");
+        assert_statement_snapshot!("stream-parts-a-stream-part-reads-its-recorded-rows-by-stream-key", *statement);
     }
 
     /// On the live branch the queued part holds the entries of the stream's
@@ -133,13 +131,8 @@ mod tests {
         let [recorded, pending] = reads.as_slice() else {
             panic!("a recorded read and a queued one: {reads:?}")
         };
-        assert!(
-            recorded.contains(r#""pr"."entity_id" = "st"."entity_id" AND "pr"."attribute_name_key" = "st"."attribute_name_key""#),
-            "{recorded}"
-        );
-        assert!(pending.contains(r#""pe"."entity_id" = "st"."entity_id""#), "{pending}");
-        assert!(pending.contains(r#""pe"."attribute_name_key" = "st"."attribute_name_key""#), "{pending}");
-        assert!(pending.contains(r#""pe"."dataset_key" = "st"."dataset_key""#), "{pending}");
+        assert_statement_snapshot!("stream-parts-a-live-stream-part-narrows-its-queued-entries-to-the-grain-1", *recorded);
+        assert_statement_snapshot!("stream-parts-a-live-stream-part-narrows-its-queued-entries-to-the-grain-2", *pending);
     }
 
     /// Every recorded row is one part, each system time projected from its
@@ -148,11 +141,13 @@ mod tests {
     #[test]
     fn a_stream_keeps_its_recorded_rows_in_one_part_with_every_system_time_as_stored() {
         let reads = reads(&HistoryBranch::recorded_in(snapshot()));
-        let [sql] = reads.as_slice() else { panic!("one recorded read: {reads:?}") };
-        for column in ["created_at", "modified_at", "deleted_at"] {
-            assert!(sql.contains(&format!(r#""rh"."{column}" AS "{column}""#)), "{sql}");
-        }
-        assert!(!sql.contains("DISTINCT FROM") && !sql.contains(r#""rh"."recorded_at" AS"#), "{sql}");
+        let [statement] = reads.as_slice() else {
+            panic!("one recorded read: {reads:?}")
+        };
+        assert_statement_snapshot!(
+            "stream-parts-a-stream-keeps-its-recorded-rows-in-one-part-with-every-system-time-as-stored",
+            *statement
+        );
     }
 
     /// A stream read for an Evolution by key over recorded rows names the
@@ -165,12 +160,9 @@ mod tests {
         });
         let recorded = HistoryBranch::recorded_in(snapshot());
         let (keyed, _) = whole_stream_parts(&recorded, &HistoryStream::read_for(&recorded, &of, Alias::new("st"))).into_reads();
-        let keyed = keyed.to_string(PostgresQueryBuilder);
-        assert!(keyed.contains(r#""st"."entity_key" AS "entity_key""#), "{keyed}");
-        assert!(!keyed.contains("entity_id"), "{keyed}");
+        assert_statement_snapshot!("stream-parts-a-stream-read-by-key-names-its-evolution-by-key-1", keyed);
         let live = HistoryBranch::live();
         let (by_id, _) = whole_stream_parts(&live, &HistoryStream::read_for(&live, &of, Alias::new("st"))).into_reads();
-        let by_id = by_id.to_string(PostgresQueryBuilder);
-        assert!(by_id.contains(r#""st"."entity_id" AS "entity_id""#), "{by_id}");
+        assert_statement_snapshot!("stream-parts-a-stream-read-by-key-names-its-evolution-by-key-2", by_id);
     }
 }

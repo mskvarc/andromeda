@@ -1,0 +1,6 @@
+---
+source: crates/andromeda-postgresql-query/src/jsonb.rs
+---
+SELECT
+  $1
+1: BigDecimal 9

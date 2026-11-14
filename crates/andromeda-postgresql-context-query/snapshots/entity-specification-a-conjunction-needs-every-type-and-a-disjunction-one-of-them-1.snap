@@ -1,0 +1,13 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/entity_specification.rs
+---
+SELECT
+  1
+WHERE
+  (COALESCE("ri"."entity_types", '{*}') && $1)
+  AND (
+    "ri"."entity_types" IS NULL
+    OR ("ri"."entity_types" @> $2)
+  )
+1: Array ARRAY ['https://example.com/Home','https://example.com/Vehicle','*']
+2: Array ARRAY ['https://example.com/Home','https://example.com/Vehicle']

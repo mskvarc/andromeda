@@ -1,13 +1,6 @@
 //! Q reads every dataset and the dataset step narrows the answer.
 
-use andromeda_test_suite::{
-    broker,
-    identity_matcher::has_id,
-    namespace::Namespace,
-    nth::nth,
-    outcome::Upserted,
-    values_matcher::has_values,
-};
+use andromeda_test_suite::{broker, identity_matcher::has_id, namespace::Namespace, nth::nth, outcome::Upserted, values_matcher::has_values};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::{headers::Accept, operation::RepresentationSpelling},

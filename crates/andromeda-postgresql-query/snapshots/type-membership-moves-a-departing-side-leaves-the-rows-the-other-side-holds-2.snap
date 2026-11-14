@@ -1,0 +1,13 @@
+---
+source: crates/andromeda-postgresql-query/src/type_membership_moves.rs
+---
+DELETE FROM
+  "entity_type_members"
+WHERE
+  "entity_key" IN (
+    SELECT
+      "entity_key"
+    FROM
+      "doomed"
+  )
+  AND (NOT "is_evolution_member")

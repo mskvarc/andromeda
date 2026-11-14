@@ -290,7 +290,6 @@ mod tests {
         instance_row::{ElementLevel, InstanceRow},
         sub_attribute::member_field::{member_condition, unit_code_text},
     };
-    use andromeda_ngsi_ld_lexicon::unit_code_resolution::resolve_unit_code;
     use andromeda_ngsi_ld_query::{
         filter::{expression::Expr, parser::parse},
         queried_entity::instance_metadata::InstanceMetadata,
@@ -300,26 +299,24 @@ mod tests {
         current::{CurrentAttributes, SubAttribute},
         temporal::AttributeHistory,
     };
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use cefact_units::UnitCode;
     use pretty_assertions::assert_eq;
-    use sea_query::{PostgresQueryBuilder, Query, Value};
+    use sea_query::{PostgresQueryBuilder, Query, SelectStatement, Value};
 
-    /// The SQL of the `q` term `"https://example.com/t".<member><term>` over
-    /// `holder`.
-    fn member_sql(member: InstanceMetadata, term: &str, holder: InstanceRow) -> String {
+    /// The statement of the `q` term `"https://example.com/t".<member><term>`
+    /// over `holder`.
+    fn member_sql(member: InstanceMetadata, term: &str, holder: InstanceRow) -> SelectStatement {
         let Expr::Pred(pred) = parse(&format!("\"https://example.com/t\".\"{}\"{term}", member.iri().as_str())).expect("parse q") else {
             panic!("a single predicate");
         };
-        Query::select()
-            .cond_where(member_condition(member, holder, &pred))
-            .to_owned()
-            .to_string(PostgresQueryBuilder)
+        Query::select().cond_where(member_condition(member, holder, &pred)).to_owned()
     }
 
     #[test]
     fn an_instant_member_compares_its_field_with_a_date_time() {
-        let sql = member_sql(InstanceMetadata::ObservedAt, ">2024-01-01T00:00:00Z", InstanceRow::Element(ElementLevel::at(1)));
-        assert!(sql.contains(r#""l1"."observed_at" > '2024-01-01 00:00:00.000000 +00:00'"#), "{sql}");
+        let statement = member_sql(InstanceMetadata::ObservedAt, ">2024-01-01T00:00:00Z", InstanceRow::Element(ElementLevel::at(1)));
+        assert_statement_snapshot!("member-field-an-instant-member-compares-its-field-with-a-date-time", statement);
     }
 
     /// Clause 4.5.5: the default instance has no `datasetId`, which a row
@@ -328,61 +325,52 @@ mod tests {
     fn a_dataset_id_reads_the_grain_key_of_a_row_and_the_field_of_an_element() {
         let operand = "==\"urn:ngsi-ld:Dataset:d1\"";
         let current = member_sql(InstanceMetadata::DatasetId, operand, InstanceRow::Current);
-        assert!(current.contains(r#"nullif("ca"."dataset_key", '') = 'urn:ngsi-ld:Dataset:d1'"#), "{current}");
+        assert_statement_snapshot!("member-field-a-dataset-id-reads-the-grain-key-of-a-row-and-the-field-of-an-element-1", current);
         let history = member_sql(InstanceMetadata::DatasetId, operand, InstanceRow::History);
-        assert!(history.contains(r#"nullif("qh"."dataset_key", '') = 'urn:ngsi-ld:Dataset:d1'"#), "{history}");
+        assert_statement_snapshot!("member-field-a-dataset-id-reads-the-grain-key-of-a-row-and-the-field-of-an-element-2", history);
         let element = member_sql(InstanceMetadata::DatasetId, operand, InstanceRow::Element(ElementLevel::at(0)));
-        assert!(element.contains(r#""l0"."dataset_id" = 'urn:ngsi-ld:Dataset:d1'"#), "{element}");
+        assert_statement_snapshot!("member-field-a-dataset-id-reads-the-grain-key-of-a-row-and-the-field-of-an-element-3", element);
     }
 
     /// Clause 4.9 `unequal` asks for the target element, so the default
     /// instance, which has no `datasetId`, is no match.
     #[test]
     fn an_unequal_dataset_id_requires_one() {
-        let sql = member_sql(InstanceMetadata::DatasetId, "!=\"urn:ngsi-ld:Dataset:d1\"", InstanceRow::Current);
-        assert!(sql.contains(r#"nullif("ca"."dataset_key", '') IS NOT NULL"#), "{sql}");
+        let statement = member_sql(InstanceMetadata::DatasetId, "!=\"urn:ngsi-ld:Dataset:d1\"", InstanceRow::Current);
+        assert_statement_snapshot!("member-field-an-unequal-dataset-id-requires-one", statement);
     }
 
     /// A `valueType` is held as a dictionary key and compared as the expanded
     /// IRI the key names.
     #[test]
     fn a_value_type_compares_the_iri_its_key_names() {
-        let sql = member_sql(InstanceMetadata::ValueType, "==\"https://example.com/String\"", InstanceRow::Current);
-        assert!(
-            sql.contains(r#"(SELECT "mt"."name" FROM "entity_type_names" AS "mt" WHERE "mt"."entity_type_name_key" = "ca"."value_type_key") = 'https://example.com/String'"#),
-            "{sql}"
-        );
+        let statement = member_sql(InstanceMetadata::ValueType, "==\"https://example.com/String\"", InstanceRow::Current);
+        assert_statement_snapshot!("member-field-a-value-type-compares-the-iri-its-key-names", statement);
     }
 
     /// Clause 4.9: an operand "Is included in the target value, if the latter
     /// is an array", so an `objectType` equals any type it lists.
     #[test]
     fn an_object_type_equality_tests_every_listed_type() {
-        let sql = member_sql(
+        let statement = member_sql(
             InstanceMetadata::ObjectType,
             "==\"https://example.com/Device\",\"https://example.com/Gauge\"",
             InstanceRow::Current,
         );
-        assert!(
-            sql.contains(
-                r#"EXISTS(SELECT 1 FROM "entity_type_names" AS "mt" WHERE "mt"."entity_type_name_key" = ANY("ca"."object_type_keys") AND "mt"."name" = ANY("#
-            ),
-            "{sql}"
-        );
+        assert_statement_snapshot!("member-field-an-object-type-equality-tests-every-listed-type-1", statement);
         let unequal = member_sql(InstanceMetadata::ObjectType, "!=\"https://example.com/Device\"", InstanceRow::Current);
-        assert!(
-            unequal.contains(r#""ca"."object_type_keys" IS NOT NULL"#) && unequal.contains("NOT"),
-            "{unequal}"
-        );
+        assert_statement_snapshot!("member-field-an-object-type-equality-tests-every-listed-type-2", unequal);
     }
 
     /// An array is no String, so an ordering or a pattern reads an
     /// `objectType` only when it lists one type.
     #[test]
     fn an_object_type_ordering_or_pattern_reads_a_single_type() {
-        for term in [">\"https://example.com/A\"", "~=\"Dev\"", "!~=\"Dev\""] {
-            let sql = member_sql(InstanceMetadata::ObjectType, term, InstanceRow::Current);
-            assert!(sql.contains(r#"CASE WHEN (cardinality("ca"."object_type_keys") = (1)) THEN"#), "{term}: {sql}");
+        for (index, term) in [">\"https://example.com/A\"", "~=\"Dev\"", "!~=\"Dev\""].into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!("member-field-an-object-type-ordering-or-pattern-reads-a-single-type-{}", index + 1),
+                member_sql(InstanceMetadata::ObjectType, term, InstanceRow::Current)
+            );
         }
     }
 
@@ -390,93 +378,65 @@ mod tests {
     /// no stored instance holds one, and no term on it matches either way.
     #[test]
     fn an_instance_id_term_matches_nothing() {
-        for term in ["", "==\"urn:ngsi-ld:Instance:1\"", "!=\"urn:ngsi-ld:Instance:1\""] {
-            let sql = member_sql(InstanceMetadata::InstanceId, term, InstanceRow::Current);
-            assert!(sql.ends_with("WHERE FALSE"), "{term}: {sql}");
+        for (index, term) in ["", "==\"urn:ngsi-ld:Instance:1\"", "!=\"urn:ngsi-ld:Instance:1\""].into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!("member-field-an-instance-id-term-matches-nothing-{}", index + 1),
+                member_sql(InstanceMetadata::InstanceId, term, InstanceRow::Current)
+            );
         }
     }
 
-    /// The SQL and the bound identities of `q`
-    /// `"https://example.com/t"."unitCode"<term>` over a current row.
-    fn unit_code_condition(term: &str) -> (String, Vec<i16>) {
+    /// The statement of `q` `"https://example.com/t"."unitCode"<term>` over a
+    /// current row.
+    fn unit_code_condition(term: &str) -> SelectStatement {
         let Expr::Pred(pred) = parse(&format!("\"https://example.com/t\".\"https://uri.etsi.org/ngsi-ld/unitCode\"{term}")).expect("parse q") else {
             panic!("a single predicate");
         };
-        let (sql, values) = Query::select()
+        Query::select()
             .cond_where(member_condition(InstanceMetadata::UnitCode, InstanceRow::Current, &pred))
             .to_owned()
-            .build(PostgresQueryBuilder);
-        let mut bound: Vec<i16> = values
-            .0
-            .into_iter()
-            .flat_map(|value| {
-                if let Value::SmallInt(Some(identity)) = value {
-                    return vec![identity];
-                }
-                let Value::Array(_, Some(elements)) = &value else {
-                    panic!("not a stored identity or an identity array: {value:?}");
-                };
-                elements
-                    .iter()
-                    .map(|element| {
-                        let Value::SmallInt(Some(identity)) = element else {
-                            panic!("not a stored identity: {element:?}");
-                        };
-                        *identity
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        bound.sort_unstable();
-        (sql, bound)
-    }
-
-    /// The stored identities of `codes`, in the order [`unit_code_condition`]
-    /// returns them.
-    fn identities(codes: &[&str]) -> Vec<i16> {
-        let mut identities: Vec<i16> = codes
-            .iter()
-            .map(|code| stored_unit_code(resolve_unit_code(code).expect("a listed code")))
-            .collect();
-        identities.sort_unstable();
-        identities
     }
 
     #[test]
     fn a_unit_code_equality_compares_the_stored_identity_of_the_code() {
-        let (sql, bound) = unit_code_condition("==\"CEL\"");
-        assert!(sql.contains(r#""ca"."unit_code_id" = $1"#), "{sql}");
-        assert_eq!(bound, [367]);
+        assert_statement_snapshot!(
+            "member-field-a-unit-code-equality-compares-the-stored-identity-of-the-code",
+            unit_code_condition("==\"CEL\"")
+        );
     }
 
     /// Every listed code is a valid `unitCode`, whatever its status.
     #[test]
     fn a_deleted_unit_code_is_a_valid_q_operand() {
-        assert_eq!(unit_code_condition("==\"KTM\"").1, identities(&["KTM"]));
+        assert_statement_snapshot!("member-field-a-deleted-unit-code-is-a-valid-q-operand", unit_code_condition("==\"KTM\""));
     }
 
     /// Clause 4.9: a String naming no listed code equals no `unitCode` and is
     /// unequal to every one.
     #[test]
     fn an_operand_naming_no_listed_code_equals_none_and_is_unequal_to_each() {
-        let (equal, bound) = unit_code_condition("==\"NOTACODE\"");
-        assert!(equal.ends_with("WHERE FALSE"), "{equal}");
-        assert_eq!(bound, Vec::<i16>::new());
-        let (unequal, bound) = unit_code_condition("!=\"NOTACODE\"");
-        assert!(unequal.contains(r#""ca"."unit_code_id" IS NOT NULL"#), "{unequal}");
-        assert_eq!(bound, Vec::<i16>::new());
+        assert_statement_snapshot!(
+            "member-field-an-operand-naming-no-listed-code-equals-none-and-is-unequal-to-each-1",
+            unit_code_condition("==\"NOTACODE\"")
+        );
+        assert_statement_snapshot!(
+            "member-field-an-operand-naming-no-listed-code-equals-none-and-is-unequal-to-each-2",
+            unit_code_condition("!=\"NOTACODE\"")
+        );
     }
 
     /// Clause 4.5.2 makes `unitCode` a String, so an ordering compares the
     /// text of the code, and the column is tested against the shorter list.
     #[test]
     fn a_unit_code_ordering_compares_the_text_of_the_code() {
-        let (at_least, bound) = unit_code_condition(">=\"ZP\"");
-        assert!(at_least.contains(r#""ca"."unit_code_id" = ANY($1)"#), "{at_least}");
-        assert_eq!(bound, identities(&["ZP", "ZZ"]));
-        let (below, bound) = unit_code_condition("<\"ZP\"");
-        assert!(below.contains(r#""ca"."unit_code_id" <> ALL($1)"#), "{below}");
-        assert_eq!(bound, identities(&["ZP", "ZZ"]));
+        assert_statement_snapshot!(
+            "member-field-a-unit-code-ordering-compares-the-text-of-the-code-1",
+            unit_code_condition(">=\"ZP\"")
+        );
+        assert_statement_snapshot!(
+            "member-field-a-unit-code-ordering-compares-the-text-of-the-code-2",
+            unit_code_condition("<\"ZP\"")
+        );
     }
 
     /// Clause 4.9 recommends the UCA for a String ordering: `z` sorts before
@@ -484,44 +444,47 @@ mod tests {
     /// all of them.
     #[test]
     fn a_unit_code_ordering_collates_under_the_icu_root_collation() {
-        assert_eq!(
-            unit_code_condition(">\"z\"").1,
-            identities(&["Z1", "Z11", "Z2", "Z3", "Z4", "Z5", "Z6", "Z8", "Z9", "ZP", "ZZ"])
+        assert_statement_snapshot!(
+            "member-field-a-unit-code-ordering-collates-under-the-icu-root-collation",
+            unit_code_condition(">\"z\"")
         );
     }
 
     #[test]
     fn a_unit_code_pattern_matches_the_text_of_the_code() {
-        let (matching, bound) = unit_code_condition("~=\"^CE\"");
-        assert!(matching.contains(r#""ca"."unit_code_id" = ANY($1)"#), "{matching}");
-        assert_eq!(bound, identities(&["CEL", "CEN"]));
-        let (not_matching, bound) = unit_code_condition("!~=\"^CE\"");
-        assert!(not_matching.contains(r#""ca"."unit_code_id" <> ALL($1)"#), "{not_matching}");
-        assert_eq!(bound, identities(&["CEL", "CEN"]));
+        assert_statement_snapshot!(
+            "member-field-a-unit-code-pattern-matches-the-text-of-the-code-1",
+            unit_code_condition("~=\"^CE\"")
+        );
+        assert_statement_snapshot!(
+            "member-field-a-unit-code-pattern-matches-the-text-of-the-code-2",
+            unit_code_condition("!~=\"^CE\"")
+        );
     }
 
     /// Clause 4.9 `patternOp` and `notPatternOp` both require the target to be
     /// present, so a term every code satisfies still asks for one.
     #[test]
     fn a_pattern_every_code_matches_still_requires_a_unit_code() {
-        let (sql, bound) = unit_code_condition("~=\".\"");
-        assert!(sql.contains(r#""ca"."unit_code_id" IS NOT NULL"#), "{sql}");
-        assert_eq!(bound, Vec::<i16>::new());
+        assert_statement_snapshot!(
+            "member-field-a-pattern-every-code-matches-still-requires-a-unit-code",
+            unit_code_condition("~=\".\"")
+        );
     }
 
     /// The bound list holds each code's text at the 1-based position its
     /// stored identity names.
     #[test]
     fn a_unit_code_text_is_read_at_the_position_of_its_stored_identity() {
-        let (sql, values) = Query::select()
+        let statement = Query::select()
             .expr(unit_code_text(InstanceRow::Current.field(
                 CurrentAttributes::UnitCodeId,
                 AttributeHistory::UnitCodeId,
                 SubAttribute::UnitCodeId,
             )))
-            .to_owned()
-            .build(PostgresQueryBuilder);
-        assert_eq!(sql, r#"SELECT ( $1 )[ "ca"."unit_code_id" ]"#);
+            .to_owned();
+        let (_, values) = statement.build(PostgresQueryBuilder);
+        assert_statement_snapshot!("member-field-a-unit-code-text-is-read-at-the-position-of-its-stored-identity", statement);
         let [Value::Array(_, Some(texts))] = values.0.as_slice() else {
             panic!("one bound text array: {values:?}");
         };
@@ -535,7 +498,7 @@ mod tests {
     /// A stored instant keeps no written text to match.
     #[test]
     fn an_instant_member_matches_no_pattern() {
-        let sql = member_sql(InstanceMetadata::ObservedAt, "~=\"2024\"", InstanceRow::Current);
-        assert!(sql.ends_with("WHERE FALSE"), "{sql}");
+        let statement = member_sql(InstanceMetadata::ObservedAt, "~=\"2024\"", InstanceRow::Current);
+        assert_statement_snapshot!("member-field-an-instant-member-matches-no-pattern", statement);
     }
 }

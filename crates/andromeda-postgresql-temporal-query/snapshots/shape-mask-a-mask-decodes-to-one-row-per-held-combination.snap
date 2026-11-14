@@ -1,0 +1,13 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/shape_mask.rs
+---
+SELECT
+  (("position" / (10)) + $1)::smallint AS "attribute_kind",
+  (("position" % (10)) + $2)::smallint AS "recorded_shape"
+FROM
+  generate_series(0, 79) AS "position"
+WHERE
+  get_bit("shape_mask", "position") = $3
+1: Int 1
+2: Int 1
+3: Int 1

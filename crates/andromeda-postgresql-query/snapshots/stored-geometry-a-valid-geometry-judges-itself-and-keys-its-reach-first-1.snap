@@ -1,0 +1,5 @@
+---
+source: crates/andromeda-postgresql-query/src/stored_geometry.rs
+---
+SELECT
+  "g"."location"

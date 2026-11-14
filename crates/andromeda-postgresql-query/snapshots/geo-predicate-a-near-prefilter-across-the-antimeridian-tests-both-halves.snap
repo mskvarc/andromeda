@@ -1,0 +1,59 @@
+---
+source: crates/andromeda-postgresql-query/src/geo_predicate.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "geo_instance"
+    WHERE
+      "geo_instance"."entity_key" = "entities"."entity_key"
+      AND "geo_instance"."attribute_name_key" = $1
+      AND "geo_instance"."value_geometry" IS NOT NULL
+      AND (
+        "geo_instance"."expires_at" IS NULL
+        OR "geo_instance"."expires_at" > NOW()
+      )
+      AND (
+        (
+          COALESCE(
+            "geo_instance"."value_geometry_reach",
+            "geo_instance"."value_geometry_valid",
+            "geo_instance"."value_geometry"
+          ) && ST_MakeEnvelope($2, $3, $4, $5, $6)
+        )
+        OR (
+          COALESCE(
+            "geo_instance"."value_geometry_reach",
+            "geo_instance"."value_geometry_valid",
+            "geo_instance"."value_geometry"
+          ) && ST_MakeEnvelope($7, $8, $9, $10, $11)
+        )
+      )
+      AND _ST_DWithin(
+        COALESCE(
+          "geo_instance"."value_geometry_valid",
+          "geo_instance"."value_geometry"
+        )::geography,
+        ST_MakeValid(ST_GeomFromEWKB($12))::geography,
+        $13
+      )
+  )
+1: Int 42
+2: Double 179.99616188378724
+3: Double -17.002714108431277
+4: Double 180
+5: Double -16.997285891568723
+6: Int 4326
+7: Double -180
+8: Double -17.002714108431277
+9: Double -179.99816188378725
+10: Double -16.997285891568723
+11: Int 4326
+12: Bytes '\x0101000020E61000008716D9CEF77F664000000000000031C0'
+13: Double 300

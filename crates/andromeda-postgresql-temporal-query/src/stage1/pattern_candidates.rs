@@ -58,7 +58,7 @@ pub(super) fn pattern_candidates(branch: &HistoryBranch, pattern: &Pattern) -> S
 mod tests {
     use crate::stage1::{
         Stage1Query,
-        query_fixture::{CountParts, PageBranches, id_pattern, opened, recorded_stage1, stage1_on},
+        query_fixture::{id_pattern, opened, recorded_stage1, stage1_on},
     };
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelector,
@@ -68,10 +68,10 @@ mod tests {
         temporal::ordering::TemporalEntityOrdering,
     };
     use andromeda_postgresql_query::history_source::HistoryBranch;
-    use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, IntoIden, PostgresQueryBuilder, Value};
+    use sea_query::{Alias, IntoIden};
 
     /// The catalogue query the step tests vary: `idPattern=.*:0123.*`, no
     /// type.
@@ -83,25 +83,17 @@ mod tests {
     fn an_unanchored_pattern_over_the_catalogue_reads_the_identifier_trigrams() {
         let stage1 = catalogue();
         assert_eq!(stage1.planning, StatementPlanning::GenericGatedBranches);
-        let (sql, values) = stage1.select.build(PostgresQueryBuilder);
-        assert!(
-            sql.contains(r#""candidates" AS  MATERIALIZED (SELECT "entities"."entity_key" FROM "entities" WHERE ((("entities"."id") COLLATE "default") ~ $"#),
-            "{sql}"
+        let statement = stage1.select;
+        assert_statement_snapshot!(
+            "pattern-candidates-an-unanchored-pattern-over-the-catalogue-reads-the-identifier-trigrams",
+            statement
         );
-        for bound in [5_000, 1_001, 1_000] {
-            assert!(values.0.contains(&Value::BigUnsigned(Some(bound))), "{bound}: {:?}", values.0);
-        }
     }
 
     #[test]
     fn the_pattern_test_is_the_expression_the_trigram_index_holds() {
-        let sql = catalogue().select.to_string(PostgresQueryBuilder);
-        let candidates = PageBranches::of(&sql).candidates;
-        assert_eq!(
-            candidates,
-            r#"SELECT "entities"."entity_key" FROM "entities" WHERE ((("entities"."id") COLLATE "default") ~ '.*:0123.*') AND "entities"."evolution_created_at" IS NOT NULL"#
-        );
-        assert!(!candidates.contains("lower(") && !candidates.contains("::"), "{candidates}");
+        let statement = catalogue().select;
+        assert_statement_snapshot!("pattern-candidates-the-pattern-test-is-the-expression-the-trigram-index-holds", statement);
     }
 
     /// The identifier index answers an anchored pattern's start, so the query
@@ -109,39 +101,26 @@ mod tests {
     /// and the pattern stays in the probe.
     #[test]
     fn an_anchored_pattern_reads_no_trigrams() {
-        for raw in ["^urn:ngsi-ld:Sensor:0123.*", "^urn:ngsi-ld:Sensor:012345$"] {
-            let sql = recorded_stage1(&opened(id_pattern(None, raw))).select.to_string(PostgresQueryBuilder);
-            let branches = PageBranches::of(&sql);
-            assert!(!branches.candidates.contains(r#""entities"."id" ~"#), "{raw}: {sql}");
-            assert!(branches.indexed.contains(r#""e"."id" ~ '^urn:ngsi-ld:Sensor:012"#), "{raw}: {sql}");
-        }
+        let prefix = recorded_stage1(&opened(id_pattern(None, "^urn:ngsi-ld:Sensor:0123.*"))).select;
+        assert_statement_snapshot!("pattern-candidates-an-anchored-pattern-reads-no-trigrams-1", prefix);
+        let exact = recorded_stage1(&opened(id_pattern(None, "^urn:ngsi-ld:Sensor:012345$"))).select;
+        assert_statement_snapshot!("pattern-candidates-an-anchored-pattern-reads-no-trigrams-2", exact);
     }
 
     #[test]
     fn a_typed_selector_narrows_the_type_walk_by_the_trigram_candidates() {
-        let sql = recorded_stage1(&id_pattern(Some("Sensor"), ".*:0123.*")).select.to_string(PostgresQueryBuilder);
-        let indexed = PageBranches::of(&sql).indexed;
-        assert!(
-            indexed.contains(concat!(
-                r#"FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_evolution_member" AND "entity_key" IN (SELECT "entity_key" FROM "candidates")"#,
-                r#" ORDER BY "id" ASC OFFSET 0) AS "e""#
-            )),
-            "{indexed}"
-        );
+        let statement = recorded_stage1(&id_pattern(Some("Sensor"), ".*:0123.*")).select;
+        assert_statement_snapshot!("pattern-candidates-a-typed-selector-narrows-the-type-walk-by-the-trigram-candidates", statement);
     }
 
     #[test]
     fn an_attrs_selection_narrows_the_holder_walk_by_the_trigram_candidates() {
         let mut compiled = id_pattern(None, ".*:0123.*");
         compiled.instances.attr_filter = vec![IriBuf::new("https://uri.etsi.org/ngsi-ld/default-context/temperature".to_owned()).expect("valid IRI")];
-        let sql = recorded_stage1(&compiled).select.to_string(PostgresQueryBuilder);
-        let indexed = PageBranches::of(&sql).indexed;
-        assert!(
-            indexed.contains(concat!(
-                r#"WHERE "hs"."attribute_name_key" = (1) AND "hs"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#,
-                r#" ORDER BY "hi"."id" ASC) AS "hr""#
-            )),
-            "{indexed}"
+        let statement = recorded_stage1(&compiled).select;
+        assert_statement_snapshot!(
+            "pattern-candidates-an-attrs-selection-narrows-the-holder-walk-by-the-trigram-candidates",
+            statement
         );
     }
 
@@ -160,85 +139,42 @@ mod tests {
             direction: SortDirection::Ascending,
             collation: Some(IcuCollation::parse("de-u-co-phonebk").expect("valid collation")),
         });
-        let sql = recorded_stage1(&paired).select.to_string(PostgresQueryBuilder);
-        let branches = PageBranches::of(&sql);
-        assert!(
-            !branches.candidates.contains(r#""entities"."id")"#) && !branches.candidates.contains(r#""entities"."id" ~"#),
-            "{sql}"
+        let paired = recorded_stage1(&paired).select;
+        assert_statement_snapshot!(
+            "pattern-candidates-paired-selectors-read-no-trigrams-and-an-ordering-keeps-the-plain-walk-1",
+            paired
         );
-        assert!(branches.indexed.contains(r#"("e"."id") COLLATE "default") ~ '.*:9.*'"#), "{sql}");
         let stage1 = recorded_stage1(&ordered);
-        let sql = stage1.select.to_string(PostgresQueryBuilder);
-        assert!(!sql.contains("candidates"), "{sql}");
         assert_eq!(stage1.planning, StatementPlanning::Cached);
+        let ordered = stage1.select;
+        assert_statement_snapshot!(
+            "pattern-candidates-paired-selectors-read-no-trigrams-and-an-ordering-keeps-the-plain-walk-2",
+            ordered
+        );
     }
 
     #[test]
     fn a_queued_branch_compares_identifiers_and_admits_queued_entities() {
-        let sql = stage1_on(&HistoryBranch::live(), &id_pattern(None, ".*:0123.*"), &PageWindow::offset(20, 0))
-            .select
-            .to_string(PostgresQueryBuilder);
-        let branches = PageBranches::of(&sql);
-        assert!(
-            branches.candidates.starts_with(
-                r#"SELECT "entities"."id" FROM "entities" WHERE ((("entities"."id") COLLATE "default") ~ '.*:0123.*') AND "entities"."evolution_created_at" IS NOT NULL UNION ALL "#
-            ),
-            "{}",
-            branches.candidates
-        );
-        assert!(
-            branches
-                .candidates
-                .contains(r#"(SELECT "entity_id" FROM "temporal_append_intents" WHERE "entity_id" ~ '.*:0123.*')"#),
-            "{}",
-            branches.candidates
-        );
-        assert!(
-            branches.indexed.contains(r#""e"."id" IN (SELECT "id" FROM "candidates")"#),
-            "{}",
-            branches.indexed
-        );
+        let statement = stage1_on(&HistoryBranch::live(), &id_pattern(None, ".*:0123.*"), &PageWindow::offset(20, 0)).select;
+        assert_statement_snapshot!("pattern-candidates-a-queued-branch-compares-identifiers-and-admits-queued-entities", statement);
     }
 
     #[test]
     fn a_snapshot_reads_its_own_trigram_index() {
-        let sql = stage1_on(
+        let statement = stage1_on(
             &HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()),
             &id_pattern(None, ".*:0123.*"),
             &PageWindow::offset(20, 0),
         )
-        .select
-        .to_string(PostgresQueryBuilder);
-        assert!(PageBranches::of(&sql).candidates.contains(r#"FROM "snap_7"."entities" WHERE"#), "{sql}");
+        .select;
+        assert_statement_snapshot!("pattern-candidates-a-snapshot-reads-its-own-trigram-index", statement);
     }
 
     #[test]
     fn a_counted_pattern_counts_under_the_count_bound() {
         let stage1 = catalogue();
         assert_eq!(stage1.count_planning, StatementPlanning::BoundValues);
-        let count = stage1.count.expect("count requested");
-        let (sql, values) = count.build(PostgresQueryBuilder);
-        assert!(sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED ("#), "{sql}");
-        assert!(values.0.contains(&Value::BigUnsigned(Some(10_001))), "{:?}", values.0);
-        assert!(values.0.contains(&Value::BigUnsigned(Some(10_000))), "{:?}", values.0);
-        let parts = CountParts::of(&sql);
-        assert!(
-            parts.indexed.contains(r#""e"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#),
-            "{}",
-            parts.indexed
-        );
-        assert_eq!(parts.walked.matches("candidates").count(), 2, "the two gates alone: {}", parts.walked);
-        assert!(
-            parts.filtered.contains(r#"("e"."id") COLLATE "default") ~ $"#),
-            "the pattern is tested once, on every looked-up Evolution: {}",
-            parts.filtered
-        );
-        assert!(
-            [&parts.indexed, &parts.walked]
-                .iter()
-                .all(|part| !part.contains(r#""e"."id" ~"#) && !part.contains(r#""e"."id") COLLATE"#)),
-            "{sql}"
-        );
-        assert!(!sql.contains("CASE WHEN"), "{sql}");
+        let statement = stage1.count.expect("count requested");
+        assert_statement_snapshot!("pattern-candidates-a-counted-pattern-counts-under-the-count-bound", statement);
     }
 }

@@ -1,0 +1,109 @@
+---
+source: crates/andromeda-postgresql-query/src/location_instances.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  "entities"."entity_key" IN (
+    SELECT DISTINCT
+      "geo_matched"."entity_key"
+    FROM
+      (
+        SELECT
+          "geo_default"."entity_key"
+        FROM
+          "entity_search" AS "geo_default"
+        WHERE
+          (
+            "geo_default"."location_expires_at" IS NULL
+            OR "geo_default"."location_expires_at" > NOW()
+          )
+          AND (
+            (
+              COALESCE(
+                "geo_default"."location_reach",
+                "geo_default"."location"
+              ) && ST_MakeEnvelope($1, $2, $3, $4, $5)
+            )
+            OR (
+              COALESCE(
+                "geo_default"."location_reach",
+                "geo_default"."location"
+              ) && ST_MakeEnvelope($6, $7, $8, $9, $10)
+            )
+          )
+          AND _ST_DWithin(
+            "geo_default"."location"::geography,
+            ST_MakeValid(ST_GeomFromEWKB($11))::geography,
+            $12
+          )
+        UNION ALL
+        (
+          SELECT
+            "geo_location_instance"."entity_key"
+          FROM
+            "current_attributes" AS "geo_location_instance"
+          WHERE
+            "geo_location_instance"."attribute_name_key" = $13
+            AND "geo_location_instance"."dataset_key" <> ('')
+            AND (
+              "geo_location_instance"."expires_at" IS NULL
+              OR "geo_location_instance"."expires_at" > NOW()
+            )
+            AND "geo_location_instance"."value_geometry" IS NOT NULL
+            AND (
+              (
+                COALESCE(
+                  "geo_location_instance"."value_geometry_reach",
+                  "geo_location_instance"."value_geometry_valid",
+                  "geo_location_instance"."value_geometry"
+                ) && ST_MakeEnvelope($14, $15, $16, $17, $18)
+              )
+              OR (
+                COALESCE(
+                  "geo_location_instance"."value_geometry_reach",
+                  "geo_location_instance"."value_geometry_valid",
+                  "geo_location_instance"."value_geometry"
+                ) && ST_MakeEnvelope($19, $20, $21, $22, $23)
+              )
+            )
+            AND _ST_DWithin(
+              COALESCE(
+                "geo_location_instance"."value_geometry_valid",
+                "geo_location_instance"."value_geometry"
+              )::geography,
+              ST_MakeValid(ST_GeomFromEWKB($24))::geography,
+              $25
+            )
+        )
+      ) AS "geo_matched"
+    ORDER BY
+      "geo_matched"."entity_key" ASC
+  )
+1: Double 179.99616188378724
+2: Double -17.002714108431277
+3: Double 180
+4: Double -16.997285891568723
+5: Int 4326
+6: Double -180
+7: Double -17.002714108431277
+8: Double -179.99816188378725
+9: Double -16.997285891568723
+10: Int 4326
+11: Bytes '\x0101000020E61000008716D9CEF77F664000000000000031C0'
+12: Double 300
+13: Int 9
+14: Double 179.99616188378724
+15: Double -17.002714108431277
+16: Double 180
+17: Double -16.997285891568723
+18: Int 4326
+19: Double -180
+20: Double -17.002714108431277
+21: Double -179.99816188378725
+22: Double -16.997285891568723
+23: Int 4326
+24: Bytes '\x0101000020E61000008716D9CEF77F664000000000000031C0'
+25: Double 300

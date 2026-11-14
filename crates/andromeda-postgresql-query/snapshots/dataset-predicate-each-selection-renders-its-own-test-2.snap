@@ -1,0 +1,8 @@
+---
+source: crates/andromeda-postgresql-query/src/dataset_predicate.rs
+---
+SELECT
+  $1
+WHERE
+  "s"."dataset_key" = ('')
+1: Int 1

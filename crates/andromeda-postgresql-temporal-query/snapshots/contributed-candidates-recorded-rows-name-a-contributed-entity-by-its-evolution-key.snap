@@ -1,0 +1,11 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/stage1/contributed_candidates.rs
+---
+SELECT
+  "entities"."entity_key"
+FROM
+  "entities"
+WHERE
+  "entities"."id" = ANY($1)
+  AND "entities"."evolution_created_at" IS NOT NULL
+1: Array ARRAY ['urn:ngsi-ld:Sensor:000009','urn:ngsi-ld:Sensor:000011']

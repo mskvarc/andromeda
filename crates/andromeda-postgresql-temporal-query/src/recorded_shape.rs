@@ -74,10 +74,11 @@ pub fn recorded_shape() -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::recorded_shape::recorded_shape;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Query, SelectStatement};
 
-    fn rendered() -> String {
-        Query::select().expr(recorded_shape()).to_owned().to_string(PostgresQueryBuilder)
+    fn rendered() -> SelectStatement {
+        Query::select().expr(recorded_shape()).to_owned()
     }
 
     /// Table 4.5.19.1-1 gives a JSON Array `avg`/`min`/`max`/`sum` over its
@@ -85,16 +86,8 @@ mod tests {
     /// inside the one JSONB column that holds both.
     #[test]
     fn an_array_is_separated_from_an_object_by_its_json_type() {
-        let sql = rendered();
-        assert!(
-            sql.contains("jsonb_typeof(COALESCE((CASE WHEN ((\"ah\".\"value_object\" ->> ('@type')) = ('@json'))"),
-            "{sql}"
-        );
-        assert!(sql.contains("THEN 6"), "the array branch must be reachable: {sql}");
-        assert!(sql.contains("THEN 5"), "the object branch must be reachable: {sql}");
-        let array_branch = sql.find("THEN 6").expect("an array branch");
-        let object_branch = sql.find("THEN 5").expect("an object branch");
-        assert!(array_branch < object_branch, "the array test must precede the object fallback: {sql}");
+        let statement = rendered();
+        assert_statement_snapshot!("recorded-shape-an-array-is-separated-from-an-object-by-its-json-type", statement);
     }
 
     /// Table 4.5.19.1-2 gives `Time` an `avg` that the `Date` and the JSON
@@ -102,10 +95,11 @@ mod tests {
     /// by the value kind the write recorded, never by the text.
     #[test]
     fn a_time_and_a_date_are_separated_from_a_plain_string_by_their_value_kind() {
-        let sql = rendered();
-        assert!(sql.contains(r#"("ah"."value_kind" = (9)) THEN 9::smallint"#), "{sql}");
-        assert!(sql.contains(r#"("ah"."value_kind" = (8)) THEN 8::smallint"#), "{sql}");
-        assert!(!sql.contains('~'), "no regular expression: {sql}");
+        let statement = rendered();
+        assert_statement_snapshot!(
+            "recorded-shape-a-time-and-a-date-are-separated-from-a-plain-string-by-their-value-kind",
+            statement
+        );
     }
 
     /// Clause 4.5.7: a deletion carries no value, so it has no shape either -
@@ -114,22 +108,21 @@ mod tests {
     /// give it their methods.
     #[test]
     fn a_declared_number_or_boolean_records_the_shape_of_its_data_type() {
-        let sql = rendered();
-        assert!(sql.contains(r#"("ah"."value_kind" IN (1, 10)) THEN 1::smallint"#), "{sql}");
-        assert!(sql.contains(r#"("ah"."value_kind" IN (3, 11)) THEN 3::smallint"#), "{sql}");
+        let statement = rendered();
+        assert_statement_snapshot!("recorded-shape-a-declared-number-or-boolean-records-the-shape-of-its-data-type", statement);
     }
 
     #[test]
     fn a_tombstone_row_falls_out_of_the_projection_with_no_shape() {
-        let sql = rendered();
-        assert!(!sql.contains("ELSE"), "{sql}");
+        let statement = rendered();
+        assert_statement_snapshot!("recorded-shape-a-tombstone-row-falls-out-of-the-projection-with-no-shape", statement);
     }
 
     /// The patterns and the branch codes are rendered inline, so projecting a
     /// shape adds no placeholder and shifts no binding a caller made.
     #[test]
     fn the_projection_binds_no_parameter_of_its_own() {
-        let (_sql, values) = Query::select().expr(recorded_shape()).to_owned().build(PostgresQueryBuilder);
-        pretty_assertions::assert_eq!(values.0.len(), 0, "nothing binds");
+        let statement = rendered();
+        assert_statement_snapshot!("recorded-shape-the-projection-binds-no-parameter-of-its-own", statement);
     }
 }

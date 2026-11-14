@@ -1,0 +1,178 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/stage1/held_shapes.rs
+---
+SELECT
+  0 AS "combination"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      (
+        SELECT
+          "re"."id" AS "entity_id",
+          "rs"."attribute_name_key" AS "attribute_name_key",
+          "rs"."dataset_key" AS "dataset_key",
+          "rh"."recorded_at",
+          "rh"."write_id",
+          "rh"."write_ordinal",
+          "rh"."attribute_kind",
+          "rh"."value_kind",
+          "rh"."observed_at",
+          "rh"."created_at",
+          "rh"."modified_at",
+          "rh"."deleted_at",
+          "rh"."value_date_time",
+          "rh"."expires_at",
+          "rh"."generated_instance_id",
+          "rh"."value_type_key",
+          "rh"."value_datatype_key",
+          "rh"."unit_code_id",
+          "rh"."value_boolean",
+          "rh"."verbatim_instance_id",
+          "rh"."value_number",
+          "rh"."value_string",
+          "rh"."value_language",
+          "rh"."value_geometry",
+          "rh"."value_geometry_valid",
+          "rh"."value_geometry_reach",
+          "rh"."value_geometry_members",
+          "rh"."value_object",
+          "rh"."value_uri",
+          "rh"."object_type_keys",
+          "rh"."sub_attributes"
+        FROM
+          "attribute_history" AS "rh"
+          JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+          JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+        WHERE
+          "re"."id" = $1
+      ) AS "ah"
+    WHERE
+      "ah"."observed_at" IS NOT NULL
+      AND "ah"."observed_at" >= $2
+      AND TRUE
+      AND "ah"."attribute_name_key" = $3
+      AND "ah"."attribute_kind" = $4
+      AND "ah"."value_kind" <> (0)
+      AND (
+        CASE
+          WHEN (
+            "ah"."value_kind" = (5)
+            AND jsonb_typeof(
+              COALESCE(
+                (
+                  CASE
+                    WHEN (("ah"."value_object" ->> ('@type')) = ('@json')) THEN "ah"."value_object" -> ('@value')
+                  END
+                ),
+                "ah"."value_object"
+              )
+            ) = ('array')
+          ) THEN 6::smallint
+          WHEN ("ah"."value_kind" = (5)) THEN 5::smallint
+          WHEN ("ah"."value_kind" = (9)) THEN 9::smallint
+          WHEN ("ah"."value_kind" = (8)) THEN 8::smallint
+          WHEN ("ah"."value_kind" = (2)) THEN 2::smallint
+          WHEN ("ah"."value_kind" IN (1, 10)) THEN 1::smallint
+          WHEN ("ah"."value_kind" IN (3, 11)) THEN 3::smallint
+          WHEN ("ah"."value_kind" = (4)) THEN 4::smallint
+          WHEN ("ah"."value_kind" = (6)) THEN 7::smallint
+          WHEN ("ah"."value_kind" = (7)) THEN 10::smallint
+        END
+      ) = $5
+  )
+UNION ALL
+(
+  SELECT
+    1 AS "combination"
+  WHERE
+    EXISTS (
+      SELECT
+        1
+      FROM
+        (
+          SELECT
+            "re"."id" AS "entity_id",
+            "rs"."attribute_name_key" AS "attribute_name_key",
+            "rs"."dataset_key" AS "dataset_key",
+            "rh"."recorded_at",
+            "rh"."write_id",
+            "rh"."write_ordinal",
+            "rh"."attribute_kind",
+            "rh"."value_kind",
+            "rh"."observed_at",
+            "rh"."created_at",
+            "rh"."modified_at",
+            "rh"."deleted_at",
+            "rh"."value_date_time",
+            "rh"."expires_at",
+            "rh"."generated_instance_id",
+            "rh"."value_type_key",
+            "rh"."value_datatype_key",
+            "rh"."unit_code_id",
+            "rh"."value_boolean",
+            "rh"."verbatim_instance_id",
+            "rh"."value_number",
+            "rh"."value_string",
+            "rh"."value_language",
+            "rh"."value_geometry",
+            "rh"."value_geometry_valid",
+            "rh"."value_geometry_reach",
+            "rh"."value_geometry_members",
+            "rh"."value_object",
+            "rh"."value_uri",
+            "rh"."object_type_keys",
+            "rh"."sub_attributes"
+          FROM
+            "attribute_history" AS "rh"
+            JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+            JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+          WHERE
+            "re"."id" = $6
+        ) AS "ah"
+      WHERE
+        "ah"."observed_at" IS NOT NULL
+        AND "ah"."observed_at" >= $7
+        AND TRUE
+        AND "ah"."attribute_name_key" = $8
+        AND "ah"."attribute_kind" = $9
+        AND "ah"."value_kind" <> (0)
+        AND (
+          CASE
+            WHEN (
+              "ah"."value_kind" = (5)
+              AND jsonb_typeof(
+                COALESCE(
+                  (
+                    CASE
+                      WHEN (("ah"."value_object" ->> ('@type')) = ('@json')) THEN "ah"."value_object" -> ('@value')
+                    END
+                  ),
+                  "ah"."value_object"
+                )
+              ) = ('array')
+            ) THEN 6::smallint
+            WHEN ("ah"."value_kind" = (5)) THEN 5::smallint
+            WHEN ("ah"."value_kind" = (9)) THEN 9::smallint
+            WHEN ("ah"."value_kind" = (8)) THEN 8::smallint
+            WHEN ("ah"."value_kind" = (2)) THEN 2::smallint
+            WHEN ("ah"."value_kind" IN (1, 10)) THEN 1::smallint
+            WHEN ("ah"."value_kind" IN (3, 11)) THEN 3::smallint
+            WHEN ("ah"."value_kind" = (4)) THEN 4::smallint
+            WHEN ("ah"."value_kind" = (6)) THEN 7::smallint
+            WHEN ("ah"."value_kind" = (7)) THEN 10::smallint
+          END
+        ) = $10
+    )
+)
+1: String 'urn:ngsi-ld:Truck:1'
+2: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
+3: Int 7
+4: SmallInt 1
+5: SmallInt 2
+6: String 'urn:ngsi-ld:Truck:1'
+7: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
+8: Int 7
+9: SmallInt 1
+10: SmallInt 6

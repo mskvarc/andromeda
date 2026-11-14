@@ -1,0 +1,20 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/geometry_parts.rs
+---
+SELECT
+  "id"
+FROM
+  "context_source_registrations"
+WHERE
+  "location" IS NOT NULL
+  AND (
+    (
+      COALESCE("location_reach", "location_valid", "location") && ST_MakeValid(ST_GeomFromEWKB($1))
+    )
+    AND _ST_Intersects(
+      COALESCE("location_valid", "location"),
+      ST_MakeValid(ST_GeomFromEWKB($2))
+    )
+  )
+1: Bytes '\x0101000020E6100000CDCCCCCCCCCC2A400000000000404A40'
+2: Bytes '\x0101000020E6100000CDCCCCCCCCCC2A400000000000404A40'

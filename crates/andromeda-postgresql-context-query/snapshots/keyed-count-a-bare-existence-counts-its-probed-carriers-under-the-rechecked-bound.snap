@@ -1,0 +1,88 @@
+---
+source: crates/andromeda-postgresql-context-query/src/keyed_count.rs
+---
+WITH
+"candidates" AS MATERIALIZED (
+  SELECT
+    "entity_search"."entity_key"
+  FROM
+    "entity_search"
+  WHERE
+    (
+      "entity_search"."attribute_name_keys" @> (ARRAY[12])
+    )
+    AND EXISTS (
+      SELECT
+        1
+      FROM
+        "current_attributes" AS "ca"
+      WHERE
+        "ca"."attribute_name_key" = $1
+        AND (
+          "ca"."expires_at" IS NULL
+          OR "ca"."expires_at" > NOW()
+        )
+        AND "ca"."entity_key" = "entity_search"."entity_key"
+    )
+  LIMIT
+    10001
+)
+SELECT
+  (
+    CASE
+      WHEN (
+        (
+          SELECT
+            COUNT(*)
+          FROM
+            "candidates"
+        ) <= $2
+      ) THEN (
+        SELECT
+          COUNT(*)
+        FROM
+          "entities"
+        WHERE
+          "entities"."created_at" IS NOT NULL
+          AND (
+            "entities"."expires_at" IS NULL
+            OR "entities"."expires_at" > NOW()
+          )
+          AND TRUE
+          AND "entities"."entity_key" IN (
+            SELECT
+              "entity_key"
+            FROM
+              "candidates"
+          )
+      )
+      ELSE (
+        SELECT
+          COUNT(*)
+        FROM
+          "entities"
+        WHERE
+          "entities"."created_at" IS NOT NULL
+          AND (
+            "entities"."expires_at" IS NULL
+            OR "entities"."expires_at" > NOW()
+          )
+          AND EXISTS (
+            SELECT
+              1
+            FROM
+              "current_attributes" AS "ca"
+            WHERE
+              "ca"."attribute_name_key" = $3
+              AND (
+                "ca"."expires_at" IS NULL
+                OR "ca"."expires_at" > NOW()
+              )
+              AND "ca"."entity_key" = "entities"."entity_key"
+          )
+      )
+    END
+  )
+1: Int 12
+2: BigUnsigned 10000
+3: Int 12

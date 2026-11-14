@@ -187,8 +187,9 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_query::geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery};
     use andromeda_postgresql_schema::current::Entities;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Condition, PostgresQueryBuilder, Query, Values};
+    use sea_query::{Alias, Condition, Query, SelectStatement};
     use std::str::FromStr;
 
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
@@ -208,12 +209,8 @@ mod tests {
         }
     }
 
-    fn render(condition: Condition) -> (String, Values) {
-        Query::select()
-            .column(Entities::Id)
-            .from(Entities::Table)
-            .cond_where(condition)
-            .build(PostgresQueryBuilder)
+    fn render(condition: Condition) -> SelectStatement {
+        Query::select().column(Entities::Id).from(Entities::Table).cond_where(condition).to_owned()
     }
 
     fn unaliased() -> EntityRowRefs {
@@ -227,7 +224,7 @@ mod tests {
     /// the one semi-join.
     #[test]
     fn every_location_instance_is_an_arm_of_one_semi_join() {
-        let (sql, _) = render(
+        let statement = render(
             any_location_instance(
                 &geo(GeoRel::Within),
                 &unaliased(),
@@ -236,36 +233,15 @@ mod tests {
             )
             .expect("renders"),
         );
-        assert!(
-            sql.contains(r#""entities"."entity_key" IN (SELECT DISTINCT "geo_matched"."entity_key" FROM (SELECT "geo_default"."entity_key" FROM "entity_search" AS "geo_default" WHERE ("geo_default"."location_expires_at" IS NULL OR "geo_default"."location_expires_at" > NOW()) AND (COALESCE("geo_default"."location_reach", "geo_default"."location") && ST_MakeValid(ST_GeomFromEWKB($1))) AND _ST_Within("geo_default"."location","#),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(r#"UNION ALL (SELECT "geo_location_instance"."entity_key" FROM "current_attributes" AS "geo_location_instance" WHERE "geo_location_instance"."attribute_name_key" = $3 AND "geo_location_instance"."dataset_key" <> ('') AND ("geo_location_instance"."expires_at" IS NULL OR "geo_location_instance"."expires_at" > NOW()) AND "geo_location_instance"."value_geometry" IS NOT NULL AND (COALESCE("geo_location_instance"."value_geometry_reach", "geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry") && ST_MakeValid(ST_GeomFromEWKB($4))) AND _ST_Within(COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry"),"#),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(r#"("geo_default"."location_expires_at" IS NULL OR "geo_default"."location_expires_at" > NOW())"#),
-            "the hoisted default instance stands only until its own expiry: {sql}"
-        );
-        assert!(
-            sql.contains(r#"("geo_location_instance"."expires_at" IS NULL OR "geo_location_instance"."expires_at" > NOW())"#),
-            "every dataset instance stands only until its own expiry: {sql}"
-        );
-        assert!(
-            !sql.contains(r#""entity_search"."location_expires_at""#),
-            "no entity-level expiry is mixed in: {sql}"
-        );
+        assert_statement_snapshot!("location-instances-every-location-instance-is-an-arm-of-one-semi-join", statement);
     }
 
     /// A `location` the dictionary has never recorded has no instance rows,
     /// so only the hoisted arm is read.
     #[test]
     fn an_unrecorded_location_reads_the_hoisted_arm_alone() {
-        let (sql, _) = render(any_location_instance(&geo(GeoRel::Within), &unaliased(), &DefaultLocationNarrowing::Unnarrowed, None).expect("renders"));
-        assert!(sql.contains(r#"FROM "entity_search" AS "geo_default""#), "{sql}");
-        assert!(!sql.contains("current_attributes"), "{sql}");
-        assert!(!sql.contains("UNION"), "{sql}");
+        let statement = render(any_location_instance(&geo(GeoRel::Within), &unaliased(), &DefaultLocationNarrowing::Unnarrowed, None).expect("renders"));
+        assert_statement_snapshot!("location-instances-an-unrecorded-location-reads-the-hoisted-arm-alone", statement);
     }
 
     /// An index's candidates restrict the hoisted arm only, bound as one array;
@@ -273,15 +249,12 @@ mod tests {
     #[test]
     fn index_candidates_restrict_the_hoisted_arm_and_leave_the_dataset_instances_alone() {
         let candidates = DefaultLocationNarrowing::Candidates(vec!["urn:ngsi-ld:V:1".parse().expect("uri"), "urn:ngsi-ld:V:2".parse().expect("uri")]);
-        let (sql, values) =
+        let statement =
             render(any_location_instance(&geo(GeoRel::Within), &unaliased(), &candidates, Some(AttributeNameKey::from(LOCATION_KEY))).expect("renders"));
-        assert!(
-            sql.contains(r#"SELECT "geo_candidate"."entity_key" FROM "entities" AS "geo_candidate" JOIN "entity_search" AS "geo_default" ON "geo_default"."entity_key" = "geo_candidate"."entity_key" WHERE "geo_candidate"."id" = ANY($"#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "location-instances-index-candidates-restrict-the-hoisted-arm-and-leave-the-dataset-instances-alone",
+            statement
         );
-        assert!(sql.contains(r#""geo_location_instance"."dataset_key" <> ('')"#), "{sql}");
-        let arrays = values.0.iter().filter(|value| matches!(value, sea_query::Value::Array(..))).count();
-        assert_eq!(arrays, 1, "the candidates bind as one array: {sql}");
     }
 
     /// The candidates drive the hoisted arm, so its box test reads no spatial
@@ -289,16 +262,8 @@ mod tests {
     #[test]
     fn index_candidates_test_the_hoisted_box_without_the_spatial_index() {
         let candidates = DefaultLocationNarrowing::Candidates(vec!["urn:ngsi-ld:V:1".parse().expect("uri")]);
-        let (sql, _) = render(any_location_instance(&geo(near("1000")), &unaliased(), &candidates, None).expect("renders"));
-        assert!(
-            sql.contains(r#"COALESCE("geo_default"."location_reach", "geo_default"."location")::box2d && ST_MakeEnvelope("#),
-            "{sql}"
-        );
-        assert!(
-            !sql.contains(r#"COALESCE("geo_default"."location_reach", "geo_default"."location") && "#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#" AND _ST_DWithin("geo_default"."location"::geography,"#), "{sql}");
+        let statement = render(any_location_instance(&geo(near("1000")), &unaliased(), &candidates, None).expect("renders"));
+        assert_statement_snapshot!("location-instances-index-candidates-test-the-hoisted-box-without-the-spatial-index", statement);
     }
 
     /// Past the probe cap the hoisted arm scans the spatial index for the box
@@ -308,11 +273,13 @@ mod tests {
         let many = (0..=MAX_PROBED_CANDIDATES)
             .map(|n| format!("urn:ngsi-ld:V:{n}").parse().expect("uri"))
             .collect();
-        let (sql, values) =
-            render(any_location_instance(&geo(near("1000")), &unaliased(), &DefaultLocationNarrowing::Candidates(many), None).expect("renders"));
-        let (unnarrowed, _) = render(any_location_instance(&geo(near("1000")), &unaliased(), &DefaultLocationNarrowing::Unnarrowed, None).expect("renders"));
-        assert_eq!(sql, unnarrowed);
-        assert!(!values.0.iter().any(|value| matches!(value, sea_query::Value::Array(..))), "{sql}");
+        let capped = render(any_location_instance(&geo(near("1000")), &unaliased(), &DefaultLocationNarrowing::Candidates(many), None).expect("renders"));
+        let unnarrowed = render(any_location_instance(&geo(near("1000")), &unaliased(), &DefaultLocationNarrowing::Unnarrowed, None).expect("renders"));
+        assert_eq!(capped, unnarrowed);
+        assert_statement_snapshot!(
+            "location-instances-candidates-past-the-probe-cap-leave-the-hoisted-arm-to-the-spatial-index",
+            capped
+        );
     }
 
     /// An index that found no default instance leaves the `datasetId`
@@ -320,7 +287,7 @@ mod tests {
     /// `location` carries a `datasetId`.
     #[test]
     fn an_empty_candidate_set_leaves_the_dataset_instances_to_decide() {
-        let (sql, _) = render(
+        let statement = render(
             any_location_instance(
                 &geo(GeoRel::Within),
                 &unaliased(),
@@ -329,18 +296,14 @@ mod tests {
             )
             .expect("renders"),
         );
-        assert!(!sql.contains("geo_default"), "{sql}");
-        assert!(
-            sql.contains(r#""entities"."entity_key" IN (SELECT DISTINCT "geo_matched"."entity_key" FROM (SELECT "geo_location_instance"."entity_key""#),
-            "{sql}"
-        );
+        assert_statement_snapshot!("location-instances-an-empty-candidate-set-leaves-the-dataset-instances-to-decide", statement);
     }
 
     /// The outer statement probes the entity tables once per matched entity,
     /// in key order, so a wide geo-query's probes stay local.
     #[test]
     fn the_matched_entities_are_read_once_each_in_key_order() {
-        let (sql, _) = render(
+        let statement = render(
             any_location_instance(
                 &geo(near("1000000")),
                 &unaliased(),
@@ -349,17 +312,16 @@ mod tests {
             )
             .expect("renders"),
         );
-        assert!(sql.contains(r#"IN (SELECT DISTINCT "geo_matched"."entity_key" FROM (SELECT "#), "{sql}");
-        assert!(sql.ends_with(r#") AS "geo_matched" ORDER BY "geo_matched"."entity_key" ASC)"#), "{sql}");
+        assert_statement_snapshot!("location-instances-the-matched-entities-are-read-once-each-in-key-order", statement);
     }
 
     /// Nothing can match when the index found no default instance and no
     /// instance row exists.
     #[test]
     fn no_arm_at_all_matches_nothing() {
-        let (sql, _) =
+        let statement =
             render(any_location_instance(&geo(GeoRel::Within), &unaliased(), &DefaultLocationNarrowing::Candidates(Vec::new()), None).expect("renders"));
-        assert!(sql.ends_with("WHERE FALSE"), "{sql}");
+        assert_statement_snapshot!("location-instances-no-arm-at-all-matches-nothing", statement);
     }
 
     /// `near` measures both arms cast to `geography`, which no index keys, so
@@ -367,7 +329,7 @@ mod tests {
     /// great-circle reach first.
     #[test]
     fn near_prefilters_both_arms_by_their_reach_box_and_measures_on_the_spheroid() {
-        let (sql, _) = render(
+        let statement = render(
             any_location_instance(
                 &geo(near("1000")),
                 &unaliased(),
@@ -376,19 +338,9 @@ mod tests {
             )
             .expect("renders"),
         );
-        assert!(
-            sql.contains(r#"COALESCE("geo_default"."location_reach", "geo_default"."location") && ST_MakeEnvelope("#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#" AND _ST_DWithin("geo_default"."location"::geography,"#), "{sql}");
-        assert!(!sql.contains("geom_to_geog"), "{sql}");
-        assert!(
-            sql.contains(r#"COALESCE("geo_location_instance"."value_geometry_reach", "geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry") && ST_MakeEnvelope("#),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(r#" AND _ST_DWithin(COALESCE("geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry")::geography,"#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "location-instances-near-prefilters-both-arms-by-their-reach-box-and-measures-on-the-spheroid",
+            statement
         );
     }
 
@@ -401,7 +353,7 @@ mod tests {
             geometry: serde_json::from_value::<Geometry>(serde_json::json!({ "type": "Point", "coordinates": [179.999, -17.0] })).expect("point parses"),
             geoproperty: LOCATION.parse().expect("valid attribute name"),
         };
-        let (sql, _) = render(
+        let statement = render(
             any_location_instance(
                 &geo,
                 &unaliased(),
@@ -410,11 +362,9 @@ mod tests {
             )
             .expect("renders"),
         );
-        assert_eq!(
-            sql.matches(r#"COALESCE("geo_location_instance"."value_geometry_reach", "geo_location_instance"."value_geometry_valid", "geo_location_instance"."value_geometry") && ST_MakeEnvelope("#)
-                .count(),
-            2,
-            "{sql}"
+        assert_statement_snapshot!(
+            "location-instances-the-dataset-instance-arm-prefilters-both-sides-of-the-antimeridian",
+            statement
         );
     }
 
@@ -423,7 +373,7 @@ mod tests {
     #[test]
     fn both_arms_read_the_statements_branch() {
         let rows = EntityRowRefs::aliased(Some(Alias::new("snap_7").into()), Alias::new("e"), Alias::new("s"));
-        let (sql, _) = render(
+        let statement = render(
             any_location_instance(
                 &geo(GeoRel::Within),
                 &rows,
@@ -432,8 +382,6 @@ mod tests {
             )
             .expect("renders"),
         );
-        assert!(sql.contains(r#"FROM "snap_7"."entity_search" AS "geo_default""#), "{sql}");
-        assert!(sql.contains(r#"FROM "snap_7"."current_attributes" AS "geo_location_instance""#), "{sql}");
-        assert!(sql.contains(r#""e"."entity_key" IN ("#), "{sql}");
+        assert_statement_snapshot!("location-instances-both-arms-read-the-statements-branch", statement);
     }
 }

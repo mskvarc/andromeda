@@ -1,0 +1,92 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/sub_attribute/keyed_equality.rs
+---
+SELECT
+  "ca"."entity_key"
+FROM
+  "current_attributes" AS "ca"
+WHERE
+  "ca"."attribute_name_key" = $1
+  AND (
+    "ca"."expires_at" IS NULL
+    OR "ca"."expires_at" > NOW()
+  )
+  AND (
+    "ca"."sub_eq_keys" && (
+      ARRAY[-4029135868080390857, 4847793309834285240]::bigint[]
+    )
+  )
+  AND "ca"."sub_attributes" IS NOT NULL
+  AND (
+    EXISTS (
+      SELECT
+        1
+      FROM
+        UNNEST("ca"."sub_attributes") AS "l0"
+      WHERE
+        "l0"."parent" = $2
+        AND (
+          "l0"."attribute_name_key" = $3
+          AND (
+            "l0"."expires_at" IS NULL
+            OR "l0"."expires_at" > NOW()
+          )
+        )
+        AND (
+          (
+            "l0"."value_string" = $4
+            AND nullif("l0"."value_kind" = (9), FALSE)
+          )
+          OR (
+            "l0"."attribute_kind" <> (6)
+            AND (
+              (
+                sub_attribute_value_object(
+                  "l0"."value_kind",
+                  "l0"."value_object",
+                  "l0"."value_proof"
+                ) @> ($5::jsonb)
+              )
+              OR (
+                (
+                  CASE
+                    WHEN ("l0"."attribute_kind" IN (1, 7)) THEN "l0"."value_type_key"
+                  END
+                ) = (
+                  SELECT
+                    "entity_type_name_key"
+                  FROM
+                    "entity_type_names"
+                  WHERE
+                    "name" = $6
+                )
+                AND (
+                  (
+                    sub_attribute_value_object(
+                      "l0"."value_kind",
+                      "l0"."value_object",
+                      "l0"."value_proof"
+                    ) @> ($7::jsonb)
+                  )
+                  OR (
+                    sub_attribute_value_object(
+                      "l0"."value_kind",
+                      "l0"."value_object",
+                      "l0"."value_proof"
+                    ) @> ($8::jsonb)
+                  )
+                )
+              )
+            )
+          )
+        )
+    )
+  )
+1: Int 2
+2: BigInt 0
+3: Int 7
+4: String '12:00:00.000000Z'
+5: String '[{"@value": "12:00:00Z", "@type": "https://uri.etsi.org/ngsi-ld/Time"}]'
+6: String 'https://uri.etsi.org/ngsi-ld/Time'
+7: String '["12:00:00Z"]'
+8: String '[{"@value": "12:00:00Z"}]'

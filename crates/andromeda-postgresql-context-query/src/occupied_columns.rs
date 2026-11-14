@@ -174,72 +174,36 @@ mod tests {
     use crate::occupied_columns::{HeldColumn, Probe, held_alone, occupied_columns};
     use andromeda_postgresql_codes::value_kind::ValueKind;
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, entity_row_refs::EntityRowRefs};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use sea_query::{Query, SelectStatement};
 
-    const COLUMNS: [&str; 9] = [
-        "value_number",
-        "value_string",
-        "value_long_text",
-        "value_boolean",
-        "value_geometry",
-        "value_object",
-        "value_date_time",
-        "value_uri",
-        "value_long_uri",
-    ];
-
-    fn rendered() -> String {
-        occupied_columns(&EntityRowRefs::unaliased(None), AttributeNameKey::from(7)).to_string(PostgresQueryBuilder)
+    fn rendered() -> SelectStatement {
+        occupied_columns(&EntityRowRefs::unaliased(None), AttributeNameKey::from(7))
     }
 
-    fn rendered_held_alone(column: HeldColumn) -> String {
-        Query::select().expr(held_alone(column)).take().to_string(PostgresQueryBuilder)
+    fn rendered_held_alone(column: HeldColumn) -> SelectStatement {
+        Query::select().expr(held_alone(column)).take()
     }
 
     #[test]
     fn every_value_column_is_probed_once() {
-        let sql = rendered();
-        assert_eq!(sql.matches(r#"FROM "current_attributes" AS "ca""#).count(), 9, "{sql}");
-        for column in COLUMNS {
-            assert_eq!(sql.matches(&format!(r#"AS "{column}""#)).count(), 1, "{column}: {sql}");
-        }
+        assert_statement_snapshot!("occupied-columns-every-value-column-is-probed-once", rendered());
     }
 
     #[test]
     fn a_column_a_b_tree_orders_is_probed_in_that_order() {
-        let sql = rendered();
-        for column in ["value_number", "value_string", "value_boolean", "value_date_time", "value_uri"] {
-            assert!(
-                sql.contains(&format!(
-                    r#"(SELECT 1 FROM "current_attributes" AS "ca" WHERE "ca"."attribute_name_key" = 7 AND "ca"."{column}" IS NOT NULL ORDER BY "ca"."{column}" ASC LIMIT 1) IS NOT NULL AS "{column}""#
-                )),
-                "{column}: {sql}"
-            );
-        }
+        assert_statement_snapshot!("occupied-columns-a-column-a-b-tree-orders-is-probed-in-that-order", rendered());
     }
 
     #[test]
     fn a_geometry_is_probed_in_entity_order() {
-        let sql = rendered();
-        assert!(
-            sql.contains(r#"AND "ca"."value_geometry" IS NOT NULL ORDER BY "ca"."entity_key" ASC LIMIT 1) IS NOT NULL AS "value_geometry""#),
-            "{sql}"
-        );
+        assert_statement_snapshot!("occupied-columns-a-geometry-is-probed-in-entity-order", rendered());
     }
 
     #[test]
     fn a_column_no_b_tree_orders_is_probed_with_the_kind_it_holds() {
-        let sql = rendered();
-        for (kind, column) in [(5, "value_object"), (2, "value_long_text"), (7, "value_long_uri")] {
-            assert!(
-                sql.contains(&format!(
-                    r#"EXISTS(SELECT 1 FROM "current_attributes" AS "ca" WHERE "ca"."attribute_name_key" = 7 AND "ca"."value_kind" = ({kind}) AND "ca"."{column}" IS NOT NULL) AS "{column}""#
-                )),
-                "{column}: {sql}"
-            );
-        }
-        assert_eq!(sql.matches(r#""ca"."value_kind""#).count(), 3, "{sql}");
+        assert_statement_snapshot!("occupied-columns-a-column-no-b-tree-orders-is-probed-with-the-kind-it-holds", rendered());
     }
 
     /// The row's kind constraint pins an object to kind 5, a long text to the
@@ -258,21 +222,18 @@ mod tests {
 
     #[test]
     fn a_probe_reads_every_instance_standing_or_not() {
-        let sql = rendered();
-        assert!(!sql.contains("expires_at"), "{sql}");
+        assert_statement_snapshot!("occupied-columns-a-probe-reads-every-instance-standing-or-not", rendered());
     }
 
     #[test]
     fn a_column_held_alone_reads_every_other_column() {
-        assert_eq!(
-            rendered_held_alone(HeldColumn::DateTime),
-            concat!(
-                r#"SELECT (SELECT NOT ("value_number" OR "value_string" OR "value_long_text" OR "value_boolean" OR "value_geometry" OR "value_object" "#,
-                r#"OR "value_uri" OR "value_long_uri") FROM "occupied_columns")"#
-            )
+        assert_statement_snapshot!(
+            "occupied-columns-a-column-held-alone-reads-every-other-column-1",
+            rendered_held_alone(HeldColumn::DateTime)
         );
-        let number = rendered_held_alone(HeldColumn::Number);
-        assert!(number.contains(r#""value_date_time""#), "{number}");
-        assert!(!number.contains(r#""value_number""#), "{number}");
+        assert_statement_snapshot!(
+            "occupied-columns-a-column-held-alone-reads-every-other-column-2",
+            rendered_held_alone(HeldColumn::Number)
+        );
     }
 }

@@ -1,0 +1,8 @@
+---
+source: crates/andromeda-postgresql-query/src/time_interval_predicate.rs
+---
+SELECT
+  $1
+WHERE
+  TRUE
+1: Int 1

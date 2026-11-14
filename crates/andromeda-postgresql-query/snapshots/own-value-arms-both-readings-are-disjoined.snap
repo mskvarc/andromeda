@@ -1,0 +1,9 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/own_value_arms.rs
+---
+SELECT
+WHERE
+  "t" > $1
+  OR "l" > $2
+1: Int 1
+2: Int 2

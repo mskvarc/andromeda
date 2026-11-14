@@ -269,40 +269,12 @@ mod tests {
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         entity_type_name_key::EntityTypeNameKey,
     };
-    use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
-    use sea_query::PostgresQueryBuilder;
+    use sea_query::{PostgresQueryBuilder, SelectStatement};
 
     const SPEED: &str = "https://example.com/speed";
-
-    /// The gate of the number walk: no instance sets a column but `value_number`.
-    const NUMBERS_ALONE: &str = concat!(
-        r#"(SELECT NOT ("value_string" OR "value_long_text" OR "value_boolean" OR "value_geometry" OR "value_object" OR "value_date_time" "#,
-        r#"OR "value_uri" OR "value_long_uri") FROM "occupied_columns")"#
-    );
-
-    /// The gate of the `DateTime` walk: no instance sets a column but
-    /// `value_date_time`.
-    const INSTANTS_ALONE: &str = concat!(
-        r#"(SELECT NOT ("value_number" OR "value_string" OR "value_long_text" OR "value_boolean" OR "value_geometry" OR "value_object" "#,
-        r#"OR "value_uri" OR "value_long_uri") FROM "occupied_columns")"#
-    );
-
-    /// The branches of a value walk page, in the order the statement holds
-    /// them.
-    struct Branches<'s> {
-        /// The CTE probing the columns the Attribute's instances occupy.
-        occupied: &'s str,
-        /// The number walk's CTE.
-        numbers: &'s str,
-        /// The `DateTime` walk's CTE.
-        instants: &'s str,
-        /// The branch of the Entities without the Attribute.
-        without: &'s str,
-        /// The plain page.
-        plain: &'s str,
-    }
 
     /// `speed` at key 7 and `location` at key 9; the type `Vehicle` at key 1.
     fn names() -> QueryNames {
@@ -335,102 +307,48 @@ mod tests {
         query
     }
 
-    fn sql(query: &CompiledEntityQuery, window: &PageWindow) -> String {
+    fn statement(query: &CompiledEntityQuery, window: &PageWindow) -> SelectStatement {
         build_query(&ContextTarget::Live, query, window, CountPolicy::Omit, &names())
             .expect("valid entity query")
             .select
-            .to_string(PostgresQueryBuilder)
-    }
-
-    fn branches(sql: &str) -> Branches<'_> {
-        let (occupied, rest) = sql
-            .split_once(r#") , "walked_numbers" AS  MATERIALIZED ("#)
-            .unwrap_or_else(|| panic!("a value walk page: {sql}"));
-        let (numbers, rest) = rest
-            .split_once(r#") , "walked_instants" AS  MATERIALIZED ("#)
-            .unwrap_or_else(|| panic!("the DateTime walk follows: {sql}"));
-        let (instants, rest) = rest
-            .split_once(r#") SELECT * FROM (SELECT * FROM (SELECT * FROM "walked_numbers" UNION ALL"#)
-            .unwrap_or_else(|| panic!("the ranked branches follow: {sql}"));
-        let (without, plain) = rest
-            .split_once(r#"AS "value_walk" UNION ALL"#)
-            .unwrap_or_else(|| panic!("the plain page follows: {sql}"));
-        Branches {
-            occupied,
-            numbers,
-            instants,
-            without,
-            plain,
-        }
     }
 
     /// The order the head statement restates on the page's columns.
-    fn head_order(sql: &str) -> &str {
-        sql.rsplit_once(r#"AS "stored" ON TRUE "#).map_or(sql, |(_, order)| order)
+    fn head_order(select: &SelectStatement) -> String {
+        let sql = select.to_string(PostgresQueryBuilder);
+        sql.rsplit_once(r#"AS "stored" ON TRUE "#).map_or(sql.as_str(), |(_, order)| order).to_owned()
     }
 
     #[test]
     fn a_number_ordering_reads_the_carriers_in_value_order() {
-        let sql = sql(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0));
-        let Branches { numbers, .. } = branches(&sql);
-        assert!(
-            numbers.contains(concat!(
-                r#""ca"."value_number" AS "sort_1", NULL::timestamptz AS "sort_2", (NULL::text) COLLATE "und-x-icu" AS "sort_3", "selected"."id" AS "sort_4" "#,
-                r#"FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (1) AND "is_current_member") AS "selected" "#,
-                r#"INNER JOIN "current_attributes" AS "ca" ON "ca"."entity_key" = "selected"."entity_key""#
-            )),
-            "{numbers}"
+        assert_statement_snapshot!(
+            "value-walk-page-a-number-ordering-reads-the-carriers-in-value-order",
+            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0))
         );
-        assert!(
-            numbers.contains(r#""ca"."attribute_name_key" = 7 AND "ca"."value_number" IS NOT NULL"#),
-            "{numbers}"
-        );
-        assert!(
-            numbers.ends_with(r#"ORDER BY "sort_0" ASC NULLS LAST, "sort_1" ASC, "sort_2" ASC, "sort_3" ASC, "sort_4" ASC LIMIT 100"#),
-            "the carriers read as many as the window needs: {numbers}"
-        );
-        assert_eq!(sql.matches("UNION ALL").count(), 3, "{sql}");
     }
 
     /// Clause 4.23.1: a `DateTime` compares as its instant.
     #[test]
     fn a_date_time_ordering_reads_the_carriers_in_instant_order() {
-        let sql = sql(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0));
-        let Branches { instants, .. } = branches(&sql);
-        assert!(
-            instants.contains(concat!(
-                r#"'https://uri.etsi.org/ngsi-ld/DateTime') AS "sort_0", NULL::numeric AS "sort_1", "ca"."value_date_time" AS "sort_2", "#,
-                r#"(NULL::text) COLLATE "und-x-icu" AS "sort_3", "selected"."id" AS "sort_4""#
-            )),
-            "{instants}"
-        );
-        assert!(
-            instants.contains(r#""ca"."attribute_name_key" = 7 AND "ca"."value_date_time" IS NOT NULL"#),
-            "{instants}"
-        );
-        assert!(
-            instants.ends_with(r#"ORDER BY "sort_0" ASC NULLS LAST, "sort_1" ASC, "sort_2" ASC, "sort_3" ASC, "sort_4" ASC LIMIT 100"#),
-            "{instants}"
+        assert_statement_snapshot!(
+            "value-walk-page-a-date-time-ordering-reads-the-carriers-in-instant-order",
+            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0))
         );
     }
 
     #[test]
     fn each_walk_is_gated_on_its_column_held_alone() {
-        let sql = sql(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0));
-        let Branches { numbers, instants, .. } = branches(&sql);
-        assert!(numbers.contains(NUMBERS_ALONE) && !numbers.contains(INSTANTS_ALONE), "{numbers}");
-        assert!(instants.contains(INSTANTS_ALONE) && !instants.contains(NUMBERS_ALONE), "{instants}");
+        assert_statement_snapshot!(
+            "value-walk-page-each-walk-is-gated-on-its-column-held-alone",
+            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0))
+        );
     }
 
     #[test]
     fn the_occupied_columns_are_read_once() {
-        let sql = sql(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0));
-        let Branches { occupied, .. } = branches(&sql);
-        assert_eq!(sql.matches(r#""ca"."value_object" IS NOT NULL"#).count(), 1, "{sql}");
-        assert_eq!(sql.matches(r#""occupied_columns" AS  MATERIALIZED"#).count(), 1, "{sql}");
-        assert!(
-            occupied.contains(r#"WITH "occupied_columns" AS  MATERIALIZED (SELECT (SELECT 1 FROM "current_attributes""#),
-            "{occupied}"
+        assert_statement_snapshot!(
+            "value-walk-page-the-occupied-columns-are-read-once",
+            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0))
         );
     }
 
@@ -439,59 +357,28 @@ mod tests {
     /// standing instance of its Entity is not the one it orders by.
     #[test]
     fn a_carrier_is_its_entitys_first_standing_instance_in_written_order() {
-        let sql = sql(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0));
-        let Branches { numbers, instants, .. } = branches(&sql);
-        for walk in [numbers, instants] {
-            assert!(
-                walk.contains(concat!(
-                    r#"("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW()) AND (NOT EXISTS(SELECT 1 FROM "current_attributes" AS "earlier" "#,
-                    r#"WHERE "earlier"."entity_key" = "ca"."entity_key" AND "earlier"."attribute_name_key" = 7 "#,
-                    r#"AND ("earlier"."expires_at" IS NULL OR "earlier"."expires_at" > NOW()) AND "earlier"."ordinal" < "ca"."ordinal"))"#
-                )),
-                "{walk}"
-            );
-        }
+        assert_statement_snapshot!(
+            "value-walk-page-a-carrier-is-its-entitys-first-standing-instance-in-written-order",
+            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0))
+        );
     }
 
     /// Clause 4.23.2 ranks an Entity without the Attribute after every value,
     /// so those are read in identifier order once the walks fall short.
     #[test]
     fn entities_without_the_attribute_follow_only_when_both_walks_fall_short() {
-        let sql = sql(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(20, 40));
-        let Branches { without, .. } = branches(&sql);
-        assert!(
-            without.contains(r#"SELECT "selected"."entity_key", NULL::integer AS "sort_0", NULL::numeric AS "sort_1", NULL::timestamptz AS "sort_2""#),
-            "{without}"
-        );
-        assert!(
-            without.contains(r#"(SELECT COUNT(*) FROM "walked_numbers") + (SELECT COUNT(*) FROM "walked_instants") < 60"#),
-            "{without}"
-        );
-        assert!(without.contains(&format!("({NUMBERS_ALONE} OR {INSTANTS_ALONE})")), "{without}");
-        assert!(
-            without.contains(concat!(
-                r#"(NOT EXISTS(SELECT 1 FROM "current_attributes" AS "ca" WHERE "ca"."entity_key" = "selected"."entity_key" "#,
-                r#"AND "ca"."attribute_name_key" = 7 AND ("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW())))"#
-            )),
-            "{without}"
-        );
-        assert!(
-            without.contains(r#""sort_4" ASC LIMIT 60) AS "without")) AS "ranked" ORDER BY "sort_0" ASC NULLS LAST"#),
-            "{without}"
-        );
-        assert!(
-            without.ends_with(r#""sort_4" ASC LIMIT 20 OFFSET 40) "#),
-            "the window is cut over every branch: {without}"
+        assert_statement_snapshot!(
+            "value-walk-page-entities-without-the-attribute-follow-only-when-both-walks-fall-short",
+            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(20, 40))
         );
     }
 
     #[test]
     fn the_plain_page_answers_when_neither_column_is_held_alone() {
-        let sql = sql(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0));
-        let Branches { plain, .. } = branches(&sql);
-        assert!(plain.contains(r#"LEFT JOIN LATERAL (SELECT COALESCE("ordered"."value_number""#), "{plain}");
-        assert!(plain.contains(&format!("(NOT {NUMBERS_ALONE}) AND (NOT {INSTANTS_ALONE})")), "{plain}");
-        assert!(plain.contains(r#"LIMIT 100 OFFSET 0) AS "sorted""#), "{plain}");
+        assert_statement_snapshot!(
+            "value-walk-page-the-plain-page-answers-when-neither-column-is-held-alone",
+            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Asc)]), &PageWindow::offset(100, 0))
+        );
     }
 
     /// Each gate beside the selection's own filters must stay one term.
@@ -499,18 +386,10 @@ mod tests {
     fn the_gate_is_one_term_beside_the_selections_other_filters() {
         let mut query = vehicles_by(vec![term(SPEED, OrderDirection::Asc)]);
         query.selection.attrs = vec![IriBuf::new(SPEED.to_owned()).expect("valid IRI")];
-        let sql = sql(&query, &PageWindow::offset(100, 0));
-        let Branches {
-            numbers,
-            instants,
-            without,
-            plain,
-            ..
-        } = branches(&sql);
-        assert!(numbers.contains(&format!(") AND {NUMBERS_ALONE} AND ")), "{numbers}");
-        assert!(instants.contains(&format!(") AND {INSTANTS_ALONE} AND ")), "{instants}");
-        assert!(without.contains(&format!(") AND ({NUMBERS_ALONE} OR {INSTANTS_ALONE}) AND ")), "{without}");
-        assert!(plain.contains(&format!(") AND (NOT {NUMBERS_ALONE}) AND (NOT {INSTANTS_ALONE})")), "{plain}");
+        assert_statement_snapshot!(
+            "value-walk-page-the-gate-is-one-term-beside-the-selections-other-filters",
+            statement(&query, &PageWindow::offset(100, 0))
+        );
     }
 
     /// Clause 4.23.2 reverses the datatype order for a descending term and
@@ -518,12 +397,9 @@ mod tests {
     /// either way (clause 5.5.9).
     #[test]
     fn a_descending_number_ordering_ranks_numbers_in_the_reversed_sequence_and_keeps_the_identifier_ascending() {
-        let sql = sql(&vehicles_by(vec![term(SPEED, OrderDirection::Desc)]), &PageWindow::offset(100, 0));
-        let Branches { numbers, .. } = branches(&sql);
-        assert!(numbers.contains(r#"'string','number','null']::text[], 'number') AS "sort_0""#), "{numbers}");
-        assert!(
-            numbers.ends_with(r#"ORDER BY "sort_0" ASC NULLS LAST, "sort_1" DESC, "sort_2" DESC, "sort_3" DESC, "sort_4" ASC LIMIT 100"#),
-            "{numbers}"
+        assert_statement_snapshot!(
+            "value-walk-page-a-descending-number-ordering-ranks-numbers-in-the-reversed-sequence-and-keeps-the-identifier-ascending",
+            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Desc)]), &PageWindow::offset(100, 0))
         );
     }
 
@@ -532,15 +408,9 @@ mod tests {
     /// identifier breaks ties ascending either way (clause 5.5.9).
     #[test]
     fn a_descending_date_time_ordering_ranks_date_times_first_and_keeps_the_identifier_ascending() {
-        let sql = sql(&vehicles_by(vec![term(SPEED, OrderDirection::Desc)]), &PageWindow::offset(100, 0));
-        let Branches { instants, .. } = branches(&sql);
-        assert!(
-            instants.contains(r#"'string','number','null']::text[], 'https://uri.etsi.org/ngsi-ld/DateTime') AS "sort_0""#),
-            "{instants}"
-        );
-        assert!(
-            instants.ends_with(r#"ORDER BY "sort_0" ASC NULLS LAST, "sort_1" DESC, "sort_2" DESC, "sort_3" DESC, "sort_4" ASC LIMIT 100"#),
-            "{instants}"
+        assert_statement_snapshot!(
+            "value-walk-page-a-descending-date-time-ordering-ranks-date-times-first-and-keeps-the-identifier-ascending",
+            statement(&vehicles_by(vec![term(SPEED, OrderDirection::Desc)]), &PageWindow::offset(100, 0))
         );
     }
 
@@ -548,12 +418,18 @@ mod tests {
     /// statement restates one order whichever branch answered.
     #[test]
     fn a_value_walk_restates_the_order_of_the_plain_page() {
-        for direction in [OrderDirection::Asc, OrderDirection::Desc] {
+        for (index, direction) in [OrderDirection::Asc, OrderDirection::Desc].into_iter().enumerate() {
             let query = vehicles_by(vec![term(SPEED, direction)]);
-            let walked = sql(&query, &PageWindow::offset(100, 0));
-            let plain = sql(&query, &PageWindow::offset(100, 20_000));
-            assert!(walked.contains(r#""walked_instants""#), "{walked}");
-            assert!(!plain.contains(r#""walked_instants""#), "{plain}");
+            let walked = statement(&query, &PageWindow::offset(100, 0));
+            assert_statement_snapshot!(
+                format!("value-walk-page-a-value-walk-restates-the-order-of-the-plain-page-{}", index * 2 + 1),
+                walked
+            );
+            let plain = statement(&query, &PageWindow::offset(100, 20_000));
+            assert_statement_snapshot!(
+                format!("value-walk-page-a-value-walk-restates-the-order-of-the-plain-page-{}", index * 2 + 2),
+                plain
+            );
             assert_eq!(head_order(&walked), head_order(&plain));
         }
     }
@@ -563,22 +439,24 @@ mod tests {
     #[test]
     fn a_client_window_ending_at_the_bound_is_walked() {
         let query = vehicles_by(vec![term(SPEED, OrderDirection::Asc)]);
-        assert!(sql(&query, &PageWindow::offset(100, 9_900).with_lookahead()).contains(r#""walked_instants""#));
-        assert!(!sql(&query, &PageWindow::offset(100, 9_901).with_lookahead()).contains(r#""walked_instants""#));
+        assert_statement_snapshot!(
+            "value-walk-page-a-client-window-ending-at-the-bound-is-walked-1",
+            statement(&query, &PageWindow::offset(100, 9_900).with_lookahead())
+        );
+        assert_statement_snapshot!(
+            "value-walk-page-a-client-window-ending-at-the-bound-is-walked-2",
+            statement(&query, &PageWindow::offset(100, 9_901).with_lookahead())
+        );
     }
 
     #[test]
     fn an_unfiltered_selection_reads_the_carriers_beside_the_entities() {
         let mut query = vehicles_by(vec![term(SPEED, OrderDirection::Asc)]);
         query.selection.selectors = vec![EntitySelector::builder().build()];
-        let sql = sql(&query, &PageWindow::offset(100, 0));
-        let Branches { numbers, instants, .. } = branches(&sql);
-        for walk in [numbers, instants] {
-            assert!(
-                walk.contains(r#"FROM "entities" INNER JOIN "current_attributes" AS "ca" ON "ca"."entity_key" = "entities"."entity_key""#),
-                "{walk}"
-            );
-        }
+        assert_statement_snapshot!(
+            "value-walk-page-an-unfiltered-selection-reads-the-carriers-beside-the-entities",
+            statement(&query, &PageWindow::offset(100, 0))
+        );
     }
 
     #[test]
@@ -605,12 +483,15 @@ mod tests {
             direction: OrderDirection::Asc,
             collation: None,
         }];
-        for query in [filtered, two_terms, sub_attribute, distance, unrecorded, by_identifier] {
+        for (index, query) in [filtered, two_terms, sub_attribute, distance, unrecorded, by_identifier]
+            .into_iter()
+            .enumerate()
+        {
             let built = build_query(&ContextTarget::Live, &query, &PageWindow::offset(100, 0), CountPolicy::Omit, &names()).expect("valid entity query");
-            let sql = built.select.to_string(PostgresQueryBuilder);
-            for cte in [r#""walked_numbers""#, r#""walked_instants""#, r#""occupied_columns""#] {
-                assert!(!sql.contains(cte), "{cte}: {sql}");
-            }
+            assert_statement_snapshot!(
+                format!("value-walk-page-an-ordering-the-value-index-cannot-serve-keeps-the-plain-page-{}", index + 1),
+                built.select
+            );
             assert_eq!(built.planning, StatementPlanning::Cached);
         }
     }
@@ -646,9 +527,7 @@ mod tests {
         let EntityTotal::Counted(count) = built.total else {
             panic!("a value walk page carries no total on its rows");
         };
-        let count = count.count.to_string(PostgresQueryBuilder);
-        assert!(count.starts_with("SELECT COUNT(*) FROM "), "{count}");
-        assert!(!count.contains("walked_") && !count.contains("current_attributes"), "{count}");
-        assert!(!built.select.to_string(PostgresQueryBuilder).contains("total_count"));
+        assert_statement_snapshot!("value-walk-page-a-counted-value-walk-counts-the-selection-on-its-own-1", count.count);
+        assert_statement_snapshot!("value-walk-page-a-counted-value-walk-counts-the-selection-on-its-own-2", built.select);
     }
 }

@@ -123,8 +123,9 @@ mod tests {
         type_selection::grammar::TypeExpr,
     };
     use andromeda_postgresql_query::{dictionary::resolved_names::ResolvedNames, entity_row_refs::EntityRowRefs, entity_type_name_key::EntityTypeNameKey};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use iri_rs::IriBuf;
-    use sea_query::{Alias, Condition, Expr, PostgresQueryBuilder, Query};
+    use sea_query::{Alias, Condition, Expr, Query, SelectStatement};
 
     fn ty(name: &str) -> TypeExpr {
         TypeExpr::Type(IriBuf::new(format!("https://example.com/{name}")).expect("valid IRI"))
@@ -150,18 +151,17 @@ mod tests {
         Pattern::parse(raw).expect("valid pattern")
     }
 
-    fn render(selectors: Vec<EntitySelector>, source: &RowSource) -> Option<String> {
+    fn render(selectors: Vec<EntitySelector>, source: &RowSource) -> Option<SelectStatement> {
         let selection = EntitySelection::builder().selectors(selectors).build();
         let rows = EntityRowRefs::unaliased(None).keyed_by(Alias::new("selected"));
-        condition(&selection, &rows, &types(), source)
-            .map(|condition: Condition| Query::select().expr(Expr::val(1)).cond_where(condition).to_string(PostgresQueryBuilder))
+        condition(&selection, &rows, &types(), source).map(|condition: Condition| Query::select().expr(Expr::val(1)).cond_where(condition).take())
     }
 
     /// Driven by `entities`, a type is a containment test on the search row.
     #[test]
     fn a_type_on_an_entities_driven_statement_tests_the_search_row() {
-        let sql = render(vec![EntitySelector::builder().type_expr(Some(ty("A"))).build()], &RowSource::Entities).expect("constrains");
-        assert!(sql.contains(r#""entity_search"."entity_type_name_keys" @> (ARRAY[1])"#), "{sql}");
+        let select = render(vec![EntitySelector::builder().type_expr(Some(ty("A"))).build()], &RowSource::Entities).expect("constrains");
+        assert_statement_snapshot!("selector-predicate-a-type-on-an-entities-driven-statement-tests-the-search-row", select);
     }
 
     /// The walk selected exactly the selectors' types, so type-only selectors
@@ -172,26 +172,25 @@ mod tests {
             EntitySelector::builder().type_expr(Some(ty("A"))).build(),
             EntitySelector::builder().type_expr(Some(ty("B"))).build(),
         ];
-        assert_eq!(render(selectors, &walked()), None);
+        assert!(render(selectors, &walked()).is_none());
     }
 
     /// A lone selector's pattern filters the walk's identifier; its type is the walk.
     #[test]
     fn a_lone_selector_keeps_only_its_pattern_on_the_walk() {
-        let sql = render(
+        let select = render(
             vec![EntitySelector::builder().type_expr(Some(ty("A"))).id_pattern(Some(pattern("urn:a.*"))).build()],
             &walked(),
         )
         .expect("constrains");
-        assert!(sql.contains(r#"("selected"."id") COLLATE "default") ~ "#), "{sql}");
-        assert!(!sql.contains("entity_type"), "{sql}");
+        assert_statement_snapshot!("selector-predicate-a-lone-selector-keeps-only-its-pattern-on-the-walk", select);
     }
 
     /// Clause 5.2.33: several selectors pairing a type with a pattern keep each
     /// pairing, the type probed by key for the walk's identifier.
     #[test]
     fn several_selectors_keep_each_type_and_pattern_pairing_as_key_probes() {
-        let sql = render(
+        let select = render(
             vec![
                 EntitySelector::builder().type_expr(Some(ty("A"))).id_pattern(Some(pattern("urn:a.*"))).build(),
                 EntitySelector::builder().type_expr(Some(ty("B"))).build(),
@@ -199,8 +198,6 @@ mod tests {
             &walked(),
         )
         .expect("constrains");
-        assert_eq!(sql.matches(r#""type_member"."id" = "selected"."id""#).count(), 2, "{sql}");
-        assert!(sql.contains(" OR "), "{sql}");
-        assert!(!sql.contains("entity_search"), "{sql}");
+        assert_statement_snapshot!("selector-predicate-several-selectors-keep-each-type-and-pattern-pairing-as-key-probes", select);
     }
 }

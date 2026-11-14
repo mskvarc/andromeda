@@ -264,9 +264,10 @@ mod tests {
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
     use andromeda_postgresql_query::{dictionary::resolved_names::ResolvedNames, entity_type_name_key::EntityTypeNameKey};
     use andromeda_postgresql_schema::current::Entities;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use sea_query::{Query, SelectStatement};
 
     fn empty_query() -> CompiledEntityQuery {
         CompiledEntityQuery::builder().selection(EntitySelection::builder().build()).build()
@@ -310,20 +311,19 @@ mod tests {
 
     /// The FROM clause and joins `relations` renders, selecting the identifier
     /// the rows it keys read.
-    fn from_clause(relations: EntityRelations) -> String {
+    fn from_clause(relations: EntityRelations) -> SelectStatement {
         let mut select = Query::select();
         select.expr(relations.rows(None).identity_column(Entities::Id));
         relations.apply_from(&mut select, None);
-        select.to_string(PostgresQueryBuilder)
+        select
     }
 
     #[test]
     fn an_identifier_query_with_no_filter_joins_nothing() {
         assert_eq!(relations(&empty_query()), joined(Demand::NotJoined));
-        let sql = from_clause(relations(&empty_query()));
-        assert_eq!(
-            sql,
-            r#"SELECT "entities"."id" FROM "entities" WHERE "entities"."created_at" IS NOT NULL AND ("entities"."expires_at" IS NULL OR "entities"."expires_at" > NOW())"#
+        assert_statement_snapshot!(
+            "entity-relations-an-identifier-query-with-no-filter-joins-nothing",
+            from_clause(relations(&empty_query()))
         );
     }
 
@@ -333,10 +333,7 @@ mod tests {
     fn a_q_filter_joins_nothing() {
         let mut filtered = empty_query();
         filtered.selection.q_expr = Some(parser::parse("\"https://example.com/speed\">1").expect("valid q"));
-        assert_eq!(
-            from_clause(relations(&filtered)),
-            r#"SELECT "entities"."id" FROM "entities" WHERE "entities"."created_at" IS NOT NULL AND ("entities"."expires_at" IS NULL OR "entities"."expires_at" > NOW())"#
-        );
+        assert_statement_snapshot!("entity-relations-a-q-filter-joins-nothing", from_clause(relations(&filtered)));
     }
 
     #[test]
@@ -379,9 +376,9 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(
-            from_clause(relations),
-            r#"SELECT "selected"."id" FROM (SELECT "entity_key", "id" FROM "entity_type_members" WHERE "entity_type_name_key" = (4) AND "is_current_member") AS "selected" WHERE "selected"."entity_key" NOT IN (SELECT "entity_key" FROM "entities" WHERE "expires_at" <= NOW())"#
+        assert_statement_snapshot!(
+            "entity-relations-a-selection-by-type-alone-is-driven-by-the-membership-walk",
+            from_clause(relations)
         );
     }
 
@@ -435,10 +432,7 @@ mod tests {
         query.ordering.terms = vec![term(OrderTarget::CreatedAt, OrderDirection::Asc)];
         let relations = relations(&query);
         assert!(matches!(relations.source, RowSource::TypeMembers { entities: Demand::Joined, .. }));
-        assert!(from_clause(relations).ends_with(concat!(
-            r#"AS "selected" JOIN "entities" ON "entities"."entity_key" = "selected"."entity_key" "#,
-            r#"WHERE "selected"."entity_key" NOT IN (SELECT "entity_key" FROM "entities" WHERE "expires_at" <= NOW())"#
-        )));
+        assert_statement_snapshot!("entity-relations-a-created-at-sort-joins-the-entities-row-to-the-walk", from_clause(relations));
     }
 
     /// Every relation a walked statement joins correlates on the walk's key.
@@ -447,11 +441,7 @@ mod tests {
         let mut query = typed_query();
         query.selection.q_expr = Some(parser::parse("\"https://example.com/speed\">1").expect("valid q"));
         query.selection.attrs = vec![IriBuf::new("https://example.com/speed".to_string()).expect("valid IRI")];
-        let sql = from_clause(relations(&query));
-        assert!(
-            sql.contains(r#"JOIN "entity_search" ON "entity_search"."entity_key" = "selected"."entity_key""#),
-            "{sql}"
-        );
+        assert_statement_snapshot!("entity-relations-a-walked-statement-joins-on-the-walks-key", from_clause(relations(&query)));
     }
 
     /// An attribute value ordering reads the attribute's rows through a
@@ -518,10 +508,6 @@ mod tests {
 
     #[test]
     fn the_joins_are_on_the_surrogate_key() {
-        let sql = from_clause(joined(Demand::Joined));
-        assert!(
-            sql.contains(r#"FROM "entities" JOIN "entity_search" ON "entity_search"."entity_key" = "entities"."entity_key""#),
-            "{sql}"
-        );
+        assert_statement_snapshot!("entity-relations-the-joins-are-on-the-surrogate-key", from_clause(joined(Demand::Joined)));
     }
 }

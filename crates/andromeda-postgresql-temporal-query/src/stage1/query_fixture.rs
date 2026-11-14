@@ -30,7 +30,7 @@ use andromeda_postgresql_query::{
 };
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
-use sea_query::{PostgresQueryBuilder, Values};
+use sea_query::SelectStatement;
 use std::str::FromStr;
 
 /// The UTC instant `raw` spells in RFC 3339.
@@ -81,28 +81,24 @@ pub(super) fn minimal_compiled() -> CompiledTemporalQuery {
         .build()
 }
 
-/// The Stage 1 result statement, rendered with `$N` placeholders and its
-/// bound values, which is what the store hands to the driver.
-pub(super) fn built(compiled: &CompiledTemporalQuery, names: &QueryNames) -> (String, Values) {
+/// The Stage 1 result statement.
+pub(super) fn built(compiled: &CompiledTemporalQuery, names: &QueryNames) -> SelectStatement {
     built_windowed(compiled, &PageWindow::offset(20, 0), names)
 }
 
 /// The Stage 1 result statement of the page `window` selects.
-pub(super) fn built_windowed(compiled: &CompiledTemporalQuery, window: &PageWindow, names: &QueryNames) -> (String, Values) {
+pub(super) fn built_windowed(compiled: &CompiledTemporalQuery, window: &PageWindow, names: &QueryNames) -> SelectStatement {
     build_stage1_entity_ids(&HistoryBranch::live(), compiled, window, CountPolicy::Omit, names)
         .expect("valid temporal query")
         .select
-        .build(PostgresQueryBuilder)
 }
 
 /// The count statement of a counted query.
-pub(super) fn built_count(compiled: &CompiledTemporalQuery, names: &QueryNames) -> String {
+pub(super) fn built_count(compiled: &CompiledTemporalQuery, names: &QueryNames) -> SelectStatement {
     build_stage1_entity_ids(&HistoryBranch::live(), compiled, &PageWindow::offset(20, 0), CountPolicy::Emit, names)
         .expect("valid temporal query")
         .count
         .expect("count requested")
-        .build(PostgresQueryBuilder)
-        .0
 }
 
 /// The `Vehicle` type the selector tests name.
@@ -250,75 +246,16 @@ pub(super) fn recorded_stage1(compiled: &CompiledTemporalQuery) -> Stage1Query {
     stage1_on(&HistoryBranch::live_recorded(), compiled, &PageWindow::offset(20, 0))
 }
 
-/// The parts of a rendered gated page.
-pub(super) struct PageBranches<'s> {
-    /// The short walk's statement, `None` when the page holds no short walk.
-    pub(super) short_walk: Option<&'s str>,
-    /// The candidate read, without its bound.
-    pub(super) candidates: &'s str,
-    /// The branch cut from the candidates.
-    pub(super) indexed: &'s str,
-    /// The branch cut from the full walk.
-    pub(super) walk: &'s str,
+/// The candidate read of the gated page `sql`, without its bound.
+pub(super) fn candidates_of(sql: &str) -> &str {
+    let marker = r#""candidates" AS  MATERIALIZED ("#;
+    let start = sql.find(marker).map_or_else(|| panic!("{marker} in {sql}"), |at| at + marker.len());
+    let end = start + sql[start..].find(" LIMIT ").unwrap_or_else(|| panic!("a bounded read: {sql}"));
+    &sql[start..end]
 }
 
-impl PageBranches<'_> {
-    /// The parts of the gated page `sql`.
-    pub(super) fn of(sql: &str) -> PageBranches<'_> {
-        let after = |text: &'_ str, marker: &str| -> usize { text.find(marker).map_or_else(|| panic!("{marker} in {sql}"), |at| at + marker.len()) };
-        let short_walk = sql.find(r#""short_walk" AS  MATERIALIZED ("#).map(|_| {
-            let short_start = after(sql, r#""short_walk" AS  MATERIALIZED ("#);
-            let short_end = sql
-                .find(r#") , "candidates" AS  MATERIALIZED ("#)
-                .unwrap_or_else(|| panic!("the candidates follow the short walk: {sql}"));
-            &sql[short_start..short_end]
-        });
-        let candidates_start = after(sql, r#""candidates" AS  MATERIALIZED ("#);
-        let candidates_end = candidates_start + sql[candidates_start..].find(" LIMIT ").unwrap_or_else(|| panic!("a bounded read: {sql}"));
-        let indexed_start = match short_walk {
-            Some(_) => after(sql, r#"AS "answered""#),
-            None => candidates_end,
-        };
-        let indexed_end = sql.find(r#"AS "indexed""#).unwrap_or_else(|| panic!("the candidate branch: {sql}"));
-        PageBranches {
-            short_walk,
-            candidates: &sql[candidates_start..candidates_end],
-            indexed: &sql[indexed_start..indexed_end],
-            walk: &sql[indexed_end..],
-        }
-    }
-
-    /// The short walk's statement of a page that holds one.
-    pub(super) fn short(&self) -> &str {
-        self.short_walk.unwrap_or_else(|| panic!("a short walk beside {}", self.indexed))
-    }
-}
-
-/// The parts of a gated count, each asserted on alone.
-pub(super) struct CountParts<'s> {
-    /// The keys of the walk narrowed to the candidates.
-    pub(super) indexed: &'s str,
-    /// Both gates and the keys of the whole walk.
-    pub(super) walked: &'s str,
-    /// The lookup of every key and the filters the count tests.
-    pub(super) filtered: &'s str,
-}
-
-impl CountParts<'_> {
-    /// The parts of the gated count `sql`.
-    pub(super) fn of(sql: &str) -> CountParts<'_> {
-        let keys_marker = r#"SELECT COUNT("e"."id") FROM (SELECT "e".* FROM ("#;
-        let keys_start = sql
-            .find(keys_marker)
-            .map_or_else(|| panic!("a count over gated keys: {sql}"), |at| at + keys_marker.len());
-        let within = sql
-            .find(r#"(SELECT COUNT(*) FROM "candidates") <= "#)
-            .unwrap_or_else(|| panic!("the gate within the bound: {sql}"));
-        let lookup = sql.find(r#") AS "k" JOIN LATERAL"#).unwrap_or_else(|| panic!("the lookup of each key: {sql}"));
-        CountParts {
-            indexed: &sql[keys_start..within],
-            walked: &sql[within..lookup],
-            filtered: &sql[lookup..],
-        }
-    }
+/// The branch of the gated page `sql` cut from the full walk.
+pub(super) fn walk_of(sql: &str) -> &str {
+    let start = sql.find(r#"AS "indexed""#).unwrap_or_else(|| panic!("the candidate branch: {sql}"));
+    &sql[start..]
 }

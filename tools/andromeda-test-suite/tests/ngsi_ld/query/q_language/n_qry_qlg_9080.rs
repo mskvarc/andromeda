@@ -3,7 +3,7 @@
 use andromeda_test_suite::{
     broker,
     namespace::Namespace,
-    q_parity::{QCase, expect_query_and_subscription_alike},
+    q_parity::{QCase, QRequest, expect_query_and_subscription_alike},
 };
 use googletest::prelude::*;
 use ngsi_ld::model::{Entity, Relationship, VocabTerm};
@@ -55,26 +55,32 @@ async fn n_qry_qlg_9080_a_q_on_object_type_selects_by_any_declared_type_in_a_que
         QCase {
             q: &device,
             selects: &[&device_id, &both_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: &gauge,
             selects: &[&both_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: &not_device,
             selects: &[&valve_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: &gauge_or_valve,
             selects: &[&both_id, &valve_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "feeds.objectType",
             selects: &[&device_id, &both_id, &valve_id],
+            request: QRequest::PLAIN,
         },
         QCase {
             q: "feeds.objectType~=\"Gauge\"",
             selects: &[],
+            request: QRequest::PLAIN,
         },
     ];
     expect_query_and_subscription_alike(&broker, &namespace, &sensor_type, &entities, &cases).await

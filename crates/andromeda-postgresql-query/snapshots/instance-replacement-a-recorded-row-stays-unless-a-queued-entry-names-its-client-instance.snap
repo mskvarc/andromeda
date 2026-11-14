@@ -1,0 +1,19 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/instance_replacement.rs
+---
+SELECT
+WHERE
+  "verbatim" IS NULL
+  OR (
+    NOT EXISTS (
+      SELECT
+        1
+      FROM
+        "temporal_append_entries" AS "pr"
+      WHERE
+        "pr"."entity_id" = "id"
+        AND "pr"."attribute_name_key" = "key"
+        AND "pr"."verbatim_instance_id" = "verbatim"
+        AND "pr"."entry_kind" IN (1, 2)
+    )
+  )

@@ -1,0 +1,9 @@
+---
+source: crates/andromeda-postgresql-context-query/src/walked_column.rs
+---
+SELECT
+  array_position($1::text[], 'number'),
+  "ca"."value_number",
+  NULL::timestamptz,
+  (NULL::text) COLLATE "und-x-icu"
+1: Array ARRAY ['number','string','object','array','boolean','https://uri.etsi.org/ngsi-ld/Time','https://uri.etsi.org/ngsi-ld/Date','https://uri.etsi.org/ngsi-ld/DateTime','null']

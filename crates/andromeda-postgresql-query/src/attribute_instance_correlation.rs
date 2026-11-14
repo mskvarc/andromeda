@@ -84,18 +84,19 @@ mod tests {
         attribute_name_key::AttributeNameKey,
         entity_row_refs::EntityRowRefs,
     };
-    use sea_query::{Alias, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Query, SelectStatement, SimpleExpr};
 
-    /// Render one correlated scan to its SQL, giving it the `SELECT 1` marker
-    /// each real caller supplies.
-    fn render(mut scan: SelectStatement) -> String {
+    /// One correlated scan, given the `SELECT 1` marker each real caller
+    /// supplies.
+    fn render(mut scan: SelectStatement) -> SelectStatement {
         scan.expr(existence_marker());
-        scan.to_string(PostgresQueryBuilder)
+        scan
     }
 
-    /// Render one column expression to its SQL alone.
-    fn render_column(expr: SimpleExpr) -> String {
-        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    /// One column expression selected alone.
+    fn render_column(expr: SimpleExpr) -> SelectStatement {
+        Query::select().expr(expr).to_owned()
     }
 
     fn aliased() -> EntityRowRefs {
@@ -113,10 +114,10 @@ mod tests {
             "geo_instance",
             AttributeNameKey::from(42_i32),
         ));
-        assert!(bare.contains("\"geo_instance\".\"entity_key\" = \"entities\".\"entity_key\""), "{bare}");
+        assert_statement_snapshot!("attribute-instance-correlation-the-correlation-binds-the-outer-row-it-was-given-1", bare);
 
         let aliased = render(geometry_instances_of(&aliased(), "geo_instance", AttributeNameKey::from(42_i32)));
-        assert!(aliased.contains("\"geo_instance\".\"entity_key\" = \"e\".\"entity_key\""), "{aliased}");
+        assert_statement_snapshot!("attribute-instance-correlation-the-correlation-binds-the-outer-row-it-was-given-2", aliased);
     }
 
     /// No branch may leave the outer reference unqualified, whatever column it
@@ -124,9 +125,14 @@ mod tests {
     /// correlating.
     #[test]
     fn no_correlation_leaves_the_outer_reference_unqualified() {
-        for rows in [EntityRowRefs::unaliased(None), aliased()] {
-            let sql = render(geometry_instances_of(&rows, "geo_instance", AttributeNameKey::from(42_i32)));
-            assert!(!sql.contains("= \"entity_key\""), "{sql}");
+        for (index, rows) in [EntityRowRefs::unaliased(None), aliased()].into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!(
+                    "attribute-instance-correlation-no-correlation-leaves-the-outer-reference-unqualified-{}",
+                    index + 1
+                ),
+                render(geometry_instances_of(&rows, "geo_instance", AttributeNameKey::from(42_i32)))
+            );
         }
     }
 
@@ -134,9 +140,10 @@ mod tests {
     /// so the entity URI appears nowhere in the correlation.
     #[test]
     fn the_correlation_reads_the_surrogate_key_and_never_the_entity_uri() {
-        let sql = render(geometry_instances_of(&aliased(), "geo_instance", AttributeNameKey::from(42_i32)));
-        assert!(!sql.contains("entity_id"), "{sql}");
-        assert!(!sql.contains("attribute_current"), "{sql}");
+        assert_statement_snapshot!(
+            "attribute-instance-correlation-the-correlation-reads-the-surrogate-key-and-never-the-entity-uri",
+            render(geometry_instances_of(&aliased(), "geo_instance", AttributeNameKey::from(42_i32)))
+        );
     }
 
     /// Clause 4.10 reads the instances of one named `GeoProperty`, so the scan
@@ -144,14 +151,14 @@ mod tests {
     /// populated: the two halves the supporting partial index is built on.
     #[test]
     fn the_correlation_restricts_to_the_geometry_instances_of_one_attribute() {
-        let sql = render(geometry_instances_of(
-            &EntityRowRefs::unaliased(None),
-            "geo_order",
-            AttributeNameKey::from(7_i32),
-        ));
-        assert!(sql.contains("FROM \"current_attributes\" AS \"geo_order\""), "{sql}");
-        assert!(sql.contains("\"geo_order\".\"attribute_name_key\" = 7"), "{sql}");
-        assert!(sql.contains("\"geo_order\".\"value_geometry\" IS NOT NULL"), "{sql}");
+        assert_statement_snapshot!(
+            "attribute-instance-correlation-the-correlation-restricts-to-the-geometry-instances-of-one-attribute",
+            render(geometry_instances_of(
+                &EntityRowRefs::unaliased(None),
+                "geo_order",
+                AttributeNameKey::from(7_i32),
+            ))
+        );
     }
 
     /// Two correlated subqueries in one statement read their own alias, so
@@ -168,18 +175,21 @@ mod tests {
             "geo_order",
             AttributeNameKey::from(1_i32),
         ));
-        assert!(!first.contains("geo_order"), "{first}");
-        assert!(!second.contains("geo_instance"), "{second}");
-        assert!(render_column(instance_geometry_column("geo_order")).contains("\"geo_order\".\"value_geometry\""));
+        assert_statement_snapshot!("attribute-instance-correlation-each-caller-names-its-own-subquery-alias-1", first);
+        assert_statement_snapshot!("attribute-instance-correlation-each-caller-names-its-own-subquery-alias-2", second);
+        assert_statement_snapshot!(
+            "attribute-instance-correlation-each-caller-names-its-own-subquery-alias-3",
+            render_column(instance_geometry_column("geo_order"))
+        );
     }
 
     /// Clause 4.7.2 stores an invalid geometry as written; a predicate judges
     /// its repaired form, in the spelling the geometry index holds.
     #[test]
     fn the_instance_geometry_is_the_repaired_form_when_there_is_one() {
-        pretty_assertions::assert_eq!(
-            render_column(instance_geometry_column("geo_instance")),
-            r#"SELECT COALESCE("geo_instance"."value_geometry_valid", "geo_instance"."value_geometry")"#
+        assert_statement_snapshot!(
+            "attribute-instance-correlation-the-instance-geometry-is-the-repaired-form-when-there-is-one",
+            render_column(instance_geometry_column("geo_instance"))
         );
     }
 }

@@ -1,0 +1,239 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/corpus_statement_tests.rs
+---
+SELECT
+  "e"."id"
+FROM
+  "entities" AS "e"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      (
+        SELECT
+          "re"."id" AS "entity_id",
+          "rs"."attribute_name_key" AS "attribute_name_key",
+          "rs"."dataset_key" AS "dataset_key",
+          "rh"."recorded_at",
+          "rh"."write_id",
+          "rh"."write_ordinal",
+          "rh"."attribute_kind",
+          "rh"."value_kind",
+          "rh"."observed_at",
+          "rh"."created_at",
+          "rh"."modified_at",
+          "rh"."deleted_at",
+          "rh"."value_date_time",
+          "rh"."expires_at",
+          "rh"."generated_instance_id",
+          "rh"."value_type_key",
+          "rh"."value_datatype_key",
+          "rh"."unit_code_id",
+          "rh"."value_boolean",
+          "rh"."verbatim_instance_id",
+          "rh"."value_number",
+          "rh"."value_string",
+          "rh"."value_language",
+          "rh"."value_geometry",
+          "rh"."value_geometry_valid",
+          "rh"."value_geometry_reach",
+          "rh"."value_geometry_members",
+          "rh"."value_object",
+          "rh"."value_uri",
+          "rh"."object_type_keys",
+          "rh"."sub_attributes"
+        FROM
+          "attribute_history" AS "rh"
+          JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+          JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+        WHERE
+          "re"."id" = "e"."id"
+          AND (
+            "rh"."verbatim_instance_id" IS NULL
+            OR (
+              NOT EXISTS (
+                SELECT
+                  1
+                FROM
+                  "temporal_append_entries" AS "pr"
+                WHERE
+                  "pr"."entity_id" = "re"."id"
+                  AND "pr"."attribute_name_key" = "rs"."attribute_name_key"
+                  AND "pr"."verbatim_instance_id" = "rh"."verbatim_instance_id"
+                  AND "pr"."entry_kind" IN (1, 2)
+              )
+            )
+          )
+        UNION ALL
+        (
+          SELECT
+            "pe"."entity_id" AS "entity_id",
+            "pe"."attribute_name_key" AS "attribute_name_key",
+            "pe"."dataset_key" AS "dataset_key",
+            "pe"."recorded_at" AS "recorded_at",
+            "pe"."write_id" AS "write_id",
+            "pe"."write_ordinal" AS "write_ordinal",
+            "pe"."attribute_kind" AS "attribute_kind",
+            "pe"."value_kind" AS "value_kind",
+            "pe"."observed_at" AS "observed_at",
+            "pe"."created_at" AS "created_at",
+            "pe"."modified_at" AS "modified_at",
+            "pe"."deleted_at" AS "deleted_at",
+            "pe"."value_date_time" AS "value_date_time",
+            "pe"."expires_at" AS "expires_at",
+            "pe"."generated_instance_id" AS "generated_instance_id",
+            "pe"."value_type_key" AS "value_type_key",
+            "pe"."value_datatype_key" AS "value_datatype_key",
+            "pe"."unit_code_id" AS "unit_code_id",
+            "pe"."value_boolean" AS "value_boolean",
+            "pe"."verbatim_instance_id" AS "verbatim_instance_id",
+            "pe"."value_number" AS "value_number",
+            "pe"."value_string" AS "value_string",
+            "pe"."value_language" AS "value_language",
+            "pe"."value_geometry" AS "value_geometry",
+            (
+              CASE
+                WHEN (ST_IsValid("pe"."value_geometry")) THEN NULL
+                ELSE ST_MakeValid("pe"."value_geometry")
+              END
+            ) AS "value_geometry_valid",
+            "pe"."value_geometry_reach" AS "value_geometry_reach",
+            "pe"."value_geometry_members" AS "value_geometry_members",
+            "pe"."value_object" AS "value_object",
+            "pe"."value_uri" AS "value_uri",
+            "pe"."object_type_keys" AS "object_type_keys",
+            "pe"."sub_attributes" AS "sub_attributes"
+          FROM
+            "temporal_append_entries" AS "pe"
+          WHERE
+            "pe"."entry_kind" IN (1, 2)
+            AND (
+              EXISTS (
+                SELECT
+                  1
+                FROM
+                  "entities" AS "pv"
+                WHERE
+                  "pv"."id" = "pe"."entity_id"
+                  AND "pv"."evolution_created_at" IS NOT NULL
+              )
+              OR EXISTS (
+                SELECT
+                  1
+                FROM
+                  "temporal_append_intents" AS "pt"
+                WHERE
+                  "pt"."entity_id" = "pe"."entity_id"
+                  AND cardinality("pt"."entity_type_name_keys") > 0
+                  AND (
+                    "pe"."entry_kind" <> (2)
+                    OR "pt"."intent_key" <= "pe"."intent_key"
+                  )
+              )
+            )
+            AND (
+              (
+                "pe"."verbatim_instance_id" IS NOT NULL
+                AND (
+                  NOT EXISTS (
+                    SELECT
+                      1
+                    FROM
+                      "temporal_append_entries" AS "pr"
+                    WHERE
+                      "pr"."entity_id" = "pe"."entity_id"
+                      AND "pr"."attribute_name_key" = "pe"."attribute_name_key"
+                      AND "pr"."verbatim_instance_id" = "pe"."verbatim_instance_id"
+                      AND "pr"."entry_kind" IN (1, 2)
+                      AND "pr"."intent_key" > "pe"."intent_key"
+                  )
+                )
+              )
+              OR (
+                "pe"."verbatim_instance_id" IS NULL
+                AND (
+                  NOT EXISTS (
+                    SELECT
+                      1
+                    FROM
+                      "attribute_history" AS "pd"
+                    WHERE
+                      "pd"."recorded_at" = "pe"."recorded_at"
+                      AND "pd"."write_id" = "pe"."write_id"
+                      AND "pd"."write_ordinal" = "pe"."write_ordinal"
+                  )
+                )
+              )
+            )
+            AND "pe"."entity_id" = "e"."id"
+        )
+      ) AS "qh"
+    WHERE
+      "qh"."attribute_name_key" = $1
+      AND (
+        "qh"."value_number" = $2
+        OR (
+          "qh"."attribute_kind" <> (6)
+          AND (
+            (
+              (
+                "qh"."value_object" @> jsonb_build_array($3::numeric)
+              )
+              OR (
+                "qh"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $4::numeric))
+              )
+              OR (
+                "qh"."value_object" @> jsonb_build_array($5::text)
+              )
+              OR (
+                "qh"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $6::text))
+              )
+            )
+            AND EXISTS (
+              SELECT
+                1
+              FROM
+                jsonb_array_elements(
+                  (
+                    CASE
+                      WHEN (jsonb_typeof("qh"."value_object") = ('array')) THEN "qh"."value_object"
+                    END
+                  )
+                ) AS "dm"
+                LEFT JOIN "entity_type_names" AS "dmt" ON "dmt"."entity_type_name_key" = (
+                  CASE
+                    WHEN ("qh"."attribute_kind" IN (1, 7)) THEN "qh"."value_type_key"
+                  END
+                )
+              WHERE
+                (
+                  CASE
+                    WHEN (
+                      jsonb_typeof(
+                        COALESCE("dm"."value" -> ('@value'), "dm"."value")
+                      ) = ('number')
+                    ) THEN (
+                      COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::numeric WHEN (jsonb_typeof(COALESCE("dm"."value" -> ('@value'), "dm"."value")) = ('string') AND COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN ('http://www.w3.org/2001/XMLSchema#decimal', 'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', 'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', 'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', 'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', 'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') AND (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}')) <> ('NaN') AND pg_input_is_valid(COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'), 'numeric')) THEN (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::numeric END) = $7)))) AND "qh"."value_kind" <> (0) AND "qh"."observed_at" IS NOT NULL AND "qh"."observed_at" >= $8 AND "qh"."observed_at" < $9) OR EXISTS(SELECT 1 FROM (SELECT "re"."id" AS "entity_id", "rs"."attribute_name_key" AS "attribute_name_key", "rs"."dataset_key" AS "dataset_key", "rs"."stream_key" AS "stream_key" FROM "temporal_attribute_streams" AS "rs" JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key" WHERE "re"."id" = "e"."id" UNION ALL (SELECT DISTINCT "pe"."entity_id" AS "entity_id", "pe"."attribute_name_key" AS "attribute_name_key", "pe"."dataset_key" AS "dataset_key", NULL::bigint AS "stream_key" FROM "temporal_append_entries" AS "pe" WHERE "pe"."entry_kind" IN (1, 2) AND (EXISTS(SELECT 1 FROM "entities" AS "pv" WHERE "pv"."id" = "pe"."entity_id" AND "pv"."evolution_created_at" IS NOT NULL) OR EXISTS(SELECT 1 FROM "temporal_append_intents" AS "pt" WHERE "pt"."entity_id" = "pe"."entity_id" AND cardinality("pt"."entity_type_name_keys") > 0 AND ("pe"."entry_kind" <> (2) OR "pt"."intent_key" <= "pe"."intent_key"))) AND (NOT EXISTS(SELECT 1 FROM "temporal_attribute_streams" AS "ps" JOIN "entities" AS "pv" ON "pv"."entity_key" = "ps"."entity_key" WHERE "pv"."id" = "pe"."entity_id" AND "ps"."attribute_name_key" = "pe"."attribute_name_key" AND "ps"."dataset_key" = "pe"."dataset_key")) AND "pe"."entity_id" = "e"."id")) AS "qs" JOIN LATERAL (SELECT * FROM ((SELECT * FROM ((SELECT "qi".*, "qi"."observed_at" AS "placed" FROM (SELECT "qs"."entity_id" AS "entity_id", "qs"."attribute_name_key" AS "attribute_name_key", "qs"."dataset_key" AS "dataset_key", "rh"."recorded_at", "rh"."write_id", "rh"."write_ordinal", "rh"."attribute_kind" AS "attribute_kind", "rh"."value_kind" AS "value_kind", "rh"."observed_at" AS "observed_at", "rh"."created_at" AS "created_at", "rh"."modified_at" AS "modified_at", "rh"."deleted_at" AS "deleted_at", "rh"."value_date_time" AS "value_date_time", "rh"."expires_at" AS "expires_at", "rh"."generated_instance_id" AS "generated_instance_id", "rh"."value_type_key" AS "value_type_key", "rh"."value_datatype_key" AS "value_datatype_key", "rh"."unit_code_id" AS "unit_code_id", "rh"."value_boolean" AS "value_boolean", "rh"."verbatim_instance_id" AS "verbatim_instance_id", "rh"."value_number" AS "value_number", "rh"."value_string" AS "value_string", "rh"."value_language" AS "value_language", "rh"."value_geometry" AS "value_geometry", "rh"."value_geometry_valid" AS "value_geometry_valid", "rh"."value_geometry_reach" AS "value_geometry_reach", "rh"."value_geometry_members" AS "value_geometry_members", "rh"."value_object" AS "value_object", "rh"."value_uri" AS "value_uri", "rh"."object_type_keys" AS "object_type_keys", "rh"."sub_attributes" AS "sub_attributes" FROM "attribute_history" AS "rh" WHERE "rh"."stream_key" = "qs"."stream_key" AND ("rh"."verbatim_instance_id" IS NULL OR (NOT EXISTS(SELECT 1 FROM "temporal_append_entries" AS "pr" WHERE "pr"."entity_id" = "qs"."entity_id" AND "pr"."attribute_name_key" = "qs"."attribute_name_key" AND "pr"."verbatim_instance_id" = "rh"."verbatim_instance_id" AND "pr"."entry_kind" IN (1, 2))))) AS "qi" WHERE "qi"."observed_at" <= $10 ORDER BY "qi"."observed_at" DESC) FETCH FIRST 1 ROW WITH TIES) AS "qe" UNION ALL (SELECT * FROM ((SELECT "qi".*, "qi"."deleted_at" AS "placed" FROM (SELECT "qs"."entity_id" AS "entity_id", "qs"."attribute_name_key" AS "attribute_name_key", "qs"."dataset_key" AS "dataset_key", "rh"."recorded_at", "rh"."write_id", "rh"."write_ordinal", "rh"."attribute_kind" AS "attribute_kind", "rh"."value_kind" AS "value_kind", "rh"."observed_at" AS "observed_at", "rh"."created_at" AS "created_at", "rh"."modified_at" AS "modified_at", "rh"."deleted_at" AS "deleted_at", "rh"."value_date_time" AS "value_date_time", "rh"."expires_at" AS "expires_at", "rh"."generated_instance_id" AS "generated_instance_id", "rh"."value_type_key" AS "value_type_key", "rh"."value_datatype_key" AS "value_datatype_key", "rh"."unit_code_id" AS "unit_code_id", "rh"."value_boolean" AS "value_boolean", "rh"."verbatim_instance_id" AS "verbatim_instance_id", "rh"."value_number" AS "value_number", "rh"."value_string" AS "value_string", "rh"."value_language" AS "value_language", "rh"."value_geometry" AS "value_geometry", "rh"."value_geometry_valid" AS "value_geometry_valid", "rh"."value_geometry_reach" AS "value_geometry_reach", "rh"."value_geometry_members" AS "value_geometry_members", "rh"."value_object" AS "value_object", "rh"."value_uri" AS "value_uri", "rh"."object_type_keys" AS "object_type_keys", "rh"."sub_attributes" AS "sub_attributes" FROM "attribute_history" AS "rh" WHERE "rh"."stream_key" = "qs"."stream_key" AND ("rh"."verbatim_instance_id" IS NULL OR (NOT EXISTS(SELECT 1 FROM "temporal_append_entries" AS "pr" WHERE "pr"."entity_id" = "qs"."entity_id" AND "pr"."attribute_name_key" = "qs"."attribute_name_key" AND "pr"."verbatim_instance_id" = "rh"."verbatim_instance_id" AND "pr"."entry_kind" IN (1, 2))))) AS "qi" WHERE "qi"."deleted_at" <= $11 AND "qi"."observed_at" IS NULL ORDER BY "qi"."deleted_at" DESC) FETCH FIRST 1 ROW WITH TIES) AS "qe") UNION ALL (SELECT * FROM ((SELECT "qi".*, "qi"."observed_at" AS "placed" FROM (SELECT "pe"."entity_id" AS "entity_id", "pe"."attribute_name_key" AS "attribute_name_key", "pe"."dataset_key" AS "dataset_key", "pe"."recorded_at" AS "recorded_at", "pe"."write_id" AS "write_id", "pe"."write_ordinal" AS "write_ordinal", "pe"."attribute_kind" AS "attribute_kind", "pe"."value_kind" AS "value_kind", "pe"."observed_at" AS "observed_at", "pe"."created_at" AS "created_at", "pe"."modified_at" AS "modified_at", "pe"."deleted_at" AS "deleted_at", "pe"."value_date_time" AS "value_date_time", "pe"."expires_at" AS "expires_at", "pe"."generated_instance_id" AS "generated_instance_id", "pe"."value_type_key" AS "value_type_key", "pe"."value_datatype_key" AS "value_datatype_key", "pe"."unit_code_id" AS "unit_code_id", "pe"."value_boolean" AS "value_boolean", "pe"."verbatim_instance_id" AS "verbatim_instance_id", "pe"."value_number" AS "value_number", "pe"."value_string" AS "value_string", "pe"."value_language" AS "value_language", "pe"."value_geometry" AS "value_geometry", (CASE WHEN (ST_IsValid("pe"."value_geometry")) THEN NULL ELSE ST_MakeValid("pe"."value_geometry") END) AS "value_geometry_valid", "pe"."value_geometry_reach" AS "value_geometry_reach", "pe"."value_geometry_members" AS "value_geometry_members", "pe"."value_object" AS "value_object", "pe"."value_uri" AS "value_uri", "pe"."object_type_keys" AS "object_type_keys", "pe"."sub_attributes" AS "sub_attributes" FROM "temporal_append_entries" AS "pe" WHERE "pe"."entry_kind" IN (1, 2) AND (EXISTS(SELECT 1 FROM "entities" AS "pv" WHERE "pv"."id" = "pe"."entity_id" AND "pv"."evolution_created_at" IS NOT NULL) OR EXISTS(SELECT 1 FROM "temporal_append_intents" AS "pt" WHERE "pt"."entity_id" = "pe"."entity_id" AND cardinality("pt"."entity_type_name_keys") > 0 AND ("pe"."entry_kind" <> (2) OR "pt"."intent_key" <= "pe"."intent_key"))) AND (("pe"."verbatim_instance_id" IS NOT NULL AND (NOT EXISTS(SELECT 1 FROM "temporal_append_entries" AS "pr" WHERE "pr"."entity_id" = "pe"."entity_id" AND "pr"."attribute_name_key" = "pe"."attribute_name_key" AND "pr"."verbatim_instance_id" = "pe"."verbatim_instance_id" AND "pr"."entry_kind" IN (1, 2) AND "pr"."intent_key" > "pe"."intent_key"))) OR ("pe"."verbatim_instance_id" IS NULL AND (NOT EXISTS(SELECT 1 FROM "attribute_history" AS "pd" WHERE "pd"."recorded_at" = "pe"."recorded_at" AND "pd"."write_id" = "pe"."write_id" AND "pd"."write_ordinal" = "pe"."write_ordinal")))) AND "pe"."entity_id" = "qs"."entity_id" AND "pe"."attribute_name_key" = "qs"."attribute_name_key" AND "pe"."dataset_key" = "qs"."dataset_key") AS "qi" WHERE "qi"."observed_at" <= $12 ORDER BY "qi"."observed_at" DESC) FETCH FIRST 1 ROW WITH TIES) AS "qe") UNION ALL (SELECT * FROM ((SELECT "qi".*, "qi"."deleted_at" AS "placed" FROM (SELECT "pe"."entity_id" AS "entity_id", "pe"."attribute_name_key" AS "attribute_name_key", "pe"."dataset_key" AS "dataset_key", "pe"."recorded_at" AS "recorded_at", "pe"."write_id" AS "write_id", "pe"."write_ordinal" AS "write_ordinal", "pe"."attribute_kind" AS "attribute_kind", "pe"."value_kind" AS "value_kind", "pe"."observed_at" AS "observed_at", "pe"."created_at" AS "created_at", "pe"."modified_at" AS "modified_at", "pe"."deleted_at" AS "deleted_at", "pe"."value_date_time" AS "value_date_time", "pe"."expires_at" AS "expires_at", "pe"."generated_instance_id" AS "generated_instance_id", "pe"."value_type_key" AS "value_type_key", "pe"."value_datatype_key" AS "value_datatype_key", "pe"."unit_code_id" AS "unit_code_id", "pe"."value_boolean" AS "value_boolean", "pe"."verbatim_instance_id" AS "verbatim_instance_id", "pe"."value_number" AS "value_number", "pe"."value_string" AS "value_string", "pe"."value_language" AS "value_language", "pe"."value_geometry" AS "value_geometry", (CASE WHEN (ST_IsValid("pe"."value_geometry")) THEN NULL ELSE ST_MakeValid("pe"."value_geometry") END) AS "value_geometry_valid", "pe"."value_geometry_reach" AS "value_geometry_reach", "pe"."value_geometry_members" AS "value_geometry_members", "pe"."value_object" AS "value_object", "pe"."value_uri" AS "value_uri", "pe"."object_type_keys" AS "object_type_keys", "pe"."sub_attributes" AS "sub_attributes" FROM "temporal_append_entries" AS "pe" WHERE "pe"."entry_kind" IN (1, 2) AND (EXISTS(SELECT 1 FROM "entities" AS "pv" WHERE "pv"."id" = "pe"."entity_id" AND "pv"."evolution_created_at" IS NOT NULL) OR EXISTS(SELECT 1 FROM "temporal_append_intents" AS "pt" WHERE "pt"."entity_id" = "pe"."entity_id" AND cardinality("pt"."entity_type_name_keys") > 0 AND ("pe"."entry_kind" <> (2) OR "pt"."intent_key" <= "pe"."intent_key"))) AND (("pe"."verbatim_instance_id" IS NOT NULL AND (NOT EXISTS(SELECT 1 FROM "temporal_append_entries" AS "pr" WHERE "pr"."entity_id" = "pe"."entity_id" AND "pr"."attribute_name_key" = "pe"."attribute_name_key" AND "pr"."verbatim_instance_id" = "pe"."verbatim_instance_id" AND "pr"."entry_kind" IN (1, 2) AND "pr"."intent_key" > "pe"."intent_key"))) OR ("pe"."verbatim_instance_id" IS NULL AND (NOT EXISTS(SELECT 1 FROM "attribute_history" AS "pd" WHERE "pd"."recorded_at" = "pe"."recorded_at" AND "pd"."write_id" = "pe"."write_id" AND "pd"."write_ordinal" = "pe"."write_ordinal")))) AND "pe"."entity_id" = "qs"."entity_id" AND "pe"."attribute_name_key" = "qs"."attribute_name_key" AND "pe"."dataset_key" = "qs"."dataset_key") AS "qi" WHERE "qi"."deleted_at" <= $13 AND "qi"."observed_at" IS NULL ORDER BY "qi"."deleted_at" DESC) FETCH FIRST 1 ROW WITH TIES) AS "qe") ORDER BY "placed" DESC) FETCH FIRST 1 ROW WITH TIES) AS "qe") AS "qh" ON TRUE WHERE "qs"."attribute_name_key" = $14 AND "qh"."placed" < $15 AND "qh"."attribute_name_key" = $16 AND ("qh"."value_number" = $17 OR ("qh"."attribute_kind" <> (6) AND ((("qh"."value_object" @> jsonb_build_array($18::numeric)) OR ("qh"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $19::numeric))) OR ("qh"."value_object" @> jsonb_build_array($20::text)) OR ("qh"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $21::text)))) AND EXISTS(SELECT 1 FROM jsonb_array_elements((CASE WHEN (jsonb_typeof("qh"."value_object") = ('array')) THEN "qh"."value_object" END)) AS "dm" LEFT JOIN "entity_type_names" AS "dmt" ON "dmt"."entity_type_name_key" = (CASE WHEN ("qh"."attribute_kind" IN (1, 7)) THEN "qh"."value_type_key" END) WHERE (CASE WHEN (jsonb_typeof(COALESCE("dm"."value" -> ('@value'), "dm"."value")) = ('number')) THEN (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::numeric WHEN (jsonb_typeof(COALESCE("dm"."value" -> ('@value'), "dm"."value")) = ('string') AND COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN ('http://www.w3.org/2001/XMLSchema#decimal', 'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', 'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', 'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', 'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', 'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') AND (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}')) <> ('NaN') AND pg_input_is_valid(COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'), 'numeric')) THEN (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::numeric END) = $22)))) AND "qh"."value_kind" <> (0))
+1: Int 1
+2: BigDecimal 10
+3: BigDecimal 10
+4: BigDecimal 10
+5: String '10'
+6: String '10'
+7: BigDecimal 10
+8: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
+9: ChronoDateTimeUtc '2025-01-01 00:00:00.000000 +00:00'
+10: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
+11: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
+12: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
+13: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
+14: Int 1
+15: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
+16: Int 1
+17: BigDecimal 10
+18: BigDecimal 10
+19: BigDecimal 10
+20: String '10'
+21: String '10'
+22: BigDecimal 10

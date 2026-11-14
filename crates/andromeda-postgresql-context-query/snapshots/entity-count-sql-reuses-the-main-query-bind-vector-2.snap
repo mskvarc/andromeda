@@ -1,0 +1,32 @@
+---
+source: crates/andromeda-postgresql-context-query/src/entity.rs
+---
+SELECT
+  COUNT(*)
+FROM
+  "entities"
+WHERE
+  "entities"."created_at" IS NOT NULL
+  AND (
+    "entities"."expires_at" IS NULL
+    OR "entities"."expires_at" > NOW()
+  )
+  AND EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        "ca"."value_number" > $2
+        AND "ca"."value_number" <> ('NaN'::numeric)
+      )
+      AND "ca"."entity_key" = "entities"."entity_key"
+  )
+1: Int 12
+2: BigDecimal 50

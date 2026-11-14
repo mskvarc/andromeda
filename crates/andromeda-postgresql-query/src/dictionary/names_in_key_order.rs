@@ -50,29 +50,21 @@ fn names_in_key_order(keys: SimpleExpr, table: impl IntoIden + Copy, key: impl I
 mod tests {
     use crate::dictionary::names_in_key_order::{attribute_names_of, type_names_of};
     use andromeda_postgresql_schema::{current::EntitySearch, subscriptions::Subscriptions};
-    use sea_query::{Expr, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Expr, Query};
 
     #[test]
     fn type_names_render_as_an_ordered_array_subquery_over_the_type_dictionary() {
-        let sql = Query::select()
-            .expr(type_names_of(Expr::col(EntitySearch::EntityTypeNameKeys)))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        pretty_assertions::assert_eq!(
-            sql,
-            "SELECT ARRAY (SELECT \"entity_type_names\".\"name\" FROM \"entity_type_names\" WHERE \"entity_type_names\".\"entity_type_name_key\" = ANY(\"entity_type_name_keys\") ORDER BY array_position(\"entity_type_name_keys\", \"entity_type_names\".\"entity_type_name_key\") ASC)"
+        let statement = Query::select().expr(type_names_of(Expr::col(EntitySearch::EntityTypeNameKeys))).to_owned();
+        assert_statement_snapshot!(
+            "names-in-key-order-type-names-render-as-an-ordered-array-subquery-over-the-type-dictionary",
+            statement
         );
     }
 
     #[test]
     fn attribute_names_render_in_the_order_the_keys_were_stored_in() {
-        let sql = Query::select()
-            .expr(attribute_names_of(Expr::col(Subscriptions::WatchedAttributes)))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        pretty_assertions::assert_eq!(
-            sql,
-            "SELECT ARRAY (SELECT \"attribute_names\".\"name\" FROM \"attribute_names\" WHERE \"attribute_names\".\"attribute_name_key\" = ANY(\"watched_attributes\") ORDER BY array_position(\"watched_attributes\", \"attribute_names\".\"attribute_name_key\") ASC)"
-        );
+        let statement = Query::select().expr(attribute_names_of(Expr::col(Subscriptions::WatchedAttributes))).to_owned();
+        assert_statement_snapshot!("names-in-key-order-attribute-names-render-in-the-order-the-keys-were-stored-in", statement);
     }
 }

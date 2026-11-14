@@ -1,0 +1,260 @@
+[
+  {
+    "@id": "urn:ngsi-ld:Vehicle:1",
+    "@type": [
+      "https://example.com/Vehicle"
+    ],
+    "https://example.com/a0": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": 10
+          }
+        ]
+      }
+    ],
+    "https://example.com/a1": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": "v1"
+          }
+        ]
+      }
+    ],
+    "https://example.com/a2": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": 8
+          }
+        ]
+      }
+    ],
+    "https://example.com/a3": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": false
+          }
+        ]
+      }
+    ],
+    "https://example.com/a4": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": 10
+          }
+        ]
+      }
+    ],
+    "https://example.com/a5": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": "v5"
+          }
+        ]
+      }
+    ],
+    "https://example.com/a6": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": 8
+          }
+        ]
+      }
+    ],
+    "https://example.com/a7": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": true
+          }
+        ]
+      }
+    ],
+    "https://example.com/a8": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": 10
+          }
+        ]
+      }
+    ],
+    "https://example.com/a9": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": 9
+          }
+        ],
+        "https://example.com/s0": [
+          {
+            "@type": [
+              "https://uri.etsi.org/ngsi-ld/Property"
+            ],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [
+              {
+                "@value": "sub"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "https://example.com/a10": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": 8
+          }
+        ]
+      }
+    ],
+    "https://example.com/a11": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": false
+          }
+        ]
+      }
+    ],
+    "https://example.com/a12": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": 10
+          }
+        ]
+      }
+    ],
+    "https://example.com/a13": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": "v13"
+          }
+        ]
+      }
+    ],
+    "https://example.com/a14": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": 8
+          }
+        ]
+      }
+    ],
+    "https://example.com/a15": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": true
+          }
+        ]
+      }
+    ],
+    "https://example.com/a16": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": 10
+          }
+        ]
+      }
+    ],
+    "https://example.com/a17": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": "v17"
+          }
+        ]
+      }
+    ],
+    "https://example.com/a18": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": 8
+          }
+        ]
+      }
+    ],
+    "https://example.com/a19": [
+      {
+        "@type": [
+          "https://uri.etsi.org/ngsi-ld/Property"
+        ],
+        "https://uri.etsi.org/ngsi-ld/hasValue": [
+          {
+            "@value": false
+          }
+        ]
+      }
+    ]
+  }
+]

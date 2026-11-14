@@ -1,0 +1,5 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/string_ordering.rs
+---
+SELECT
+  ("s") COLLATE "und-x-icu"

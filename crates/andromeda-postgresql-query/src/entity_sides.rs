@@ -63,42 +63,45 @@ pub fn holds_evolution(entities: impl IntoIden) -> SimpleExpr {
 mod tests {
     use crate::entity_sides::{holds_current_state, holds_evolution, holds_standing_state, not_expired};
     use andromeda_postgresql_schema::current::E;
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, DynIden, Expr, IntoIden, PostgresQueryBuilder, Query, SimpleExpr};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, DynIden, Expr, IntoIden, Query, SelectStatement, SimpleExpr};
 
-    fn render(expr: SimpleExpr) -> String {
-        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    fn render(expr: SimpleExpr) -> SelectStatement {
+        Query::select().expr(expr).to_owned()
     }
 
     #[test]
     fn a_current_state_is_one_whose_creation_instant_is_set() {
-        assert_eq!(render(holds_current_state(E)), r#"SELECT "e"."created_at" IS NOT NULL"#);
+        assert_statement_snapshot!(
+            "entity-sides-a-current-state-is-one-whose-creation-instant-is-set",
+            render(holds_current_state(E))
+        );
     }
 
     /// Clause 4.22: an Entity past its `expiresAt` is invalid before the sweep
     /// deletes it.
     #[test]
     fn a_standing_state_is_a_current_one_whose_expiry_is_ahead_or_absent() {
-        assert_eq!(
-            render(holds_standing_state(E)),
-            r#"SELECT "e"."created_at" IS NOT NULL AND ("e"."expires_at" IS NULL OR "e"."expires_at" > NOW())"#
+        assert_statement_snapshot!(
+            "entity-sides-a-standing-state-is-a-current-one-whose-expiry-is-ahead-or-absent",
+            render(holds_standing_state(E))
         );
     }
 
     #[test]
     fn an_unjoined_entity_is_tested_against_the_expired_set_of_its_branch() {
         let schema: DynIden = Alias::new("snapshot_1").into_iden();
-        assert_eq!(
-            render(not_expired(Expr::col(("selected", "entity_key")), Some(&schema))),
-            concat!(
-                r#"SELECT "selected"."entity_key" NOT IN "#,
-                r#"(SELECT "entity_key" FROM "snapshot_1"."entities" WHERE "expires_at" <= NOW())"#
-            )
+        assert_statement_snapshot!(
+            "entity-sides-an-unjoined-entity-is-tested-against-the-expired-set-of-its-branch",
+            render(not_expired(Expr::col(("selected", "entity_key")), Some(&schema)))
         );
     }
 
     #[test]
     fn a_temporal_evolution_is_one_whose_creation_instant_is_set() {
-        assert_eq!(render(holds_evolution(E)), r#"SELECT "e"."evolution_created_at" IS NOT NULL"#);
+        assert_statement_snapshot!(
+            "entity-sides-a-temporal-evolution-is-one-whose-creation-instant-is-set",
+            render(holds_evolution(E))
+        );
     }
 }

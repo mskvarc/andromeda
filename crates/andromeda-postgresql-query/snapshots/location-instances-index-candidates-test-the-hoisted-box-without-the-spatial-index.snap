@@ -1,0 +1,47 @@
+---
+source: crates/andromeda-postgresql-query/src/location_instances.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  "entities"."entity_key" IN (
+    SELECT DISTINCT
+      "geo_matched"."entity_key"
+    FROM
+      (
+        SELECT
+          "geo_candidate"."entity_key"
+        FROM
+          "entities" AS "geo_candidate"
+          JOIN "entity_search" AS "geo_default" ON "geo_default"."entity_key" = "geo_candidate"."entity_key"
+        WHERE
+          "geo_candidate"."id" = $1
+          AND (
+            "geo_default"."location_expires_at" IS NULL
+            OR "geo_default"."location_expires_at" > NOW()
+          )
+          AND (
+            COALESCE(
+              "geo_default"."location_reach",
+              "geo_default"."location"
+            )::box2d && ST_MakeEnvelope($2, $3, $4, $5, $6)::box2d
+          )
+          AND _ST_DWithin(
+            "geo_default"."location"::geography,
+            ST_MakeValid(ST_GeomFromEWKB($7))::geography,
+            $8
+          )
+      ) AS "geo_matched"
+    ORDER BY
+      "geo_matched"."entity_key" ASC
+  )
+1: String 'urn:ngsi-ld:V:1'
+2: Double 0.9909497426989623
+3: Double 1.9909553052290783
+4: Double 1.0090502573010376
+5: Double 2.009044694770922
+6: Int 4326
+7: Bytes '\x0101000020E6100000000000000000F03F0000000000000040'
+8: Double 1000

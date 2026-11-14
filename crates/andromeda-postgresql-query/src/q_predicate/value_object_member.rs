@@ -285,15 +285,16 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse, path::QueryPath};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use sea_query::{Query, SelectStatement};
 
     fn name(value: &str) -> AttributeName {
         value.parse().expect("valid attribute name")
     }
 
-    /// The SQL the one member term of `q` compiles to over `row`.
-    fn member_sql(q: &str, row: InstanceRow) -> String {
+    /// The statement the one member term of `q` compiles to over `row`.
+    fn member_sql(q: &str, row: InstanceRow) -> SelectStatement {
         let Expr::Pred(pred) = parse(q).expect("parse q") else {
             panic!("a single predicate");
         };
@@ -301,10 +302,7 @@ mod tests {
             panic!("a local path");
         };
         let members = path.members().expect("a member path");
-        Query::select()
-            .cond_where(member_term(&pred, members, row))
-            .to_owned()
-            .to_string(PostgresQueryBuilder)
+        Query::select().cond_where(member_term(&pred, members, row)).to_owned()
     }
 
     /// Expansion turns the members of a structured value into IRI-keyed nodes,
@@ -345,33 +343,24 @@ mod tests {
     /// target value, which a history row holds in its own `value_object`.
     #[test]
     fn a_temporal_q_on_a_compound_value_reads_value_object() {
-        let sql = member_sql("\"https://example.com/address\"[city]==\"Bern\"", InstanceRow::History);
-        assert!(sql.contains(r#"jsonb_path_query("qh"."value_object", 'strict $."city"', '{}', TRUE)"#), "{sql}");
-        assert!(sql.contains(r"-> ('@value')"), "{sql}");
-        assert!(sql.contains("'Bern'"), "{sql}");
-        assert!(!sql.contains("jsonb_build_object"), "{sql}");
+        let statement = member_sql("\"https://example.com/address\"[city]==\"Bern\"", InstanceRow::History);
+        assert_statement_snapshot!("value-object-member-a-temporal-q-on-a-compound-value-reads-value-object", statement);
     }
 
     /// Only the literals of an expanded member are compared; one is a scalar
     /// target and two or more an array.
     #[test]
     fn an_expanded_member_keeps_its_literals_and_counts_them() {
-        let sql = member_sql("address[city]==4", InstanceRow::Current);
-        assert!(
-            sql.contains(r#"jsonb_path_query_array("member"."member", 'lax $[*] ? (exists(@."@value"))')"#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#"jsonb_array_length("member"."member") = (1)"#), "{sql}");
-        assert!(sql.contains(r#"jsonb_array_length("member"."member") >= (2)"#), "{sql}");
+        let statement = member_sql("address[city]==4", InstanceRow::Current);
+        assert_statement_snapshot!("value-object-member-an-expanded-member-keeps-its-literals-and-counts-them", statement);
     }
 
     /// Clause 4.9 `equal`: the operand "Is included in the target value, if
     /// the latter is an array", for a JSON array of a literal too.
     #[test]
     fn an_equality_on_a_member_tests_each_value_of_an_array_target() {
-        let sql = member_sql("address[city]==4", InstanceRow::Current);
-        assert!(sql.contains(r#"jsonb_path_query("member"."member", 'strict $[*]') AS "element""#), "{sql}");
-        assert!(sql.contains(r#"jsonb_typeof("member"."member") = ('array')"#), "{sql}");
+        let statement = member_sql("address[city]==4", InstanceRow::Current);
+        assert_statement_snapshot!("value-object-member-an-equality-on-a-member-tests-each-value-of-an-array-target", statement);
     }
 
     /// Clause 4.9: a target of another data type is unequal to the operand, and
@@ -379,56 +368,55 @@ mod tests {
     /// equality over a reached member.
     #[test]
     fn an_inequality_on_a_member_is_the_total_negation_of_its_equality_over_the_target() {
-        let sql = member_sql("address[city]!=4", InstanceRow::Current);
-        assert!(sql.contains("NOT COALESCE("), "{sql}");
-        assert!(!sql.contains(") <> 4"), "{sql}");
-        assert!(
-            sql.contains(r#"WHERE jsonb_array_length("member"."member") >= (1) AND (NOT COALESCE("#),
-            "{sql}"
+        let statement = member_sql("address[city]!=4", InstanceRow::Current);
+        assert_statement_snapshot!(
+            "value-object-member-an-inequality-on-a-member-is-the-total-negation-of-its-equality-over-the-target",
+            statement
         );
     }
 
     #[test]
     fn an_outside_range_on_a_member_is_the_total_negation_of_within() {
-        let sql = member_sql("address[floor]!=1..5", InstanceRow::Current);
-        assert!(sql.contains("NOT COALESCE("), "{sql}");
-        assert!(sql.contains(">= 1") && sql.contains("<= 5"), "{sql}");
-        assert!(!sql.contains(r#"AS "element""#), "a range is never within an array: {sql}");
+        let statement = member_sql("address[floor]!=1..5", InstanceRow::Current);
+        assert_statement_snapshot!("value-object-member-an-outside-range-on-a-member-is-the-total-negation-of-within", statement);
     }
 
     #[test]
     fn an_outside_value_list_on_a_member_is_the_total_negation_of_membership() {
-        let sql = member_sql("address[floor]!=1,2", InstanceRow::Current);
-        assert!(sql.contains("NOT COALESCE("), "{sql}");
-        assert!(sql.contains(" = 1") && sql.contains(" = 2"), "{sql}");
-        assert!(sql.contains(r#"AS "element""#), "{sql}");
+        let statement = member_sql("address[floor]!=1,2", InstanceRow::Current);
+        assert_statement_snapshot!(
+            "value-object-member-an-outside-value-list-on-a-member-is-the-total-negation-of-membership",
+            statement
+        );
     }
 
     /// Clause 4.9 makes an ordering across data types false and matches no
     /// array, so the ordering reads the guarded lift of a scalar target alone.
     #[test]
     fn an_ordering_on_a_member_compares_a_scalar_target_only() {
-        let sql = member_sql("address[city]<4", InstanceRow::Current);
-        assert!(sql.contains("= ('number')"), "{sql}");
-        assert!(!sql.contains("NOT COALESCE("), "{sql}");
-        assert!(!sql.contains(r#"AS "element""#), "{sql}");
+        let statement = member_sql("address[city]<4", InstanceRow::Current);
+        assert_statement_snapshot!("value-object-member-an-ordering-on-a-member-compares-a-scalar-target-only", statement);
     }
 
     /// Clause 4.9: "If the target value data type is different than String
     /// then it shall be considered as not matching", in both polarities.
     #[test]
     fn a_pattern_on_a_member_reads_only_a_string_not_declared_as_a_time_value() {
-        for q in ["address[city]~=\"^Cel\"", "address[city]!~=\"^Cel\""] {
-            let sql = member_sql(q, InstanceRow::Current);
-            assert!(sql.contains("= ('string')"), "{sql}");
-            assert!(sql.contains("'https://uri.etsi.org/ngsi-ld/DateTime'"), "{sql}");
+        for (index, q) in ["address[city]~=\"^Cel\"", "address[city]!~=\"^Cel\""].into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!(
+                    "value-object-member-a-pattern-on-a-member-reads-only-a-string-not-declared-as-a-time-value-{}",
+                    index + 1
+                ),
+                member_sql(q, InstanceRow::Current)
+            );
         }
     }
 
     /// The member reached is the target element, whatever it holds.
     #[test]
     fn an_existence_on_a_member_asks_only_for_the_member() {
-        let sql = member_sql("address[city]", InstanceRow::Current);
-        assert!(sql.contains("WHERE TRUE"), "{sql}");
+        let statement = member_sql("address[city]", InstanceRow::Current);
+        assert_statement_snapshot!("value-object-member-an-existence-on-a-member-asks-only-for-the-member", statement);
     }
 }

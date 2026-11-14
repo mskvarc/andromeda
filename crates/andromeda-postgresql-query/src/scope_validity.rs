@@ -132,19 +132,20 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use andromeda_postgresql_schema::temporal::ScopeHistory;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use chrono::{DateTime, Utc};
-    use sea_query::{Alias, Condition, Expr, Iden, PostgresQueryBuilder, Query};
+    use sea_query::{Alias, Condition, Expr, Iden, Query, SelectStatement};
 
     fn instant(raw: &str) -> DateTime<Utc> {
         raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
-    fn render(condition: Condition) -> String {
+    fn render(condition: Condition) -> SelectStatement {
         Query::select()
             .expr(Expr::val(1))
             .from_as(ScopeHistory::Table, ScopeEvent)
             .cond_where(condition)
-            .to_string(PostgresQueryBuilder)
+            .to_owned()
     }
 
     #[test]
@@ -166,7 +167,7 @@ mod tests {
     /// exactly that entity.
     #[test]
     fn a_between_window_admits_an_event_that_started_before_it() {
-        let sql = render(overlaps_window(
+        let statement = render(overlaps_window(
             ScopeHistory::ObservedAt,
             TimeInterval::Between {
                 from: instant("2018-08-01T12:00:00Z"),
@@ -176,55 +177,50 @@ mod tests {
             &HistoryBranch::live(),
             &HistoryOf::EveryEntity,
         ));
-        assert!(sql.contains("\"sh\".\"observed_at\" < "), "{sql}");
-        assert!(!sql.contains("\"sh\".\"observed_at\" >= "), "{sql}");
-        assert!(sql.contains("NOT EXISTS"), "{sql}");
+        assert_statement_snapshot!("scope-validity-a-between-window-admits-an-event-that-started-before-it", statement);
     }
 
     #[test]
     fn an_unbounded_window_constrains_nothing() {
-        let sql = render(overlaps_window(
+        let statement = render(overlaps_window(
             ScopeHistory::ObservedAt,
             TimeInterval::Unbounded,
             WindowReach::InsideAndInEffect,
             &HistoryBranch::live(),
             &HistoryOf::EveryEntity,
         ));
-        assert!(!sql.contains("\"sh\".\"observed_at\""), "{sql}");
-        assert!(!sql.contains("NOT EXISTS"), "{sql}");
+        assert_statement_snapshot!("scope-validity-an-unbounded-window-constrains-nothing", statement);
     }
 
     #[test]
     fn a_before_window_bounds_only_the_start_of_the_interval() {
-        let sql = render(overlaps_window(
+        let statement = render(overlaps_window(
             ScopeHistory::ObservedAt,
             TimeInterval::Before(instant("2018-08-01T13:00:00Z")),
             WindowReach::InsideAndInEffect,
             &HistoryBranch::live(),
             &HistoryOf::EveryEntity,
         ));
-        assert!(sql.contains("\"sh\".\"observed_at\" < "), "{sql}");
-        assert!(!sql.contains("NOT EXISTS"), "{sql}");
+        assert_statement_snapshot!("scope-validity-a-before-window-bounds-only-the-start-of-the-interval", statement);
     }
 
     #[test]
     fn an_after_window_bounds_only_the_end_of_the_interval() {
-        let sql = render(overlaps_window(
+        let statement = render(overlaps_window(
             ScopeHistory::ObservedAt,
             TimeInterval::After(instant("2018-08-01T12:00:00Z")),
             WindowReach::InsideAndInEffect,
             &HistoryBranch::live(),
             &HistoryOf::EveryEntity,
         ));
-        assert!(!sql.contains("\"sh\".\"observed_at\" < "), "{sql}");
-        assert!(sql.contains("NOT EXISTS"), "{sql}");
+        assert_statement_snapshot!("scope-validity-an-after-window-bounds-only-the-end-of-the-interval", statement);
     }
 
     /// Clause 5.7.4.4: read inside only, an event counts when it lies at or
     /// after the window's opening, and no supersession is probed.
     #[test]
     fn an_inside_reach_admits_only_events_inside_the_window() {
-        let sql = render(overlaps_window(
+        let statement = render(overlaps_window(
             ScopeHistory::ObservedAt,
             TimeInterval::Between {
                 from: instant("2018-08-01T12:00:00Z"),
@@ -234,26 +230,21 @@ mod tests {
             &HistoryBranch::live(),
             &HistoryOf::EveryEntity,
         ));
-        assert!(sql.contains("\"sh\".\"observed_at\" >= '2018-08-01 12:00:00"), "{sql}");
-        assert!(sql.contains("\"sh\".\"observed_at\" < '2018-08-01 13:00:00"), "{sql}");
-        assert!(!sql.contains("NOT EXISTS"), "{sql}");
+        assert_statement_snapshot!("scope-validity-an-inside-reach-admits-only-events-inside-the-window", statement);
     }
 
     /// The supersession probe compares strictly later events and stays inside
     /// the entity the outer event belongs to.
     #[test]
     fn supersession_is_strict_and_confined_to_one_entity() {
-        let sql = render(overlaps_window(
+        let statement = render(overlaps_window(
             ScopeHistory::ObservedAt,
             TimeInterval::After(instant("2018-08-01T12:00:00Z")),
             WindowReach::InsideAndInEffect,
             &HistoryBranch::live(),
             &HistoryOf::EveryEntity,
         ));
-        assert!(sql.contains("\"sh_next\".\"observed_at\" > \"sh\".\"observed_at\""), "{sql}");
-        assert!(!sql.contains("\"sh_next\".\"observed_at\" >= \"sh\".\"observed_at\""), "{sql}");
-        assert!(sql.contains("\"re\".\"id\" = \"sh\".\"entity_id\""), "{sql}");
-        assert!(sql.contains("\"pe\".\"entity_id\" = \"sh\".\"entity_id\""), "{sql}");
+        assert_statement_snapshot!("scope-validity-supersession-is-strict-and-confined-to-one-entity", statement);
     }
 
     /// An event read for an Evolution by key carries the key and no
@@ -273,8 +264,7 @@ mod tests {
             &HistoryBranch::live_recorded(),
             &of,
         ));
-        assert!(recorded.contains(r#""rsh"."entity_key" = "sh"."entity_key""#), "{recorded}");
-        assert!(!recorded.contains("entities") && !recorded.contains("entity_id"), "{recorded}");
+        assert_statement_snapshot!("scope-validity-supersession-names-the-evolution-by-what-the-event-source-projects-1", recorded);
         let queued = render(overlaps_window(
             ScopeHistory::ObservedAt,
             after,
@@ -282,13 +272,12 @@ mod tests {
             &HistoryBranch::live(),
             &of,
         ));
-        assert!(queued.contains(r#""re"."id" = "sh"."entity_id""#), "{queued}");
-        assert!(queued.contains(r#""pe"."entity_id" = "sh"."entity_id""#), "{queued}");
+        assert_statement_snapshot!("scope-validity-supersession-names-the-evolution-by-what-the-event-source-projects-2", queued);
     }
 
     #[test]
     fn an_event_carrying_no_instant_on_the_axis_is_excluded() {
-        let sql = render(Condition::all().add(positioned_on_axis(ScopeHistory::ObservedAt)));
-        assert!(sql.contains("\"sh\".\"observed_at\" IS NOT NULL"), "{sql}");
+        let statement = render(Condition::all().add(positioned_on_axis(ScopeHistory::ObservedAt)));
+        assert_statement_snapshot!("scope-validity-an-event-carrying-no-instant-on-the-axis-is-excluded", statement);
     }
 }

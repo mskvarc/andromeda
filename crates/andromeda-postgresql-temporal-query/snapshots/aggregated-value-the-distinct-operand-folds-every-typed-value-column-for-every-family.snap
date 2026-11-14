@@ -1,0 +1,13 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/aggregated_value.rs
+---
+SELECT
+  COALESCE(
+    "ah"."value_number"::text,
+    "ah"."value_string"::text,
+    "ah"."value_boolean"::text,
+    "ah"."value_geometry"::text,
+    "ah"."value_object"::text,
+    "ah"."value_date_time"::text,
+    "ah"."value_uri"::text
+  )

@@ -4,4 +4,6 @@
 conductor
 results*
 *.stderr
+*.snap.new
+*.pending-snap
 

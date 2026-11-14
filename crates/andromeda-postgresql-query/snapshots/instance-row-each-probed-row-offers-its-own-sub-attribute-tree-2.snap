@@ -1,0 +1,5 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/instance_row.rs
+---
+SELECT
+  "qh"."sub_attributes"

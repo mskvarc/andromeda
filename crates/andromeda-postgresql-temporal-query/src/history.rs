@@ -238,8 +238,9 @@ mod tests {
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
         history_source::HistoryBranch,
     };
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use iri_rs::IriBuf;
-    use sea_query::{IntoIden, PostgresQueryBuilder};
+    use sea_query::{IntoIden, SelectStatement};
     use std::{num::NonZeroU32, slice};
 
     /// The one entity these tests build a history statement for.
@@ -267,19 +268,15 @@ mod tests {
             .build()
     }
 
-    /// The stage-2 statement rendered as SQL with its values inlined, which is
-    /// what the shape assertions read.
-    fn sql_of(compiled: &CompiledTemporalQuery) -> String {
-        build_temporal_history_query(&HistoryBranch::live(), slice::from_ref(&vehicle_id()), compiled, &QueryNames::default()).to_string(PostgresQueryBuilder)
+    /// The stage-2 statement over the live branch for the one entity.
+    fn statement_of(compiled: &CompiledTemporalQuery) -> SelectStatement {
+        build_temporal_history_query(&HistoryBranch::live(), slice::from_ref(&vehicle_id()), compiled, &QueryNames::default())
     }
 
     #[test]
     fn build_temporal_history_no_filters() {
-        let sql = sql_of(&minimal_compiled());
-        assert!(sql.contains("\"re\".\"id\" ="), "{sql}");
-        assert!(sql.contains("attribute_history"), "{sql}");
-        assert!(sql.contains("JOIN \"attribute_names\""), "{sql}");
-        assert!(sql.contains("ORDER BY"), "{sql}");
+        let statement = statement_of(&minimal_compiled());
+        assert_statement_snapshot!("history-build-temporal-history-no-filters", statement);
     }
 
     /// Clause 5.6.6 leaves the evolution standing when the current entity is
@@ -287,18 +284,8 @@ mod tests {
     /// identity row and not through the current-state tables.
     #[test]
     fn history_reaches_the_entity_through_the_temporal_catalogue() {
-        let sql = sql_of(&minimal_compiled());
-        assert!(
-            sql.contains("JOIN \"temporal_attribute_streams\" AS \"rs\" ON \"rs\".\"stream_key\" = \"rh\".\"stream_key\""),
-            "{sql}"
-        );
-        assert!(
-            sql.contains("JOIN \"entities\" AS \"re\" ON \"re\".\"entity_key\" = \"rs\".\"entity_key\""),
-            "{sql}"
-        );
-        for current_state in ["\"entity_search\"", "\"current_attributes\""] {
-            assert!(!sql.contains(current_state), "{current_state}: {sql}");
-        }
+        let statement = statement_of(&minimal_compiled());
+        assert_statement_snapshot!("history-history-reaches-the-entity-through-the-temporal-catalogue", statement);
     }
 
     /// The kind of a historical instance is a fact of the row, because the
@@ -306,11 +293,8 @@ mod tests {
     /// reinterpret older rows through it.
     #[test]
     fn every_row_carries_its_own_attribute_and_value_kind() {
-        let sql = sql_of(&minimal_compiled());
-        assert!(sql.contains("\"ah\".\"attribute_kind\""), "{sql}");
-        assert!(sql.contains("\"ah\".\"value_kind\""), "{sql}");
-        assert!(!sql.contains("\"attribute_type\""), "{sql}");
-        assert!(!sql.contains("\"value_type\""), "{sql}");
+        let statement = statement_of(&minimal_compiled());
+        assert_statement_snapshot!("history-every-row-carries-its-own-attribute-and-value-kind", statement);
     }
 
     /// Clause 4.5.7: a client-supplied `instanceId` survives verbatim while a
@@ -318,10 +302,8 @@ mod tests {
     /// both columns are projected and the reconstruction picks the populated one.
     #[test]
     fn both_halves_of_the_instance_identity_are_projected() {
-        let sql = sql_of(&minimal_compiled());
-        assert!(sql.contains("\"ah\".\"generated_instance_id\""), "{sql}");
-        assert!(sql.contains("\"ah\".\"verbatim_instance_id\""), "{sql}");
-        assert!(!sql.contains("\"instance_id\""), "{sql}");
+        let statement = statement_of(&minimal_compiled());
+        assert_statement_snapshot!("history-both-halves-of-the-instance-identity-are-projected", statement);
     }
 
     /// All four axes of clause 5.2.21 are rendered, and the operational
@@ -329,12 +311,8 @@ mod tests {
     /// an axis the row does not carry: no axis is coalesced with another.
     #[test]
     fn all_four_time_axes_are_projected_without_substitution() {
-        let sql = sql_of(&minimal_compiled());
-        for column in ["observed_at", "created_at", "modified_at", "deleted_at", "recorded_at"] {
-            assert!(sql.contains(&format!("\"ah\".\"{column}\"")), "{column} missing: {sql}");
-        }
-        assert!(!sql.contains("COALESCE(\"ah\""), "{sql}");
-        assert!(sql.contains(r#""ah"."observed_at" IS NOT NULL"#), "{sql}");
+        let statement = statement_of(&minimal_compiled());
+        assert_statement_snapshot!("history-all-four-time-axes-are-projected-without-substitution", statement);
     }
 
     /// Clause 5.2.21: the deletion axis exists only on the rows that record a
@@ -344,25 +322,24 @@ mod tests {
     fn the_deleted_at_axis_selects_the_rows_that_carry_it() {
         let mut compiled = minimal_compiled();
         compiled.window.timeproperty = TimeProp::Deleted;
-        let sql = sql_of(&compiled);
-        assert!(sql.contains("\"ah\".\"deleted_at\" IS NOT NULL"), "{sql}");
-        assert!(!sql.contains("urn:ngsi-ld:null"), "{sql}");
+        let statement = statement_of(&compiled);
+        assert_statement_snapshot!("history-the-deleted-at-axis-selects-the-rows-that-carry-it", statement);
     }
 
     #[test]
     fn build_temporal_history_before() {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::Before("2024-01-15T10:00:00Z".parse().expect("valid instant"));
-        let sql = sql_of(&compiled);
-        assert!(sql.contains("\"ah\".\"observed_at\" <"), "{sql}");
+        let statement = statement_of(&compiled);
+        assert_statement_snapshot!("history-build-temporal-history-before", statement);
     }
 
     #[test]
     fn build_temporal_history_after() {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After("2024-01-15T10:00:00Z".parse().expect("valid instant"));
-        let sql = sql_of(&compiled);
-        assert!(sql.contains("\"ah\".\"observed_at\" >="), "{sql}");
+        let statement = statement_of(&compiled);
+        assert_statement_snapshot!("history-build-temporal-history-after", statement);
     }
 
     #[test]
@@ -372,9 +349,8 @@ mod tests {
             from: "2024-01-15T10:00:00Z".parse().expect("valid instant"),
             to: "2024-01-15T12:00:00Z".parse().expect("valid instant"),
         };
-        let sql = sql_of(&compiled);
-        assert!(sql.contains(">="), "{sql}");
-        assert!(sql.contains('<'), "{sql}");
+        let statement = statement_of(&compiled);
+        assert_statement_snapshot!("history-build-temporal-history-between", statement);
     }
 
     /// Clause 4.11 defaults the selector to `observedAt`; each axis is filtered
@@ -382,19 +358,20 @@ mod tests {
     /// `observedAt` window.
     #[test]
     fn each_time_property_filters_its_own_column() {
-        let expected = [
-            (TimeProp::Observed, "\"ah\".\"observed_at\" <"),
-            (TimeProp::Created, "\"ah\".\"created_at\" <"),
-            (TimeProp::Modified, "\"ah\".\"modified_at\" <"),
-            (TimeProp::Deleted, "\"ah\".\"deleted_at\" <"),
-        ];
-        for (prop, predicate) in expected {
+        let before_on = |prop: TimeProp| {
             let mut compiled = minimal_compiled();
             compiled.window.timeproperty = prop;
             compiled.window.interval = TimeInterval::Before("2024-01-15T10:00:00Z".parse().expect("valid instant"));
-            let sql = sql_of(&compiled);
-            assert!(sql.contains(predicate), "{prop}: {sql}");
-        }
+            statement_of(&compiled)
+        };
+        let observed = before_on(TimeProp::Observed);
+        assert_statement_snapshot!("history-each-time-property-filters-its-own-column-1", observed);
+        let created = before_on(TimeProp::Created);
+        assert_statement_snapshot!("history-each-time-property-filters-its-own-column-2", created);
+        let modified = before_on(TimeProp::Modified);
+        assert_statement_snapshot!("history-each-time-property-filters-its-own-column-3", modified);
+        let deleted = before_on(TimeProp::Deleted);
+        assert_statement_snapshot!("history-each-time-property-filters-its-own-column-4", deleted);
     }
 
     #[test]
@@ -409,10 +386,8 @@ mod tests {
             types: ResolvedNames::default(),
             ..QueryNames::default()
         };
-        let sql =
-            build_temporal_history_query(&HistoryBranch::live_recorded(), slice::from_ref(&vehicle_id()), &compiled, &names).to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#""ah"."attribute_name_key" = 7"#), "the attrs narrow by dictionary key: {sql}");
-        assert!(!sql.contains(r#""an"."name" ="#), "{sql}");
+        let statement = build_temporal_history_query(&HistoryBranch::live_recorded(), slice::from_ref(&vehicle_id()), &compiled, &names);
+        assert_statement_snapshot!("history-build-temporal-history-with-attrs", statement);
     }
 
     /// Clause 4.5.5: `@none` selects the instance that carries no `datasetId`,
@@ -425,19 +400,18 @@ mod tests {
 
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["@none"]);
-        let sql = sql_of(&compiled);
-        assert!(sql.contains(r#""ah"."dataset_key" = ('')"#), "{sql}");
-        assert!(!sql.contains("urn:ngsi-ld:Dataset"), "{sql}");
+        let none = statement_of(&compiled);
+        assert_statement_snapshot!("history-dataset-id-none-selects-the-default-instance-1", none);
 
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["urn:ngsi-ld:Dataset:one"]);
-        let sql = sql_of(&compiled);
-        assert!(sql.contains(r#""ah"."dataset_key" = 'urn:ngsi-ld:Dataset:one'"#), "{sql}");
+        let one = statement_of(&compiled);
+        assert_statement_snapshot!("history-dataset-id-none-selects-the-default-instance-2", one);
 
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["@none", "urn:ngsi-ld:Dataset:one"]);
-        let sql = sql_of(&compiled);
-        assert!(sql.contains(r#""ah"."dataset_key" = ANY(ARRAY ['urn:ngsi-ld:Dataset:one',''])"#), "{sql}");
+        let both = statement_of(&compiled);
+        assert_statement_snapshot!("history-dataset-id-none-selects-the-default-instance-3", both);
     }
 
     #[test]
@@ -446,11 +420,8 @@ mod tests {
         compiled.representation.format = TemporalFormat::AggregatedValues;
         compiled.representation.aggr_methods = vec![AggrMethod::Avg, AggrMethod::Min, AggrMethod::Max];
         compiled.representation.aggr_period_duration = AggregationPeriod::parse("PT1H").expect("valid period");
-        let sql = sql_of(&compiled);
-        assert!(sql.contains("time_bucket"), "{sql}");
-        assert!(sql.contains("bucket_start"), "{sql}");
-        assert!(sql.contains("agg_avg"), "{sql}");
-        assert!(sql.contains("JOIN \"attribute_names\""), "{sql}");
+        let statement = statement_of(&compiled);
+        assert_statement_snapshot!("history-build-aggregation-query-with-period", statement);
     }
 
     #[test]
@@ -458,9 +429,8 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.representation.format = TemporalFormat::AggregatedValues;
         compiled.representation.aggr_methods = vec![AggrMethod::TotalCount];
-        let sql = sql_of(&compiled);
-        assert!(sql.contains("agg_total_count"), "{sql}");
-        assert!(sql.contains("HAVING (COUNT(*)) > (0)"), "{sql}");
+        let statement = statement_of(&compiled);
+        assert_statement_snapshot!("history-build-aggregation-query-whole-range", statement);
     }
 
     /// Clause 5.7.4.4 keeps the instances that meet the temporal, query and
@@ -469,36 +439,39 @@ mod tests {
     /// axis.
     #[test]
     fn a_temporal_scope_q_leaves_the_instances_of_a_selected_entity_whole() {
-        for axis in [TimeProp::Observed, TimeProp::Modified] {
+        let scoped_on = |axis: TimeProp| {
             let mut scoped = minimal_compiled();
             scoped.window.timeproperty = axis;
             scoped.entities.scope_q = Some(ScopeQuery::parse("/Madrid/#").expect("valid scope query"));
+            statement_of(&scoped)
+        };
+        let unscoped_on = |axis: TimeProp| {
             let mut unscoped = minimal_compiled();
             unscoped.window.timeproperty = axis;
-            let sql = sql_of(&scoped);
-            assert_eq!(sql, sql_of(&unscoped), "{axis}");
-            assert!(!sql.contains("scope_history"), "{axis}: {sql}");
-        }
+            statement_of(&unscoped)
+        };
+        let observed = scoped_on(TimeProp::Observed);
+        assert_eq!(observed, unscoped_on(TimeProp::Observed));
+        assert_statement_snapshot!("history-a-temporal-scope-q-leaves-the-instances-of-a-selected-entity-whole-1", observed);
+        let modified = scoped_on(TimeProp::Modified);
+        assert_eq!(modified, unscoped_on(TimeProp::Modified));
+        assert_statement_snapshot!("history-a-temporal-scope-q-leaves-the-instances-of-a-selected-entity-whole-2", modified);
     }
 
     /// Clause 5.7.3: the evolution of one entity on the live branch is its
     /// recorded rows and its queued entries, both read for that entity alone.
     #[test]
     fn the_history_read_unions_the_pending_rows_of_the_entity() {
-        let sql = sql_of(&minimal_compiled());
-        assert!(sql.contains(r#"UNNEST(ARRAY[ 'urn:ngsi-ld:Vehicle:1' ]) AS "read_entity""#), "{sql}");
-        assert!(sql.contains(r#""re"."id" = "read_entity"."read_entity""#), "{sql}");
-        assert!(sql.contains(r#"UNION ALL (SELECT "pe"."entity_id" AS "entity_id""#), "{sql}");
-        assert!(sql.contains(r#""pe"."entity_id" = "read_entity"."read_entity""#), "{sql}");
+        let live = statement_of(&minimal_compiled());
+        assert_statement_snapshot!("history-the-history-read-unions-the-pending-rows-of-the-entity-1", live);
         let snapshot = Alias::new("snap_7").into_iden();
         let recorded = build_temporal_history_query(
             &HistoryBranch::recorded_in(snapshot),
             slice::from_ref(&vehicle_id()),
             &minimal_compiled(),
             &QueryNames::default(),
-        )
-        .to_string(PostgresQueryBuilder);
-        assert!(!recorded.contains("temporal_append"), "{recorded}");
+        );
+        assert_statement_snapshot!("history-the-history-read-unions-the-pending-rows-of-the-entity-2", recorded);
     }
 
     /// `between` 2024-01-15T10:00Z and 2024-01-16T10:00Z, the window the page
@@ -512,7 +485,7 @@ mod tests {
 
     /// The stage 2 statement of `page` over `interval` on the recorded rows
     /// alone.
-    fn recorded_sql_of(page: InstancePage, interval: TimeInterval) -> String {
+    fn recorded_statement_of(page: InstancePage, interval: TimeInterval) -> SelectStatement {
         let mut compiled = minimal_compiled();
         compiled.instances.page = page;
         compiled.window.interval = interval;
@@ -522,7 +495,6 @@ mod tests {
             &compiled,
             &QueryNames::default(),
         )
-        .to_string(PostgresQueryBuilder)
     }
 
     /// Clauses 5.7.3.4 and 5.7.4.4: `lastN` is the last `n` instances of each
@@ -530,15 +502,8 @@ mod tests {
     /// the read stops after them instead of ranking the window.
     #[test]
     fn a_last_n_page_reads_each_stream_backwards_with_a_limit() {
-        let sql = recorded_sql_of(InstancePage::LastN { n: count(5) }, one_day());
-        assert!(sql.contains("JOIN LATERAL"), "{sql}");
-        assert!(sql.contains(r#""rh"."stream_key" = "st"."stream_key""#), "{sql}");
-        assert!(
-            sql.contains(r#"ORDER BY "ah"."observed_at" DESC, "ah"."write_id" DESC, "ah"."write_ordinal" DESC LIMIT 5"#),
-            "{sql}"
-        );
-        assert!(!sql.contains("OVER"), "{sql}");
-        assert!(sql.contains(r#"FALSE AS "stream_continues""#), "a complete answer reports no cut: {sql}");
+        let statement = recorded_statement_of(InstancePage::LastN { n: count(5) }, one_day());
+        assert_statement_snapshot!("history-a-last-n-page-reads-each-stream-backwards-with-a-limit", statement);
     }
 
     /// Clause 6.3.10 forwards: the page is read through the axis index from
@@ -546,12 +511,8 @@ mod tests {
     /// read goes past the page.
     #[test]
     fn a_forward_page_reads_each_stream_with_a_limit() {
-        let sql = recorded_sql_of(InstancePage::Forward { size: 100 }, one_day());
-        assert!(sql.contains("LEFT JOIN LATERAL"), "{sql}");
-        assert!(sql.contains(r#"ORDER BY "ah"."observed_at" ASC LIMIT 100"#), "{sql}");
-        assert!(sql.contains(r#"ORDER BY "edge_candidates"."edge" ASC LIMIT 1 OFFSET 99"#), "{sql}");
-        assert!(!sql.contains("OVER"), "{sql}");
-        assert!(!sql.contains("COUNT(*)"), "{sql}");
+        let statement = recorded_statement_of(InstancePage::Forward { size: 100 }, one_day());
+        assert_statement_snapshot!("history-a-forward-page-reads-each-stream-with-a-limit", statement);
     }
 
     /// The kept instances stay a subquery behind `OFFSET 0`, so the planner
@@ -559,18 +520,16 @@ mod tests {
     /// it estimates the stream to hold, rather than once per row.
     #[test]
     fn a_page_reads_its_kept_instances_behind_a_fence_after_the_edge() {
-        for page in [
-            InstancePage::Forward { size: 100 },
+        let forward = recorded_statement_of(InstancePage::Forward { size: 100 }, one_day());
+        assert_statement_snapshot!("history-a-page-reads-its-kept-instances-behind-a-fence-after-the-edge-1", forward);
+        let backward = recorded_statement_of(
             InstancePage::Backward {
                 size: 1000,
                 requested: count(5000),
             },
-        ] {
-            let sql = recorded_sql_of(page, one_day());
-            let edge = sql.find(r#"AS "stream_edge""#).expect("the stream edge lateral");
-            let kept = sql.find(r#"OFFSET 0) AS "page""#).expect("the fenced page lateral");
-            assert!(edge < kept, "{sql}");
-        }
+            one_day(),
+        );
+        assert_statement_snapshot!("history-a-page-reads-its-kept-instances-behind-a-fence-after-the-edge-2", backward);
     }
 
     /// The page keeps every instance up to its edge instant rather than a
@@ -579,74 +538,41 @@ mod tests {
     /// previous page ended on and do not count towards the edge.
     #[test]
     fn instances_sharing_an_instant_stay_on_one_page() {
-        let sql = recorded_sql_of(InstancePage::Forward { size: 100 }, one_day());
-        assert!(
-            sql.contains(r#""ah"."observed_at" <= COALESCE("stream_edge"."edge", 'infinity'::timestamptz)"#),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(concat!(
-                r#"AND "ah"."observed_at" > '2024-01-15 10:00:00.000000 +00:00' "#,
-                r#"ORDER BY "ah"."observed_at" ASC LIMIT 100"#
-            )),
-            "{sql}"
-        );
-        let unbounded = recorded_sql_of(InstancePage::Forward { size: 100 }, TimeInterval::Unbounded);
-        assert!(!unbounded.contains(r#""ah"."observed_at" > '"#), "{unbounded}");
-        assert!(
-            unbounded.contains(r#"ORDER BY "ah"."observed_at" ASC LIMIT 100"#),
-            "an unbounded window has no lower bound to leave uncounted: {unbounded}"
-        );
+        let bounded = recorded_statement_of(InstancePage::Forward { size: 100 }, one_day());
+        assert_statement_snapshot!("history-instances-sharing-an-instant-stay-on-one-page-1", bounded);
+        // An unbounded window has no lower bound to leave uncounted.
+        let unbounded = recorded_statement_of(InstancePage::Forward { size: 100 }, TimeInterval::Unbounded);
+        assert_statement_snapshot!("history-instances-sharing-an-instant-stay-on-one-page-2", unbounded);
     }
 
     /// Clause 6.3.10 backwards: `before` is an exclusive bound, so the page
     /// counts every instance and keeps all those from its edge on.
     #[test]
     fn a_backward_page_keeps_every_instance_from_its_edge() {
-        let sql = recorded_sql_of(
+        let statement = recorded_statement_of(
             InstancePage::Backward {
                 size: 1000,
                 requested: count(5000),
             },
             TimeInterval::Before("2024-01-15T10:00:00Z".parse().expect("valid instant")),
         );
-        assert!(sql.contains(r#"ORDER BY "ah"."observed_at" DESC LIMIT 1000"#), "{sql}");
-        assert!(sql.contains("OFFSET 999"), "{sql}");
-        assert!(
-            sql.contains(r#""ah"."observed_at" >= COALESCE("stream_edge"."edge", '-infinity'::timestamptz)"#),
-            "{sql}"
-        );
+        assert_statement_snapshot!("history-a-backward-page-keeps-every-instance-from-its-edge", statement);
     }
 
     /// A page reports whether each stream holds an instance beyond its edge,
     /// which is what the response's `Content-Range` is cut on.
     #[test]
     fn a_page_reports_whether_each_stream_runs_on_beyond_it() {
-        let forward = recorded_sql_of(InstancePage::Forward { size: 100 }, one_day());
-        assert!(forward.contains(r#"AS "stream_continues""#), "{forward}");
-        assert!(forward.contains(r#""ah"."observed_at" > "edge_row"."edge""#), "{forward}");
-        let backward = recorded_sql_of(
+        let forward = recorded_statement_of(InstancePage::Forward { size: 100 }, one_day());
+        assert_statement_snapshot!("history-a-page-reports-whether-each-stream-runs-on-beyond-it-1", forward);
+        let backward = recorded_statement_of(
             InstancePage::Backward {
                 size: 1000,
                 requested: count(5000),
             },
             one_day(),
         );
-        assert!(backward.contains(r#""ah"."observed_at" < "edge_row"."edge""#), "{backward}");
-    }
-
-    /// Every page shape a read compiles to, over a window unbounded on the
-    /// axis.
-    fn every_page() -> [InstancePage; 4] {
-        [
-            InstancePage::Whole,
-            InstancePage::Forward { size: 100 },
-            InstancePage::Backward {
-                size: 1000,
-                requested: count(5000),
-            },
-            InstancePage::LastN { n: count(3) },
-        ]
+        assert_statement_snapshot!("history-a-page-reports-whether-each-stream-runs-on-beyond-it-2", backward);
     }
 
     /// Clause 4.5.7 places every instance of a temporal representation "at a
@@ -655,20 +581,66 @@ mod tests {
     /// only the instances that carry an instant there, and none is read apart.
     #[test]
     fn every_read_on_an_axis_represents_only_the_instances_carrying_it() {
-        for (axis, column) in [
-            (TimeProp::Observed, "observed_at"),
-            (TimeProp::Created, "created_at"),
-            (TimeProp::Modified, "modified_at"),
-            (TimeProp::Deleted, "deleted_at"),
-        ] {
-            for page in every_page() {
-                let sql = recorded_sql_on(axis, page, TimeInterval::Unbounded);
-                let carried = format!(r#""ah"."{column}" IS NOT NULL"#);
-                let missing = format!(r#""ah"."{column}" IS NULL"#);
-                assert!(sql.contains(&carried), "{column}: {sql}");
-                assert!(!sql.contains(&missing), "{column}: {sql}");
-            }
-        }
+        let observed_whole = recorded_statement_on(TimeProp::Observed, InstancePage::Whole, TimeInterval::Unbounded);
+        assert_statement_snapshot!("history-every-read-on-an-axis-represents-only-the-instances-carrying-it-1", observed_whole);
+        let observed_forward = recorded_statement_on(TimeProp::Observed, InstancePage::Forward { size: 100 }, TimeInterval::Unbounded);
+        assert_statement_snapshot!("history-every-read-on-an-axis-represents-only-the-instances-carrying-it-2", observed_forward);
+        let observed_backward = recorded_statement_on(
+            TimeProp::Observed,
+            InstancePage::Backward {
+                size: 1000,
+                requested: count(5000),
+            },
+            TimeInterval::Unbounded,
+        );
+        assert_statement_snapshot!("history-every-read-on-an-axis-represents-only-the-instances-carrying-it-3", observed_backward);
+        let observed_last_n = recorded_statement_on(TimeProp::Observed, InstancePage::LastN { n: count(3) }, TimeInterval::Unbounded);
+        assert_statement_snapshot!("history-every-read-on-an-axis-represents-only-the-instances-carrying-it-4", observed_last_n);
+        let created_whole = recorded_statement_on(TimeProp::Created, InstancePage::Whole, TimeInterval::Unbounded);
+        assert_statement_snapshot!("history-every-read-on-an-axis-represents-only-the-instances-carrying-it-5", created_whole);
+        let created_forward = recorded_statement_on(TimeProp::Created, InstancePage::Forward { size: 100 }, TimeInterval::Unbounded);
+        assert_statement_snapshot!("history-every-read-on-an-axis-represents-only-the-instances-carrying-it-6", created_forward);
+        let created_backward = recorded_statement_on(
+            TimeProp::Created,
+            InstancePage::Backward {
+                size: 1000,
+                requested: count(5000),
+            },
+            TimeInterval::Unbounded,
+        );
+        assert_statement_snapshot!("history-every-read-on-an-axis-represents-only-the-instances-carrying-it-7", created_backward);
+        let created_last_n = recorded_statement_on(TimeProp::Created, InstancePage::LastN { n: count(3) }, TimeInterval::Unbounded);
+        assert_statement_snapshot!("history-every-read-on-an-axis-represents-only-the-instances-carrying-it-8", created_last_n);
+        let modified_whole = recorded_statement_on(TimeProp::Modified, InstancePage::Whole, TimeInterval::Unbounded);
+        assert_statement_snapshot!("history-every-read-on-an-axis-represents-only-the-instances-carrying-it-9", modified_whole);
+        let modified_forward = recorded_statement_on(TimeProp::Modified, InstancePage::Forward { size: 100 }, TimeInterval::Unbounded);
+        assert_statement_snapshot!("history-every-read-on-an-axis-represents-only-the-instances-carrying-it-10", modified_forward);
+        let modified_backward = recorded_statement_on(
+            TimeProp::Modified,
+            InstancePage::Backward {
+                size: 1000,
+                requested: count(5000),
+            },
+            TimeInterval::Unbounded,
+        );
+        assert_statement_snapshot!("history-every-read-on-an-axis-represents-only-the-instances-carrying-it-11", modified_backward);
+        let modified_last_n = recorded_statement_on(TimeProp::Modified, InstancePage::LastN { n: count(3) }, TimeInterval::Unbounded);
+        assert_statement_snapshot!("history-every-read-on-an-axis-represents-only-the-instances-carrying-it-12", modified_last_n);
+        let deleted_whole = recorded_statement_on(TimeProp::Deleted, InstancePage::Whole, TimeInterval::Unbounded);
+        assert_statement_snapshot!("history-every-read-on-an-axis-represents-only-the-instances-carrying-it-13", deleted_whole);
+        let deleted_forward = recorded_statement_on(TimeProp::Deleted, InstancePage::Forward { size: 100 }, TimeInterval::Unbounded);
+        assert_statement_snapshot!("history-every-read-on-an-axis-represents-only-the-instances-carrying-it-14", deleted_forward);
+        let deleted_backward = recorded_statement_on(
+            TimeProp::Deleted,
+            InstancePage::Backward {
+                size: 1000,
+                requested: count(5000),
+            },
+            TimeInterval::Unbounded,
+        );
+        assert_statement_snapshot!("history-every-read-on-an-axis-represents-only-the-instances-carrying-it-15", deleted_backward);
+        let deleted_last_n = recorded_statement_on(TimeProp::Deleted, InstancePage::LastN { n: count(3) }, TimeInterval::Unbounded);
+        assert_statement_snapshot!("history-every-read-on-an-axis-represents-only-the-instances-carrying-it-16", deleted_last_n);
     }
 
     /// Clause 4.5.19 places every aggregate in a period of the time range, the
@@ -677,24 +649,47 @@ mod tests {
     /// whole range, folds only instances that carry an instant on the axis.
     #[test]
     fn every_aggregation_folds_only_the_instances_carrying_the_axis() {
-        for period in ["PT1H", "PT0S"] {
-            for page in every_page() {
-                let mut compiled = minimal_compiled();
-                compiled.representation.format = TemporalFormat::AggregatedValues;
-                compiled.representation.aggr_methods = vec![AggrMethod::Sum];
-                compiled.representation.aggr_period_duration = AggregationPeriod::parse(period).expect("valid period");
-                compiled.instances.page = page;
-                let sql = build_temporal_history_query(
-                    &HistoryBranch::live_recorded(),
-                    slice::from_ref(&vehicle_id()),
-                    &compiled,
-                    &QueryNames::default(),
-                )
-                .to_string(PostgresQueryBuilder);
-                assert!(sql.contains(r#""ah"."observed_at" IS NOT NULL"#), "{period}: {sql}");
-                assert!(!sql.contains(r#""ah"."observed_at" IS NULL"#), "{period}: {sql}");
-            }
-        }
+        let aggregated = |period: &str, page: InstancePage| {
+            let mut compiled = minimal_compiled();
+            compiled.representation.format = TemporalFormat::AggregatedValues;
+            compiled.representation.aggr_methods = vec![AggrMethod::Sum];
+            compiled.representation.aggr_period_duration = AggregationPeriod::parse(period).expect("valid period");
+            compiled.instances.page = page;
+            build_temporal_history_query(
+                &HistoryBranch::live_recorded(),
+                slice::from_ref(&vehicle_id()),
+                &compiled,
+                &QueryNames::default(),
+            )
+        };
+        let hour_whole = aggregated("PT1H", InstancePage::Whole);
+        assert_statement_snapshot!("history-every-aggregation-folds-only-the-instances-carrying-the-axis-1", hour_whole);
+        let hour_forward = aggregated("PT1H", InstancePage::Forward { size: 100 });
+        assert_statement_snapshot!("history-every-aggregation-folds-only-the-instances-carrying-the-axis-2", hour_forward);
+        let hour_backward = aggregated(
+            "PT1H",
+            InstancePage::Backward {
+                size: 1000,
+                requested: count(5000),
+            },
+        );
+        assert_statement_snapshot!("history-every-aggregation-folds-only-the-instances-carrying-the-axis-3", hour_backward);
+        let hour_last_n = aggregated("PT1H", InstancePage::LastN { n: count(3) });
+        assert_statement_snapshot!("history-every-aggregation-folds-only-the-instances-carrying-the-axis-4", hour_last_n);
+        let range_whole = aggregated("PT0S", InstancePage::Whole);
+        assert_statement_snapshot!("history-every-aggregation-folds-only-the-instances-carrying-the-axis-5", range_whole);
+        let range_forward = aggregated("PT0S", InstancePage::Forward { size: 100 });
+        assert_statement_snapshot!("history-every-aggregation-folds-only-the-instances-carrying-the-axis-6", range_forward);
+        let range_backward = aggregated(
+            "PT0S",
+            InstancePage::Backward {
+                size: 1000,
+                requested: count(5000),
+            },
+        );
+        assert_statement_snapshot!("history-every-aggregation-folds-only-the-instances-carrying-the-axis-7", range_backward);
+        let range_last_n = aggregated("PT0S", InstancePage::LastN { n: count(3) });
+        assert_statement_snapshot!("history-every-aggregation-folds-only-the-instances-carrying-the-axis-8", range_last_n);
     }
 
     /// On the live branch a stream's recorded rows and its queued entries are
@@ -705,28 +700,21 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.instances.page = InstancePage::LastN { n: count(5) };
         compiled.window.interval = one_day();
-        let sql = sql_of(&compiled);
-        assert_eq!(sql.matches("LIMIT 5").count(), 3, "both parts and their join: {sql}");
-        assert!(sql.contains(r#""rh"."stream_key" = "st"."stream_key""#), "{sql}");
-        assert!(sql.contains(r#""pe"."attribute_name_key" = "st"."attribute_name_key""#), "{sql}");
-        assert!(sql.contains(r#""pe"."dataset_key" = "st"."dataset_key""#), "{sql}");
+        let statement = statement_of(&compiled);
+        assert_statement_snapshot!("history-each-part-of-a-live-stream-is-ordered-and-limited-on-its-own", statement);
     }
 
     /// Every instance of a stream carries its attribute's name, so the name is
     /// joined once per stream rather than per instance read.
     #[test]
     fn a_page_joins_the_attribute_name_once_per_stream() {
-        let sql = recorded_sql_of(InstancePage::Forward { size: 100 }, one_day());
-        assert_eq!(sql.matches(r#"JOIN "attribute_names""#).count(), 1, "{sql}");
-        assert!(
-            sql.contains(r#"JOIN "attribute_names" AS "an" ON "an"."attribute_name_key" = "st"."attribute_name_key""#),
-            "{sql}"
-        );
+        let statement = recorded_statement_of(InstancePage::Forward { size: 100 }, one_day());
+        assert_statement_snapshot!("history-a-page-joins-the-attribute-name-once-per-stream", statement);
     }
 
     /// The stage 2 statement of `page` over `interval` on the axis `axis`, on
     /// the recorded rows alone.
-    fn recorded_sql_on(axis: TimeProp, page: InstancePage, interval: TimeInterval) -> String {
+    fn recorded_statement_on(axis: TimeProp, page: InstancePage, interval: TimeInterval) -> SelectStatement {
         let mut compiled = minimal_compiled();
         compiled.window.timeproperty = axis;
         compiled.instances.page = page;
@@ -737,7 +725,6 @@ mod tests {
             &compiled,
             &QueryNames::default(),
         )
-        .to_string(PostgresQueryBuilder)
     }
 
     /// Clause 4.8 has the broker stamp `createdAt` and `modifiedAt` on every
@@ -746,15 +733,10 @@ mod tests {
     /// index keys.
     #[test]
     fn a_system_time_page_reads_one_recorded_part_ordered_on_the_axis_column() {
-        for (axis, column) in [(TimeProp::Created, "created_at"), (TimeProp::Modified, "modified_at")] {
-            let sql = recorded_sql_on(axis, InstancePage::Forward { size: 100 }, one_day());
-            let ordered = format!(r#"ORDER BY "ah"."{column}" ASC LIMIT 100"#);
-            assert_eq!(sql.matches(&ordered).count(), 1, "one edge read: {sql}");
-            assert!(sql.contains(&format!(r#""ah"."{column}" >= '"#)), "{sql}");
-            assert!(sql.contains(&format!(r#""ah"."{column}" <= COALESCE("stream_edge"."edge""#)), "{sql}");
-            assert!(!sql.contains("DISTINCT FROM") && !sql.contains(r#""rh"."recorded_at" AS"#), "{sql}");
-            assert!(!sql.contains(") OR EXISTS(SELECT 1 FROM"), "one part to continue in: {sql}");
-        }
+        let created = recorded_statement_on(TimeProp::Created, InstancePage::Forward { size: 100 }, one_day());
+        assert_statement_snapshot!("history-a-system-time-page-reads-one-recorded-part-ordered-on-the-axis-column-1", created);
+        let modified = recorded_statement_on(TimeProp::Modified, InstancePage::Forward { size: 100 }, one_day());
+        assert_statement_snapshot!("history-a-system-time-page-reads-one-recorded-part-ordered-on-the-axis-column-2", modified);
     }
 
     /// A `lastN` on a system-time axis takes the last `n` of the recorded
@@ -762,27 +744,23 @@ mod tests {
     /// instant they project.
     #[test]
     fn a_system_time_last_n_takes_the_last_instances_on_the_axis_column() {
-        let sql = recorded_sql_on(TimeProp::Modified, InstancePage::LastN { n: count(5) }, one_day());
-        assert_eq!(sql.matches("LIMIT 5").count(), 2, "the part and the join: {sql}");
-        assert!(sql.contains(r#"ORDER BY "ah"."modified_at" DESC, "ah"."write_id" DESC"#), "{sql}");
-        assert!(sql.contains(r#"ORDER BY "latest"."modified_at" DESC, "latest"."write_id" DESC"#), "{sql}");
+        let statement = recorded_statement_on(TimeProp::Modified, InstancePage::LastN { n: count(5) }, one_day());
+        assert_statement_snapshot!("history-a-system-time-last-n-takes-the-last-instances-on-the-axis-column", statement);
     }
 
     /// `observedAt` is the client's instant, so a page on it reads each
     /// stream's recorded rows whole through the axis index.
     #[test]
     fn an_observed_page_reads_each_stream_in_one_recorded_part() {
-        let sql = recorded_sql_on(TimeProp::Observed, InstancePage::Forward { size: 100 }, one_day());
-        assert_eq!(sql.matches(r#"ORDER BY "ah"."observed_at" ASC LIMIT 100"#).count(), 1, "{sql}");
-        assert!(!sql.contains("DISTINCT FROM"), "{sql}");
+        let statement = recorded_statement_on(TimeProp::Observed, InstancePage::Forward { size: 100 }, one_day());
+        assert_statement_snapshot!("history-an-observed-page-reads-each-stream-in-one-recorded-part", statement);
     }
 
     /// Every instance in the window is read when no page applies: the one
     /// LATERAL is the read of each entity, none reads a stream on its own.
     #[test]
     fn the_whole_history_reads_every_instance() {
-        let sql = sql_of(&minimal_compiled());
-        pretty_assertions::assert_eq!(sql.matches("LATERAL").count(), 1, "{sql}");
-        assert!(!sql.contains("LIMIT"), "{sql}");
+        let statement = statement_of(&minimal_compiled());
+        assert_statement_snapshot!("history-the-whole-history-reads-every-instance", statement);
     }
 }

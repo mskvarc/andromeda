@@ -1,0 +1,17 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/attribute_holders.rs
+---
+SELECT
+  "attribute_name_key",
+  "entity_type_name_key",
+  SUM("stream_delta")::bigint AS "streams"
+FROM
+  "snap_2"."stream_type_census"
+WHERE
+  "attribute_name_key" = $1
+GROUP BY
+  "attribute_name_key",
+  "entity_type_name_key"
+HAVING
+  SUM("stream_delta") > (0)
+1: Int 7

@@ -126,42 +126,42 @@ mod tests {
         language_term::language_term,
     };
     use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse};
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Expr as SeaExpr, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Expr as SeaExpr, Query, SelectStatement};
 
-    /// The term of a one-predicate filter over a stand-in map, rendered.
-    fn render(q: &str, selection: LanguageSelection<'_>) -> String {
+    /// The term of a one-predicate filter over a stand-in map.
+    fn render(q: &str, selection: LanguageSelection<'_>) -> SelectStatement {
         let Expr::Pred(pred) = parse(q).expect("parses") else {
             panic!("a single predicate");
         };
         let map = LanguageMap::of_column(SeaExpr::col(Alias::new("map")));
-        Query::select()
-            .expr(language_term(&pred, &map, selection))
-            .to_owned()
-            .to_string(PostgresQueryBuilder)
+        Query::select().expr(language_term(&pred, &map, selection)).to_owned()
     }
 
     /// Clause 4.9 recommends the UCA for ordering text strings, under the ICU
     /// root collation clause 4.23.1 makes the default.
     #[test]
     fn a_string_ordering_compares_under_the_icu_root_collation() {
-        let sql = render("\"https://example.com/name\">\"m\"", LanguageSelection::AnyLanguage);
-        assert!(sql.contains(r#"COLLATE "und-x-icu") > 'm'"#), "{sql}");
+        let statement = render("\"https://example.com/name\">\"m\"", LanguageSelection::AnyLanguage);
+        assert_statement_snapshot!("language-term-a-string-ordering-compares-under-the-icu-root-collation", statement);
     }
 
     /// RFC 8259 section 8.3 makes String equality code unit identity, the byte
     /// order of the stored String columns.
     #[test]
     fn a_string_equality_compares_under_the_byte_order_of_the_string_columns() {
-        let sql = render("\"https://example.com/name\"==\"m\"", LanguageSelection::AnyLanguage);
-        assert!(sql.contains(r#"COLLATE "C") = 'm'"#), "{sql}");
+        let statement = render("\"https://example.com/name\"==\"m\"", LanguageSelection::AnyLanguage);
+        assert_statement_snapshot!("language-term-a-string-equality-compares-under-the-byte-order-of-the-string-columns", statement);
     }
 
     /// A number or a boolean is a datatype no string carries.
     #[test]
     fn a_number_or_boolean_operand_matches_no_string() {
-        for q in ["\"https://example.com/name\">5", "\"https://example.com/name\"==true"] {
-            assert!(render(q, LanguageSelection::AnyLanguage).contains("FALSE"), "{q}");
+        for (index, q) in ["\"https://example.com/name\">5", "\"https://example.com/name\"==true"].into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!("language-term-a-number-or-boolean-operand-matches-no-string-{}", index + 1),
+                render(q, LanguageSelection::AnyLanguage)
+            );
         }
     }
 
@@ -169,28 +169,37 @@ mod tests {
     /// selection when no string satisfies the positive form.
     #[test]
     fn the_complementary_operators_deny_every_string() {
-        for q in [
+        for (index, q) in [
             "\"https://example.com/name\"!~=\"^D\"",
             "\"https://example.com/name\"!=\"a\"..\"m\"",
             "\"https://example.com/name\"!=\"Door\"",
-        ] {
-            let sql = render(q, LanguageSelection::AnyLanguage);
-            assert!(sql.contains("NOT EXISTS"), "{q}: {sql}");
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_statement_snapshot!(
+                format!("language-term-the-complementary-operators-deny-every-string-{}", index + 1),
+                render(q, LanguageSelection::AnyLanguage)
+            );
         }
     }
 
     /// The positive operators ask for one string that satisfies them.
     #[test]
     fn the_positive_operators_ask_for_one_string() {
-        for q in [
+        for (index, q) in [
             "\"https://example.com/name\"~=\"^D\"",
             "\"https://example.com/name\"==\"a\"..\"m\"",
             "\"https://example.com/name\"<=\"m\"",
             "\"https://example.com/name\"==\"Door\",\"Gate\"",
-        ] {
-            let sql = render(q, LanguageSelection::AnyLanguage);
-            assert!(!sql.contains("NOT "), "{q}: {sql}");
-            assert_eq!(sql.matches("EXISTS").count(), 1, "{q}: {sql}");
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_statement_snapshot!(
+                format!("language-term-the-positive-operators-ask-for-one-string-{}", index + 1),
+                render(q, LanguageSelection::AnyLanguage)
+            );
         }
     }
 }

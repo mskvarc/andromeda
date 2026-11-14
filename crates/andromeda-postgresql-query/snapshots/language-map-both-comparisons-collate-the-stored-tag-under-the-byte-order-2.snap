@@ -1,0 +1,13 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/language_map.rs
+---
+SELECT
+  EXISTS (
+    SELECT
+      1
+    FROM
+      jsonb_array_elements("map") AS "ls"
+    WHERE
+      (("ls"."value" ->> ('@language')) COLLATE "C") ~* ($1::text)
+  )
+1: String '^it(-[a-z0-9]{2,8})*-it(-[a-z0-9]{1,8})*$'

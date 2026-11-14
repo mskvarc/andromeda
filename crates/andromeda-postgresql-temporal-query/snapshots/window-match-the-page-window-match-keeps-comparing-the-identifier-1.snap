@@ -1,0 +1,68 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/stage1/window_match.rs
+---
+SELECT
+  "e"."id" AS "entity_id"
+FROM
+  (
+    SELECT
+      "entity_key",
+      "id"
+    FROM
+      "entity_type_members"
+    WHERE
+      "entity_type_name_key" = (3)
+      AND "is_evolution_member"
+  ) AS "e"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      (
+        SELECT
+          "re"."id" AS "entity_id",
+          "rs"."attribute_name_key" AS "attribute_name_key",
+          "rs"."dataset_key" AS "dataset_key",
+          "rh"."recorded_at",
+          "rh"."write_id",
+          "rh"."write_ordinal",
+          "rh"."attribute_kind",
+          "rh"."value_kind",
+          "rh"."observed_at",
+          "rh"."created_at",
+          "rh"."modified_at",
+          "rh"."deleted_at",
+          "rh"."value_date_time",
+          "rh"."expires_at",
+          "rh"."generated_instance_id",
+          "rh"."value_type_key",
+          "rh"."value_datatype_key",
+          "rh"."unit_code_id",
+          "rh"."value_boolean",
+          "rh"."verbatim_instance_id",
+          "rh"."value_number",
+          "rh"."value_string",
+          "rh"."value_language",
+          "rh"."value_geometry",
+          "rh"."value_geometry_valid",
+          "rh"."value_geometry_reach",
+          "rh"."value_geometry_members",
+          "rh"."value_object",
+          "rh"."value_uri",
+          "rh"."object_type_keys",
+          "rh"."sub_attributes"
+        FROM
+          "attribute_history" AS "rh"
+          JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+          JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+      ) AS "ah"
+    WHERE
+      "ah"."observed_at" < $1
+      AND "ah"."entity_id" = "e"."id"
+  )
+ORDER BY
+  "e"."id" ASC
+LIMIT
+  20 OFFSET 0
+1: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'

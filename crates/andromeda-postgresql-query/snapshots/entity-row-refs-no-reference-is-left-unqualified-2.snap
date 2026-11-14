@@ -1,0 +1,5 @@
+---
+source: crates/andromeda-postgresql-query/src/entity_row_refs.rs
+---
+SELECT
+  "e"."entity_key"

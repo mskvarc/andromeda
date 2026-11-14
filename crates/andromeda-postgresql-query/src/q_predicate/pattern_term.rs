@@ -104,20 +104,18 @@ mod tests {
         parser::parse,
         predicate::{PatternPolarity, Predicate},
     };
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use sea_query::{Query, SelectStatement};
 
-    fn render(q: &str, polarity: PatternPolarity, row: InstanceRow) -> String {
+    fn render(q: &str, polarity: PatternPolarity, row: InstanceRow) -> SelectStatement {
         let Expr::Pred(pred) = parse(q).expect("parses") else {
             panic!("a single predicate");
         };
         let (Predicate::MatchPattern { pattern, .. } | Predicate::NotMatchPattern { pattern, .. }) = &pred else {
             panic!("a pattern term");
         };
-        Query::select()
-            .cond_where(pattern_value(&pred, pattern, polarity, row))
-            .to_owned()
-            .to_string(PostgresQueryBuilder)
+        Query::select().cond_where(pattern_value(&pred, pattern, polarity, row)).to_owned()
     }
 
     #[test]
@@ -138,25 +136,21 @@ mod tests {
 
     #[test]
     fn a_pattern_on_a_current_row_disjoins_every_target() {
-        let sql = render("\"https://example.com/name\"~=\"^D\"", PatternPolarity::Match, InstanceRow::Current);
-        assert!(sql.contains(r#""ca"."value_string" ~ '^D'"#), "{sql}");
-        assert!(sql.contains(r#"(("ca"."value_long_text") COLLATE "default") ~ '^D'"#), "{sql}");
-        assert!(sql.contains(r#"jsonb_array_elements((CASE WHEN ("ca"."attribute_kind" = (5))"#), "{sql}");
-        assert_eq!(sql.matches(" OR ").count(), 2, "{sql}");
+        let statement = render("\"https://example.com/name\"~=\"^D\"", PatternPolarity::Match, InstanceRow::Current);
+        assert_statement_snapshot!("pattern-term-a-pattern-on-a-current-row-disjoins-every-target", statement);
     }
 
     /// Clause 4.9 `notPatternOp`: no string of a `languageMap` may match.
     #[test]
     fn a_not_pattern_denies_every_string_of_the_language_map() {
-        let sql = render("\"https://example.com/name\"!~=\"^D\"", PatternPolarity::NotMatch, InstanceRow::Current);
-        assert!(sql.contains(r#""ca"."value_string" !~ '^D'"#), "{sql}");
-        assert!(sql.contains("NOT EXISTS"), "{sql}");
+        let statement = render("\"https://example.com/name\"!~=\"^D\"", PatternPolarity::NotMatch, InstanceRow::Current);
+        assert_statement_snapshot!("pattern-term-a-not-pattern-denies-every-string-of-the-language-map", statement);
     }
 
     /// A Relationship's object is never a pattern target (clause 4.9).
     #[test]
     fn a_pattern_never_reads_a_relationship_object() {
-        let sql = render("\"https://example.com/owner\"~=\"urn:Person:.*\"", PatternPolarity::Match, InstanceRow::Current);
-        assert!(!sql.contains("value_uri") && !sql.contains("value_long_uri"), "{sql}");
+        let statement = render("\"https://example.com/owner\"~=\"urn:Person:.*\"", PatternPolarity::Match, InstanceRow::Current);
+        assert_statement_snapshot!("pattern-term-a-pattern-never-reads-a-relationship-object", statement);
     }
 }

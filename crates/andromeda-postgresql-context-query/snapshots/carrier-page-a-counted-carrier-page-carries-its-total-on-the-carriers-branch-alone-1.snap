@@ -1,0 +1,17 @@
+---
+source: crates/andromeda-postgresql-context-query/src/carrier_page.rs
+---
+SELECT
+  COUNT(*)
+FROM
+  "entities"
+  JOIN "entity_search" ON "entity_search"."entity_key" = "entities"."entity_key"
+WHERE
+  "entities"."created_at" IS NOT NULL
+  AND (
+    "entities"."expires_at" IS NULL
+    OR "entities"."expires_at" > NOW()
+  )
+  AND (
+    "entity_search"."attribute_name_keys" @> (ARRAY[28])
+  )

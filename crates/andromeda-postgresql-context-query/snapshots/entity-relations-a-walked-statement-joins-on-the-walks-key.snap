@@ -1,0 +1,26 @@
+---
+source: crates/andromeda-postgresql-context-query/src/entity_relations.rs
+---
+SELECT
+  "selected"."id"
+FROM
+  (
+    SELECT
+      "entity_key",
+      "id"
+    FROM
+      "entity_type_members"
+    WHERE
+      "entity_type_name_key" = (4)
+      AND "is_current_member"
+  ) AS "selected"
+  JOIN "entity_search" ON "entity_search"."entity_key" = "selected"."entity_key"
+WHERE
+  "selected"."entity_key" NOT IN (
+    SELECT
+      "entity_key"
+    FROM
+      "entities"
+    WHERE
+      "expires_at" <= NOW()
+  )

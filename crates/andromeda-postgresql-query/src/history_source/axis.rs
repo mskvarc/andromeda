@@ -62,8 +62,9 @@ mod tests {
     use crate::history_source::axis::{axis_bound, axis_column, axis_order, axis_present, axis_window};
     use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use chrono::{DateTime, Utc};
-    use sea_query::{Alias, ExprTrait, Iden, Order, PostgresQueryBuilder, Query, SelectStatement};
+    use sea_query::{Alias, ExprTrait, Iden, Order, Query, SelectStatement};
 
     fn instant(raw: &str) -> DateTime<Utc> {
         raw.parse::<NgsiLdDateTime>().expect("a valid instant").get()
@@ -73,10 +74,10 @@ mod tests {
         Alias::new("ah")
     }
 
-    fn rendered(build: impl FnOnce(&mut SelectStatement)) -> String {
+    fn rendered(build: impl FnOnce(&mut SelectStatement)) -> SelectStatement {
         let mut select = Query::select();
         build(&mut select);
-        select.to_string(PostgresQueryBuilder)
+        select
     }
 
     #[test]
@@ -103,16 +104,14 @@ mod tests {
     /// keys.
     #[test]
     fn a_stream_is_ordered_on_the_column_of_its_axis() {
-        for (prop, key) in [
-            (TimeProp::Observed, r#"ORDER BY "ah"."observed_at" ASC"#),
-            (TimeProp::Created, r#"ORDER BY "ah"."created_at" ASC"#),
-            (TimeProp::Modified, r#"ORDER BY "ah"."modified_at" ASC"#),
-            (TimeProp::Deleted, r#"ORDER BY "ah"."deleted_at" ASC"#),
-        ] {
-            let sql = rendered(|select| {
+        for (index, prop) in [TimeProp::Observed, TimeProp::Created, TimeProp::Modified, TimeProp::Deleted]
+            .into_iter()
+            .enumerate()
+        {
+            let statement = rendered(|select| {
                 select.order_by_expr(axis_order(ah(), prop), Order::Asc);
             });
-            assert!(sql.ends_with(key), "{prop}: {sql}");
+            assert_statement_snapshot!(format!("axis-a-stream-is-ordered-on-the-column-of-its-axis-{}", index + 1), statement);
         }
     }
 
@@ -121,17 +120,11 @@ mod tests {
     #[test]
     fn a_bound_on_an_axis_bounds_its_column_alone() {
         let at = instant("2026-01-01T00:00:00Z");
-        for (prop, column) in [
-            (TimeProp::Observed, "observed_at"),
-            (TimeProp::Created, "created_at"),
-            (TimeProp::Deleted, "deleted_at"),
-        ] {
-            let sql = rendered(|select| {
+        for (index, prop) in [TimeProp::Observed, TimeProp::Created, TimeProp::Deleted].into_iter().enumerate() {
+            let statement = rendered(|select| {
                 select.and_where(axis_bound(ah(), prop, |instant| instant.gt(at)));
             });
-            let expected = format!(r#"WHERE "ah"."{column}" > '2026-01-01 00:00:00.000000 +00:00'"#);
-            assert!(sql.ends_with(&expected), "{prop}: {sql}");
-            assert!(!sql.contains("COALESCE"), "{prop}: {sql}");
+            assert_statement_snapshot!(format!("axis-a-bound-on-an-axis-bounds-its-column-alone-{}", index + 1), statement);
         }
     }
 
@@ -142,12 +135,11 @@ mod tests {
             from: instant("2026-01-01T00:00:00Z"),
             to: instant("2026-02-01T00:00:00Z"),
         };
-        for (prop, column) in [(TimeProp::Observed, "observed_at"), (TimeProp::Modified, "modified_at")] {
-            let sql = rendered(|select| {
+        for (index, prop) in [TimeProp::Observed, TimeProp::Modified].into_iter().enumerate() {
+            let statement = rendered(|select| {
                 select.cond_where(axis_window(ah(), prop, &interval));
             });
-            let expected = format!(r#"WHERE "ah"."{column}" >= '2026-01-01 00:00:00.000000 +00:00' AND "ah"."{column}" < '2026-02-01 00:00:00.000000 +00:00'"#);
-            assert!(sql.ends_with(&expected), "{prop}: {sql}");
+            assert_statement_snapshot!(format!("axis-a-window-on-an-axis-bounds-its-column-from-each-side-{}", index + 1), statement);
         }
     }
 
@@ -155,11 +147,11 @@ mod tests {
     /// index, which keeps a row without the axis out.
     #[test]
     fn presence_on_an_axis_is_stated_on_its_column() {
-        for (prop, column) in [(TimeProp::Observed, "observed_at"), (TimeProp::Deleted, "deleted_at")] {
-            let sql = rendered(|select| {
+        for (index, prop) in [TimeProp::Observed, TimeProp::Deleted].into_iter().enumerate() {
+            let statement = rendered(|select| {
                 select.cond_where(axis_present(ah(), prop));
             });
-            assert!(sql.ends_with(&format!(r#"WHERE "ah"."{column}" IS NOT NULL"#)), "{prop}: {sql}");
+            assert_statement_snapshot!(format!("axis-presence-on-an-axis-is-stated-on-its-column-{}", index + 1), statement);
         }
     }
 

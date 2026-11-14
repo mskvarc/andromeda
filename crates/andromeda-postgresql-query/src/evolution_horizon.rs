@@ -30,15 +30,12 @@ pub fn horizon_of(instant: SimpleExpr) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::evolution_horizon::horizon_of;
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Expr, Query};
 
     #[test]
     fn a_horizon_is_the_end_of_the_utc_hour_holding_its_instant() {
-        let sql = Query::select()
-            .expr(horizon_of(Expr::col(Alias::new("observed_at"))))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        assert_eq!(sql, r#"SELECT date_trunc('hour', "observed_at", 'UTC') + (make_interval(secs => 3600))"#);
+        let statement = Query::select().expr(horizon_of(Expr::col(Alias::new("observed_at")))).to_owned();
+        assert_statement_snapshot!("evolution-horizon-a-horizon-is-the-end-of-the-utc-hour-holding-its-instant", statement);
     }
 }

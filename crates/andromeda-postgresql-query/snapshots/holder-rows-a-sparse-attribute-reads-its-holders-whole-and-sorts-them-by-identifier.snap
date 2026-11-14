@@ -1,0 +1,32 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/holder_rows.rs
+---
+SELECT
+  *
+FROM
+  (
+    SELECT DISTINCT
+      ON ("held"."id") "held"."id",
+      "held"."entity_key"
+    FROM
+      (
+        SELECT
+          "hr"."id",
+          "hr"."entity_key"
+        FROM
+          (
+            SELECT
+              "hi"."id",
+              "hs"."entity_key"
+            FROM
+              "temporal_attribute_streams" AS "hs"
+              JOIN "entities" AS "hi" ON "hi"."entity_key" = "hs"."entity_key"
+            WHERE
+              "hs"."attribute_name_key" = (9)
+            ORDER BY
+              "hi"."id" ASC
+          ) AS "hr"
+      ) AS "held"
+    ORDER BY
+      "held"."id" ASC
+  ) AS "e"

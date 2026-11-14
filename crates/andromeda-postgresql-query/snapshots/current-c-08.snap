@@ -1,0 +1,78 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/corpus_statement_tests.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        (
+          NOT COALESCE(
+            "ca"."value_number" = $2
+            OR (
+              "ca"."attribute_kind" <> (6)
+              AND (
+                (
+                  (
+                    "ca"."value_object" @> jsonb_build_array($3::numeric)
+                  )
+                  OR (
+                    "ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $4::numeric))
+                  )
+                  OR (
+                    "ca"."value_object" @> jsonb_build_array($5::text)
+                  )
+                  OR (
+                    "ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $6::text))
+                  )
+                )
+                AND EXISTS (
+                  SELECT
+                    1
+                  FROM
+                    jsonb_array_elements(
+                      (
+                        CASE
+                          WHEN (jsonb_typeof("ca"."value_object") = ('array')) THEN "ca"."value_object"
+                        END
+                      )
+                    ) AS "dm"
+                    LEFT JOIN "entity_type_names" AS "dmt" ON "dmt"."entity_type_name_key" = (
+                      CASE
+                        WHEN ("ca"."attribute_kind" IN (1, 7)) THEN "ca"."value_type_key"
+                      END
+                    )
+                  WHERE
+                    (
+                      CASE
+                        WHEN (
+                          jsonb_typeof(
+                            COALESCE("dm"."value" -> ('@value'), "dm"."value")
+                          ) = ('number')
+                        ) THEN (
+                          COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::numeric WHEN (jsonb_typeof(COALESCE("dm"."value" -> ('@value'), "dm"."value")) = ('string') AND COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN ('http://www.w3.org/2001/XMLSchema#decimal', 'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', 'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', 'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', 'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', 'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') AND (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}')) <> ('NaN') AND pg_input_is_valid(COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'), 'numeric')) THEN (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::numeric END) = $7))), FALSE)) AND (NOT COALESCE("ca"."value_number" = $8 OR ("ca"."attribute_kind" <> (6) AND ((("ca"."value_object" @> jsonb_build_array($9::numeric)) OR ("ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $10::numeric))) OR ("ca"."value_object" @> jsonb_build_array($11::text)) OR ("ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $12::text)))) AND EXISTS(SELECT 1 FROM jsonb_array_elements((CASE WHEN (jsonb_typeof("ca"."value_object") = ('array')) THEN "ca"."value_object" END)) AS "dm" LEFT JOIN "entity_type_names" AS "dmt" ON "dmt"."entity_type_name_key" = (CASE WHEN ("ca"."attribute_kind" IN (1, 7)) THEN "ca"."value_type_key" END) WHERE (CASE WHEN (jsonb_typeof(COALESCE("dm"."value" -> ('@value'), "dm"."value")) = ('number')) THEN (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::numeric WHEN (jsonb_typeof(COALESCE("dm"."value" -> ('@value'), "dm"."value")) = ('string') AND COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN ('http://www.w3.org/2001/XMLSchema#decimal', 'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', 'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', 'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', 'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', 'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') AND (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}')) <> ('NaN') AND pg_input_is_valid(COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'), 'numeric')) THEN (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::numeric END) = $13))), FALSE))) AND "ca"."entity_key" = "entities"."entity_key")
+1: Int 1
+2: BigDecimal 10
+3: BigDecimal 10
+4: BigDecimal 10
+5: String '10'
+6: String '10'
+7: BigDecimal 10
+8: BigDecimal 20
+9: BigDecimal 20
+10: BigDecimal 20
+11: String '20'
+12: String '20'
+13: BigDecimal 20

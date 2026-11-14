@@ -196,7 +196,8 @@ mod tests {
         dictionary::query_names::QueryNames,
         history_source::{HistoryBranch, HistoryOf},
     };
-    use sea_query::{Condition, Expr, PostgresQueryBuilder};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Condition, Expr, SelectStatement};
     use std::num::{NonZeroU32, NonZeroU64};
 
     /// A page of 1,000 periods and 1,000,000 instances.
@@ -232,7 +233,7 @@ mod tests {
             .build()
     }
 
-    fn sql_on(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> String {
+    fn statement_on(branch: &HistoryBranch, compiled: &CompiledTemporalQuery) -> SelectStatement {
         build_aggregation_query(
             branch,
             &HistoryOf::Entity(Expr::val("urn:ngsi-ld:Vehicle:1")),
@@ -240,16 +241,10 @@ mod tests {
             &Condition::all(),
             &QueryNames::default(),
         )
-        .to_string(PostgresQueryBuilder)
     }
 
-    fn sql_of(compiled: &CompiledTemporalQuery) -> String {
-        sql_on(&HistoryBranch::live_recorded(), compiled)
-    }
-
-    /// The edge lateral of the statement, up to the rows it bounds.
-    fn edge_of(sql: &str) -> &str {
-        sql.split(r#"AS "stream_edge""#).next().expect("the edge lateral")
+    fn statement_of(compiled: &CompiledTemporalQuery) -> SelectStatement {
+        statement_on(&HistoryBranch::live_recorded(), compiled)
     }
 
     /// The skip-scan: each probe one descent of the stream's axis index, from
@@ -260,24 +255,8 @@ mod tests {
     /// overlapping the search.
     #[test]
     fn the_period_edge_is_found_by_skipping_through_the_stream_axis_index() {
-        let sql = sql_of(&aggregated("PT1H", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
-        let edge = edge_of(&sql);
-        assert!(edge.contains(r#"WITH RECURSIVE "probes" ("probe", "period_start", "period_end") AS"#), "{sql}");
-        pretty_assertions::assert_eq!(edge.matches(r#"ORDER BY "ah"."observed_at" ASC LIMIT 1)"#).count(), 3, "{sql}");
-        assert!(
-            edge.contains(r#""ah"."observed_at" >= "probes"."period_end" AND "ah"."observed_at" < "probes"."period_end" + ('PT1H'::interval)"#),
-            "{sql}"
-        );
-        assert!(edge.contains(r#""ah"."observed_at" >= "probes"."period_end" + ('PT1H'::interval)"#), "{sql}");
-        assert!(edge.contains(r#"COALESCE((SELECT "found"."instant""#), "{sql}");
-        assert!(edge.contains(r#""found"."instant" IS NOT NULL"#), "{sql}");
-        assert!(edge.contains(r#"WHERE "probes"."probe" <= (1000)"#), "{sql}");
-        assert!(
-            edge.contains(r#"SELECT LEAST((SELECT "probes"."period_start" FROM "probes" WHERE "probes"."probe" = (1001))"#),
-            "{sql}"
-        );
-        assert!(edge.contains(r#"time_bucket('PT1H'::interval, "found"."instant""#), "{sql}");
-        assert!(edge.contains(r#""found_period"."bucket_start" + ('PT1H'::interval) AS "period_end""#), "{sql}");
+        let statement = statement_of(&aggregated("PT1H", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
+        assert_statement_snapshot!("aggregated-page-the-period-edge-is-found-by-skipping-through-the-stream-axis-index", statement);
     }
 
     /// A day holds at most 25 hourly periods, so a page of 1,000 cannot stop
@@ -290,27 +269,19 @@ mod tests {
             from: "2026-01-01T00:00:00Z".parse().expect("a valid instant"),
             to: "2026-01-02T00:00:00Z".parse().expect("a valid instant"),
         };
-        let sql = sql_of(&compiled);
-        let edge = edge_of(&sql);
-        assert!(
-            edge.contains(r#"WITH RECURSIVE "probes" ("probe", "period_start", "period_end") AS (SELECT 1 AS "probe""#),
-            "{sql}"
+        let statement = statement_of(&compiled);
+        assert_statement_snapshot!(
+            "aggregated-page-a-window-holding-fewer-periods-than-the-page-reads-the-first-probe-alone",
+            statement
         );
-        assert!(!edge.contains(r#""probes"."probe" + (1)"#), "{sql}");
-        assert!(!edge.contains(r#""probes"."probe" <= (1000)"#), "{sql}");
-        assert!(edge.contains(r#""probes"."probe" = (1001)"#), "{sql}");
     }
 
     /// On the calendar grid the next probe starts at the next period's start,
     /// counted from the origin, rather than at the start plus the period.
     #[test]
     fn a_calendar_period_edge_steps_from_the_origin() {
-        let sql = sql_of(&aggregated("P1M", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
-        let edge = edge_of(&sql);
-        assert!(!edge.contains("time_bucket"), "{sql}");
-        assert!(edge.contains(r#""found_period"."bucket_end" AS "period_end""#), "{sql}");
-        assert!(edge.contains(r#""calendar_grid"."period_index" + (1)"#), "{sql}");
-        assert!(edge.contains(r#""ah"."observed_at" >= "probes"."period_end""#), "{sql}");
+        let statement = statement_of(&aggregated("P1M", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
+        assert_statement_snapshot!("aggregated-page-a-calendar-period-edge-steps-from-the-origin", statement);
     }
 
     /// On the calendar grid the edge lists the periods its probes found, and
@@ -318,29 +289,11 @@ mod tests {
     /// both sides, placing none of them on the grid.
     #[test]
     fn a_calendar_page_of_whole_periods_reads_each_listed_period_on_its_own() {
-        let sql = sql_of(&aggregated("P1M", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
-        let edge = edge_of(&sql);
-        assert!(
-            edge.contains(r#"(SELECT array_agg("probes"."period_start" ORDER BY "probes"."period_start") FROM "probes") AS "period_starts""#),
-            "{sql}"
+        let statement = statement_of(&aggregated("P1M", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
+        assert_statement_snapshot!(
+            "aggregated-page-a-calendar-page-of-whole-periods-reads-each-listed-period-on-its-own",
+            statement
         );
-        assert!(
-            edge.contains(r#"(SELECT array_agg("probes"."period_end" ORDER BY "probes"."period_start") FROM "probes") AS "period_ends""#),
-            "{sql}"
-        );
-        assert!(edge.contains(r#""edge_bound"."period_starts", "edge_bound"."period_ends""#), "{sql}");
-        let rows = sql.split(r#"AS "stream_edge""#).nth(1).expect("the rows after the edge");
-        assert!(rows.contains(r#"UNNEST("stream_edge"."period_starts") AS "bucket_start""#), "{sql}");
-        assert!(
-            rows.contains(concat!(
-                r#""ah"."observed_at" < "stream_edge"."bound" "#,
-                r#"AND ("ah"."observed_at" >= "page_period"."bucket_start" "#,
-                r#"AND "ah"."observed_at" < "page_period"."bucket_end")"#
-            )),
-            "{sql}"
-        );
-        assert!(!rows.contains("calendar_grid"), "{sql}");
-        assert!(!rows.contains("GROUP BY"), "{sql}");
     }
 
     /// A calendar page keeping its last `lastN` instances counts them across
@@ -352,24 +305,19 @@ mod tests {
             budget: budget(),
             requested: NonZeroU32::new(5000).expect("a positive count"),
         };
-        let sql = sql_of(&aggregated("P1M", TimeProp::Observed, page));
-        assert!(edge_of(&sql).contains(r#"AS "period_starts""#), "{sql}");
-        let rows = sql.split(r#"AS "stream_edge""#).nth(1).expect("the rows after the edge");
-        assert!(rows.contains("LIMIT 5000"), "{sql}");
-        assert!(
-            rows.contains(r#"width_bucket("ah"."observed_at", "stream_edge"."period_starts") AS "period_position""#),
-            "{sql}"
+        let statement = statement_of(&aggregated("P1M", TimeProp::Observed, page));
+        assert_statement_snapshot!(
+            "aggregated-page-a-calendar-page-keeping-its-last-n-places-its-instances-among-the-listed-periods",
+            statement
         );
-        assert!(!rows.contains("calendar_grid"), "{sql}");
     }
 
     /// On the exact grid `time_bucket` places the rows in the order the axis
     /// index returns them, so the edge lists no period.
     #[test]
     fn an_exact_page_lists_no_period() {
-        let sql = sql_of(&aggregated("PT1H", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
-        assert!(!sql.contains("period_starts"), "{sql}");
-        assert!(!sql.contains("page_period"), "{sql}");
+        let statement = statement_of(&aggregated("PT1H", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
+        assert_statement_snapshot!("aggregated-page-an-exact-page-lists-no-period", statement);
     }
 
     /// The budget probe reads the instance one past the budget before the count
@@ -377,27 +325,16 @@ mod tests {
     /// of the period it falls in.
     #[test]
     fn the_instance_budget_cuts_at_the_start_of_the_period_it_falls_in() {
-        let sql = sql_of(&aggregated("P1D", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
-        let edge = edge_of(&sql);
-        assert!(edge.contains(r#"ORDER BY "ah"."observed_at" ASC LIMIT 1000001"#), "{sql}");
-        assert!(edge.contains(r#"ORDER BY "found"."instant" ASC LIMIT 1 OFFSET 1000000"#), "{sql}");
-        assert!(
-            edge.contains(r#"SELECT COALESCE((SELECT "probes"."period_start" FROM "probes" WHERE "probes"."probe" = (1001)), 'infinity'::timestamptz) AS "bound" OFFSET 0"#),
-            "{sql}"
-        );
-        assert!(edge.contains(r#""ah"."observed_at" < "budget_bound"."bound""#), "{sql}");
-        assert!(edge.contains(r#"GREATEST("found_period"."bucket_start","#), "{sql}");
+        let statement = statement_of(&aggregated("P1D", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
+        assert_statement_snapshot!("aggregated-page-the-instance-budget-cuts-at-the-start-of-the-period-it-falls-in", statement);
     }
 
     /// A period is never split: when the first period alone holds more than the
     /// budget, the page ends after it rather than before it.
     #[test]
     fn a_first_period_over_the_budget_is_read_whole() {
-        let sql = sql_of(&aggregated("P1D", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
-        assert!(
-            edge_of(&sql).contains(r#"GREATEST("found_period"."bucket_start", (SELECT "probes"."period_end" FROM "probes" WHERE "probes"."probe" = (1)))"#),
-            "{sql}"
-        );
+        let statement = statement_of(&aggregated("P1D", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
+        assert_statement_snapshot!("aggregated-page-a-first-period-over-the-budget-is-read-whole", statement);
     }
 
     /// Every part of a live stream (its recorded rows and its queued
@@ -407,33 +344,18 @@ mod tests {
     #[test]
     fn each_part_of_a_live_stream_is_ordered_and_limited_on_its_own() {
         let page = InstancePage::Periods { budget: budget() };
-        let live = sql_on(&HistoryBranch::live(), &aggregated("PT1H", TimeProp::Created, page));
-        let ordered = r#"ORDER BY "ah"."created_at" ASC"#;
-        pretty_assertions::assert_eq!(edge_of(&live).matches(&format!("{ordered} LIMIT 1000001")).count(), 2, "{live}");
-        pretty_assertions::assert_eq!(edge_of(&live).matches(&format!("{ordered} LIMIT 1)")).count(), 6, "{live}");
-        let recorded = sql_of(&aggregated("PT1H", TimeProp::Observed, page));
-        pretty_assertions::assert_eq!(
-            edge_of(&recorded).matches(r#"ORDER BY "ah"."observed_at" ASC LIMIT 1000001"#).count(),
-            1,
-            "{recorded}"
-        );
+        let live = statement_on(&HistoryBranch::live(), &aggregated("PT1H", TimeProp::Created, page));
+        assert_statement_snapshot!("aggregated-page-each-part-of-a-live-stream-is-ordered-and-limited-on-its-own-1", live);
+        let recorded = statement_of(&aggregated("PT1H", TimeProp::Observed, page));
+        assert_statement_snapshot!("aggregated-page-each-part-of-a-live-stream-is-ordered-and-limited-on-its-own-2", recorded);
     }
 
     /// The rows the page aggregates are those before its edge, grouped by
     /// `time_bucket` so the stream's axis index returns them in period order.
     #[test]
     fn the_page_groups_the_rows_before_its_cut_by_time_bucket() {
-        let sql = sql_of(&aggregated("PT1H", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
-        let rows = sql.split(r#"AS "stream_edge""#).nth(1).expect("the rows after the edge");
-        assert!(rows.contains(r#""ah"."observed_at" < "stream_edge"."bound""#), "{sql}");
-        assert!(rows.contains(r#"time_bucket('PT1H'::interval, "ah"."observed_at""#), "{sql}");
-        assert!(rows.contains(r#"GROUP BY "bucket"."bucket_start""#), "{sql}");
-        assert!(sql.contains(r#""stream_edge"."stream_continues" AS "stream_continues""#), "{sql}");
-        assert!(
-            edge_of(&sql).contains(r#"COALESCE("edge_cut"."cut", 'infinity'::timestamptz) AS "bound""#),
-            "{sql}"
-        );
-        assert!(edge_of(&sql).contains(r#""edge_bound"."cut" IS NOT NULL AS "stream_continues""#), "{sql}");
+        let statement = statement_of(&aggregated("PT1H", TimeProp::Observed, InstancePage::Periods { budget: budget() }));
+        assert_statement_snapshot!("aggregated-page-the-page-groups-the-rows-before-its-cut-by-time-bucket", statement);
     }
 
     /// Paging backwards with a `lastN` above the maximum walks from the most
@@ -445,20 +367,8 @@ mod tests {
             budget: budget(),
             requested: NonZeroU32::new(5000).expect("a positive count"),
         };
-        let sql = sql_of(&aggregated("PT1H", TimeProp::Observed, page));
-        let edge = edge_of(&sql);
-        assert!(edge.contains(r#"ORDER BY "ah"."observed_at" DESC LIMIT 1)"#), "{sql}");
-        assert!(edge.contains(r#""ah"."observed_at" < "probes"."period_start""#), "{sql}");
-        assert!(
-            edge.contains(r#"SELECT GREATEST((SELECT "probes"."period_end" FROM "probes" WHERE "probes"."probe" = (1001))"#),
-            "{sql}"
-        );
-        assert!(edge.contains(r#"ORDER BY "found"."instant" DESC LIMIT 1 OFFSET 4999"#), "{sql}");
-        assert!(edge.contains(r#""edge_bound"."cut" IS NOT NULL AND (NOT EXISTS("#), "{sql}");
-        assert!(edge.contains(r#""ah"."observed_at" >= "edge_bound"."bound""#), "{sql}");
-        let rows = sql.split(r#"AS "stream_edge""#).nth(1).expect("the rows after the edge");
-        assert!(rows.contains(r#""ah"."observed_at" >= "stream_edge"."bound""#), "{sql}");
-        assert!(rows.contains("LIMIT 5000"), "{sql}");
+        let statement = statement_of(&aggregated("PT1H", TimeProp::Observed, page));
+        assert_statement_snapshot!("aggregated-page-a-backward-page-keeps-the-last-n-instances-from-its-edge", statement);
     }
 
     /// A `lastN` within the maximum and a whole-range aggregation are complete
@@ -468,12 +378,9 @@ mod tests {
         let last_n = InstancePage::LastN {
             n: NonZeroU32::new(5).expect("a positive count"),
         };
-        let sql = sql_of(&aggregated("PT1H", TimeProp::Observed, last_n));
-        assert!(!sql.contains("stream_edge"), "{sql}");
-        assert!(sql.contains(r#"ORDER BY "ah"."observed_at" DESC, "ah"."write_id" DESC"#), "{sql}");
-        assert!(sql.contains("LIMIT 5"), "{sql}");
-        let whole = sql_of(&aggregated("", TimeProp::Observed, InstancePage::Whole));
-        assert!(!whole.contains("stream_edge"), "{whole}");
-        assert!(!whole.contains("probes"), "{whole}");
+        let last = statement_of(&aggregated("PT1H", TimeProp::Observed, last_n));
+        assert_statement_snapshot!("aggregated-page-a-complete-answer-is-read-without-an-edge-1", last);
+        let whole = statement_of(&aggregated("", TimeProp::Observed, InstancePage::Whole));
+        assert_statement_snapshot!("aggregated-page-a-complete-answer-is-read-without-an-edge-2", whole);
     }
 }

@@ -90,9 +90,9 @@ mod tests {
         attribute_name_key::AttributeNameKey,
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     };
-    use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
     use pretty_assertions::assert_eq;
-    use sea_query::{PostgresQueryBuilder, Value};
+    use sea_query::SelectStatement;
 
     fn names() -> QueryNames {
         QueryNames {
@@ -117,39 +117,25 @@ mod tests {
     }
 
     /// The count statement a counted first page runs when it carries no
-    /// total, with its bound values.
-    fn count_of(q: &str) -> (String, Vec<Value>) {
+    /// total.
+    fn count_of(q: &str) -> SelectStatement {
         count_on(q, &PageWindow::offset(100, 0))
     }
 
-    fn count_on(q: &str, window: &PageWindow) -> (String, Vec<Value>) {
+    fn count_on(q: &str, window: &PageWindow) -> SelectStatement {
         let built = build_query(&ContextTarget::Live, &query(q), window, CountPolicy::Emit, &names()).expect("valid entity query");
         match built.total {
-            EntityTotal::OnPageRows { uncounted: count } | EntityTotal::Counted(count) => {
-                let (sql, values) = count.count.build(PostgresQueryBuilder);
-                (sql, values.0)
-            }
+            EntityTotal::OnPageRows { uncounted: count } | EntityTotal::Counted(count) => count.count,
             EntityTotal::Omitted => panic!("a counted query has a total"),
         }
     }
 
-    /// The two arms of the count's `CASE`: the count over the candidates,
-    /// then the walk.
-    fn arms(sql: &str) -> (&str, &str) {
-        let (_, after_gate) = sql.split_once(" THEN ").unwrap_or_else(|| panic!("a gated count: {sql}"));
-        after_gate.split_once(" ELSE ").unwrap_or_else(|| panic!("a walk past the bound: {sql}"))
-    }
-
     #[test]
     fn a_keyed_count_reads_its_candidates_under_its_own_bound() {
-        let (sql, values) = count_of("\"https://example.com/temperature\"~=\"text-71.*\"");
-        assert!(
-            sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (SELECT "entity_key" FROM (SELECT "ca"."entity_key""#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "keyed-count-a-keyed-count-reads-its-candidates-under-its-own-bound",
+            count_of("\"https://example.com/temperature\"~=\"text-71.*\"")
         );
-        assert!(sql.contains(r#"SELECT (CASE WHEN ((SELECT COUNT(*) FROM "candidates") <= $"#), "{sql}");
-        assert!(values.contains(&Value::BigUnsigned(Some(10_001))), "{values:?}");
-        assert!(values.contains(&Value::BigUnsigned(Some(10_000))), "{values:?}");
     }
 
     /// A short walk that fills the page found the term dense, so the count
@@ -167,115 +153,70 @@ mod tests {
         let EntityTotal::OnPageRows { uncounted } = built.total else {
             panic!("a first keyed page carries its total when the candidates answer");
         };
-        let dense = uncounted
-            .walked
-            .expect("a keyed page counts a dense term by walking")
-            .select
-            .to_string(PostgresQueryBuilder);
-        assert!(dense.starts_with("SELECT COUNT(*) FROM "), "{dense}");
-        assert!(!dense.contains("candidates") && !dense.starts_with("WITH"), "{dense}");
-        assert!(
-            dense.contains(r#"("ca"."value_string") COLLATE "default") ~ "#),
-            "the walk probes the whole q: {dense}"
-        );
+        let dense = uncounted.walked.expect("a keyed page counts a dense term by walking").select;
+        assert_statement_snapshot!("keyed-count-a-keyed-page-answered-by-its-short-walk-is-counted-by-the-walk-alone", dense);
     }
 
     /// Past a cursor the page carries no total, so the count is its own
     /// statement, gated on the candidates the same way.
     #[test]
     fn a_continued_cursor_page_counts_through_the_same_gate() {
-        let (sql, _) = count_on("\"https://example.com/temperature\"~=\"text-71.*\"", &continued());
-        let (indexed, _) = arms(&sql);
-        assert!(indexed.contains(r#"IN (SELECT "entity_key" FROM "candidates")"#), "{sql}");
+        assert_statement_snapshot!(
+            "keyed-count-a-continued-cursor-page-counts-through-the-same-gate",
+            count_on("\"https://example.com/temperature\"~=\"text-71.*\"", &continued())
+        );
     }
 
     /// A range of the date-time index is a match as it is read, so the count
     /// reads more of them before it walks.
     #[test]
     fn a_date_time_ordering_counts_through_the_ranged_bound() {
-        let (sql, values) = count_of("\"https://example.com/temperature\">2024-01-15T12:00:00Z");
-        let (candidates, _) = sql.split_once(" SELECT (CASE WHEN ").unwrap_or_else(|| panic!("a gated count: {sql}"));
-        assert!(candidates.contains(r#""ca"."value_date_time" > $"#), "{candidates}");
-        assert!(values.contains(&Value::BigUnsigned(Some(50_001))), "{values:?}");
-        assert!(values.contains(&Value::BigUnsigned(Some(50_000))), "{values:?}");
-        let (indexed, walked) = arms(&sql);
-        assert!(!indexed.contains("value_date_time"), "the candidates answer the ordering: {indexed}");
-        assert!(walked.contains(r#""ca"."value_date_time" > $"#), "the walk probes the whole q: {walked}");
+        assert_statement_snapshot!(
+            "keyed-count-a-date-time-ordering-counts-through-the-ranged-bound",
+            count_of("\"https://example.com/temperature\">2024-01-15T12:00:00Z")
+        );
     }
 
     #[test]
     fn a_bare_existence_counts_its_probed_carriers_under_the_rechecked_bound() {
-        let (sql, values) = count_of("\"https://example.com/temperature\"");
-        let (candidates, _) = sql.split_once(" SELECT (CASE WHEN ").unwrap_or_else(|| panic!("a gated count: {sql}"));
-        assert!(candidates.contains(r#""entity_search"."attribute_name_keys" @> (ARRAY[12])"#), "{candidates}");
-        assert!(values.contains(&Value::BigUnsigned(Some(10_001))), "{values:?}");
-        assert!(values.contains(&Value::BigUnsigned(Some(10_000))), "{values:?}");
-        let (indexed, walked) = arms(&sql);
-        assert!(!indexed.contains("current_attributes"), "the candidates answer the existence: {indexed}");
-        assert!(walked.contains(r#"FROM "current_attributes" AS "ca""#), "the walk probes the whole q: {walked}");
+        assert_statement_snapshot!(
+            "keyed-count-a-bare-existence-counts-its-probed-carriers-under-the-rechecked-bound",
+            count_of("\"https://example.com/temperature\"")
+        );
     }
 
     /// A hop's candidates are read whole, so the count narrows the selection
     /// to them and never walks it outward.
     #[test]
     fn a_linked_entity_hop_counts_every_linking_entity_from_its_candidates() {
-        let (sql, values) = count_of("\"https://example.com/hasTrip\"{\"https://example.com/temperature\"}==\"x\"");
-        let (candidates, indexed) = sql
-            .split_once(r#") AS "matches") SELECT "#)
-            .unwrap_or_else(|| panic!("a count over the candidates: {sql}"));
-        assert!(
-            candidates.contains(r#""ca_ln1"."value_object" @> jsonb_build_array("le1"."id")"#),
-            "{candidates}"
-        );
-        assert!(
-            !sql.contains("LIMIT") && !sql.contains("CASE WHEN ((SELECT COUNT(*) FROM \"candidates\")"),
-            "{sql}"
-        );
-        assert!(!values.iter().any(|value| matches!(value, Value::BigUnsigned(_))), "{values:?}");
-        assert!(indexed.contains(r#"IN (SELECT "entity_key" FROM "candidates")"#), "{indexed}");
-        assert!(
-            !indexed.contains("JOIN jsonb_array_elements_text("),
-            "the count never probes the hop outward: {indexed}"
+        assert_statement_snapshot!(
+            "keyed-count-a-linked-entity-hop-counts-every-linking-entity-from-its-candidates",
+            count_of("\"https://example.com/hasTrip\"{\"https://example.com/temperature\"}==\"x\"")
         );
     }
 
     #[test]
     fn a_keyed_count_counts_the_selection_narrowed_to_few_candidates() {
-        let (sql, _) = count_of("\"https://example.com/temperature\"~=\"text-71.*\";\"https://example.com/temperature\"!=\"x\"");
-        let (indexed, _) = arms(&sql);
-        assert!(
-            indexed.contains(r#""entities"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#),
-            "{indexed}"
-        );
-        assert!(
-            !indexed.contains(r#"("ca"."value_string") COLLATE "default") ~ "#),
-            "the candidates answer the pattern: {indexed}"
-        );
-        assert!(
-            indexed.contains(r#"NOT COALESCE(("ca"."value_string" = $"#),
-            "the rest of q still filters: {indexed}"
+        assert_statement_snapshot!(
+            "keyed-count-a-keyed-count-counts-the-selection-narrowed-to-few-candidates",
+            count_of("\"https://example.com/temperature\"~=\"text-71.*\";\"https://example.com/temperature\"!=\"x\"")
         );
     }
 
     #[test]
     fn a_keyed_count_walks_the_selection_past_its_bound() {
-        let (sql, _) = count_of("\"https://example.com/temperature\"~=\"text-71.*\"");
-        let (_, walked) = arms(&sql);
-        assert!(!walked.contains("candidates"), "{walked}");
-        assert!(
-            walked.contains(r#"("ca"."value_string") COLLATE "default") ~ "#),
-            "the walk probes the whole q: {walked}"
+        assert_statement_snapshot!(
+            "keyed-count-a-keyed-count-walks-the-selection-past-its-bound",
+            count_of("\"https://example.com/temperature\"~=\"text-71.*\"")
         );
     }
 
     #[test]
     fn a_keyed_sub_attribute_equality_counts_through_the_key_index() {
-        let (sql, _) = count_of("\"https://example.com/temperature\".\"https://example.com/source\"==\"sensor-43\"");
-        let (candidates, _) = sql.split_once(" SELECT (CASE WHEN ").unwrap_or_else(|| panic!("a gated count: {sql}"));
-        assert!(candidates.contains(r#""ca"."sub_eq_keys" && "#), "{candidates}");
-        let (indexed, walked) = arms(&sql);
-        assert!(!indexed.contains("sub_eq_keys") && !indexed.contains("UNNEST("), "{indexed}");
-        assert!(walked.contains("UNNEST("), "{walked}");
+        assert_statement_snapshot!(
+            "keyed-count-a-keyed-sub-attribute-equality-counts-through-the-key-index",
+            count_of("\"https://example.com/temperature\".\"https://example.com/source\"==\"sensor-43\"")
+        );
     }
 
     #[test]
@@ -291,9 +232,7 @@ mod tests {
         let EntityTotal::OnPageRows { uncounted } = built.total else {
             panic!("an unkeyed first page carries its total on its rows");
         };
-        let sql = uncounted.count.to_string(PostgresQueryBuilder);
-        assert!(sql.starts_with("SELECT COUNT(*) FROM "), "{sql}");
-        assert!(!sql.contains("candidates") && !sql.contains("CASE"), "{sql}");
+        assert_statement_snapshot!("keyed-count-a-count-without-a-keyed-term-is-one-count-over-the-whole-filter", uncounted.count);
         assert_eq!(built.total_planning, StatementPlanning::Cached);
     }
 

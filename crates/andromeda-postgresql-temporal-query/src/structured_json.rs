@@ -41,33 +41,32 @@ pub fn structured_json() -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::structured_json::structured_json;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Query, SelectStatement};
 
-    fn rendered() -> (String, usize) {
-        let (sql, values) = Query::select().expr(structured_json()).to_owned().build(PostgresQueryBuilder);
-        (sql, values.0.len())
+    fn rendered() -> SelectStatement {
+        Query::select().expr(structured_json()).to_owned()
     }
 
     /// A JSON literal is read out of its `@json` value object.
     #[test]
     fn a_json_literal_is_read_out_of_its_value_object() {
-        let (sql, _) = rendered();
-        assert!(sql.contains(r#"WHEN (("ah"."value_object" ->> ('@type')) = ('@json'))"#), "{sql}");
-        assert!(sql.contains(r#"THEN "ah"."value_object" -> ('@value') END"#), "{sql}");
+        let statement = rendered();
+        assert_statement_snapshot!("structured-json-a-json-literal-is-read-out-of-its-value-object", statement);
     }
 
     /// Every other stored JSON is the value itself.
     #[test]
     fn any_other_stored_json_is_the_value_itself() {
-        let (sql, _) = rendered();
-        assert!(sql.contains("COALESCE((CASE WHEN"), "{sql}");
-        assert!(sql.ends_with(r#"END), "ah"."value_object")"#), "{sql}");
+        let statement = rendered();
+        assert_statement_snapshot!("structured-json-any-other-stored-json-is-the-value-itself", statement);
     }
 
     /// The keywords are rendered inline, so the expression shifts no binding a
     /// caller made.
     #[test]
     fn the_expression_binds_no_parameter() {
-        pretty_assertions::assert_eq!(rendered().1, 0);
+        let statement = rendered();
+        assert_statement_snapshot!("structured-json-the-expression-binds-no-parameter", statement);
     }
 }

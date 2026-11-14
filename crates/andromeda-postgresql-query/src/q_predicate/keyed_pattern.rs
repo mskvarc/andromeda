@@ -77,8 +77,9 @@ mod tests {
         q_predicate::keyed_pattern::pattern_candidates,
     };
     use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
-    use sea_query::PostgresQueryBuilder;
+    use sea_query::SelectStatement;
 
     fn names() -> QueryNames {
         QueryNames {
@@ -91,25 +92,17 @@ mod tests {
         }
     }
 
-    fn candidates(q: &str) -> Option<String> {
+    fn candidates(q: &str) -> Option<SelectStatement> {
         let Expr::Pred(pred) = parse(q).expect("parse q") else {
             panic!("a single predicate");
         };
-        pattern_candidates(&pred, &EntityRowRefs::unaliased(None), &names()).map(|select| select.to_string(PostgresQueryBuilder))
+        pattern_candidates(&pred, &EntityRowRefs::unaliased(None), &names())
     }
 
     #[test]
     fn a_pattern_conjunct_on_an_own_value_is_index_served() {
-        let sql = candidates("\"https://example.com/p27\"~=\"text-71.*\"").expect("keyed");
-        assert!(
-            sql.starts_with(r#"SELECT "entity_key" FROM (SELECT "ca"."entity_key" FROM "current_attributes" AS "ca""#),
-            "{sql}"
-        );
-        assert_eq!(sql.matches(r#""ca"."attribute_name_key" = 27"#).count(), 3, "one branch per target: {sql}");
-        assert_eq!(sql.matches("UNION ALL").count(), 2, "{sql}");
-        assert!(sql.contains(r#"(("ca"."value_string") COLLATE "default") ~ 'text-71.*'"#), "{sql}");
-        assert!(sql.contains(r#"(("ca"."value_long_text") COLLATE "default") ~ 'text-71.*'"#), "{sql}");
-        assert!(sql.ends_with(r#") AS "matches""#), "{sql}");
+        let statement = candidates("\"https://example.com/p27\"~=\"text-71.*\"").expect("keyed");
+        assert_statement_snapshot!("keyed-pattern-a-pattern-conjunct-on-an-own-value-is-index-served", statement);
     }
 
     /// The language branch names the rows `idx_ca_value_object` keys, so the
@@ -117,25 +110,18 @@ mod tests {
     /// the map with no target language (clause 4.9).
     #[test]
     fn the_language_map_branch_reads_the_language_property_rows_of_the_attribute() {
-        let sql = candidates("\"https://example.com/p27\"~=\"text-71.*\"").expect("keyed");
-        let language = sql.rsplit("UNION ALL").next().expect("the last branch");
-        assert!(
-            language.contains(r#"("ca"."attribute_kind" = (5) AND "ca"."value_object" IS NOT NULL)"#),
-            "{language}"
+        let statement = candidates("\"https://example.com/p27\"~=\"text-71.*\"").expect("keyed");
+        assert_statement_snapshot!(
+            "keyed-pattern-the-language-map-branch-reads-the-language-property-rows-of-the-attribute",
+            statement
         );
-        assert!(
-            language.contains(r#"jsonb_array_elements((CASE WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object" END)) AS "ls""#),
-            "{language}"
-        );
-        assert!(language.contains(r#"("ls"."value" ->> ('@value')) ~ 'text-71.*'"#), "{language}");
-        assert!(!language.contains("@language"), "{language}");
     }
 
     /// Clause 4.22: a past-due instance holds no value, so no branch offers it.
     #[test]
     fn every_branch_skips_an_expired_instance() {
-        let sql = candidates("\"https://example.com/p27\"~=\"text-71.*\"").expect("keyed");
-        assert_eq!(sql.matches(r#""ca"."expires_at" IS NULL"#).count(), 3, "{sql}");
+        let statement = candidates("\"https://example.com/p27\"~=\"text-71.*\"").expect("keyed");
+        assert_statement_snapshot!("keyed-pattern-every-branch-skips-an-expired-instance", statement);
     }
 
     #[test]

@@ -1,0 +1,92 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/holder_rows.rs
+---
+SELECT
+  *
+FROM
+  (
+    SELECT DISTINCT
+      ON ("held"."id") "held"."id",
+      "held"."entity_key"
+    FROM
+      (
+        SELECT
+          "hr"."id",
+          "hr"."entity_key"
+        FROM
+          (
+            SELECT
+              "hw"."id",
+              "hw"."entity_key"
+            FROM
+              "snap_1"."entity_type_members" AS "hw"
+            WHERE
+              "hw"."entity_type_name_key" = (3)
+              AND "hw"."is_evolution_member"
+              AND (
+                SELECT
+                  1
+                FROM
+                  "snap_1"."temporal_attribute_streams" AS "hs"
+                WHERE
+                  "hs"."entity_key" = "hw"."entity_key"
+                  AND "hs"."attribute_name_key" = (7)
+                LIMIT
+                  1
+              ) IS NOT NULL
+            ORDER BY
+              "hw"."id" ASC
+          ) AS "hr"
+        UNION ALL
+        (
+          SELECT
+            "hr"."id",
+            "hr"."entity_key"
+          FROM
+            (
+              SELECT
+                "hw"."id",
+                "hw"."entity_key"
+              FROM
+                "snap_1"."entity_type_members" AS "hw"
+              WHERE
+                "hw"."entity_type_name_key" = (4)
+                AND "hw"."is_evolution_member"
+                AND (
+                  SELECT
+                    1
+                  FROM
+                    "snap_1"."temporal_attribute_streams" AS "hs"
+                  WHERE
+                    "hs"."entity_key" = "hw"."entity_key"
+                    AND "hs"."attribute_name_key" = (7)
+                  LIMIT
+                    1
+                ) IS NOT NULL
+              ORDER BY
+                "hw"."id" ASC
+            ) AS "hr"
+        )
+        UNION ALL
+        (
+          SELECT
+            "hr"."id",
+            "hr"."entity_key"
+          FROM
+            (
+              SELECT
+                "hi"."id",
+                "hs"."entity_key"
+              FROM
+                "snap_1"."temporal_attribute_streams" AS "hs"
+                JOIN "snap_1"."entities" AS "hi" ON "hi"."entity_key" = "hs"."entity_key"
+              WHERE
+                "hs"."attribute_name_key" = (9)
+              ORDER BY
+                "hi"."id" ASC
+            ) AS "hr"
+        )
+      ) AS "held"
+    ORDER BY
+      "held"."id" ASC
+  ) AS "e"

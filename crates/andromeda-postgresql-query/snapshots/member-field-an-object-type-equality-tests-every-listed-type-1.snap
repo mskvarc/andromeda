@@ -1,0 +1,15 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/sub_attribute/member_field.rs
+---
+SELECT
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "entity_type_names" AS "mt"
+    WHERE
+      "mt"."entity_type_name_key" = ANY("ca"."object_type_keys")
+      AND "mt"."name" = ANY($1)
+  )
+1: Array ARRAY ['https://example.com/Device','https://example.com/Gauge']

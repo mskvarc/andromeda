@@ -79,7 +79,8 @@ mod tests {
         PendingEntries,
         instance_replacement::{kept_beside_pending, queued_instance_replacements},
     };
-    use sea_query::{Alias, Expr, IntoIden, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Expr, IntoIden, Query};
 
     #[test]
     fn a_recorded_row_stays_unless_a_queued_entry_names_its_client_instance() {
@@ -89,13 +90,12 @@ mod tests {
             Expr::col(Alias::new("key")),
             Expr::col(Alias::new("verbatim")),
         )
-        .map(|condition| Query::select().cond_where(condition).to_owned().to_string(PostgresQueryBuilder));
-        let sql = kept.expect("a branch reading its queue keeps rows by condition");
-        assert!(
-            sql.contains(r#""verbatim" IS NULL OR (NOT EXISTS(SELECT 1 FROM "temporal_append_entries" AS "pr""#),
-            "{sql}"
+        .map(|condition| Query::select().cond_where(condition).to_owned());
+        let statement = kept.expect("a branch reading its queue keeps rows by condition");
+        assert_statement_snapshot!(
+            "instance-replacement-a-recorded-row-stays-unless-a-queued-entry-names-its-client-instance",
+            statement
         );
-        assert!(sql.contains(r#""pr"."verbatim_instance_id" = "verbatim""#), "{sql}");
         assert!(
             kept_beside_pending(
                 PendingEntries::Absent,
@@ -111,14 +111,8 @@ mod tests {
     /// recorded row, and only an attribute entry carries one.
     #[test]
     fn the_replaced_attributes_are_those_a_queued_client_instance_names() {
-        let sql = queued_instance_replacements(&HistoryBranch::live()).map(|grains| grains.to_string(PostgresQueryBuilder));
-        pretty_assertions::assert_eq!(
-            sql.as_deref(),
-            Some(concat!(
-                r#"SELECT DISTINCT "pr"."entity_id" AS "entity_id", "pr"."attribute_name_key" AS "attribute_name_key" FROM "temporal_append_entries" AS "pr""#,
-                r#" WHERE "pr"."verbatim_instance_id" IS NOT NULL AND "pr"."entry_kind" IN (1, 2)"#
-            ))
-        );
+        let grains = queued_instance_replacements(&HistoryBranch::live()).expect("a branch reading its queue replaces instances");
+        assert_statement_snapshot!("instance-replacement-the-replaced-attributes-are-those-a-queued-client-instance-names", grains);
         for branch in [HistoryBranch::live_recorded(), HistoryBranch::recorded_in(Alias::new("snap_1").into_iden())] {
             assert!(queued_instance_replacements(&branch).is_none());
         }

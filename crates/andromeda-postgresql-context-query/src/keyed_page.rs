@@ -120,9 +120,8 @@ mod tests {
         attribute_name_key::AttributeNameKey,
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     };
-    use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
     use pretty_assertions::assert_eq;
-    use sea_query::{PostgresQueryBuilder, Value};
 
     fn names() -> QueryNames {
         QueryNames {
@@ -153,21 +152,7 @@ mod tests {
             &names(),
         )
         .expect("valid entity query");
-        let (sql, _) = built.select.build(PostgresQueryBuilder);
-        let short = sql
-            .find(r#"WITH "short_walk" AS  MATERIALIZED (SELECT "walked".*"#)
-            .unwrap_or_else(|| panic!("the short walk: {sql}"));
-        let candidates = sql
-            .find(r#""candidates" AS  MATERIALIZED (SELECT "ca"."entity_key""#)
-            .unwrap_or_else(|| panic!("the index path: {sql}"));
-        assert!(short < candidates, "{sql}");
-        assert!(sql.contains(r#""ca"."sub_eq_keys" && "#), "{sql}");
-        assert!(sql.contains(r#"(SELECT COUNT(*) FROM "short_walk") >= $"#), "{sql}");
-        assert!(sql.contains(r#"(SELECT COUNT(*) FROM "candidates") <= $"#), "{sql}");
-        assert!(sql.contains(r#"(SELECT COUNT(*) FROM "candidates") > $"#), "{sql}");
-        assert!(sql.contains(r#""entities"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#), "{sql}");
-        assert_eq!(sql.matches("UNION ALL").count(), 2, "{sql}");
-        assert!(sql.contains("OFFSET"), "the full walk probes each Entity: {sql}");
+        assert_statement_snapshot!("keyed-page-a-keyed-equality-walks-short-then-probes-the-index", built.select);
     }
 
     /// Clause 6.3.13: the index branch reads every candidate before it cuts
@@ -185,27 +170,14 @@ mod tests {
         )
         .expect("valid entity query");
         assert!(matches!(built.total, EntityTotal::OnPageRows { .. }), "the page carries the total it can");
-        let sql = built.select.to_string(PostgresQueryBuilder);
-        let (answered, rest) = sql.split_once(r#"AS "answered""#).expect("the short walk branch");
-        let (indexed, walk) = rest.split_once(r#"AS "indexed""#).expect("the index branch");
-        assert!(
-            answered.contains(r#"SELECT *, NULL AS "total_count", 1 AS "gated_step" FROM "short_walk""#),
-            "{answered}"
-        );
-        assert!(indexed.contains(r#"COUNT(*) OVER () AS "total_count", 2 AS "gated_step""#), "{indexed}");
-        assert!(
-            walk.contains(r#"NULL AS "total_count", 3 AS "gated_step""#) && !walk.contains("OVER ()"),
-            "{walk}"
-        );
-        assert!(sql.contains(r#""page"."total_count" AS "total_count""#), "the heads read it back: {sql}");
-        assert!(sql.contains(r#""page"."gated_step" AS "gated_step""#), "the heads read the step back: {sql}");
+        assert_statement_snapshot!("keyed-page-a-counted-keyed-page-carries-its-total-on-the-index-branch-alone", built.select);
     }
 
     #[test]
     fn an_uncounted_or_continued_keyed_page_carries_no_total() {
         let q = query("\"https://example.com/temperature\"~=\"text-71.*\"");
         let uncounted = build_query(&ContextTarget::Live, &q, &PageWindow::offset(100, 0), CountPolicy::Omit, &names()).expect("valid entity query");
-        assert!(!uncounted.select.to_string(PostgresQueryBuilder).contains("total_count"));
+        assert_statement_snapshot!("keyed-page-an-uncounted-or-continued-keyed-page-carries-no-total-1", uncounted.select);
         let continued = build_query(
             &ContextTarget::Live,
             &q,
@@ -214,7 +186,7 @@ mod tests {
             &names(),
         )
         .expect("valid entity query");
-        assert!(!continued.select.to_string(PostgresQueryBuilder).contains("total_count"));
+        assert_statement_snapshot!("keyed-page-an-uncounted-or-continued-keyed-page-carries-no-total-2", continued.select);
         assert!(matches!(continued.total, EntityTotal::Counted(_)), "past a cursor the total is its own count");
     }
 
@@ -228,12 +200,7 @@ mod tests {
             &names(),
         )
         .expect("valid entity query");
-        let (sql, values) = built.select.build(PostgresQueryBuilder);
-        let candidates = sql
-            .split_once(r#""candidates" AS  MATERIALIZED ("#)
-            .map_or_else(|| panic!("the index path: {sql}"), |(_, rest)| rest);
-        assert!(candidates.contains(r#") AS "matches" LIMIT $"#), "{candidates}");
-        assert!(values.0.contains(&Value::BigUnsigned(Some(1001))), "{:?}", values.0);
+        assert_statement_snapshot!("keyed-page-the-page-reads-one-candidate-past-its-bound", built.select);
     }
 
     /// A range of a typed value index is a match as it is read, so the page
@@ -249,16 +216,7 @@ mod tests {
         )
         .expect("valid entity query");
         assert_eq!(built.planning, StatementPlanning::GatedBranches);
-        let (sql, values) = built.select.build(PostgresQueryBuilder);
-        let candidates = sql
-            .split(r#""candidates" AS  MATERIALIZED ("#)
-            .nth(1)
-            .and_then(|rest| rest.split(r#") AS "matches""#).next())
-            .unwrap_or_else(|| panic!("the index path: {sql}"));
-        assert!(candidates.contains(r#""ca"."value_date_time" > $"#), "{candidates}");
-        assert_eq!(candidates.matches("UNION ALL").count(), 0, "a languageMap holds no time value: {candidates}");
-        assert!(values.0.contains(&Value::BigUnsigned(Some(50_001))), "{:?}", values.0);
-        assert!(values.0.contains(&Value::BigUnsigned(Some(50_000))), "{:?}", values.0);
+        assert_statement_snapshot!("keyed-page-a-date-time-ordering-reads-its-candidates-under-the-ranged-bound", built.select);
     }
 
     /// Clause 4.9 `q=attr`: the carriers of the name are each probed for a
@@ -275,20 +233,7 @@ mod tests {
         )
         .expect("valid entity query");
         assert_eq!(built.planning, StatementPlanning::GatedBranches);
-        let (sql, values) = built.select.build(PostgresQueryBuilder);
-        let candidates = sql
-            .split(r#""candidates" AS  MATERIALIZED ("#)
-            .nth(1)
-            .and_then(|rest| rest.split(r#") AS "matches""#).next())
-            .unwrap_or_else(|| panic!("the index path: {sql}"));
-        assert!(candidates.contains(r#""entity_search"."attribute_name_keys" @> (ARRAY[12])"#), "{candidates}");
-        assert!(candidates.contains(r#""ca"."entity_key" = "entity_search"."entity_key""#), "{candidates}");
-        assert!(values.0.contains(&Value::BigUnsigned(Some(10_001))), "{:?}", values.0);
-        assert!(values.0.contains(&Value::BigUnsigned(Some(10_000))), "{:?}", values.0);
-        let after_short = sql.split(r#"AS "answered""#).nth(1).expect("the index branch follows the short walk");
-        let (indexed, walk) = after_short.split_once(r#"AS "indexed""#).expect("the index branch");
-        assert!(!indexed.contains("current_attributes"), "{indexed}");
-        assert!(walk.contains(r#"FROM "current_attributes" AS "ca""#), "{walk}");
+        assert_statement_snapshot!("keyed-page-a-bare-existence-pages-through-the-carriers-of-its-name", built.select);
     }
 
     /// The hop is read from the linked entities inward, every one of them,
@@ -305,28 +250,10 @@ mod tests {
         )
         .expect("valid entity query");
         assert_eq!(built.planning, StatementPlanning::GatedBranches);
-        let (sql, values) = built.select.build(PostgresQueryBuilder);
-        let candidates = sql
-            .split(r#""candidates" AS  MATERIALIZED ("#)
-            .nth(1)
-            .and_then(|rest| rest.split(r#") AS "matches""#).next())
-            .unwrap_or_else(|| panic!("the index path: {sql}"));
-        assert!(
-            candidates.contains(r#"FROM "entities" AS "le1" JOIN "current_attributes" AS "ca_ln1""#),
-            "{candidates}"
+        assert_statement_snapshot!(
+            "keyed-page-a-linked-entity-hop-pages-through-the-instances-naming-its-linked-matches",
+            built.select
         );
-        assert!(candidates.contains(r#""ca_ln1"."value_uri" = "le1"."id""#), "{candidates}");
-        assert!(!sql.contains(r#") AS "matches" LIMIT"#), "the candidates are read whole: {sql}");
-        assert!(!values.0.contains(&Value::BigUnsigned(Some(50_001))), "{:?}", values.0);
-        let after_short = sql.split(r#"AS "answered""#).nth(1).expect("the index branch follows the short walk");
-        let (indexed, rest) = after_short.split_once(r#"AS "indexed""#).expect("the index branch");
-        assert!(!indexed.contains("ca_ln1"), "the candidates answer the hop: {indexed}");
-        assert!(
-            !indexed.contains(r#"(SELECT COUNT(*) FROM "candidates")"#),
-            "no bound gates the index branch: {indexed}"
-        );
-        assert!(!rest.contains("UNION ALL"), "the short walk and the index branch alone: {rest}");
-        assert!(!rest.contains("JOIN jsonb_array_elements_text("), "no walk probes the hop outward: {rest}");
     }
 
     /// A Date is held as its fixed-width text, so its candidates range over the
@@ -341,15 +268,7 @@ mod tests {
             &names(),
         )
         .expect("valid entity query");
-        let (sql, _) = built.select.build(PostgresQueryBuilder);
-        let after_short = sql.split(r#"AS "answered""#).nth(1).expect("the index branch follows the short walk");
-        let (indexed, walk) = after_short.split_once(r#"AS "indexed""#).expect("the index branch");
-        assert!(
-            indexed.contains(r#""entities"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#),
-            "{indexed}"
-        );
-        assert!(!indexed.contains(r#""ca"."value_string" <= $"#), "{indexed}");
-        assert!(walk.contains(r#""ca"."value_string" <= $"#), "{walk}");
+        assert_statement_snapshot!("keyed-page-a-date-ordering-pages-through-the-string-index", built.select);
     }
 
     /// The index branch answers the keyed term with its candidates, so its
@@ -364,11 +283,7 @@ mod tests {
             &names(),
         )
         .expect("valid entity query");
-        let (sql, _) = built.select.build(PostgresQueryBuilder);
-        let indexed = sql.split(r#"AS "answered""#).nth(1).expect("the index branch follows the short walk");
-        let indexed = indexed.split(r#"AS "indexed""#).next().expect("the index branch");
-        assert_eq!(indexed.matches("UNNEST(").count(), 0, "{indexed}");
-        assert!(indexed.contains(r#""ca"."value_number" > "#), "{indexed}");
+        assert_statement_snapshot!("keyed-page-the-index-branch-leaves-out-the-term-its-candidates-answer", built.select);
     }
 
     /// A `~=` on an own value tries the short walk, then the trigram
@@ -384,17 +299,7 @@ mod tests {
         )
         .expect("valid entity query");
         assert_eq!(built.planning, StatementPlanning::GatedBranches);
-        let (sql, _) = built.select.build(PostgresQueryBuilder);
-        let candidates = sql
-            .split(r#""candidates" AS  MATERIALIZED ("#)
-            .nth(1)
-            .and_then(|rest| rest.split(r#") AS "matches""#).next())
-            .unwrap_or_else(|| panic!("the index path: {sql}"));
-        assert!(candidates.contains(r#"("ca"."value_string") COLLATE "default") ~ $"#), "{candidates}");
-        assert!(candidates.contains(r#"("ca"."value_long_text") COLLATE "default") ~ $"#), "{candidates}");
-        assert_eq!(candidates.matches("UNION ALL").count(), 2, "{candidates}");
-        assert!(sql.contains(r#""entities"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#), "{sql}");
-        assert!(sql.contains(r#"(SELECT COUNT(*) FROM "candidates") > $"#), "{sql}");
+        assert_statement_snapshot!("keyed-page-a-pattern-on-an-own-value-walks-short-then-probes-the-trigram-indexes", built.select);
     }
 
     /// Every branch cuts the same window over the same order, so whichever
@@ -404,13 +309,7 @@ mod tests {
         let q = "\"https://example.com/temperature\"~=\"text-71.*\"";
         let window = PageWindow::offset(20, 40);
         let keyed = build_query(&ContextTarget::Live, &query(q), &window, CountPolicy::Omit, &names()).expect("valid entity query");
-        let (sql, _) = keyed.select.build(PostgresQueryBuilder);
-        let branches: Vec<&str> = sql.split("UNION ALL (SELECT * FROM (").skip(1).collect();
-        assert_eq!(branches.len(), 2, "the index and the full walk follow the short walk: {sql}");
-        for branch in branches {
-            assert!(branch.contains(r#"ORDER BY "sort_0" ASC"#), "{branch}");
-            assert!(branch.contains("LIMIT $") && branch.contains("OFFSET $"), "{branch}");
-        }
+        assert_statement_snapshot!("keyed-page-a-pattern-page-cuts-the-same-window-as-the-plain-statement", keyed.select);
     }
 
     /// The index branch answers the pattern with its candidates, so its filter
@@ -425,11 +324,7 @@ mod tests {
             &names(),
         )
         .expect("valid entity query");
-        let (sql, _) = built.select.build(PostgresQueryBuilder);
-        let after_short = sql.split(r#"AS "answered""#).nth(1).expect("the index branch follows the short walk");
-        let (indexed, walk) = after_short.split_once(r#"AS "indexed""#).expect("the index branch");
-        assert!(!indexed.contains("value_string"), "{indexed}");
-        assert!(walk.contains(r#"("ca"."value_string") COLLATE "default") ~ $"#), "{walk}");
+        assert_statement_snapshot!("keyed-page-the-pattern-candidates-are-rechecked-by-the-term", built.select);
     }
 
     /// A pattern on a sub-attribute has no key, so the page is the plain walk.
@@ -443,9 +338,7 @@ mod tests {
             &names(),
         )
         .expect("valid entity query");
-        let (sql, _) = built.select.build(PostgresQueryBuilder);
-        assert!(!sql.contains("short_walk") && !sql.contains("sub_eq_keys"), "{sql}");
-        assert!(sql.contains("OFFSET"), "{sql}");
+        assert_statement_snapshot!("keyed-page-a-sub-attribute-pattern-pages-without-the-index", built.select);
     }
 
     /// Without the operand a generic plan cannot estimate the key overlap and

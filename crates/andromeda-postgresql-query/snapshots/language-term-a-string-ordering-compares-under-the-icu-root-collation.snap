@@ -1,0 +1,15 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/language_term.rs
+---
+SELECT
+  EXISTS (
+    SELECT
+      1
+    FROM
+      jsonb_array_elements("map") AS "ls"
+    WHERE
+      (
+        ("ls"."value" ->> ('@value')) COLLATE "und-x-icu"
+      ) > $1
+  )
+1: String 'm'

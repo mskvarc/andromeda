@@ -1,0 +1,19 @@
+---
+source: crates/andromeda-postgresql-context-query/src/occupied_columns.rs
+---
+SELECT
+  (
+    SELECT
+      NOT (
+        "value_number"
+        OR "value_string"
+        OR "value_long_text"
+        OR "value_boolean"
+        OR "value_geometry"
+        OR "value_object"
+        OR "value_uri"
+        OR "value_long_uri"
+      )
+    FROM
+      "occupied_columns"
+  )

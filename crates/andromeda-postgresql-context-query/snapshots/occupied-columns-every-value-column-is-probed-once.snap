@@ -1,0 +1,121 @@
+---
+source: crates/andromeda-postgresql-context-query/src/occupied_columns.rs
+---
+SELECT
+  (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND "ca"."value_number" IS NOT NULL
+    ORDER BY
+      "ca"."value_number" ASC
+    LIMIT
+      1
+  ) IS NOT NULL AS "value_number",
+  (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $2
+      AND "ca"."value_string" IS NOT NULL
+    ORDER BY
+      "ca"."value_string" ASC
+    LIMIT
+      1
+  ) IS NOT NULL AS "value_string",
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $3
+      AND "ca"."value_kind" = (2)
+      AND "ca"."value_long_text" IS NOT NULL
+  ) AS "value_long_text",
+  (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $4
+      AND "ca"."value_boolean" IS NOT NULL
+    ORDER BY
+      "ca"."value_boolean" ASC
+    LIMIT
+      1
+  ) IS NOT NULL AS "value_boolean",
+  (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $5
+      AND "ca"."value_geometry" IS NOT NULL
+    ORDER BY
+      "ca"."entity_key" ASC
+    LIMIT
+      1
+  ) IS NOT NULL AS "value_geometry",
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $6
+      AND "ca"."value_kind" = (5)
+      AND "ca"."value_object" IS NOT NULL
+  ) AS "value_object",
+  (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $7
+      AND "ca"."value_date_time" IS NOT NULL
+    ORDER BY
+      "ca"."value_date_time" ASC
+    LIMIT
+      1
+  ) IS NOT NULL AS "value_date_time",
+  (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $8
+      AND "ca"."value_uri" IS NOT NULL
+    ORDER BY
+      "ca"."value_uri" ASC
+    LIMIT
+      1
+  ) IS NOT NULL AS "value_uri",
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $9
+      AND "ca"."value_kind" = (7)
+      AND "ca"."value_long_uri" IS NOT NULL
+  ) AS "value_long_uri"
+1: Int 7
+2: Int 7
+3: Int 7
+4: Int 7
+5: Int 7
+6: Int 7
+7: Int 7
+8: Int 7
+9: Int 7

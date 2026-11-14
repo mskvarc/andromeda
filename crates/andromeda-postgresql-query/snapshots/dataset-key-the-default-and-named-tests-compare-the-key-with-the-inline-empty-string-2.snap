@@ -1,0 +1,5 @@
+---
+source: crates/andromeda-postgresql-query/src/dataset_key.rs
+---
+SELECT
+  "s"."dataset_key" <> ('')

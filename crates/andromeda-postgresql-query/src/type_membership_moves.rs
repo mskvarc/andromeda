@@ -192,9 +192,8 @@ mod tests {
         type_membership_moves::{Member, carried_among, membership_insert, membership_removal, side_departure},
     };
     use andromeda_postgresql_schema::type_membership::MembershipSide;
-    use andromeda_postgresql_seaquery::literal::false_literal;
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, DynIden, Expr, ExprTrait, IntoIden, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::false_literal};
+    use sea_query::{Alias, DynIden, Expr, ExprTrait, IntoIden, Query, SelectStatement, SimpleExpr};
 
     fn evolution(schema: Option<&DynIden>) -> Memberships<'_> {
         Memberships {
@@ -222,18 +221,8 @@ mod tests {
     /// rather than conflicting.
     #[test]
     fn an_insert_lands_one_membership_row_per_carried_type_on_its_side() {
-        let sql = membership_insert(evolution(None), written(), column("new_types"), member(), None, false_literal())
-            .expect("the membership insert builds")
-            .to_string(PostgresQueryBuilder);
-        assert_eq!(
-            sql,
-            concat!(
-                r#"INSERT INTO "entity_type_members" ("entity_key", "entity_type_name_key", "id", "is_current_member", "is_evolution_member") "#,
-                r#"SELECT "written"."entity_key", "carried"."entity_type_name_key", "written"."id", FALSE, TRUE FROM "written" "#,
-                r#"INNER JOIN LATERAL (SELECT UNNEST("written"."new_types") AS "entity_type_name_key") AS "carried" ON TRUE "#,
-                r#"ON CONFLICT ("entity_type_name_key", "id") DO UPDATE SET "is_evolution_member" = TRUE"#
-            )
-        );
+        let insert = membership_insert(evolution(None), written(), column("new_types"), member(), None, false_literal()).expect("the membership insert builds");
+        assert_statement_snapshot!("type-membership-moves-an-insert-lands-one-membership-row-per-carried-type-on-its-side", insert);
     }
 
     /// A create that also establishes the Evolution states the Evolution's
@@ -244,26 +233,16 @@ mod tests {
             side: MembershipSide::Current,
             schema: None,
         };
-        let sql = membership_insert(current, written(), column("new_types"), member(), None, column("established"))
-            .expect("the membership insert builds")
-            .to_string(PostgresQueryBuilder);
-        assert!(
-            sql.contains(r#"SELECT "written"."entity_key", "carried"."entity_type_name_key", "written"."id", TRUE, "written"."established" FROM "written" "#),
-            "{sql}"
-        );
-        assert!(sql.ends_with(r#"DO UPDATE SET "is_current_member" = TRUE"#), "{sql}");
+        let insert = membership_insert(current, written(), column("new_types"), member(), None, column("established")).expect("the membership insert builds");
+        assert_statement_snapshot!("type-membership-moves-an-insert-states-the-other-sides-flag-it-is-given", insert);
     }
 
     #[test]
     fn an_admitted_insert_keeps_only_the_types_its_condition_admits() {
         let admitted = carried_among(column("old_types")).not();
-        let sql = membership_insert(evolution(None), written(), column("new_types"), member(), Some(admitted), false_literal())
-            .expect("the membership insert builds")
-            .to_string(PostgresQueryBuilder);
-        assert!(
-            sql.contains(r#"WHERE NOT "carried"."entity_type_name_key" = ANY("written"."old_types") ON CONFLICT"#),
-            "{sql}"
-        );
+        let insert = membership_insert(evolution(None), written(), column("new_types"), member(), Some(admitted), false_literal())
+            .expect("the membership insert builds");
+        assert_statement_snapshot!("type-membership-moves-an-admitted-insert-keeps-only-the-types-its-condition-admits", insert);
     }
 
     /// A type the current state drops stays a row while the Evolution holds
@@ -275,19 +254,13 @@ mod tests {
             schema: None,
         };
         let removal = membership_removal(current, written(), column("old_types"), column("new_types"), column("id"));
-        let addressed = concat!(
-            r#"("entity_type_name_key", "id") IN "#,
-            r#"(SELECT "carried"."entity_type_name_key", "written"."id" FROM "written" "#,
-            r#"INNER JOIN LATERAL (SELECT UNNEST("written"."old_types") AS "entity_type_name_key") AS "carried" ON TRUE "#,
-            r#"WHERE NOT "carried"."entity_type_name_key" = ANY("written"."new_types"))"#
+        assert_statement_snapshot!(
+            "type-membership-moves-a-removal-clears-the-flag-the-other-side-keeps-and-deletes-the-rest-1",
+            removal.cleared
         );
-        assert_eq!(
-            removal.cleared.to_string(PostgresQueryBuilder),
-            format!(r#"UPDATE "entity_type_members" SET "is_current_member" = FALSE WHERE {addressed} AND "is_evolution_member""#)
-        );
-        assert_eq!(
-            removal.deleted.to_string(PostgresQueryBuilder),
-            format!(r#"DELETE FROM "entity_type_members" WHERE {addressed} AND (NOT "is_evolution_member")"#)
+        assert_statement_snapshot!(
+            "type-membership-moves-a-removal-clears-the-flag-the-other-side-keeps-and-deletes-the-rest-2",
+            removal.deleted
         );
     }
 
@@ -301,37 +274,18 @@ mod tests {
         };
         let keys = Query::select().column(Alias::new("entity_key")).from(Alias::new("doomed")).take();
         let removal = side_departure(current, keys);
-        assert_eq!(
-            removal.cleared.to_string(PostgresQueryBuilder),
-            r#"UPDATE "entity_type_members" SET "is_current_member" = FALSE WHERE "entity_key" IN (SELECT "entity_key" FROM "doomed") AND "is_evolution_member""#
-        );
-        assert_eq!(
-            removal.deleted.to_string(PostgresQueryBuilder),
-            r#"DELETE FROM "entity_type_members" WHERE "entity_key" IN (SELECT "entity_key" FROM "doomed") AND (NOT "is_evolution_member")"#
-        );
+        assert_statement_snapshot!("type-membership-moves-a-departing-side-leaves-the-rows-the-other-side-holds-1", removal.cleared);
+        assert_statement_snapshot!("type-membership-moves-a-departing-side-leaves-the-rows-the-other-side-holds-2", removal.deleted);
     }
 
     #[test]
     fn a_branch_moves_its_memberships_in_its_own_schema() {
         let schema = Alias::new("snap_5").into_iden();
-        let added = membership_insert(evolution(Some(&schema)), written(), column("new_types"), member(), None, false_literal())
-            .expect("the membership insert builds")
-            .to_string(PostgresQueryBuilder);
+        let added =
+            membership_insert(evolution(Some(&schema)), written(), column("new_types"), member(), None, false_literal()).expect("the membership insert builds");
         let removal = membership_removal(evolution(Some(&schema)), written(), column("old_types"), column("new_types"), column("id"));
-        assert!(added.starts_with(r#"INSERT INTO "snap_5"."entity_type_members""#), "{added}");
-        assert!(
-            removal
-                .cleared
-                .to_string(PostgresQueryBuilder)
-                .starts_with(r#"UPDATE "snap_5"."entity_type_members""#),
-            "{removal:?}"
-        );
-        assert!(
-            removal
-                .deleted
-                .to_string(PostgresQueryBuilder)
-                .starts_with(r#"DELETE FROM "snap_5"."entity_type_members""#),
-            "{removal:?}"
-        );
+        assert_statement_snapshot!("type-membership-moves-a-branch-moves-its-memberships-in-its-own-schema-1", added);
+        assert_statement_snapshot!("type-membership-moves-a-branch-moves-its-memberships-in-its-own-schema-2", removal.cleared);
+        assert_statement_snapshot!("type-membership-moves-a-branch-moves-its-memberships-in-its-own-schema-3", removal.deleted);
     }
 }

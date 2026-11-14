@@ -1,0 +1,18 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/coverage.rs
+---
+SELECT
+  1
+FROM
+  "context_source_registrations"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "registration_information" AS "ri"
+    WHERE
+      "ri"."registration_id" = "context_source_registrations"."id"
+      AND (COALESCE("ri"."entity_types", '{*}') && $1)
+  )
+1: Array ARRAY ['https://example.com/Vehicle','*']

@@ -52,14 +52,11 @@ pub(super) fn queued_candidates(branch: &HistoryBranch) -> SelectStatement {
 mod tests {
     use crate::stage1::queued_candidates::queued_candidates;
     use andromeda_postgresql_query::history_source::HistoryBranch;
-    use pretty_assertions::assert_eq;
-    use sea_query::PostgresQueryBuilder;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
 
     #[test]
     fn every_entity_a_queued_intent_names_is_a_candidate() {
-        assert_eq!(
-            queued_candidates(&HistoryBranch::live()).to_string(PostgresQueryBuilder),
-            r#"SELECT "entity_id" FROM "temporal_append_intents""#
-        );
+        let statement = queued_candidates(&HistoryBranch::live());
+        assert_statement_snapshot!("queued-candidates-every-entity-a-queued-intent-names-is-a-candidate", statement);
     }
 }

@@ -24,14 +24,12 @@ pub fn unexpired(expires_at: SimpleExpr) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::expiry::unexpired;
-    use sea_query::{Expr, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Expr, Query};
 
     #[test]
     fn a_row_stands_while_it_never_expires_or_its_expiry_is_ahead() {
-        let sql = Query::select()
-            .expr(unexpired(Expr::col(("ca", "expires_at"))))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        pretty_assertions::assert_eq!(sql, r#"SELECT "ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW()"#);
+        let statement = Query::select().expr(unexpired(Expr::col(("ca", "expires_at")))).to_owned();
+        assert_statement_snapshot!("expiry-a-row-stands-while-it-never-expires-or-its-expiry-is-ahead", statement);
     }
 }

@@ -1,0 +1,47 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/keyed_branches.rs
+---
+SELECT
+  "entity_key"
+FROM
+  (
+    SELECT
+      "ca"."entity_key"
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+    UNION ALL
+    (
+      SELECT
+        "ca"."entity_key"
+      FROM
+        "current_attributes" AS "ca"
+      WHERE
+        "ca"."attribute_name_key" = $2
+        AND (
+          "ca"."expires_at" IS NULL
+          OR "ca"."expires_at" > NOW()
+        )
+    )
+    UNION ALL
+    (
+      SELECT
+        "ca"."entity_key"
+      FROM
+        "current_attributes" AS "ca"
+      WHERE
+        "ca"."attribute_name_key" = $3
+        AND (
+          "ca"."expires_at" IS NULL
+          OR "ca"."expires_at" > NOW()
+        )
+    )
+  ) AS "matches"
+1: Int 4
+2: Int 4
+3: Int 4

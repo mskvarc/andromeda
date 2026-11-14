@@ -1,0 +1,18 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/keyed_branches.rs
+---
+SELECT
+  "ca"."entity_key"
+FROM
+  "current_attributes" AS "ca"
+WHERE
+  "ca"."attribute_name_key" = $1
+  AND (
+    "ca"."expires_at" IS NULL
+    OR "ca"."expires_at" > NOW()
+  )
+  AND (
+    "ca"."attribute_kind" = (5)
+    AND "ca"."value_object" IS NOT NULL
+  )
+1: Int 4

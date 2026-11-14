@@ -1,0 +1,16 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/entity_rows.rs
+---
+SELECT
+  *
+FROM
+  (
+    SELECT
+      "entity_key",
+      "id"
+    FROM
+      "snap_1"."entity_type_members"
+    WHERE
+      "entity_type_name_key" = (3)
+      AND "is_evolution_member"
+  ) AS "e"

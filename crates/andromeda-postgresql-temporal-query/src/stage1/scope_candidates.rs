@@ -85,7 +85,7 @@ fn recorded_scope_matches(branch: &HistoryBranch, scope_q: &ScopeQuery) -> Selec
 mod tests {
     use crate::{
         split_filter_leaves::build_filter_leaf_truths,
-        stage1::query_fixture::{CountParts, PageBranches, ids, instant, recorded_stage1, scope_query, sensor_names, stage1_on},
+        stage1::query_fixture::{ids, instant, recorded_stage1, scope_query, sensor_names, stage1_on},
     };
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::{
@@ -96,110 +96,57 @@ mod tests {
         },
     };
     use andromeda_postgresql_query::history_source::HistoryBranch;
-    use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, IntoIden, PostgresQueryBuilder, Value};
+    use sea_query::{Alias, IntoIden, SelectStatement};
 
-    /// The candidates' test of the recorded Scope path.
-    const CANDIDATE_PATH: &str = r#""scope_history"."scope_path" ~ ("#;
-    /// The per-Entity probe's test of a Scope event's path.
-    const PROBE_PATH: &str = r#""sh"."scope_path" ~ ("#;
-
-    /// The rendered page of `scopeQ=<raw>` over the `Sensor` walk.
-    fn type_page(raw: &str) -> String {
-        recorded_stage1(&scope_query(raw)).select.to_string(PostgresQueryBuilder)
-    }
-
-    /// The `lquery` literal of the first path test `marker` opens in `sql`.
-    fn lquery_after<'s>(sql: &'s str, marker: &str) -> &'s str {
-        let start = sql.find(marker).unwrap_or_else(|| panic!("{marker} in {sql}")) + marker.len();
-        let end = sql[start..].find("::lquery").unwrap_or_else(|| panic!("an lquery after {marker} in {sql}"));
-        &sql[start..start + end]
-    }
-
-    /// Whether `sql` compares `value_kind` anywhere, which a projected column
-    /// never does.
-    fn compares_the_value_kind(sql: &str) -> bool {
-        [r#""value_kind" ="#, r#""value_kind" <>"#, r#""value_kind" IN"#, "value_kind = "]
-            .iter()
-            .any(|comparison| sql.contains(comparison))
+    /// The page of `scopeQ=<raw>` over the `Sensor` walk.
+    fn type_page(raw: &str) -> SelectStatement {
+        recorded_stage1(&scope_query(raw)).select
     }
 
     #[test]
     fn a_scope_query_over_a_type_walk_reads_the_recorded_scope_paths() {
         let stage1 = recorded_stage1(&scope_query("/city/moved1"));
         assert_eq!(stage1.planning, StatementPlanning::GenericGatedBranches);
-        let sql = stage1.select.to_string(PostgresQueryBuilder);
-        let candidates = PageBranches::of(&sql).candidates;
-        assert!(
-            candidates.starts_with(concat!(
-                r#"SELECT "scope_history"."entity_key" FROM "scope_history" WHERE "scope_history"."value_kind" = 1 AND "#,
-                r#"("scope_history"."scope_path" ~ ("#
-            )),
-            "{candidates}"
-        );
-        assert_eq!(lquery_after(candidates, CANDIDATE_PATH), "'city.moved1'");
-        let (_, values) = stage1.select.build(PostgresQueryBuilder);
-        assert!(values.0.contains(&Value::BigUnsigned(Some(10_001))), "{:?}", values.0);
+        let statement = stage1.select;
+        assert_statement_snapshot!("scope-candidates-a-scope-query-over-a-type-walk-reads-the-recorded-scope-paths", statement);
     }
 
     #[test]
     fn the_scope_candidates_state_the_partial_predicate_the_index_holds() {
-        let sql = type_page("/city/moved1");
-        assert!(PageBranches::of(&sql).candidates.contains(r#""scope_history"."value_kind" = 1"#), "{sql}");
+        let statement = type_page("/city/moved1");
+        assert_statement_snapshot!("scope-candidates-the-scope-candidates-state-the-partial-predicate-the-index-holds", statement);
     }
 
     #[test]
     fn the_per_entity_scope_probe_never_states_the_partial_predicate() {
-        let sql = type_page("/city/moved1");
-        let branches = PageBranches::of(&sql);
-        for residual in [branches.short(), branches.indexed, branches.walk] {
-            assert!(residual.contains(r#"FROM "scope_history" AS "rsh""#), "{residual}");
-            assert!(!compares_the_value_kind(residual), "{residual}");
-        }
+        let page = type_page("/city/moved1");
+        assert_statement_snapshot!("scope-candidates-the-per-entity-scope-probe-never-states-the-partial-predicate-1", page);
         let leaf = build_filter_leaf_truths(
             &HistoryBranch::live_recorded(),
             &scope_query("/city/moved1"),
             &ids(&["urn:ngsi-ld:Sensor:000001"]),
             &sensor_names(),
         )
-        .expect("renders")
-        .to_string(PostgresQueryBuilder);
-        assert!(leaf.contains(r#"FROM "scope_history" AS "rsh""#), "{leaf}");
-        assert!(!compares_the_value_kind(&leaf), "{leaf}");
+        .expect("renders");
+        assert_statement_snapshot!("scope-candidates-the-per-entity-scope-probe-never-states-the-partial-predicate-2", leaf);
     }
 
     #[test]
     fn the_scope_path_test_is_the_one_the_probe_renders() {
-        for raw in ["/city/moved1", "/city/+", "/city/#"] {
-            let sql = type_page(raw);
-            let branches = PageBranches::of(&sql);
-            assert_eq!(
-                lquery_after(branches.candidates, CANDIDATE_PATH),
-                lquery_after(branches.indexed, PROBE_PATH),
-                "{raw}"
-            );
-        }
+        let exact = type_page("/city/moved1");
+        assert_statement_snapshot!("scope-candidates-the-scope-path-test-is-the-one-the-probe-renders-1", exact);
+        let single = type_page("/city/+");
+        assert_statement_snapshot!("scope-candidates-the-scope-path-test-is-the-one-the-probe-renders-2", single);
+        let multi = type_page("/city/#");
+        assert_statement_snapshot!("scope-candidates-the-scope-path-test-is-the-one-the-probe-renders-3", multi);
     }
 
     #[test]
     fn a_conjunctive_scope_query_reads_rows_matching_any_of_its_paths() {
-        let sql = type_page("(/A;/B),/C");
-        let branches = PageBranches::of(&sql);
-        assert!(
-            branches.candidates.ends_with(concat!(
-                r#" AND (("scope_history"."scope_path" ~ ('A'::lquery)) OR ("scope_history"."scope_path" ~ ('B'::lquery))"#,
-                r#" OR ("scope_history"."scope_path" ~ ('C'::lquery)))"#
-            )),
-            "{}",
-            branches.candidates
-        );
-        assert_eq!(branches.indexed.matches(r#") AS "sh" WHERE"#).count(), 3, "{}", branches.indexed);
-        let a = branches.indexed.find("('A'::lquery)").expect("the probe of /A");
-        let b = branches.indexed.find("('B'::lquery)").expect("the probe of /B");
-        let c = branches.indexed.find("('C'::lquery)").expect("the probe of /C");
-        assert!(branches.indexed[a..b].contains("') AND EXISTS(SELECT 1 FROM"), "{}", branches.indexed);
-        assert!(branches.indexed[b..c].contains("')) OR EXISTS(SELECT 1 FROM"), "{}", branches.indexed);
+        let statement = type_page("(/A;/B),/C");
+        assert_statement_snapshot!("scope-candidates-a-conjunctive-scope-query-reads-rows-matching-any-of-its-paths", statement);
     }
 
     #[test]
@@ -207,67 +154,31 @@ mod tests {
         let mut compiled = scope_query("/city/moved1");
         compiled.window.timeproperty = TimeProp::Modified;
         compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
-        let sql = recorded_stage1(&compiled).select.to_string(PostgresQueryBuilder);
-        let branches = PageBranches::of(&sql);
-        for axis in ["recorded_at", "observed_at", "created_at", "modified_at", "deleted_at"] {
-            assert!(!branches.candidates.contains(axis), "{axis}: {}", branches.candidates);
-        }
-        assert!(branches.indexed.contains(r#""sh"."modified_at" IS NOT NULL"#), "{}", branches.indexed);
-        assert!(branches.indexed.contains(r#"AS "sh_next""#), "{}", branches.indexed);
+        let statement = recorded_stage1(&compiled).select;
+        assert_statement_snapshot!("scope-candidates-the-window-and-the-validity-overlap-stay-in-the-probe", statement);
     }
 
     #[test]
     fn a_scope_page_falls_to_the_walk_past_ten_thousand_rows() {
-        let sql = type_page("/city/moved1");
-        let branches = PageBranches::of(&sql);
-        assert!(branches.walk.contains(r#"(SELECT COUNT(*) FROM "candidates") > 10000"#), "{}", branches.walk);
-        assert!(
-            branches.indexed.contains(r#"(SELECT COUNT(*) FROM "candidates") <= 10000"#),
-            "{}",
-            branches.indexed
-        );
-        assert!(branches.short().contains("LIMIT 200 OFFSET 0"), "{}", branches.short());
+        let statement = type_page("/city/moved1");
+        assert_statement_snapshot!("scope-candidates-a-scope-page-falls-to-the-walk-past-ten-thousand-rows", statement);
     }
 
     #[test]
     fn a_queued_branch_admits_every_queued_entity_for_its_scope() {
-        let sql = stage1_on(&HistoryBranch::live(), &scope_query("/city/moved1"), &PageWindow::offset(20, 0))
-            .select
-            .to_string(PostgresQueryBuilder);
-        let branches = PageBranches::of(&sql);
-        assert!(
-            branches.candidates.starts_with(concat!(
-                r#"SELECT "entities"."id" FROM "scope_history""#,
-                r#" JOIN "entities" ON "entities"."entity_key" = "scope_history"."entity_key""#,
-                r#" WHERE "scope_history"."value_kind" = 1 AND "#
-            )),
-            "{}",
-            branches.candidates
-        );
-        assert!(
-            branches
-                .candidates
-                .ends_with(r#" UNION ALL (SELECT "entity_id" FROM "temporal_append_intents")"#),
-            "{}",
-            branches.candidates
-        );
-        assert!(
-            branches.indexed.contains(r#""e"."id" IN (SELECT "id" FROM "candidates")"#),
-            "{}",
-            branches.indexed
-        );
+        let statement = stage1_on(&HistoryBranch::live(), &scope_query("/city/moved1"), &PageWindow::offset(20, 0)).select;
+        assert_statement_snapshot!("scope-candidates-a-queued-branch-admits-every-queued-entity-for-its-scope", statement);
     }
 
     #[test]
     fn a_snapshot_reads_its_own_scope_path_index() {
-        let sql = stage1_on(
+        let statement = stage1_on(
             &HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()),
             &scope_query("/city/moved1"),
             &PageWindow::offset(20, 0),
         )
-        .select
-        .to_string(PostgresQueryBuilder);
-        assert!(PageBranches::of(&sql).candidates.contains(r#"FROM "snap_7"."scope_history" WHERE"#), "{sql}");
+        .select;
+        assert_statement_snapshot!("scope-candidates-a-snapshot-reads-its-own-scope-path-index", statement);
     }
 
     /// Clause 5.7.4.4 applies the Scope query of a split query only to the
@@ -277,53 +188,17 @@ mod tests {
     fn a_contributed_entity_is_a_candidate_whatever_its_scope() {
         let mut compiled = scope_query("/city/moved1");
         compiled.contributed = ContributedEntities::new(ids(&["urn:ngsi-ld:Sensor:000009"]), ContributedRendering::Local);
-        let recorded = recorded_stage1(&compiled).select.to_string(PostgresQueryBuilder);
-        let branches = PageBranches::of(&recorded);
-        assert!(
-            branches.candidates.ends_with(concat!(
-                r#" UNION ALL (SELECT "entities"."entity_key" FROM "entities""#,
-                r#" WHERE "entities"."id" = 'urn:ngsi-ld:Sensor:000009' AND "entities"."evolution_created_at" IS NOT NULL)"#
-            )),
-            "{}",
-            branches.candidates
-        );
-        assert!(
-            branches.indexed.contains(r#" OR "e"."id" = 'urn:ngsi-ld:Sensor:000009'"#),
-            "{}",
-            branches.indexed
-        );
-        let queued = stage1_on(&HistoryBranch::live(), &compiled, &PageWindow::offset(20, 0))
-            .select
-            .to_string(PostgresQueryBuilder);
-        assert!(
-            PageBranches::of(&queued).candidates.contains(concat!(
-                r#" UNION ALL (SELECT "entities"."id" FROM "entities""#,
-                r#" WHERE "entities"."id" = 'urn:ngsi-ld:Sensor:000009' AND "entities"."evolution_created_at" IS NOT NULL)"#
-            )),
-            "{queued}"
-        );
+        let recorded = recorded_stage1(&compiled).select;
+        assert_statement_snapshot!("scope-candidates-a-contributed-entity-is-a-candidate-whatever-its-scope-1", recorded);
+        let queued = stage1_on(&HistoryBranch::live(), &compiled, &PageWindow::offset(20, 0)).select;
+        assert_statement_snapshot!("scope-candidates-a-contributed-entity-is-a-candidate-whatever-its-scope-2", queued);
     }
 
     #[test]
     fn a_counted_scope_query_counts_under_the_count_bound() {
         let stage1 = recorded_stage1(&scope_query("/city/moved1"));
         assert_eq!(stage1.count_planning, StatementPlanning::BoundValues);
-        let (sql, values) = stage1.count.expect("count requested").build(PostgresQueryBuilder);
-        assert!(
-            sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED (SELECT "scope_history"."entity_key" FROM"#),
-            "{sql}"
-        );
-        assert!(values.0.contains(&Value::BigUnsigned(Some(10_001))), "{:?}", values.0);
-        assert!(values.0.contains(&Value::BigUnsigned(Some(10_000))), "{:?}", values.0);
-        let parts = CountParts::of(&sql);
-        assert!(
-            parts.indexed.contains(r#""entity_key" IN (SELECT "entity_key" FROM "candidates")"#),
-            "{}",
-            parts.indexed
-        );
-        assert_eq!(parts.walked.matches("candidates").count(), 2, "the two gates alone: {}", parts.walked);
-        assert!(parts.filtered.contains(r#"FROM "scope_history" AS "rsh""#), "{}", parts.filtered);
-        assert!(!parts.indexed.contains("scope_history") && !parts.walked.contains("scope_history"), "{sql}");
-        assert!(!sql.contains("CASE WHEN"), "{sql}");
+        let statement = stage1.count.expect("count requested");
+        assert_statement_snapshot!("scope-candidates-a-counted-scope-query-counts-under-the-count-bound", statement);
     }
 }

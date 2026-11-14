@@ -1,0 +1,14 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/entity_rows.rs
+---
+SELECT
+  "te"."evolution_created_at" IS NOT NULL
+  OR EXISTS (
+    SELECT
+      1
+    FROM
+      "temporal_append_intents" AS "pt"
+    WHERE
+      "pt"."entity_id" = "te"."id"
+      AND cardinality("pt"."entity_type_name_keys") > 0
+  )

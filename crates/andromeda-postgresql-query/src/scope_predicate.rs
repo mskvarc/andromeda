@@ -167,8 +167,8 @@ mod tests {
     use super::*;
     use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
     use andromeda_postgresql_schema::current::{Entities, EntitySearch};
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::Alias;
 
     fn scope(raw: &str) -> ScopeQuery {
         ScopeQuery::parse(raw).expect("valid scope query")
@@ -192,48 +192,50 @@ mod tests {
         raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
-    fn render(condition: Condition) -> String {
-        Query::select()
-            .column(Entities::Id)
-            .from(Entities::Table)
-            .cond_where(condition)
-            .to_string(PostgresQueryBuilder)
+    fn render(condition: Condition) -> SelectStatement {
+        Query::select().column(Entities::Id).from(Entities::Table).cond_where(condition).to_owned()
     }
 
     /// A one-term disjunction renders without nesting, so no special case for a
     /// single `OR` term is needed.
     #[test]
     fn a_single_scope_term_renders_without_nesting() {
-        let sql = render(condition(&scope("/A/B"), &current()));
-        assert!(sql.contains("::lquery"), "{sql}");
-        assert!(!sql.contains(" OR "), "{sql}");
-        assert_eq!(sql.matches("::lquery").count(), 1, "{sql}");
+        assert_statement_snapshot!(
+            "scope-predicate-a-single-scope-term-renders-without-nesting",
+            render(condition(&scope("/A/B"), &current()))
+        );
     }
 
     #[test]
     fn a_single_scope_history_term_renders_one_probe() {
-        let sql = render(condition(&scope("/A/B"), &history(TimeInterval::Unbounded)));
-        assert_eq!(sql.matches(r#") AS "sh" WHERE"#).count(), 1, "{sql}");
-        assert!(!sql.contains(") OR EXISTS(SELECT 1 FROM (SELECT"), "{sql}");
+        assert_statement_snapshot!(
+            "scope-predicate-a-single-scope-history-term-renders-one-probe",
+            render(condition(&scope("/A/B"), &history(TimeInterval::Unbounded)))
+        );
     }
 
     #[test]
     fn comma_separated_scopes_render_a_disjunction() {
-        let sql = render(condition(&scope("/A,/B"), &current()));
-        assert!(sql.contains(" OR "), "{sql}");
+        assert_statement_snapshot!(
+            "scope-predicate-comma-separated-scopes-render-a-disjunction",
+            render(condition(&scope("/A,/B"), &current()))
+        );
     }
 
     #[test]
     fn semicolon_separated_scopes_render_a_conjunction() {
-        let sql = render(condition(&scope("(/A;/B)"), &current()));
-        assert!(sql.contains(" AND "), "{sql}");
+        assert_statement_snapshot!(
+            "scope-predicate-semicolon-separated-scopes-render-a-conjunction",
+            render(condition(&scope("(/A;/B)"), &current()))
+        );
     }
 
     #[test]
     fn scope_history_renders_one_probe_per_term() {
-        let sql = render(condition(&scope("(/A;/B),/C"), &history(TimeInterval::Unbounded)));
-        assert_eq!(sql.matches(r#") AS "sh" WHERE"#).count(), 3, "{sql}");
-        assert!(sql.contains("scope_history"), "{sql}");
+        assert_statement_snapshot!(
+            "scope-predicate-scope-history-renders-one-probe-per-term",
+            render(condition(&scope("(/A;/B),/C"), &history(TimeInterval::Unbounded)))
+        );
     }
 
     /// Clause 4.18: a Scope "is considered valid from the time it has been set
@@ -247,13 +249,10 @@ mod tests {
             from: instant("2018-08-01T12:00:00Z"),
             to: instant("2018-08-01T13:00:00Z"),
         };
-        let sql = render(condition(&scope("/A"), &history(interval)));
-        assert!(sql.contains("\"sh\".\"observed_at\" < "), "{sql}");
-        assert!(
-            !sql.contains("\"sh\".\"observed_at\" >= "),
-            "a scope set before the window is still valid inside it: {sql}"
+        assert_statement_snapshot!(
+            "scope-predicate-a-between-window-tests-the-validity-interval-rather-than-the-event-instant",
+            render(condition(&scope("/A"), &history(interval)))
         );
-        assert!(sql.contains("NOT EXISTS"), "{sql}");
     }
 
     /// Scope history hangs off the temporal catalogue, so the probe reads the
@@ -262,23 +261,20 @@ mod tests {
     /// entries through their own.
     #[test]
     fn scope_history_probes_read_the_entity_inside_each_source() {
-        let sql = render(condition(&scope("/A"), &history(TimeInterval::Unbounded)));
-        assert!(sql.contains("\"re\".\"id\" = \"e\".\"id\""), "{sql}");
-        assert!(sql.contains("\"pe\".\"entity_id\" = \"e\".\"id\""), "{sql}");
-        assert!(!sql.contains("\"sh\".\"time\""), "{sql}");
+        assert_statement_snapshot!(
+            "scope-predicate-scope-history-probes-read-the-entity-inside-each-source",
+            render(condition(&scope("/A"), &history(TimeInterval::Unbounded)))
+        );
     }
 
     /// Clause 5.2.21: each `timeproperty` positions a scope event on its own
     /// column, exactly as it positions an attribute instance.
     #[test]
     fn each_time_property_positions_the_scope_probe_on_its_own_column() {
-        let expected = [
-            (TimeProp::Observed, "observed_at"),
-            (TimeProp::Created, "created_at"),
-            (TimeProp::Modified, "modified_at"),
-            (TimeProp::Deleted, "deleted_at"),
-        ];
-        for (timeproperty, column) in expected {
+        for (index, timeproperty) in [TimeProp::Observed, TimeProp::Created, TimeProp::Modified, TimeProp::Deleted]
+            .into_iter()
+            .enumerate()
+        {
             let target = ScopeTarget::history(
                 HistoryOf::Entity(SeaExpr::col((Alias::new("e"), Alias::new("entity_key")))),
                 timeproperty,
@@ -286,9 +282,10 @@ mod tests {
                 HistoryBranch::live(),
                 WindowReach::InsideAndInEffect,
             );
-            let sql = render(condition(&scope("/A"), &target));
-            assert!(sql.contains(&format!("\"sh\".\"{column}\" IS NOT NULL")), "{sql}");
-            assert!(sql.contains(&format!("\"sh_next\".\"{column}\" <= ")), "{sql}");
+            assert_statement_snapshot!(
+                format!("scope-predicate-each-time-property-positions-the-scope-probe-on-its-own-column-{}", index + 1),
+                render(condition(&scope("/A"), &target))
+            );
         }
     }
 
@@ -297,8 +294,10 @@ mod tests {
     /// row carrying that axis is pathless.
     #[test]
     fn every_scope_probe_tests_a_path_the_row_carries() {
-        let sql = render(condition(&scope("/A"), &history(TimeInterval::Unbounded)));
-        assert!(sql.contains("\"sh\".\"scope_path\" ~ "), "{sql}");
+        assert_statement_snapshot!(
+            "scope-predicate-every-scope-probe-tests-a-path-the-row-carries",
+            render(condition(&scope("/A"), &history(TimeInterval::Unbounded)))
+        );
     }
 
     /// Both targets walk the same grammar, so a change to the precedence
@@ -306,12 +305,13 @@ mod tests {
     #[test]
     fn every_target_renders_the_same_boolean_structure() {
         let scope_q = scope("(/A;/B),/C");
-        let current_sql = render(condition(&scope_q, &current()));
-        let history_sql = render(condition(&scope_q, &history(TimeInterval::Unbounded)));
-        for sql in [&current_sql, &history_sql] {
-            assert!(sql.contains(" AND "), "{sql}");
-            assert!(sql.contains(" OR "), "{sql}");
-            assert_eq!(sql.matches("::lquery").count(), 3, "{sql}");
-        }
+        assert_statement_snapshot!(
+            "scope-predicate-every-target-renders-the-same-boolean-structure-1",
+            render(condition(&scope_q, &current()))
+        );
+        assert_statement_snapshot!(
+            "scope-predicate-every-target-renders-the-same-boolean-structure-2",
+            render(condition(&scope_q, &history(TimeInterval::Unbounded)))
+        );
     }
 }

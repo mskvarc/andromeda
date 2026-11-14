@@ -153,8 +153,9 @@ mod tests {
         queried_entity::instance_metadata::InstanceMetadata,
         temporal::window::TimeInterval,
     };
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Condition, Expr as SeaExpr, PostgresQueryBuilder, Query};
+    use sea_query::{Alias, Condition, Expr as SeaExpr, Query, SelectStatement};
 
     fn names() -> ResolvedNames<AttributeName> {
         ResolvedNames::from_pairs(
@@ -179,7 +180,7 @@ mod tests {
 
     /// `q` compiled as a temporal query's, over the instances of an unbounded
     /// window.
-    fn temporal(q: &str) -> String {
+    fn temporal(q: &str) -> SelectStatement {
         let window = HistoryWindow::builder()
             .branch(HistoryBranch::live())
             .of(HistoryOf::Entity(SeaExpr::col((Alias::new("e"), Alias::new("id")))))
@@ -198,7 +199,7 @@ mod tests {
             &names,
             LanguageMatching::TagEquality,
         );
-        Query::select().cond_where(condition).to_owned().to_string(PostgresQueryBuilder)
+        Query::select().cond_where(condition).to_owned()
     }
 
     #[test]
@@ -242,20 +243,8 @@ mod tests {
     #[test]
     fn a_sub_attribute_recheck_joins_one_unnest_per_level() {
         let path = element_path("\"https://example.com/a\".\"https://example.com/b\".\"https://example.com/c\"==3").expect("resolved");
-        let sql = Query::select()
-            .cond_where(path.condition(Condition::all()))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#""ca"."sub_attributes" IS NOT NULL"#), "{sql}");
-        assert!(
-            sql.contains(r#"FROM UNNEST("ca"."sub_attributes") WITH ORDINALITY AS "l0" JOIN UNNEST("ca"."sub_attributes") AS "l1" ON "l1"."parent" = "l0"."ordinality" WHERE "l0"."parent" = 0"#),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(r#""l0"."attribute_name_key" = 5"#) && sql.contains(r#""l1"."attribute_name_key" = 9"#),
-            "{sql}"
-        );
-        assert!(!sql.contains("sub_eq_keys"), "{sql}");
+        let statement = Query::select().cond_where(path.condition(Condition::all())).to_owned();
+        assert_statement_snapshot!("element-path-a-sub-attribute-recheck-joins-one-unnest-per-level", statement);
     }
 
     #[test]
@@ -267,13 +256,8 @@ mod tests {
         .expect("resolved");
         assert_eq!(path.holder(), InstanceRow::History);
         let path = element_path_in("\"https://example.com/a\".\"https://example.com/b\"==3", ProbedRow::History).expect("resolved");
-        let sql = Query::select()
-            .cond_where(path.condition(Condition::all()))
-            .to_owned()
-            .to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#""qh"."sub_attributes" IS NOT NULL"#), "{sql}");
-        assert!(sql.contains(r#"FROM UNNEST("qh"."sub_attributes") AS "l0""#), "{sql}");
-        assert!(!sql.contains("expires_at"), "a recorded element is not read against expiry: {sql}");
+        let statement = Query::select().cond_where(path.condition(Condition::all())).to_owned();
+        assert_statement_snapshot!("element-path-a-history-path-is-held-by-the-history-row-and-walks-its-tree", statement);
     }
 
     /// Clause 5.7.4.4 S2 checks `q` against the in-window instances, and
@@ -281,33 +265,20 @@ mod tests {
     /// sub-attribute is an element of each history row's tree.
     #[test]
     fn a_temporal_q_on_a_sub_attribute_walks_the_history_elements() {
-        let sql = temporal("\"https://example.com/speed\".\"https://example.com/accuracy\">0.5");
-        assert!(sql.contains("EXISTS"), "{sql}");
-        assert!(sql.contains(r#"FROM UNNEST("qh"."sub_attributes") AS "l0""#), "{sql}");
-        assert!(sql.contains(r#""qh"."attribute_name_key" = 11"#), "{sql}");
-        assert!(sql.contains(r#""l0"."attribute_name_key" = 12"#), "{sql}");
-        assert!(sql.contains(r#""l0"."value_number" > "#), "{sql}");
-        assert!(!sql.contains("jsonb_build_object"), "{sql}");
+        let statement = temporal("\"https://example.com/speed\".\"https://example.com/accuracy\">0.5");
+        assert_statement_snapshot!("element-path-a-temporal-q-on-a-sub-attribute-walks-the-history-elements", statement);
     }
 
     #[test]
     fn a_temporal_q_on_a_nested_sub_attribute_unnests_each_level() {
-        let sql = temporal("\"https://example.com/speed\".\"https://example.com/accuracy\".\"https://example.com/method\"==\"gps\"");
-        assert!(
-            sql.contains(r#"FROM UNNEST("qh"."sub_attributes") WITH ORDINALITY AS "l0" JOIN UNNEST("qh"."sub_attributes") AS "l1" ON "l1"."parent" = "l0"."ordinality" WHERE "l0"."parent" = 0"#),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(r#""l0"."attribute_name_key" = 12"#) && sql.contains(r#""l1"."attribute_name_key" = 13"#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#""l1"."value_string""#), "{sql}");
+        let statement = temporal("\"https://example.com/speed\".\"https://example.com/accuracy\".\"https://example.com/method\"==\"gps\"");
+        assert_statement_snapshot!("element-path-a-temporal-q-on-a-nested-sub-attribute-unnests-each-level", statement);
     }
 
     #[test]
     fn a_temporal_q_on_a_sub_attribute_observed_at_reads_the_element_field() {
-        let sql = temporal("\"https://example.com/speed\".\"https://example.com/accuracy\".\"https://uri.etsi.org/ngsi-ld/observedAt\">2026-01-01T00:00:00Z");
-        assert!(sql.contains(r#""l0"."observed_at" > '2026-01-01 00:00:00.000000 +00:00'"#), "{sql}");
-        assert!(!sql.contains("jsonb_path"), "{sql}");
+        let statement =
+            temporal("\"https://example.com/speed\".\"https://example.com/accuracy\".\"https://uri.etsi.org/ngsi-ld/observedAt\">2026-01-01T00:00:00Z");
+        assert_statement_snapshot!("element-path-a-temporal-q-on-a-sub-attribute-observed-at-reads-the-element-field", statement);
     }
 }

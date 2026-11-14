@@ -1,0 +1,11 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/encountered_sources.rs
+---
+SELECT
+  1
+FROM
+  "context_source_registrations"
+WHERE
+  "context_source_alias" IS NULL
+  OR "context_source_alias" <> $1
+1: String 'broker-b'

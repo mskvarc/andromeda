@@ -1,0 +1,66 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/corpus_statement_tests.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        NOT COALESCE(
+          (
+            (
+              (("ca"."value_string") COLLATE "und-x-icu") >= $2
+              OR (("ca"."value_long_text") COLLATE "und-x-icu") >= $3
+            )
+            AND nullif("ca"."value_kind" = (2), FALSE)
+            AND (
+              (
+                (("ca"."value_string") COLLATE "und-x-icu") <= $4
+                OR (("ca"."value_long_text") COLLATE "und-x-icu") <= $5
+              )
+              AND nullif("ca"."value_kind" = (2), FALSE)
+            )
+          )
+          OR EXISTS (
+            SELECT
+              1
+            FROM
+              jsonb_array_elements(
+                (
+                  CASE
+                    WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                  END
+                )
+              ) AS "ls"
+            WHERE
+              (
+                ("ls"."value" ->> ('@value')) COLLATE "und-x-icu"
+              ) >= $6
+              AND (
+                ("ls"."value" ->> ('@value')) COLLATE "und-x-icu"
+              ) <= $7
+          ),
+          FALSE
+        )
+      )
+      AND "ca"."entity_key" = "entities"."entity_key"
+  )
+1: Int 5
+2: String 'a'
+3: String 'a'
+4: String 'b'
+5: String 'b'
+6: String 'a'
+7: String 'b'

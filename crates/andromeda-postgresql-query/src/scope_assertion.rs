@@ -104,7 +104,8 @@ fn state_at(events: &SelectStatement, axis: ScopeHistory, at: &SimpleExpr) -> Si
 mod tests {
     use crate::scope_assertion::{EVENT_COLUMNS, held_in_force, path_set};
     use andromeda_postgresql_schema::temporal::ScopeHistory;
-    use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query, SelectStatement};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Expr, ExprTrait, Query, SelectStatement};
 
     fn events() -> SelectStatement {
         Query::select()
@@ -114,7 +115,7 @@ mod tests {
             .to_owned()
     }
 
-    fn rendered() -> String {
+    fn rendered() -> SelectStatement {
         let asserted = path_set(
             Query::select().from(Alias::new("asserted")).to_owned(),
             Expr::col(Alias::new("verbatim_scope_path")),
@@ -123,39 +124,19 @@ mod tests {
             .expr(Expr::val(1))
             .cond_where(held_in_force(&events(), &asserted, &Expr::col(Alias::new("at"))))
             .to_owned()
-            .to_string(PostgresQueryBuilder)
     }
 
     /// The head on each axis is the newest event at or before the assertion's
     /// instant, one descent of the Entity's index on that axis.
     #[test]
     fn each_axis_reads_its_newest_event_at_or_before_the_instant() {
-        let sql = rendered();
-        for axis in ["recorded_at", "observed_at"] {
-            assert!(
-                sql.contains(&format!(
-                    r#"SELECT "sah"."{axis}" FROM (SELECT "recorded_at", "observed_at", "verbatim_scope_path" FROM "scope_history""#
-                )),
-                "{axis}: {sql}"
-            );
-            assert!(
-                sql.contains(&format!(r#"WHERE "sah"."{axis}" <= "at" ORDER BY "sah"."{axis}" DESC LIMIT 1"#)),
-                "{axis}: {sql}"
-            );
-        }
-        assert!(!sql.contains("created_at") && !sql.contains("modified_at"), "{sql}");
+        assert_statement_snapshot!("scope-assertion-each-axis-reads-its-newest-event-at-or-before-the-instant", rendered());
     }
 
     /// A state is the set of paths at the head instant, a removal naming none,
     /// and is compared with the assertion as a set sorted byte-wise.
     #[test]
     fn a_state_is_compared_with_the_assertion_as_a_byte_ordered_path_set() {
-        let sql = rendered();
-        assert!(sql.contains(r#""sas"."verbatim_scope_path" IS NOT NULL"#), "{sql}");
-        assert!(
-            sql.contains(r#"ORDER BY ("sas"."verbatim_scope_path") COLLATE "C" ASC)) COLLATE "C") = ((ARRAY (SELECT "verbatim_scope_path" FROM "asserted" ORDER BY ("verbatim_scope_path") COLLATE "C" ASC)) COLLATE "C")"#),
-            "{sql}"
-        );
-        assert_eq!(sql.matches(r#"= ((ARRAY (SELECT "verbatim_scope_path" FROM "asserted""#).count(), 2, "{sql}");
+        assert_statement_snapshot!("scope-assertion-a-state-is-compared-with-the-assertion-as-a-byte-ordered-path-set", rendered());
     }
 }

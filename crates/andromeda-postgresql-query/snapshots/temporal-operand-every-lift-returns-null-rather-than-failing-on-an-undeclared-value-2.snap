@@ -1,0 +1,11 @@
+---
+source: crates/andromeda-postgresql-query/src/temporal_operand.rs
+---
+SELECT
+  (
+    CASE
+      WHEN (
+        "datatype" = ('https://uri.etsi.org/ngsi-ld/Date')
+      ) THEN "text"
+    END
+  )

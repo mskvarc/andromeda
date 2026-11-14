@@ -1,0 +1,21 @@
+---
+source: crates/andromeda-postgresql-context-query/src/attribute_value_datatype.rs
+---
+SELECT
+  (
+    CASE
+      WHEN ("n" IS NOT NULL) THEN 'number'
+      WHEN ("b" IS NOT NULL) THEN 'boolean'
+      WHEN ("t" IS NOT NULL) THEN 'https://uri.etsi.org/ngsi-ld/DateTime'
+      WHEN ("d" = ('https://uri.etsi.org/ngsi-ld/DateTime')) THEN 'https://uri.etsi.org/ngsi-ld/DateTime'
+      WHEN ("d" = ('https://uri.etsi.org/ngsi-ld/Date')) THEN 'https://uri.etsi.org/ngsi-ld/Date'
+      WHEN ("d" = ('https://uri.etsi.org/ngsi-ld/Time')) THEN 'https://uri.etsi.org/ngsi-ld/Time'
+      WHEN ("s" IS NOT NULL) THEN 'string'
+      WHEN ("j") THEN 'null'
+      WHEN (
+        jsonb_typeof("o") = ('array')
+        OR ("o" ? ('@list'))
+      ) THEN 'array'
+      WHEN ("o" IS NOT NULL) THEN 'object'
+    END
+  )

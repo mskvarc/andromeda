@@ -1,0 +1,15 @@
+---
+source: crates/andromeda-postgresql-query/src/temporal_operand.rs
+---
+SELECT
+  (
+    CASE
+      WHEN (
+        "datatype" = ('https://uri.etsi.org/ngsi-ld/Time')
+        AND pg_input_is_valid(('1970-01-01T') || "text", 'timestamptz')
+      ) THEN to_char(
+        ((('1970-01-01T') || "text")::timestamptz) AT TIME ZONE ('UTC'),
+        'HH24:MI:SS.US'
+      ) || ('Z')
+    END
+  )

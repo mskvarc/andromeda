@@ -1,0 +1,172 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/stage1/scope_candidates.rs
+---
+WITH
+"candidates" AS MATERIALIZED (
+  SELECT
+    "scope_history"."entity_key"
+  FROM
+    "scope_history"
+  WHERE
+    "scope_history"."value_kind" = $1
+    AND ("scope_history"."scope_path" ~ ($2::lquery))
+  LIMIT
+    10001
+)
+SELECT
+  COUNT("e"."id")
+FROM
+  (
+    SELECT
+      "e".*
+    FROM
+      (
+        SELECT
+          "e"."entity_key"
+        FROM
+          (
+            SELECT
+              "entity_key",
+              "id"
+            FROM
+              "entity_type_members"
+            WHERE
+              "entity_type_name_key" = (1)
+              AND "is_evolution_member"
+              AND "entity_key" IN (
+                SELECT
+                  "entity_key"
+                FROM
+                  "candidates"
+              )
+            ORDER BY
+              "id" ASC OFFSET 0
+          ) AS "e"
+        WHERE
+          (
+            SELECT
+              COUNT(*)
+            FROM
+              "candidates"
+          ) <= $3
+        UNION ALL
+        (
+          SELECT
+            "e"."entity_key"
+          FROM
+            (
+              SELECT
+                "entity_key",
+                "id"
+              FROM
+                "entity_type_members"
+              WHERE
+                "entity_type_name_key" = (1)
+                AND "is_evolution_member"
+            ) AS "e"
+          WHERE
+            (
+              SELECT
+                COUNT(*)
+              FROM
+                "candidates"
+            ) > $4
+        )
+      ) AS "k"
+      JOIN LATERAL (
+        SELECT
+          *
+        FROM
+          (
+            SELECT
+              *
+            FROM
+              "entities"
+            WHERE
+              "entities"."evolution_created_at" IS NOT NULL
+          ) AS "e"
+        WHERE
+          "e"."entity_key" = "k"."entity_key" OFFSET 0
+      ) AS "e" ON TRUE
+  ) AS "e"
+WHERE
+  EXISTS (
+    SELECT
+      $5
+    FROM
+      (
+        SELECT
+          "rsh"."entity_key" AS "entity_key",
+          "rsh"."recorded_at",
+          "rsh"."write_id",
+          "rsh"."write_ordinal",
+          "rsh"."value_kind",
+          "rsh"."observed_at",
+          "rsh"."created_at",
+          "rsh"."modified_at",
+          "rsh"."deleted_at",
+          "rsh"."scope_path",
+          "rsh"."verbatim_scope_path"
+        FROM
+          "scope_history" AS "rsh"
+        WHERE
+          "rsh"."entity_key" = "e"."entity_key"
+      ) AS "sh"
+    WHERE
+      "sh"."observed_at" IS NOT NULL
+      AND ("sh"."scope_path" ~ ($6::lquery))
+      AND "sh"."observed_at" < $7
+  )
+  AND EXISTS (
+    SELECT
+      1
+    FROM
+      (
+        SELECT
+          "rs"."entity_key" AS "entity_key",
+          "rs"."attribute_name_key" AS "attribute_name_key",
+          "rs"."dataset_key" AS "dataset_key",
+          "rh"."recorded_at",
+          "rh"."write_id",
+          "rh"."write_ordinal",
+          "rh"."attribute_kind",
+          "rh"."value_kind",
+          "rh"."observed_at",
+          "rh"."created_at",
+          "rh"."modified_at",
+          "rh"."deleted_at",
+          "rh"."value_date_time",
+          "rh"."expires_at",
+          "rh"."generated_instance_id",
+          "rh"."value_type_key",
+          "rh"."value_datatype_key",
+          "rh"."unit_code_id",
+          "rh"."value_boolean",
+          "rh"."verbatim_instance_id",
+          "rh"."value_number",
+          "rh"."value_string",
+          "rh"."value_language",
+          "rh"."value_geometry",
+          "rh"."value_geometry_valid",
+          "rh"."value_geometry_reach",
+          "rh"."value_geometry_members",
+          "rh"."value_object",
+          "rh"."value_uri",
+          "rh"."object_type_keys",
+          "rh"."sub_attributes"
+        FROM
+          "attribute_history" AS "rh"
+          JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+      ) AS "ah"
+    WHERE
+      "ah"."observed_at" < $8
+      AND "ah"."entity_key" = "e"."entity_key"
+  )
+1: SmallInt 1
+2: String 'city.moved1'
+3: BigUnsigned 10000
+4: BigUnsigned 10000
+5: Int 1
+6: String 'city.moved1'
+7: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'
+8: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'

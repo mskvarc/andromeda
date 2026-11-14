@@ -28,21 +28,12 @@ pub(crate) fn value_text(row: impl IntoIden) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::value_text::value_text;
-    use sea_query::{Alias, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Query};
 
     #[test]
     fn every_value_column_is_folded_once() {
-        let sql = Query::select().expr(value_text(Alias::new("ah"))).to_owned().to_string(PostgresQueryBuilder);
-        for column in [
-            "value_number",
-            "value_string",
-            "value_boolean",
-            "value_geometry",
-            "value_object",
-            "value_date_time",
-            "value_uri",
-        ] {
-            assert_eq!(sql.matches(&format!(r#""ah"."{column}""#)).count(), 1, "{column}: {sql}");
-        }
+        let statement = Query::select().expr(value_text(Alias::new("ah"))).to_owned();
+        assert_statement_snapshot!("value-text-every-value-column-is-folded-once", statement);
     }
 }

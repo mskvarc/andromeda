@@ -46,8 +46,8 @@ mod tests {
     use crate::stage1::{contributed_candidates::contributed_candidates, query_fixture::ids};
     use andromeda_ngsi_ld_query::temporal::contributed_entities::{ContributedEntities, ContributedRendering};
     use andromeda_postgresql_query::history_source::HistoryBranch;
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, IntoIden, PostgresQueryBuilder};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, IntoIden};
 
     /// Two Entities a Context Source contributed.
     fn two() -> ContributedEntities {
@@ -61,32 +61,19 @@ mod tests {
 
     #[test]
     fn recorded_rows_name_a_contributed_entity_by_its_evolution_key() {
-        let sql = contributed_candidates(&HistoryBranch::live_recorded(), &two())
-            .expect("contributed Entities")
-            .to_string(PostgresQueryBuilder);
-        assert_eq!(
-            sql,
-            concat!(
-                r#"SELECT "entities"."entity_key" FROM "entities""#,
-                r#" WHERE "entities"."id" = ANY(ARRAY ['urn:ngsi-ld:Sensor:000009','urn:ngsi-ld:Sensor:000011'])"#,
-                r#" AND "entities"."evolution_created_at" IS NOT NULL"#
-            )
-        );
+        let statement = contributed_candidates(&HistoryBranch::live_recorded(), &two()).expect("contributed Entities");
+        assert_statement_snapshot!("contributed-candidates-recorded-rows-name-a-contributed-entity-by-its-evolution-key", statement);
     }
 
     #[test]
     fn a_queued_branch_names_a_contributed_entity_by_its_identifier() {
-        let sql = contributed_candidates(&HistoryBranch::live(), &two())
-            .expect("contributed Entities")
-            .to_string(PostgresQueryBuilder);
-        assert!(sql.starts_with(r#"SELECT "entities"."id" FROM "entities" WHERE"#), "{sql}");
+        let statement = contributed_candidates(&HistoryBranch::live(), &two()).expect("contributed Entities");
+        assert_statement_snapshot!("contributed-candidates-a-queued-branch-names-a-contributed-entity-by-its-identifier", statement);
     }
 
     #[test]
     fn a_snapshot_reads_its_own_catalogue() {
-        let sql = contributed_candidates(&HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()), &two())
-            .expect("contributed Entities")
-            .to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#"FROM "snap_7"."entities" WHERE"#), "{sql}");
+        let statement = contributed_candidates(&HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()), &two()).expect("contributed Entities");
+        assert_statement_snapshot!("contributed-candidates-a-snapshot-reads-its-own-catalogue", statement);
     }
 }

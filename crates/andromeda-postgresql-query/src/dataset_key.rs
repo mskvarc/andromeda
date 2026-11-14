@@ -70,10 +70,11 @@ pub fn is_named_instance(column: impl Into<SimpleExpr>) -> SimpleExpr {
 mod tests {
     use crate::dataset_key::{DatasetKey, is_default_instance, is_named_instance};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Expr, Query, SelectStatement, SimpleExpr};
 
-    fn render(expression: SimpleExpr) -> String {
-        Query::select().expr(expression).to_owned().to_string(PostgresQueryBuilder)
+    fn render(expression: SimpleExpr) -> SelectStatement {
+        Query::select().expr(expression).to_owned()
     }
 
     #[test]
@@ -104,7 +105,13 @@ mod tests {
     #[test]
     fn the_default_and_named_tests_compare_the_key_with_the_inline_empty_string() {
         let column = || Expr::col((Alias::new("s"), Alias::new("dataset_key")));
-        pretty_assertions::assert_eq!(render(is_default_instance(column())), r#"SELECT "s"."dataset_key" = ('')"#);
-        pretty_assertions::assert_eq!(render(is_named_instance(column())), r#"SELECT "s"."dataset_key" <> ('')"#);
+        assert_statement_snapshot!(
+            "dataset-key-the-default-and-named-tests-compare-the-key-with-the-inline-empty-string-1",
+            render(is_default_instance(column()))
+        );
+        assert_statement_snapshot!(
+            "dataset-key-the-default-and-named-tests-compare-the-key-with-the-inline-empty-string-2",
+            render(is_named_instance(column()))
+        );
     }
 }

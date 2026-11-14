@@ -46,7 +46,7 @@ When two places need the same functionality, it moves into the module that owns 
 
 ## What the gates catch
 
-The gates below run over the whole workspace. Most of them check production code only, not tests, build scripts or test-only items. `time_handling` reads test code too, because a test that parses a time some other way asserts behaviour the broker doesn't have, and so do `module_naming` and the part of `raw_sql` that looks for statement text handed to the driver. Some gates have a baseline, which tolerates only the entries listed on it and can only shrink. Today only the `type_erased_error` baseline has an entry, a single one for the DNS resolver in `andromeda-outbound-http`, because `reqwest`'s `Resolve` trait hands errors back boxed. So every other gate fails on the first violation.
+The gates below run over the whole workspace. Most of them check production code only, not tests, build scripts or test-only items. `time_handling` reads test code too, because a test that parses a time some other way asserts behaviour the broker doesn't have, and so do `module_naming` and the part of `raw_sql` that looks for statement text handed to the driver. Some gates have a baseline, which tolerates only the entries listed on it and can only shrink. Two baselines have entries today. `type_erased_error` lists one, the DNS resolver in `andromeda-outbound-http`, because `reqwest`'s `Resolve` trait hands errors back boxed. `q_reading` counts, per file, the sites in `andromeda-postgresql-query` and `andromeda-postgresql-context-query` that still match on a `q` term's syntax tree, and a file whose count drops must lower its entry. Every other gate fails on the first violation.
 
 | Gate | Fails on | Why |
 |---|---|---|
@@ -57,6 +57,7 @@ The gates below run over the whole workspace. Most of them check production code
 | `swallowed_row_decode` | a column that fails to decode being read as zero, empty or absent | Answering from a default would answer as if nothing were wrong. |
 | `state_codec_boundary` | a PostgreSQL crate turning entity state into a JSON document | PostgreSQL holds entity state as typed rows. |
 | `scope_grammar`, `linked_retrieval`, `registration_matching`, `time_handling` | a decision of that concern taken outside its one engine | Two readings of the same rule let one endpoint accept what another refuses. |
+| `q_reading` | a pattern naming a variant of `Predicate`, `SetMembership`, `OrderingOp` or `CompareValue` outside `andromeda-ngsi-ld-query/src/filter/`, beyond its baseline | Clause 4.9 gives a Query Term one meaning, and every place that decides it from the syntax tree is a reading that can drift from the others. |
 | `geometry_box_test` | a geo-query box test on a bare geometry column | A long great-circle edge bows past its vertices, so the box has to be the one the spatial index keys. |
 | `raw_constant` | an IRI or media type kept as a plain string constant | A constant is validated when it compiles. |
 | `configuration_layering`, `configuration_ownership`, `configuration_description` | the configuration rules above | |

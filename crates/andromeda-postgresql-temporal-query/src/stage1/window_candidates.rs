@@ -89,7 +89,7 @@ impl WindowRead {
 
 #[cfg(test)]
 mod tests {
-    use crate::stage1::query_fixture::{PageBranches, ids, instant, iri, recorded_stage1, sensors, stage1_on};
+    use crate::stage1::query_fixture::{candidates_of, ids, instant, iri, recorded_stage1, sensors, stage1_on};
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelector,
@@ -97,10 +97,9 @@ mod tests {
         temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
     };
     use andromeda_postgresql_query::history_source::HistoryBranch;
-    use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, IntoIden, PostgresQueryBuilder, Value};
-    use strum::IntoEnumIterator;
+    use sea_query::{Alias, IntoIden, PostgresQueryBuilder, SelectStatement};
 
     /// A query of the `Sensor` type over `interval` on `timeproperty`.
     fn windowed(timeproperty: TimeProp, interval: TimeInterval) -> CompiledTemporalQuery {
@@ -115,63 +114,57 @@ mod tests {
         windowed(TimeProp::Modified, TimeInterval::After(instant("2026-10-18T03:00:00Z")))
     }
 
-    /// The candidate read of the gated page of `compiled` over the `Sensor`
-    /// walk, rendered with its values inlined.
-    fn candidates_of(compiled: &CompiledTemporalQuery) -> String {
-        let sql = recorded_stage1(compiled).select.to_string(PostgresQueryBuilder);
-        PageBranches::of(&sql).candidates.to_owned()
+    /// The gated page of `compiled` over the `Sensor` walk.
+    fn page_of(compiled: &CompiledTemporalQuery) -> SelectStatement {
+        recorded_stage1(compiled).select
     }
 
     #[test]
     fn a_window_over_a_type_walk_reads_the_horizons_at_or_after_its_start() {
         let stage1 = recorded_stage1(&modified_after());
         assert_eq!(stage1.planning, StatementPlanning::GenericGatedBranches);
-        let (sql, values) = stage1.select.build(PostgresQueryBuilder);
-        let candidates = PageBranches::of(&sql).candidates;
-        assert!(
-            candidates.starts_with(r#"SELECT "entities"."entity_key" FROM "entities" WHERE "entities"."evolution_active_until" >= $"#),
-            "{candidates}"
+        let statement = stage1.select;
+        assert_statement_snapshot!(
+            "window-candidates-a-window-over-a-type-walk-reads-the-horizons-at-or-after-its-start",
+            statement
         );
-        assert!(!candidates.contains("attribute_history"), "{candidates}");
-        assert!(values.0.contains(&Value::BigUnsigned(Some(10_001))), "{:?}", values.0);
     }
 
     /// The horizon bounds the instants of every axis at once, so the axis
     /// changes only the residual window match.
     #[test]
     fn every_axis_reads_the_same_horizons() {
-        let candidates: Vec<String> = TimeProp::iter()
-            .map(|timeproperty| candidates_of(&windowed(timeproperty, TimeInterval::After(instant("2026-10-18T03:00:00Z")))))
-            .collect();
-        assert_eq!(
-            candidates.first().map(String::as_str),
-            Some(r#"SELECT "entities"."entity_key" FROM "entities" WHERE "entities"."evolution_active_until" >= '2026-10-18 03:00:00.000000 +00:00'"#)
-        );
+        let after = || TimeInterval::After(instant("2026-10-18T03:00:00Z"));
+        let observed = page_of(&windowed(TimeProp::Observed, after()));
+        assert_statement_snapshot!("window-candidates-every-axis-reads-the-same-horizons-1", observed);
+        let created = page_of(&windowed(TimeProp::Created, after()));
+        assert_statement_snapshot!("window-candidates-every-axis-reads-the-same-horizons-2", created);
+        let modified = page_of(&windowed(TimeProp::Modified, after()));
+        assert_statement_snapshot!("window-candidates-every-axis-reads-the-same-horizons-3", modified);
+        let deleted = page_of(&windowed(TimeProp::Deleted, after()));
+        assert_statement_snapshot!("window-candidates-every-axis-reads-the-same-horizons-4", deleted);
+        let renderings = [observed, created, modified, deleted].map(|statement| statement.to_string(PostgresQueryBuilder));
+        let candidates: Vec<&str> = renderings.iter().map(|sql| candidates_of(sql)).collect();
         assert!(candidates.windows(2).all(|pair| pair[0] == pair[1]), "{candidates:?}");
     }
 
     #[test]
     fn a_between_window_reads_the_horizons_from_its_start() {
-        let between = candidates_of(&windowed(
+        let statement = page_of(&windowed(
             TimeProp::Modified,
             TimeInterval::Between {
                 from: instant("2026-10-18T03:00:00Z"),
                 to: instant("2026-10-19T03:00:00Z"),
             },
         ));
-        assert_eq!(
-            between,
-            r#"SELECT "entities"."entity_key" FROM "entities" WHERE "entities"."evolution_active_until" >= '2026-10-18 03:00:00.000000 +00:00'"#
-        );
+        assert_statement_snapshot!("window-candidates-a-between-window-reads-the-horizons-from-its-start", statement);
     }
 
     /// A `before` window reaches back without limit, which no horizon bounds.
     #[test]
     fn a_before_window_has_no_window_step() {
-        let stage1 = recorded_stage1(&windowed(TimeProp::Modified, TimeInterval::Before(instant("2026-10-18T03:00:00Z"))));
-        let sql = stage1.select.to_string(PostgresQueryBuilder);
-        assert!(!sql.contains("candidates"), "{sql}");
-        assert!(!sql.contains("evolution_active_until"), "{sql}");
+        let statement = page_of(&windowed(TimeProp::Modified, TimeInterval::Before(instant("2026-10-18T03:00:00Z"))));
+        assert_statement_snapshot!("window-candidates-a-before-window-has-no-window-step", statement);
     }
 
     /// The horizon covers every attribute of the Evolution, so the concerned
@@ -180,16 +173,21 @@ mod tests {
     fn the_concerned_attributes_leave_the_candidates_alone() {
         let mut compiled = modified_after();
         compiled.instances.attr_filter = vec![iri("https://uri.etsi.org/ngsi-ld/default-context/temperature")];
-        assert_eq!(candidates_of(&compiled), candidates_of(&modified_after()));
+        let narrowed = page_of(&compiled);
+        assert_statement_snapshot!("window-candidates-the-concerned-attributes-leave-the-candidates-alone-1", narrowed);
+        let plain = page_of(&modified_after());
+        assert_statement_snapshot!("window-candidates-the-concerned-attributes-leave-the-candidates-alone-2", plain);
+        let (narrowed, plain) = (narrowed.to_string(PostgresQueryBuilder), plain.to_string(PostgresQueryBuilder));
+        assert_eq!(candidates_of(&narrowed), candidates_of(&plain));
     }
 
     #[test]
     fn an_unbounded_window_has_no_window_step() {
         let compiled = windowed(TimeProp::Modified, TimeInterval::Unbounded);
         let stage1 = recorded_stage1(&compiled);
-        let sql = stage1.select.to_string(PostgresQueryBuilder);
-        assert!(!sql.contains("candidates"), "{sql}");
         assert_eq!(stage1.planning, StatementPlanning::Cached);
+        let statement = stage1.select;
+        assert_statement_snapshot!("window-candidates-an-unbounded-window-has-no-window-step", statement);
     }
 
     #[test]
@@ -197,9 +195,9 @@ mod tests {
         let mut compiled = modified_after();
         compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Sensor:000001"])).build()];
         let stage1 = recorded_stage1(&compiled);
-        let sql = stage1.select.to_string(PostgresQueryBuilder);
-        assert!(!sql.contains("candidates"), "{sql}");
         assert_eq!(stage1.planning, StatementPlanning::Cached);
+        let statement = stage1.select;
+        assert_statement_snapshot!("window-candidates-a-selector-naming-identifiers-keeps-the-plain-walk", statement);
     }
 
     /// Clause 6.3.13 counts every match, which the window match's semi-join
@@ -208,23 +206,14 @@ mod tests {
     fn a_counted_window_keeps_its_semi_join_count() {
         let stage1 = recorded_stage1(&modified_after());
         assert_eq!(stage1.count_planning, StatementPlanning::Cached);
-        let count = stage1.count.expect("count requested").to_string(PostgresQueryBuilder);
-        assert!(!count.contains("candidates"), "{count}");
-        assert!(count.starts_with(r#"SELECT COUNT("e"."id") FROM"#), "{count}");
-        assert!(
-            count.contains(r#""ah"."modified_at" >= '2026-10-18 03:00:00.000000 +00:00' AND "ah"."entity_key" = "e"."entity_key""#),
-            "{count}"
-        );
+        let statement = stage1.count.expect("count requested");
+        assert_statement_snapshot!("window-candidates-a-counted-window-keeps-its-semi-join-count", statement);
     }
 
     #[test]
     fn a_page_of_one_takes_the_window_step() {
-        let sql = stage1_on(&HistoryBranch::live_recorded(), &modified_after(), &PageWindow::offset(1, 0))
-            .select
-            .to_string(PostgresQueryBuilder);
-        let branches = PageBranches::of(&sql);
-        assert!(branches.short().contains("LIMIT 200 OFFSET 0"), "{}", branches.short());
-        assert!(branches.walk.contains(r#"(SELECT COUNT(*) FROM "candidates") > 10000"#), "{}", branches.walk);
+        let statement = stage1_on(&HistoryBranch::live_recorded(), &modified_after(), &PageWindow::offset(1, 0)).select;
+        assert_statement_snapshot!("window-candidates-a-page-of-one-takes-the-window-step", statement);
     }
 
     /// A page of 20 behind a short walk of 200 is projected full within the
@@ -232,100 +221,39 @@ mod tests {
     /// 200 / 1,500, rounded up).
     #[test]
     fn a_short_walk_projecting_the_page_full_sends_it_to_the_walk_unread() {
-        let sql = recorded_stage1(&modified_after()).select.to_string(PostgresQueryBuilder);
-        let branches = PageBranches::of(&sql);
-        let filled = r#"CASE WHEN ((SELECT COUNT(*) FROM "short_walk") >= 20) THEN FALSE WHEN ((SELECT COUNT(*) FROM "short_walk") >= 3)"#;
-        assert!(
-            branches
-                .walk
-                .contains(&format!(r#"{filled} THEN TRUE ELSE (SELECT COUNT(*) FROM "candidates") > 10000 END"#)),
-            "{}",
-            branches.walk
-        );
-        assert!(
-            branches
-                .indexed
-                .contains(&format!(r#"{filled} THEN FALSE ELSE (SELECT COUNT(*) FROM "candidates") <= 10000 END"#)),
-            "{}",
-            branches.indexed
-        );
+        let statement = page_of(&modified_after());
+        assert_statement_snapshot!("window-candidates-a-short-walk-projecting-the-page-full-sends-it-to-the-walk-unread", statement);
     }
 
     #[test]
     fn a_page_beyond_the_short_walk_holds_no_short_walk_and_lets_the_candidates_decide() {
-        let sql = stage1_on(&HistoryBranch::live_recorded(), &modified_after(), &PageWindow::offset(20, 250))
-            .select
-            .to_string(PostgresQueryBuilder);
-        let branches = PageBranches::of(&sql);
-        assert_eq!(branches.short_walk, None, "{sql}");
-        assert!(!sql.contains("short_walk") && !sql.contains(r#"AS "answered""#), "{sql}");
-        assert!(!branches.walk.contains("CASE"), "{}", branches.walk);
-        assert!(
-            branches.indexed.contains(r#"(SELECT COUNT(*) FROM "candidates") <= 10000 AND"#),
-            "{}",
-            branches.indexed
-        );
-        assert!(
-            branches.walk.contains(r#"(SELECT COUNT(*) FROM "candidates") > 10000 AND"#),
-            "{}",
-            branches.walk
+        let statement = stage1_on(&HistoryBranch::live_recorded(), &modified_after(), &PageWindow::offset(20, 250)).select;
+        assert_statement_snapshot!(
+            "window-candidates-a-page-beyond-the-short-walk-holds-no-short-walk-and-lets-the-candidates-decide",
+            statement
         );
     }
 
     #[test]
     fn the_window_match_stays_the_residual() {
-        let sql = recorded_stage1(&modified_after()).select.to_string(PostgresQueryBuilder);
-        let branches = PageBranches::of(&sql);
-        assert!(
-            branches.indexed.contains(r#""entity_key" IN (SELECT "entity_key" FROM "candidates")"#),
-            "{}",
-            branches.indexed
-        );
-        for residual in [branches.short(), branches.indexed, branches.walk] {
-            assert!(residual.contains(r#""ah"."modified_at" >= "#), "{residual}");
-        }
+        let statement = page_of(&modified_after());
+        assert_statement_snapshot!("window-candidates-the-window-match-stays-the-residual", statement);
     }
 
     #[test]
     fn a_queued_branch_admits_every_queued_entity_for_its_window() {
-        let sql = stage1_on(&HistoryBranch::live(), &modified_after(), &PageWindow::offset(20, 0))
-            .select
-            .to_string(PostgresQueryBuilder);
-        let branches = PageBranches::of(&sql);
-        assert!(
-            branches
-                .candidates
-                .starts_with(r#"SELECT "entities"."id" FROM "entities" WHERE "entities"."evolution_active_until" >= "#),
-            "{}",
-            branches.candidates
-        );
-        assert!(
-            branches
-                .candidates
-                .ends_with(r#" UNION ALL (SELECT "entity_id" FROM "temporal_append_intents")"#),
-            "{}",
-            branches.candidates
-        );
-        assert!(
-            branches.indexed.contains(r#""e"."id" IN (SELECT "id" FROM "candidates")"#),
-            "{}",
-            branches.indexed
-        );
+        let statement = stage1_on(&HistoryBranch::live(), &modified_after(), &PageWindow::offset(20, 0)).select;
+        assert_statement_snapshot!("window-candidates-a-queued-branch-admits-every-queued-entity-for-its-window", statement);
     }
 
     #[test]
     fn a_snapshot_reads_its_own_history() {
-        let sql = stage1_on(
+        let statement = stage1_on(
             &HistoryBranch::recorded_in(Alias::new("snap_7").into_iden()),
             &modified_after(),
             &PageWindow::offset(20, 0),
         )
-        .select
-        .to_string(PostgresQueryBuilder);
-        let candidates = PageBranches::of(&sql).candidates;
-        assert!(
-            candidates.starts_with(r#"SELECT "entities"."entity_key" FROM "snap_7"."entities" WHERE "entities"."evolution_active_until" >= "#),
-            "{candidates}"
-        );
+        .select;
+        assert_statement_snapshot!("window-candidates-a-snapshot-reads-its-own-history", statement);
     }
 }

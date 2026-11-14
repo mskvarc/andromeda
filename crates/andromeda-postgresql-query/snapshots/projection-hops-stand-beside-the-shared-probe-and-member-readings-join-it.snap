@@ -1,0 +1,143 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/projection.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca_ln1"
+      JOIN jsonb_array_elements_text(
+        COALESCE(
+          "ca_ln1"."value_object",
+          jsonb_build_array(
+            COALESCE("ca_ln1"."value_uri", "ca_ln1"."value_long_uri")
+          )
+        )
+      ) AS "lo1" ON TRUE
+      JOIN "entities" AS "le1" ON "le1"."id" = "lo1"
+    WHERE
+      "ca_ln1"."entity_key" = "entities"."entity_key"
+      AND "ca_ln1"."attribute_name_key" = $1
+      AND "ca_ln1"."attribute_kind" IN (2, 8)
+      AND (
+        "ca_ln1"."expires_at" IS NULL
+        OR "ca_ln1"."expires_at" > NOW()
+      )
+      AND (
+        "le1"."created_at" IS NOT NULL
+        AND (
+          "le1"."expires_at" IS NULL
+          OR "le1"."expires_at" > NOW()
+        )
+      )
+      AND EXISTS (
+        SELECT
+          1
+        FROM
+          "current_attributes" AS "ca"
+        WHERE
+          "ca"."attribute_name_key" = $2
+          AND (
+            "ca"."expires_at" IS NULL
+            OR "ca"."expires_at" > NOW()
+          )
+          AND (
+            (
+              "ca"."value_string" = $3
+              AND nullif("ca"."value_kind" = (2), FALSE)
+            )
+            OR "ca"."value_uri" = $4
+            OR (
+              "ca"."attribute_kind" <> (6)
+              AND (
+                (
+                  (
+                    "ca"."value_object" @> jsonb_build_array($5::text)
+                  )
+                  OR (
+                    "ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $6::text))
+                  )
+                )
+                AND EXISTS (
+                  SELECT
+                    1
+                  FROM
+                    jsonb_array_elements(
+                      (
+                        CASE
+                          WHEN (jsonb_typeof("ca"."value_object") = ('array')) THEN "ca"."value_object"
+                        END
+                      )
+                    ) AS "dm"
+                    LEFT JOIN "entity_type_names" AS "dmt" ON "dmt"."entity_type_name_key" = (
+                      CASE
+                        WHEN ("ca"."attribute_kind" IN (1, 7)) THEN "ca"."value_type_key"
+                      END
+                    )
+                  WHERE
+                    (
+                      CASE
+                        WHEN (
+                          jsonb_typeof(
+                            COALESCE("dm"."value" -> ('@value'), "dm"."value")
+                          ) = ('string')
+                          AND (
+                            NOT COALESCE(
+                              COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN (
+                                'https://uri.etsi.org/ngsi-ld/DateTime',
+                                'https://uri.etsi.org/ngsi-ld/Date',
+                                'https://uri.etsi.org/ngsi-ld/Time'
+                              )
+                              OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN (
+                                'http://www.w3.org/2001/XMLSchema#decimal',
+                                'http://www.w3.org/2001/XMLSchema#integer',
+                                'http://www.w3.org/2001/XMLSchema#long',
+                                'http://www.w3.org/2001/XMLSchema#int',
+                                'http://www.w3.org/2001/XMLSchema#short',
+                                'http://www.w3.org/2001/XMLSchema#byte',
+                                'http://www.w3.org/2001/XMLSchema#nonNegativeInteger',
+                                'http://www.w3.org/2001/XMLSchema#positiveInteger',
+                                'http://www.w3.org/2001/XMLSchema#nonPositiveInteger',
+                                'http://www.w3.org/2001/XMLSchema#negativeInteger',
+                                'http://www.w3.org/2001/XMLSchema#unsignedLong',
+                                'http://www.w3.org/2001/XMLSchema#unsignedInt',
+                                'http://www.w3.org/2001/XMLSchema#unsignedShort',
+                                'http://www.w3.org/2001/XMLSchema#unsignedByte',
+                                'http://www.w3.org/2001/XMLSchema#float',
+                                'http://www.w3.org/2001/XMLSchema#double'
+                              )
+                              OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) = ('http://www.w3.org/2001/XMLSchema#boolean'),
+                              FALSE
+                            )
+                          )
+                        ) THEN (
+                          COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::text END) = $7)))) AND "ca"."entity_key" = "le1"."entity_key")) OR EXISTS(SELECT 1 FROM "current_attributes" AS "ca" WHERE ("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW()) AND (("ca"."attribute_name_key" = $8 AND (("ca"."value_string" = $9 AND nullif("ca"."value_kind" = (2), FALSE)) OR "ca"."value_uri" = $10 OR ("ca"."attribute_kind" <> (6) AND ((("ca"."value_object" @> jsonb_build_array($11::text)) OR ("ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $12::text)))) AND EXISTS(SELECT 1 FROM jsonb_array_elements((CASE WHEN (jsonb_typeof("ca"."value_object") = ('array')) THEN "ca"."value_object" END)) AS "dm" LEFT JOIN "entity_type_names" AS "dmt" ON "dmt"."entity_type_name_key" = (CASE WHEN ("ca"."attribute_kind" IN (1, 7)) THEN "ca"."value_type_key" END) WHERE (CASE WHEN (jsonb_typeof(COALESCE("dm"."value" -> ('@value'), "dm"."value")) = ('string') AND (NOT COALESCE(COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN ('https://uri.etsi.org/ngsi-ld/DateTime', 'https://uri.etsi.org/ngsi-ld/Date', 'https://uri.etsi.org/ngsi-ld/Time') OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN ('http://www.w3.org/2001/XMLSchema#decimal', 'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', 'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', 'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', 'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', 'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) = ('http://www.w3.org/2001/XMLSchema#boolean'), FALSE))) THEN (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::text END) = $13))))) OR ("ca"."attribute_name_key" = $14 AND (("ca"."value_string" = $15 AND nullif("ca"."value_kind" = (2), FALSE)) OR "ca"."value_uri" = $16 OR ("ca"."attribute_kind" <> (6) AND ((("ca"."value_object" @> jsonb_build_array($17::text)) OR ("ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $18::text)))) AND EXISTS(SELECT 1 FROM jsonb_array_elements((CASE WHEN (jsonb_typeof("ca"."value_object") = ('array')) THEN "ca"."value_object" END)) AS "dm" LEFT JOIN "entity_type_names" AS "dmt" ON "dmt"."entity_type_name_key" = (CASE WHEN ("ca"."attribute_kind" IN (1, 7)) THEN "ca"."value_type_key" END) WHERE (CASE WHEN (jsonb_typeof(COALESCE("dm"."value" -> ('@value'), "dm"."value")) = ('string') AND (NOT COALESCE(COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN ('https://uri.etsi.org/ngsi-ld/DateTime', 'https://uri.etsi.org/ngsi-ld/Date', 'https://uri.etsi.org/ngsi-ld/Time') OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN ('http://www.w3.org/2001/XMLSchema#decimal', 'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', 'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', 'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', 'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', 'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') OR COALESCE("dmt"."name", "dm"."value" ->> ('@type')) = ('http://www.w3.org/2001/XMLSchema#boolean'), FALSE))) THEN (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::text END) = $19))))) OR ("ca"."attribute_name_key" = $20 AND (EXISTS(SELECT 1 FROM jsonb_array_elements((CASE WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object" END)) AS "ls" WHERE LOWER(("ls"."value" ->> ('@language')) COLLATE "C") = LOWER(($21::text) COLLATE "C") AND (("ls"."value" ->> ('@value')) COLLATE "und-x-icu") > $22) OR (EXISTS(SELECT 1 FROM (SELECT jsonb_path_query_array("member"."member", 'lax $[*] ? (exists(@."@value"))') AS "member" FROM jsonb_path_query("ca"."value_object", 'strict $."street"', '{}', TRUE) AS "member") AS "member" WHERE jsonb_array_length("member"."member") = (1) AND (((CASE WHEN (jsonb_typeof(("member"."member" -> (0)) -> ('@value')) = ('string') AND (NOT COALESCE((("member"."member" -> (0)) ->> ('@type')) IN ('https://uri.etsi.org/ngsi-ld/DateTime', 'https://uri.etsi.org/ngsi-ld/Date', 'https://uri.etsi.org/ngsi-ld/Time') OR (("member"."member" -> (0)) ->> ('@type')) IN ('http://www.w3.org/2001/XMLSchema#decimal', 'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', 'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', 'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', 'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', 'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') OR (("member"."member" -> (0)) ->> ('@type')) = ('http://www.w3.org/2001/XMLSchema#boolean'), FALSE))) THEN ((("member"."member" -> (0)) -> ('@value')) #>> ('{}'))::text END)) COLLATE "und-x-icu") > $23) OR ("ca"."attribute_kind" = (6) AND EXISTS(SELECT 1 FROM (SELECT "member"."member" AS "member" FROM jsonb_path_query("ca"."value_object", 'strict $."street"', '{}', TRUE) AS "member") AS "member" WHERE (NOT jsonb_typeof("member"."member") = ('array')) AND (((CASE WHEN (jsonb_typeof("member"."member") = ('string') AND (NOT COALESCE((NULL::text) IN ('https://uri.etsi.org/ngsi-ld/DateTime', 'https://uri.etsi.org/ngsi-ld/Date', 'https://uri.etsi.org/ngsi-ld/Time') OR (NULL::text) IN ('http://www.w3.org/2001/XMLSchema#decimal', 'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', 'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', 'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', 'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', 'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') OR (NULL::text) = ('http://www.w3.org/2001/XMLSchema#boolean'), FALSE))) THEN ("member"."member" #>> ('{}'))::text END)) COLLATE "und-x-icu") > $24)))))) AND "ca"."entity_key" = "entities"."entity_key")
+1: Int 19
+2: Int 20
+3: String 'x'
+4: String 'x'
+5: String 'x'
+6: String 'x'
+7: String 'x'
+8: Int 13
+9: String 'red'
+10: String 'red'
+11: String 'red'
+12: String 'red'
+13: String 'red'
+14: Int 14
+15: String 'y'
+16: String 'y'
+17: String 'y'
+18: String 'y'
+19: String 'y'
+20: Int 15
+21: String 'street'
+22: String 'a'
+23: String 'a'
+24: String 'a'

@@ -1,0 +1,22 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/aggregated_value.rs
+---
+SELECT
+  (
+    CASE
+      WHEN ("ah"."attribute_kind" NOT IN (2, 8, 4)) THEN COALESCE(
+        (
+          CASE
+            WHEN (
+              "ah"."value_number" NOT IN (
+                'NaN'::numeric,
+                'Infinity'::numeric,
+                '-Infinity'::numeric
+              )
+            ) THEN "ah"."value_number"
+          END
+        ),
+        "ah"."value_boolean"::integer::numeric
+      )
+    END
+  )

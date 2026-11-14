@@ -181,7 +181,8 @@ fn some_identifier_matches_registered_pattern(ids: &[&str]) -> SelectStatement {
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_query::pattern::Pattern;
-    use sea_query::PostgresQueryBuilder;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::SelectStatement;
 
     fn iri(value: &str) -> IriBuf {
         IriBuf::new(value.to_string()).expect("valid IRI")
@@ -191,12 +192,12 @@ mod tests {
         value.parse().expect("valid URI")
     }
 
-    fn render(specification: &ExpandedEntitySpecification<'_>) -> String {
+    fn render(specification: &ExpandedEntitySpecification<'_>) -> SelectStatement {
         let row = row_matches(specification).expect("the specification constrains the entity axis");
-        Query::select().expr(int_literal(1)).cond_where(row).to_string(PostgresQueryBuilder)
+        Query::select().expr(int_literal(1)).cond_where(row).take()
     }
 
-    fn types(selection: &TypeExpr) -> String {
+    fn types(selection: &TypeExpr) -> SelectStatement {
         render(&ExpandedEntitySpecification {
             entity_type: Some(selection),
             ids: &[],
@@ -208,13 +209,8 @@ mod tests {
     /// so one name is decided by the overlap with the wildcard sentinel.
     #[test]
     fn one_type_is_decided_by_the_indexed_overlap_alone() {
-        let sql = types(&TypeExpr::Type(iri("https://example.com/Vehicle")));
-        assert!(
-            sql.contains("COALESCE(\"ri\".\"entity_types\", '{*}') && ARRAY ['https://example.com/Vehicle','*']"),
-            "{sql}"
-        );
-        assert!(!sql.contains("@>"), "{sql}");
-        assert!(!sql.contains("entity_id"), "no identifier axis without identifiers: {sql}");
+        let select = types(&TypeExpr::Type(iri("https://example.com/Vehicle")));
+        assert_statement_snapshot!("entity-specification-one-type-is-decided-by-the-indexed-overlap-alone", select);
     }
 
     /// Clause 5.12 matches the selector against the row's types: a
@@ -226,25 +222,18 @@ mod tests {
             TypeExpr::Type(iri("https://example.com/Home")),
             TypeExpr::Type(iri("https://example.com/Vehicle")),
         ]);
-        let sql = types(&conjunction);
-        assert!(
-            sql.contains("COALESCE(\"ri\".\"entity_types\", '{*}') && ARRAY ['https://example.com/Home','https://example.com/Vehicle','*']"),
-            "{sql}"
-        );
-        assert!(
-            sql.contains("\"ri\".\"entity_types\" IS NULL OR (\"ri\".\"entity_types\" @> ARRAY ['https://example.com/Home','https://example.com/Vehicle'])"),
-            "{sql}"
+        assert_statement_snapshot!(
+            "entity-specification-a-conjunction-needs-every-type-and-a-disjunction-one-of-them-1",
+            types(&conjunction)
         );
         let disjunction = TypeExpr::Or(vec![
             TypeExpr::Type(iri("https://example.com/Home")),
             TypeExpr::Type(iri("https://example.com/Vehicle")),
         ]);
-        let sql = types(&disjunction);
-        assert!(
-            sql.contains("COALESCE(\"ri\".\"entity_types\", '{*}') && ARRAY ['https://example.com/Home','https://example.com/Vehicle','*']"),
-            "{sql}"
+        assert_statement_snapshot!(
+            "entity-specification-a-conjunction-needs-every-type-and-a-disjunction-one-of-them-2",
+            types(&disjunction)
         );
-        assert!(!sql.contains("@>"), "a disjunction of names is decided by the overlap: {sql}");
     }
 
     #[test]
@@ -256,12 +245,10 @@ mod tests {
                 TypeExpr::Type(iri("https://example.com/Boat")),
             ]),
         ]);
-        let sql = types(&nested);
-        assert!(
-            sql.contains("\"ri\".\"entity_types\" && ARRAY ['https://example.com/Vehicle','https://example.com/Boat']"),
-            "{sql}"
+        assert_statement_snapshot!(
+            "entity-specification-a-nested-selection-keeps-its-boolean-structure-in-the-residual",
+            types(&nested)
         );
-        assert!(sql.contains("\"ri\".\"entity_types\" @> ARRAY ['https://example.com/Home']"), "{sql}");
     }
 
     #[test]
@@ -278,22 +265,14 @@ mod tests {
     #[test]
     fn identifiers_admit_unconstrained_rows_exact_ids_and_pattern_only_rows_the_ids_match() {
         let ids = [uri("urn:ngsi-ld:Vehicle:1"), uri("urn:ngsi-ld:Vehicle:2")];
-        let sql = render(&ExpandedEntitySpecification {
+        let select = render(&ExpandedEntitySpecification {
             entity_type: None,
             ids: &ids,
             id_pattern: None,
         });
-        assert!(
-            sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ANY(ARRAY ['urn:ngsi-ld:Vehicle:1','urn:ngsi-ld:Vehicle:2',''])"),
-            "{sql}"
-        );
-        assert!(
-            sql.contains("\"ri\".\"entity_id\" = ANY(ARRAY ['urn:ngsi-ld:Vehicle:1','urn:ngsi-ld:Vehicle:2'])"),
-            "{sql}"
-        );
-        assert!(
-            sql.contains("\"queried\".\"queried\" ~ \"ri\".\"entity_id_pattern_form\""),
-            "the registered pattern is evaluated as its stored restatement: {sql}"
+        assert_statement_snapshot!(
+            "entity-specification-identifiers-admit-unconstrained-rows-exact-ids-and-pattern-only-rows-the-ids-match",
+            select
         );
     }
 
@@ -302,30 +281,26 @@ mod tests {
     #[test]
     fn a_registered_pattern_is_consulted_only_on_rows_without_an_id() {
         let ids = [uri("urn:ngsi-ld:Vehicle:1")];
-        let sql = render(&ExpandedEntitySpecification {
+        let select = render(&ExpandedEntitySpecification {
             entity_type: None,
             ids: &ids,
             id_pattern: None,
         });
-        assert!(
-            sql.contains("\"ri\".\"entity_id\" IS NULL AND (\"ri\".\"entity_id_pattern_form\" IS NULL OR EXISTS(SELECT 1 FROM UNNEST(ARRAY ['urn:ngsi-ld:Vehicle:1']) AS \"queried\" WHERE \"queried\".\"queried\" ~ \"ri\".\"entity_id_pattern_form\"))"),
-            "{sql}"
-        );
+        assert_statement_snapshot!("entity-specification-a-registered-pattern-is-consulted-only-on-rows-without-an-id", select);
     }
 
     #[test]
     fn a_queried_pattern_is_matched_against_registered_ids_and_admits_rows_without_one() {
         let pattern = Pattern::parse("urn:ngsi-ld:Fleet.*").expect("valid pattern");
-        let sql = render(&ExpandedEntitySpecification {
+        let select = render(&ExpandedEntitySpecification {
             entity_type: None,
             ids: &[],
             id_pattern: Some(&pattern),
         });
-        assert!(
-            sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ('') OR (((\"ri\".\"entity_id\") COLLATE \"default\") ~ 'urn:ngsi-ld:Fleet.*')"),
-            "{sql}"
+        assert_statement_snapshot!(
+            "entity-specification-a-queried-pattern-is-matched-against-registered-ids-and-admits-rows-without-one",
+            select
         );
-        assert!(!sql.contains("UNNEST"), "{sql}");
     }
 
     /// Clause 5.12: the identifier axis is one condition of the `EntityInfo`
@@ -340,26 +315,20 @@ mod tests {
         })
         .expect("a pattern constrains the entity axis")
         .add(ri_col(RegistrationInformation::PropertyNameKeys).is_not_null());
-        let sql = Query::select().expr(int_literal(1)).cond_where(row).to_string(PostgresQueryBuilder);
-        assert!(
-            sql.ends_with(
-                "WHERE (COALESCE(\"ri\".\"entity_id\", '') = ('') OR (((\"ri\".\"entity_id\") COLLATE \"default\") ~ 'urn:ngsi-ld:Fleet.*')) AND \"ri\".\"property_name_keys\" IS NOT NULL"
-            ),
-            "{sql}"
-        );
+        let select = Query::select().expr(int_literal(1)).cond_where(row).take();
+        assert_statement_snapshot!("entity-specification-a-pattern-without-a-type-is-a-conjunct-a-further-axis-narrows", select);
     }
 
     #[test]
     fn the_type_and_identifier_axes_are_one_row_condition() {
         let entity_type = TypeExpr::Type(iri("https://example.com/Vehicle"));
         let ids = [uri("urn:ngsi-ld:Vehicle:1")];
-        let sql = render(&ExpandedEntitySpecification {
+        let select = render(&ExpandedEntitySpecification {
             entity_type: Some(&entity_type),
             ids: &ids,
             id_pattern: None,
         });
-        assert!(sql.contains("\"entity_types\""), "{sql}");
-        assert!(sql.contains("\"entity_id\""), "{sql}");
+        assert_statement_snapshot!("entity-specification-the-type-and-identifier-axes-are-one-row-condition", select);
     }
 
     #[test]

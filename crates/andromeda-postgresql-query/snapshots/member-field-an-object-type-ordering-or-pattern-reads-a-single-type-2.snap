@@ -1,0 +1,18 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/sub_attribute/member_field.rs
+---
+SELECT
+WHERE
+  (
+    CASE
+      WHEN (cardinality("ca"."object_type_keys") = (1)) THEN (
+        SELECT
+          "mt"."name"
+        FROM
+          "entity_type_names" AS "mt"
+        WHERE
+          "mt"."entity_type_name_key" = (("ca"."object_type_keys")[1])
+      )
+    END
+  ) ~ $1
+1: String 'Dev'

@@ -1,0 +1,9 @@
+---
+source: crates/andromeda-postgresql-query/src/dataset_predicate.rs
+---
+SELECT
+  $1
+WHERE
+  "s"."dataset_key" = $2
+1: Int 1
+2: String 'urn:ngsi-ld:Dataset:one'

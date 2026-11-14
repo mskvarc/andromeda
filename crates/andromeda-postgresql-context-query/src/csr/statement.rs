@@ -178,28 +178,16 @@ mod tests {
         temporal::window::TimeInterval,
         type_selection::grammar::TypeExpr,
     };
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use chrono::{DateTime, Utc};
     use iri_rs::IriBuf;
-    use pretty_assertions::assert_eq;
-    use sea_query::PostgresQueryBuilder;
 
-    /// A built CSR discovery rendered with its values inlined: the paginated
-    /// statement and its always-present count.
-    struct Built {
-        sql: String,
-        count_sql: String,
-    }
-
-    fn build(query: &CompiledCsrQuery) -> Built {
+    fn build(query: &CompiledCsrQuery) -> CsrQuery {
         build_paged(query, &PageWindow::offset(20, 0))
     }
 
-    fn build_paged(query: &CompiledCsrQuery, window: &PageWindow) -> Built {
-        let csr = build_csr_query(query, window).expect("a renderable discovery");
-        Built {
-            sql: csr.select.to_string(PostgresQueryBuilder),
-            count_sql: csr.count.to_string(PostgresQueryBuilder),
-        }
+    fn build_paged(query: &CompiledCsrQuery, window: &PageWindow) -> CsrQuery {
+        build_csr_query(query, window).expect("a renderable discovery")
     }
 
     fn ids(raw: &[&str]) -> Vec<Identifier> {
@@ -236,11 +224,7 @@ mod tests {
 
     #[test]
     fn build_empty_query_returns_base_sql() {
-        let q = empty_query();
-        let built = build(&q);
-        assert!(built.sql.contains("context_source_registrations"));
-        assert!(built.sql.contains("LIMIT"));
-        assert!(built.sql.contains("OFFSET"));
+        assert_statement_snapshot!("statement-build-empty-query-returns-base-sql", build(&empty_query()).select);
     }
 
     /// Clause 5.9.2.4: a registration past its `expiresAt` is gone from
@@ -248,27 +232,19 @@ mod tests {
     #[test]
     fn every_discovery_excludes_expired_registrations_from_the_page_and_the_count() {
         let built = build(&empty_query());
-        assert!(built.sql.contains("\"expires_at\" IS NULL OR \"expires_at\" > NOW()"), "{}", built.sql);
-        assert!(
-            built.count_sql.contains("\"expires_at\" IS NULL OR \"expires_at\" > NOW()"),
-            "{}",
-            built.count_sql
+        assert_statement_snapshot!(
+            "statement-every-discovery-excludes-expired-registrations-from-the-page-and-the-count-1",
+            built.select
+        );
+        assert_statement_snapshot!(
+            "statement-every-discovery-excludes-expired-registrations-from-the-page-and-the-count-2",
+            built.count
         );
     }
 
     #[test]
     fn discovery_reads_the_shared_registration_projection() {
-        let built = build(&empty_query());
-        for column in ["\"id\"", "\"registration_name\"", "\"context_source_alias\"", "\"additional_properties\""] {
-            assert!(built.sql.contains(column), "missing {column}: {}", built.sql);
-        }
-        assert!(
-            built.sql.contains("ST_AsEWKB(\"context_source_registrations\".\"location\") AS \"location\""),
-            "{}",
-            built.sql
-        );
-        assert!(built.sql.contains("LEFT JOIN \"registration_delivery_state\""), "{}", built.sql);
-        assert!(!built.sql.contains("\"type\""), "{}", built.sql);
+        assert_statement_snapshot!("statement-discovery-reads-the-shared-registration-projection", build(&empty_query()).select);
     }
 
     /// Clause 5.5.9: an offset page reads the registrations in the unique
@@ -276,8 +252,7 @@ mod tests {
     #[test]
     fn an_offset_discovery_orders_by_id() {
         let built = build_paged(&empty_query(), &PageWindow::offset(10, 30));
-        assert!(built.sql.contains(r#"ORDER BY "id" ASC LIMIT 10 OFFSET 30"#), "{}", built.sql);
-        assert!(!built.sql.contains("created_at\" ASC"), "{}", built.sql);
+        assert_statement_snapshot!("statement-an-offset-discovery-orders-by-id", built.select);
     }
 
     /// The first page of a cursor walk reads in the identifier order its
@@ -288,10 +263,7 @@ mod tests {
             limit: 3,
             start: PageStart::Cursor(None),
         };
-        let built = build_paged(&empty_query(), &window);
-        assert!(built.sql.contains(r#"ORDER BY "id" ASC LIMIT 3"#), "{}", built.sql);
-        assert!(!built.sql.contains(r#"ORDER BY "created_at""#), "{}", built.sql);
-        assert!(!built.sql.contains("OFFSET"), "{}", built.sql);
+        assert_statement_snapshot!("statement-a-fresh-discovery-orders-by-id", build_paged(&empty_query(), &window).select);
     }
 
     /// Clause 5.5.9.1: a forward cursor pages `id > boundary` ascending over the
@@ -299,10 +271,7 @@ mod tests {
     #[test]
     fn a_forward_cursor_pages_id_ascending_past_the_boundary() {
         let built = build_paged(&empty_query(), &PageWindow::after(20, "urn:ngsi-ld:Csr:010".parse().expect("valid URI")));
-        assert!(built.sql.contains(r#""id" > 'urn:ngsi-ld:Csr:010'"#), "{}", built.sql);
-        assert!(built.sql.contains(r#"ORDER BY "id" ASC"#), "{}", built.sql);
-        assert!(!built.sql.contains("OFFSET"), "keyset mode drops OFFSET: {}", built.sql);
-        assert!(!built.sql.contains(r#"ORDER BY "created_at""#), "keyset mode orders by id alone: {}", built.sql);
+        assert_statement_snapshot!("statement-a-forward-cursor-pages-id-ascending-past-the-boundary", built.select);
     }
 
     /// Clause 5.5.9.1: a backward cursor pages `id < boundary` descending (the
@@ -313,10 +282,10 @@ mod tests {
             limit: 20,
             start: PageStart::Cursor(Some(PageCursor::Before("urn:ngsi-ld:Csr:010".parse().expect("valid URI")))),
         };
-        let built = build_paged(&empty_query(), &window);
-        assert!(built.sql.contains(r#""id" < 'urn:ngsi-ld:Csr:010'"#), "{}", built.sql);
-        assert!(built.sql.contains(r#"ORDER BY "id" DESC"#), "{}", built.sql);
-        assert!(!built.sql.contains("OFFSET"), "{}", built.sql);
+        assert_statement_snapshot!(
+            "statement-a-backward-cursor-pages-id-descending-before-the-boundary",
+            build_paged(&empty_query(), &window).select
+        );
     }
 
     /// Clause 5.5.9.1: the from-end cursor pages the last ids descending with no
@@ -327,28 +296,17 @@ mod tests {
             limit: 20,
             start: PageStart::Cursor(Some(PageCursor::End)),
         };
-        let built = build_paged(&empty_query(), &window);
-        assert!(built.sql.contains(r#"ORDER BY "id" DESC"#), "{}", built.sql);
-        assert!(
-            !built.sql.contains(r#""id" >"#) && !built.sql.contains(r#""id" <"#),
-            "no boundary predicate: {}",
-            built.sql
+        assert_statement_snapshot!(
+            "statement-a-from-end-cursor-pages-the-last-ids-descending",
+            build_paged(&empty_query(), &window).select
         );
-        assert!(!built.sql.contains("OFFSET"), "{}", built.sql);
     }
 
     #[test]
     fn build_with_entity_type() {
         let mut q = empty_query();
         q.entity_type = Some(TypeExpr::Type(iri("https://example.com/Vehicle")));
-        let built = build(&q);
-        assert!(
-            built
-                .sql
-                .contains("COALESCE(\"ri\".\"entity_types\", '{*}') && ARRAY ['https://example.com/Vehicle','*']"),
-            "{}",
-            built.sql
-        );
+        assert_statement_snapshot!("statement-build-with-entity-type", build(&q).select);
     }
 
     /// Clause 5.12: entity identifiers are matched against the registered
@@ -357,29 +315,17 @@ mod tests {
     fn entity_ids_are_matched_against_entity_info_not_the_registration_id() {
         let mut q = empty_query();
         q.ids = ids(&["urn:a", "urn:b"]);
-        let built = build(&q);
-        assert!(
-            built.sql.contains("COALESCE(\"ri\".\"entity_id\", '') = ANY(ARRAY ['urn:a','urn:b',''])"),
-            "{}",
-            built.sql
-        );
-        assert!(built.sql.contains("\"ri\".\"entity_id\" = ANY(ARRAY ['urn:a','urn:b'])"), "{}", built.sql);
-        assert!(!built.sql.contains("\"id\" = ANY("), "the registration id is not an entity id: {}", built.sql);
+        assert_statement_snapshot!("statement-entity-ids-are-matched-against-entity-info-not-the-registration-id", build(&q).select);
     }
 
     #[test]
     fn a_queried_id_pattern_is_evaluated_against_registered_ids_and_admits_registered_patterns() {
         let mut q = empty_query();
         q.id_pattern = Some(Pattern::parse("urn:ngsi-ld:.*").unwrap());
-        let built = build(&q);
-        assert!(
-            built
-                .sql
-                .contains("COALESCE(\"ri\".\"entity_id\", '') = ('') OR (((\"ri\".\"entity_id\") COLLATE \"default\") ~ 'urn:ngsi-ld:.*')"),
-            "{}",
-            built.sql
+        assert_statement_snapshot!(
+            "statement-a-queried-id-pattern-is-evaluated-against-registered-ids-and-admits-registered-patterns",
+            build(&q).select
         );
-        assert!(!built.sql.contains("\"entity_id_pattern\" ="), "{}", built.sql);
     }
 
     /// Clause 5.12: the identifier pattern and the attribute names must both
@@ -391,14 +337,14 @@ mod tests {
         q.id_pattern = Some(Pattern::parse("urn:ngsi-ld:Fleet.*").unwrap());
         q.attrs = vec![iri("https://example.com/speed")];
         let built = build(&q);
-        for statement in [&built.sql, &built.count_sql] {
-            assert!(
-                statement.contains(
-                    "(COALESCE(\"ri\".\"entity_id\", '') = ('') OR (((\"ri\".\"entity_id\") COLLATE \"default\") ~ 'urn:ngsi-ld:Fleet.*')) AND ((\"ri\".\"property_name_keys\" && "
-                ),
-                "{statement}"
-            );
-        }
+        assert_statement_snapshot!(
+            "statement-a-pattern-without-a-type-and-an-attribute-list-must-both-hold-on-the-row-1",
+            built.select
+        );
+        assert_statement_snapshot!(
+            "statement-a-pattern-without-a-type-and-an-attribute-list-must-both-hold-on-the-row-2",
+            built.count
+        );
     }
 
     /// Clause 5.12: an `EntityInfo` with neither `id` nor `idPattern` matches
@@ -407,13 +353,9 @@ mod tests {
     fn an_entity_info_without_identifier_constraint_is_admitted_for_any_queried_id() {
         let mut q = empty_query();
         q.ids = ids(&["urn:a"]);
-        let built = build(&q);
-        assert!(
-            built
-                .sql
-                .contains("\"ri\".\"entity_id\" IS NULL AND (\"ri\".\"entity_id_pattern_form\" IS NULL OR"),
-            "{}",
-            built.sql
+        assert_statement_snapshot!(
+            "statement-an-entity-info-without-identifier-constraint-is-admitted-for-any-queried-id",
+            build(&q).select
         );
     }
 
@@ -421,9 +363,7 @@ mod tests {
     fn build_with_attrs() {
         let mut q = empty_query();
         q.attrs = vec![iri("https://example.com/speed"), iri("https://example.com/temp")];
-        let built = build(&q);
-        assert!(built.sql.contains("\"property_name_keys\""), "{}", built.sql);
-        assert!(built.sql.contains("\"relationship_name_keys\""), "{}", built.sql);
+        assert_statement_snapshot!("statement-build-with-attrs", build(&q).select);
     }
 
     /// Clause 5.12: an information item naming no property and no relationship
@@ -432,14 +372,7 @@ mod tests {
     fn an_entity_only_information_item_matches_any_attribute_list() {
         let mut q = empty_query();
         q.attrs = vec![iri("https://example.com/speed")];
-        let built = build(&q);
-        assert!(
-            built
-                .sql
-                .contains("OR (\"ri\".\"property_name_keys\" IS NULL AND \"ri\".\"relationship_name_keys\" IS NULL)"),
-            "{}",
-            built.sql
-        );
+        assert_statement_snapshot!("statement-an-entity-only-information-item-matches-any-attribute-list", build(&q).select);
     }
 
     /// Clause 5.12: the entity axis and the attribute axis must hold for the
@@ -451,19 +384,7 @@ mod tests {
         q.entity_type = Some(TypeExpr::Type(iri("https://example.com/Vehicle")));
         q.ids = ids(&["urn:ngsi-ld:Vehicle:1"]);
         q.attrs = vec![iri("https://example.com/speed")];
-        let built = build(&q);
-        assert_eq!(built.sql.matches("FROM \"registration_information\" AS \"ri\"").count(), 1, "{}", built.sql);
-        let row_scan = &built.sql[built.sql.find("FROM \"registration_information\" AS \"ri\"").expect("one row scan")..];
-        let where_clause = &row_scan[row_scan.find(" WHERE ").expect("the scan has a WHERE")..];
-        for predicate in [
-            "\"ri\".\"registration_id\" = \"context_source_registrations\".\"id\"",
-            "\"ri\".\"entity_types\"",
-            "\"ri\".\"entity_id\" = 'urn:ngsi-ld:Vehicle:1'",
-            "\"ri\".\"property_name_keys\"",
-            "\"ri\".\"relationship_name_keys\"",
-        ] {
-            assert!(where_clause.contains(predicate), "{predicate}: {}", built.sql);
-        }
+        assert_statement_snapshot!("statement-entity-and-attribute-axes-are-decided-on-the-same-information-row", build(&q).select);
     }
 
     #[test]
@@ -485,20 +406,12 @@ mod tests {
         );
         let mut pattern_query = empty_query();
         pattern_query.id_pattern = Some(Pattern::parse("urn:ngsi-ld:.*").unwrap());
-        for built in [build(&q), build(&pattern_query)] {
-            for statement in [&built.sql, &built.count_sql] {
-                for json_walk in [
-                    "jsonb_array_elements",
-                    "->",
-                    "jsonb_exists",
-                    "\"information\"",
-                    "\"observation_interval\"",
-                    "\"management_interval\"",
-                ] {
-                    assert!(!statement.contains(json_walk), "{json_walk}: {statement}");
-                }
-            }
-        }
+        let filtered = build(&q);
+        let patterned = build(&pattern_query);
+        assert_statement_snapshot!("statement-no-registration-statement-walks-json-1", filtered.select);
+        assert_statement_snapshot!("statement-no-registration-statement-walks-json-2", filtered.count);
+        assert_statement_snapshot!("statement-no-registration-statement-walks-json-3", patterned.select);
+        assert_statement_snapshot!("statement-no-registration-statement-walks-json-4", patterned.count);
     }
 
     #[test]
@@ -507,23 +420,7 @@ mod tests {
         q.entity_type = Some(TypeExpr::Type(iri("https://example.com/Vehicle")));
         q.ids = ids(&["urn:ngsi-ld:Vehicle:1"]);
         q.attrs = vec![iri("https://example.com/speed")];
-        let built = build(&q);
-        assert!(
-            built
-                .sql
-                .contains("COALESCE(\"ri\".\"entity_types\", '{*}') && ARRAY ['https://example.com/Vehicle','*']"),
-            "{}",
-            built.sql
-        );
-        assert!(
-            built
-                .sql
-                .contains("COALESCE(\"ri\".\"entity_id\", '') = ANY(ARRAY ['urn:ngsi-ld:Vehicle:1','']) OR \"ri\".\"entity_id_pattern\" IS NOT NULL"),
-            "{}",
-            built.sql
-        );
-        assert!(built.sql.contains("\"ri\".\"property_name_keys\" && (ARRAY (SELECT"), "{}", built.sql);
-        assert!(!built.sql.contains("NOT EXISTS"), "{}", built.sql);
+        assert_statement_snapshot!("statement-every-selective-axis-carries-its-indexed-test", build(&q).select);
     }
 
     #[test]
@@ -531,9 +428,7 @@ mod tests {
         // Nothing to narrow: an unfiltered discovery must not pay for a
         // semi-join that would admit every registration anyway; the rows it
         // reads are those the projection carries.
-        let built = build(&empty_query());
-        assert!(!built.sql.contains("AS \"ri\""), "{}", built.sql);
-        assert!(!built.sql.contains("EXISTS("), "{}", built.sql);
+        assert_statement_snapshot!("statement-a-query-without-selective-filters-carries-no-preselect", build(&empty_query()).select);
     }
 
     #[test]
@@ -542,20 +437,17 @@ mod tests {
         // from, so both statements share one condition.
         let mut q = empty_query();
         q.attrs = vec![iri("https://example.com/speed")];
-        let built = build(&q);
-        assert!(built.count_sql.contains("registration_information"), "{}", built.count_sql);
+        assert_statement_snapshot!("statement-the-count-statement-carries-the-same-preselect-as-the-page", build(&q).count);
     }
 
     #[test]
     fn build_with_geo_within() {
         let mut q = empty_query();
         q.geo = Some(geo_query("https://uri.etsi.org/ngsi-ld/location"));
-        let built = build(&q);
         // Clause 5.10.2.4: a registration with no location still matches, and
         // one whose location reaches into the reference possibly contains a
         // location within it.
-        assert!(built.sql.contains("\"location\" IS NULL"), "{}", built.sql);
-        assert!(built.sql.contains(" _ST_Intersects("), "{}", built.sql);
+        assert_statement_snapshot!("statement-build-with-geo-within", build(&q).select);
     }
 
     /// Each part of the page is read through the window widened to reach the
@@ -565,17 +457,10 @@ mod tests {
     fn a_geo_discovery_pages_the_two_parts_and_cuts_the_page_from_their_union() {
         let mut q = empty_query();
         q.geo = Some(geo_query("https://uri.etsi.org/ngsi-ld/location"));
-        let built = build_paged(&q, &PageWindow::offset(10, 30));
-        assert!(
-            built
-                .sql
-                .contains(r#""id" = ANY(array_cat(ARRAY (SELECT "id" FROM "context_source_registrations" WHERE "#),
-            "{}",
-            built.sql
+        assert_statement_snapshot!(
+            "statement-a-geo-discovery-pages-the-two-parts-and-cuts-the-page-from-their-union",
+            build_paged(&q, &PageWindow::offset(10, 30)).select
         );
-        assert_eq!(built.sql.matches(r#"ORDER BY "id" ASC LIMIT 40 OFFSET 0)"#).count(), 2, "{}", built.sql);
-        assert!(built.sql.ends_with(r#"ORDER BY "id" ASC LIMIT 10 OFFSET 30"#), "{}", built.sql);
-        assert!(!built.sql.contains(r#""location" IS NULL OR ST_"#), "{}", built.sql);
     }
 
     #[test]
@@ -583,14 +468,10 @@ mod tests {
         let mut q = empty_query();
         q.geo = Some(geo_query("https://uri.etsi.org/ngsi-ld/location"));
         let window = PageWindow::after(5, "urn:ngsi-ld:ContextSourceRegistration:7".parse().expect("valid URI"));
-        let built = build_paged(&q, &window);
-        assert_eq!(
-            built.sql.matches(r#""id" > 'urn:ngsi-ld:ContextSourceRegistration:7'"#).count(),
-            3,
-            "both parts and the page: {}",
-            built.sql
+        assert_statement_snapshot!(
+            "statement-a-geo-discovery-cursor-page-bounds-each-part-by-the-cursor",
+            build_paged(&q, &window).select
         );
-        assert_eq!(built.sql.matches(r#"ORDER BY "id" ASC LIMIT 5"#).count(), 3, "{}", built.sql);
     }
 
     /// The parts are disjoint, so the total is their sum, and each part keeps
@@ -600,24 +481,7 @@ mod tests {
         let mut q = empty_query();
         q.geo = Some(geo_query("https://uri.etsi.org/ngsi-ld/location"));
         q.ids = ids(&["urn:ngsi-ld:Vehicle:1"]);
-        let built = build(&q);
-        assert!(
-            built
-                .count_sql
-                .starts_with(r#"SELECT (SELECT COUNT(*) FROM "context_source_registrations" WHERE "#),
-            "{}",
-            built.count_sql
-        );
-        assert!(built.count_sql.contains(r#"AND "location" IS NULL) + (SELECT COUNT(*)"#), "{}", built.count_sql);
-        assert!(
-            built
-                .count_sql
-                .contains(r#""location" IS NOT NULL AND ((COALESCE("location_reach", "location_valid", "location") && ST_MakeValid(ST_GeomFromEWKB("#),
-            "{}",
-            built.count_sql
-        );
-        assert!(built.count_sql.contains(" AND _ST_Intersects("), "{}", built.count_sql);
-        assert_eq!(built.count_sql.matches("registration_information").count(), 2, "{}", built.count_sql);
+        assert_statement_snapshot!("statement-a-geo-discovery-counts-the-sum-of-the-two-parts", build(&q).count);
     }
 
     /// A geoquery whose reduction constrains no geometry keeps every
@@ -633,8 +497,8 @@ mod tests {
             ..geo_query("https://uri.etsi.org/ngsi-ld/location")
         });
         let built = build(&q);
-        assert!(!built.sql.contains("array_cat"), "{}", built.sql);
-        assert!(!built.count_sql.contains('+'), "{}", built.count_sql);
+        assert_statement_snapshot!("statement-a-minimum-distance-only-geo-discovery-is-not-split-1", built.select);
+        assert_statement_snapshot!("statement-a-minimum-distance-only-geo-discovery-is-not-split-2", built.count);
     }
 
     /// Table 5.2.9-1: `observationSpace` and `operationSpace` are geometries of
@@ -642,16 +506,21 @@ mod tests {
     /// including the clause 5.10.2.4 default, reads `location`.
     #[test]
     fn the_geoproperty_selects_the_registration_geometry() {
-        for (geoproperty, column) in [
-            ("https://uri.etsi.org/ngsi-ld/location", "\"location\""),
-            ("https://uri.etsi.org/ngsi-ld/observationSpace", "\"observation_space\""),
-            ("https://uri.etsi.org/ngsi-ld/operationSpace", "\"operation_space\""),
-            ("https://example.com/somewhere", "\"location\""),
-        ] {
+        for (index, geoproperty) in [
+            "https://uri.etsi.org/ngsi-ld/location",
+            "https://uri.etsi.org/ngsi-ld/observationSpace",
+            "https://uri.etsi.org/ngsi-ld/operationSpace",
+            "https://example.com/somewhere",
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let mut q = empty_query();
             q.geo = Some(geo_query(geoproperty));
-            let built = build(&q);
-            assert!(built.sql.contains(&format!("{column} IS NULL")), "{geoproperty}: {}", built.sql);
+            assert_statement_snapshot!(
+                format!("statement-the-geoproperty-selects-the-registration-geometry-{}", index + 1),
+                build(&q).select
+            );
         }
     }
 
@@ -659,13 +528,9 @@ mod tests {
     /// any interval are considered.
     #[test]
     fn no_temporal_query_admits_only_latest_information_registrations() {
-        let built = build(&empty_query());
-        assert!(
-            built
-                .sql
-                .contains("\"observation_interval_start\" IS NULL AND \"management_interval_start\" IS NULL"),
-            "{}",
-            built.sql
+        assert_statement_snapshot!(
+            "statement-no-temporal-query-admits-only-latest-information-registrations",
+            build(&empty_query()).select
         );
     }
 
@@ -678,10 +543,7 @@ mod tests {
                 .timeproperty(None)
                 .build(),
         );
-        let built = build(&q);
-        assert!(built.sql.contains("\"observation_interval_start\" IS NOT NULL"), "{}", built.sql);
-        assert!(built.sql.contains("\"observation_interval_start\" <="), "{}", built.sql);
-        assert!(!built.sql.contains("management_interval_start\" IS NULL"), "{}", built.sql);
+        assert_statement_snapshot!("statement-build-with-temporal-before", build(&q).select);
     }
 
     #[test]
@@ -693,9 +555,7 @@ mod tests {
                 .timeproperty(Some(TimeProp::Created))
                 .build(),
         );
-        let built = build(&q);
-        assert!(built.sql.contains("\"management_interval_start\" IS NOT NULL"), "{}", built.sql);
-        assert!(built.sql.contains("\"management_interval_end\" >="), "{}", built.sql);
+        assert_statement_snapshot!("statement-build-with-temporal-after", build(&q).select);
     }
 
     #[test]
@@ -710,9 +570,7 @@ mod tests {
                 .timeproperty(None)
                 .build(),
         );
-        let built = build(&q);
-        assert!(built.sql.contains("\"observation_interval_start\" <="), "{}", built.sql);
-        assert!(built.sql.contains("\"observation_interval_end\" >="), "{}", built.sql);
+        assert_statement_snapshot!("statement-build-with-temporal-between", build(&q).select);
     }
 
     /// Clause 4.9: `csf` reads the stored Context Source Property document,
@@ -722,20 +580,14 @@ mod tests {
     fn csf_reads_the_context_source_properties_column() {
         let mut q = empty_query();
         q.csf_expr = Some(parser::parse("\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\"").unwrap());
-        let built = build(&q);
-        assert!(built.sql.contains("\"context_source_properties\" -> ("), "{}", built.sql);
-        let filtered = built.sql.split(" WHERE ").nth(1).expect("a WHERE clause");
-        assert!(!filtered.contains("additional_properties"), "{}", built.sql);
+        assert_statement_snapshot!("statement-csf-reads-the-context-source-properties-column", build(&q).select);
     }
 
     #[test]
     fn a_scope_query_matches_the_stored_label_paths_with_an_lquery() {
         let mut q = empty_query();
         q.scope_q = Some(ScopeQuery::parse("/Madrid/#").unwrap());
-        let built = build(&q);
-        assert!(built.sql.contains("\"context_source_registrations\".\"scope_paths\" ~"), "{}", built.sql);
-        assert!(built.sql.contains("'Madrid.*'::lquery"), "{}", built.sql);
-        assert!(!built.sql.contains("UNNEST"), "{}", built.sql);
+        assert_statement_snapshot!("statement-a-scope-query-matches-the-stored-label-paths-with-an-lquery", build(&q).select);
     }
 
     /// Clause 5.12: a registration whose alias the request already passed
@@ -744,21 +596,20 @@ mod tests {
     fn build_with_encountered_sources() {
         let mut q = empty_query();
         q.encountered_sources = vec![ContextSourcePseudonym::new("broker-b").unwrap()];
-        let built = build(&q);
-        assert!(built.sql.contains("\"context_source_alias\" <> 'broker-b'"), "{}", built.sql);
+        assert_statement_snapshot!("statement-build-with-encountered-sources", build(&q).select);
     }
 
     #[test]
     fn build_count_sql_always_present() {
-        let q = empty_query();
-        let built = build(&q);
-        assert!(built.count_sql.contains("COUNT(*)"), "{}", built.count_sql);
+        assert_statement_snapshot!("statement-build-count-sql-always-present", build(&empty_query()).count);
     }
 
     #[test]
     fn build_with_pagination() {
-        let built = build_paged(&empty_query(), &PageWindow::offset(50, 100));
-        assert!(built.sql.contains("LIMIT 50 OFFSET 100"), "{}", built.sql);
+        assert_statement_snapshot!(
+            "statement-build-with-pagination",
+            build_paged(&empty_query(), &PageWindow::offset(50, 100)).select
+        );
     }
 
     #[test]
@@ -767,8 +618,7 @@ mod tests {
         q.entity_type = Some(TypeExpr::Type(iri("https://example.com/Vehicle")));
         q.ids = ids(&["urn:a"]);
         q.attrs = vec![iri("https://example.com/speed")];
-        let built = build(&q);
-        assert!(built.sql.contains(" AND "));
+        assert_statement_snapshot!("statement-build-with-multiple-filters", build(&q).select);
     }
 
     /// Registrations read clause 4.10 exactly as entities do: the reference
@@ -787,8 +637,6 @@ mod tests {
             geometry: serde_json::from_value::<Geometry>(ring).expect("polygon parses"),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         });
-        let built = build(&q);
-        assert!(built.sql.contains(" _ST_Intersects("), "{}", built.sql);
-        assert!(built.sql.contains("ST_GeomFromEWKB"), "{}", built.sql);
+        assert_statement_snapshot!("statement-a-polygon-reference-geometry-renders-the-same-relation-as-a-point", build(&q).select);
     }
 }

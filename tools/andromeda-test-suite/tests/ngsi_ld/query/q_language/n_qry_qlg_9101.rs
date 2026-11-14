@@ -1,0 +1,101 @@
+//! Every filter of the fixed q corpus selects alike in a query and a subscription, each in a test of its own.
+
+use andromeda_test_suite::q_corpus::expect_corpus_case;
+use googletest::prelude::*;
+
+/// Generates one test per corpus case, each named for what the case pins and running the case it names.
+macro_rules! corpus_cases {
+    ($($test:ident => $case:literal),+ $(,)?) => {$(
+        #[doc = concat!(
+            "Pins: Query Entities and a Subscription with the filter of the corpus case ",
+            $case,
+            " select exactly the Entities the corpus names for it"
+        )]
+        #[doc = "Clause: 4.9, 5.8.1"]
+        #[gtest]
+        #[tokio::test]
+        async fn $test() -> Result<()> {
+            expect_corpus_case($case).await
+        }
+    )+};
+}
+
+corpus_cases! {
+    n_qry_qlg_9101_a_number_equality_selects_a_scalar_an_array_member_and_any_instance => "C-01",
+    n_qry_qlg_9102_a_number_inequality_selects_a_string_and_an_unequal_instance => "C-02",
+    n_qry_qlg_9103_greater_than_skips_an_array_and_selects_through_any_instance => "C-03",
+    n_qry_qlg_9104_less_or_equal_selects_through_any_instance => "C-04",
+    n_qry_qlg_9105_an_inclusive_range_selects_through_any_instance => "C-05",
+    n_qry_qlg_9106_an_excluded_range_selects_a_string_an_array_and_an_instance_outside => "C-06",
+    n_qry_qlg_9107_a_value_list_selects_a_scalar_an_array_member_and_any_instance => "C-07",
+    n_qry_qlg_9108_an_excluded_value_list_skips_an_array_holding_a_member => "C-08",
+    n_qry_qlg_9109_existence_selects_every_holder_of_the_attribute => "C-09",
+    n_qry_qlg_9110_a_string_equality_selects_the_equal_string => "C-10",
+    n_qry_qlg_9111_a_string_inequality_selects_a_number_as_unequal => "C-11",
+    n_qry_qlg_9112_a_string_ordering_skips_a_number => "C-12",
+    n_qry_qlg_9113_a_pattern_selects_matching_strings => "C-13",
+    n_qry_qlg_9114_a_negated_pattern_skips_a_number => "C-14",
+    n_qry_qlg_9115_a_boolean_equality_selects_true => "C-15",
+    n_qry_qlg_9116_a_boolean_inequality_selects_false => "C-16",
+    n_qry_qlg_9117_a_quoted_uri_selects_the_relationship_object => "C-17",
+    n_qry_qlg_9118_an_ordering_never_selects_a_relationship => "C-18",
+    n_qry_qlg_9119_a_pattern_never_selects_a_relationship => "C-19",
+    n_qry_qlg_9120_an_inequality_selects_a_relationship_to_another_object => "C-20",
+    n_qry_qlg_9121_an_equality_selects_a_list_relationship_holding_the_object => "C-21",
+    n_qry_qlg_9122_an_inequality_skips_a_list_relationship_holding_the_object => "C-22",
+    n_qry_qlg_9123_an_equality_selects_any_string_of_a_language_map => "C-23",
+    n_qry_qlg_9124_an_inequality_skips_a_language_map_holding_the_string => "C-24",
+    n_qry_qlg_9125_an_inequality_selects_a_language_map_lacking_the_string => "C-25",
+    n_qry_qlg_9126_a_target_language_selects_its_string => "C-26",
+    n_qry_qlg_9127_a_target_language_skips_another_languages_string => "C-27",
+    n_qry_qlg_9128_an_absent_target_language_is_unequal => "C-28",
+    n_qry_qlg_9129_a_pattern_reads_any_string_of_a_language_map => "C-29",
+    n_qry_qlg_9130_a_negated_pattern_selects_a_language_map_with_no_match => "C-30",
+    n_qry_qlg_9131_a_negated_pattern_searches_anywhere_in_a_language_map_string => "C-31",
+    n_qry_qlg_9132_a_date_operand_selects_a_declared_date => "C-32",
+    n_qry_qlg_9133_a_quoted_operand_never_equals_a_declared_date => "C-33",
+    n_qry_qlg_9134_a_quoted_operand_is_unequal_to_a_declared_date => "C-34",
+    n_qry_qlg_9135_a_pattern_skips_a_declared_date => "C-35",
+    n_qry_qlg_9136_a_date_time_ordering_selects_a_later_declared_date_time => "C-36",
+    n_qry_qlg_9137_not_a_number_is_unordered => "C-37",
+    n_qry_qlg_9138_not_a_number_is_unequal_to_every_number => "C-38",
+    n_qry_qlg_9139_an_infinity_orders_past_every_finite_number => "C-39",
+    n_qry_qlg_9140_an_infinity_equals_no_finite_number => "C-40",
+    n_qry_qlg_9141_observed_at_selects_by_the_instance_member => "C-41",
+    n_qry_qlg_9142_unit_code_selects_by_the_instance_member => "C-42",
+    n_qry_qlg_9143_a_pattern_reads_the_unit_code => "C-43",
+    n_qry_qlg_9144_a_sub_property_equality_selects_its_holder => "C-44",
+    n_qry_qlg_9145_a_sub_property_existence_selects_its_holder => "C-45",
+    n_qry_qlg_9146_an_absent_sub_property_selects_nothing => "C-46",
+    n_qry_qlg_9147_a_compound_member_equality_selects_its_holder => "C-47",
+    n_qry_qlg_9148_a_compound_member_ordering_selects_its_holder => "C-48",
+    n_qry_qlg_9149_a_conjunction_selects_only_what_both_terms_select => "C-49",
+    n_qry_qlg_9150_a_disjunction_selects_what_either_term_selects => "C-50",
+    n_qry_qlg_9151_an_absent_compound_member_selects_nothing => "C-51",
+    n_qry_qlg_9152_an_inequality_on_an_absent_compound_member_selects_nothing => "C-52",
+    n_qry_qlg_9153_a_relationship_is_unequal_to_a_range => "C-53",
+    n_qry_qlg_9154_a_string_ordering_reads_any_string_of_a_language_map => "C-54",
+    n_qry_qlg_9155_an_excluded_string_range_selects_a_language_map_with_a_string_outside => "C-55",
+    n_qry_qlg_9156_a_uri_operand_selects_a_relationship_in_another_spelling => "C-56",
+    n_qry_qlg_9157_expand_values_expands_the_operand_of_a_vocab_property => "C-57",
+    n_qry_qlg_9158_an_unexpanded_operand_never_equals_a_vocab_property => "C-58",
+    n_qry_qlg_9159_a_list_property_includes_the_operand => "C-59",
+    n_qry_qlg_9160_an_ordering_never_selects_a_list_property => "C-60",
+    n_qry_qlg_9161_json_keys_keeps_a_json_property_member_literal => "C-61",
+    n_qry_qlg_9162_a_member_reaches_into_a_geo_property => "C-62",
+    n_qry_qlg_9163_a_string_property_compares_with_the_uri_spelling_written => "C-63",
+    n_qry_qlg_9164_a_value_list_member_selects_a_relationship_in_another_spelling => "C-64",
+    n_qry_qlg_9165_a_hop_reads_the_linked_entity => "C-65",
+    n_qry_qlg_9166_a_hop_inequality_skips_a_linked_entity_holding_the_value => "C-66",
+    n_qry_qlg_9167_a_hop_to_an_entity_lacking_the_attribute_selects_nothing => "C-67",
+    n_qry_qlg_9168_a_hop_guard_admits_the_named_type => "C-68",
+    n_qry_qlg_9169_a_hop_guard_skips_another_type => "C-69",
+    n_qry_qlg_9170_a_one_element_array_reads_as_its_element => "C-70",
+    n_qry_qlg_9171_a_date_time_equality_compares_instants => "C-71",
+    n_qry_qlg_9172_a_time_ordering_compares_times => "C-72",
+    n_qry_qlg_9173_a_comma_before_the_fraction_is_a_date_time => "C-73",
+    n_qry_qlg_9174_an_inequality_on_an_absent_sub_property_selects_nothing => "C-74",
+    n_qry_qlg_9175_a_negated_pattern_skips_a_declared_date => "C-75",
+    n_qry_qlg_9176_a_list_relationship_is_unequal_to_a_range => "C-76",
+    n_qry_qlg_9177_a_relationship_is_unequal_to_a_string_range => "C-77",
+}

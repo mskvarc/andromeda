@@ -213,59 +213,41 @@ fn short_walk(evolutions: TableRef, conditions: Condition, window_match: SelectS
 mod tests {
     use crate::stage1::{
         gated_walk::{ShortWalkLength, dense_matches},
-        query_fixture::{PageBranches, id_pattern, recorded_stage1, stage1_on},
+        query_fixture::{id_pattern, recorded_stage1, stage1_on},
     };
     use andromeda_ngsi_ld_query::page_window::PageWindow;
     use andromeda_postgresql_query::history_source::HistoryBranch;
-    use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
     use pretty_assertions::assert_eq;
-    use sea_query::PostgresQueryBuilder;
+    use sea_query::SelectStatement;
 
-    /// The rendered page of `idPattern=.*:0123.*` over the catalogue.
-    fn catalogue_page() -> String {
-        recorded_stage1(&id_pattern(None, ".*:0123.*")).select.to_string(PostgresQueryBuilder)
+    /// The page of `idPattern=.*:0123.*` over the catalogue.
+    fn catalogue_page() -> SelectStatement {
+        recorded_stage1(&id_pattern(None, ".*:0123.*")).select
     }
 
     #[test]
     fn the_candidate_branch_keeps_the_window_match_and_drops_the_pattern() {
-        let sql = catalogue_page();
-        let indexed = PageBranches::of(&sql).indexed;
-        assert!(indexed.contains(r#""e"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#), "{indexed}");
-        assert!(indexed.contains("EXISTS(SELECT 1 FROM"), "{indexed}");
-        assert!(!indexed.contains(r#""e"."id" ~"#) && !indexed.contains(r#""e"."id") COLLATE"#), "{indexed}");
+        let statement = catalogue_page();
+        assert_statement_snapshot!("gated-walk-the-candidate-branch-keeps-the-window-match-and-drops-the-pattern", statement);
     }
 
     #[test]
     fn the_candidate_branch_orders_by_identifier_before_its_residual() {
-        let sql = catalogue_page();
-        let indexed = PageBranches::of(&sql).indexed;
-        assert!(
-            indexed.contains(concat!(
-                r#"FROM (SELECT * FROM (SELECT * FROM "entities" WHERE "entities"."evolution_created_at" IS NOT NULL) AS "e" WHERE "e"."entity_key" IN (SELECT "entity_key" FROM "candidates")"#,
-                r#" ORDER BY "id" ASC OFFSET 0) AS "e" WHERE"#
-            )),
-            "{indexed}"
-        );
+        let statement = catalogue_page();
+        assert_statement_snapshot!("gated-walk-the-candidate-branch-orders-by-identifier-before-its-residual", statement);
     }
 
     #[test]
     fn the_full_walk_keeps_the_pattern_past_the_bound() {
-        let sql = catalogue_page();
-        let walk = PageBranches::of(&sql).walk;
-        assert!(walk.contains(r#"("e"."id") COLLATE "default") ~ '.*:0123.*'"#), "{walk}");
-        assert!(walk.contains(r#"(SELECT COUNT(*) FROM "candidates") > 1000"#), "{walk}");
+        let statement = catalogue_page();
+        assert_statement_snapshot!("gated-walk-the-full-walk-keeps-the-pattern-past-the-bound", statement);
     }
 
     #[test]
     fn the_short_walk_tests_the_first_five_thousand_evolutions() {
-        let sql = catalogue_page();
-        let branches = PageBranches::of(&sql);
-        let short = branches.short();
-        assert!(
-            short.contains(r#"FROM (SELECT * FROM (SELECT * FROM "entities" WHERE "entities"."evolution_created_at" IS NOT NULL) AS "e" ORDER BY "e"."id" ASC LIMIT 5000 OFFSET 0) AS "e" WHERE"#),
-            "{short}"
-        );
-        assert!(short.contains(r#"("e"."id") COLLATE "default") ~ '.*:0123.*'"#), "{short}");
+        let statement = catalogue_page();
+        assert_statement_snapshot!("gated-walk-the-short-walk-tests-the-first-five-thousand-evolutions", statement);
     }
 
     /// 21 matches behind a 200-Evolution short walk fill within a
@@ -301,38 +283,19 @@ mod tests {
 
     #[test]
     fn a_step_without_a_dense_walk_keeps_its_plain_gates() {
-        let sql = catalogue_page();
-        let walk = PageBranches::of(&sql).walk;
-        assert!(!walk.contains("CASE"), "{walk}");
-        assert!(
-            walk.contains(r#"(SELECT COUNT(*) FROM "short_walk") < 20 AND (SELECT COUNT(*) FROM "candidates") > 1000"#),
-            "{walk}"
-        );
+        let statement = catalogue_page();
+        assert_statement_snapshot!("gated-walk-a-step-without-a-dense-walk-keeps-its-plain-gates", statement);
     }
 
     #[test]
     fn a_page_beyond_the_short_walk_holds_no_short_walk() {
-        let sql = stage1_on(&HistoryBranch::live_recorded(), &id_pattern(None, ".*:0123.*"), &PageWindow::offset(4990, 20))
-            .select
-            .to_string(PostgresQueryBuilder);
-        assert_eq!(PageBranches::of(&sql).short_walk, None, "{sql}");
-        assert!(sql.starts_with(r#"WITH "candidates" AS  MATERIALIZED ("#), "{sql}");
-        assert!(!sql.contains("short_walk"), "{sql}");
+        let statement = stage1_on(&HistoryBranch::live_recorded(), &id_pattern(None, ".*:0123.*"), &PageWindow::offset(4990, 20)).select;
+        assert_statement_snapshot!("gated-walk-a-page-beyond-the-short-walk-holds-no-short-walk", statement);
     }
 
     #[test]
     fn a_page_without_a_short_walk_keeps_one_candidate_branch_and_one_walk() {
-        let sql = stage1_on(&HistoryBranch::live_recorded(), &id_pattern(None, ".*:0123.*"), &PageWindow::offset(4990, 20))
-            .select
-            .to_string(PostgresQueryBuilder);
-        let branches = PageBranches::of(&sql);
-        assert_eq!(sql.matches("UNION ALL").count(), 1, "{sql}");
-        assert!(
-            branches.indexed.contains(r#"(SELECT COUNT(*) FROM "candidates") <= 1000 AND"#),
-            "{}",
-            branches.indexed
-        );
-        assert!(branches.walk.contains(r#"(SELECT COUNT(*) FROM "candidates") > 1000 AND"#), "{}", branches.walk);
-        assert!(branches.walk.ends_with("LIMIT 4990 OFFSET 20) AS \"walk\")"), "{}", branches.walk);
+        let statement = stage1_on(&HistoryBranch::live_recorded(), &id_pattern(None, ".*:0123.*"), &PageWindow::offset(4990, 20)).select;
+        assert_statement_snapshot!("gated-walk-a-page-without-a-short-walk-keeps-one-candidate-branch-and-one-walk", statement);
     }
 }

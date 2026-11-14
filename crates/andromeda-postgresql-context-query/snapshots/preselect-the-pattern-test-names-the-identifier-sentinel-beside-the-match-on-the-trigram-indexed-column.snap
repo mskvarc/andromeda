@@ -1,0 +1,7 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/preselect.rs
+---
+SELECT
+  COALESCE("ri"."entity_id", '') = ('')
+  OR ((("ri"."entity_id") COLLATE "default") ~ $1)
+1: String 'urn:ngsi-ld:Fleet.*'

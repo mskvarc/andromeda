@@ -65,15 +65,16 @@ mod tests {
         page_window::{PageStart, PageWindow},
         read_order::ReadOrder,
     };
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
+    use sea_query::{Alias, Expr, Query, SelectStatement};
 
-    /// The SQL of a select over `items` windowed by `window`, and its read order.
-    fn windowed(window: &PageWindow) -> (String, ReadOrder) {
+    /// A select over `items` windowed by `window`, and its read order.
+    fn windowed(window: &PageWindow) -> (SelectStatement, ReadOrder) {
         let mut select = Query::select();
         select.column(Alias::new("id")).from(Alias::new("items"));
         let order = apply_identifier_window(&mut select, Expr::col(Alias::new("id")), window);
-        (select.to_string(PostgresQueryBuilder), order)
+        (select, order)
     }
 
     fn boundary(id: &str) -> Identifier {
@@ -83,49 +84,49 @@ mod tests {
     /// Clause 5.5.9.2: an offset page skips in identifier order.
     #[test]
     fn offset_window_orders_by_id_with_limit_and_offset() {
-        let (sql, order) = windowed(&PageWindow::offset(10, 30));
-        assert_eq!(sql, r#"SELECT "id" FROM "items" ORDER BY "id" ASC LIMIT 10 OFFSET 30"#);
+        let (statement, order) = windowed(&PageWindow::offset(10, 30));
+        assert_statement_snapshot!("page-window-offset-window-orders-by-id-with-limit-and-offset", statement);
         assert_eq!(order, ReadOrder::Ascending);
     }
 
     /// The first page of a cursor walk reads from the start, with no skip.
     #[test]
     fn fresh_cursor_window_orders_by_id_without_offset() {
-        let (sql, order) = windowed(&PageWindow {
+        let (statement, order) = windowed(&PageWindow {
             limit: 10,
             start: PageStart::Cursor(None),
         });
-        assert_eq!(sql, r#"SELECT "id" FROM "items" ORDER BY "id" ASC LIMIT 10"#);
+        assert_statement_snapshot!("page-window-fresh-cursor-window-orders-by-id-without-offset", statement);
         assert_eq!(order, ReadOrder::Ascending);
     }
 
     /// Clause 5.5.9.1: a forward cursor reads past its boundary, ascending.
     #[test]
     fn after_window_filters_greater_ascending() {
-        let (sql, order) = windowed(&PageWindow::after(10, boundary("urn:e:5")));
-        assert_eq!(sql, r#"SELECT "id" FROM "items" WHERE "id" > 'urn:e:5' ORDER BY "id" ASC LIMIT 10"#);
+        let (statement, order) = windowed(&PageWindow::after(10, boundary("urn:e:5")));
+        assert_statement_snapshot!("page-window-after-window-filters-greater-ascending", statement);
         assert_eq!(order, ReadOrder::Ascending);
     }
 
     /// A backward cursor reads before its boundary, descending from it.
     #[test]
     fn before_window_filters_less_descending() {
-        let (sql, order) = windowed(&PageWindow {
+        let (statement, order) = windowed(&PageWindow {
             limit: 10,
             start: PageStart::Cursor(Some(PageCursor::Before(boundary("urn:e:5")))),
         });
-        assert_eq!(sql, r#"SELECT "id" FROM "items" WHERE "id" < 'urn:e:5' ORDER BY "id" DESC LIMIT 10"#);
+        assert_statement_snapshot!("page-window-before-window-filters-less-descending", statement);
         assert_eq!(order, ReadOrder::Descending);
     }
 
     /// The from-end cursor reads the final page, descending from the end.
     #[test]
     fn end_window_reads_descending() {
-        let (sql, order) = windowed(&PageWindow {
+        let (statement, order) = windowed(&PageWindow {
             limit: 10,
             start: PageStart::Cursor(Some(PageCursor::End)),
         });
-        assert_eq!(sql, r#"SELECT "id" FROM "items" ORDER BY "id" DESC LIMIT 10"#);
+        assert_statement_snapshot!("page-window-end-window-reads-descending", statement);
         assert_eq!(order, ReadOrder::Descending);
     }
 }

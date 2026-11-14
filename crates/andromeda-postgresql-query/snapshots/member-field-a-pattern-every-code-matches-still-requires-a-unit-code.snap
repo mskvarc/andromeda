@@ -1,0 +1,6 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/sub_attribute/member_field.rs
+---
+SELECT
+WHERE
+  "ca"."unit_code_id" IS NOT NULL

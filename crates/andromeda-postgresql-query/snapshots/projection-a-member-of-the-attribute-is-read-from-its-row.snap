@@ -1,0 +1,24 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/projection.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND "ca"."observed_at" > $2
+      AND "ca"."entity_key" = "entities"."entity_key"
+  )
+1: Int 7
+2: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'

@@ -221,8 +221,9 @@ mod tests {
     };
     use andromeda_postgresql_encoding::ewkb::encode;
     use andromeda_postgresql_schema::current::Entities;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::{assert_eq, assert_ne};
-    use sea_query::{Alias, Condition, PostgresQueryBuilder, Query, Value, Values};
+    use sea_query::{Alias, Condition, PostgresQueryBuilder, Query, SelectStatement, Value, Values};
     use std::{str::FromStr, sync::LazyLock};
 
     /// The unaliased entity rows the entity path filters.
@@ -246,12 +247,8 @@ mod tests {
         }
     }
 
-    fn render(condition: Condition) -> String {
-        Query::select()
-            .column(Entities::Id)
-            .from(Entities::Table)
-            .cond_where(condition)
-            .to_string(PostgresQueryBuilder)
+    fn render(condition: Condition) -> SelectStatement {
+        Query::select().column(Entities::Id).from(Entities::Table).cond_where(condition).to_owned()
     }
 
     /// The same query with the reference point carrying an altitude.
@@ -351,24 +348,18 @@ mod tests {
             },
             LOCATION,
         );
-        let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap());
-        assert!(sql.contains("_ST_DWithin("), "{sql}");
-        assert!(sql.contains("ST_Distance"), "{sql}");
+        let statement = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap());
+        assert_statement_snapshot!("geo-predicate-near-with-both-distances-renders-a-conjunction", statement);
     }
 
     #[test]
     fn a_search_alias_reaches_the_semi_join_and_each_instance_carries_its_own_expiry_guard() {
         let geo = point_query(GeoRel::Within, LOCATION);
-        let sql = render(condition(&geo, &ALIASED, &UNNARROWED, &resolved_custom()).unwrap());
-        assert!(
-            sql.contains("\"e\".\"entity_key\" IN (SELECT DISTINCT \"geo_matched\".\"entity_key\" FROM (SELECT \"geo_default\".\"entity_key\""),
-            "{sql}"
+        let statement = render(condition(&geo, &ALIASED, &UNNARROWED, &resolved_custom()).unwrap());
+        assert_statement_snapshot!(
+            "geo-predicate-a-search-alias-reaches-the-semi-join-and-each-instance-carries-its-own-expiry-guard",
+            statement
         );
-        assert!(
-            sql.contains("\"geo_default\".\"location_expires_at\" IS NULL OR \"geo_default\".\"location_expires_at\" > NOW()"),
-            "the hoisted default instance is guarded by its own expiry: {sql}"
-        );
-        assert!(!sql.contains("\"s\".\"location_expires_at\""), "no entity-level expiry is mixed in: {sql}");
     }
 
     /// Clause 4.10: `geoproperty` names any `GeoProperty` of the entity. Every
@@ -378,27 +369,8 @@ mod tests {
     #[test]
     fn a_custom_geoproperty_is_read_from_its_attribute_instance_rows() {
         let geo = point_query(GeoRel::Within, CUSTOM_GEOPROPERTY);
-        let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap());
-        assert!(sql.contains("EXISTS(SELECT 1 FROM \"current_attributes\""), "{sql}");
-        assert!(sql.contains("\"geo_instance\".\"value_geometry\""), "{sql}");
-        assert!(
-            sql.contains(&format!("\"attribute_name_key\" = {CUSTOM_GEOPROPERTY_ID}")),
-            "the dictionary key selects the attribute: {sql}"
-        );
-        assert!(
-            sql.contains("\"geo_instance\".\"entity_key\" = \"entities\".\"entity_key\""),
-            "correlated to the filtered row: {sql}"
-        );
-        assert!(sql.contains("_ST_Within("), "{sql}");
-        assert!(sql.contains("ST_GeomFromEWKB"), "reference side still binds EWKB: {sql}");
-        assert!(
-            !sql.contains("ST_GeomFromGeoJSON"),
-            "the geometry is stored decoded, not as GeoJSON text: {sql}"
-        );
-        assert!(
-            sql.contains("\"geo_instance\".\"expires_at\" IS NULL OR \"geo_instance\".\"expires_at\" > NOW()"),
-            "each instance is guarded by its own clause 4.22 expiry: {sql}"
-        );
+        let statement = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap());
+        assert_statement_snapshot!("geo-predicate-a-custom-geoproperty-is-read-from-its-attribute-instance-rows", statement);
     }
 
     /// A planar relation reads the judged geometry, which the index does not
@@ -407,14 +379,8 @@ mod tests {
     #[test]
     fn an_area_relation_tests_the_indexed_reach_box_before_the_relation() {
         let geo = point_query(GeoRel::Within, CUSTOM_GEOPROPERTY);
-        let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
-        let boxed = sql
-            .find(r#"COALESCE("geo_instance"."value_geometry_reach", "geo_instance"."value_geometry_valid", "geo_instance"."value_geometry") && ST_MakeValid(ST_GeomFromEWKB("#)
-            .expect("the box test");
-        let relation = sql
-            .find(r#" AND _ST_Within(COALESCE("geo_instance"."value_geometry_valid", "geo_instance"."value_geometry"), "#)
-            .expect("the relation");
-        assert!(boxed < relation, "{sql}");
+        let statement = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
+        assert_statement_snapshot!("geo-predicate-an-area-relation-tests-the-indexed-reach-box-before-the-relation", statement);
     }
 
     /// Clause 4.10: where a `GeoProperty` has several `datasetId` instances, one
@@ -425,13 +391,8 @@ mod tests {
     #[test]
     fn a_multi_instance_geoproperty_matches_when_any_one_instance_does() {
         let geo = point_query(GeoRel::Within, CUSTOM_GEOPROPERTY);
-        let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap());
-        assert!(
-            sql.contains("EXISTS(SELECT 1 FROM \"current_attributes\""),
-            "an existential, not an aggregate: {sql}"
-        );
-        assert!(!sql.contains("dataset_key"), "no instance is preferred over another: {sql}");
-        assert!(!sql.contains("NOT EXISTS"), "a non-matching instance does not veto a matching one: {sql}");
+        let statement = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap());
+        assert_statement_snapshot!("geo-predicate-a-multi-instance-geoproperty-matches-when-any-one-instance-does", statement);
     }
 
     /// The two spec-defined `GeoProperties` of clause 4.7 are not special-cased:
@@ -439,12 +400,16 @@ mod tests {
     /// so none of them can be the one that silently reads the wrong column.
     #[test]
     fn a_spec_defined_geoproperty_takes_the_same_route_as_a_custom_one() {
-        for iri in ["https://uri.etsi.org/ngsi-ld/observationSpace", "https://uri.etsi.org/ngsi-ld/operationSpace"] {
+        for (index, iri) in ["https://uri.etsi.org/ngsi-ld/observationSpace", "https://uri.etsi.org/ngsi-ld/operationSpace"]
+            .into_iter()
+            .enumerate()
+        {
             let names = ResolvedNames::from_pairs([(name(iri), AttributeNameKey::from(7_i32))]);
             let geo = point_query(GeoRel::Within, iri);
-            let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &names).unwrap());
-            assert!(sql.contains("EXISTS(SELECT 1 FROM \"current_attributes\""), "{iri}: {sql}");
-            assert!(sql.contains("\"attribute_name_key\" = 7"), "{iri}: {sql}");
+            assert_statement_snapshot!(
+                format!("geo-predicate-a-spec-defined-geoproperty-takes-the-same-route-as-a-custom-one-{}", index + 1),
+                render(condition(&geo, &UNALIASED, &UNNARROWED, &names).unwrap())
+            );
         }
     }
 
@@ -455,10 +420,11 @@ mod tests {
     fn the_default_geoproperty_reads_its_hoisted_instance_and_every_dataset_instance() {
         let geo = point_query(GeoRel::Within, LOCATION);
         let names = ResolvedNames::from_pairs([(name(LOCATION), AttributeNameKey::from(3_i32))]);
-        let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &names).unwrap());
-        assert!(sql.contains(" AND _ST_Within(\"geo_default\".\"location\""), "{sql}");
-        assert!(sql.contains("\"geo_location_instance\".\"attribute_name_key\" = 3"), "{sql}");
-        assert!(sql.contains("\"geo_location_instance\".\"dataset_key\" <> ('')"), "{sql}");
+        let statement = render(condition(&geo, &UNALIASED, &UNNARROWED, &names).unwrap());
+        assert_statement_snapshot!(
+            "geo-predicate-the-default-geoproperty-reads-its-hoisted-instance-and-every-dataset-instance",
+            statement
+        );
     }
 
     /// A `location` the dictionary has never recorded has no instance rows, so
@@ -466,9 +432,8 @@ mod tests {
     #[test]
     fn an_unrecorded_default_geoproperty_reads_its_hoisted_instance_alone() {
         let geo = point_query(GeoRel::Within, LOCATION);
-        let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_none()).unwrap());
-        assert!(sql.contains(" AND _ST_Within(\"geo_default\".\"location\""), "{sql}");
-        assert!(!sql.contains("current_attributes"), "{sql}");
+        let statement = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_none()).unwrap());
+        assert_statement_snapshot!("geo-predicate-an-unrecorded-default-geoproperty-reads-its-hoisted-instance-alone", statement);
     }
 
     /// Clause 4.10: an Entity that does not convey the target `GeoProperty` is
@@ -477,9 +442,8 @@ mod tests {
     #[test]
     fn an_unknown_geoproperty_matches_nothing_without_failing() {
         let geo = point_query(GeoRel::Within, "https://example.com/neverRecorded");
-        let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_none()).expect("renders"));
-        assert!(sql.contains("FALSE"), "{sql}");
-        assert!(!sql.contains("ST_Within"), "no relation is evaluated at all: {sql}");
+        let statement = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_none()).expect("renders"));
+        assert_statement_snapshot!("geo-predicate-an-unknown-geoproperty-matches-nothing-without-failing", statement);
     }
 
     /// `near` reaches the instance geometry as `geography`, exactly as it
@@ -493,16 +457,8 @@ mod tests {
             },
             CUSTOM_GEOPROPERTY,
         );
-        let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap());
-        assert!(
-            sql.contains("COALESCE(\"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\")::geography"),
-            "{sql}"
-        );
-        assert!(sql.contains("_ST_DWithin(COALESCE("), "{sql}");
-        assert!(
-            sql.contains("COALESCE(\"geo_instance\".\"value_geometry_reach\", \"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\") && ST_MakeEnvelope("),
-            "the cast column reaches no index, so the box the geometry GiST keys prefilters it: {sql}"
-        );
+        let statement = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap());
+        assert_statement_snapshot!("geo-predicate-a-near-relation-casts-the-instance-geometry-to-geography", statement);
     }
 
     /// A `near` query on a custom `GeoProperty` at the given reference point.
@@ -517,34 +473,14 @@ mod tests {
         }
     }
 
-    /// The doubles a statement binds, in order.
-    fn bound_doubles(values: &Values) -> Vec<f64> {
-        values
-            .0
-            .iter()
-            .filter_map(|value| if let Value::Double(Some(double)) = value { Some(*double) } else { None })
-            .collect()
-    }
-
     /// A reference by the antimeridian reaches both its sides, so the box
     /// test is the disjunction of the envelope's two halves rather than one box
     /// that stops at the seam.
     #[test]
     fn a_near_prefilter_across_the_antimeridian_tests_both_halves() {
         let geo = near_query(179.999, -17.0, Some("300"), None);
-        let (sql, values) = render_parameterised(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
-        assert_eq!(
-            sql.matches("COALESCE(\"geo_instance\".\"value_geometry_reach\", \"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\") && ST_MakeEnvelope(")
-                .count(),
-            2,
-            "{sql}"
-        );
-        assert!(
-            sql.contains(")) OR (COALESCE(\"geo_instance\".\"value_geometry_reach\", \"geo_instance\".\"value_geometry_valid\", \"geo_instance\".\"value_geometry\") && ST_MakeEnvelope("),
-            "{sql}"
-        );
-        let doubles = bound_doubles(&values);
-        assert!(doubles.contains(&180.0) && doubles.contains(&-180.0), "{doubles:?}");
+        let statement = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
+        assert_statement_snapshot!("geo-predicate-a-near-prefilter-across-the-antimeridian-tests-both-halves", statement);
     }
 
     /// `near` is measured on the spheroid, where 5 000 m due north of the
@@ -553,22 +489,15 @@ mod tests {
     #[test]
     fn a_near_prefilter_covers_the_spheroidal_reach_of_the_reference() {
         let geo = near_query(0.0, 0.0, Some("5000"), None);
-        let (_, values) = render_parameterised(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
-        // The distance itself binds as a double too; the box's ordinates are
-        // the ones that are latitudes.
-        let north = bound_doubles(&values)
-            .into_iter()
-            .filter(|double| double.abs() <= 90.0)
-            .fold(f64::NEG_INFINITY, f64::max);
-        assert!(north >= 0.045_218, "the box reaches latitude {north}");
+        let statement = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
+        assert_statement_snapshot!("geo-predicate-a-near-prefilter-covers-the-spheroidal-reach-of-the-reference", statement);
     }
 
     #[test]
     fn a_min_distance_only_near_renders_no_prefilter() {
         let geo = near_query(1.0, 2.0, None, Some("1000"));
-        let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
-        assert!(!sql.contains("&&"), "{sql}");
-        assert!(sql.contains("ST_Distance"), "{sql}");
+        let statement = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
+        assert_statement_snapshot!("geo-predicate-a-min-distance-only-near-renders-no-prefilter", statement);
     }
 
     /// The instance subquery correlates to whichever alias the enclosing
@@ -577,40 +506,37 @@ mod tests {
     #[test]
     fn an_instance_subquery_correlates_through_the_table_alias() {
         let geo = point_query(GeoRel::Within, CUSTOM_GEOPROPERTY);
-        let sql = render(condition(&geo, &ALIASED, &UNNARROWED, &resolved_custom()).unwrap());
-        assert!(sql.contains("\"geo_instance\".\"entity_key\" = \"e\".\"entity_key\""), "{sql}");
+        let statement = render(condition(&geo, &ALIASED, &UNNARROWED, &resolved_custom()).unwrap());
+        assert_statement_snapshot!("geo-predicate-an-instance-subquery-correlates-through-the-table-alias", statement);
     }
 
     #[test]
     fn an_entity_without_a_location_does_not_match_a_geo_filter() {
         let geo = point_query(GeoRel::Within, LOCATION);
-        let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap());
-        // The expiry guard has an `IS NULL` of its own, so the assertion names
-        // the geometry column rather than the operator.
-        assert!(!sql.contains("\"location\" IS NULL"), "an entity query admits no null geometry: {sql}");
+        let statement = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap());
+        assert_statement_snapshot!("geo-predicate-an-entity-without-a-location-does-not-match-a-geo-filter", statement);
     }
 
     #[test]
     fn every_georel_renders_its_postgis_function_on_an_entity() {
         let cases = [
-            (GeoRel::Within, "_ST_Within"),
-            (GeoRel::Contains, "_ST_Contains"),
-            (GeoRel::Intersects, "_ST_Intersects"),
-            (GeoRel::Disjoint, "ST_Disjoint"),
-            (GeoRel::Equals, "_ST_Equals"),
-            (GeoRel::Overlaps, "_ST_Overlaps"),
-            (
-                GeoRel::Near {
-                    max_distance: Some(PositiveDistance::from_str("500").expect("positive distance")),
-                    min_distance: Some(PositiveDistance::from_str("100").expect("positive distance")),
-                },
-                "_ST_DWithin",
-            ),
+            GeoRel::Within,
+            GeoRel::Contains,
+            GeoRel::Intersects,
+            GeoRel::Disjoint,
+            GeoRel::Equals,
+            GeoRel::Overlaps,
+            GeoRel::Near {
+                max_distance: Some(PositiveDistance::from_str("500").expect("positive distance")),
+                min_distance: Some(PositiveDistance::from_str("100").expect("positive distance")),
+            },
         ];
-        for (georel, function) in cases {
+        for (index, georel) in cases.into_iter().enumerate() {
             let geo = point_query(georel, LOCATION);
-            let sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap());
-            assert!(sql.contains(&format!("{function}(\"geo_default\"")), "{:?} on an entity: {sql}", geo.georel);
+            assert_statement_snapshot!(
+                format!("geo-predicate-every-georel-renders-its-postgis-function-on-an-entity-{}", index + 1),
+                render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap())
+            );
         }
     }
 
@@ -625,10 +551,12 @@ mod tests {
             },
             LOCATION,
         );
-        let entity_sql = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap());
-        let temporal_sql = render(condition(&geo, &ALIASED, &UNNARROWED, &resolved_custom()).unwrap());
-        assert!(entity_sql.contains("_ST_DWithin("), "{entity_sql}");
-        assert!(temporal_sql.contains("_ST_DWithin("), "{temporal_sql}");
+        let entity = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).unwrap());
+        let temporal = render(condition(&geo, &ALIASED, &UNNARROWED, &resolved_custom()).unwrap());
+        let entity_sql = entity.to_string(PostgresQueryBuilder);
+        let temporal_sql = temporal.to_string(PostgresQueryBuilder);
+        assert_statement_snapshot!("geo-predicate-entity-and-temporal-render-the-same-geo-predicate-1", entity);
+        assert_statement_snapshot!("geo-predicate-entity-and-temporal-render-the-same-geo-predicate-2", temporal);
         // The only difference is the qualification of the outer rows' columns.
         assert_eq!(
             entity_sql.replace("\"entity_search\".", "\"s\".").replace("\"entities\".", "\"e\"."),
@@ -682,10 +610,7 @@ mod tests {
         let decoded = Geometry::try_from(&ewkb).expect("the bound bytes decode");
         assert_eq!(decoded.dimension(), GeometryDimension::ThreeD);
 
-        let (_, values) = render_parameterised(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
-        assert!(
-            bound_bytes(&values).contains(&ewkb.to_vec()),
-            "the statement binds exactly the encoded reference"
-        );
+        let statement = render(condition(&geo, &UNALIASED, &UNNARROWED, &resolved_custom()).expect("renders"));
+        assert_statement_snapshot!("geo-predicate-a-three-dimensional-reference-binds-as-three-dimensional-ewkb", statement);
     }
 }

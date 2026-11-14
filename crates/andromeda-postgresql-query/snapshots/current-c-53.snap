@@ -1,0 +1,35 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/corpus_statement_tests.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        NOT COALESCE(
+          "ca"."value_number" >= $2
+          AND "ca"."value_number" <> ('NaN'::numeric)
+          AND (
+            "ca"."value_number" <= $3
+            AND "ca"."value_number" <> ('NaN'::numeric)
+          ),
+          FALSE
+        )
+      )
+      AND "ca"."entity_key" = "entities"."entity_key"
+  )
+1: Int 5
+2: BigDecimal 1
+3: BigDecimal 5

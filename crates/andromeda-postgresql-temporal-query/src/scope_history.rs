@@ -144,8 +144,9 @@ mod tests {
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use andromeda_postgresql_query::history_source::HistoryBranch;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use iri_rs::IriBuf;
-    use sea_query::PostgresQueryBuilder;
+    use sea_query::SelectStatement;
     use std::slice;
 
     fn vehicle_id() -> Identifier {
@@ -166,8 +167,8 @@ mod tests {
             .build()
     }
 
-    fn sql_of(compiled: &CompiledTemporalQuery) -> String {
-        build_scope_history_query(&HistoryBranch::live(), slice::from_ref(&vehicle_id()), compiled).to_string(PostgresQueryBuilder)
+    fn statement_of(compiled: &CompiledTemporalQuery) -> SelectStatement {
+        build_scope_history_query(&HistoryBranch::live(), slice::from_ref(&vehicle_id()), compiled)
     }
 
     fn iri(raw: &str) -> IriBuf {
@@ -180,13 +181,8 @@ mod tests {
     /// never has.
     #[test]
     fn the_scope_read_reaches_the_entity_through_the_temporal_catalogue() {
-        let sql = sql_of(&minimal_compiled());
-        assert!(
-            sql.contains("JOIN \"entities\" AS \"re\" ON \"re\".\"entity_key\" = \"rsh\".\"entity_key\""),
-            "{sql}"
-        );
-        assert!(!sql.contains("\"entity_search\""), "{sql}");
-        assert!(!sql.contains("temporal_attribute_streams"), "{sql}");
+        let statement = statement_of(&minimal_compiled());
+        assert_statement_snapshot!("scope-history-the-scope-read-reaches-the-entity-through-the-temporal-catalogue", statement);
     }
 
     /// Clause 4.5.6 gives the reified scope all four Temporal Properties, so
@@ -194,21 +190,16 @@ mod tests {
     /// projected for ordering alone.
     #[test]
     fn all_four_axes_are_projected_beside_the_write_identity() {
-        let sql = sql_of(&minimal_compiled());
-        for column in ["observed_at", "created_at", "modified_at", "deleted_at", "recorded_at"] {
-            assert!(sql.contains(&format!("\"sh\".\"{column}\"")), "{column} missing: {sql}");
-        }
-        assert!(sql.contains("\"sh\".\"write_id\""), "{sql}");
-        assert!(sql.contains("\"sh\".\"write_ordinal\""), "{sql}");
+        let statement = statement_of(&minimal_compiled());
+        assert_statement_snapshot!("scope-history-all-four-axes-are-projected-beside-the-write-identity", statement);
     }
 
     /// The Scope is read back from the text it was written in, never rebuilt
     /// from its label path.
     #[test]
     fn the_written_scope_is_projected() {
-        let sql = sql_of(&minimal_compiled());
-        assert!(sql.contains("\"sh\".\"verbatim_scope_path\""), "{sql}");
-        assert!(!sql.contains("\"scope_path\"::text"), "{sql}");
+        let statement = statement_of(&minimal_compiled());
+        assert_statement_snapshot!("scope-history-the-written-scope-is-projected", statement);
     }
 
     /// Clause 4.18: a Scope set before the window and never removed is valid
@@ -221,10 +212,8 @@ mod tests {
             from: "2018-08-01T12:00:00Z".parse().expect("valid instant"),
             to: "2018-08-01T13:00:00Z".parse().expect("valid instant"),
         };
-        let sql = sql_of(&compiled);
-        assert!(sql.contains("\"sh\".\"observed_at\" < "), "{sql}");
-        assert!(!sql.contains("\"sh\".\"observed_at\" >= "), "{sql}");
-        assert!(sql.contains("NOT EXISTS"), "{sql}");
+        let statement = statement_of(&compiled);
+        assert_statement_snapshot!("scope-history-a-between-window-carries-forward-the-scope-that-was-already-valid", statement);
     }
 
     /// The rows of one event arrive together and in write order, which is what
@@ -232,11 +221,8 @@ mod tests {
     /// 4.18 allows an Entity.
     #[test]
     fn the_rows_of_one_event_are_ordered_together() {
-        let sql = sql_of(&minimal_compiled());
-        assert!(
-            sql.contains("ORDER BY \"read_entity\".\"read_entity\" ASC, \"sh\".\"observed_at\" ASC, \"sh\".\"recorded_at\" ASC, \"sh\".\"write_id\" ASC, \"sh\".\"write_ordinal\" ASC"),
-            "{sql}"
-        );
+        let statement = statement_of(&minimal_compiled());
+        assert_statement_snapshot!("scope-history-the-rows-of-one-event-are-ordered-together", statement);
     }
 
     /// Clause 4.5.7 lets one write state several instances of a Property, each
@@ -244,30 +230,35 @@ mod tests {
     /// events is projected under a fixed name for the store to group on.
     #[test]
     fn the_requested_axis_is_projected_as_the_event_instant() {
-        let sql = sql_of(&minimal_compiled());
-        assert!(sql.contains("\"sh\".\"observed_at\" AS \"scope_event_at\""), "{sql}");
+        let on_observed = statement_of(&minimal_compiled());
+        assert_statement_snapshot!("scope-history-the-requested-axis-is-projected-as-the-event-instant-1", on_observed);
 
         let mut on_modified = minimal_compiled();
         on_modified.window.timeproperty = TimeProp::Modified;
-        let sql = sql_of(&on_modified);
-        assert!(sql.contains("\"sh\".\"modified_at\" AS \"scope_event_at\""), "{sql}");
+        let on_modified = statement_of(&on_modified);
+        assert_statement_snapshot!("scope-history-the-requested-axis-is-projected-as-the-event-instant-2", on_modified);
     }
 
     /// Clause 5.2.21: the requested `timeproperty` positions the scope event,
     /// exactly as it positions an attribute instance.
     #[test]
     fn each_time_property_positions_the_scope_read_on_its_own_column() {
-        for (timeproperty, column) in [
-            (TimeProp::Observed, "observed_at"),
-            (TimeProp::Created, "created_at"),
-            (TimeProp::Modified, "modified_at"),
-            (TimeProp::Deleted, "deleted_at"),
-        ] {
-            let mut compiled = minimal_compiled();
-            compiled.window.timeproperty = timeproperty;
-            let sql = sql_of(&compiled);
-            assert!(sql.contains(&format!("\"sh\".\"{column}\" IS NOT NULL")), "{timeproperty}: {sql}");
-        }
+        let mut observed = minimal_compiled();
+        observed.window.timeproperty = TimeProp::Observed;
+        let observed = statement_of(&observed);
+        assert_statement_snapshot!("scope-history-each-time-property-positions-the-scope-read-on-its-own-column-1", observed);
+        let mut created = minimal_compiled();
+        created.window.timeproperty = TimeProp::Created;
+        let created = statement_of(&created);
+        assert_statement_snapshot!("scope-history-each-time-property-positions-the-scope-read-on-its-own-column-2", created);
+        let mut modified = minimal_compiled();
+        modified.window.timeproperty = TimeProp::Modified;
+        let modified = statement_of(&modified);
+        assert_statement_snapshot!("scope-history-each-time-property-positions-the-scope-read-on-its-own-column-3", modified);
+        let mut deleted = minimal_compiled();
+        deleted.window.timeproperty = TimeProp::Deleted;
+        let deleted = statement_of(&deleted);
+        assert_statement_snapshot!("scope-history-each-time-property-positions-the-scope-read-on-its-own-column-4", deleted);
     }
 
     /// Table 6.18.3.2-1 makes `attrs` a synonym for `pick`, which names Entity
@@ -292,12 +283,7 @@ mod tests {
     /// entries still queued for the entity.
     #[test]
     fn the_scope_history_read_unions_pending_scope_entries() {
-        let sql = sql_of(&minimal_compiled());
-        assert!(
-            sql.contains(r#"FROM "temporal_append_entries" AS "pe" WHERE "pe"."entry_kind" IN (3, 4)"#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#""pe"."entity_id" = "read_entity"."read_entity""#), "{sql}");
-        assert!(sql.contains(&format!("UNNEST(ARRAY[ '{}' ])", vehicle_id())), "{sql}");
+        let statement = statement_of(&minimal_compiled());
+        assert_statement_snapshot!("scope-history-the-scope-history-read-unions-pending-scope-entries", statement);
     }
 }

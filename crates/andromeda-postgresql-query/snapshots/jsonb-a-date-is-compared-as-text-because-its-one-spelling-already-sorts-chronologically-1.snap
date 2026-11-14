@@ -1,0 +1,9 @@
+---
+source: crates/andromeda-postgresql-query/src/jsonb.rs
+---
+SELECT
+  (
+    CASE
+      WHEN (
+        "datatype" = ('https://uri.etsi.org/ngsi-ld/Date')
+      ) THEN "stored" #>> ('{}') END)

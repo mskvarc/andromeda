@@ -1,0 +1,351 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/stage1/pattern_candidates.rs
+---
+WITH
+"short_walk" AS MATERIALIZED (
+  SELECT
+    "e"."id" AS "entity_id"
+  FROM
+    (
+      SELECT
+        *
+      FROM
+        (
+          SELECT
+            *
+          FROM
+            "entities"
+          WHERE
+            "entities"."evolution_created_at" IS NOT NULL
+        ) AS "e"
+      ORDER BY
+        "e"."id" ASC
+      LIMIT
+        200 OFFSET 0
+    ) AS "e"
+  WHERE
+    (
+      (
+        ((("e"."id") COLLATE "default") ~ $1)
+        AND ("e"."evolution_type_name_keys" @> (ARRAY[1]))
+      )
+      OR ((("e"."id") COLLATE "default") ~ $2)
+    )
+    AND EXISTS (
+      SELECT
+        1
+      FROM
+        (
+          SELECT
+            "re"."id" AS "entity_id",
+            "rs"."attribute_name_key" AS "attribute_name_key",
+            "rs"."dataset_key" AS "dataset_key",
+            "rh"."recorded_at",
+            "rh"."write_id",
+            "rh"."write_ordinal",
+            "rh"."attribute_kind",
+            "rh"."value_kind",
+            "rh"."observed_at",
+            "rh"."created_at",
+            "rh"."modified_at",
+            "rh"."deleted_at",
+            "rh"."value_date_time",
+            "rh"."expires_at",
+            "rh"."generated_instance_id",
+            "rh"."value_type_key",
+            "rh"."value_datatype_key",
+            "rh"."unit_code_id",
+            "rh"."value_boolean",
+            "rh"."verbatim_instance_id",
+            "rh"."value_number",
+            "rh"."value_string",
+            "rh"."value_language",
+            "rh"."value_geometry",
+            "rh"."value_geometry_valid",
+            "rh"."value_geometry_reach",
+            "rh"."value_geometry_members",
+            "rh"."value_object",
+            "rh"."value_uri",
+            "rh"."object_type_keys",
+            "rh"."sub_attributes"
+          FROM
+            "attribute_history" AS "rh"
+            JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+            JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+        ) AS "ah"
+      WHERE
+        "ah"."observed_at" >= $3
+        AND "ah"."entity_id" = "e"."id"
+    )
+  ORDER BY
+    "e"."id" ASC
+  LIMIT
+    20
+),
+"candidates" AS MATERIALIZED (
+  SELECT
+    "entities"."entity_key"
+  FROM
+    "entities"
+  WHERE
+    "entities"."evolution_active_until" >= $4
+  LIMIT
+    10001
+)
+SELECT
+  *
+FROM
+  (
+    SELECT
+      *
+    FROM
+      "short_walk"
+    WHERE
+      (
+        SELECT
+          COUNT(*)
+        FROM
+          "short_walk"
+      ) >= $5
+    ORDER BY
+      "entity_id" ASC
+    LIMIT
+      20 OFFSET 0
+  ) AS "answered"
+UNION ALL
+(
+  SELECT
+    *
+  FROM
+    (
+      SELECT
+        "e"."id" AS "entity_id"
+      FROM
+        (
+          SELECT
+            *
+          FROM
+            (
+              SELECT
+                *
+              FROM
+                "entities"
+              WHERE
+                "entities"."evolution_created_at" IS NOT NULL
+            ) AS "e"
+          WHERE
+            "e"."entity_key" IN (
+              SELECT
+                "entity_key"
+              FROM
+                "candidates"
+            )
+          ORDER BY
+            "id" ASC OFFSET 0
+        ) AS "e"
+      WHERE
+        (
+          (
+            ((("e"."id") COLLATE "default") ~ $6)
+            AND ("e"."evolution_type_name_keys" @> (ARRAY[1]))
+          )
+          OR ((("e"."id") COLLATE "default") ~ $7)
+        )
+        AND (
+          CASE
+            WHEN (
+              (
+                SELECT
+                  COUNT(*)
+                FROM
+                  "short_walk"
+              ) >= $8
+            ) THEN FALSE
+            WHEN (
+              (
+                SELECT
+                  COUNT(*)
+                FROM
+                  "short_walk"
+              ) >= $9
+            ) THEN FALSE
+            ELSE (
+              SELECT
+                COUNT(*)
+              FROM
+                "candidates"
+            ) <= $10
+          END
+        )
+        AND EXISTS (
+          SELECT
+            1
+          FROM
+            (
+              SELECT
+                "re"."id" AS "entity_id",
+                "rs"."attribute_name_key" AS "attribute_name_key",
+                "rs"."dataset_key" AS "dataset_key",
+                "rh"."recorded_at",
+                "rh"."write_id",
+                "rh"."write_ordinal",
+                "rh"."attribute_kind",
+                "rh"."value_kind",
+                "rh"."observed_at",
+                "rh"."created_at",
+                "rh"."modified_at",
+                "rh"."deleted_at",
+                "rh"."value_date_time",
+                "rh"."expires_at",
+                "rh"."generated_instance_id",
+                "rh"."value_type_key",
+                "rh"."value_datatype_key",
+                "rh"."unit_code_id",
+                "rh"."value_boolean",
+                "rh"."verbatim_instance_id",
+                "rh"."value_number",
+                "rh"."value_string",
+                "rh"."value_language",
+                "rh"."value_geometry",
+                "rh"."value_geometry_valid",
+                "rh"."value_geometry_reach",
+                "rh"."value_geometry_members",
+                "rh"."value_object",
+                "rh"."value_uri",
+                "rh"."object_type_keys",
+                "rh"."sub_attributes"
+              FROM
+                "attribute_history" AS "rh"
+                JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+                JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+            ) AS "ah"
+          WHERE
+            "ah"."observed_at" >= $11
+            AND "ah"."entity_id" = "e"."id"
+        )
+      ORDER BY
+        "e"."id" ASC
+      LIMIT
+        20 OFFSET 0
+    ) AS "indexed"
+)
+UNION ALL
+(
+  SELECT
+    *
+  FROM
+    (
+      SELECT
+        "e"."id" AS "entity_id"
+      FROM
+        (
+          SELECT
+            *
+          FROM
+            "entities"
+          WHERE
+            "entities"."evolution_created_at" IS NOT NULL
+        ) AS "e"
+      WHERE
+        (
+          (
+            ((("e"."id") COLLATE "default") ~ $12)
+            AND ("e"."evolution_type_name_keys" @> (ARRAY[1]))
+          )
+          OR ((("e"."id") COLLATE "default") ~ $13)
+        )
+        AND (
+          CASE
+            WHEN (
+              (
+                SELECT
+                  COUNT(*)
+                FROM
+                  "short_walk"
+              ) >= $14
+            ) THEN FALSE
+            WHEN (
+              (
+                SELECT
+                  COUNT(*)
+                FROM
+                  "short_walk"
+              ) >= $15
+            ) THEN TRUE
+            ELSE (
+              SELECT
+                COUNT(*)
+              FROM
+                "candidates"
+            ) > $16
+          END
+        )
+        AND EXISTS (
+          SELECT
+            1
+          FROM
+            (
+              SELECT
+                "re"."id" AS "entity_id",
+                "rs"."attribute_name_key" AS "attribute_name_key",
+                "rs"."dataset_key" AS "dataset_key",
+                "rh"."recorded_at",
+                "rh"."write_id",
+                "rh"."write_ordinal",
+                "rh"."attribute_kind",
+                "rh"."value_kind",
+                "rh"."observed_at",
+                "rh"."created_at",
+                "rh"."modified_at",
+                "rh"."deleted_at",
+                "rh"."value_date_time",
+                "rh"."expires_at",
+                "rh"."generated_instance_id",
+                "rh"."value_type_key",
+                "rh"."value_datatype_key",
+                "rh"."unit_code_id",
+                "rh"."value_boolean",
+                "rh"."verbatim_instance_id",
+                "rh"."value_number",
+                "rh"."value_string",
+                "rh"."value_language",
+                "rh"."value_geometry",
+                "rh"."value_geometry_valid",
+                "rh"."value_geometry_reach",
+                "rh"."value_geometry_members",
+                "rh"."value_object",
+                "rh"."value_uri",
+                "rh"."object_type_keys",
+                "rh"."sub_attributes"
+              FROM
+                "attribute_history" AS "rh"
+                JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+                JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+            ) AS "ah"
+          WHERE
+            "ah"."observed_at" >= $17
+            AND "ah"."entity_id" = "e"."id"
+        )
+      ORDER BY
+        "e"."id" ASC
+      LIMIT
+        20 OFFSET 0
+    ) AS "walk"
+)
+1: String '.*:0123.*'
+2: String '.*:9.*'
+3: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
+4: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
+5: BigUnsigned 20
+6: String '.*:0123.*'
+7: String '.*:9.*'
+8: BigUnsigned 20
+9: BigUnsigned 3
+10: BigUnsigned 10000
+11: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
+12: String '.*:0123.*'
+13: String '.*:9.*'
+14: BigUnsigned 20
+15: BigUnsigned 3
+16: BigUnsigned 10000
+17: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'

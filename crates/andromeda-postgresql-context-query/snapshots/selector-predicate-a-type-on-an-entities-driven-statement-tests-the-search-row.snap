@@ -1,0 +1,8 @@
+---
+source: crates/andromeda-postgresql-context-query/src/selector_predicate.rs
+---
+SELECT
+  $1
+WHERE
+  "entity_search"."entity_type_name_keys" @> (ARRAY[1])
+1: Int 1

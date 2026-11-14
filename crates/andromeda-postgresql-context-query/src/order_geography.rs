@@ -103,8 +103,8 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
     use andromeda_postgresql_query::{attribute_name_key::AttributeNameKey, dictionary::resolved_names::ResolvedNames, entity_row_refs::EntityRowRefs};
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, PostgresQueryBuilder, Query, SimpleExpr};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Query, SelectStatement, SimpleExpr};
 
     const CUSTOM_GEOPROPERTY: &str = "https://example.com/customGeo";
     const CUSTOM_GEOPROPERTY_ID: i32 = 42;
@@ -130,15 +130,9 @@ mod tests {
         EntityRowRefs::aliased(None, Alias::new("e"), Alias::new("s"))
     }
 
-    /// Render a distance expression to its SQL with values inlined.
-    fn render(expr: SimpleExpr) -> String {
-        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
-    }
-
-    /// Render a distance expression to its SQL with `$n` placeholders.
-    fn render_parameterised(expr: SimpleExpr) -> String {
-        let (sql, _) = Query::select().expr(expr).to_owned().build(PostgresQueryBuilder);
-        sql
+    /// Wrap a distance expression in the statement that selects it.
+    fn render(expr: SimpleExpr) -> SelectStatement {
+        Query::select().expr(expr).to_owned()
     }
 
     /// Clause 4.23.1 defines sort by distance as the Haversine spherical
@@ -146,24 +140,18 @@ mod tests {
     /// operands make.
     #[test]
     fn the_distance_is_measured_on_a_sphere_and_not_on_the_spheroid() {
-        let sql = render(
+        let select = render(
             geo_order_distance(&name(LOCATION.as_str()), &ResolvedNames::default(), &outer(), REFERENCE).expect("the default GeoProperty is measurable"),
         );
-        assert!(sql.contains("ST_DistanceSphere("), "{sql}");
-        assert!(!sql.contains("::geography"), "the spheroidal measurement must not be used: {sql}");
+        assert_statement_snapshot!("order-geography-the-distance-is-measured-on-a-sphere-and-not-on-the-spheroid", select);
     }
 
     #[test]
     fn the_default_geoproperty_measures_from_its_dedicated_geometry_column() {
-        let sql = render(
+        let select = render(
             geo_order_distance(&name(LOCATION.as_str()), &ResolvedNames::default(), &outer(), REFERENCE).expect("the default GeoProperty is measurable"),
         );
-        assert!(sql.contains("ST_DistanceSphere(\"entity_search\".\"location\""), "{sql}");
-        assert!(
-            sql.contains("CASE WHEN (\"entity_search\".\"location_expires_at\" IS NULL OR \"entity_search\".\"location_expires_at\" > NOW())"),
-            "an expired default instance is not measured to: {sql}"
-        );
-        assert!(!sql.contains("current_attributes"), "the default GeoProperty needs no instance lookup: {sql}");
+        assert_statement_snapshot!("order-geography-the-default-geoproperty-measures-from-its-dedicated-geometry-column", select);
     }
 
     /// Clause 4.23 read together with clause 4.10: an ordering reads the same
@@ -171,36 +159,22 @@ mod tests {
     /// instance rows and takes the smallest distance among them.
     #[test]
     fn a_custom_geoproperty_measures_from_its_nearest_attribute_instance() {
-        let sql = render(geo_order_distance(&name(CUSTOM_GEOPROPERTY), &resolved_custom(), &outer(), REFERENCE).expect("a recorded GeoProperty is measurable"));
-        assert!(sql.contains("FROM \"current_attributes\""), "{sql}");
-        assert!(sql.contains("MIN(ST_DistanceSphere("), "the nearest instance decides: {sql}");
-        assert!(
-            sql.contains(r#"MIN(ST_DistanceSphere(COALESCE("geo_order"."value_geometry_valid", "geo_order"."value_geometry"), "#),
-            "an invalid written geometry is measured from its repaired form: {sql}"
-        );
-        assert!(sql.contains(&format!("\"attribute_name_key\" = {CUSTOM_GEOPROPERTY_ID}")), "{sql}");
-        assert!(
-            sql.contains("\"geo_order\".\"entity_key\" = \"entities\".\"entity_key\""),
-            "correlated to the ordered row: {sql}"
-        );
-        assert!(!sql.contains("ST_GeomFromGeoJSON"), "the geometry is stored decoded: {sql}");
-        assert!(
-            sql.contains("\"geo_order\".\"expires_at\" IS NULL OR \"geo_order\".\"expires_at\" > NOW()"),
-            "an expired instance is not measured to: {sql}"
-        );
+        let select =
+            render(geo_order_distance(&name(CUSTOM_GEOPROPERTY), &resolved_custom(), &outer(), REFERENCE).expect("a recorded GeoProperty is measurable"));
+        assert_statement_snapshot!("order-geography-a-custom-geoproperty-measures-from-its-nearest-attribute-instance", select);
     }
 
     /// The correlation binds the outer relation it was handed rather than
     /// whichever `entity_key` column the enclosing statement happens to expose.
     #[test]
     fn the_ordering_subquery_correlates_through_the_outer_row_it_is_given() {
-        let sql =
+        let custom =
             render(geo_order_distance(&name(CUSTOM_GEOPROPERTY), &resolved_custom(), &aliased(), REFERENCE).expect("a recorded GeoProperty is measurable"));
-        assert!(sql.contains("\"geo_order\".\"entity_key\" = \"e\".\"entity_key\""), "{sql}");
-        let default_sql = render(
+        assert_statement_snapshot!("order-geography-the-ordering-subquery-correlates-through-the-outer-row-it-is-given-1", custom);
+        let default = render(
             geo_order_distance(&name(LOCATION.as_str()), &ResolvedNames::default(), &aliased(), REFERENCE).expect("the default GeoProperty is measurable"),
         );
-        assert!(default_sql.contains("ST_DistanceSphere(\"s\".\"location\""), "{default_sql}");
+        assert_statement_snapshot!("order-geography-the-ordering-subquery-correlates-through-the-outer-row-it-is-given-2", default);
     }
 
     /// Every branch that measures anything binds the reference geometry as its
@@ -211,9 +185,12 @@ mod tests {
             geo_order_distance(&name(LOCATION.as_str()), &ResolvedNames::default(), &outer(), REFERENCE),
             geo_order_distance(&name(CUSTOM_GEOPROPERTY), &resolved_custom(), &outer(), REFERENCE),
         ];
-        for expr in cases {
-            let sql = render_parameterised(expr.expect("a measurable GeoProperty"));
-            assert_eq!(sql.matches("$1").count(), 1, "{sql}");
+        for (index, expr) in cases.into_iter().enumerate() {
+            let select = render(expr.expect("a measurable GeoProperty"));
+            assert_statement_snapshot!(
+                format!("order-geography-every-measuring-branch-binds-the-reference-geometry-first-{}", index + 1),
+                select
+            );
         }
     }
 
@@ -222,9 +199,9 @@ mod tests {
     #[test]
     fn no_geoproperty_iri_reaches_the_statement_text() {
         let names = ResolvedNames::from_pairs([(name("https://example.com/o'brien"), AttributeNameKey::from(9_i32))]);
-        let sql = render(geo_order_distance(&name("https://example.com/o'brien"), &names, &outer(), REFERENCE).expect("a recorded GeoProperty is measurable"));
-        assert!(!sql.contains("brien"), "{sql}");
-        assert_eq!(sql.matches('\'').count() % 2, 0, "unbalanced SQL literal: {sql}");
+        let select =
+            render(geo_order_distance(&name("https://example.com/o'brien"), &names, &outer(), REFERENCE).expect("a recorded GeoProperty is measurable"));
+        assert_statement_snapshot!("order-geography-no-geoproperty-iri-reaches-the-statement-text", select);
     }
 
     /// An IRI the broker has never recorded keys no attribute, so there is no

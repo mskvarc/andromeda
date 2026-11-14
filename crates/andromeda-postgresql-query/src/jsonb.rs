@@ -88,7 +88,8 @@ pub fn lift_comparison(scalar: &Scalar, stored: SimpleExpr, datatype: SimpleExpr
 mod tests {
     use crate::jsonb::lift_comparison;
     use andromeda_ngsi_ld_query::filter::scalar::{Scalar, parse_date, parse_date_time, parse_time};
-    use sea_query::{Alias, Expr as SeaExpr, PostgresQueryBuilder, Query, SimpleExpr, Value, Values};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Expr as SeaExpr, Query, SelectStatement, SimpleExpr};
 
     /// A plain column stands in for the JSONB value real callers lift.
     fn stored() -> SimpleExpr {
@@ -100,50 +101,22 @@ mod tests {
         SeaExpr::col(Alias::new("datatype"))
     }
 
-    /// Render one lifted operand to its SQL text alone.
-    fn render(expr: SimpleExpr) -> String {
-        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
-    }
-
-    /// The one text value an operand binds.
-    fn bound_value(expr: SimpleExpr) -> String {
-        let (_, Values(values)) = Query::select().expr(expr).to_owned().build(PostgresQueryBuilder);
-        match values.into_iter().next().expect("one bound value") {
-            Value::String(Some(text)) => text,
-            Value::BigDecimal(Some(value)) => value.to_string(),
-            other @ (Value::Bool(_)
-            | Value::TinyInt(_)
-            | Value::SmallInt(_)
-            | Value::Int(_)
-            | Value::BigInt(_)
-            | Value::TinyUnsigned(_)
-            | Value::SmallUnsigned(_)
-            | Value::Unsigned(_)
-            | Value::BigUnsigned(_)
-            | Value::Float(_)
-            | Value::Double(_)
-            | Value::BigDecimal(None)
-            | Value::Enum(_)
-            | Value::Char(_)
-            | Value::Bytes(_)
-            | Value::ChronoDate(_)
-            | Value::ChronoTime(_)
-            | Value::ChronoDateTime(_)
-            | Value::ChronoDateTimeUtc(_)
-            | Value::ChronoDateTimeLocal(_)
-            | Value::ChronoDateTimeWithTimeZone(_)
-            | Value::Uuid(_)
-            | Value::Array(..)) => panic!("a lifted operand binds text: {other:?}"),
-            Value::String(None) => panic!("a lifted operand binds an absent value"),
-        }
+    /// One lifted operand selected alone.
+    fn render(expr: SimpleExpr) -> SelectStatement {
+        Query::select().expr(expr).to_owned()
     }
 
     #[test]
     fn a_number_is_lifted_to_numeric_on_both_sides_so_it_is_not_ordered_as_text() {
         let lifted = lift_comparison(&Scalar::Number(9.into()), stored(), datatype());
-        assert!(render(lifted.stored).contains("::numeric"), "the stored side casts to numeric");
-        assert!(!render(lifted.operand.clone()).contains("::"), "the operand is already NUMERIC");
-        assert_eq!(bound_value(lifted.operand), "9", "the operand binds NUMERIC, not a float");
+        assert_statement_snapshot!(
+            "jsonb-a-number-is-lifted-to-numeric-on-both-sides-so-it-is-not-ordered-as-text-1",
+            render(lifted.stored)
+        );
+        assert_statement_snapshot!(
+            "jsonb-a-number-is-lifted-to-numeric-on-both-sides-so-it-is-not-ordered-as-text-2",
+            render(lifted.operand)
+        );
     }
 
     /// Clause 4.9 makes a target of another data type unequal to the operand,
@@ -151,28 +124,25 @@ mod tests {
     /// declared as an XSD number, reaches the cast.
     #[test]
     fn a_number_lift_reads_a_json_number_or_a_string_declared_as_one() {
-        let sql = render(lift_comparison(&Scalar::Number(4.into()), stored(), datatype()).stored);
-        assert!(
-            sql.contains(r#"CASE WHEN (jsonb_typeof("stored") = ('number')) THEN ("stored" #>> ('{}'))::numeric WHEN (jsonb_typeof("stored") = ('string') AND "datatype" IN ("#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "jsonb-a-number-lift-reads-a-json-number-or-a-string-declared-as-one",
+            render(lift_comparison(&Scalar::Number(4.into()), stored(), datatype()).stored)
         );
     }
 
     #[test]
     fn a_boolean_lift_reads_a_json_boolean_or_a_string_declared_as_one() {
-        let sql = render(lift_comparison(&Scalar::Bool(true), stored(), datatype()).stored);
-        assert!(
-            sql.contains(r#"CASE WHEN (jsonb_typeof("stored") = ('boolean')) THEN ("stored" #>> ('{}'))::boolean WHEN (jsonb_typeof("stored") = ('string') AND "datatype" = ('http://www.w3.org/2001/XMLSchema#boolean')"#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "jsonb-a-boolean-lift-reads-a-json-boolean-or-a-string-declared-as-one",
+            render(lift_comparison(&Scalar::Bool(true), stored(), datatype()).stored)
         );
     }
 
     #[test]
     fn a_boolean_is_lifted_to_boolean_on_both_sides() {
         let lifted = lift_comparison(&Scalar::Bool(true), stored(), datatype());
-        assert!(render(lifted.stored).contains("::boolean"));
-        assert!(render(lifted.operand.clone()).contains("::boolean"));
-        assert_eq!(bound_value(lifted.operand), "true");
+        assert_statement_snapshot!("jsonb-a-boolean-is-lifted-to-boolean-on-both-sides-1", render(lifted.stored));
+        assert_statement_snapshot!("jsonb-a-boolean-is-lifted-to-boolean-on-both-sides-2", render(lifted.operand));
     }
 
     /// Clause 4.9 makes a target of another data type unequal to the operand,
@@ -181,14 +151,14 @@ mod tests {
     #[test]
     fn a_string_operand_reads_only_a_json_string_declared_as_no_other_data_type() {
         let lifted = lift_comparison(&Scalar::Str("red".to_string()), stored(), datatype());
-        let sql = render(lifted.stored);
-        assert!(
-            sql.contains(r#"CASE WHEN (jsonb_typeof("stored") = ('string') AND (NOT COALESCE("datatype" IN ("#),
-            "{sql}"
+        assert_statement_snapshot!(
+            "jsonb-a-string-operand-reads-only-a-json-string-declared-as-no-other-data-type-1",
+            render(lifted.stored)
         );
-        assert!(sql.contains(r#"THEN ("stored" #>> ('{}'))::text END"#), "{sql}");
-        assert!(!render(lifted.operand.clone()).contains("::"), "the operand is not cast");
-        assert_eq!(bound_value(lifted.operand), "red");
+        assert_statement_snapshot!(
+            "jsonb-a-string-operand-reads-only-a-json-string-declared-as-no-other-data-type-2",
+            render(lifted.operand)
+        );
     }
 
     /// A declared `DateTime` is an instant, which text order does not order.
@@ -196,9 +166,7 @@ mod tests {
     fn a_date_time_is_compared_as_a_timestamp_not_as_text() {
         let instant = parse_date_time("2024-01-01T00:00:00Z").expect("valid date-time");
         let lifted = lift_comparison(&Scalar::DateTime(instant), stored(), datatype());
-        let stored_sql = render(lifted.stored);
-        assert!(stored_sql.contains("::timestamptz"), "{stored_sql}");
-        assert!(stored_sql.contains("CASE WHEN "), "the cast must be guarded: {stored_sql}");
+        assert_statement_snapshot!("jsonb-a-date-time-is-compared-as-a-timestamp-not-as-text", render(lifted.stored));
     }
 
     /// Truncating to whole seconds would make `>` admit an instant inside the
@@ -207,26 +175,28 @@ mod tests {
     fn a_date_time_operand_binds_as_the_instant_it_names() {
         let instant = parse_date_time("2024-01-01T00:00:00.123456Z").expect("valid date-time");
         let lifted = lift_comparison(&Scalar::DateTime(instant), stored(), datatype());
-        let (_, Values(values)) = Query::select().expr(lifted.operand).to_owned().build(PostgresQueryBuilder);
-        assert_eq!(values, vec![Value::ChronoDateTimeUtc(Some(instant))]);
+        assert_statement_snapshot!("jsonb-a-date-time-operand-binds-as-the-instant-it-names", render(lifted.operand));
     }
 
     #[test]
     fn a_time_is_brought_to_the_fixed_width_encoding_on_both_sides() {
         let time = parse_time("12:00:00,5Z").expect("the comma compatibility form");
         let lifted = lift_comparison(&Scalar::Time(time), stored(), datatype());
-        assert!(render(lifted.stored).contains("AT TIME ZONE"), "the stored side normalises to UTC");
-        assert_eq!(bound_value(lifted.operand), "12:00:00.500000Z");
+        assert_statement_snapshot!("jsonb-a-time-is-brought-to-the-fixed-width-encoding-on-both-sides-1", render(lifted.stored));
+        assert_statement_snapshot!("jsonb-a-time-is-brought-to-the-fixed-width-encoding-on-both-sides-2", render(lifted.operand));
     }
 
     #[test]
     fn a_date_is_compared_as_text_because_its_one_spelling_already_sorts_chronologically() {
         let date = parse_date("2024-01-01").expect("valid full-date");
         let lifted = lift_comparison(&Scalar::Date(date), stored(), datatype());
-        let stored_sql = render(lifted.stored);
-        assert!(!stored_sql.contains("::"), "the stored side is not cast: {stored_sql}");
-        assert!(stored_sql.contains(r#""stored" #>> ('{}')"#), "the value is read as its text: {stored_sql}");
-        assert!(stored_sql.contains("'https://uri.etsi.org/ngsi-ld/Date'"), "only a declared Date: {stored_sql}");
-        assert_eq!(bound_value(lifted.operand), "2024-01-01");
+        assert_statement_snapshot!(
+            "jsonb-a-date-is-compared-as-text-because-its-one-spelling-already-sorts-chronologically-1",
+            render(lifted.stored)
+        );
+        assert_statement_snapshot!(
+            "jsonb-a-date-is-compared-as-text-because-its-one-spelling-already-sorts-chronologically-2",
+            render(lifted.operand)
+        );
     }
 }

@@ -1,0 +1,58 @@
+---
+source: crates/andromeda-postgresql-context-query/src/entity.rs
+---
+SELECT
+  "stored"."entity_key",
+  "stored"."id",
+  "stored"."entity_created_at",
+  "stored"."entity_modified_at",
+  "stored"."entity_write_count",
+  "stored"."entity_expires_at",
+  "stored"."entity_type_name_keys",
+  "stored"."verbatim_scope_paths"
+FROM
+  (
+    SELECT
+      "entities"."entity_key",
+      "entities"."id" AS "sort_0"
+    FROM
+      "entities"
+      JOIN "entity_search" ON "entity_search"."entity_key" = "entities"."entity_key"
+    WHERE
+      "entities"."created_at" IS NOT NULL
+      AND (
+        "entities"."expires_at" IS NULL
+        OR "entities"."expires_at" > NOW()
+      )
+      AND (
+        "entities"."id" = $1
+        AND (
+          "entity_search"."entity_type_name_keys" @> (ARRAY[1])
+        )
+      )
+    ORDER BY
+      "sort_0" ASC
+    LIMIT
+      20 OFFSET 0
+  ) AS "page"
+  INNER JOIN LATERAL (
+    SELECT
+      "e"."entity_key" AS "entity_key",
+      "e"."id" AS "id",
+      "e"."created_at" AS "entity_created_at",
+      "e"."modified_at" AS "entity_modified_at",
+      "e"."write_count" AS "entity_write_count",
+      "e"."expires_at" AS "entity_expires_at",
+      "s"."entity_type_name_keys" AS "entity_type_name_keys",
+      "s"."verbatim_scope_paths" AS "verbatim_scope_paths"
+    FROM
+      "entities" AS "e"
+      INNER JOIN "entity_search" AS "s" ON "s"."entity_key" = "e"."entity_key"
+    WHERE
+      "e"."entity_key" = "page"."entity_key"
+    LIMIT
+      1
+  ) AS "stored" ON TRUE
+ORDER BY
+  "page"."sort_0" ASC
+1: String 'urn:a'

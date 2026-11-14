@@ -162,13 +162,11 @@ mod tests {
         language_map::{LanguageMap, LanguageSelection},
     };
     use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, target_language::TargetLanguage};
-    use andromeda_postgresql_seaquery::literal::text_literal;
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Expr as SeaExpr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr, Value};
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::text_literal};
+    use sea_query::{Alias, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
 
-    fn render(expr: SimpleExpr) -> (String, Vec<Value>) {
-        let (sql, values) = Query::select().expr(expr).build(PostgresQueryBuilder);
-        (sql, values.0)
+    fn render(expr: SimpleExpr) -> SelectStatement {
+        Query::select().expr(expr).to_owned()
     }
 
     fn column_map() -> LanguageMap {
@@ -187,11 +185,8 @@ mod tests {
     /// a map; any other family's object is never unnested.
     #[test]
     fn an_instance_row_offers_its_object_only_as_a_language_property() {
-        let (sql, _) = render(LanguageMap::of_instance(InstanceRow::Current).holds(LanguageSelection::AnyLanguage));
-        assert!(
-            sql.contains(r#"jsonb_array_elements((CASE WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object" END)) AS "ls""#),
-            "{sql}"
-        );
+        let statement = render(LanguageMap::of_instance(InstanceRow::Current).holds(LanguageSelection::AnyLanguage));
+        assert_statement_snapshot!("language-map-an-instance-row-offers-its-object-only-as-a-language-property", statement);
     }
 
     /// Clause 4.9: with a target language the target value is the string of
@@ -202,13 +197,8 @@ mod tests {
     #[test]
     fn tag_equality_pins_the_language_of_the_string_it_reads_ignoring_case() {
         let tag = language("en-GB");
-        let (sql, binds) = render(column_map().some_string(LanguageSelection::TargetLanguage(tag.selector(), LanguageMatching::TagEquality), equals_door));
-        assert!(
-            sql.contains(r#"LOWER(("ls"."value" ->> ('@language')) COLLATE "C") = LOWER(($1::text) COLLATE "C")"#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#"("ls"."value" ->> ('@value')) = ('Door')"#), "{sql}");
-        assert!(matches!(&binds[0], Value::String(Some(text)) if text.as_str() == "en-GB"), "{binds:?}");
+        let statement = render(column_map().some_string(LanguageSelection::TargetLanguage(tag.selector(), LanguageMatching::TagEquality), equals_door));
+        assert_statement_snapshot!("language-map-tag-equality-pins-the-language-of-the-string-it-reads-ignoring-case", statement);
     }
 
     /// RFC 4647 section 3.3.2: under extended filtering the entry's tag is
@@ -218,18 +208,18 @@ mod tests {
     /// defaults to.
     #[test]
     fn extended_filtering_matches_the_tag_against_the_range_pattern() {
-        for (text, matching) in [
+        for (index, (text, matching)) in [
             ("en", LanguageMatching::ExtendedFiltering),
             ("de-*-DE", LanguageMatching::ExtendedFiltering),
             ("de-*-DE", LanguageMatching::TagEquality),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let target = language(text);
-            let (sql, binds) = render(column_map().holds(LanguageSelection::TargetLanguage(target.selector(), matching)));
-            assert!(sql.contains(r#"(("ls"."value" ->> ('@language')) COLLATE "C") ~* ($1::text)"#), "{text}: {sql}");
-            assert!(!sql.contains("LOWER"), "{text}: {sql}");
-            assert!(
-                matches!(&binds[0], Value::String(Some(pattern)) if pattern.starts_with('^')),
-                "{text}: {binds:?}"
+            assert_statement_snapshot!(
+                format!("language-map-extended-filtering-matches-the-tag-against-the-range-pattern-{}", index + 1),
+                render(column_map().holds(LanguageSelection::TargetLanguage(target.selector(), matching)))
             );
         }
     }
@@ -241,22 +231,18 @@ mod tests {
     #[test]
     fn both_comparisons_collate_the_stored_tag_under_the_byte_order() {
         let target = language("it-IT");
-        let (equality, _) = render(column_map().holds(LanguageSelection::TargetLanguage(target.selector(), LanguageMatching::TagEquality)));
-        let (filtering, _) = render(column_map().holds(LanguageSelection::TargetLanguage(target.selector(), LanguageMatching::ExtendedFiltering)));
-        for (sql, comparison) in [(equality, "equality"), (filtering, "extended filtering")] {
-            assert!(
-                sql.contains(r#"("ls"."value" ->> ('@language')) COLLATE "C""#),
-                "{comparison} leaves the stored tag under the database locale: {sql}"
-            );
-        }
+        let equality = render(column_map().holds(LanguageSelection::TargetLanguage(target.selector(), LanguageMatching::TagEquality)));
+        let filtering = render(column_map().holds(LanguageSelection::TargetLanguage(target.selector(), LanguageMatching::ExtendedFiltering)));
+        assert_statement_snapshot!("language-map-both-comparisons-collate-the-stored-tag-under-the-byte-order-1", equality);
+        assert_statement_snapshot!("language-map-both-comparisons-collate-the-stored-tag-under-the-byte-order-2", filtering);
     }
 
     /// With no target language every entry is a candidate, the `@none` one
     /// included, so no tag is tested.
     #[test]
     fn no_target_language_reads_every_string() {
-        let (sql, _) = render(column_map().some_string(LanguageSelection::AnyLanguage, equals_door));
-        assert!(!sql.contains("@language"), "{sql}");
+        let statement = render(column_map().some_string(LanguageSelection::AnyLanguage, equals_door));
+        assert_statement_snapshot!("language-map-no-target-language-reads-every-string", statement);
     }
 
     /// Clause 4.9 `unequal` and `notPatternOp` require the `LanguageProperty`,
@@ -265,10 +251,7 @@ mod tests {
     #[test]
     fn no_string_requires_the_map_and_denies_a_match_under_the_language() {
         let tag = language("fr");
-        let (sql, binds) = render(column_map().no_string(LanguageSelection::TargetLanguage(tag.selector(), LanguageMatching::TagEquality), equals_door));
-        assert_eq!(sql.matches("EXISTS").count(), 2, "{sql}");
-        assert_eq!(sql.matches("@language").count(), 1, "{sql}");
-        assert!(sql.contains("(NOT EXISTS("), "{sql}");
-        assert!(matches!(&binds[0], Value::String(Some(text)) if text.as_str() == "fr"), "{binds:?}");
+        let statement = render(column_map().no_string(LanguageSelection::TargetLanguage(tag.selector(), LanguageMatching::TagEquality), equals_door));
+        assert_statement_snapshot!("language-map-no-string-requires-the-map-and-denies-a-match-under-the-language", statement);
     }
 }

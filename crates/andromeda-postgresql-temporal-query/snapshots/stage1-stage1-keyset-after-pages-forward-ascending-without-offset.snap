@@ -1,0 +1,174 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/stage1/mod.rs
+---
+SELECT
+  "e"."id" AS "entity_id"
+FROM
+  (
+    SELECT
+      "ru"."id",
+      "ru"."evolution_type_name_keys"
+    FROM
+      (
+        SELECT
+          "re"."id",
+          "re"."evolution_type_name_keys",
+          FALSE AS "queued"
+        FROM
+          "entities" AS "re"
+        WHERE
+          "re"."evolution_created_at" IS NOT NULL
+        UNION ALL
+        (
+          SELECT
+            "first_stated"."id",
+            array_agg(
+              "first_stated"."stated_key"
+              ORDER BY
+                (
+                  "first_stated"."list_rank",
+                  "first_stated"."key_position"
+                )
+            ) AS "entity_type_name_keys",
+            TRUE AS "queued"
+          FROM
+            (
+              SELECT DISTINCT
+                ON ("stated_list"."id", "stated_key"."stated_key") "stated_list"."id",
+                "stated_key"."stated_key",
+                "stated_list"."list_rank",
+                array_position(
+                  "stated_list"."entity_type_name_keys",
+                  "stated_key"."stated_key"
+                ) AS "key_position"
+              FROM
+                (
+                  SELECT
+                    "pv"."id" AS "id",
+                    "pv"."evolution_type_name_keys" AS "entity_type_name_keys",
+                    0 AS "list_rank"
+                  FROM
+                    "entities" AS "pv"
+                  WHERE
+                    "pv"."evolution_created_at" IS NOT NULL
+                    AND EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        "temporal_append_intents" AS "pt"
+                      WHERE
+                        "pt"."entity_id" = "pv"."id"
+                        AND cardinality("pt"."entity_type_name_keys") > 0
+                    )
+                  UNION ALL
+                  (
+                    SELECT
+                      "pt"."entity_id" AS "id",
+                      "pt"."entity_type_name_keys" AS "entity_type_name_keys",
+                      "pt"."intent_key" AS "list_rank"
+                    FROM
+                      "temporal_append_intents" AS "pt"
+                    WHERE
+                      cardinality("pt"."entity_type_name_keys") > 0
+                  )
+                ) AS "stated_list",
+                UNNEST("stated_list"."entity_type_name_keys") AS "stated_key"
+              ORDER BY
+                "stated_list"."id" ASC,
+                "stated_key"."stated_key" ASC,
+                "stated_list"."list_rank" ASC
+            ) AS "first_stated"
+          GROUP BY
+            "first_stated"."id"
+        )
+      ) AS "ru"
+    WHERE
+      "ru"."queued"
+      OR (
+        NOT EXISTS (
+          SELECT
+            1
+          FROM
+            "temporal_append_intents" AS "pt"
+          WHERE
+            "pt"."entity_id" = "ru"."id"
+            AND cardinality("pt"."entity_type_name_keys") > 0
+        )
+      )
+  ) AS "e"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      (
+        SELECT
+          "re"."id" AS "entity_id",
+          "rs"."attribute_name_key" AS "attribute_name_key",
+          "rs"."dataset_key" AS "dataset_key",
+          "rs"."stream_key" AS "stream_key"
+        FROM
+          "temporal_attribute_streams" AS "rs"
+          JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+        WHERE
+          "re"."id" = "e"."id"
+        UNION ALL
+        (
+          SELECT DISTINCT
+            "pe"."entity_id" AS "entity_id",
+            "pe"."attribute_name_key" AS "attribute_name_key",
+            "pe"."dataset_key" AS "dataset_key",
+            NULL::bigint AS "stream_key"
+          FROM
+            "temporal_append_entries" AS "pe"
+          WHERE
+            "pe"."entry_kind" IN (1, 2)
+            AND (
+              EXISTS (
+                SELECT
+                  1
+                FROM
+                  "entities" AS "pv"
+                WHERE
+                  "pv"."id" = "pe"."entity_id"
+                  AND "pv"."evolution_created_at" IS NOT NULL
+              )
+              OR EXISTS (
+                SELECT
+                  1
+                FROM
+                  "temporal_append_intents" AS "pt"
+                WHERE
+                  "pt"."entity_id" = "pe"."entity_id"
+                  AND cardinality("pt"."entity_type_name_keys") > 0
+                  AND (
+                    "pe"."entry_kind" <> (2)
+                    OR "pt"."intent_key" <= "pe"."intent_key"
+                  )
+              )
+            )
+            AND (
+              NOT EXISTS (
+                SELECT
+                  1
+                FROM
+                  "temporal_attribute_streams" AS "ps"
+                  JOIN "entities" AS "pv" ON "pv"."entity_key" = "ps"."entity_key"
+                WHERE
+                  "pv"."id" = "pe"."entity_id"
+                  AND "ps"."attribute_name_key" = "pe"."attribute_name_key"
+                  AND "ps"."dataset_key" = "pe"."dataset_key"
+              )
+            )
+            AND "pe"."entity_id" = "e"."id"
+        )
+      ) AS "s"
+    WHERE
+      TRUE
+  )
+  AND "e"."id" > $1
+ORDER BY
+  "e"."id" ASC
+LIMIT
+  20
+1: String 'urn:ngsi-ld:Vehicle:001'

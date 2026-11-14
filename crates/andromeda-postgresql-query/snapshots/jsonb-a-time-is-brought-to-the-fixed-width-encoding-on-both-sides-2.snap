@@ -1,0 +1,6 @@
+---
+source: crates/andromeda-postgresql-query/src/jsonb.rs
+---
+SELECT
+  $1
+1: String '12:00:00.500000Z'

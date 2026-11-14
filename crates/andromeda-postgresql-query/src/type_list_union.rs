@@ -88,8 +88,8 @@ pub fn type_list_union(lists: SelectStatement) -> SelectStatement {
 #[cfg(test)]
 mod tests {
     use crate::type_list_union::{TypeListColumn, type_list_union};
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Expr, Query};
 
     fn lists() -> sea_query::SelectStatement {
         Query::select()
@@ -104,18 +104,6 @@ mod tests {
     /// position there, and the keys of an Entity aggregate in that order.
     #[test]
     fn each_key_is_kept_once_in_the_order_it_first_appears() {
-        let sql = type_list_union(lists()).to_string(PostgresQueryBuilder);
-        assert_eq!(
-            sql,
-            concat!(
-                r#"SELECT "first_stated"."id", array_agg("first_stated"."stated_key" ORDER BY ("first_stated"."list_rank", "first_stated"."key_position")) AS "entity_type_name_keys" FROM "#,
-                r#"(SELECT DISTINCT ON ("stated_list"."id", "stated_key"."stated_key") "stated_list"."id", "stated_key"."stated_key", "stated_list"."list_rank", "#,
-                r#"array_position("stated_list"."entity_type_name_keys", "stated_key"."stated_key") AS "key_position" "#,
-                r#"FROM (SELECT "entity_id" AS "id", "types" AS "entity_type_name_keys", "intent_key" AS "list_rank" FROM "lists") AS "stated_list", "#,
-                r#"UNNEST("stated_list"."entity_type_name_keys") AS "stated_key" "#,
-                r#"ORDER BY "stated_list"."id" ASC, "stated_key"."stated_key" ASC, "stated_list"."list_rank" ASC) AS "first_stated" "#,
-                r#"GROUP BY "first_stated"."id""#
-            )
-        );
+        assert_statement_snapshot!("type-list-union-each-key-is-kept-once-in-the-order-it-first-appears", type_list_union(lists()));
     }
 }

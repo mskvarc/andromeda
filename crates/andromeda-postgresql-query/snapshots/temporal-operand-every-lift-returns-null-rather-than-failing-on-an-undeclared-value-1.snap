@@ -1,0 +1,12 @@
+---
+source: crates/andromeda-postgresql-query/src/temporal_operand.rs
+---
+SELECT
+  (
+    CASE
+      WHEN (
+        "datatype" = ('https://uri.etsi.org/ngsi-ld/DateTime')
+        AND pg_input_is_valid("text", 'timestamptz')
+      ) THEN ("text")::timestamptz
+    END
+  )

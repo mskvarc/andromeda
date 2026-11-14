@@ -78,8 +78,9 @@ mod tests {
         q_predicate::keyed_term::keyed_candidates,
     };
     use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
-    use sea_query::PostgresQueryBuilder;
+    use sea_query::{PostgresQueryBuilder, SelectStatement};
 
     fn names() -> QueryNames {
         QueryNames {
@@ -92,33 +93,33 @@ mod tests {
         }
     }
 
-    fn candidates(q: &str) -> Option<String> {
+    fn candidates(q: &str) -> Option<SelectStatement> {
         let expr = parse(q).expect("parse q");
-        keyed_candidates(&expr, &EntityRowRefs::unaliased(None), &names(), LanguageMatching::TagEquality)
-            .map(|keyed| keyed.select.to_string(PostgresQueryBuilder))
+        keyed_candidates(&expr, &EntityRowRefs::unaliased(None), &names(), LanguageMatching::TagEquality).map(|keyed| keyed.select)
+    }
+
+    /// The statement of a keyed equality on `temperature.source` with `operand`.
+    fn keyed_source(operand: &str) -> SelectStatement {
+        candidates(&format!("\"https://example.com/temperature\".\"https://example.com/source\"=={operand}")).expect("keyed")
     }
 
     /// The inline key array a keyed equality on `temperature.source` reads.
     fn key_array(operand: &str) -> String {
-        let sql = candidates(&format!("\"https://example.com/temperature\".\"https://example.com/source\"=={operand}")).expect("keyed");
+        let sql = keyed_source(operand).to_string(PostgresQueryBuilder);
         let (_, keys) = sql.split_once(r#""ca"."sub_eq_keys" && (ARRAY["#).expect("the key column is probed");
         keys.split_once("]::bigint[])").expect("the keys are an inline bigint array").0.to_owned()
     }
 
     #[test]
     fn a_keyed_equality_reads_its_candidates_through_the_key_column() {
-        let sql = candidates("\"https://example.com/temperature\".\"https://example.com/source\"==\"sensor-43\"").expect("keyed");
-        assert!(sql.contains(r#""ca"."sub_eq_keys" && (ARRAY["#), "{sql}");
-        assert!(
-            sql.contains(r#"FROM UNNEST("ca"."sub_attributes") AS "l0""#),
-            "the candidates are rechecked: {sql}"
-        );
+        let statement = candidates("\"https://example.com/temperature\".\"https://example.com/source\"==\"sensor-43\"").expect("keyed");
+        assert_statement_snapshot!("keyed-equality-a-keyed-equality-reads-its-candidates-through-the-key-column", statement);
     }
 
     /// A String may equal a String or a Relationship object, keyed apart.
     #[test]
     fn a_string_operand_reads_two_keys() {
-        assert_eq!(key_array("\"sensor-43\"").split(", ").count(), 2);
+        assert_statement_snapshot!("keyed-equality-a-string-operand-reads-two-keys", keyed_source("\"sensor-43\""));
     }
 
     /// A declared time value is keyed under its kind and a `valueType`-declared
@@ -126,16 +127,28 @@ mod tests {
     /// the same whichever spelling the operand is written in.
     #[test]
     fn a_date_time_operand_reads_its_kind_key_and_its_string_key_whatever_its_spelling() {
-        let keys = key_array("2024-01-01T00:00:00Z");
-        assert_eq!(keys.split(", ").count(), 2);
-        assert_eq!(key_array("2024-01-01T00:00:00.000Z"), keys);
+        assert_statement_snapshot!(
+            "keyed-equality-a-date-time-operand-reads-its-kind-key-and-its-string-key-whatever-its-spelling-1",
+            keyed_source("2024-01-01T00:00:00Z")
+        );
+        assert_statement_snapshot!(
+            "keyed-equality-a-date-time-operand-reads-its-kind-key-and-its-string-key-whatever-its-spelling-2",
+            keyed_source("2024-01-01T00:00:00.000Z")
+        );
+        assert_eq!(key_array("2024-01-01T00:00:00.000Z"), key_array("2024-01-01T00:00:00Z"));
     }
 
     #[test]
     fn a_time_operand_reads_its_kind_key_and_its_string_key_whatever_its_spelling() {
-        let keys = key_array("12:00:00Z");
-        assert_eq!(keys.split(", ").count(), 2);
-        assert_eq!(key_array("12:00:00.000Z"), keys);
+        assert_statement_snapshot!(
+            "keyed-equality-a-time-operand-reads-its-kind-key-and-its-string-key-whatever-its-spelling-1",
+            keyed_source("12:00:00Z")
+        );
+        assert_statement_snapshot!(
+            "keyed-equality-a-time-operand-reads-its-kind-key-and-its-string-key-whatever-its-spelling-2",
+            keyed_source("12:00:00.000Z")
+        );
+        assert_eq!(key_array("12:00:00.000Z"), key_array("12:00:00Z"));
     }
 
     #[test]

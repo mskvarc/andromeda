@@ -1,0 +1,10 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/expiry_predicate.rs
+---
+SELECT
+  1
+FROM
+  "context_source_registrations"
+WHERE
+  "expires_at" IS NULL
+  OR "expires_at" > NOW()

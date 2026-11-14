@@ -290,31 +290,27 @@ mod tests {
         q_predicate::{instance_scan::InstanceScan, projection::compile},
     };
     use andromeda_postgresql_schema::current::Entities;
-    use andromeda_postgresql_seaquery::literal::int_literal;
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Condition, PostgresQueryBuilder, Query};
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
+    use sea_query::{Alias, Condition, PostgresQueryBuilder, Query, SelectStatement};
 
-    fn render(q: &str) -> String {
+    fn render(q: &str) -> SelectStatement {
         let expr = parser::parse(q).expect("parse q");
         let condition = csr_expr_to_condition(&expr);
         Query::select()
             .expr(int_literal(1))
             .from(Alias::new("context_source_registrations"))
             .cond_where(condition)
-            .to_string(PostgresQueryBuilder)
+            .to_owned()
     }
 
     #[test]
     fn existence_probes_the_jsonb_key() {
-        let sql = render("temperature");
-        assert!(sql.contains("\"context_source_properties\" ?"), "{sql}");
+        assert_statement_snapshot!("filter-existence-probes-the-jsonb-key", render("temperature"));
     }
 
     #[test]
     fn a_comparison_unwraps_the_property_envelope() {
-        let sql = render("temperature>10");
-        assert!(sql.contains("'Property'"), "{sql}");
-        assert!(sql.contains(" > "), "{sql}");
+        assert_statement_snapshot!("filter-a-comparison-unwraps-the-property-envelope", render("temperature>10"));
     }
 
     #[test]
@@ -324,7 +320,9 @@ mod tests {
         // ~3^depth.
         let shallow = render("a.b>1");
         let deeper = render("a.b.c.d.e>1");
-        assert!(deeper.contains("AS \"j\""), "uses the aliased subquery form: {deeper}");
+        assert_statement_snapshot!("filter-a-deep-sub-attribute-path-extracts-through-nested-subqueries-not-exponentially", deeper);
+        let shallow = shallow.to_string(PostgresQueryBuilder);
+        let deeper = deeper.to_string(PostgresQueryBuilder);
         // Three more levels under linear growth stay within a small multiple;
         // under ~3^depth they would be orders of magnitude larger.
         assert!(deeper.len() < shallow.len() * 6, "growth must be linear: {} vs {}", deeper.len(), shallow.len());
@@ -335,9 +333,10 @@ mod tests {
     /// an expanded name can still carry one into a single-quoted SQL literal.
     #[test]
     fn an_apostrophe_in_a_property_name_is_doubled() {
-        let sql = render("\"https://example.com/o'brien\">10");
-        assert!(sql.contains("o''brien"), "{sql}");
-        assert_eq!(sql.matches('\'').count() % 2, 0, "unbalanced SQL literal: {sql}");
+        assert_statement_snapshot!(
+            "filter-an-apostrophe-in-a-property-name-is-doubled",
+            render("\"https://example.com/o'brien\">10")
+        );
     }
 
     /// Clause 4.9 Table 4.9-1 admits a range only after `==`/`!=`; `>` takes a
@@ -354,10 +353,7 @@ mod tests {
     /// no negated pattern over it.
     #[test]
     fn a_negated_csr_pattern_requires_the_property_to_be_present() {
-        let sql = render("name!~=\"^A.*\"");
-        assert!(sql.contains("IS NOT NULL AND"), "{sql}");
-        assert!(!sql.contains("IS NULL OR"), "{sql}");
-        assert!(sql.contains("!~"), "{sql}");
+        assert_statement_snapshot!("filter-a-negated-csr-pattern-requires-the-property-to-be-present", render("name!~=\"^A.*\""));
     }
 
     /// Clause 4.9: a pattern compares against the value's text, not its quoted
@@ -366,10 +362,7 @@ mod tests {
     /// arm must unwrap with `#>> '{}'` like every comparison arm does.
     #[test]
     fn a_csr_pattern_matches_the_unwrapped_value_not_its_quoted_json() {
-        let sql = render("name~=\"^A.*\"");
-        assert!(sql.contains("#>> ('{}')"), "{sql}");
-        assert!(!sql.contains(")::text "), "{sql}");
-        assert!(sql.contains(" ~ "), "{sql}");
+        assert_statement_snapshot!("filter-a-csr-pattern-matches-the-unwrapped-value-not-its-quoted-json", render("name~=\"^A.*\""));
     }
 
     /// A compound value's member is a JSON object key inside the unwrapped
@@ -378,17 +371,13 @@ mod tests {
     /// of the addressed member, and `q=info[city]==Berlin` never matches.
     #[test]
     fn a_compound_value_path_steps_into_the_member_without_wrapping_it_as_a_property() {
-        let sql = render("\"https://example.com/address\"[city]==\"Berlin\"");
         // The member step (`->'city'`) is applied right after the sub-attribute
         // extraction's closing parentheses, outside the `unwrap_property` CASE
         // (once for the presence test and once for the comparison), not inside it,
         // which would test a `type` member `city`'s own value never carries.
-        assert!(sql.contains("-> ('city')) IS NOT NULL"), "{sql}");
-        assert!(sql.contains("= 'Berlin'"), "{sql}");
-        assert_eq!(
-            sql.matches("-> ('city')").count(),
-            2,
-            "the member is stepped once for presence, once for comparison: {sql}"
+        assert_statement_snapshot!(
+            "filter-a-compound-value-path-steps-into-the-member-without-wrapping-it-as-a-property",
+            render("\"https://example.com/address\"[city]==\"Berlin\"")
         );
     }
 
@@ -397,29 +386,35 @@ mod tests {
     /// its `@type` (clause 4.9).
     #[test]
     fn a_date_time_operand_reads_the_declared_value_and_datatype() {
-        let sql = render("\"https://uri.etsi.org/ngsi-ld/expiresAt\">2030-01-01T00:00:00Z");
-        assert!(sql.contains("-> ('@value')) #>> ('{}')"), "{sql}");
-        assert!(sql.contains("->> ('@type')"), "{sql}");
-        assert!(sql.contains("'https://uri.etsi.org/ngsi-ld/DateTime'"), "{sql}");
+        assert_statement_snapshot!(
+            "filter-a-date-time-operand-reads-the-declared-value-and-datatype",
+            render("\"https://uri.etsi.org/ngsi-ld/expiresAt\">2030-01-01T00:00:00Z")
+        );
     }
 
     /// Clause 4.9 makes a target of another data type unequal to the operand,
     /// so a number reads only a JSON number and a String only a JSON string.
     #[test]
     fn an_operand_reads_only_a_property_of_its_own_json_type() {
-        let number = render("\"https://example.com/zip\"==3310");
-        assert!(number.contains("jsonb_typeof(\"element\".\"element\") = ('number')"), "{number}");
-        let string = render("\"https://example.com/zip\"==\"3310\"");
-        assert!(string.contains("jsonb_typeof(\"element\".\"element\") = ('string')"), "{string}");
+        assert_statement_snapshot!(
+            "filter-an-operand-reads-only-a-property-of-its-own-json-type-1",
+            render("\"https://example.com/zip\"==3310")
+        );
+        assert_statement_snapshot!(
+            "filter-an-operand-reads-only-a-property-of-its-own-json-type-2",
+            render("\"https://example.com/zip\"==\"3310\"")
+        );
     }
 
     /// Clause 4.9: "If the target value data type is different than String
     /// then it shall be considered as not matching", in both polarities.
     #[test]
     fn a_pattern_reads_only_a_string_property() {
-        for q in ["\"https://example.com/zip\"~=\"^33\"", "\"https://example.com/zip\"!~=\"^33\""] {
-            let sql = render(q);
-            assert!(sql.contains("= ('string')"), "{sql}");
+        for (index, q) in ["\"https://example.com/zip\"~=\"^33\"", "\"https://example.com/zip\"!~=\"^33\""]
+            .into_iter()
+            .enumerate()
+        {
+            assert_statement_snapshot!(format!("filter-a-pattern-reads-only-a-string-property-{}", index + 1), render(q));
         }
     }
 
@@ -428,40 +423,40 @@ mod tests {
     /// element by element, and a scalar property as the one element it is.
     #[test]
     fn an_equal_term_reads_an_array_property_by_membership() {
-        let sql = render("\"https://uri.etsi.org/ngsi-ld/operations\"==\"queryEntity\"");
-        assert!(sql.contains("IS NOT NULL AND EXISTS(SELECT 1 FROM jsonb_path_query("), "{sql}");
-        assert!(
-            sql.contains("'$[*]') AS \"element\" WHERE (CASE WHEN (jsonb_typeof(\"element\".\"element\") = ('string') AND (NOT COALESCE((NULL::text) IN ("),
-            "{sql}"
+        assert_statement_snapshot!(
+            "filter-an-equal-term-reads-an-array-property-by-membership",
+            render("\"https://uri.etsi.org/ngsi-ld/operations\"==\"queryEntity\"")
         );
-        assert!(!sql.contains("NOT EXISTS"), "{sql}");
     }
 
     /// Clause 4.9: an Unequal term holds when its value "is not included in
     /// the target value, if the latter is an array".
     #[test]
     fn an_unequal_term_holds_when_no_element_of_an_array_property_is_its_value() {
-        let sql = render("\"https://uri.etsi.org/ngsi-ld/operations\"!=\"queryEntity\"");
-        assert!(sql.contains("IS NOT NULL AND (NOT EXISTS(SELECT 1 FROM jsonb_path_query("), "{sql}");
+        assert_statement_snapshot!(
+            "filter-an-unequal-term-holds-when-no-element-of-an-array-property-is-its-value",
+            render("\"https://uri.etsi.org/ngsi-ld/operations\"!=\"queryEntity\"")
+        );
     }
 
     /// Clause 4.9: a value list holds when the array "includes any of the
     /// Query Term values", so every value is compared within one element scan.
     #[test]
     fn a_value_list_reads_an_array_property_in_one_element_scan() {
-        let sql = render("\"https://uri.etsi.org/ngsi-ld/operations\"==\"queryEntity\",\"retrieveEntity\"");
-        assert_eq!(sql.matches("jsonb_path_query(").count(), 1, "{sql}");
-        assert!(sql.contains("= 'queryEntity' OR "), "{sql}");
-        assert!(sql.contains("= 'retrieveEntity'"), "{sql}");
+        assert_statement_snapshot!(
+            "filter-a-value-list-reads-an-array-property-in-one-element-scan",
+            render("\"https://uri.etsi.org/ngsi-ld/operations\"==\"queryEntity\",\"retrieveEntity\"")
+        );
     }
 
     /// The same rule for `!=` over a range and over a value list.
     #[test]
     fn a_negated_csr_comparison_requires_the_property_to_be_present() {
-        for expression in ["speed!=10..20", "color!=\"red\",\"blue\"", "speed!=10"] {
-            let sql = render(expression);
-            assert!(sql.contains("IS NOT NULL AND"), "{expression}: {sql}");
-            assert!(!sql.contains("IS NULL OR"), "{expression}: {sql}");
+        for (index, expression) in ["speed!=10..20", "color!=\"red\",\"blue\"", "speed!=10"].into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!("filter-a-negated-csr-comparison-requires-the-property-to-be-present-{}", index + 1),
+                render(expression)
+            );
         }
     }
 
@@ -513,12 +508,8 @@ mod tests {
         }
     }
 
-    fn render_entity_condition(condition: Condition) -> String {
-        Query::select()
-            .column(Entities::Id)
-            .from(Entities::Table)
-            .cond_where(condition)
-            .to_string(PostgresQueryBuilder)
+    fn entity_statement(condition: Condition) -> SelectStatement {
+        Query::select().column(Entities::Id).from(Entities::Table).cond_where(condition).to_owned()
     }
 
     /// One row of the clause 4.9 conformance table.
@@ -581,10 +572,12 @@ mod tests {
     /// satisfies a predicate over it, in either polarity. The in-memory
     /// evaluator decides that directly; the two SQL renderings decide it
     /// structurally, by conjoining the presence test rather than disjoining it,
-    /// which is what these assertions pin.
+    /// which the snapshots of both renderings show. The one `IS NULL OR` a
+    /// projection probe holds is the clause 4.22 expiry guard of the instance,
+    /// not a test of the addressed element.
     #[test]
     fn every_backend_reads_clause_four_nine_the_same_way() {
-        for case in cases() {
+        for (index, case) in cases().into_iter().enumerate() {
             let expr = parser::parse(&case.expression).unwrap_or_else(|error| panic!("{}: {error}", case.expression));
 
             for entity in &case.matching {
@@ -609,32 +602,16 @@ mod tests {
                 case.expression
             );
 
-            let projection_sql = render_entity_condition(compile(
+            let projection = entity_statement(compile(
                 &expr,
                 &InstanceScan::Current(&EntityRowRefs::unaliased(None)),
                 &names(),
                 LanguageMatching::TagEquality,
             ));
-            assert!(
-                projection_sql.contains("EXISTS("),
-                "{} must test presence structurally: {projection_sql}",
-                case.expression
-            );
-            // The clause 4.22 guard a probe carries is the one `IS NULL OR` the
-            // rendering legitimately holds: it tests the instance's expiry, not
-            // the addressed element.
-            let unguarded = projection_sql.replace(r#"("ca"."expires_at" IS NULL OR "ca"."expires_at" > NOW())"#, "");
-            assert!(
-                !unguarded.contains("IS NULL OR"),
-                "{} must not admit a missing element: {projection_sql}",
-                case.expression
-            );
-
-            let csr_sql = render_entity_condition(csr_expr_to_condition(&expr));
-            assert!(
-                !csr_sql.contains("IS NULL OR"),
-                "{} must not admit a registration without the property: {csr_sql}",
-                case.expression
+            assert_statement_snapshot!(format!("filter-every-backend-reads-clause-four-nine-the-same-way-{}-1", index + 1), projection);
+            assert_statement_snapshot!(
+                format!("filter-every-backend-reads-clause-four-nine-the-same-way-{}-2", index + 1),
+                entity_statement(csr_expr_to_condition(&expr))
             );
         }
     }

@@ -1,0 +1,86 @@
+---
+source: crates/andromeda-postgresql-context-query/src/keyed_count.rs
+---
+WITH
+"candidates" AS MATERIALIZED (
+  SELECT
+    "entity_key"
+  FROM
+    (
+      SELECT
+        "ca"."entity_key"
+      FROM
+        "current_attributes" AS "ca"
+      WHERE
+        "ca"."attribute_name_key" = $1
+        AND (
+          "ca"."expires_at" IS NULL
+          OR "ca"."expires_at" > NOW()
+        )
+        AND "ca"."value_date_time" > $2
+    ) AS "matches"
+  LIMIT
+    50001
+)
+SELECT
+  (
+    CASE
+      WHEN (
+        (
+          SELECT
+            COUNT(*)
+          FROM
+            "candidates"
+        ) <= $3
+      ) THEN (
+        SELECT
+          COUNT(*)
+        FROM
+          "entities"
+        WHERE
+          "entities"."created_at" IS NOT NULL
+          AND (
+            "entities"."expires_at" IS NULL
+            OR "entities"."expires_at" > NOW()
+          )
+          AND TRUE
+          AND "entities"."entity_key" IN (
+            SELECT
+              "entity_key"
+            FROM
+              "candidates"
+          )
+      )
+      ELSE (
+        SELECT
+          COUNT(*)
+        FROM
+          "entities"
+        WHERE
+          "entities"."created_at" IS NOT NULL
+          AND (
+            "entities"."expires_at" IS NULL
+            OR "entities"."expires_at" > NOW()
+          )
+          AND EXISTS (
+            SELECT
+              1
+            FROM
+              "current_attributes" AS "ca"
+            WHERE
+              "ca"."attribute_name_key" = $4
+              AND (
+                "ca"."expires_at" IS NULL
+                OR "ca"."expires_at" > NOW()
+              )
+              AND "ca"."value_date_time" > $5
+              AND "ca"."entity_key" = "entities"."entity_key"
+          )
+      )
+    END
+  )
+1: Int 12
+2: ChronoDateTimeUtc '2024-01-15 12:00:00.000000 +00:00'
+3: BigUnsigned 50000
+4: Int 12
+5: ChronoDateTimeUtc '2024-01-15 12:00:00.000000 +00:00'

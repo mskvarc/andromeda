@@ -1,0 +1,14 @@
+---
+source: crates/andromeda-postgresql-temporal-query/src/aggregated_value.rs
+---
+SELECT
+  AVG(
+    (
+      CASE
+        WHEN (
+          "ah"."value_kind" = (9)
+          AND "ah"."attribute_kind" NOT IN (2, 8, 4)
+        ) THEN "ah"."value_string"::time:: interval
+      END
+    )
+  )::time

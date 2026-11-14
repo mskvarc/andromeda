@@ -198,8 +198,8 @@ mod tests {
         sort_key::{KeyOrder, NullPlacement, SortKey},
     };
     use andromeda_postgresql_schema::current::Entities;
-    use pretty_assertions::assert_eq;
-    use sea_query::{Alias, IntoIden, PostgresQueryBuilder, Query, SelectStatement};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, IntoIden, Query, SelectStatement};
 
     fn windowed_page() -> SelectStatement {
         Query::select().from(Entities::Table).limit(100).offset(5000).take()
@@ -217,21 +217,8 @@ mod tests {
     #[test]
     fn the_heads_are_read_outside_the_window_in_the_pages_order() {
         let rows = EntityRowRefs::unaliased(None);
-        let sql = heads_of(windowed_page(), &rows, by_id(&rows), CountPolicy::Omit).to_string(PostgresQueryBuilder);
-        assert_eq!(
-            sql,
-            concat!(
-                r#"SELECT "stored"."entity_key", "stored"."id", "stored"."entity_created_at", "stored"."entity_modified_at", "stored"."entity_write_count", "stored"."entity_expires_at", "#,
-                r#""stored"."entity_type_name_keys", "stored"."verbatim_scope_paths" "#,
-                r#"FROM (SELECT "entities"."entity_key", "entities"."id" AS "sort_0" FROM "entities" ORDER BY "sort_0" ASC LIMIT 100 OFFSET 5000) AS "page" "#,
-                r#"INNER JOIN LATERAL (SELECT "e"."entity_key" AS "entity_key", "e"."id" AS "id", "e"."created_at" AS "entity_created_at", "#,
-                r#""e"."modified_at" AS "entity_modified_at", "e"."write_count" AS "entity_write_count", "e"."expires_at" AS "entity_expires_at", "#,
-                r#""s"."entity_type_name_keys" AS "entity_type_name_keys", "s"."verbatim_scope_paths" AS "verbatim_scope_paths" "#,
-                r#"FROM "entities" AS "e" INNER JOIN "entity_search" AS "s" ON "s"."entity_key" = "e"."entity_key" "#,
-                r#"WHERE "e"."entity_key" = "page"."entity_key" LIMIT 1) AS "stored" ON TRUE "#,
-                r#"ORDER BY "page"."sort_0" ASC"#
-            )
-        );
+        let heads = heads_of(windowed_page(), &rows, by_id(&rows), CountPolicy::Omit);
+        assert_statement_snapshot!("entity-page-the-heads-are-read-outside-the-window-in-the-pages-order", heads);
     }
 
     /// The total counts the matching entities inside the page, before the
@@ -239,9 +226,8 @@ mod tests {
     #[test]
     fn the_total_is_counted_inside_the_page_and_carried_out() {
         let rows = EntityRowRefs::unaliased(None);
-        let sql = heads_of(windowed_page(), &rows, by_id(&rows), CountPolicy::Emit).to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#""page"."total_count" AS "total_count""#), "{sql}");
-        assert!(sql.contains(r#"COUNT(*) OVER () AS "total_count""#), "{sql}");
+        let heads = heads_of(windowed_page(), &rows, by_id(&rows), CountPolicy::Emit);
+        assert_statement_snapshot!("entity-page-the-total-is-counted-inside-the-page-and-carried-out", heads);
     }
 
     /// Every key keeps its direction and its null placement at both levels.
@@ -258,17 +244,15 @@ mod tests {
                 KeyOrder::new(SortDirection::Ascending, NullPlacement::Unstated),
             ),
         ];
-        let sql = heads_of(windowed_page(), &rows, keys, CountPolicy::Omit).to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#"ORDER BY "sort_0" DESC NULLS LAST, "sort_1" ASC LIMIT"#), "{sql}");
-        assert!(sql.ends_with(r#"ORDER BY "page"."sort_0" DESC NULLS LAST, "page"."sort_1" ASC"#), "{sql}");
+        let heads = heads_of(windowed_page(), &rows, keys, CountPolicy::Omit);
+        assert_statement_snapshot!("entity-page-each-key-is-restated-with-its-direction-and-null-placement", heads);
     }
 
     /// A Snapshot branch's heads are looked up in the branch's own schema.
     #[test]
     fn a_branch_page_looks_its_heads_up_in_the_branch_schema() {
         let rows = EntityRowRefs::unaliased(Some(Alias::new("snap_5").into_iden()));
-        let sql = heads_of(windowed_page(), &rows, by_id(&rows), CountPolicy::Omit).to_string(PostgresQueryBuilder);
-        assert!(sql.contains(r#"FROM "snap_5"."entities" AS "e""#), "{sql}");
-        assert!(sql.contains(r#"INNER JOIN "snap_5"."entity_search" AS "s""#), "{sql}");
+        let heads = heads_of(windowed_page(), &rows, by_id(&rows), CountPolicy::Omit);
+        assert_statement_snapshot!("entity-page-a-branch-page-looks-its-heads-up-in-the-branch-schema", heads);
     }
 }

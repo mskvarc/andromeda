@@ -81,8 +81,8 @@ mod tests {
     use crate::entity_reads::{each_entity, entity_read_planning};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_postgresql_query::history_source::HistoryOf;
-    use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
-    use sea_query::{Alias, Asterisk, Expr, ExprTrait, PostgresQueryBuilder, Query, SelectStatement, Value};
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
+    use sea_query::{Alias, Asterisk, Expr, ExprTrait, Query, SelectStatement};
 
     fn ids() -> Vec<Identifier> {
         ["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"]
@@ -108,12 +108,8 @@ mod tests {
     /// not grow with the page, and the read narrows to the unnested column.
     #[test]
     fn every_entity_is_bound_in_one_array_and_read_in_a_lateral() {
-        let (sql, values) = read_of(&ids()).build(PostgresQueryBuilder);
-        pretty_assertions::assert_eq!(
-            sql,
-            r#"SELECT "read_entity"."read_entity" AS "read_entity_id" FROM UNNEST($1) AS "read_entity" JOIN LATERAL (SELECT * FROM "t" WHERE "id" = "read_entity"."read_entity" OFFSET $2) AS "h" ON $3 ORDER BY "read_entity"."read_entity" ASC"#
-        );
-        assert!(matches!(values.0.first(), Some(Value::Array(_, Some(ids))) if ids.len() == 2), "{values:?}");
+        let statement = read_of(&ids());
+        assert_statement_snapshot!("entity-reads-every-entity-is-bound-in-one-array-and-read-in-a-lateral", statement);
         assert_eq!(entity_read_planning(&ids()), StatementPlanning::Generic);
     }
 
@@ -122,20 +118,15 @@ mod tests {
     #[test]
     fn one_entity_binds_its_identifier_as_the_element_of_an_array_constructor() {
         let one = &ids()[..1];
-        let (sql, values) = read_of(one).build(PostgresQueryBuilder);
-        pretty_assertions::assert_eq!(
-            sql,
-            r#"SELECT "read_entity"."read_entity" AS "read_entity_id" FROM UNNEST(ARRAY[ $1 ]) AS "read_entity" JOIN LATERAL (SELECT * FROM "t" WHERE "id" = "read_entity"."read_entity" OFFSET $2) AS "h" ON $3 ORDER BY "read_entity"."read_entity" ASC"#
-        );
-        pretty_assertions::assert_eq!(values.0.first(), Some(&Value::from("urn:ngsi-ld:Vehicle:1")));
+        let statement = read_of(one);
+        assert_statement_snapshot!("entity-reads-one-entity-binds-its-identifier-as-the-element-of-an-array-constructor", statement);
         pretty_assertions::assert_eq!(entity_read_planning(one), StatementPlanning::Cached);
     }
 
     #[test]
     fn an_empty_page_reads_an_empty_array_planned_generically() {
-        let (sql, values) = read_of(&[]).build(PostgresQueryBuilder);
-        assert!(sql.contains(r#"FROM UNNEST($1) AS "read_entity""#), "{sql}");
-        assert!(matches!(values.0.first(), Some(Value::Array(_, Some(ids))) if ids.is_empty()), "{values:?}");
+        let statement = read_of(&[]);
+        assert_statement_snapshot!("entity-reads-an-empty-page-reads-an-empty-array-planned-generically", statement);
         pretty_assertions::assert_eq!(entity_read_planning(&[]), StatementPlanning::Generic);
     }
 }

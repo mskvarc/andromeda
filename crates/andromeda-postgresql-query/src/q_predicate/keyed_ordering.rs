@@ -110,8 +110,9 @@ mod tests {
         q_predicate::keyed_ordering::ordering_candidates,
     };
     use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
-    use sea_query::PostgresQueryBuilder;
+    use sea_query::SelectStatement;
 
     fn names() -> QueryNames {
         QueryNames {
@@ -124,55 +125,47 @@ mod tests {
         }
     }
 
-    fn candidates(q: &str) -> Option<String> {
+    fn candidates(q: &str) -> Option<SelectStatement> {
         let Expr::Pred(pred) = parse(q).expect("parse q") else {
             panic!("a single predicate");
         };
-        ordering_candidates(&pred, &EntityRowRefs::unaliased(None), &names()).map(|select| select.to_string(PostgresQueryBuilder))
+        ordering_candidates(&pred, &EntityRowRefs::unaliased(None), &names())
     }
 
     /// A `languageMap` holds no time value, so the one branch ranges over the
     /// date-time index.
     #[test]
     fn a_date_time_ordering_reads_the_date_time_index_alone() {
-        let sql = candidates("\"https://example.com/observedOn\">2024-01-15T12:00:00Z").expect("keyed");
-        assert!(sql.contains(r#""ca"."attribute_name_key" = 21"#), "{sql}");
-        assert!(sql.contains(r#""ca"."value_date_time" > '2024-01-15 12:00:00.000000 +00:00'"#), "{sql}");
-        assert!(!sql.contains("UNION ALL"), "{sql}");
-        assert!(!sql.contains("value_object"), "{sql}");
+        let statement = candidates("\"https://example.com/observedOn\">2024-01-15T12:00:00Z").expect("keyed");
+        assert_statement_snapshot!("keyed-ordering-a-date-time-ordering-reads-the-date-time-index-alone", statement);
     }
 
     /// A `Date` is held as its fixed-width text under value kind 8, whose
     /// byte order is chronological, so its branch ranges over the string index.
     #[test]
     fn a_date_ordering_reads_the_string_index_by_its_text() {
-        let sql = candidates("\"https://example.com/observedOn\"<=2024-01-15").expect("keyed");
-        assert!(sql.contains(r#""ca"."value_string" <= '2024-01-15'"#), "{sql}");
-        assert!(sql.contains(r#"nullif("ca"."value_kind" = (8), FALSE)"#), "{sql}");
-        assert!(!sql.contains("COLLATE"), "{sql}");
+        let statement = candidates("\"https://example.com/observedOn\"<=2024-01-15").expect("keyed");
+        assert_statement_snapshot!("keyed-ordering-a-date-ordering-reads-the-string-index-by-its-text", statement);
     }
 
     /// A `Time` is held in its fixed-width storage encoding under value kind 9.
     #[test]
     fn a_time_ordering_reads_the_string_index_by_its_fixed_width_encoding() {
-        let sql = candidates("\"https://example.com/observedOn\">12:00:00Z").expect("keyed");
-        assert!(sql.contains(r#""ca"."value_string" > '12:00:00.000000Z'"#), "{sql}");
-        assert!(sql.contains(r#"nullif("ca"."value_kind" = (9), FALSE)"#), "{sql}");
+        let statement = candidates("\"https://example.com/observedOn\">12:00:00Z").expect("keyed");
+        assert_statement_snapshot!("keyed-ordering-a-time-ordering-reads-the-string-index-by-its-fixed-width-encoding", statement);
     }
 
     #[test]
     fn a_date_time_range_reads_both_bounds_from_the_date_time_index() {
-        let sql = candidates("\"https://example.com/observedOn\"==2024-01-01T00:00:00Z..2024-02-01T00:00:00Z").expect("keyed");
-        assert!(sql.contains(r#""ca"."value_date_time" >= '2024-01-01 00:00:00.000000 +00:00'"#), "{sql}");
-        assert!(sql.contains(r#""ca"."value_date_time" <= '2024-02-01 00:00:00.000000 +00:00'"#), "{sql}");
-        assert!(!sql.contains("UNION ALL"), "{sql}");
+        let statement = candidates("\"https://example.com/observedOn\"==2024-01-01T00:00:00Z..2024-02-01T00:00:00Z").expect("keyed");
+        assert_statement_snapshot!("keyed-ordering-a-date-time-range-reads-both-bounds-from-the-date-time-index", statement);
     }
 
     /// Clause 4.22: a past-due instance holds no value, so no branch offers it.
     #[test]
     fn every_branch_skips_an_expired_instance() {
-        let sql = candidates("\"https://example.com/observedOn\">2024-01-15T12:00:00Z").expect("keyed");
-        assert_eq!(sql.matches(r#""ca"."expires_at" IS NULL"#).count(), 1, "{sql}");
+        let statement = candidates("\"https://example.com/observedOn\">2024-01-15T12:00:00Z").expect("keyed");
+        assert_statement_snapshot!("keyed-ordering-every-branch-skips-an-expired-instance", statement);
     }
 
     /// A number orders through its typed column alone, which the planner

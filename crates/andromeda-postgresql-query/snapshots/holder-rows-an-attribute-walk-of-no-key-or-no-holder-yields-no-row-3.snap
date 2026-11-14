@@ -1,0 +1,15 @@
+---
+source: crates/andromeda-postgresql-query/src/history_source/holder_rows.rs
+---
+SELECT
+  *
+FROM
+  (
+    SELECT
+      "id",
+      "entity_key"
+    FROM
+      "entities"
+    WHERE
+      FALSE
+  ) AS "e"

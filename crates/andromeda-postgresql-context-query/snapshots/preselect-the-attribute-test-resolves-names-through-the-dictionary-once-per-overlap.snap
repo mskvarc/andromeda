@@ -1,0 +1,34 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/preselect.rs
+---
+SELECT
+  (
+    "ri"."property_name_keys" && (
+      ARRAY (
+        SELECT
+          "an"."attribute_name_key"
+        FROM
+          "attribute_names" AS "an"
+        WHERE
+          "an"."name" = ANY($1)
+      )
+    )
+  )
+  OR (
+    "ri"."relationship_name_keys" && (
+      ARRAY (
+        SELECT
+          "an"."attribute_name_key"
+        FROM
+          "attribute_names" AS "an"
+        WHERE
+          "an"."name" = ANY($2)
+      )
+    )
+  )
+  OR (
+    "ri"."property_name_keys" IS NULL
+    AND "ri"."relationship_name_keys" IS NULL
+  )
+1: Array ARRAY ['https://example.com/speed','https://example.com/temp']
+2: Array ARRAY ['https://example.com/speed','https://example.com/temp']

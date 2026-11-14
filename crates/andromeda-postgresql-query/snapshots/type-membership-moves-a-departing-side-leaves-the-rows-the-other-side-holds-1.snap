@@ -1,0 +1,15 @@
+---
+source: crates/andromeda-postgresql-query/src/type_membership_moves.rs
+---
+UPDATE
+  "entity_type_members"
+SET
+  "is_current_member" = FALSE
+WHERE
+  "entity_key" IN (
+    SELECT
+      "entity_key"
+    FROM
+      "doomed"
+  )
+  AND "is_evolution_member"

@@ -27,14 +27,15 @@ pub const fn column_name(timeproperty: TimeProp) -> &'static str {
 #[cfg(test)]
 mod tests {
     use crate::time_column::column_name;
+    use andromeda_architecture_checks::assert_named_snapshot;
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 
     #[test]
     fn no_time_axis_falls_back_to_another_column() {
-        for prop in [TimeProp::Observed, TimeProp::Created, TimeProp::Modified, TimeProp::Deleted] {
-            assert!(!column_name(prop).contains("COALESCE"), "{prop}");
-            assert!(!column_name(prop).contains("recorded_at"), "{prop}");
-        }
+        let names = [TimeProp::Observed, TimeProp::Created, TimeProp::Modified, TimeProp::Deleted]
+            .map(column_name)
+            .join("\n");
+        assert_named_snapshot!("time-column-no-time-axis-falls-back-to-another-column", names);
     }
 
     /// `scope_history` names the four axes exactly as `attribute_history` does,

@@ -187,78 +187,57 @@ mod tests {
         ordered_text_expr,
         sized_numeric_expr,
     };
-    use andromeda_postgresql_codes::attribute_kind::AttributeKind;
-    use sea_query::{PostgresQueryBuilder, Query, SimpleExpr};
-    use std::collections::BTreeSet;
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Query, SelectStatement, SimpleExpr};
 
-    fn rendered(expr: SimpleExpr) -> String {
-        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
-    }
-
-    /// The family codes one rendered operand excludes from its value fold.
-    fn gated_families(sql: &str) -> BTreeSet<i16> {
-        let gate = sql
-            .split_once("\"ah\".\"attribute_kind\" NOT IN (")
-            .expect("every value operand gates on the attribute family")
-            .1;
-        gate.split_once(')')
-            .expect("a closed family list")
-            .0
-            .split(',')
-            .map(|code| code.trim().parse::<i16>().expect("a family code"))
-            .collect()
+    fn rendered(expr: SimpleExpr) -> SelectStatement {
+        Query::select().expr(expr).to_owned()
     }
 
     /// Table 4.5.19.1-1, "JSON Array" column: `avg`, `min`, `max` and `sum`
     /// are taken over the sizes of the arrays, so their operand measures one.
     #[test]
     fn the_sized_operand_measures_an_array_by_its_length() {
-        let sql = rendered(sized_numeric_expr());
-        let structured = "COALESCE((CASE WHEN ((\"ah\".\"value_object\" ->> ('@type')) = ('@json'))";
-        assert!(sql.contains(&format!("jsonb_array_length({structured}")), "{sql}");
-        assert!(sql.contains(&format!("jsonb_typeof({structured}")), "{sql}");
+        let statement = rendered(sized_numeric_expr());
+        assert_statement_snapshot!("aggregated-value-the-sized-operand-measures-an-array-by-its-length", statement);
     }
 
     /// Table 4.5.19.1-1 marks `stddev` and `sumsq` N/A for a JSON Array, so
     /// their operand must not reach the JSONB column at all.
     #[test]
     fn the_arithmetic_operand_never_measures_an_array() {
-        let sql = rendered(arithmetic_numeric_expr());
-        assert!(!sql.contains("jsonb_array_length"), "{sql}");
-        assert!(!sql.contains("value_object"), "{sql}");
+        let statement = rendered(arithmetic_numeric_expr());
+        assert_statement_snapshot!("aggregated-value-the-arithmetic-operand-never-measures-an-array", statement);
     }
 
     /// Table 4.5.19.1-1's note reads true as 1 and false as 0, which is what
     /// carries every arithmetic method over to the JSON Boolean column.
     #[test]
     fn both_numeric_operands_read_a_boolean_as_its_zero_or_one() {
-        for sql in [rendered(sized_numeric_expr()), rendered(arithmetic_numeric_expr())] {
-            assert!(sql.contains("\"ah\".\"value_boolean\"::integer::numeric"), "{sql}");
-        }
+        let sized = rendered(sized_numeric_expr());
+        assert_statement_snapshot!("aggregated-value-both-numeric-operands-read-a-boolean-as-its-zero-or-one-1", sized);
+        let arithmetic = rendered(arithmetic_numeric_expr());
+        assert_statement_snapshot!("aggregated-value-both-numeric-operands-read-a-boolean-as-its-zero-or-one-2", arithmetic);
     }
 
     /// A declared float or double beyond the decimals has no JSON number, so
     /// every numeric operand reads only a finite value of the number column.
     #[test]
     fn every_numeric_operand_skips_the_numbers_beyond_the_decimals() {
-        for sql in [rendered(sized_numeric_expr()), rendered(arithmetic_numeric_expr())] {
-            assert!(
-                sql.contains(
-                    r#"CASE WHEN ("ah"."value_number" NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)) THEN "ah"."value_number" END"#
-                ),
-                "{sql}"
-            );
-        }
+        let sized = rendered(sized_numeric_expr());
+        assert_statement_snapshot!("aggregated-value-every-numeric-operand-skips-the-numbers-beyond-the-decimals-1", sized);
+        let arithmetic = rendered(arithmetic_numeric_expr());
+        assert_statement_snapshot!("aggregated-value-every-numeric-operand-skips-the-numbers-beyond-the-decimals-2", arithmetic);
     }
 
     /// An exact decimal stays exact: no operand widens the value column to
     /// binary floating point on its way into an aggregate.
     #[test]
     fn no_operand_widens_the_exact_value_column_to_a_float() {
-        for sql in [rendered(sized_numeric_expr()), rendered(arithmetic_numeric_expr())] {
-            assert!(!sql.contains("float8"), "{sql}");
-            assert!(!sql.contains("double precision"), "{sql}");
-        }
+        let sized = rendered(sized_numeric_expr());
+        assert_statement_snapshot!("aggregated-value-no-operand-widens-the-exact-value-column-to-a-float-1", sized);
+        let arithmetic = rendered(arithmetic_numeric_expr());
+        assert_statement_snapshot!("aggregated-value-no-operand-widens-the-exact-value-column-to-a-float-2", arithmetic);
     }
 
     /// Table 4.5.19.1-3 marks every value-derived method N/A for a
@@ -269,19 +248,16 @@ mod tests {
     /// happened to land in.
     #[test]
     fn no_value_operand_folds_a_family_the_tables_mark_not_applicable() {
-        let refused: BTreeSet<i16> = [AttributeKind::Relationship, AttributeKind::ListRelationship, AttributeKind::VocabProperty]
-            .iter()
-            .map(|family| family.code())
-            .collect();
-        for sql in [
-            rendered(sized_numeric_expr()),
-            rendered(arithmetic_numeric_expr()),
-            rendered(ordered_text_expr()),
-            rendered(ordered_instant_expr()),
-            rendered(average_time_expr()),
-        ] {
-            pretty_assertions::assert_eq!(gated_families(&sql), refused, "{sql}");
-        }
+        let sized = rendered(sized_numeric_expr());
+        assert_statement_snapshot!("aggregated-value-no-value-operand-folds-a-family-the-tables-mark-not-applicable-1", sized);
+        let arithmetic = rendered(arithmetic_numeric_expr());
+        assert_statement_snapshot!("aggregated-value-no-value-operand-folds-a-family-the-tables-mark-not-applicable-2", arithmetic);
+        let text = rendered(ordered_text_expr());
+        assert_statement_snapshot!("aggregated-value-no-value-operand-folds-a-family-the-tables-mark-not-applicable-3", text);
+        let instant = rendered(ordered_instant_expr());
+        assert_statement_snapshot!("aggregated-value-no-value-operand-folds-a-family-the-tables-mark-not-applicable-4", instant);
+        let time = rendered(average_time_expr());
+        assert_statement_snapshot!("aggregated-value-no-value-operand-folds-a-family-the-tables-mark-not-applicable-5", time);
     }
 
     /// The families the tables do give value-derived aggregates to are not
@@ -291,16 +267,8 @@ mod tests {
     /// unnoticed.
     #[test]
     fn the_family_gate_names_only_the_three_families_the_tables_refuse() {
-        let gated = gated_families(&rendered(sized_numeric_expr()));
-        for family in [
-            AttributeKind::Property,
-            AttributeKind::GeoProperty,
-            AttributeKind::LanguageProperty,
-            AttributeKind::JsonProperty,
-            AttributeKind::ListProperty,
-        ] {
-            assert!(!gated.contains(&family.code()), "{family:?} must not be gated out: {gated:?}");
-        }
+        let statement = rendered(sized_numeric_expr());
+        assert_statement_snapshot!("aggregated-value-the-family-gate-names-only-the-three-families-the-tables-refuse", statement);
     }
 
     /// `distinctCount` is defined in every column of every table, including
@@ -308,10 +276,10 @@ mod tests {
     /// fold reaches every typed value column and is never gated on the family.
     #[test]
     fn the_distinct_operand_folds_every_typed_value_column_for_every_family() {
-        let sql = rendered(distinct_value_expr());
-        for column in ["value_number", "value_string", "value_boolean", "value_date_time", "value_uri", "value_object"] {
-            assert!(sql.contains(column), "{column} missing: {sql}");
-        }
-        assert!(!sql.contains("attribute_kind"), "counting must not be gated on the family: {sql}");
+        let statement = rendered(distinct_value_expr());
+        assert_statement_snapshot!(
+            "aggregated-value-the-distinct-operand-folds-every-typed-value-column-for-every-family",
+            statement
+        );
     }
 }

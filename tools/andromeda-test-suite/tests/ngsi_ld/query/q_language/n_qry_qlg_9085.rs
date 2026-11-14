@@ -3,7 +3,7 @@
 use andromeda_test_suite::{
     broker,
     namespace::Namespace,
-    q_parity::{QCase, expect_query_and_subscription_alike},
+    q_parity::{QCase, QRequest, expect_query_and_subscription_alike},
 };
 use googletest::prelude::*;
 use ngsi_ld::model::{Entity, Relationship};
@@ -30,8 +30,13 @@ async fn n_qry_qlg_9085_a_range_against_a_relationship_is_unequal_in_a_query_and
         QCase {
             q: "r!=1..5",
             selects: &[&vehicle_id],
+            request: QRequest::PLAIN,
         },
-        QCase { q: "r==1..5", selects: &[] },
+        QCase {
+            q: "r==1..5",
+            selects: &[],
+            request: QRequest::PLAIN,
+        },
     ];
     expect_query_and_subscription_alike(&broker, &namespace, &vehicle_type, &entities, &cases).await
 }

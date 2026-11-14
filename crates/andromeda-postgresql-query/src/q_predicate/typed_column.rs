@@ -176,26 +176,28 @@ mod tests {
         scalar::{Scalar, parse_date, parse_time},
     };
     use andromeda_postgresql_schema::{string_value_column::INDEXED_STRING_BYTE_LIMIT, uri_value_column::INDEXED_URI_BYTE_LIMIT};
-    use sea_query::{PostgresQueryBuilder, Query, SimpleExpr};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Query, SelectStatement, SimpleExpr};
 
     /// The comparison over a current row.
     fn current(scalar: &Scalar, op: CmpOp) -> SimpleExpr {
         typed_column_condition(scalar, op, InstanceRow::Current)
     }
 
-    fn render(expr: SimpleExpr) -> String {
-        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    fn render(expr: SimpleExpr) -> SelectStatement {
+        Query::select().expr(expr).to_owned()
     }
 
     #[test]
     fn each_operand_kind_names_the_column_the_write_path_projects_it_into() {
-        for (scalar, column) in [
-            (Scalar::Number(1.into()), "value_number"),
-            (Scalar::Bool(true), "value_boolean"),
-            (Scalar::Str("red".to_owned()), "value_string"),
-        ] {
-            let sql = render(current(&scalar, CmpOp::Equal));
-            assert!(sql.contains(column), "{scalar:?}: {sql}");
+        for (index, scalar) in [Scalar::Number(1.into()), Scalar::Bool(true), Scalar::Str("red".to_owned())]
+            .into_iter()
+            .enumerate()
+        {
+            assert_statement_snapshot!(
+                format!("typed-column-each-operand-kind-names-the-column-the-write-path-projects-it-into-{}", index + 1),
+                render(current(&scalar, CmpOp::Equal))
+            );
         }
     }
 
@@ -205,11 +207,14 @@ mod tests {
     #[test]
     fn only_the_equality_operators_reach_relationship_objects() {
         let scalar = Scalar::Str("urn:ngsi-ld:Person:1".to_owned());
-        for op in [CmpOp::Equal, CmpOp::Unequal] {
-            assert!(render(current(&scalar, op)).contains("value_uri"), "{op:?}");
-        }
-        for op in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq] {
-            assert!(!render(current(&scalar, op)).contains("value_uri"), "{op:?}");
+        for (index, op) in [CmpOp::Equal, CmpOp::Unequal, CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq]
+            .into_iter()
+            .enumerate()
+        {
+            assert_statement_snapshot!(
+                format!("typed-column-only-the-equality-operators-reach-relationship-objects-{}", index + 1),
+                render(current(&scalar, op))
+            );
         }
     }
 
@@ -218,26 +223,35 @@ mod tests {
     /// alone, and reads it for both number kinds.
     #[test]
     fn a_number_ordering_leaves_not_a_number_out_and_equality_does_not_guard() {
-        for op in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq] {
-            let sql = render(current(&Scalar::Number(3.into()), op));
-            assert!(sql.contains(r#""ca"."value_number" <> ('NaN'::numeric)"#), "{op:?}: {sql}");
-            assert!(!sql.contains("value_kind"), "{op:?}: {sql}");
+        for (index, op) in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq, CmpOp::Equal]
+            .into_iter()
+            .enumerate()
+        {
+            assert_statement_snapshot!(
+                format!(
+                    "typed-column-a-number-ordering-leaves-not-a-number-out-and-equality-does-not-guard-{}",
+                    index + 1
+                ),
+                render(current(&Scalar::Number(3.into()), op))
+            );
         }
-        let sql = render(current(&Scalar::Number(3.into()), CmpOp::Equal));
-        assert!(!sql.contains("NaN") && !sql.contains("value_kind"), "{sql}");
     }
 
     /// RFC 3986 section 6.2.2.2: a percent-encoded reserved character is not
     /// equivalent to the character, so the operand is compared as written.
     #[test]
     fn a_percent_encoded_relationship_operand_is_compared_as_written() {
-        for scalar in [
+        for (index, scalar) in [
             Scalar::Str("urn:ngsi-ld%3ABuilding%3A1".to_owned()),
             Scalar::Uri("urn:ngsi-ld%3ABuilding%3A1".to_owned()),
-        ] {
-            let sql = render(current(&scalar, CmpOp::Equal));
-            assert!(sql.contains(r#""ca"."value_uri" = 'urn:ngsi-ld%3ABuilding%3A1'"#), "{scalar:?}: {sql}");
-            assert!(!sql.contains("urn:ngsi-ld:Building:1"), "{scalar:?}: {sql}");
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_statement_snapshot!(
+                format!("typed-column-a-percent-encoded-relationship-operand-is-compared-as-written-{}", index + 1),
+                render(current(&scalar, CmpOp::Equal))
+            );
         }
     }
 
@@ -247,10 +261,11 @@ mod tests {
     #[test]
     fn a_uri_equality_past_the_limit_reads_only_the_overflow_uri_column() {
         let long = Scalar::Str(format!("urn:ngsi-ld:Person:{}", "a".repeat(6000)));
-        for op in [CmpOp::Equal, CmpOp::Unequal] {
-            let sql = render(current(&long, op));
-            assert!(sql.contains(r#""ca"."value_long_uri" "#), "{op:?}: {sql}");
-            assert!(!sql.contains("value_uri"), "{op:?}: {sql}");
+        for (index, op) in [CmpOp::Equal, CmpOp::Unequal].into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!("typed-column-a-uri-equality-past-the-limit-reads-only-the-overflow-uri-column-{}", index + 1),
+                render(current(&long, op))
+            );
         }
     }
 
@@ -258,9 +273,8 @@ mod tests {
     fn a_uri_equality_at_the_limit_reads_only_the_indexed_uri_column() {
         let prefix = "urn:ngsi-ld:Person:";
         let at_limit = format!("{prefix}{}", "a".repeat(INDEXED_URI_BYTE_LIMIT - prefix.len()));
-        let sql = render(current(&Scalar::Str(at_limit), CmpOp::Equal));
-        assert!(sql.contains(r#""ca"."value_uri" = "#), "{sql}");
-        assert!(!sql.contains("value_long_uri"), "{sql}");
+        let statement = render(current(&Scalar::Str(at_limit), CmpOp::Equal));
+        assert_statement_snapshot!("typed-column-a-uri-equality-at-the-limit-reads-only-the-indexed-uri-column", statement);
     }
 
     /// History keeps a URI of any length in `value_uri`, so a long URI
@@ -268,46 +282,45 @@ mod tests {
     #[test]
     fn a_long_uri_equality_over_history_reads_the_one_history_uri_column() {
         let long = format!("urn:ngsi-ld:Person:{}", "a".repeat(6000));
-        let sql = render(typed_column_condition(&Scalar::Str(long), CmpOp::Equal, InstanceRow::History));
-        assert!(sql.contains(r#""qh"."value_uri" = "#), "{sql}");
-        assert!(!sql.contains("value_long_uri"), "{sql}");
+        let statement = render(typed_column_condition(&Scalar::Str(long), CmpOp::Equal, InstanceRow::History));
+        assert_statement_snapshot!("typed-column-a-long-uri-equality-over-history-reads-the-one-history-uri-column", statement);
     }
 
     /// An element keeps a String of any length in `value_string`, so its
     /// ordering reads that field alone.
     #[test]
     fn an_element_string_ordering_reads_its_one_string_field() {
-        let sql = render(typed_column_condition(
+        let statement = render(typed_column_condition(
             &Scalar::Str("m".to_owned()),
             CmpOp::Greater,
             InstanceRow::Element(ElementLevel::at(0)),
         ));
-        assert!(sql.contains(r#"("l0"."value_string") COLLATE "und-x-icu""#), "{sql}");
-        assert!(!sql.contains("value_long_text"), "{sql}");
+        assert_statement_snapshot!("typed-column-an-element-string-ordering-reads-its-one-string-field", statement);
     }
 
     #[test]
     fn a_short_string_equality_reads_only_the_indexed_column() {
-        let sql = render(current(&Scalar::Str("red".to_owned()), CmpOp::Equal));
-        assert!(sql.contains(r#""ca"."value_string" = "#), "{sql}");
-        assert!(!sql.contains("value_long_text"), "{sql}");
+        let statement = render(current(&Scalar::Str("red".to_owned()), CmpOp::Equal));
+        assert_statement_snapshot!("typed-column-a-short-string-equality-reads-only-the-indexed-column", statement);
     }
 
     #[test]
     fn a_string_equality_past_the_limit_reads_only_the_overflow_column() {
         let long = "a".repeat(INDEXED_STRING_BYTE_LIMIT + 1);
-        let sql = render(current(&Scalar::Str(long), CmpOp::Equal));
-        assert!(sql.contains(r#""ca"."value_long_text" = "#), "{sql}");
-        assert!(!sql.contains("value_string"), "{sql}");
+        let statement = render(current(&Scalar::Str(long), CmpOp::Equal));
+        assert_statement_snapshot!("typed-column-a-string-equality-past-the-limit-reads-only-the-overflow-column", statement);
     }
 
     #[test]
     fn string_ordering_reads_both_string_columns_and_never_relationship_objects() {
-        for op in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq] {
-            let sql = render(current(&Scalar::Str("m".to_owned()), op));
-            assert!(sql.contains(r#"("ca"."value_string") COLLATE "und-x-icu""#), "{op:?}: {sql}");
-            assert!(sql.contains(r#"("ca"."value_long_text") COLLATE "und-x-icu""#), "{op:?}: {sql}");
-            assert!(!sql.contains("value_uri"), "{op:?}: {sql}");
+        for (index, op) in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq].into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!(
+                    "typed-column-string-ordering-reads-both-string-columns-and-never-relationship-objects-{}",
+                    index + 1
+                ),
+                render(current(&Scalar::Str("m".to_owned()), op))
+            );
         }
     }
 
@@ -315,8 +328,11 @@ mod tests {
     /// equality keeps the byte order of the column and its index.
     #[test]
     fn a_string_equality_compares_under_the_column_byte_order() {
-        for op in [CmpOp::Equal, CmpOp::Unequal] {
-            assert!(!render(current(&Scalar::Str("m".to_owned()), op)).contains("COLLATE"), "{op:?}");
+        for (index, op) in [CmpOp::Equal, CmpOp::Unequal].into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!("typed-column-a-string-equality-compares-under-the-column-byte-order-{}", index + 1),
+                render(current(&Scalar::Str("m".to_owned()), op))
+            );
         }
     }
 
@@ -325,20 +341,27 @@ mod tests {
     #[test]
     fn a_long_string_equality_over_history_reads_the_one_history_string_column() {
         let long = "a".repeat(INDEXED_STRING_BYTE_LIMIT + 1);
-        let sql = render(typed_column_condition(&Scalar::Str(long), CmpOp::Equal, InstanceRow::History));
-        assert!(sql.contains(r#""qh"."value_string" = "#), "{sql}");
-        assert!(!sql.contains("value_long_text"), "{sql}");
+        let statement = render(typed_column_condition(&Scalar::Str(long), CmpOp::Equal, InstanceRow::History));
+        assert_statement_snapshot!(
+            "typed-column-a-long-string-equality-over-history-reads-the-one-history-string-column",
+            statement
+        );
     }
 
     #[test]
     fn date_and_time_operands_never_read_the_overflow_column() {
         let date = parse_date("2024-01-15").expect("a date");
         let time = parse_time("12:00:00Z").expect("a time");
-        for scalar in [Scalar::Date(date), Scalar::Time(time)] {
-            for op in [CmpOp::Equal, CmpOp::Greater, CmpOp::Less] {
-                let sql = render(current(&scalar, op));
-                assert!(sql.contains("value_string"), "{scalar:?} {op:?}: {sql}");
-                assert!(!sql.contains("value_long_text"), "{scalar:?} {op:?}: {sql}");
+        for (scalar_index, scalar) in [Scalar::Date(date), Scalar::Time(time)].into_iter().enumerate() {
+            for (op_index, op) in [CmpOp::Equal, CmpOp::Greater, CmpOp::Less].into_iter().enumerate() {
+                assert_statement_snapshot!(
+                    format!(
+                        "typed-column-date-and-time-operands-never-read-the-overflow-column-{}-{}",
+                        scalar_index + 1,
+                        op_index + 1
+                    ),
+                    render(current(&scalar, op))
+                );
             }
         }
     }
@@ -349,13 +372,16 @@ mod tests {
     #[test]
     fn a_time_operand_compares_one_fixed_width_text_under_its_value_kind() {
         let time = parse_time("12:00:00,5Z").expect("the comma compatibility form");
-        for row in [InstanceRow::Current, InstanceRow::Element(ElementLevel::at(0))] {
-            for op in [CmpOp::Equal, CmpOp::Greater, CmpOp::LessEq] {
-                let sql = render(typed_column_condition(&Scalar::Time(time), op, row));
-                assert!(sql.contains("'12:00:00.500000Z'"), "{op:?} {sql}");
-                assert!(sql.contains("\"value_kind\" = (9), FALSE)"), "{op:?} {sql}");
-                assert!(!sql.contains(" IN ("), "one text, not a set of spellings: {sql}");
-                assert!(!sql.contains('~'), "no regular expression: {sql}");
+        for (row_index, row) in [InstanceRow::Current, InstanceRow::Element(ElementLevel::at(0))].into_iter().enumerate() {
+            for (op_index, op) in [CmpOp::Equal, CmpOp::Greater, CmpOp::LessEq].into_iter().enumerate() {
+                assert_statement_snapshot!(
+                    format!(
+                        "typed-column-a-time-operand-compares-one-fixed-width-text-under-its-value-kind-{}-{}",
+                        row_index + 1,
+                        op_index + 1
+                    ),
+                    render(typed_column_condition(&Scalar::Time(time), op, row))
+                );
             }
         }
     }
@@ -363,17 +389,19 @@ mod tests {
     #[test]
     fn a_date_operand_reads_value_kind_8() {
         let date = parse_date("2024-01-15").expect("a date");
-        let sql = render(current(&Scalar::Date(date), CmpOp::Equal));
-        assert!(sql.contains("'2024-01-15'") && sql.contains("\"value_kind\" = (8), FALSE)"), "{sql}");
+        let statement = render(current(&Scalar::Date(date), CmpOp::Equal));
+        assert_statement_snapshot!("typed-column-a-date-operand-reads-value-kind-8", statement);
     }
 
     /// Clause 4.9: a quoted operand is a String, which matches no `Date` or
     /// `Time` the string column also holds.
     #[test]
     fn a_string_operand_reads_value_kind_2() {
-        for op in [CmpOp::Equal, CmpOp::Greater] {
-            let sql = render(current(&Scalar::Str("2024-01-15".to_owned()), op));
-            assert!(sql.contains("\"value_kind\" = (2), FALSE)"), "{op:?} {sql}");
+        for (index, op) in [CmpOp::Equal, CmpOp::Greater].into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!("typed-column-a-string-operand-reads-value-kind-2-{}", index + 1),
+                render(current(&Scalar::Str("2024-01-15".to_owned()), op))
+            );
         }
     }
 }

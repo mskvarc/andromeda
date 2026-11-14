@@ -71,10 +71,11 @@ mod tests {
     use crate::q_predicate::declared_member::some_member_equals;
     use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_ngsi_ld_query::filter::scalar::Scalar;
-    use sea_query::{Alias, Expr as SeaExpr, PostgresQueryBuilder, Query, SimpleExpr};
+    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use sea_query::{Alias, Expr as SeaExpr, Query, SelectStatement, SimpleExpr};
 
-    fn render(expr: SimpleExpr) -> String {
-        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    fn render(expr: SimpleExpr) -> SelectStatement {
+        Query::select().expr(expr).to_owned()
     }
 
     fn column() -> SimpleExpr {
@@ -87,37 +88,27 @@ mod tests {
 
     #[test]
     fn only_an_array_is_unnested() {
-        let sql = render(some_member_equals(&column(), &value_type(), &Scalar::Bool(true)));
-        assert!(
-            sql.contains(r#"jsonb_array_elements((CASE WHEN (jsonb_typeof("value_object") = ('array')) THEN "value_object" END)) AS "dm""#),
-            "{sql}"
-        );
+        let statement = render(some_member_equals(&column(), &value_type(), &Scalar::Bool(true)));
+        assert_statement_snapshot!("declared-member-only-an-array-is-unnested", statement);
     }
 
     /// Clause 4.5.2: the `valueType` declares each member before its own
     /// `@type` does.
     #[test]
     fn a_member_is_declared_by_the_value_type_before_its_own_type() {
-        let sql = render(some_member_equals(&column(), &value_type(), &Scalar::Number(JsonNumber::from(4))));
-        assert!(
-            sql.contains(r#"LEFT JOIN "entity_type_names" AS "dmt" ON "dmt"."entity_type_name_key" = "value_type_key""#),
-            "{sql}"
-        );
-        assert!(sql.contains(r#"COALESCE("dmt"."name", "dm"."value" ->> ('@type'))"#), "{sql}");
-        assert!(sql.contains(r#"COALESCE("dm"."value" -> ('@value'), "dm"."value")"#), "{sql}");
+        let statement = render(some_member_equals(&column(), &value_type(), &Scalar::Number(JsonNumber::from(4))));
+        assert_statement_snapshot!("declared-member-a-member-is-declared-by-the-value-type-before-its-own-type", statement);
     }
 
     #[test]
     fn a_number_member_reads_a_string_declared_as_an_xsd_number() {
-        let sql = render(some_member_equals(&column(), &value_type(), &Scalar::Number(JsonNumber::from(4))));
-        assert!(sql.contains("'http://www.w3.org/2001/XMLSchema#integer'"), "{sql}");
-        assert!(sql.contains("::numeric"), "{sql}");
+        let statement = render(some_member_equals(&column(), &value_type(), &Scalar::Number(JsonNumber::from(4))));
+        assert_statement_snapshot!("declared-member-a-number-member-reads-a-string-declared-as-an-xsd-number", statement);
     }
 
     #[test]
     fn a_string_member_leaves_out_a_string_declared_as_another_data_type() {
-        let sql = render(some_member_equals(&column(), &value_type(), &Scalar::Str("4".to_owned())));
-        assert!(sql.contains("NOT"), "{sql}");
-        assert!(sql.contains("'http://www.w3.org/2001/XMLSchema#boolean'"), "{sql}");
+        let statement = render(some_member_equals(&column(), &value_type(), &Scalar::Str("4".to_owned())));
+        assert_statement_snapshot!("declared-member-a-string-member-leaves-out-a-string-declared-as-another-data-type", statement);
     }
 }

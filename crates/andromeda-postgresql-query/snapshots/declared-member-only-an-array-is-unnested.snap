@@ -1,0 +1,26 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/declared_member.rs
+---
+SELECT
+  EXISTS (
+    SELECT
+      1
+    FROM
+      jsonb_array_elements(
+        (
+          CASE
+            WHEN (jsonb_typeof("value_object") = ('array')) THEN "value_object"
+          END
+        )
+      ) AS "dm"
+      LEFT JOIN "entity_type_names" AS "dmt" ON "dmt"."entity_type_name_key" = "value_type_key"
+    WHERE
+      (
+        CASE
+          WHEN (
+            jsonb_typeof(
+              COALESCE("dm"."value" -> ('@value'), "dm"."value")
+            ) = ('boolean')
+          ) THEN (
+            COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::boolean WHEN (jsonb_typeof(COALESCE("dm"."value" -> ('@value'), "dm"."value")) = ('string') AND COALESCE("dmt"."name", "dm"."value" ->> ('@type')) = ('http://www.w3.org/2001/XMLSchema#boolean') AND pg_input_is_valid(COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'), 'boolean')) THEN (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::boolean END) = ($1::boolean))
+1: String 'true'

@@ -1,0 +1,11 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/typed_column.rs
+---
+SELECT
+  (
+    (("ca"."value_string") COLLATE "und-x-icu") > $1
+    OR (("ca"."value_long_text") COLLATE "und-x-icu") > $2
+  )
+  AND nullif("ca"."value_kind" = (2), FALSE)
+1: String '2024-01-15'
+2: String '2024-01-15'

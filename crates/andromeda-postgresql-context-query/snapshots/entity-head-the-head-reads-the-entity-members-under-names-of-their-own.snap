@@ -1,0 +1,12 @@
+---
+source: crates/andromeda-postgresql-context-query/src/entity_head.rs
+---
+SELECT
+  "e"."entity_key" AS "entity_key",
+  "e"."id" AS "id",
+  "e"."created_at" AS "entity_created_at",
+  "e"."modified_at" AS "entity_modified_at",
+  "e"."write_count" AS "entity_write_count",
+  "e"."expires_at" AS "entity_expires_at",
+  "entity_search"."entity_type_name_keys" AS "entity_type_name_keys",
+  "entity_search"."verbatim_scope_paths" AS "verbatim_scope_paths"

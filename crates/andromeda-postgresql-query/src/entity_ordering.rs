@@ -49,15 +49,15 @@ pub fn entity_identifier_key(identifier: SimpleExpr, direction: SortDirection, c
 mod tests {
     use crate::entity_ordering::{entity_identifier_key, ordering_collation, sql_order};
     use andromeda_ngsi_ld_query::ordering::{collation::IcuCollation, sort_direction::SortDirection};
-    use andromeda_postgresql_seaquery::collation::PostgresCollation;
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, collation::PostgresCollation};
     use pretty_assertions::assert_eq;
-    use sea_query::{Alias, Expr, Order, PostgresQueryBuilder, Query};
+    use sea_query::{Alias, Expr, Order, Query, SelectStatement};
 
-    fn ordered_by_identifier(collation: Option<&IcuCollation>, direction: SortDirection) -> String {
+    fn ordered_by_identifier(collation: Option<&IcuCollation>, direction: SortDirection) -> SelectStatement {
         let mut select = Query::select();
         select.expr(Expr::col(Alias::new("id")));
         entity_identifier_key(Expr::col(Alias::new("id")), direction, &ordering_collation(collation)).order_by(&mut select);
-        select.to_string(PostgresQueryBuilder)
+        select
     }
 
     #[test]
@@ -82,13 +82,17 @@ mod tests {
     #[test]
     fn the_identifier_key_collates_and_puts_absent_values_last() {
         let requested = IcuCollation::parse("de-u-co-phonebk").expect("valid collation");
-        let sql = ordered_by_identifier(Some(&requested), SortDirection::Ascending);
-        assert!(sql.contains(r#"("id") COLLATE "de-u-co-phonebk" ASC NULLS LAST"#), "{sql}");
+        assert_statement_snapshot!(
+            "entity-ordering-the-identifier-key-collates-and-puts-absent-values-last",
+            ordered_by_identifier(Some(&requested), SortDirection::Ascending)
+        );
     }
 
     #[test]
     fn a_descending_identifier_key_reverses_only_the_order() {
-        let sql = ordered_by_identifier(None, SortDirection::Descending);
-        assert!(sql.contains(r#"("id") COLLATE "und-x-icu" DESC NULLS LAST"#), "{sql}");
+        assert_statement_snapshot!(
+            "entity-ordering-a-descending-identifier-key-reverses-only-the-order",
+            ordered_by_identifier(None, SortDirection::Descending)
+        );
     }
 }

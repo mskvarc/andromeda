@@ -1,0 +1,21 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/sub_attribute/member_field.rs
+---
+SELECT
+WHERE
+  "ca"."object_type_keys" IS NOT NULL
+  AND (
+    NOT COALESCE(
+      EXISTS (
+        SELECT
+          1
+        FROM
+          "entity_type_names" AS "mt"
+        WHERE
+          "mt"."entity_type_name_key" = ANY("ca"."object_type_keys")
+          AND "mt"."name" = $1
+      ),
+      FALSE
+    )
+  )
+1: String 'https://example.com/Device'
