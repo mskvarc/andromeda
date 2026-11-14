@@ -10,10 +10,13 @@ use ngsi_ld::{
 
 /// Pins: Query Entities over three Buildings, one without name, with count, limit 1 and pick=id,name serves the
 /// three on three full pages counted 3, and with pick=name serves two pages counted 2 and an empty third page
-/// Clause: 4.21, 5.5.9, 5.7.2.4, 6.3.13
+/// Clause: 4.21, 5.7.2.5, 5.5.9, 5.7.2.4, 6.3.13
+/// Recorded: clause 5.7.2.5 reduces every Entity of the payload to the listed members and says nothing of an Entity
+/// the list leaves with none; Andromeda leaves such an Entity out of the page and out of the count, so every page
+/// is full and the count names what the pages hold
 #[gtest]
 #[tokio::test]
-async fn n_qry_prj_9004_a_query_counts_and_pages_only_the_entities_a_pick_leaves_a_member() -> Result<()> {
+async fn o_qry_prj_9011_a_query_counts_and_pages_only_the_entities_a_pick_leaves_a_member() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let building_emptied_a_id = namespace.urn("Building", "emptied-a")?;

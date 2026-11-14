@@ -1,4 +1,4 @@
-//! Q with an after window admits the instance in effect when it opens.
+//! Q with an after window reads only the instances inside it.
 
 use andromeda_test_suite::{
     attribute_matcher::any_attribute,
@@ -16,17 +16,13 @@ use ngsi_ld::{
     query::{q, temporal_query},
 };
 
-/// Pins: an after window opens at its instant exactly as a between window does, so a temporal q admits the same entities
-/// by the instances in effect when it opens and leaves out the entities whose value a deletion or an instance at the
-/// window start replaced
-/// Clause: 5.7.4.4, 4.11, 4.9, 4.5.7
-/// Recorded: clause 5.7.4.4 checks q against the Attribute instances "during the interval defined by the temporal query"
-/// and clause 4.11 makes them the values "valid within the specified timeframe", without saying whether the instance
-/// observed before the window opens and not yet replaced is one of them; Andromeda reads it as one (as Annex C clause
-/// C.5.5 evaluates a q on an attribute it does not render), evaluated by q but never rendered
+/// Pins: a temporal q power>8 with an after window opening at t60 selects M1 alone, whose 9 is observed inside the
+/// window, and none of M2, M5 and M6, whose only values above 8 are observed before it, M3, whose power is deleted,
+/// or M4, whose instance at the window start is 1; M1 answers with its one projected status instance
+/// Clause: 5.7.4.4, 4.11, 4.9
 #[gtest]
 #[tokio::test]
-async fn o_tmp_qry_0005_q_with_an_after_window_admits_the_instance_in_effect_when_it_opens() -> Result<()> {
+async fn n_tmp_qry_0005_q_with_an_after_window_reads_only_the_instances_inside_it() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let meter_type = namespace.entity_type("Meter")?;
@@ -106,12 +102,10 @@ async fn o_tmp_qry_0005_q_with_an_after_window_admits_the_instance_in_effect_whe
         .attrs(vec!["status".parse()?])
         .send()
         .await?;
-    expect_that!(page.items(), len(eq(4)));
-    for id in [&meter_m1_id, &meter_m2_id, &meter_m5_id, &meter_m6_id] {
-        expect_that!(page.items(), contains(has_id(id)));
-        let entity = page.items().iter().find(|entity| &entity.id == id).or_fail()?;
-        expect_that!(entity.attributes.len(), eq(1));
-        expect_that!(entity, has_evolution("status", all!(len(eq(1)), contains(any_attribute().observed_at(t75)))));
-    }
+    expect_that!(page.items(), len(eq(1)));
+    expect_that!(page.items(), contains(has_id(&meter_m1_id)));
+    let entity = page.items().iter().find(|entity| entity.id == meter_m1_id).or_fail()?;
+    expect_that!(entity.attributes.len(), eq(1));
+    expect_that!(entity, has_evolution("status", all!(len(eq(1)), contains(any_attribute().observed_at(t75)))));
     Ok(())
 }

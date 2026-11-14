@@ -6,7 +6,7 @@ use andromeda_test_suite::{
     namespace::Namespace,
     nth::nth,
     outcome::Upserted,
-    values_matcher::{has_values, pair},
+    values_matcher::has_values,
 };
 use googletest::prelude::*;
 use ngsi_ld::{
@@ -17,7 +17,8 @@ use ngsi_ld::{
 
 /// Pins: Query Temporal Evolution of Entities over v observed 10 by default and 200 in a named dataset selects the
 /// Entity for v>100 with no `datasetId`, with `datasetId=@none` and with the named dataset, nothing for v>300 with
-/// `datasetId=@none`, and with q=v>100 and `datasetId=@none` answers v holding the default pair 10 alone
+/// `datasetId=@none`, and with q=v>100 and `datasetId=@none` answers the Entity without v: the dataset step keeps
+/// the default instance 10 alone, and the representation holds only the instances which meet the query
 /// Clause: 5.7.4.4, 4.9
 #[gtest]
 #[tokio::test]
@@ -87,12 +88,6 @@ async fn n_tmp_qry_9038_q_reads_every_dataset_and_the_dataset_step_narrows_the_a
         .send()
         .await?;
     expect_that!(values.items(), len(eq(1)));
-    expect_that!(
-        values.items().first(),
-        some(has_values(
-            "v",
-            all!(len(eq(1)), nth(0, pair().value(10).time("2020-01-01T00:00:00Z".parse()?)))
-        ))
-    );
+    expect_that!(values.items().first(), some(not(has_values("v", anything()))));
     Ok(())
 }

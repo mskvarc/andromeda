@@ -14,10 +14,13 @@ use ngsi_ld::{
 
 /// Pins: Query Entities with pick=name over a Building with a name and one holding only category answers the first
 /// alone, and with pick=unknown answers an empty array
-/// Clause: 4.21, 5.7.2.4
+/// Clause: 4.21, 5.7.2.5, 5.7.2.4
+/// Recorded: clause 5.7.2.5 reduces every Entity of the payload to the listed members and says nothing of an Entity
+/// the list leaves with none; Andromeda leaves such an Entity out of the page and out of the count, so every page
+/// is full and the count names what the pages hold
 #[gtest]
 #[tokio::test]
-async fn n_qry_prj_9006_a_query_leaves_out_the_entity_a_pick_empties() -> Result<()> {
+async fn o_qry_prj_9012_a_query_leaves_out_the_entity_a_pick_empties() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let building_query_kept_id = namespace.urn("Building", "query-kept")?;

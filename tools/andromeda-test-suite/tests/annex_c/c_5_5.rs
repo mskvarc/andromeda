@@ -1,10 +1,10 @@
-//! Annex C.5.5: the temporal evolution of the speed of the Vehicle that is not a Mercedes over a one-hour window,
-//! with and without the `brandName` observed before it (clauses 4.5.7 and 5.7.4).
+//! Annex C.5.5: the temporal evolution of the speed of the Vehicle that is not a Mercedes over a one-hour window
+//! (clauses 4.5.7 and 5.7.4).
 
 use crate::{
     printed_document::{expect_flat, remove_from_items},
     served_context::{ServedContexts, linked, ok_body},
-    speed_evolution::{SPEEDS, record_b9211},
+    speed_evolution::{BrandObserved, SPEEDS, record_b9211},
     vehicle_example::aggregated_context,
 };
 use andromeda_test_suite::{
@@ -50,32 +50,35 @@ fn printed_speed(namespace: &Namespace) -> Value {
 /// Pins: Query Temporal Evolution of Entities with type, q, attrs=speed and a one-hour window answers the three speed
 /// instances of B9211 as C.5.5 EXAMPLE 1 prints them
 /// Clause: C.5.5, 4.5.7, 4.11, 5.7.4
+/// Expected: B9211's `brandName` is observed at 12:00, inside the window, where the annex observes it at 11:00; a
+/// query is checked only against the instances inside the window (clauses 4.11 and 5.7.4.4)
 #[gtest]
 #[tokio::test]
 async fn c_5_5_0001_the_speed_evolution_of_the_vehicle_not_a_mercedes() -> Result<()> {
     let namespace = Namespace::fresh();
     let served = ServedContexts::start(&namespace).await?;
     let broker = linked(&broker::front()?, &aggregated_context(&served, &namespace).await?)?;
-    record_b9211(&broker, &namespace).await?;
+    record_b9211(&broker, &namespace, BrandObserved::AtWindowStart).await?;
     let body = not_a_mercedes(&broker, &namespace, vec!["speed".parse()?]).await?;
     expect_flat(body, vec![printed_speed(&namespace)])?;
     served.stop();
     Ok(())
 }
 
-/// Pins: Query Temporal Evolution of Entities with attrs=speed,brandName answers only the speed instances as C.5.5
-/// EXAMPLE 2 prints, the one brandName instance lying before the window
+/// Pins: Query Temporal Evolution of Entities with attrs=speed,brandName, over B9211 whose one brandName instance is
+/// observed at 11:00, before the window, answers no Vehicle
 /// Clause: C.5.5, 4.5.7, 4.11, 5.7.4
-/// Expected: brandName is observed once, before the window, so that it has no evolution inside it (clause 5.6.11)
+/// Expected: the annex answers B9211's speed instances, while a query is checked only against the instances inside
+/// the window (clauses 4.11 and 5.7.4.4), and brandName has none there
 #[gtest]
 #[tokio::test]
-async fn c_5_5_0002_the_brand_name_outside_the_window_adds_nothing() -> Result<()> {
+async fn c_5_5_0002_a_brand_name_observed_before_the_window_selects_nothing() -> Result<()> {
     let namespace = Namespace::fresh();
     let served = ServedContexts::start(&namespace).await?;
     let broker = linked(&broker::front()?, &aggregated_context(&served, &namespace).await?)?;
-    record_b9211(&broker, &namespace).await?;
+    record_b9211(&broker, &namespace, BrandObserved::BeforeWindow).await?;
     let body = not_a_mercedes(&broker, &namespace, vec!["speed".parse()?, "brandName".parse()?]).await?;
-    expect_flat(body, vec![printed_speed(&namespace)])?;
+    expect_flat(body, Vec::new())?;
     served.stop();
     Ok(())
 }

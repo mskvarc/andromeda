@@ -1,5 +1,6 @@
 //! The temporal evolutions of the entities matching an NGSI-LD query on `speed` are queried (clause 5.7.4). Both
-//! Vehicles of the setup hold a speed above 90, and each answer carries every instance of the entity.
+//! Vehicles of the setup hold a speed above 90, and each answer carries the speed instances above 90 and every
+//! fuelLevel instance.
 //!
 //! The answer is compared exactly with the test's expectation.
 
@@ -15,6 +16,8 @@ use serde_json::json;
 
 /// Pins: Check that one can query the temporal evolution of entities matching the given NGSI-LD query
 /// Clause: 5.7.4
+/// Expected: speed answers only the instances 120 and 100, not 80 as well, since the representation holds only the
+/// instances which meet the query (clause 5.7.4.4)
 #[gtest]
 #[tokio::test]
 async fn e021_08_01_query_the_temporal_evolution_of_entities_matching_the_given_ngsi_ld_query() -> Result<()> {
@@ -42,7 +45,6 @@ async fn e021_08_01_query_the_temporal_evolution_of_entities_matching_the_given_
                 "type": "Vehicle",
                 "speed": [
                     {"type": "Property", "value": 120, "observedAt": "2020-08-01T12:03:00Z"},
-                    {"type": "Property", "value": 80, "observedAt": "2020-08-01T12:05:00Z"},
                     {"type": "Property", "value": 100, "observedAt": "2020-08-01T12:07:00Z"},
                 ],
                 "fuelLevel": [
@@ -56,7 +58,6 @@ async fn e021_08_01_query_the_temporal_evolution_of_entities_matching_the_given_
                 "type": "Vehicle",
                 "speed": [
                     {"type": "Property", "value": 120, "observedAt": "2020-09-01T12:03:00Z"},
-                    {"type": "Property", "value": 80, "observedAt": "2020-09-01T12:05:00Z"},
                     {"type": "Property", "value": 100, "observedAt": "2020-09-01T12:07:00Z"},
                 ],
                 "fuelLevel": [
