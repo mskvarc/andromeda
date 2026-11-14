@@ -79,7 +79,7 @@ use andromeda_ngsi_ld_query::{
     page_window::{PageStart, PageWindow},
 };
 use andromeda_ngsi_ld_representation::attribute_nesting::AttributeNestingExceeded;
-use andromeda_ngsi_ld_request::query::entity::{operation::EntityQueryOperation, parameters::EntityQueryParameters};
+use andromeda_ngsi_ld_request::query::entity::{admitted::AdmittedEntityQuery, operation::EntityQueryOperation, parameters::EntityQueryParameters};
 use chrono::{DateTime, Utc};
 use std::{collections::HashSet, sync::Arc};
 use tracing::warn;
@@ -153,9 +153,10 @@ impl SnapshotExecutor {
             Ok(params) => params,
             Err(error) => return Ok(failure_detail(classify_parameter_error(&error).into_problem())),
         };
-        if let Err(error) = params.validate(EntityQueryOperation::Query) {
-            return Ok(failure_detail(classify_parameter_error(&error).into_problem()));
-        }
+        let params = match params.admit(EntityQueryOperation::Query, self.sources.entity_query.filter_admission()) {
+            Ok(params) => params,
+            Err(error) => return Ok(failure_detail(classify_parameter_error(&error).into_problem())),
+        };
 
         let filters = match self.entity_registration_filters(&params, context).await {
             Ok(filters) => filters,
@@ -247,7 +248,7 @@ impl SnapshotExecutor {
     /// Returns a transient store failure the page met.
     async fn local_page(
         &self,
-        params: &EntityQueryParameters,
+        params: &AdmittedEntityQuery,
         window: &PageWindow,
         context: &ContextSpec,
         snapshot_id: &Identifier,

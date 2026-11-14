@@ -16,7 +16,7 @@
 
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
-use andromeda_ngsi_ld_query::entity_selector_params::EntitySelectorParams;
+use andromeda_ngsi_ld_query::written_entity_selector::WrittenEntitySelector;
 
 /// Intersect a request's identifiers with the entities a live map lists,
 /// preserving the order the request wrote them in.
@@ -45,7 +45,7 @@ pub fn scope_query_ids(map: &EntityMap, existing_ids: Option<&[Identifier]>) -> 
 /// list. A selector left with no identifier admits nothing and so contributes
 /// nothing to the union; a union emptied that way leaves the request
 /// considering no entity at all, which only the flat list can express.
-pub fn hold_selection_to_map(map: &EntityMap, id: &mut Option<Vec<Identifier>>, selectors: &mut Vec<EntitySelectorParams>) {
+pub fn hold_selection_to_map(map: &EntityMap, id: &mut Option<Vec<Identifier>>, selectors: &mut Vec<WrittenEntitySelector>) {
     if selectors.is_empty() {
         *id = Some(scope_query_ids(map, id.as_deref()));
         return;
@@ -72,7 +72,7 @@ mod tests {
     use crate::query_scoping::{hold_selection_to_map, scope_query_ids};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity_map::EntityMap;
-    use andromeda_ngsi_ld_query::entity_selector_params::EntitySelectorParams;
+    use andromeda_ngsi_ld_query::written_entity_selector::WrittenEntitySelector;
     use chrono::{TimeDelta, Utc};
 
     /// An entity identifier, as the request boundary would have validated it.
@@ -90,15 +90,15 @@ mod tests {
     }
 
     /// One clause 5.2.33 selector over the given identifiers.
-    fn selector(entity_ids: &[&str]) -> EntitySelectorParams {
-        EntitySelectorParams {
+    fn selector(entity_ids: &[&str]) -> WrittenEntitySelector {
+        WrittenEntitySelector {
             id: Some(entity_ids.iter().map(|id| identifier(id)).collect()),
-            ..EntitySelectorParams::default()
+            ..WrittenEntitySelector::default()
         }
     }
 
     /// The identifiers a selector was narrowed to, as wire text.
-    fn selector_ids(selectors: &[EntitySelectorParams]) -> Vec<Vec<&str>> {
+    fn selector_ids(selectors: &[WrittenEntitySelector]) -> Vec<Vec<&str>> {
         selectors
             .iter()
             .map(|selector| selector.id.as_deref().unwrap_or_default().iter().map(Identifier::as_str).collect())
@@ -169,7 +169,7 @@ mod tests {
     fn a_body_selector_naming_no_identifier_is_held_to_the_whole_map() {
         let map = map_over(&["urn:ngsi-ld:Vehicle:a", "urn:ngsi-ld:Vehicle:b"]);
         let mut id = None;
-        let mut selectors = vec![EntitySelectorParams::default()];
+        let mut selectors = vec![WrittenEntitySelector::default()];
 
         hold_selection_to_map(&map, &mut id, &mut selectors);
 
@@ -222,7 +222,7 @@ mod tests {
         pretty_assertions::assert_eq!(string_id, Some(Vec::new()));
 
         let mut body_id = None;
-        let mut body_selectors = vec![EntitySelectorParams::default()];
+        let mut body_selectors = vec![WrittenEntitySelector::default()];
         hold_selection_to_map(&map, &mut body_id, &mut body_selectors);
         assert!(body_selectors.is_empty(), "an emptied map admits no selector");
         pretty_assertions::assert_eq!(body_id, Some(Vec::new()));

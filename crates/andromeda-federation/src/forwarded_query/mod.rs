@@ -32,7 +32,7 @@ use andromeda_ngsi_ld_model::{
     registration::{ContextSourceRegistration, info::RegistrationInfo},
     registration_matching::entity_specification::EntitySpecification,
 };
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, entity_selector_params::EntitySelectorParams};
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, written_entity_selector::WrittenEntitySelector};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::representation_parameter::WrittenValue;
 use std::num::NonZeroU32;
@@ -104,7 +104,7 @@ impl ForwardedQuery {
     /// cannot be expanded against the request context.
     async fn for_block(
         client: ClientQuery<'_>,
-        selector: &EntitySelectorParams,
+        selector: &WrittenEntitySelector,
         block: &RegistrationInfo,
         split: SplitEntities,
         source_page: Option<SourcePage>,
@@ -360,7 +360,7 @@ mod tests {
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-    use andromeda_ngsi_ld_query::entity_selector_params::EntitySelectorParams;
+    use andromeda_ngsi_ld_query::written_entity_selector::WrittenEntitySelector;
     use andromeda_ngsi_ld_request::{
         entity::GetEntityParams,
         query::{
@@ -699,16 +699,16 @@ mod tests {
 
     /// A POST query naming `selectors`, whose flat members are the flattened
     /// summary the body conversion leaves.
-    fn union_query(selectors: Vec<EntitySelectorParams>) -> EntityQueryParameters {
+    fn union_query(selectors: Vec<WrittenEntitySelector>) -> EntityQueryParameters {
         let mut query = entity_query("");
         query.entity_selectors = selectors;
         query
     }
 
-    fn typed(raw: &str) -> EntitySelectorParams {
-        EntitySelectorParams {
+    fn typed(raw: &str) -> WrittenEntitySelector {
+        WrittenEntitySelector {
             type_: Some(raw.parse().expect("valid type expression")),
-            ..EntitySelectorParams::default()
+            ..WrittenEntitySelector::default()
         }
     }
 
@@ -760,7 +760,7 @@ mod tests {
     #[tokio::test]
     async fn a_selector_pairs_its_identifier_with_its_own_type() {
         let reg = registration(&json!([{"entities": [{"type": DEVICE, "id": VEHICLE_X}]}]));
-        let query = union_query(vec![EntitySelectorParams {
+        let query = union_query(vec![WrittenEntitySelector {
             id: Some(vec![uri(VEHICLE_X)]),
             ..typed("Vehicle")
         }]);

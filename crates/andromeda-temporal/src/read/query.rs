@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_query::{
     projection::attrs_selection::AttrsAdmission,
     temporal::{compiled::CompiledTemporalQuery, contributed_entities::ContributedEntities},
 };
-use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation};
+use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
 use andromeda_telemetry::temporal::{self, TemporalOperation};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -42,9 +42,9 @@ impl TemporalService {
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalError::Request`] when the parameters do not satisfy
-    /// clause 5.7.4 or name an attribute that is ineligible for a requested
-    /// aggregation method (clause 5.7.4.4), and [`TemporalError::Persistence`]
+    /// Returns [`TemporalError::Request`] when the parameters name an attribute
+    /// that is ineligible for a requested aggregation method (clause 5.7.4.4),
+    /// and [`TemporalError::Persistence`]
     /// when the history cannot be read. A single entity that fails to render is reported as a warning
     /// on the result rather than failing the query.
     ///
@@ -56,7 +56,7 @@ impl TemporalService {
     pub async fn query(
         &self,
         target: &ContextTarget,
-        params: &TemporalQueryParameters,
+        params: &AdmittedTemporalRequest,
         window: &PageWindow,
         count: CountPolicy,
         reading: QueryReading<'_>,
@@ -65,8 +65,6 @@ impl TemporalService {
         let context = reading.context;
         let timer = temporal::start(TemporalOperation::Query);
         let result = async {
-            params.validate(TemporalQueryOperation::Query, self.linked_retrieval)?;
-
             let mut compiled = self.compile_temporal_query(params, reading, AttrsAdmission::ReifiedScopeAdmitted).await?;
             compiled.contributed = contributed;
             let compiled = compiled;

@@ -8,12 +8,11 @@ use crate::{
     query_reading::QueryReading,
     remote_linked::{HeldPart, RemoteTemporalLinkedSource, TemporalLinkedWindow},
     service::TemporalService,
-    stub_broker::{StubBroker, live_target, service, service_over, uri},
+    stub_broker::{StubBroker, admitted, live_target, service, service_over, uri},
 };
 use andromeda_json_literal::{JsonLiteral, piece::JsonPiece};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_linked_retrieval::{
-    admission::{LinkedOperation, TemporalJoin},
     keyword::Keyword,
     plan::JoinPlan,
     representation::LinkedRepresentation,
@@ -215,7 +214,6 @@ const fn extended_reading(context: &ContextSpec) -> QueryReading<'_> {
     QueryReading {
         context,
         language_targeting: LanguageTargeting::Specification,
-        operation: LinkedOperation::QueryTemporal(TemporalJoin::Extended),
     }
 }
 
@@ -230,7 +228,7 @@ async fn joined(service: &TemporalService, roots: &[TemporalBody], params: &Temp
         .join_linked_temporal(
             &live_target(),
             roots,
-            params,
+            &admitted(params.clone()),
             extended_reading(&context()),
             AttrsAdmission::ReifiedScopeAdmitted,
         )
@@ -275,12 +273,13 @@ fn appended_ids(joined: &TemporalLinkedJoin) -> Vec<String> {
 async fn no_retrieving_join_traverses_nothing() {
     let mut params = flat_join(1);
     params.join = Some(JoinMode::None);
+    params.join_level = None;
     let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
     let joined = service(StubBroker::new([(uri("urn:ngsi-ld:T:B"), Vec::new())]))
         .join_linked_temporal(
             &live_target(),
             &roots,
-            &params,
+            &admitted(params),
             extended_reading(&context()),
             AttrsAdmission::ReifiedScopeAdmitted,
         )

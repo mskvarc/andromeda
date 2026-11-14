@@ -19,7 +19,7 @@
 //! links purely against its own history; a federated composition supplies one
 //! that forwards to the registered context sources.
 
-use crate::error::TemporalError;
+use crate::{error::TemporalError, temporal_invariant::TemporalInvariant};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_linked_retrieval::source::{RemoteReach, RemoteResolution};
 use andromeda_ngsi_ld_lexicon::{
@@ -32,7 +32,10 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::temporal::aggregation_period::AggregationPeriod;
-use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
+use andromeda_ngsi_ld_request::{
+    query::temporal::{TemporalQueryParameters, admitted::AdmittedTemporalRequest},
+    representation_parameter::WrittenValue,
+};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::{fmt, num::NonZeroU32};
@@ -111,6 +114,18 @@ impl TemporalLinkedWindow {
             attrs: self.attrs.clone(),
             ..TemporalQueryParameters::default()
         }
+    }
+
+    /// The query a Linked Entity's own history is read with, as
+    /// [`TemporalLinkedWindow::to_parameters`] describes it, carrying no `q`
+    /// for an admission to cover.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalInvariant::DerivedQueryFilter`] when the parameters
+    /// carry a `q`, which the window has no member for.
+    pub fn to_admitted_parameters(&self) -> Result<AdmittedTemporalRequest, TemporalError> {
+        AdmittedTemporalRequest::unfiltered(self.to_parameters()).map_err(|refusal| TemporalError::from(TemporalInvariant::DerivedQueryFilter(refusal)))
     }
 }
 

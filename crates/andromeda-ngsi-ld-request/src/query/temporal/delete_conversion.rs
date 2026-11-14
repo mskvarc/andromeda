@@ -15,8 +15,7 @@ impl TemporalDeleteParameters {
     /// Every member the delete does not carry is left at its default, and the
     /// execution is pinned to the local scope: the delete is never forwarded, so
     /// its entity set is resolved against this broker's history alone.
-    #[must_use]
-    pub fn selection_params(&self) -> TemporalQueryParameters {
+    pub(crate) fn selection_params(&self) -> TemporalQueryParameters {
         TemporalQueryParameters {
             // clone: the compiled selection owns its filters independently of
             // the reusable delete parameters, which the scope still reads.

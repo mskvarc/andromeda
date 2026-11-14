@@ -1,14 +1,16 @@
-//! The one compile entry of the `q` language (clause 4.9).
+//! The two steps every pipeline takes a written `q` filter through (clause
+//! 4.9).
 //!
-//! Every pipeline that reads a written `q` filter (Query Entities, the
-//! temporal operations, Subscriptions and registration discovery) turns it
-//! into the filter it evaluates through [`compile_q_filter`], so the order of
-//! the steps is stated once: the complexity admission of clause 5.5.6, term
-//! expansion under the request's `jsonKeys` and `expandValues` (clauses 4.9
-//! and 6.4.3.2), the Linked Entity admission of its hops (clauses 5.7.2.4,
-//! 5.7.4.4 and 5.14.4.4), and the admission of its target languages. The
-//! pipelines differ only in where the filter and its opt-ins come from and
-//! which terms they admit it under.
+//! [`admit_q_filter`] admits the filter once per request, where the request
+//! is validated: its complexity (clause 5.5.6), its Linked Entity hops for the
+//! operation (clauses 5.7.2.4, 5.7.4.4 and 5.14.4.4) through a port the Linked
+//! Entity engine implements, and its target languages. None of them changes
+//! under term expansion. [`compile_q_filter`] takes only the
+//! [`AdmittedFilter`] that admission makes, so no filter is compiled
+//! unadmitted, and expands it under the request's `jsonKeys` and
+//! `expandValues` (clauses 4.9 and 6.4.3.2) wherever the request is read.
+//! Query Entities, the temporal operations, Subscriptions and registration
+//! discovery all take these two steps.
 
 use crate::{
     error::QueryError,
@@ -71,32 +73,61 @@ impl FilterOptIns {
     }
 }
 
-/// Compile a written `q` filter into the filter a pipeline evaluates.
+/// A written `q` filter one request has admitted: within the complexity the
+/// broker resolves (clause 5.5.6), its Linked Entity hops admitted for the
+/// operation (clauses 5.7.2.4, 5.7.4.4 and 5.14.4.4), and its target languages
+/// admitted under the `q_target_languages` level. Only [`admit_q_filter`]
+/// makes one, so every filter a pipeline compiles was admitted once, by the
+/// request that wrote it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmittedFilter(Expr);
+
+impl AdmittedFilter {
+    /// The filter as the request wrote it.
+    #[must_use]
+    pub const fn written(&self) -> &Expr {
+        &self.0
+    }
+}
+
+/// Admit the written `q` filter of one request: its complexity under
+/// `admission.complexity`, then its hops through `hops`, then its target
+/// languages under `admission.language_targeting`.
 ///
-/// The filter is admitted under `admission.complexity`, expanded under
-/// `opt_ins`, its hops admitted by `hops`, and its target languages admitted
-/// under `admission.language_targeting`, in that order. Neither the complexity
-/// nor the target languages of a filter change under expansion, so the order
-/// decides only which refusal a filter breaking two rules reports.
+/// None of the three changes under term expansion, so a request is admitted
+/// once, where it is validated, and its filter is compiled wherever it is
+/// read.
 ///
 /// # Errors
 ///
-/// Returns the [`QueryError`] of the complexity admission, of a term or an
-/// opted-in operand that does not expand, or of a target language the level
-/// does not admit, and the refusal of `hops` for a hop the operation does not
-/// admit, each converted into `E`.
-pub async fn compile_q_filter<E, H, X>(filter: Expr, opt_ins: &FilterOptIns, admission: FilterAdmission, hops: &H, expander: &X) -> Result<Expr, E>
+/// Returns the [`QueryError`] of the complexity admission or of a target
+/// language the level does not admit, and the refusal of `hops` for a hop the
+/// operation does not admit, each converted into `E`.
+pub fn admit_q_filter<E, H>(filter: &Expr, admission: FilterAdmission, hops: &H) -> Result<AdmittedFilter, E>
 where
     E: From<QueryError> + From<H::Refusal>,
     H: FilterHopAdmission,
-    X: TermExpander,
 {
-    admission.complexity.admit(&filter)?;
-    let filter = expand_q_expr(filter, &opt_ins.json_keys, expander).await?;
-    let filter = apply_expand_values(filter, &opt_ins.expand_values, expander).await?;
-    hops.admit_hops(&filter)?;
-    admission.language_targeting.admit(&filter)?;
-    Ok(filter)
+    admission.complexity.admit(filter)?;
+    hops.admit_hops(filter)?;
+    admission.language_targeting.admit(filter)?;
+    // clone: the request keeps the filter it wrote, which forwarding reads
+    Ok(AdmittedFilter(filter.clone()))
+}
+
+/// Compile an admitted `q` filter into the filter a pipeline evaluates: its
+/// terms expanded under `opt_ins.json_keys`, then the operands of the
+/// attributes `opt_ins.expand_values` names.
+///
+/// # Errors
+///
+/// Returns [`QueryError::TermExpansion`], [`QueryError::TermNotAnIri`] or
+/// [`QueryError::AttributeNameInvalid`] when a term or an opted-in operand
+/// does not expand.
+pub async fn compile_q_filter<X: TermExpander>(filter: &AdmittedFilter, opt_ins: &FilterOptIns, expander: &X) -> Result<Expr, QueryError> {
+    // clone: expansion consumes its tree, and every compilation of the request reads the admitted filter again
+    let filter = expand_q_expr(filter.0.clone(), &opt_ins.json_keys, expander).await?;
+    apply_expand_values(filter, &opt_ins.expand_values, expander).await
 }
 
 #[cfg(test)]
@@ -104,7 +135,7 @@ mod tests {
     use crate::{
         error::QueryError,
         filter::{
-            compilation::{FilterAdmission, FilterOptIns, compile_q_filter},
+            compilation::{AdmittedFilter, FilterAdmission, FilterOptIns, admit_q_filter, compile_q_filter},
             complexity::FilterComplexityLimits,
             expression::Expr,
             hop_admission::FilterHopAdmission,
@@ -112,16 +143,20 @@ mod tests {
             parser::parse,
             serialize::serialize,
         },
-        prefix_expander::{PrefixExpander, namespaced},
+        namespace_expander::NamespaceExpander,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use iri_rs::{IriBuf, iri};
     use std::num::NonZeroUsize;
+
+    /// Expands every term and type under `https://example.org/`.
+    const EXPANDER: NamespaceExpander = NamespaceExpander::uniform(iri!("https://example.org/"));
 
     /// The refusal of a hop, standing for the operation's Linked Entity rule.
     #[derive(Debug, PartialEq, Eq)]
     struct HopRefused;
 
-    /// Why the entry refused a filter in these tests.
+    /// Why admission refused a filter in these tests.
     #[derive(Debug, derive_more::From)]
     enum Refused {
         /// A refusal of the `q` language.
@@ -149,6 +184,10 @@ mod tests {
         }
     }
 
+    fn namespaced(term: &str) -> IriBuf {
+        EXPANDER.term_iri(term).expect("a term resolves against the namespace")
+    }
+
     /// The broker's default limits: 1000 comparisons, 16 levels of nesting.
     fn default_limits() -> FilterComplexityLimits {
         FilterComplexityLimits::new(
@@ -169,20 +208,18 @@ mod tests {
     }
 
     async fn opt_ins(json_keys: &[&str], expand_values: &[&str]) -> FilterOptIns {
-        FilterOptIns::expanded(Some(&names(json_keys)), Some(&names(expand_values)), &PrefixExpander)
+        FilterOptIns::expanded(Some(&names(json_keys)), Some(&names(expand_values)), &EXPANDER)
             .await
             .expect("the opt-ins expand")
     }
 
-    async fn compiled(q: &str, opt_ins: &FilterOptIns, admission: FilterAdmission, hops: &Hops) -> Result<Expr, Refused> {
-        compile_q_filter::<Refused, _, _>(parse(q).expect("the filter parses"), opt_ins, admission, hops, &PrefixExpander).await
+    fn admitted(q: &str, admission: FilterAdmission, hops: &Hops) -> Result<AdmittedFilter, Refused> {
+        admit_q_filter::<Refused, _>(&parse(q).expect("the filter parses"), admission, hops)
     }
 
     async fn compiled_text(q: &str, opt_ins: &FilterOptIns) -> String {
-        let filter = compiled(q, opt_ins, admission(LanguageTargeting::Specification), &Hops::Admitted)
-            .await
-            .expect("the filter compiles");
-        serialize(&filter)
+        let filter = admitted(q, admission(LanguageTargeting::Specification), &Hops::Admitted).expect("the filter is admitted");
+        serialize(&compile_q_filter(&filter, opt_ins, &EXPANDER).await.expect("the filter compiles"))
     }
 
     /// CP-1: a term expands to the IRI the context maps it to.
@@ -207,41 +244,27 @@ mod tests {
     }
 
     /// CP-3, clause 5.5.6: a filter of 1 001 comparisons is too complex under
-    /// the default limits, and a stored filter read under no limit is not.
-    #[tokio::test]
-    async fn a_filter_past_the_comparison_limit_is_refused_and_one_read_back_is_not() {
+    /// the default limits, and one admitted under no limit past the parser's,
+    /// as a stored filter is read, is not.
+    #[test]
+    fn a_filter_past_the_comparison_limit_is_refused_and_one_read_back_is_not() {
         let values = (0..1001).map(|value| value.to_string()).collect::<Vec<_>>().join(",");
         let q = format!("speed=={values}");
-        let refused = compiled(&q, &FilterOptIns::default(), admission(LanguageTargeting::Specification), &Hops::Admitted).await;
+        let refused = admitted(&q, admission(LanguageTargeting::Specification), &Hops::Admitted);
         assert!(matches!(refused, Err(Refused::Query(QueryError::QTooManyComparisons { .. }))), "{refused:?}");
         let stored = FilterAdmission {
             complexity: FilterComplexityLimits::PARSED,
             language_targeting: LanguageTargeting::Specification,
         };
-        compiled(&q, &FilterOptIns::default(), stored, &Hops::Admitted)
-            .await
-            .expect("a stored filter is read under no limit");
+        admitted(&q, stored, &Hops::Admitted).expect("a stored filter is read under no limit");
     }
 
     /// CP-4, clause 4.9: a full language tag as a target language is admitted
     /// at the language-tags level and refused at the specification level.
-    #[tokio::test]
-    async fn a_language_tag_target_is_admitted_only_at_the_language_tags_level() {
-        compiled(
-            "name[en-GB]==\"x\"",
-            &FilterOptIns::default(),
-            admission(LanguageTargeting::LanguageTags),
-            &Hops::Admitted,
-        )
-        .await
-        .expect("the language-tags level admits a tag");
-        let refused = compiled(
-            "name[en-GB]==\"x\"",
-            &FilterOptIns::default(),
-            admission(LanguageTargeting::Specification),
-            &Hops::Admitted,
-        )
-        .await;
+    #[test]
+    fn a_language_tag_target_is_admitted_only_at_the_language_tags_level() {
+        admitted("name[en-GB]==\"x\"", admission(LanguageTargeting::LanguageTags), &Hops::Admitted).expect("the language-tags level admits a tag");
+        let refused = admitted("name[en-GB]==\"x\"", admission(LanguageTargeting::Specification), &Hops::Admitted);
         assert!(matches!(refused, Err(Refused::Query(QueryError::LanguageTagNotAdmitted(_)))), "{refused:?}");
     }
 
@@ -260,27 +283,26 @@ mod tests {
         );
     }
 
-    /// The entry refuses a filter's hops before its target languages, and
-    /// admits its complexity before either.
-    #[tokio::test]
-    async fn the_admissions_run_complexity_then_hops_then_target_languages() {
-        let hop_and_tag = "r{name[en-GB]}==\"x\"";
-        let refused = compiled(
-            hop_and_tag,
-            &FilterOptIns::default(),
-            admission(LanguageTargeting::Specification),
-            &Hops::Refused,
-        )
-        .await;
+    /// Admission refuses a filter's hops before its target languages, and its
+    /// complexity before either.
+    #[test]
+    fn admission_runs_complexity_then_hops_then_target_languages() {
+        let refused = admitted("r{name[en-GB]}==\"x\"", admission(LanguageTargeting::Specification), &Hops::Refused);
         assert!(matches!(refused, Err(Refused::Hop(HopRefused))), "{refused:?}");
         let values = (0..1001).map(|value| value.to_string()).collect::<Vec<_>>().join(",");
-        let refused = compiled(
-            &format!("r{{a}}=={values}"),
-            &FilterOptIns::default(),
-            admission(LanguageTargeting::Specification),
-            &Hops::Refused,
-        )
-        .await;
+        let refused = admitted(&format!("r{{a}}=={values}"), admission(LanguageTargeting::Specification), &Hops::Refused);
         assert!(matches!(refused, Err(Refused::Query(QueryError::QTooManyComparisons { .. }))), "{refused:?}");
+    }
+
+    /// The admitted filter is the filter the request wrote, and compiling it
+    /// leaves it as written for the next compilation.
+    #[tokio::test]
+    async fn an_admitted_filter_keeps_the_filter_as_written() {
+        let written = parse("speed>5").expect("the filter parses");
+        let filter = admit_q_filter::<Refused, _>(&written, admission(LanguageTargeting::Specification), &Hops::Admitted).expect("the filter is admitted");
+        compile_q_filter(&filter, &FilterOptIns::default(), &EXPANDER)
+            .await
+            .expect("the filter compiles");
+        pretty_assertions::assert_eq!(filter.written(), &written);
     }
 }

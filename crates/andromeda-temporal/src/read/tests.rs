@@ -3,14 +3,14 @@
 use crate::{
     service::TemporalService,
     service_limits::TemporalServiceLimits,
-    stub_broker::{StubBroker, limits, live_target, service_under, uri},
+    stub_broker::{StubBroker, admitted, limits, live_target, service_under, uri},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, time::date_time::NgsiLdDateTime, time_rel::TimeRel};
 use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalHistoryRow, TemporalValue, evolution_instance::EvolutionInstance};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::temporal::{continuation::TemporalContinuation, window::TimeInterval};
-use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, admitted::AdmittedTemporalRequest};
 use chrono::{DateTime, Duration, Utc};
 use std::{num::NonZeroU32, sync::Arc};
 
@@ -56,13 +56,13 @@ fn paging_service(rows: Vec<TemporalHistoryRow>) -> TemporalService {
     )
 }
 
-fn after_2020(last_n: Option<u32>) -> TemporalQueryParameters {
-    TemporalQueryParameters {
+fn after_2020(last_n: Option<u32>) -> AdmittedTemporalRequest {
+    admitted(TemporalQueryParameters {
         timerel: Some(TimeRel::After),
         time_at: Some("2020-01-01T00:00:00Z".parse().expect("a valid instant")),
         last_n: last_n.and_then(NonZeroU32::new),
         ..TemporalQueryParameters::default()
-    }
+    })
 }
 
 /// Clause 6.3.10: a forward page ends on the most recent instant it served,

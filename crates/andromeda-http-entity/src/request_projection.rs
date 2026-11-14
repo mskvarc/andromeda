@@ -12,9 +12,9 @@
 
 use andromeda_entity::{error::EntityError, query::EntityQueryService};
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_linked_retrieval::{admission::LinkedOperation, narrowing::list::ListInForce};
+use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_query::{entity::compiled::CompiledEntityQuery, projection::compiled::Projection};
-use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
+use andromeda_ngsi_ld_request::query::entity::admitted::AdmittedEntityQuery;
 
 /// The compiled query a response's projection is read from, held so the
 /// borrows handed to the renderer and the join outlive it.
@@ -31,14 +31,10 @@ impl RequestProjection {
     ///
     /// Returns [`EntityError`] when the query cannot be compiled against the
     /// active context.
-    pub(crate) async fn of(service: &EntityQueryService, params: &EntityQueryParameters, context: &ContextSpec) -> Result<RequestProjection, EntityError> {
+    pub(crate) async fn of(service: &EntityQueryService, params: &AdmittedEntityQuery, context: &ContextSpec) -> Result<RequestProjection, EntityError> {
         let compiled = match (params.pick.as_ref(), params.omit.as_ref(), params.attrs.as_ref()) {
             (None, None, None) => None,
-            (Some(_), _, _) | (_, Some(_), _) | (_, _, Some(_)) => Some(
-                service
-                    .compile_query_public(params, context, service.language_targeting(), LinkedOperation::QueryEntities)
-                    .await?,
-            ),
+            (Some(_), _, _) | (_, Some(_), _) | (_, _, Some(_)) => Some(service.compile_query_public(params, context, service.language_targeting()).await?),
         };
         Ok(RequestProjection { compiled })
     }

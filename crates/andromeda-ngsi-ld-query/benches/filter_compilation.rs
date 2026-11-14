@@ -8,37 +8,11 @@
 use andromeda_ngsi_ld_query::{
     error::QueryError,
     filter::{expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes, parser::parse},
-    term_expander::{TermExpander, TermExpansionFailure},
+    namespace_expander::EXAMPLE_NAMESPACE,
 };
 use criterion::Criterion;
-use iri_rs::IriBuf;
-use std::{
-    future::{Future, ready},
-    hint::black_box,
-    io,
-};
+use std::{hint::black_box, io};
 use tokio::runtime::Builder;
-
-/// Expands every term under one vocabulary, as a context with an `@vocab`
-/// does, with no JSON-LD processor.
-struct PrefixExpander;
-
-impl PrefixExpander {
-    /// The IRI `term` expands to.
-    fn expanded(term: &str) -> Result<IriBuf, QueryError> {
-        IriBuf::new(format!("https://example.com/{term}")).map_err(|_| QueryError::TermExpansion(TermExpansionFailure::NotAnIri))
-    }
-}
-
-impl TermExpander for PrefixExpander {
-    fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-        ready(PrefixExpander::expanded(term))
-    }
-
-    fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-        ready(PrefixExpander::expanded(term))
-    }
-}
 
 /// A filter of a hundred terms over twenty Attributes, every operator among
 /// them, in groups of five joined by `|`.
@@ -79,7 +53,7 @@ fn main() -> Result<(), SetupError> {
     let mut group = criterion.benchmark_group("compile-100-terms");
     group.bench_function("parse", |bencher| bencher.iter(|| parse(black_box(&written))));
     group.bench_function("expand", |bencher| {
-        bencher.iter(|| runtime.block_on(expand_q_expr(black_box(parsed.clone()), &json_keys, &PrefixExpander)));
+        bencher.iter(|| runtime.block_on(expand_q_expr(black_box(parsed.clone()), &json_keys, &EXAMPLE_NAMESPACE)));
     });
     group.finish();
     criterion.final_summary();

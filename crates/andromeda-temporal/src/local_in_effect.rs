@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{projection::attrs_selection::AttrsAdmission, split_filter::SplitFilter};
 use andromeda_ngsi_ld_render::temporal::history_row::neutral_row_to_instance;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
 use indexmap::IndexMap;
 use std::collections::HashMap;
 
@@ -69,7 +69,7 @@ impl TemporalService {
     pub async fn read_local_in_effect(
         &self,
         target: &ContextTarget,
-        params: &TemporalQueryParameters,
+        params: &AdmittedTemporalRequest,
         reading: QueryReading<'_>,
         entity_ids: &[Identifier],
     ) -> Result<LocalInEffect, TemporalError> {

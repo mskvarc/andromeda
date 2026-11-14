@@ -92,12 +92,12 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         api_root,
         headers,
         context,
-        mut params,
+        params,
         page,
         posted,
     } = request;
     let service = &state.temporal;
-    let admitted = admit_request(&state, &target, &context, protocol, &mut params, &uri).await?;
+    let (params, admitted) = admit_request(&state, &target, &context, protocol, params, &uri).await?;
     let scope = QueryScope::of(&target, &params);
 
     let split = state.forwarding.split_entities(params.split_entities);
@@ -120,7 +120,6 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         params: &params,
         context: &context,
         language_targeting: admitted.language.targeting,
-        operation: admitted.operation,
         attrs_admission: AttrsAdmission::ReifiedScopeAdmitted,
     };
     let (local_result, local_total) = query_local_history(&read, &admitted, &local, &contributed, &uri).await?;

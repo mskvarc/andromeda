@@ -30,6 +30,7 @@ use andromeda_ngsi_ld_query::ordering::parameters::OrderingParameters;
 use andromeda_ngsi_ld_request::{
     error::ParameterError,
     query::entity::{
+        admitted::AdmittedEntityQuery,
         operation::EntityQueryOperation,
         parameters::{EntityQueryParameters, EntityQueryParametersOptions},
     },
@@ -60,7 +61,8 @@ pub(crate) struct AdmittedQuery {
     pub(crate) language: NegotiatedLanguageTargeting,
 }
 
-/// Hold the query to every rule that can be decided before it runs, and
+/// Hold the query to every rule that can be decided before it runs, admitting
+/// its `q` under the broker's complexity limits and target-language level, and
 /// resolve the Entity Map it runs under.
 ///
 /// A branch that cannot federate is confined to the local scope first: clause
@@ -69,39 +71,34 @@ pub(crate) struct AdmittedQuery {
 ///
 /// # Errors
 ///
-/// The classified failure of the clause 5.7.2.4 validation, of resolving the Entity Map, of the Table 6.3.7-1
-/// options, of expanding the registration filters, of the clause 5.7.2.4 ordering rule, of
-/// the clause 5.5.6 `q` complexity limits, and of admitting the `q` target
-/// languages under the broker's
-/// `q_target_languages` level and the levels of the sources the query reaches.
+/// The classified failure of the clause 5.7.2.4 validation, of the clause 5.5.6
+/// `q` complexity limits and the broker's `q_target_languages` level, of
+/// resolving the Entity Map, of the Table 6.3.7-1 options, of expanding the
+/// registration filters, of the clause 5.7.2.4 ordering rule, and of the
+/// levels of the sources the query reaches.
 pub(crate) async fn admit_request(
     state: &EntityRouteServices,
     target: &ContextTarget,
     context: &AdmittedContext,
     protocol: NgsiLdProtocolHeaders,
-    query: &mut EntityQueryParameters,
+    mut query: EntityQueryParameters,
     binding: &QueryBinding,
     instance: &HttpUri,
-) -> Result<AdmittedQuery, ProblemResponse> {
+) -> Result<(AdmittedEntityQuery, AdmittedQuery), ProblemResponse> {
     if !target.permits_federation() {
         query.local = Some(true);
     }
-    query.validate(EntityQueryOperation::Query).with_entity_instance(instance)?;
-    let referenced = protocol.entity_map.as_ref().map(NgsiLdEntityMap::as_inner);
-    let map_use = resolve_query_map_use(&state.entity_maps, target, query, referenced, instance).await?;
-    let opts = query.parse_options().with_entity_instance(instance)?;
-    let registration_filters = registration_filters(state, context, query, instance).await?;
     let service = &state.entity_query;
-    // The broker refuses a filter too complex for it to resolve, and a target
-    // language its own `q_target_languages` level does not admit, before any
-    // source is asked.
-    if let Some(q) = &query.q {
-        service.filter_complexity().admit(q).with_entity_instance(instance)?;
-        service.language_targeting().admit(q).with_entity_instance(instance)?;
-    }
+    let mut query = query
+        .admit(EntityQueryOperation::Query, service.filter_admission())
+        .with_entity_instance(instance)?;
+    let referenced = protocol.entity_map.as_ref().map(NgsiLdEntityMap::as_inner);
+    let map_use = resolve_query_map_use(&state.entity_maps, target, &mut query, referenced, instance).await?;
+    let opts = query.parse_options().with_entity_instance(instance)?;
+    let registration_filters = registration_filters(state, context, &query, instance).await?;
     let read = ParticipatingRead {
         requested_scope: query.execution_scope(),
-        client_query: ClientQuery::EntityQuery(query),
+        client_query: ClientQuery::EntityQuery(&query),
         geo: registration_filters.geo(),
         operation: binding.forwarding_operation(),
         entity_map: EntityMapInUse::from(&map_use),
@@ -112,15 +109,17 @@ pub(crate) async fn admit_request(
         .negotiate_language_targeting(target, context, &read, service.language_targeting(), advertised_language_targeting)
         .await
         .with_entity_instance(instance)?;
-    Ok(AdmittedQuery {
-        language_filter: query.lang.take().or(protocol.language_filter),
+    let language_filter = query.take_language().or(protocol.language_filter);
+    let admitted = AdmittedQuery {
+        language_filter,
         prefer: protocol.prefer,
         incoming_via: protocol.incoming_via,
         map_use,
         opts,
         registration_filters,
         language,
-    })
+    };
+    Ok((query, admitted))
 }
 
 /// The query's context source filter and geoquery expanded under the

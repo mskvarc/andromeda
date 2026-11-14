@@ -3,7 +3,6 @@ use crate::{
     queried_entity::{expanded_fixture::FixtureEntity, linked_entities::NoLinkedEntities},
 };
 use andromeda_ngsi_ld_query::{
-    error::QueryError,
     filter::{
         expansion::expand_q_expr,
         expression::Expr,
@@ -12,29 +11,14 @@ use andromeda_ngsi_ld_query::{
         parser::parse,
         serialize::{serialize, serialize_written_members},
     },
-    term_expander::TermExpander,
+    namespace_expander::EXAMPLE_NAMESPACE,
 };
-use iri_rs::IriBuf;
 use serde_json::json;
-use std::future::{Future, ready};
-
-/// Expands every term under `https://example.com/`, as a `@vocab` would.
-struct VocabExpander;
-
-impl TermExpander for VocabExpander {
-    fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-        ready(Ok(IriBuf::new(format!("https://example.com/{term}")).expect("an IRI")))
-    }
-
-    fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-        self.expand_term(term)
-    }
-}
 
 /// The filter as a store reads it back: the expanded text, joined with the
 /// written spelling of its members.
 async fn persisted_round_trip(q: &str) -> Expr {
-    let expanded = expand_q_expr(parse(q).expect("parses"), &JsonKeyAttributes::default(), &VocabExpander)
+    let expanded = expand_q_expr(parse(q).expect("parses"), &JsonKeyAttributes::default(), &EXAMPLE_NAMESPACE)
         .await
         .expect("expands");
     let addressed: Expr = serialize(&expanded).parse().expect("the expanded text parses");

@@ -41,6 +41,7 @@ pub(crate) async fn delete_by_query(
     TemporalDeleteQuery(params): TemporalDeleteQuery,
 ) -> Result<Response, ProblemResponse> {
     let context = context.into_inner();
+    let params = params.admit(state.temporal.filter_admission()).with_instance(&uri)?;
     let outcome = state.temporal.delete_by_query(&target, &params, &context).await.with_instance(&uri)?;
     match outcome {
         // A dry run removed nothing and reports what it would have; the count is

@@ -2,12 +2,11 @@
 
 use crate::{error::TemporalError, instance_limits::TemporalInstanceLimits, query_reading::QueryReading, service::TemporalService};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander};
-use andromeda_linked_retrieval::filter_hops::FilterHops;
 use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
 use andromeda_ngsi_ld_query::{
     entity_selection::{ConsideredEntities, EntitySelection},
     filter::{
-        compilation::{FilterAdmission, FilterOptIns, compile_q_filter},
+        compilation::{FilterOptIns, compile_q_filter},
         expansion::expand_attr_path,
         json_key_attributes::JsonKeyAttributes,
         trailing_members::TrailingMembers,
@@ -32,36 +31,33 @@ use andromeda_ngsi_ld_query::{
     },
     term_expander::TermExpander,
 };
-use andromeda_ngsi_ld_request::{error::ParameterError, query::temporal::TemporalQueryParameters};
+use andromeda_ngsi_ld_request::{
+    error::ParameterError,
+    query::temporal::{TemporalQueryParameters, admitted::AdmittedTemporalRequest},
+};
 use std::num::NonZeroU32;
 
 impl TemporalService {
-    /// Validate, expand, and compile temporal query parameters as `reading`
-    /// reads them: their terms expanded under its JSON-LD context, the `q`
-    /// target languages admitted and matched under its level, and the hops of
-    /// the `q` admitted for its operation.
+    /// Expand and compile admitted temporal query parameters as `reading` reads
+    /// them: their terms expanded under its JSON-LD context and the `q` target
+    /// languages matched under its level.
     ///
     /// # Errors
     ///
     /// Returns [`TemporalError::Query`] when a selector, `q` filter, geo
-    /// selection or projection term is not well formed, when the `q` filter is
-    /// too complex to resolve (clause 5.5.6), when the
+    /// selection or projection term is not well formed, when the
     /// `timerel` / `timeAt` / `endTimeAt` triple does not describe an interval
     /// (clause 5.7.4.4), or when the ordering names something clause 5.7.4.3
-    /// does not admit, [`TemporalError::Request`] when a hop of the `q` is one
-    /// the operation does not admit, and [`TemporalError::JsonLd`] when a term
-    /// cannot be expanded against the context.
+    /// does not admit, [`TemporalError::Request`] when a query parameter
+    /// cannot be interpreted, and [`TemporalError::JsonLd`] when a term cannot
+    /// be expanded against the context.
     pub async fn compile_temporal_query(
         &self,
-        params: &TemporalQueryParameters,
+        params: &AdmittedTemporalRequest,
         reading: QueryReading<'_>,
         attrs_admission: AttrsAdmission,
     ) -> Result<CompiledTemporalQuery, TemporalError> {
-        let QueryReading {
-            context,
-            language_targeting,
-            operation,
-        } = reading;
+        let QueryReading { context, language_targeting } = reading;
         let prepared_context = self.engine.prepare_term_context(context);
         let expander = ContextualExpander::new(&self.engine, &prepared_context);
         // Clause 5.2.33: a POST temporal query body's `entities[]` is a union of
@@ -79,14 +75,8 @@ impl TemporalService {
             .map_or_default(ToOwned::to_owned);
 
         let opt_ins = FilterOptIns::expanded(params.json_keys.as_deref(), params.expand_values.as_deref(), &expander).await?;
-        let admission = FilterAdmission {
-            complexity: self.limits.filter_complexity,
-            language_targeting,
-        };
-        let hops = FilterHops::new(operation, params.join, params.join_level);
-        // Expansion consumes the AST while the caller retains its request parameters.
-        let q_expr = match params.q.clone() {
-            Some(filter) => Some(compile_q_filter::<TemporalError, _, _>(filter, &opt_ins, admission, &hops, &expander).await?),
+        let q_expr = match params.filter() {
+            Some(filter) => Some(compile_q_filter(filter, &opt_ins, &expander).await?),
             None => None,
         };
         let geo = self.compile_geo_query(params, &prepared_context).await?;
@@ -260,18 +250,12 @@ pub(crate) async fn compile_projection(params: &TemporalQueryParameters, expande
 mod tests {
     use crate::{
         compilation::{compile_grouping, compile_instance_page, compile_representation},
-        error::TemporalError,
         instance_limits::TemporalInstanceLimits,
-        query_reading::QueryReading,
-        stub_broker::{StubBroker, service},
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
-    use andromeda_linked_retrieval::admission::{LinkedOperation, TemporalJoin};
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat};
     use andromeda_ngsi_ld_query::{
-        error::QueryError,
-        filter::{expansion::expand_json_keys, language_targeting::LanguageTargeting},
-        projection::attrs_selection::AttrsAdmission,
+        filter::expansion::expand_json_keys,
         temporal::{aggregation_period::AggregationPeriod, grouping::group_key::GroupKey, instance_page::InstancePage, period_budget::PeriodBudget},
     };
     use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
@@ -436,49 +420,6 @@ mod tests {
                 requested: count(5000)
             }
         );
-    }
-
-    /// Clause 5.5.6: a temporal `q` making more comparisons, or nesting
-    /// deeper, than the broker's default limits (1000 and 16) is
-    /// `TooComplexQuery`; one at them compiles.
-    #[tokio::test]
-    async fn a_temporal_q_past_the_complexity_limits_is_too_complex_and_one_at_them_compiles() {
-        let service = service(StubBroker::new([]));
-        let values = |count: usize| (0..count).map(|value| value.to_string()).collect::<Vec<_>>().join(",");
-        let nested = |levels: usize| (1..levels).fold("a>1;b>1".to_owned(), |inner, level| format!("c{level}>1|({inner})"));
-        for (q, admitted) in [
-            (format!("speed=={}", values(1000)), true),
-            (format!("speed=={}", values(1001)), false),
-            (nested(16), true),
-            (nested(17), false),
-        ] {
-            let params = TemporalQueryParameters {
-                q: Some(q.parse().expect("a valid filter")),
-                ..TemporalQueryParameters::default()
-            };
-            let result = service
-                .compile_temporal_query(
-                    &params,
-                    QueryReading {
-                        context: &ContextSpec::core_only(),
-                        language_targeting: LanguageTargeting::Specification,
-                        operation: LinkedOperation::QueryTemporal(TemporalJoin::Spec),
-                    },
-                    AttrsAdmission::ReifiedScopeAdmitted,
-                )
-                .await;
-            if admitted {
-                assert!(result.is_ok(), "{q}: {result:?}");
-            } else {
-                assert!(
-                    matches!(
-                        result,
-                        Err(TemporalError::Query(QueryError::QTooManyComparisons { .. } | QueryError::QNestedTooDeep { .. }))
-                    ),
-                    "{q}: {result:?}"
-                );
-            }
-        }
     }
 
     /// Clause 4.5.19.1: an aggregation over the whole time range is one

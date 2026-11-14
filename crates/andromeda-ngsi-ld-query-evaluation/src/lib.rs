@@ -29,6 +29,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-value-order",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-q-corpus",
     ],

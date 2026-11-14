@@ -35,7 +35,7 @@ use andromeda_ngsi_ld_query::{
     type_selection::grammar::TypeExprRaw,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
+use andromeda_ngsi_ld_request::query::entity::{operation::EntityQueryOperation, parameters::EntityQueryParameters};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -335,8 +335,11 @@ async fn an_entity_the_store_does_not_hold_is_not_found() {
 /// A clause 5.7.2 query over the one-entity store, its page compacted as a
 /// query response writes it.
 async fn query(parameters: &str) -> Vec<Entity> {
-    let parameters: EntityQueryParameters = serde_urlencoded::from_str(parameters).expect("valid query parameters");
     let service = service();
+    let parameters = serde_urlencoded::from_str::<EntityQueryParameters>(parameters)
+        .expect("valid query parameters")
+        .admit(EntityQueryOperation::Query, service.filter_admission())
+        .expect("a query validation admits");
     let (rows, _) = service
         .query_states(
             &ContextTarget::Live,

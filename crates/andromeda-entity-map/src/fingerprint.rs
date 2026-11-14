@@ -24,11 +24,11 @@ use crate::{entity_map_invariant::EntityMapInvariant, error::EntityMapError};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity_map_fingerprint::{MapRequestKind, RequestFingerprint};
 use andromeda_ngsi_ld_query::{
-    entity_selector_params::EntitySelectorParams,
     filter::expression::Expr,
     geo::input::GeoQueryInput,
     scope::query::ScopeQuery,
     type_selection::grammar::TypeExprRaw,
+    written_entity_selector::WrittenEntitySelector,
 };
 use andromeda_ngsi_ld_request::{
     entity::GetEntityParams,
@@ -100,7 +100,7 @@ struct QueryFilters<'a> {
     csf: Option<&'a Expr>,
     /// The selectors of a POST body's `entities[]` (clause 5.2.33), which
     /// carry the type selection in place of `entity_type` when present.
-    selectors: &'a [EntitySelectorParams],
+    selectors: &'a [WrittenEntitySelector],
 }
 
 impl<'a> From<&'a EntityQueryParameters> for QueryFilters<'a> {
@@ -188,8 +188,8 @@ fn sorted_names(names: &[AttributeName]) -> String {
 /// a body of the selectors `A` and `B` select alike, whatever ids or patterns
 /// those carry. The alternatives are joined with `,`, which no parsed type name
 /// holds, so the result is the clause 4.17 text of the same selection.
-fn type_alternatives(entity_type: Option<&TypeExprRaw>, selectors: &[EntitySelectorParams]) -> Option<String> {
-    let mut alternatives: Vec<String> = EntitySelectorParams::effective(selectors, None, None, entity_type)
+fn type_alternatives(entity_type: Option<&TypeExprRaw>, selectors: &[WrittenEntitySelector]) -> Option<String> {
+    let mut alternatives: Vec<String> = WrittenEntitySelector::effective(selectors, None, None, entity_type)
         .iter()
         .filter_map(|selector| selector.type_.as_ref())
         .flat_map(TypeExprRaw::alternatives)

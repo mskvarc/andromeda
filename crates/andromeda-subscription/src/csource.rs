@@ -1,7 +1,6 @@
 use crate::{
     change::{CsourceSubscriptionChange, UpsertKind},
     error::SubscriptionError,
-    filter_admission::SubscriptionFilterAdmission,
     request_validation,
     term_expansion,
     variant::{CsfReach, DatasetIdPolicy, SubscriptionVariant},
@@ -10,6 +9,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{subscription::Subscription, subscription_request::SubscriptionRequest};
+use andromeda_ngsi_ld_query::filter::compilation::AdmittedFilter;
 use async_trait::async_trait;
 
 /// CSR-subscription-specific behaviour.
@@ -34,9 +34,9 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
         &self,
         request: &mut SubscriptionRequest,
         context: &ContextSpec,
-        admission: SubscriptionFilterAdmission,
+        admitted_q: Option<&AdmittedFilter>,
     ) -> Result<(), SubscriptionError> {
-        term_expansion::expand_common_subscription_terms(&self.engine, request, context, admission).await
+        term_expansion::expand_common_subscription_terms(&self.engine, request, context, admitted_q).await
     }
 
     /// A Context Source Registration Subscription is served as it is stored:

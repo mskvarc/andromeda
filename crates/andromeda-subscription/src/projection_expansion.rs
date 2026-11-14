@@ -50,28 +50,7 @@ async fn expand_projection_lists(lists: &mut [ProjectionList], expander: &impl T
 #[cfg(test)]
 mod tests {
     use crate::{error::SubscriptionError, projection_expansion::expand_notification_projection};
-    use andromeda_ngsi_ld_query::{error::QueryError, projection::grammar::ProjectionList, term_expander::TermExpander};
-    use iri_rs::IriBuf;
-    use std::future::{Future, ready};
-
-    /// Expands a short name under `https://example.com/`, the way a request
-    /// `@context` with that vocabulary does, and keeps a full IRI as written.
-    struct ExampleVocabulary;
-
-    impl TermExpander for ExampleVocabulary {
-        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            let expanded = if term.contains(':') {
-                term.to_owned()
-            } else {
-                format!("https://example.com/{term}")
-            };
-            ready(Ok(IriBuf::new(expanded).expect("valid IRI")))
-        }
-
-        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            self.expand_term(term)
-        }
-    }
+    use andromeda_ngsi_ld_query::{error::QueryError, namespace_expander::EXAMPLE_NAMESPACE, projection::grammar::ProjectionList};
 
     fn lists(raw: &[&str]) -> Vec<ProjectionList> {
         raw.iter().map(|list| list.parse().expect("valid projection list")).collect()
@@ -80,7 +59,7 @@ mod tests {
     async fn expanded(pick: &[&str], omit: &[&str]) -> Result<(Vec<ProjectionList>, Vec<ProjectionList>), SubscriptionError> {
         let mut pick = lists(pick);
         let mut omit = lists(omit);
-        expand_notification_projection(Some(&mut pick), Some(&mut omit), &ExampleVocabulary).await?;
+        expand_notification_projection(Some(&mut pick), Some(&mut omit), &EXAMPLE_NAMESPACE).await?;
         Ok((pick, omit))
     }
 

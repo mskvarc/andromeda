@@ -7,7 +7,7 @@ use crate::{
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_model::query::body::Query;
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity_selector_params::EntitySelectorParams};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, written_entity_selector::WrittenEntitySelector};
 
 impl TryFrom<Query> for EntityQueryParameters {
     type Error = ParameterError;
@@ -17,11 +17,11 @@ impl TryFrom<Query> for EntityQueryParameters {
             return Err(ParameterError::EntityQueryTemporalMembers);
         }
 
-        let entity_selectors: Vec<EntitySelectorParams> = query
+        let entity_selectors: Vec<WrittenEntitySelector> = query
             .entities
             .unwrap_or_default()
             .into_iter()
-            .map(|selector| EntitySelectorParams {
+            .map(|selector| WrittenEntitySelector {
                 id: selector.id,
                 id_pattern: selector.id_pattern,
                 type_: Some(selector.type_),

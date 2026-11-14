@@ -25,14 +25,30 @@ use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
-    filter::language_targeting::LanguageTargeting,
+    filter::{compilation::FilterAdmission, language_targeting::LanguageTargeting},
     geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
     page_window::PageWindow,
     projection::returned_attributes::ReturnedAttributes,
 };
+use andromeda_ngsi_ld_request::query::entity::{admitted::AdmittedEntityQuery, operation::EntityQueryOperation, parameters::EntityQueryParameters};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use async_trait::async_trait;
 use std::{collections::HashMap, sync::Arc};
+
+/// The query `parameters` write, validated for Query Entities under the
+/// admission of the default test service.
+pub(crate) fn admitted_query(parameters: &str) -> AdmittedEntityQuery {
+    serde_urlencoded::from_str::<EntityQueryParameters>(parameters)
+        .expect("valid query parameters")
+        .admit(
+            EntityQueryOperation::Query,
+            FilterAdmission {
+                complexity: filter_complexity_limits(&RequestLimitsConfig::default()),
+                language_targeting: LanguageTargeting::Specification,
+            },
+        )
+        .expect("a query validation admits")
+}
 
 /// A store whose every method is an error: the tests built on it never read.
 struct UnusedStore;

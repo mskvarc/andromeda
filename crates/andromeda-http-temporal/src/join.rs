@@ -69,7 +69,6 @@ pub(crate) async fn apply_temporal_join(
             QueryReading {
                 context: read.context,
                 language_targeting: read.language_targeting,
-                operation: read.operation,
             },
             read.attrs_admission,
         )

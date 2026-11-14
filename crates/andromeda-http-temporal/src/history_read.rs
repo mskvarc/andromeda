@@ -10,9 +10,8 @@
 
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_linked_retrieval::admission::LinkedOperation;
 use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, projection::attrs_selection::AttrsAdmission};
-use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
 use andromeda_temporal::service::TemporalService;
 
 /// One read of temporal history, and what it is bound to.
@@ -23,15 +22,12 @@ pub(crate) struct TemporalHistoryRead<'a> {
     pub(crate) target: &'a ContextTarget,
     /// The query that bounds the read: its temporal window, its filters and
     /// the clause 4.5.23 join it asks for.
-    pub(crate) params: &'a TemporalQueryParameters,
+    pub(crate) params: &'a AdmittedTemporalRequest,
     /// The JSON-LD context the read's terms expand under (clause 6.3.5).
     pub(crate) context: &'a ContextSpec,
     /// What the query's target languages may be and how they select
     /// languageMap keys.
     pub(crate) language_targeting: LanguageTargeting,
-    /// The operation the read answers, under the broker's temporal Linked
-    /// Entity mode, which admits or refuses the hops of its `q`.
-    pub(crate) operation: LinkedOperation,
     /// Which Entity members the read's `attrs` admits, set by the operation the read answers.
     pub(crate) attrs_admission: AttrsAdmission,
 }

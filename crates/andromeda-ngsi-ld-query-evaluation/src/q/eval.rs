@@ -268,7 +268,6 @@ mod tests {
         },
     };
     use andromeda_ngsi_ld_query::{
-        error::QueryError,
         filter::{
             expansion::expand_q_expr,
             expression::Expr,
@@ -277,16 +276,12 @@ mod tests {
             parser::parse,
             path::QueryPath,
         },
-        term_expander::TermExpander,
+        namespace_expander::EXAMPLE_NAMESPACE_TYPED,
     };
     use andromeda_q_corpus::conformance::{COLOR, CONFORMANCE, ConformanceVehicle, NAME, SPEED};
-    use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
     use serde_json::Value;
-    use std::{
-        borrow::Cow,
-        future::{Future, ready},
-    };
+    use std::borrow::Cow;
 
     /// Whether an expanded entity satisfies an expression, read through the
     /// entity traits.
@@ -821,20 +816,6 @@ mod tests {
         assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/wing\"]!=4"));
     }
 
-    /// An expander that prefixes every term, standing in for a request
-    /// `@context` without needing a JSON-LD engine.
-    struct PrefixExpander;
-
-    impl TermExpander for PrefixExpander {
-        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            ready(Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI")))
-        }
-
-        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            ready(Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI")))
-        }
-    }
-
     /// A `JsonProperty`, whose value is raw JSON that JSON-LD expansion never
     /// touches: `hasJSON`'s `@value` holds the object exactly as the client
     /// wrote it, keys included.
@@ -856,7 +837,7 @@ mod tests {
         let expanded = expand_q_expr(
             parse("myJson[city]==\"Berlin\"").expect("parses"),
             &JsonKeyAttributes::default(),
-            &PrefixExpander,
+            &EXAMPLE_NAMESPACE_TYPED,
         )
         .await
         .expect("expands");
@@ -865,7 +846,7 @@ mod tests {
         let non_matching = expand_q_expr(
             parse("myJson[city]==\"Paris\"").expect("parses"),
             &JsonKeyAttributes::default(),
-            &PrefixExpander,
+            &EXAMPLE_NAMESPACE_TYPED,
         )
         .await
         .expect("expands");

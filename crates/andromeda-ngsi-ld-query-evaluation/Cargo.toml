@@ -22,6 +22,7 @@ andromeda-ngsi-ld-value-order.workspace = true
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+andromeda-ngsi-ld-query = { workspace = true, features = ["test-support"] }
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-q-corpus.workspace = true
 iri-rs = { version = "4.1.1", features = ["serde", "static"] }

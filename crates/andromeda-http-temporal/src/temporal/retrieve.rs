@@ -71,8 +71,8 @@ pub(crate) async fn get(
     // read path before anything is forwarded or expanded against it.
     let context = admit_request_context(service.engine(), SubmittedContext::from(context), &uri).await?;
     params.lang = params.lang.take().or(protocol.language_filter);
-    params
-        .validate(TemporalQueryOperation::Retrieve, service.linked_retrieval())
+    let params = params
+        .admit(TemporalQueryOperation::Retrieve, service.linked_retrieval(), service.filter_admission())
         .with_instance(&uri)?;
 
     // Clause 5.7.3.4: a local retrieval contacts no source and uses no map.
@@ -125,7 +125,6 @@ pub(crate) async fn get(
         context: &context,
         // A retrieval carries no `q` (Table 6.19.3.1-1).
         language_targeting: state.temporal.language_targeting(),
-        operation: TemporalQueryOperation::Retrieve.linked(state.temporal.linked_retrieval()),
         attrs_admission: TemporalQueryOperation::Retrieve.attrs_admission(),
     };
     // The history is compacted under the request context once every holder's

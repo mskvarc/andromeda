@@ -21,7 +21,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{
     csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
     filter::{
-        compilation::{FilterOptIns, compile_q_filter},
+        compilation::{FilterOptIns, admit_q_filter, compile_q_filter},
         expansion::expand_csf_expr,
         path::expanded_attribute_name,
         referenced_attributes::referenced_attributes,
@@ -142,13 +142,13 @@ impl RegistrationService {
         // Clause 5.10.2.4: the attributes the `q` filter and the geoquery name
         // match registrations exactly as the `attrs` list does, so they join
         // it; the filter itself is not evaluated against a registration.
-        if let Some(expression) = params.q.clone() {
+        if let Some(expression) = params.q.as_ref() {
             // Clause 5.10.2.3 takes neither `jsonKeys` nor `expandValues`, so no
             // attribute is raw JSON and none admits a bare word; and no clause
             // bounds the hops of a discovery query.
             let hops = FilterHops::new(LinkedOperation::QueryRegistrations, None, None);
-            let expanded_filter =
-                compile_q_filter::<RegistrationError, _, _>(expression, &FilterOptIns::default(), self.filter_admission, &hops, &expander).await?;
+            let admitted = admit_q_filter::<RegistrationError, _>(expression, self.filter_admission, &hops)?;
+            let expanded_filter = compile_q_filter(&admitted, &FilterOptIns::default(), &expander).await?;
             for name in referenced_attributes(&expanded_filter) {
                 let iri = IriBuf::new(name.as_str().to_owned())
                     .map_err(|source| RegistrationError::Validation(RegistrationValidationReason::QNonIriAttribute { source }))?;

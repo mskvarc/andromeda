@@ -42,21 +42,9 @@ fn expand_children<'a, E: TermExpander>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::namespace_expander::EXAMPLE_NAMESPACE_TYPED;
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
-    use std::future::ready;
-
-    struct PrefixExpander;
-
-    impl TermExpander for PrefixExpander {
-        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            ready(Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI")))
-        }
-
-        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            ready(Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI")))
-        }
-    }
 
     fn iri(value: &str) -> IriBuf {
         IriBuf::new(value.to_string()).expect("valid IRI")
@@ -71,7 +59,7 @@ mod tests {
             ]),
             TypeExprRaw::Type("Motorhome".parse().expect("valid type name")),
         ]);
-        let expanded = expand_type_expression(&raw, &PrefixExpander).await.expect("expands");
+        let expanded = expand_type_expression(&raw, &EXAMPLE_NAMESPACE_TYPED).await.expect("expands");
         assert_eq!(
             expanded,
             TypeExpr::Or(vec![

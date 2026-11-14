@@ -5,12 +5,9 @@
 use crate::{error::SubscriptionError, subscription_validation_reason::SubscriptionValidationReason};
 use andromeda_linked_retrieval::admission::{LinkedOperation, LinkedRequest, admit_request};
 use andromeda_ngsi_ld_model::notification_request::NotificationRequest;
-use andromeda_ngsi_ld_query::{
-    filter::expression::Expr,
-    projection::{
-        exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
-        grammar::{ProjectionList, RawProjectionTerm},
-    },
+use andromeda_ngsi_ld_query::projection::{
+    exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
+    grammar::{ProjectionList, RawProjectionTerm},
 };
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 
@@ -32,20 +29,18 @@ pub(crate) const fn validate_endpoint_present(notification: &NotificationRequest
     }
 }
 
-/// Validate the parts of one notification that stand apart from the endpoint,
-/// the `q` the Subscription filters by being the one it shares a Linked Entity
-/// admission with.
+/// Validate the parts of one notification that stand apart from the endpoint.
 ///
 /// # Errors
 ///
 /// Returns the [`SubscriptionError::Validation`] of the first rule the
 /// notification breaks.
-pub(crate) fn validate_notification(notification: &NotificationRequest, q: Option<&Expr>) -> Result<(), SubscriptionError> {
+pub(crate) fn validate_notification(notification: &NotificationRequest) -> Result<(), SubscriptionError> {
     validate_show_changes_format(notification)?;
     validate_projection_exclusivity(notification)?;
     let pick = notification.pick.as_deref().map(projection_terms);
     let omit = notification.omit.as_deref().map(projection_terms);
-    admit_linked_references(notification, pick.as_deref(), omit.as_deref(), q)
+    admit_linked_references(notification, pick.as_deref(), omit.as_deref())
 }
 
 /// Reject a notification combining `pick` or `omit` with the deprecated
@@ -69,8 +64,8 @@ fn validate_projection_exclusivity(notification: &NotificationRequest) -> Result
 }
 
 /// Admit the Linked Entity references of a subscription: the clause 4.21
-/// nesting of `pick`/`omit`, the clause 4.9 hops of `q` and the retrieving
-/// `notification.join`.
+/// nesting of `pick`/`omit` and the retrieving `notification.join`. The hops of
+/// its `q` are admitted with the filter itself.
 ///
 /// Clause 5.8.1.4 adds a Subscription that passes the clause 5.2.12 checks,
 /// none of which bounds these references, so the engine admits every one.
@@ -78,12 +73,10 @@ fn admit_linked_references(
     notification: &NotificationRequest,
     pick: Option<&[RawProjectionTerm]>,
     omit: Option<&[RawProjectionTerm]>,
-    q: Option<&Expr>,
 ) -> Result<(), SubscriptionError> {
     let request = LinkedRequest::builder()
         .pick(pick)
         .omit(omit)
-        .q(q)
         .join(notification.join)
         .join_level(notification.join_level)
         .build();
@@ -140,7 +133,7 @@ mod tests {
     fn show_changes_under_a_simplified_notification_format_is_rejected() {
         for format in ["keyValues", "simplified"] {
             let notification = notification(json!({"format": format, "showChanges": true, "endpoint": {"uri": "http://127.0.0.1:8085/notify"}}));
-            let error = validate_notification(&notification, None).expect_err("clause 5.2.14.1 forbids the combination");
+            let error = validate_notification(&notification).expect_err("clause 5.2.14.1 forbids the combination");
             assert!(error.to_string().contains("showChanges"), "{format}: {error}");
         }
     }
@@ -151,7 +144,7 @@ mod tests {
     fn show_changes_under_a_normalized_or_concise_format_is_accepted() {
         for format in ["normalized", "concise"] {
             let notification = notification(json!({"format": format, "showChanges": true, "endpoint": {"uri": "http://127.0.0.1:8085/notify"}}));
-            let result = validate_notification(&notification, None);
+            let result = validate_notification(&notification);
             assert!(result.is_ok(), "{format}: {result:?}");
         }
     }
@@ -164,7 +157,7 @@ mod tests {
             json!({"pick": ["id"], "attributes": ["speed"]}),
             json!({"omit": ["type"], "attributes": ["speed"]}),
         ] {
-            let result = validate_notification(&notification(wire.clone()), None);
+            let result = validate_notification(&notification(wire.clone()));
             assert!(
                 matches!(&result, Err(SubscriptionError::Validation(SubscriptionValidationReason::Projection(_)))),
                 "{wire}: {result:?}"
@@ -174,7 +167,7 @@ mod tests {
 
     #[test]
     fn pick_and_omit_of_different_members_are_admitted() {
-        let result = validate_notification(&notification(json!({"pick": ["id", "speed"], "omit": ["type"]})), None);
+        let result = validate_notification(&notification(json!({"pick": ["id", "speed"], "omit": ["type"]})));
         assert!(result.is_ok(), "{result:?}");
     }
 
@@ -183,13 +176,12 @@ mod tests {
     /// deeper than `joinLevel` alike.
     #[test]
     fn a_nested_pick_without_join_is_admitted() {
-        let q = "owner{name}==\"x\"".parse().expect("a filter with a hop");
         for wire in [
             json!({"pick": ["id", "owner{name}"]}),
             json!({"pick": ["owner{employer{name}}"], "join": "flat", "joinLevel": 1}),
             json!({"omit": ["owner{email}"], "join": "@none"}),
         ] {
-            let result = validate_notification(&notification(wire.clone()), Some(&q));
+            let result = validate_notification(&notification(wire.clone()));
             assert!(result.is_ok(), "{wire}: {result:?}");
         }
     }

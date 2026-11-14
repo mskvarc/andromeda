@@ -18,7 +18,7 @@ use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
-use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
+use andromeda_ngsi_ld_request::query::entity::admitted::AdmittedEntityQuery;
 use axum::http::Uri as HttpUri;
 
 /// The entities this broker holds itself for a query page.
@@ -47,7 +47,7 @@ pub(crate) struct LocalVersions {
 pub(crate) async fn local_versions(
     service: &EntityQueryService,
     target: &ContextTarget,
-    query: &EntityQueryParameters,
+    query: &AdmittedEntityQuery,
     page: &QueryPage,
     context: &AdmittedContext,
     targeting: LanguageTargeting,

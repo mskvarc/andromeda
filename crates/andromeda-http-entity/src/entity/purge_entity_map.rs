@@ -36,7 +36,7 @@ use andromeda_federation::request::EntityMapInUse;
 use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
 use andromeda_http_response::{headers::with_entity_map, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
-use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
+use andromeda_ngsi_ld_request::query::{entity::admitted::AdmittedEntityQuery, selection_mut::SelectionMut};
 use axum::{http::Uri as HttpUri, response::Response};
 
 /// Which `EntityMap` a purge determined its entities from (Table 6.4.3.3-2).
@@ -95,7 +95,7 @@ impl PurgeEntityMap {
 pub(crate) async fn resolve_purge_map(
     maps: &EntityMapService,
     target: &ContextTarget,
-    query: &mut EntityQueryParameters,
+    query: &mut AdmittedEntityQuery,
     referenced: Option<&NgsiLdEntityMap>,
     instance: &HttpUri,
 ) -> Result<PurgeEntityMap, ProblemResponse> {
@@ -109,7 +109,8 @@ pub(crate) async fn resolve_purge_map(
     let resolved = maps.resolve_reuse(referenced.as_inner(), &fingerprint).await.with_entity_instance(instance)?;
     match resolved {
         ReferencedEntityMap::Live(map) => {
-            hold_selection_to_map(&map, &mut query.id, &mut query.entity_selectors);
+            let SelectionMut { id, entity_selectors } = query.selection_mut();
+            hold_selection_to_map(&map, id, entity_selectors);
             // `resolve_reuse` already hands back a boxed map.
             Ok(PurgeEntityMap::Used(map))
         }

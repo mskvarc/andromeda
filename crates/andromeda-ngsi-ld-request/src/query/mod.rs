@@ -11,7 +11,11 @@
 pub mod csr;
 pub mod deserialization;
 pub mod entity;
+pub mod filter_not_admitted;
 pub mod parameter_error;
+#[cfg(test)]
+pub(crate) mod permissive_admission;
+pub mod selection_mut;
 pub mod temporal;
 
 use crate::pagination::page_size::{BROKER_PAGE_SIZE_CAP, PageSizeBounds};

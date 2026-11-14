@@ -1,7 +1,10 @@
-use crate::admission::{AdmissionError, LinkedMember, LinkedOperation, LinkedRequest, ReachingMember, TemporalJoin, admit_request};
+use crate::{
+    admission::{AdmissionError, LinkedMember, LinkedOperation, LinkedRequest, ReachingMember, TemporalJoin, admit_request},
+    filter_hops::FilterHops,
+};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
-    filter::expression::Expr,
+    filter::{expression::Expr, hop_admission::FilterHopAdmission},
     projection::grammar::{ProjectionList, RawProjectionTerm},
 };
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
@@ -43,13 +46,10 @@ impl Case {
     fn admit(&self, operation: LinkedOperation) -> Result<(), AdmissionError> {
         let pick: Option<Vec<RawProjectionTerm>> = self.pick.map(|raw| Vec::from(raw.parse::<ProjectionList>().expect("valid projection list")));
         let q: Option<Expr> = self.q.map(|raw| raw.parse().expect("valid filter"));
-        let request = LinkedRequest::builder()
-            .pick(pick.as_deref())
-            .q(q.as_ref())
-            .join(self.join)
-            .join_level(self.join_level.and_then(NonZeroU32::new))
-            .build();
-        admit_request(operation, &request)
+        let join_level = self.join_level.and_then(NonZeroU32::new);
+        let request = LinkedRequest::builder().pick(pick.as_deref()).join(self.join).join_level(join_level).build();
+        admit_request(operation, &request)?;
+        q.map_or(Ok(()), |q| FilterHops::new(operation, self.join, join_level).admit_hops(&q))
     }
 }
 

@@ -73,31 +73,18 @@ fn refused_keyword(name: &AttributeName, admission: AttrsAdmission) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{AttrsAdmission, expand_attrs_admitted};
-    use crate::{error::QueryError, term_expander::TermExpander};
+    use crate::{
+        error::QueryError,
+        namespace_expander::{EXAMPLE_NAMESPACE_TYPED, NamespaceExpander},
+    };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
-    use std::future::ready;
 
-    /// Expands `sc` to the Scope IRI, passes absolute IRIs through and prefixes
-    /// every other term with `https://example.com/`.
-    struct ScopeAliasExpander;
-
-    impl TermExpander for ScopeAliasExpander {
-        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            let iri = match term {
-                "scope" | "sc" => expanded_properties::SCOPE.as_str().to_owned(),
-                _ if term.starts_with("https://") => term.to_owned(),
-                _ => format!("https://example.com/{term}"),
-            };
-            ready(Ok(IriBuf::new(iri).expect("valid IRI")))
-        }
-
-        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            ready(Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI")))
-        }
-    }
+    /// Expands `sc` to the Scope IRI like the shared expander does `scope`.
+    const SCOPE_ALIASES: NamespaceExpander =
+        EXAMPLE_NAMESPACE_TYPED.with_core_members(&[("scope", expanded_properties::SCOPE), ("sc", expanded_properties::SCOPE)]);
 
     fn names(raw: &[&str]) -> Vec<AttributeName> {
         raw.iter().map(|name| name.parse::<AttributeName>().expect("a valid name")).collect()
@@ -108,7 +95,7 @@ mod tests {
         let expanded = expand_attrs_admitted(
             &names(&["speed", "https://example.org/temperature"]),
             AttrsAdmission::AttributeNamesOnly,
-            &ScopeAliasExpander,
+            &SCOPE_ALIASES,
         )
         .await;
         assert_eq!(
@@ -124,7 +111,7 @@ mod tests {
     async fn the_compact_identity_members_are_refused_under_every_admission() {
         for admission in [AttrsAdmission::AttributeNamesOnly, AttrsAdmission::ReifiedScopeAdmitted] {
             for member in ["id", "type"] {
-                let refused = expand_attrs_admitted(&names(&["speed", member]), admission, &ScopeAliasExpander).await;
+                let refused = expand_attrs_admitted(&names(&["speed", member]), admission, &SCOPE_ALIASES).await;
                 assert!(
                     matches!(refused, Err(QueryError::AttrsReservedMember { ref term }) if term.as_str() == member),
                     "{member} must be refused under {admission:?}, got {refused:?}"
@@ -135,13 +122,13 @@ mod tests {
 
     #[tokio::test]
     async fn the_compact_scope_is_refused_only_where_the_scope_is_not_an_attribute() {
-        let refused = expand_attrs_admitted(&names(&["scope"]), AttrsAdmission::AttributeNamesOnly, &ScopeAliasExpander).await;
+        let refused = expand_attrs_admitted(&names(&["scope"]), AttrsAdmission::AttributeNamesOnly, &SCOPE_ALIASES).await;
         assert!(
             matches!(refused, Err(QueryError::AttrsReservedMember { ref term }) if term.as_str() == "scope"),
             "{refused:?}"
         );
 
-        let admitted = expand_attrs_admitted(&names(&["scope"]), AttrsAdmission::ReifiedScopeAdmitted, &ScopeAliasExpander).await;
+        let admitted = expand_attrs_admitted(&names(&["scope"]), AttrsAdmission::ReifiedScopeAdmitted, &SCOPE_ALIASES).await;
         assert_eq!(
             admitted.expect("the reified scope is an attribute"),
             vec![IriBuf::new(expanded_properties::SCOPE.as_str().to_owned()).expect("valid IRI")]
@@ -153,7 +140,7 @@ mod tests {
         let refused = expand_attrs_admitted(
             &names(&["https://uri.etsi.org/ngsi-ld/scope"]),
             AttrsAdmission::AttributeNamesOnly,
-            &ScopeAliasExpander,
+            &SCOPE_ALIASES,
         )
         .await;
         assert!(
@@ -164,7 +151,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_context_alias_of_the_scope_is_refused_as_the_scope_under_attribute_names_only() {
-        let refused = expand_attrs_admitted(&names(&["sc"]), AttrsAdmission::AttributeNamesOnly, &ScopeAliasExpander).await;
+        let refused = expand_attrs_admitted(&names(&["sc"]), AttrsAdmission::AttributeNamesOnly, &SCOPE_ALIASES).await;
         assert!(
             matches!(refused, Err(QueryError::AttrsReservedMember { ref term }) if term.as_str() == "sc"),
             "{refused:?}"

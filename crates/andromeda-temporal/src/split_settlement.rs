@@ -38,7 +38,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_query_evaluation::split_filter::leaf_truths;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
-use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
 use std::collections::{HashMap, HashSet};
 
 /// Which of the contributed entities the filters keep.
@@ -76,7 +76,7 @@ impl TemporalService {
     pub async fn settle_split_filters(
         &self,
         target: &ContextTarget,
-        params: &TemporalQueryParameters,
+        params: &AdmittedTemporalRequest,
         reading: QueryReading<'_>,
         answered: &AnsweredParts<'_>,
         local: &LocalInEffect,

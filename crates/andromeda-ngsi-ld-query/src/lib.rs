@@ -32,11 +32,12 @@ pub mod defined_token;
 pub mod entity;
 pub mod entity_filters;
 pub mod entity_selection;
-pub mod entity_selector_params;
 pub mod error;
 pub mod filter;
 pub mod geo;
 pub mod identifier_axis;
+#[cfg(any(test, feature = "test-support"))]
+pub mod namespace_expander;
 pub mod non_posix_construct;
 pub mod ordering;
 pub mod page_reach;
@@ -44,8 +45,6 @@ pub mod page_window;
 pub mod pattern;
 pub mod portable_pattern;
 pub mod posix_dialect;
-#[cfg(test)]
-mod prefix_expander;
 pub mod projection;
 pub mod read_order;
 pub mod scope;
@@ -56,6 +55,7 @@ pub mod temporal;
 pub mod term_compactor;
 pub mod term_expander;
 pub mod type_selection;
+pub mod written_entity_selector;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

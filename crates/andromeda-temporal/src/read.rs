@@ -25,18 +25,19 @@ use andromeda_ngsi_ld_query::{
     projection::attrs_selection::AttrsAdmission,
     temporal::compiled::CompiledTemporalQuery,
 };
-use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation};
+use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
 use andromeda_telemetry::temporal::{self, TemporalOperation};
 use std::{collections::HashMap, slice::from_ref};
 
 impl TemporalService {
-    /// Retrieve and render one temporal entity under the supplied query parameters.
+    /// Retrieve and render one temporal entity under the supplied admitted
+    /// query parameters.
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalError::Request`] when the parameters do not satisfy
-    /// clause 5.7.3 or name an attribute that is ineligible for a requested
-    /// aggregation method (clause 5.7.4.4), [`TemporalError::NotFound`] when the
+    /// Returns [`TemporalError::Request`] when the parameters name an attribute
+    /// that is ineligible for a requested aggregation method (clause 5.7.4.4),
+    /// [`TemporalError::NotFound`] when the
     /// entity has no Temporal Evolution or an `attrs` filter selects none of
     /// it (clause 5.7.2), and [`TemporalError::Persistence`] or
     /// [`TemporalError::Rendering`] when the history cannot be read or
@@ -45,20 +46,17 @@ impl TemporalService {
         &self,
         target: &ContextTarget,
         entity_id: &Identifier,
-        params: &TemporalQueryParameters,
+        params: &AdmittedTemporalRequest,
         context: &ContextSpec,
     ) -> Result<TemporalReadResult, TemporalError> {
         let timer = temporal::start(TemporalOperation::Retrieve);
         let result = async {
-            params.validate(TemporalQueryOperation::Retrieve, self.linked_retrieval)?;
-
             let compiled = self
                 .compile_temporal_query(
                     params,
                     QueryReading {
                         context,
                         language_targeting: self.language_targeting(),
-                        operation: TemporalQueryOperation::Retrieve.linked(self.linked_retrieval),
                     },
                     AttrsAdmission::AttributeNamesOnly,
                 )
@@ -170,13 +168,12 @@ impl TemporalService {
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalError::Request`] when the parameters do not satisfy
-    /// clause 5.7.4, and [`TemporalError::Persistence`] when the identifiers
-    /// cannot be read.
+    /// Returns [`TemporalError::Query`] when the query does not compile, and
+    /// [`TemporalError::Persistence`] when the identifiers cannot be read.
     pub async fn query_ids(
         &self,
         target: &ContextTarget,
-        params: &TemporalQueryParameters,
+        params: &AdmittedTemporalRequest,
         window: &PageWindow,
         reading: QueryReading<'_>,
         identifiers: RequestedIdentifiers,
@@ -184,7 +181,6 @@ impl TemporalService {
     ) -> Result<Vec<Identifier>, TemporalError> {
         let timer = temporal::start(TemporalOperation::QueryIds);
         let result = async {
-            params.validate(TemporalQueryOperation::Query, self.linked_retrieval)?;
             let mut compiled = self.compile_temporal_query(params, reading, AttrsAdmission::ReifiedScopeAdmitted).await?;
             match identifiers {
                 RequestedIdentifiers::Narrow => {}

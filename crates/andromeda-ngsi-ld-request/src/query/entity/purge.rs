@@ -26,18 +26,21 @@ use crate::{
             deserialize_optional_pattern,
             deserialize_optional_uri_csv,
         },
-        entity::parameters::EntityQueryParameters,
+        entity::{admitted::AdmittedEntityQuery, parameters::EntityQueryParameters},
     },
     query_narrowing::{AdmittedNarrowings, ExecutionScope, NarrowingInputs, require_narrowing, require_wildcard_locality},
     query_parameter::{QueryParameter, QueryParameterSet},
     query_parameter_set,
 };
-use andromeda_linked_retrieval::admission::{LinkedOperation, LinkedRequest, admit_request};
+use andromeda_linked_retrieval::{admission::LinkedOperation, filter_hops::FilterHops};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     dataset::DatasetSelector,
-    filter::expression::Expr,
+    filter::{
+        compilation::{AdmittedFilter, FilterAdmission, admit_q_filter},
+        expression::Expr,
+    },
     ordering::parameters::OrderingParameters,
     pattern::Pattern,
     scope::query::ScopeQuery,
@@ -123,8 +126,9 @@ query_parameter_set!(
 /// runs and the members that say what the purge removes.
 #[derive(Debug)]
 pub struct PurgeSelection {
-    /// The selection, as the Query Entities operation compiles it.
-    pub query: EntityQueryParameters,
+    /// The selection, as the Query Entities operation compiles it, its `q`
+    /// admitted for the purge.
+    pub query: AdmittedEntityQuery,
     /// Attributes removed from every selected entity.
     pub drop: Option<Vec<AttributeName>>,
     /// Attributes every selected entity keeps.
@@ -140,7 +144,9 @@ impl PurgeEntitiesParameters {
         ExecutionScope::of(self.local, self.entity_type.as_ref(), &[])
     }
 
-    /// Validate the purge before its selection runs.
+    /// Validate the purge before its selection runs, and split it into that
+    /// selection, its `q` admitted under `admission`, and what the purge
+    /// removes.
     ///
     /// # Errors
     ///
@@ -149,10 +155,12 @@ impl PurgeEntitiesParameters {
     /// [`ParameterError::WildcardTypeWithLocalFalse`] when `type=*` meets
     /// `local=false`, [`ParameterError::DropKeepExclusive`] when `drop` and
     /// `keep` are both present, [`ParameterError::DatasetIdWithDeleteAll`]
-    /// when `datasetId` and `deleteAll` are, and
+    /// when `datasetId` and `deleteAll` are,
     /// [`ParameterError::LinkedRetrievalUnavailable`] when `q` traverses a
-    /// Linked Entity, which clause 5.6.21.4 refuses.
-    pub fn validate(&self) -> Result<(), ParameterError> {
+    /// Linked Entity, which clause 5.6.21.4 refuses, and
+    /// [`ParameterError::Query`] when the `q` is too complex (clause 5.5.6) or
+    /// names a target language `admission` does not admit.
+    pub fn admit(self, admission: FilterAdmission) -> Result<PurgeSelection, ParameterError> {
         require_narrowing(
             &NarrowingInputs::builder()
                 .admitted(AdmittedNarrowings::ENTITIES)
@@ -174,13 +182,13 @@ impl PurgeEntitiesParameters {
         if self.delete_all == Some(true) && self.dataset_id.is_some() {
             return Err(ParameterError::DatasetIdWithDeleteAll);
         }
-        admit_request(LinkedOperation::PurgeEntities, &LinkedRequest::builder().q(self.q.as_ref()).build())?;
-        Ok(())
+        let hops = FilterHops::new(LinkedOperation::PurgeEntities, None, None);
+        let filter = self.q.as_ref().map(|q| admit_q_filter::<ParameterError, _>(q, admission, &hops)).transpose()?;
+        Ok(self.into_selection(filter))
     }
 
     /// Split the purge into the selection it runs and what it removes.
-    #[must_use]
-    pub fn into_selection(self) -> PurgeSelection {
+    fn into_selection(self, filter: Option<AdmittedFilter>) -> PurgeSelection {
         let query = EntityQueryParameters {
             id: self.id,
             entity_type: self.entity_type,
@@ -212,7 +220,7 @@ impl PurgeEntitiesParameters {
             csf: self.csf,
         };
         PurgeSelection {
-            query,
+            query: AdmittedEntityQuery::admitted(query, filter),
             drop: self.drop,
             keep: self.keep,
             delete_all: self.delete_all,
@@ -222,8 +230,18 @@ impl PurgeEntitiesParameters {
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::ParameterError, query::entity::purge::PurgeEntitiesParameters};
+    use crate::{
+        error::ParameterError,
+        query::{
+            entity::purge::{PurgeEntitiesParameters, PurgeSelection},
+            permissive_admission::PERMISSIVE,
+        },
+    };
     use pretty_assertions::assert_eq;
+
+    fn admitted(query: &str) -> Result<PurgeSelection, ParameterError> {
+        params(query).admit(PERMISSIVE)
+    }
 
     fn params(query: &str) -> PurgeEntitiesParameters {
         serde_urlencoded::from_str(query).expect("a decodable purge")
@@ -279,15 +297,15 @@ mod tests {
     #[test]
     fn a_purge_needs_a_narrowing_input() {
         for query in ["type=Vehicle", "attrs=speed", "drop=speed", "keep=speed", "q=speed%3E1", "local=true"] {
-            assert!(params(query).validate().is_ok(), "{query}");
+            assert!(admitted(query).is_ok(), "{query}");
         }
-        let err = params("id=urn:ngsi-ld:Vehicle:1").validate().expect_err("identifiers alone are too wide");
+        let err = admitted("id=urn:ngsi-ld:Vehicle:1").expect_err("identifiers alone are too wide");
         assert!(matches!(err, ParameterError::SelectorRequired(_)), "{err:?}");
     }
 
     #[test]
     fn drop_and_keep_together_are_refused() {
-        let err = params("type=Vehicle&drop=a&keep=b").validate().expect_err("drop and keep contradict");
+        let err = admitted("type=Vehicle&drop=a&keep=b").expect_err("drop and keep contradict");
         assert!(matches!(err, ParameterError::DropKeepExclusive), "{err:?}");
     }
 
@@ -295,33 +313,32 @@ mod tests {
     /// each scopes a purge on its own.
     #[test]
     fn dataset_id_beside_delete_all_is_refused() {
-        let err = params("type=Vehicle&drop=speed&datasetId=urn:ngsi-ld:Dataset:1&deleteAll=true")
-            .validate()
-            .expect_err("datasetId and deleteAll contradict");
+        let err = admitted("type=Vehicle&drop=speed&datasetId=urn:ngsi-ld:Dataset:1&deleteAll=true").expect_err("datasetId and deleteAll contradict");
         assert!(matches!(err, ParameterError::DatasetIdWithDeleteAll), "{err:?}");
-        assert!(params("type=Vehicle&drop=speed&deleteAll=true").validate().is_ok());
-        assert!(params("type=Vehicle&drop=speed&datasetId=urn:ngsi-ld:Dataset:1").validate().is_ok());
+        assert!(admitted("type=Vehicle&drop=speed&deleteAll=true").is_ok());
+        assert!(admitted("type=Vehicle&drop=speed&datasetId=urn:ngsi-ld:Dataset:1").is_ok());
     }
 
     /// Table 5.2.33-1: `type=*` implies local scope.
     #[test]
     fn a_wildcard_type_is_local_and_refuses_local_false() {
-        assert!(params("type=*").validate().is_ok());
-        let err = params("type=*&local=false").validate().expect_err("type=* contradicts local=false");
+        assert!(admitted("type=*").is_ok());
+        let err = admitted("type=*&local=false").expect_err("type=* contradicts local=false");
         assert!(matches!(err, ParameterError::WildcardTypeWithLocalFalse), "{err:?}");
     }
 
     /// Clause 5.6.21.4: a filter on Linked Entity attributes is refused.
     #[test]
     fn a_q_hop_is_refused() {
-        let err = params("type=Car&q=isParkedIn%7Bcategory%7D").validate().expect_err("purge retrieves nothing");
+        let err = admitted("type=Car&q=isParkedIn%7Bcategory%7D").expect_err("purge retrieves nothing");
         assert!(matches!(err, ParameterError::LinkedRetrievalUnavailable { .. }), "{err:?}");
     }
 
     #[test]
     fn the_selection_keeps_what_selects_and_the_purge_keeps_what_it_removes() {
-        let selection = params("type=Vehicle&q=speed%3E1&local=true&drop=speed&datasetId=@none").into_selection();
+        let selection = admitted("type=Vehicle&q=speed%3E1&local=true&drop=speed&datasetId=@none").expect("a valid purge");
         assert!(selection.query.entity_type.is_some() && selection.query.q.is_some() && selection.query.dataset_id.is_some());
+        assert!(selection.query.filter().is_some(), "the selection carries the admission of its q");
         assert_eq!(selection.query.local, Some(true));
         assert!(selection.drop.is_some() && selection.keep.is_none() && selection.delete_all.is_none());
     }

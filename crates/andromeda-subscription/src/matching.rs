@@ -133,14 +133,16 @@ mod tests {
         error::QueryError,
         filter::language_matching::LanguageMatching,
         geo::{admission::GeoQueryAdmission, compile::compile_geo_query, input::GeoQueryInput, near_distance_band::NearDistanceBand},
+        namespace_expander::EXAMPLE_NAMESPACE,
         projection::compiled::Projection,
-        term_expander::{TermExpander, TermExpansionFailure},
+        term_expander::TermExpander,
     };
     use andromeda_ngsi_ld_query_evaluation::{geo_query::geo_query_matches, queried_entity::linked_entities::NoLinkedEntities};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use chrono::{DateTime, Utc};
     use futures::executor::block_on;
-    use iri_rs::IriBuf;
+    use iri_rs::{Iri, IriBuf};
     use std::{
         fmt::Display,
         future::{Future, ready},
@@ -231,28 +233,29 @@ mod tests {
         event_of(change(EntityLifecycle::Created, AttributeChangeKind::Created))
     }
 
-    /// Resolves every term to the NGSI-LD `location` `GeoProperty`, which is what
-    /// the core context does for the default `geoproperty`.
+    /// Resolves every attribute term to the NGSI-LD `location` `GeoProperty`,
+    /// which is what the core context does for the default `geoproperty`, and
+    /// every type term under `https://example.com/`.
     struct LocationExpander;
 
     impl TermExpander for LocationExpander {
         fn expand_term(&self, _term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            ready(IriBuf::new(LOCATION.to_owned()).map_err(|_| QueryError::TermExpansion(TermExpansionFailure::NotAnIri)))
+            ready(Ok(IriBuf::from(LOCATION)))
         }
 
         fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            ready(IriBuf::new(format!("https://example.com/{term}")).map_err(|_| QueryError::TermExpansion(TermExpansionFailure::NotAnIri)))
+            ready(EXAMPLE_NAMESPACE.type_iri(term))
         }
     }
 
-    const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
+    const LOCATION: Iri<&str> = expanded_properties::LOCATION;
 
     /// A stored entity whose `location` is the point given.
     fn located(longitude: f64, latitude: f64) -> EntityState {
         state(&serde_json::json!([{
             "@id": "urn:ngsi-ld:Building:001",
             "@type": ["https://example.com/Building"],
-            LOCATION: [{
+            (LOCATION.as_str()): [{
                 "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{
                     "@type": ["https://purl.org/geojson/vocab#Point"],
@@ -276,7 +279,7 @@ mod tests {
             "georel": "near;maxDistance==1000",
             "geometry": "Point",
             "coordinates": [13.4, 52.5],
-            "geoproperty": LOCATION
+            "geoproperty": LOCATION.as_str()
         })))
         .expect("the subscription geoQ fixture did not compile");
 
@@ -307,7 +310,7 @@ mod tests {
             "georel": "near;maxDistance==1000",
             "geometry": "Point",
             "coordinates": [13.4, 52.5],
-            "geoproperty": LOCATION
+            "geoproperty": LOCATION.as_str()
         })))
         .expect("the subscription geoQ fixture did not compile");
 

@@ -8,14 +8,18 @@
 use crate::{
     entity_map_lifetime::require_entity_map_for_lifetime,
     error::ParameterError,
-    query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation},
+    query::temporal::{TemporalQueryParameters, admitted::AdmittedTemporalRequest, operation::TemporalQueryOperation},
     query_narrowing::{AdmittedNarrowings, ExecutionScope, NarrowingInputs, require_narrowing, require_wildcard_locality},
     representation_parameter::{SelectedRepresentation, WrittenValue, resolve_representation, selected_representation},
 };
-use andromeda_linked_retrieval::admission::{LinkedRequest, TemporalJoin, admit_request};
+use andromeda_linked_retrieval::{
+    admission::{LinkedRequest, TemporalJoin, admit_request},
+    filter_hops::FilterHops,
+};
 use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
     error::QueryError,
+    filter::compilation::{FilterAdmission, admit_q_filter},
     projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
     temporal::{
         grouping::{AggregationGrouping, group_key::GroupKey},
@@ -114,7 +118,9 @@ impl TemporalQueryParameters {
     }
 
     /// Validate the parameters for `operation`, with temporal Linked Entity
-    /// retrieval as `linked_retrieval` says.
+    /// retrieval as `linked_retrieval` says, and admit the `q` under
+    /// `admission`, the broker's complexity limits and `q_target_languages`
+    /// level.
     ///
     /// The query and the Entity Map it creates require `timerel` and `timeAt`;
     /// the single-entity retrieval takes both or neither.
@@ -134,13 +140,20 @@ impl TemporalQueryParameters {
     /// [`ParameterError::SelectorRequired`] when a query endpoint omits the
     /// temporal window or every entity selector,
     /// [`ParameterError::Query`] when the `timerel`, `timeAt` and `endTimeAt`
-    /// group names no interval, [`ParameterError::AggrMethodsRequired`] when
+    /// group names no interval or the `q` is too complex (clause 5.5.6) or
+    /// names a target language `admission` does not admit,
+    /// [`ParameterError::AggrMethodsRequired`] when
     /// `format=aggregatedValues` carries no aggregation methods,
     /// [`ParameterError::AggregationWithoutAggregatedValues`] when the
     /// aggregation parameters meet any other format, and
     /// [`ParameterError::EntityMapLifetimeWithoutEntityMap`] when a query or a
     /// retrieval names a map lifetime without asking for a map.
-    pub fn validate(&self, operation: TemporalQueryOperation, linked_retrieval: TemporalJoin) -> Result<(), ParameterError> {
+    pub fn admit(
+        self,
+        operation: TemporalQueryOperation,
+        linked_retrieval: TemporalJoin,
+        admission: FilterAdmission,
+    ) -> Result<AdmittedTemporalRequest, ParameterError> {
         // Clause 6.3.20: a `format` or `options` value Table 6.3.12-1 does not
         // define is refused here rather than during deserialisation, where the
         // error type would have been lost.
@@ -158,12 +171,13 @@ impl TemporalQueryParameters {
         let linked = LinkedRequest::builder()
             .pick(self.pick.as_deref())
             .omit(self.omit.as_deref())
-            .q(self.q.as_ref())
             .join(self.join)
             .join_level(self.join_level)
             .contained_by(self.contained_by.as_deref())
             .build();
         admit_request(operation.linked(linked_retrieval), &linked)?;
+        let hops = FilterHops::new(operation.linked(linked_retrieval), self.join, self.join_level);
+        let filter = self.q.as_ref().map(|q| admit_q_filter::<ParameterError, _>(q, admission, &hops)).transpose()?;
         match operation {
             TemporalQueryOperation::Query | TemporalQueryOperation::Retrieve => {
                 require_entity_map_for_lifetime(self.entity_map, self.entity_map_lifetime.as_ref())?;
@@ -204,7 +218,8 @@ impl TemporalQueryParameters {
         // interval, so the request seam builds it rather than re-deriving it.
         self.window().map_err(ParameterError::Query)?;
         self.validate_aggregation()?;
-        self.validate_grouping()
+        self.validate_grouping()?;
+        Ok(AdmittedTemporalRequest::admitted(self, filter))
     }
 
     /// Whether `aggregatedValues` is named by the supported `format` or by the

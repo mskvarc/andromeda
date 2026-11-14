@@ -8,11 +8,12 @@
 //! which change event the store broadcast carries. Naming those four is what
 //! lets `crate::lifecycle` be written once.
 
-use crate::{change::UpsertKind, error::SubscriptionError, filter_admission::SubscriptionFilterAdmission};
+use crate::{change::UpsertKind, error::SubscriptionError};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{subscription::Subscription, subscription_request::SubscriptionRequest};
+use andromeda_ngsi_ld_query::filter::compilation::AdmittedFilter;
 use futures::future::BoxFuture;
 
 /// Controls whether a subscription variant persists clause 5.8 `datasetId`
@@ -43,21 +44,22 @@ pub trait SubscriptionVariant: Send + Sync {
     type Change: Clone + Send + 'static;
 
     /// Expand the request's terms in place under `context` (clause 5.5.7),
-    /// its `q` admitted under `admission`.
+    /// its `q` compiled from `admitted_q`, the admission validation gave it.
     ///
     /// Initialising `jsonldContext` is not part of it: that is a clause 5.8.1.4
     /// creation step, and an update leaves the stored member as it is unless
     /// the fragment names one (clauses 5.8.2.4 and 5.5.8).
-    fn expand_terms<'life0, 'life1, 'life2, 'async_trait>(
+    fn expand_terms<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
         request: &'life1 mut SubscriptionRequest,
         context: &'life2 ContextSpec,
-        admission: SubscriptionFilterAdmission,
+        admitted_q: Option<&'life3 AdmittedFilter>,
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
+        'life3: 'async_trait,
         Self: 'async_trait;
 
     /// Complete a subscription, already spelled in the reader's terms, with

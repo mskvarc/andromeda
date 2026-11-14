@@ -1,11 +1,10 @@
 use crate::{
     merged_parts::{EntityParts, LocalPart},
     query_reading::QueryReading,
-    stub_broker::{StubBroker, live_target, service_over, uri},
+    stub_broker::{StubBroker, admitted, live_target, service_over, uri},
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
-use andromeda_linked_retrieval::admission::{LinkedOperation, TemporalJoin};
 use andromeda_ngsi_ld_expansion::entity_expansion::EntityExpansion;
 use andromeda_ngsi_ld_lexicon::{
     aggr_method::AggrMethod,
@@ -30,7 +29,10 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
 use andromeda_ngsi_ld_representation::compact_node::context_reading::ContextReading;
-use andromeda_ngsi_ld_request::{query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
+use andromeda_ngsi_ld_request::{
+    query::temporal::{TemporalQueryParameters, admitted::AdmittedTemporalRequest},
+    representation_parameter::WrittenValue,
+};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::sync::Arc;
@@ -82,14 +84,14 @@ fn aggregate_of_the_merged_instances(average: i64) -> TemporalAggregationRow {
     }
 }
 
-fn aggregated_query() -> TemporalQueryParameters {
-    TemporalQueryParameters {
+fn aggregated_query() -> AdmittedTemporalRequest {
+    admitted(TemporalQueryParameters {
         timerel: Some(TimeRel::After),
         time_at: Some("2024-01-01T00:00:00Z".parse().expect("a valid instant")),
         format: Some(WrittenValue::Supported(TemporalFormat::AggregatedValues)),
         aggr_methods: Some(vec![AggrMethod::Avg]),
         ..TemporalQueryParameters::default()
-    }
+    })
 }
 
 /// Clause 5.7.4.4: two aggregates of one period are no aggregate of their
@@ -110,7 +112,6 @@ async fn aggregation_over_sources_uses_the_merged_instances() {
             QueryReading {
                 context: &context(),
                 language_targeting: LanguageTargeting::Specification,
-                operation: LinkedOperation::QueryTemporal(TemporalJoin::Spec),
             },
             vec![EntityParts {
                 entity_id: uri("urn:ngsi-ld:T:A"),
@@ -160,7 +161,6 @@ async fn an_excluded_local_part_is_left_to_the_store_and_the_answered_types_name
             QueryReading {
                 context: &context(),
                 language_targeting: LanguageTargeting::Specification,
-                operation: LinkedOperation::QueryTemporal(TemporalJoin::Spec),
             },
             vec![EntityParts {
                 entity_id: uri("urn:ngsi-ld:T:A"),
@@ -192,7 +192,6 @@ async fn an_included_local_part_is_named_by_the_local_catalogue() {
             QueryReading {
                 context: &context(),
                 language_targeting: LanguageTargeting::Specification,
-                operation: LinkedOperation::QueryTemporal(TemporalJoin::Spec),
             },
             vec![EntityParts {
                 entity_id: uri("urn:ngsi-ld:T:A"),

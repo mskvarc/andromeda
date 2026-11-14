@@ -10,13 +10,12 @@
 use crate::{error::EntityError, query::EntityQueryService};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
-use andromeda_linked_retrieval::{admission::LinkedOperation, filter_hops::FilterHops};
 use andromeda_ngsi_ld_entity::{document::EntityDocument, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_query::{
     entity_filters::EntityFilters,
     filter::{
-        compilation::{FilterAdmission, FilterOptIns, compile_q_filter},
+        compilation::{AdmittedFilter, FilterOptIns, compile_q_filter},
         expression::Expr,
         language_targeting::LanguageTargeting,
     },
@@ -36,28 +35,27 @@ impl EntityQueryService {
     /// the model, so the filters, expanded under `context`, are evaluated over
     /// the document each one is. The entities a `rel{…}` hop of `q` crosses
     /// into (clause 4.9) are read from `target` as they stand now, and its
-    /// target languages are admitted and select keys under
-    /// `language_targeting`, the level the request runs under.
+    /// target languages select keys under `language_targeting`, the level the
+    /// request runs under.
     ///
     /// # Errors
     ///
     /// Returns [`EntityError::Query`] when `q` or the geoquery cannot be
-    /// compiled against `context`, [`EntityError::Request`] when a hop of `q`
-    /// reaches past the request's `join`, and the store's [`EntityError`] when the
+    /// compiled against `context`, and the store's [`EntityError`] when the
     /// entities a hop of `q` links to cannot be read.
     pub async fn retain_matching(
         &self,
         target: &ContextTarget,
         entities: Vec<ReceivedState>,
-        mut deferred: DeferredSplitFilters,
+        deferred: DeferredSplitFilters,
         context: &ContextSpec,
         language_targeting: LanguageTargeting,
     ) -> Result<Vec<ReceivedState>, EntityError> {
         // One preparation serves the deferred `q` and the geoquery alike.
         let prepared_context = self.engine().prepare_term_context(context);
         let expander = ContextualExpander::new(self.engine(), &prepared_context);
-        let q = match deferred.q.take() {
-            Some(q_expr) => Some(self.compile_deferred_q(q_expr, &deferred, language_targeting, &expander).await?),
+        let q = match &deferred.q {
+            Some(admitted) => Some(compile_deferred_q(admitted, &deferred, &expander).await?),
             None => None,
         };
         let geo = compile_geo_query(deferred.geo.as_ref(), &expander, self.geo_admission).await?;
@@ -83,28 +81,6 @@ impl EntityQueryService {
             .collect())
     }
 
-    /// Compile the deferred `q`, expanded under the opt-ins and the hop bound
-    /// `deferred` carries.
-    async fn compile_deferred_q(
-        &self,
-        q_expr: Expr,
-        deferred: &DeferredSplitFilters,
-        language_targeting: LanguageTargeting,
-        expander: &impl TermExpander,
-    ) -> Result<Expr, EntityError> {
-        // Clause 4.9 EXAMPLE 11: the deferred filter is expanded under
-        // the same `jsonKeys` declaration the local query used, so one
-        // request has one expansion of one filter.
-        let opt_ins = FilterOptIns::expanded(deferred.json_keys.as_deref(), deferred.expand_values.as_deref(), expander).await?;
-        let admission = FilterAdmission {
-            complexity: self.filter_complexity,
-            language_targeting,
-        };
-        // Clause 5.7.2.4: `splitEntities` belongs to Query Entities.
-        let hops = FilterHops::new(LinkedOperation::QueryEntities, deferred.join, deferred.join_level);
-        compile_q_filter::<EntityError, _, _>(q_expr, &opt_ins, admission, &hops, expander).await
-    }
-
     /// The entities the `rel{…}` hops of `q` cross into from the merged
     /// `documents`, none when `q` takes no hop.
     async fn linked_states_of(
@@ -123,20 +99,40 @@ impl EntityQueryService {
     }
 }
 
+/// Compile the deferred `q`, expanded under the opt-ins `deferred` carries.
+async fn compile_deferred_q(admitted: &AdmittedFilter, deferred: &DeferredSplitFilters, expander: &impl TermExpander) -> Result<Expr, EntityError> {
+    // Clause 4.9 EXAMPLE 11: the deferred filter is expanded under
+    // the same `jsonKeys` declaration the local query used, so one
+    // request has one expansion of one filter.
+    let opt_ins = FilterOptIns::expanded(deferred.json_keys.as_deref(), deferred.expand_values.as_deref(), expander).await?;
+    Ok(compile_q_filter(admitted, &opt_ins, expander).await?)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::query::service_test_double::service;
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_linked_retrieval::{admission::LinkedOperation, filter_hops::FilterHops};
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
     use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
     use andromeda_ngsi_ld_model::entity_system_times::EntitySystemTimes;
     use andromeda_ngsi_ld_query::{
-        filter::{language_targeting::LanguageTargeting, parser::parse},
+        filter::{
+            compilation::{AdmittedFilter, admit_q_filter},
+            language_targeting::LanguageTargeting,
+            parser::parse,
+        },
         scope::query::ScopeQuery,
     };
-    use andromeda_ngsi_ld_request::deferred_split_filters::DeferredSplitFilters;
+    use andromeda_ngsi_ld_request::{deferred_split_filters::DeferredSplitFilters, error::ParameterError};
     use serde_json::json;
+
+    /// The filter `q` writes, admitted for Query Entities under no join.
+    fn admitted(q: &str) -> AdmittedFilter {
+        let hops = FilterHops::new(LinkedOperation::QueryEntities, None, None);
+        admit_q_filter::<ParameterError, _>(&parse(q).expect("q parses"), service().filter_admission(), &hops).expect("the filter is admitted")
+    }
 
     /// A merged Vehicle `id` whose `speed` is `speed`, in the scope `/Madrid`.
     fn vehicle(id: &str, speed: u32) -> ReceivedState {
@@ -177,7 +173,7 @@ mod tests {
     #[tokio::test]
     async fn the_deferred_filters_keep_the_merged_entities_they_admit() {
         let deferred = DeferredSplitFilters {
-            q: Some(parse("\"https://example.com/speed\">50").expect("q parses")),
+            q: Some(admitted("\"https://example.com/speed\">50")),
             scope_q: Some(ScopeQuery::parse("/Madrid").expect("scopeQ parses")),
             ..DeferredSplitFilters::default()
         };

@@ -263,8 +263,6 @@ pub struct LinkedRequest<'r> {
     pub pick: Option<&'r [RawProjectionTerm]>,
     /// The clause 4.21 `omit` terms.
     pub omit: Option<&'r [RawProjectionTerm]>,
-    /// The clause 4.9 `q` filter.
-    pub q: Option<&'r Expr>,
     /// The clause 4.5.23 `join`.
     pub join: Option<JoinMode>,
     /// The clause 4.5.23 `joinLevel`.
@@ -275,7 +273,10 @@ pub struct LinkedRequest<'r> {
 
 /// Admit every Linked Entity reference of `request` for `operation`: the
 /// `joinLevel`, then the `containedBy`, then the retrieving `join`, then the
-/// projection, then the filter.
+/// projection. The hops of a `q` are admitted by [`FilterHops`], which every
+/// `q` pipeline runs once, where it validates its request.
+///
+/// [`FilterHops`]: crate::filter_hops::FilterHops
 ///
 /// # Errors
 ///
@@ -289,7 +290,6 @@ pub fn admit_request(operation: LinkedOperation, request: &LinkedRequest<'_>) ->
     [
         LinkedReference::of_join(request.join),
         LinkedReference::of_projection(request.pick, request.omit),
-        LinkedReference::of_filter(request.q),
     ]
     .into_iter()
     .flatten()

@@ -9,12 +9,11 @@
 
 use crate::{
     error::SubscriptionError,
-    filter_admission::SubscriptionFilterAdmission,
     filter_opt_ins::expanded_opt_ins,
     projection_expansion::expand_notification_projection,
+    subscription_invariant::SubscriptionInvariant,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
-use andromeda_linked_retrieval::{admission::LinkedOperation, filter_hops::FilterHops};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReference};
 use andromeda_ngsi_ld_model::{
     clearable::Clearable,
@@ -25,7 +24,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{
     error::QueryError,
     filter::{
-        compilation::{FilterAdmission, compile_q_filter},
+        compilation::{AdmittedFilter, compile_q_filter},
         expansion::{expand_attribute_names, expand_csf_expr},
     },
     term_expander::TermExpander,
@@ -66,18 +65,17 @@ async fn expand_geoproperty(geoproperty: &mut NgsiLdReference, expander: &impl T
 /// omit, the filters, the opt-in lists and geoQ of a subscription request in
 /// place. Context hosting is NOT handled here, because the lifecycle adds that on top.
 ///
-/// The `q` is compiled through the one compile entry of its language under
-/// `admission`, the hops a Subscription admits included (clause 5.8.1.4), and
-/// the `q` the request holds afterwards is the expanded filter itself, which
-/// also keeps the spelling the subscriber wrote of its trailing `[…]` members,
-/// where clause 4.9 reads a `LanguageProperty`'s target language and a raw JSON
-/// key.
+/// The `q` is compiled from `admitted_q`, the admission its request received
+/// at validation, and the `q` the request holds afterwards is the expanded
+/// filter itself, which also keeps the spelling the subscriber wrote of its
+/// trailing `[…]` members, where clause 4.9 reads a `LanguageProperty`'s target
+/// language and a raw JSON key.
 ///
 /// # Errors
 ///
-/// Returns [`SubscriptionError::Query`] for a `q` too complex to resolve
-/// (clause 5.5.6) or naming a target language `admission` does not admit,
-/// and when the `@context` cannot be resolved
+/// Returns [`SubscriptionError::Internal`] when the request writes a `q` and
+/// `admitted_q` is none, or the reverse, and [`SubscriptionError::Query`] when
+/// the `@context` cannot be resolved
 /// or when any term the request names (an entity type, a watched or notified
 /// attribute, a projection or opt-in name, a filter term, the `geoproperty`)
 /// does not expand to a usable name. Such a term is refused rather than kept
@@ -87,7 +85,7 @@ pub(crate) async fn expand_common_subscription_terms(
     engine: &JsonLdEngine,
     request: &mut SubscriptionRequest,
     context: &ContextSpec,
-    admission: SubscriptionFilterAdmission,
+    admitted_q: Option<&AdmittedFilter>,
 ) -> Result<(), SubscriptionError> {
     let prepared_context = engine.prepare_term_context(context);
     let term_expander = ContextualExpander::new(engine, &prepared_context);
@@ -103,19 +101,10 @@ pub(crate) async fn expand_common_subscription_terms(
     }
 
     let opt_ins = expanded_opt_ins(&mut request.expand_values, &mut request.json_keys, &term_expander).await?;
-    let q_admission = FilterAdmission {
-        complexity: admission.q_complexity,
-        language_targeting: admission.language_targeting,
-    };
-    let notification = request.notification.as_ref();
-    let hops = FilterHops::new(
-        LinkedOperation::Subscription,
-        notification.and_then(|notification| notification.join),
-        notification.and_then(|notification| notification.join_level),
-    );
-    request.q = match mem::take(&mut request.q) {
-        Clearable::Set(q) => Clearable::Set(compile_q_filter::<SubscriptionError, _, _>(q, &opt_ins, q_admission, &hops, &term_expander).await?),
-        unchanged @ (Clearable::Absent | Clearable::NgsiLdNull) => unchanged,
+    request.q = match (mem::take(&mut request.q), admitted_q) {
+        (Clearable::Set(_), Some(admitted)) => Clearable::Set(compile_q_filter(admitted, &opt_ins, &term_expander).await?),
+        (unchanged @ (Clearable::Absent | Clearable::NgsiLdNull), None) => unchanged,
+        (Clearable::Set(_), None) | (Clearable::Absent | Clearable::NgsiLdNull, Some(_)) => return Err(SubscriptionInvariant::QNotAdmitted.into()),
     };
 
     // Expand the context source filter's property terms: a registration's
@@ -139,7 +128,13 @@ pub(crate) async fn expand_common_subscription_terms(
 
 #[cfg(test)]
 mod tests {
-    use crate::{admission_fixture::broker_defaults, error::SubscriptionError, term_expansion::expand_common_subscription_terms};
+    use crate::{
+        admission_fixture::broker_defaults,
+        error::SubscriptionError,
+        request_validation::admit_q,
+        subscription_invariant::SubscriptionInvariant,
+        term_expansion::expand_common_subscription_terms,
+    };
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -165,33 +160,25 @@ mod tests {
         SubscriptionRequest::from_request_text(wire.to_string().as_bytes(), ContextReading::keyword_spellings()).expect("a readable request")
     }
 
-    /// `wire` expanded under the core context, its `q` admitted under the
-    /// broker's default limits and `language_targeting`.
-    async fn expanded_at(wire: Value, language_targeting: LanguageTargeting) -> Result<SubscriptionRequest, SubscriptionError> {
+    /// `wire` with its `q` admitted at the broker's default limits and every
+    /// target language, then expanded under `context`.
+    async fn expanded_under(wire: Value, context: &ContextSpec) -> Result<SubscriptionRequest, SubscriptionError> {
         let mut request = request(&wire);
-        expand_common_subscription_terms(&offline_engine(), &mut request, &ContextSpec::none(), broker_defaults(language_targeting)).await?;
+        let admitted = admit_q(&request, broker_defaults(LanguageTargeting::LanguageRanges))?;
+        expand_common_subscription_terms(&offline_engine(), &mut request, context, admitted.as_ref()).await?;
         Ok(request)
     }
 
-    /// `wire` expanded under the core context, every target language of its
-    /// `q` admitted.
+    /// `wire` expanded under the core context.
     async fn expanded(wire: Value) -> Result<SubscriptionRequest, SubscriptionError> {
-        expanded_at(wire, LanguageTargeting::LanguageRanges).await
+        expanded_under(wire, &ContextSpec::none()).await
     }
 
     /// `wire` expanded under a body `@context` that maps `speed`, `Vehicle`
     /// and `place` to nothing, so none of them names an IRI.
     async fn expanded_under_null_mappings(wire: Value) -> Result<SubscriptionRequest, SubscriptionError> {
-        let mut request = request(&wire);
         let context = JsonLiteral::admit(&json!({"speed": null, "Vehicle": null, "place": null}).to_string()).expect("an admissible literal");
-        expand_common_subscription_terms(
-            &offline_engine(),
-            &mut request,
-            &ContextSpec::from_body(context),
-            broker_defaults(LanguageTargeting::LanguageRanges),
-        )
-        .await?;
-        Ok(request)
+        expanded_under(wire, &ContextSpec::from_body(context)).await
     }
 
     /// Whether `result` is the refusal of a term that expands to nothing.
@@ -435,79 +422,23 @@ mod tests {
         pretty_assertions::assert_eq!(written["geoQ"]["geoproperty"], json!(format!("{DEFAULT}place")));
     }
 
-    /// Clause 5.5.6: a `q` making more comparisons, or nesting deeper, than the
-    /// broker resolves is `TooComplexQuery`, on create and update alike, both of
-    /// which expand the request; one at the limits is admitted.
+    /// A written `q` that validation never admitted, and an admission with no
+    /// `q` to compile, are broken invariants and not a compilation.
     #[tokio::test]
-    async fn a_q_past_the_complexity_limits_is_refused_and_one_at_them_admitted() {
-        let values = |count: usize| (0..count).map(|value| value.to_string()).collect::<Vec<_>>().join(",");
-        let nested = |levels: usize| (1..levels).fold("a>1;b>1".to_owned(), |inner, level| format!("c{level}>1|({inner})"));
-        for (q, admitted) in [
-            (format!("speed=={}", values(1000)), true),
-            (format!("speed=={}", values(1001)), false),
-            (nested(16), true),
-            (nested(17), false),
-        ] {
-            let result = expanded_at(json!({"q": q}), LanguageTargeting::Specification).await;
-            if admitted {
-                assert!(result.is_ok(), "{q}: {result:?}");
-            } else {
-                assert!(
-                    matches!(
-                        result,
-                        Err(SubscriptionError::Query(
-                            QueryError::QTooManyComparisons { .. } | QueryError::QNestedTooDeep { .. }
-                        ))
-                    ),
-                    "{q}: {result:?}"
-                );
-            }
-        }
-    }
-
-    /// A wildcard range has no clause 4.9 tag-equality reading, so only the
-    /// `language-ranges` level admits one in a `q`.
-    #[tokio::test]
-    async fn a_q_language_range_is_admitted_only_at_the_ranges_level() {
-        let body = json!({"q": "name[de-*-DE]==\"Aufzug\""});
-        for level in [LanguageTargeting::Specification, LanguageTargeting::LanguageTags] {
-            let refused = expanded_at(body.clone(), level).await;
-            assert!(
-                matches!(refused, Err(SubscriptionError::Query(QueryError::LanguageRangeNotAdmitted(_)))),
-                "{level}: {refused:?}"
-            );
-        }
-        expanded_at(body, LanguageTargeting::LanguageRanges)
-            .await
-            .expect("the ranges level admits a range");
-    }
-
-    /// CP-4: the clause 4.9 `AttrName` admits no `-`, so a full tag needs the
-    /// `language-tags` level.
-    #[tokio::test]
-    async fn a_full_tag_is_admitted_from_the_tags_level_up() {
-        let body = json!({"q": "name[en-GB]==\"Lift\""});
-        let refused = expanded_at(body.clone(), LanguageTargeting::Specification).await;
+    async fn a_q_and_its_admission_must_come_together() {
+        let mut written = request(&json!({"q": "speed>1"}));
+        let unadmitted = expand_common_subscription_terms(&offline_engine(), &mut written, &ContextSpec::none(), None).await;
         assert!(
-            matches!(refused, Err(SubscriptionError::Query(QueryError::LanguageTagNotAdmitted(_)))),
-            "{refused:?}"
+            matches!(unadmitted, Err(SubscriptionError::Internal(SubscriptionInvariant::QNotAdmitted))),
+            "{unadmitted:?}"
         );
-        for level in [LanguageTargeting::LanguageTags, LanguageTargeting::LanguageRanges] {
-            assert!(expanded_at(body.clone(), level).await.is_ok(), "{level}");
-        }
-        expanded_at(json!({"q": "name[en]==\"Lift\""}), LanguageTargeting::Specification)
-            .await
-            .expect("a one-member bracket is the specification's own");
-    }
 
-    /// CP-8, clause 5.8.1.4: no clause bounds a Subscription's hops, so a hop
-    /// with no `join` and one deeper than any `joinLevel` are both admitted.
-    #[tokio::test]
-    async fn a_q_hop_is_admitted_without_a_join() {
-        for q in ["r{a}==1", "r{s{a}}==1"] {
-            expanded_at(json!({"q": q}), LanguageTargeting::Specification)
-                .await
-                .unwrap_or_else(|refusal| panic!("{q}: {refusal}"));
-        }
+        let admitted = admit_q(&request(&json!({"q": "speed>1"})), broker_defaults(LanguageTargeting::Specification)).expect("the q is admitted");
+        let mut absent = request(&json!({}));
+        let unwritten = expand_common_subscription_terms(&offline_engine(), &mut absent, &ContextSpec::none(), admitted.as_ref()).await;
+        assert!(
+            matches!(unwritten, Err(SubscriptionError::Internal(SubscriptionInvariant::QNotAdmitted))),
+            "{unwritten:?}"
+        );
     }
 }

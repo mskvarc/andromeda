@@ -13,8 +13,8 @@ use andromeda_jsonld::{
 use andromeda_ngsi_ld_query::{
     csr::expanded_entity_specification::ExpandedEntitySpecification,
     entity_selection::EntitySelector,
-    entity_selector_params::EntitySelectorParams,
     selector_compilation::compile_entity_selectors,
+    written_entity_selector::WrittenEntitySelector,
 };
 
 /// The selectors of one read, each compiled with its type expression expanded.
@@ -33,7 +33,7 @@ impl ExpandedSelectors {
     pub(crate) async fn expand(
         engine: &JsonLdEngine,
         context: &PreparedTermContext,
-        selectors: &[EntitySelectorParams],
+        selectors: &[WrittenEntitySelector],
     ) -> Result<ExpandedSelectors, FederationError> {
         let selectors = compile_entity_selectors(selectors, &ContextualExpander::new(engine, context)).await?;
         Ok(ExpandedSelectors { selectors })
@@ -59,19 +59,19 @@ mod tests {
     use andromeda_json_literal::JsonLiteral;
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_query::{
-        entity_selector_params::EntitySelectorParams,
         type_selection::grammar::{TypeExpr, TypeExprRaw},
+        written_entity_selector::WrittenEntitySelector,
     };
     use serde_json::json;
 
-    fn selector(type_: &str) -> EntitySelectorParams {
-        EntitySelectorParams {
+    fn selector(type_: &str) -> WrittenEntitySelector {
+        WrittenEntitySelector {
             type_: Some(type_.parse::<TypeExprRaw>().expect("a valid type expression")),
-            ..EntitySelectorParams::default()
+            ..WrittenEntitySelector::default()
         }
     }
 
-    async fn specified(selectors: &[EntitySelectorParams]) -> Vec<Option<String>> {
+    async fn specified(selectors: &[WrittenEntitySelector]) -> Vec<Option<String>> {
         let service = offline_service(Vec::new());
         let context = ContextSpec::from_body(
             JsonLiteral::admit(&json!({"Alpha": "https://example.org/Alpha", "Beta": "https://example.org/Beta"}).to_string()).expect("an admissible literal"),
@@ -91,7 +91,7 @@ mod tests {
     /// selector naming none stays unconstrained on the type axis.
     #[tokio::test]
     async fn each_selector_keeps_its_own_expanded_type() {
-        let specifications = specified(&[selector("Alpha"), selector("Beta"), EntitySelectorParams::default()]).await;
+        let specifications = specified(&[selector("Alpha"), selector("Beta"), WrittenEntitySelector::default()]).await;
         assert!(
             specifications[0].as_deref().is_some_and(|text| text.contains("https://example.org/Alpha")),
             "{specifications:?}"

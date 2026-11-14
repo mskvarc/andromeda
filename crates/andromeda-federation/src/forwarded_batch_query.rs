@@ -69,7 +69,7 @@ mod tests {
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-    use andromeda_ngsi_ld_query::entity_selector_params::EntitySelectorParams;
+    use andromeda_ngsi_ld_query::written_entity_selector::WrittenEntitySelector;
     use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
     use serde_json::{Value, json};
 
@@ -158,9 +158,9 @@ mod tests {
         let mut params: EntityQueryParameters = serde_urlencoded::from_str("").expect("valid query");
         params.entity_selectors = ["Alpha", "Beta"]
             .into_iter()
-            .map(|raw| EntitySelectorParams {
+            .map(|raw| WrittenEntitySelector {
                 type_: Some(raw.parse().expect("valid type expression")),
-                ..EntitySelectorParams::default()
+                ..WrittenEntitySelector::default()
             })
             .collect();
         let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");

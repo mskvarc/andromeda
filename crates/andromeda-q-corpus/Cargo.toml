@@ -14,7 +14,7 @@ workspace = true
 
 [dependencies]
 andromeda-ngsi-ld-lexicon.workspace = true
-andromeda-ngsi-ld-query.workspace = true
+andromeda-ngsi-ld-query = { workspace = true, features = ["test-support"] }
 andromeda-ngsi-ld-vocabulary.workspace = true
 iri-rs = { version = "4.1.1", features = ["serde", "static"] }
 strum = { version = "0.28.0", features = ["derive"] }

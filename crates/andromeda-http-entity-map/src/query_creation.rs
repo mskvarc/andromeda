@@ -28,14 +28,13 @@ use andromeda_http_extraction::{
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_http_temporal::extension_gate::TemporalExtensionGate;
 use andromeda_jsonld::user_context_admission::{SubmittedContext, admit_user_context};
-use andromeda_linked_retrieval::admission::LinkedOperation;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{candidate_filters::CandidateFilters, page_window::PageWindow};
 use andromeda_ngsi_ld_request::{
     empty::EmptyParams,
     query::{
-        entity::parameters::EntityQueryParameters,
-        temporal::{TemporalQueryParameters, operation::TemporalQueryOperation},
+        entity::{admitted::AdmittedEntityQuery, parameters::EntityQueryParameters},
+        temporal::admitted::AdmittedTemporalRequest,
     },
     query_narrowing::ExecutionScope,
 };
@@ -64,7 +63,7 @@ fn candidate_filters(state: &EntityMapRouteServices, split_entities: Option<bool
 /// 5.14.4.4), held to the filters `filters` says.
 async fn local_entity_ids(
     state: &Arc<EntityMapRouteServices>,
-    query: &EntityQueryParameters,
+    query: &AdmittedEntityQuery,
     window: &PageWindow,
     filters: CandidateFilters,
     rendering: &CreationRendering<'_>,
@@ -72,12 +71,7 @@ async fn local_entity_ids(
     let uri = rendering.uri;
     let mut compiled = state
         .entity_query
-        .compile_query_public(
-            query,
-            rendering.context,
-            state.entity_query.language_targeting(),
-            LinkedOperation::EntityMapQuery,
-        )
+        .compile_query_public(query, rendering.context, state.entity_query.language_targeting())
         .await
         .with_entity_map_instance(uri)?;
     match filters {
@@ -100,7 +94,7 @@ async fn local_entity_ids(
 /// Create the map an entity query selects, over either binding (clause 5.14.4.4).
 async fn create_from_entity_query(
     state: &Arc<EntityMapRouteServices>,
-    query: &EntityQueryParameters,
+    query: &AdmittedEntityQuery,
     window: &PageWindow,
     forwarded_query: String,
     rendering: &CreationRendering<'_>,
@@ -128,7 +122,7 @@ async fn create_from_entity_query(
 /// Create the map a temporal query selects, over either binding (clause 5.14.5.4).
 async fn create_from_temporal_query(
     state: &Arc<EntityMapRouteServices>,
-    params: &TemporalQueryParameters,
+    params: &AdmittedTemporalRequest,
     window: &PageWindow,
     forwarded_query: String,
     rendering: &CreationRendering<'_>,
@@ -148,7 +142,6 @@ async fn create_from_temporal_query(
             QueryReading {
                 context: rendering.context,
                 language_targeting: state.temporal.language_targeting(),
-                operation: TemporalQueryOperation::EntityMap.linked(state.temporal.linked_retrieval()),
             },
             RequestedIdentifiers::Narrow,
             candidate_filters(state, params.split_entities, params.execution_scope()),
@@ -184,7 +177,7 @@ pub(crate) async fn create_from_query(
     let context = admit_user_context(state.entity_query.engine(), SubmittedContext::from(context))
         .await
         .with_entity_map_instance(&uri)?;
-    validate_entity_map_query(&query, accept.media_type(), &uri)?;
+    let query = validate_entity_map_query(query, state.entity_query.filter_admission(), accept.media_type(), &uri)?;
     let window = membership_window(&pagination, &query.page, &query.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(query.split_entities).is_split());
     let forwarded_query = forwarded_query_string(&uri, filters);
@@ -223,7 +216,7 @@ pub(crate) async fn create_from_query_post(
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_map_instance(&uri)?;
     let body = body.admitted(&context).await?;
     let query = EntityQueryParameters::try_from(body).with_entity_map_instance(&uri)?;
-    validate_entity_map_query(&query, accept.media_type(), &uri)?;
+    let query = validate_entity_map_query(query, state.entity_query.filter_admission(), accept.media_type(), &uri)?;
     let window = membership_window(&pagination, &query.page, &query.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(query.split_entities).is_split());
     let forwarded_query = body_query_string(&query, filters, &uri);
@@ -260,7 +253,7 @@ pub(crate) async fn create_temporal_from_query(
     let context = admit_user_context(state.entity_query.engine(), SubmittedContext::from(context))
         .await
         .with_entity_map_instance(&uri)?;
-    validate_temporal_entity_map_query(&params, state.temporal.linked_retrieval(), &uri)?;
+    let params = validate_temporal_entity_map_query(params, state.temporal.linked_retrieval(), state.temporal.filter_admission(), &uri)?;
     let window = membership_window(&pagination, &params.page, &params.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(params.split_entities).is_split());
     let forwarded_query = forwarded_temporal_query_string(&uri, filters);
@@ -299,7 +292,7 @@ pub(crate) async fn create_temporal_from_query_post(
     let context = admit_user_context(state.entity_query.engine(), context).await.with_entity_map_instance(&uri)?;
     let body = body.admitted(&context).await?;
     let params = admitted_body_parameters(body, url, &admission).map_err(|report| ProblemResponse::classified(report, uri.clone()))?;
-    validate_temporal_entity_map_query(&params, state.temporal.linked_retrieval(), &uri)?;
+    let params = validate_temporal_entity_map_query(params, state.temporal.linked_retrieval(), state.temporal.filter_admission(), &uri)?;
     let window = membership_window(&pagination, &params.page, &params.ordering, &uri)?;
     let filters = ForwardedFilters::for_split(state.forwarding.split_entities(params.split_entities).is_split());
     let forwarded_query = temporal_body_query_string(&params, filters);

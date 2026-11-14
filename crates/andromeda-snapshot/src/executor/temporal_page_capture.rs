@@ -34,7 +34,7 @@ use andromeda_ngsi_ld_query::{
     page_window::{PageStart, PageWindow},
     temporal::{contributed_entities::ContributedEntities, window::TemporalWindow},
 };
-use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation};
+use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
 use andromeda_temporal::{
     error::TemporalError,
     query_reading::QueryReading,
@@ -113,7 +113,7 @@ impl SnapshotExecutor {
     /// would otherwise carry it inline across every await.
     async fn local_instances(
         &self,
-        narrowed: &TemporalQueryParameters,
+        narrowed: &AdmittedTemporalRequest,
         capture: &TemporalCapture<'_>,
     ) -> Result<(Vec<TemporalHistory>, Option<TemporalRange>), TemporalError> {
         let window = PageWindow {
@@ -128,7 +128,6 @@ impl SnapshotExecutor {
             QueryReading {
                 context: capture.context,
                 language_targeting: self.sources.temporal.language_targeting(),
-                operation: TemporalQueryOperation::Query.linked(self.sources.temporal.linked_retrieval()),
             },
             ContributedEntities::default(),
         ))

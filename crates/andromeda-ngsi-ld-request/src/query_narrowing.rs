@@ -38,10 +38,10 @@
 use crate::error::ParameterError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
 use andromeda_ngsi_ld_query::{
-    entity_selector_params::EntitySelectorParams,
     filter::{expression::Expr, referenced_attributes::referenced_attributes},
     geo::input::GeoQueryInput,
     type_selection::grammar::TypeExprRaw,
+    written_entity_selector::WrittenEntitySelector,
 };
 use strum::{Display, IntoEnumIterator};
 use typed_builder::TypedBuilder;
@@ -82,7 +82,7 @@ pub struct NarrowingInputs<'a> {
     /// Input (a) as a POST body writes it: one clause 5.2.11 selector per
     /// entry, each carrying its own type selector (clause 5.2.23).
     #[builder(default = Default::default())]
-    entity_selectors: &'a [EntitySelectorParams],
+    entity_selectors: &'a [WrittenEntitySelector],
     /// Input (b): the list of Attribute names, in its deprecated spelling.
     #[builder(default = Default::default())]
     attrs: Option<&'a [AttributeName]>,
@@ -119,7 +119,7 @@ impl ExecutionScope {
     /// the flat `type` and the `type` of each clause 5.2.33 selector of a POST
     /// body alike.
     #[must_use]
-    pub fn of(local: Option<bool>, entity_type: Option<&TypeExprRaw>, selectors: &[EntitySelectorParams]) -> ExecutionScope {
+    pub fn of(local: Option<bool>, entity_type: Option<&TypeExprRaw>, selectors: &[WrittenEntitySelector]) -> ExecutionScope {
         if selects_every_type(entity_type, selectors) {
             ExecutionScope::Local
         } else {
@@ -145,7 +145,7 @@ impl ExecutionScope {
 /// # Errors
 ///
 /// Returns [`ParameterError::WildcardTypeWithLocalFalse`] for that pair.
-pub fn require_wildcard_locality(local: Option<bool>, entity_type: Option<&TypeExprRaw>, selectors: &[EntitySelectorParams]) -> Result<(), ParameterError> {
+pub fn require_wildcard_locality(local: Option<bool>, entity_type: Option<&TypeExprRaw>, selectors: &[WrittenEntitySelector]) -> Result<(), ParameterError> {
     match local {
         Some(false) if selects_every_type(entity_type, selectors) => Err(ParameterError::WildcardTypeWithLocalFalse),
         Some(false | true) | None => Ok(()),
@@ -154,7 +154,7 @@ pub fn require_wildcard_locality(local: Option<bool>, entity_type: Option<&TypeE
 
 /// Whether the flat `type` or the `type` of any clause 5.2.33 selector is the
 /// clause 4.17 `*` that selects every Entity Type.
-fn selects_every_type(entity_type: Option<&TypeExprRaw>, selectors: &[EntitySelectorParams]) -> bool {
+fn selects_every_type(entity_type: Option<&TypeExprRaw>, selectors: &[WrittenEntitySelector]) -> bool {
     entity_type
         .into_iter()
         .chain(selectors.iter().filter_map(|selector| selector.type_.as_ref()))
