@@ -384,40 +384,38 @@ mod tests {
         );
     }
 
-    /// A segment naming the family's value member itself (`speed.value` once
-    /// expanded) lands on the first value, read as a plain value even for a
-    /// Relationship.
+    /// Clause 4.9 makes each name after the first "a (sub)Property or
+    /// (sub)Relationship", and a family's value member is neither, so a
+    /// segment naming it (`speed.value` once expanded) addresses no element
+    /// of any family.
     #[test]
-    fn a_segment_naming_the_value_member_lands_on_the_first_value() {
+    fn a_segment_naming_the_value_member_addresses_nothing() {
         let entity = json!({
             "https://example.com/speed": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 80}, {"@value": 90}]}],
             "https://example.com/owner": [{"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:Person:1"}]}],
             "https://example.com/colors": [{"https://uri.etsi.org/ngsi-ld/hasValueList": [{"@list": [{"@value": "red"}]}]}]
         });
-        pretty_assertions::assert_eq!(
-            targets_along(&entity, &through("https://example.com/speed", &["https://uri.etsi.org/ngsi-ld/hasValue"])),
-            vec![(json!(80), TargetOrigin::AttributeValue)]
-        );
-        pretty_assertions::assert_eq!(
-            targets_along(&entity, &through("https://example.com/owner", &["https://uri.etsi.org/ngsi-ld/hasObject"])),
-            vec![(json!("urn:ngsi-ld:Person:1"), TargetOrigin::AttributeValue)]
-        );
-        pretty_assertions::assert_eq!(
-            targets_along(&entity, &through("https://example.com/owner", &["https://uri.etsi.org/ngsi-ld/hasValue"])),
-            Vec::new(),
-            "another family's value member is no member of this instance"
-        );
-        pretty_assertions::assert_eq!(
-            targets_along(&entity, &through("https://example.com/colors", &["https://uri.etsi.org/ngsi-ld/hasValueList"])),
-            Vec::new(),
-            "a list holds its items inside one list, which is no value of its own"
-        );
+        let fixture = FixtureEntity::from_expanded(&entity);
+        for (attribute, member) in [
+            ("https://example.com/speed", "https://uri.etsi.org/ngsi-ld/hasValue"),
+            ("https://example.com/owner", "https://uri.etsi.org/ngsi-ld/hasObject"),
+            ("https://example.com/owner", "https://uri.etsi.org/ngsi-ld/hasValue"),
+            ("https://example.com/colors", "https://uri.etsi.org/ngsi-ld/hasValueList"),
+        ] {
+            let path = through(attribute, &[member]);
+            pretty_assertions::assert_eq!(targets_along(&entity, &path), Vec::new(), "{attribute}.{member}");
+            assert!(
+                !addresses_element(&fixture, &QueryPath::Local(path), NoLinkedEntities, LanguageMatching::TagEquality),
+                "{attribute}.{member}"
+            );
+        }
     }
 
-    /// A structured value's members are reachable through the `.` axis as well
-    /// as through a compound path, one member per segment.
+    /// Clause 4.9 enters a compound value through the trailing path, "enclosed
+    /// in a single pair of square brackets", so a structured value's member is
+    /// reached there and never through a `.` segment naming the value member.
     #[test]
-    fn a_structured_value_member_is_reached_through_the_value_member_segment() {
+    fn a_structured_value_member_is_reached_through_the_trailing_path_alone() {
         let entity = json!({
             "https://example.com/address": [{
                 "https://uri.etsi.org/ngsi-ld/hasValue": [{
@@ -433,6 +431,10 @@ mod tests {
                     &["https://uri.etsi.org/ngsi-ld/hasValue", "https://example.com/city"]
                 )
             ),
+            Vec::new()
+        );
+        pretty_assertions::assert_eq!(
+            targets_along(&entity, &bracketed("https://example.com/address", "https://example.com/city")),
             vec![(json!("Berlin"), TargetOrigin::AttributeValue)]
         );
     }
