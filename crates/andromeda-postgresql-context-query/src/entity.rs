@@ -246,12 +246,12 @@ pub(crate) fn build_entity_conditions(
         condition = condition.add(members);
     }
 
-    if let Some(q_expr) = &query.selection.q_expr {
+    if let Some(compiled) = &query.selection.q {
         let scan = InstanceScan::Current(rows);
         match q {
-            QFilter::Whole => condition = condition.add(q_filter::compile(q_expr, &scan, names, query.selection.language_matching)),
+            QFilter::Whole => condition = condition.add(q_filter::compile(compiled.expr(), &scan, names, compiled.matching())),
             QFilter::Except(answered) => {
-                condition = condition.add(q_filter::compile_except(q_expr, answered, &scan, names, query.selection.language_matching));
+                condition = condition.add(q_filter::compile_except(compiled.expr(), answered, &scan, names, compiled.matching()));
             }
             QFilter::Omitted => {}
         }
@@ -279,7 +279,9 @@ mod tests {
         entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
         error::QueryError,
         filter::{
+            compiled_filter::CompiledFilter,
             expression::Expr,
+            language_matching::LanguageMatching,
             parser,
             path::{AttrPath, QueryPath},
             predicate::{OrderingOp, Predicate},
@@ -422,7 +424,10 @@ mod tests {
     #[test]
     fn a_q_filter_probes_inside_the_page_and_the_heads_are_read_outside_it() {
         let mut q = empty_query();
-        q.selection.q_expr = Some(parser::parse("\"https://example.com/temperature\">1").expect("valid q"));
+        q.selection.q = Some(CompiledFilter::new(
+            parser::parse("\"https://example.com/temperature\">1").expect("valid q"),
+            LanguageMatching::TagEquality,
+        ));
         let built = build(&q, &temperature_is_known());
         assert_statement_snapshot!("entity-a-q-filter-probes-inside-the-page-and-the-heads-are-read-outside-it", built.select);
     }
@@ -763,7 +768,10 @@ mod tests {
     #[test]
     fn build_with_q_existence() {
         let mut q = empty_query();
-        q.selection.q_expr = Some(parser::parse("\"https://example.com/temperature\"").unwrap());
+        q.selection.q = Some(CompiledFilter::new(
+            parser::parse("\"https://example.com/temperature\"").unwrap(),
+            LanguageMatching::TagEquality,
+        ));
         let built = build(&q, &temperature_is_known());
         // Row presence is existence: a deleted attribute leaves no row.
         assert_statement_snapshot!("entity-build-with-q-existence", built.select);
@@ -772,11 +780,14 @@ mod tests {
     #[test]
     fn build_with_q_comparison() {
         let mut cq = empty_query();
-        cq.selection.q_expr = Some(Expr::Pred(Predicate::Ordering {
-            path: QueryPath::Local(AttrPath::simple("https://example.com/temperature".parse().expect("valid attribute name"))),
-            op: OrderingOp::Greater,
-            rhs: Scalar::Number(50.into()),
-        }));
+        cq.selection.q = Some(CompiledFilter::new(
+            Expr::Pred(Predicate::Ordering {
+                path: QueryPath::Local(AttrPath::simple("https://example.com/temperature".parse().expect("valid attribute name"))),
+                op: OrderingOp::Greater,
+                rhs: Scalar::Number(50.into()),
+            }),
+            LanguageMatching::TagEquality,
+        ));
         let built = build(&cq, &temperature_is_known());
         assert_statement_snapshot!("entity-build-with-q-comparison", built.select);
     }
@@ -787,11 +798,14 @@ mod tests {
         // placeholder sequence has to be identical up to the pagination
         // parameters the count query omits.
         let mut cq = empty_query();
-        cq.selection.q_expr = Some(Expr::Pred(Predicate::Ordering {
-            path: QueryPath::Local(AttrPath::simple("https://example.com/temperature".parse().expect("valid attribute name"))),
-            op: OrderingOp::Greater,
-            rhs: Scalar::Number(50.into()),
-        }));
+        cq.selection.q = Some(CompiledFilter::new(
+            Expr::Pred(Predicate::Ordering {
+                path: QueryPath::Local(AttrPath::simple("https://example.com/temperature".parse().expect("valid attribute name"))),
+                op: OrderingOp::Greater,
+                rhs: Scalar::Number(50.into()),
+            }),
+            LanguageMatching::TagEquality,
+        ));
         let built = build_counted(&cq, &temperature_is_known());
         assert_statement_snapshot!("entity-count-sql-reuses-the-main-query-bind-vector-1", built.select);
         let count = built.count.expect("count sql");

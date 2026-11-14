@@ -16,7 +16,7 @@ use crate::{
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
-    filter::expression::Expr as QueryExpr,
+    filter::compiled_filter::CompiledFilter,
     page_window::{PageStart, PageWindow},
     read_order::ReadOrder,
 };
@@ -35,7 +35,7 @@ pub(crate) enum PageShape<'q> {
     /// to the planner.
     Plain,
     /// The gated page of a `q` whose conjunct an index answers.
-    Keyed(&'q QueryExpr, KeyedCandidates<'q>),
+    Keyed(&'q CompiledFilter, KeyedCandidates<'q>),
     /// The gated page of a selection by `attrs` alone, the statement reading
     /// the Entities that carry one of the Attributes.
     Carriers(SelectStatement),
@@ -78,11 +78,11 @@ impl<'q> PageShape<'q> {
     ) -> PageShape<'q> {
         let keyed = query
             .selection
-            .q_expr
+            .q
             .as_ref()
-            .and_then(|q_expr| keyed_candidates(q_expr, rows, names, query.selection.language_matching).map(|keyed| (q_expr, keyed)));
+            .and_then(|q| keyed_candidates(q.expr(), rows, names, q.matching()).map(|keyed| (q, keyed)));
         match keyed {
-            Some((q_expr, keyed)) => PageShape::Keyed(q_expr, keyed),
+            Some((q, keyed)) => PageShape::Keyed(q, keyed),
             None => carriers(query, names, schema)
                 .map(PageShape::Carriers)
                 .or_else(|| value_walk_order(query, names, window).map(PageShape::ValueWalk))
@@ -146,7 +146,7 @@ impl<'q> PageShape<'q> {
                     total_candidates: None,
                 });
             }
-            PageShape::Keyed(q_expr, keyed) => {
+            PageShape::Keyed(q, keyed) => {
                 let keyed_total = match count {
                     CountPolicy::Emit => Some(TotalCandidates::Term(KeyedCandidates {
                         select: keyed.select.clone(),
@@ -154,7 +154,7 @@ impl<'q> PageShape<'q> {
                     })),
                     CountPolicy::Omit => None,
                 };
-                let (page, read_order) = keyed_page(source, q_expr, keyed, gated_columns(count, counted_on_page))?;
+                let (page, read_order) = keyed_page(source, q, keyed, gated_columns(count, counted_on_page))?;
                 (page, read_order, StatementPlanning::BoundValues, keyed_total)
             }
             PageShape::Carriers(carriers) => {

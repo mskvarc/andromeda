@@ -61,11 +61,7 @@ pub(crate) fn pattern_matches<'q>(query: &'q CompiledEntityQuery, relations: &En
     };
     let alone = match (selection.considered, &selection.projected_members) {
         (ConsideredEntities::Selected, ProjectedMembers::Unconditional) => {
-            selection.attrs.is_empty()
-                && selection.q_expr.is_none()
-                && selection.geo.is_none()
-                && selection.scope_q.is_none()
-                && query.ordering.terms.is_empty()
+            selection.attrs.is_empty() && selection.q.is_none() && selection.geo.is_none() && selection.scope_q.is_none() && query.ordering.terms.is_empty()
         }
         (ConsideredEntities::NoEntity, _) | (ConsideredEntities::Selected, ProjectedMembers::AnyOf { .. } | ProjectedMembers::AnyBesides { .. }) => false,
     };
@@ -138,7 +134,7 @@ mod tests {
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
         entity_selection::{EntitySelection, EntitySelector},
-        filter::parser::parse,
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
         ordering::term::{CompiledOrderTerm, OrderDirection, OrderTarget},
         page_window::PageWindow,
         pattern::Pattern,
@@ -230,7 +226,10 @@ mod tests {
     #[test]
     fn an_id_pattern_filtered_further_or_ordered_keeps_the_plain_page() {
         let mut filtered = by_pattern(".*_1196287$");
-        filtered.selection.q_expr = Some(parse("\"https://example.com/headSign\">1").expect("valid q"));
+        filtered.selection.q = Some(CompiledFilter::new(
+            parse("\"https://example.com/headSign\">1").expect("valid q"),
+            LanguageMatching::TagEquality,
+        ));
         let mut by_attrs = by_pattern(".*_1196287$");
         by_attrs.selection.attrs = vec![IriBuf::new("https://example.com/headSign".to_string()).expect("valid IRI")];
         let mut ordered = by_pattern(".*_1196287$");

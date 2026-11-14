@@ -1,7 +1,7 @@
 //! Which entities a query matches.
 
 use crate::{
-    filter::{expression::Expr, language_matching::LanguageMatching},
+    filter::compiled_filter::CompiledFilter,
     geo::{default_location_narrowing::DefaultLocationNarrowing, query::GeoQuery},
     identifier_axis::IdentifierAxis,
     pattern::Pattern,
@@ -119,14 +119,10 @@ pub struct EntitySelection {
     /// Expanded attribute IRIs the entity must carry. Empty means no attribute
     /// filter.
     pub attrs: Vec<IriBuf>,
-    /// Parsed `q` expression for property-level filtering (clause 4.9).
-    pub q_expr: Option<Expr>,
-    /// How the target languages of `q_expr` select languageMap keys.
-    ///
-    /// The broker's `q_target_languages` level decides it, and a request
-    /// reaching a context source that does not serve that level falls back to
-    /// the clause 4.9 tag equality, which is also the default.
-    pub language_matching: LanguageMatching,
+    /// The `q` filter for property-level filtering (clause 4.9), compiled
+    /// under the language matching of the broker's `q_target_languages`
+    /// level.
+    pub q: Option<CompiledFilter>,
     /// Geo-spatial query filter, if specified (clause 4.10).
     pub geo: Option<GeoQuery>,
     /// What an in-memory spatial index established about `geo`'s default
@@ -189,7 +185,7 @@ impl EntitySelection {
     /// so clause 5.7.4.4 applies them only to the gathered Entity and clause
     /// 5.14.5.4 keeps them out of the local candidates of an `EntityMap`.
     pub fn without_split_filters(&mut self) {
-        self.q_expr = None;
+        self.q = None;
         self.geo = None;
         self.scope_q = None;
     }
@@ -211,7 +207,7 @@ impl EntitySelection {
 mod tests {
     use crate::{
         entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
-        filter::parser::parse,
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
         geo::query::GeoQuery,
         identifier_axis::IdentifierAxis,
         pattern::Pattern,
@@ -297,7 +293,7 @@ mod tests {
                     .build(),
             ])
             .attrs(vec![speed.clone()])
-            .q_expr(Some(parse("speed>10").expect("q parses")))
+            .q(Some(CompiledFilter::new(parse("speed>10").expect("q parses"), LanguageMatching::TagEquality)))
             .geo(Some(GeoQuery {
                 georel: GeoRel::Within,
                 geometry: serde_json::from_value::<Geometry>(serde_json::json!({
@@ -311,7 +307,7 @@ mod tests {
             .considered(ConsideredEntities::NoEntity)
             .build();
         selection.without_split_filters();
-        assert!(selection.q_expr.is_none(), "the value filter is dropped");
+        assert!(selection.q.is_none(), "the value filter is dropped");
         assert!(selection.geo.is_none(), "the geoquery is dropped");
         assert!(selection.scope_q.is_none(), "the scope query is dropped");
         pretty_assertions::assert_eq!(selection.selectors[0].ids.len(), 1);
@@ -333,7 +329,7 @@ mod tests {
                     .build(),
             ])
             .attrs(vec![speed.clone()])
-            .q_expr(Some(parse("speed>10").expect("q parses")))
+            .q(Some(CompiledFilter::new(parse("speed>10").expect("q parses"), LanguageMatching::TagEquality)))
             .considered(ConsideredEntities::NoEntity)
             .projected_members(ProjectedMembers::AnyOf {
                 attributes: vec![speed],
@@ -344,7 +340,7 @@ mod tests {
         assert!(selection.attrs.is_empty(), "the Attribute list is dropped");
         pretty_assertions::assert_eq!(selection.projected_members, ProjectedMembers::Unconditional);
         assert!(selection.selectors[0].id_pattern.is_some(), "the id pattern stays");
-        assert!(selection.q_expr.is_some(), "the value filter stays");
+        assert!(selection.q.is_some(), "the value filter stays");
         pretty_assertions::assert_eq!(selection.considered, ConsideredEntities::NoEntity);
     }
 }

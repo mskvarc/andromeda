@@ -12,3 +12,14 @@ pub enum FilterReading {
     /// One Query Term.
     Term(Box<TermReading>),
 }
+
+impl FilterReading {
+    /// Every term reading, in pre-order.
+    #[must_use]
+    pub fn terms(&self) -> Vec<&TermReading> {
+        match self {
+            FilterReading::All(children) | FilterReading::Any(children) => children.iter().flat_map(FilterReading::terms).collect(),
+            FilterReading::Term(term) => vec![term],
+        }
+    }
+}

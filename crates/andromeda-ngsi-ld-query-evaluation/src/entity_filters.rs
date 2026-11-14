@@ -3,7 +3,7 @@
 
 use crate::{
     geo_query::geo_query_matches,
-    q::eval::evaluate,
+    q::filter_run::filter_holds,
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
     scope_query::scope_query_matches,
 };
@@ -20,7 +20,7 @@ where
     E: QueriedEntity<'a> + LocatedEntity<'a> + ScopedEntity<'a>,
     L: LinkedEntities<'a>,
 {
-    filters.q.is_none_or(|expr| evaluate(expr, entity, linked, filters.language_matching))
+    filters.q.is_none_or(|q| filter_holds(q.reading(), entity, linked))
         && filters.geo.is_none_or(|geo| geo_query_matches(geo, entity))
         && filters.scope.is_none_or(|scope| scope_query_matches(scope, entity.scopes()))
 }
@@ -37,7 +37,7 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_query::{
         entity_filters::EntityFilters,
-        filter::{language_matching::LanguageMatching, parser::parse},
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
         geo::query::GeoQuery,
         scope::query::ScopeQuery,
     };
@@ -71,11 +71,10 @@ mod tests {
 
     /// Whether `x` passes the filters given.
     fn admits_x(q: Option<&str>, geo: Option<&GeoQuery>, scope: Option<&str>) -> bool {
-        let q = q.map(|raw| parse(raw).expect("q parses"));
+        let q = q.map(|raw| CompiledFilter::new(parse(raw).expect("q parses"), LanguageMatching::TagEquality));
         let scope = scope.map(|raw| ScopeQuery::parse(raw).expect("scopeQ parses"));
         let filters = EntityFilters {
             q: q.as_ref(),
-            language_matching: LanguageMatching::TagEquality,
             geo,
             scope: scope.as_ref(),
         };

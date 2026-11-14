@@ -434,7 +434,6 @@ mod tests {
                 selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
             },
             compiled_q: None,
-            language_matching: LanguageMatching::TagEquality,
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
             compiled_scope_q: None,
             dataset_id: None,

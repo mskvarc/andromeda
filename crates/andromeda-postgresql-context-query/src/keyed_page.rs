@@ -25,7 +25,7 @@ use crate::{
     entity_page::ProjectedPage,
     gated_page::{GatedColumns, IndexOrWalk, PageSource, ShortWalk, gated_page, walked_rows},
 };
-use andromeda_ngsi_ld_query::{filter::expression::Expr as QueryExpr, read_order::ReadOrder};
+use andromeda_ngsi_ld_query::{filter::compiled_filter::CompiledFilter, read_order::ReadOrder};
 use andromeda_postgresql_query::{
     error::RenderError,
     one_time_gate::CandidateBound,
@@ -85,7 +85,7 @@ pub(crate) const fn page_bound(read: CandidateRead) -> CandidateBound {
 /// spelling, or a query-language rule a renderer decides first.
 pub(crate) fn keyed_page(
     source: &PageSource<'_>,
-    q_expr: &QueryExpr,
+    q: &CompiledFilter,
     keyed: KeyedCandidates<'_>,
     columns: GatedColumns,
 ) -> Result<(ProjectedPage, ReadOrder), RenderError> {
@@ -93,7 +93,7 @@ pub(crate) fn keyed_page(
     let short = ShortWalk {
         source: *source,
         walked: source.condition(QFilter::Omitted)?,
-        probe: compile(q_expr, &InstanceScan::Current(&walked), source.names, source.query.selection.language_matching),
+        probe: compile(q.expr(), &InstanceScan::Current(&walked), source.names, q.matching()),
         length: SHORT_WALK,
     };
     let rest = IndexOrWalk {
@@ -113,7 +113,7 @@ mod tests {
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
         entity_selection::EntitySelection,
-        filter::parser::parse,
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
         page_window::PageWindow,
     };
     use andromeda_postgresql_query::query_names::QueryNames;
@@ -134,7 +134,7 @@ mod tests {
 
     fn query(q: &str) -> CompiledEntityQuery {
         let mut query = CompiledEntityQuery::builder().selection(EntitySelection::builder().build()).build();
-        query.selection.q_expr = Some(parse(q).expect("valid q"));
+        query.selection.q = Some(CompiledFilter::new(parse(q).expect("valid q"), LanguageMatching::TagEquality));
         query
     }
 

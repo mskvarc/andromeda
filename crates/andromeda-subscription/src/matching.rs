@@ -131,7 +131,6 @@ mod tests {
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_query::{
         error::QueryError,
-        filter::language_matching::LanguageMatching,
         geo::{admission::GeoQueryAdmission, compile::compile_geo_query, input::GeoQueryInput, near_distance_band::NearDistanceBand},
         namespace_expander::EXAMPLE_NAMESPACE,
         projection::compiled::Projection,
@@ -193,7 +192,6 @@ mod tests {
                 selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
             },
             compiled_q: None,
-            language_matching: LanguageMatching::TagEquality,
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
             compiled_scope_q: None,
             dataset_id: None,

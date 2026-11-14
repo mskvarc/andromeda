@@ -67,10 +67,10 @@ pub fn build_filter_leaf_truths(
 fn leaf_expression(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, leaf: FilterLeaf<'_>, names: &QueryNames) -> Result<SeaExpr, RenderError> {
     let of = HistoryOf::Entity(SeaExpr::col((E, Entities::Id)));
     match leaf {
-        FilterLeaf::Term(pred) => {
-            let term = Expr::Pred(pred.clone());
+        FilterLeaf::Term { predicate, matching, .. } => {
+            let term = Expr::Pred(predicate.clone());
             let window = windowed_instances(branch, compiled, &of, WindowReach::Inside);
-            Ok(q_filter::compile(&term, &InstanceScan::History(&window), names, compiled.entities.language_matching).into())
+            Ok(q_filter::compile(&term, &InstanceScan::History(&window), names, matching).into())
         }
         FilterLeaf::Geo(_) => Ok(temporal_geo_existential(branch, compiled, names, &of, WindowReach::Inside)?.map_or_else(false_literal, Into::into)),
         FilterLeaf::ScopeRequirement(pattern) => Ok(pattern_condition(pattern, &scope_history_target(branch, compiled, &of, WindowReach::Inside))),
@@ -84,7 +84,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
-        filter::parser,
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
         geo::query::GeoQuery,
         scope::query::ScopeQuery,
         temporal::{
@@ -103,7 +103,7 @@ mod tests {
         CompiledTemporalQuery::builder()
             .entities(
                 EntitySelection::builder()
-                    .q_expr(Some(parser::parse(q).expect("q parses")))
+                    .q(Some(CompiledFilter::new(parser::parse(q).expect("q parses"), LanguageMatching::TagEquality)))
                     .geo(geo)
                     .scope_q(scope.map(|raw| ScopeQuery::parse(raw).expect("scopeQ parses")))
                     .build(),

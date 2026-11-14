@@ -105,7 +105,7 @@ mod tests {
         entity_selector::EntitySelector,
         subscription::{SubscriptionStatus, standing::SubscriptionStanding},
     };
-    use andromeda_ngsi_ld_query::{filter::language_matching::LanguageMatching, projection::compiled::Projection};
+    use andromeda_ngsi_ld_query::projection::compiled::Projection;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
@@ -158,7 +158,6 @@ mod tests {
                 selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
             },
             compiled_q: None,
-            language_matching: LanguageMatching::TagEquality,
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
             compiled_scope_q: None,
             dataset_id: None,

@@ -308,7 +308,7 @@ impl SnapshotExecutor {
             split: forwarding.split_entities(params.split_entities),
             context,
             triggering: TriggeringRequest::default(),
-            csf_expr: filters.csf(),
+            csf: filters.csf(),
             geo: filters.geo(),
             entity_map: EntityMapInUse::None,
             budget,

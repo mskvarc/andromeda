@@ -173,16 +173,16 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
 mod tests {
     use crate::registration::context_source_properties::ContextSourceProperties;
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse};
-    use andromeda_ngsi_ld_query_evaluation::{q::eval::evaluate, queried_entity::linked_entities::NoLinkedEntities};
+    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading};
+    use andromeda_ngsi_ld_query_evaluation::{q::filter_run::filter_holds, queried_entity::linked_entities::NoLinkedEntities};
     use serde_json::{Value, json};
 
     /// Whether the filter holds over the properties, read through the entity
     /// traits.
     fn holds(q: &str, properties: &Value) -> bool {
-        let expr = parse(q).expect("the filter parses");
+        let reading = FilterReading::of(&parse(q).expect("the filter parses"), LanguageMatching::TagEquality);
         let properties = JsonLiteral::admit(&properties.to_string()).expect("a JSON literal");
-        ContextSourceProperties::of(properties.piece()).is_some_and(|properties| evaluate(&expr, properties, NoLinkedEntities, LanguageMatching::TagEquality))
+        ContextSourceProperties::of(properties.piece()).is_some_and(|properties| filter_holds(&reading, properties, NoLinkedEntities))
     }
 
     #[test]

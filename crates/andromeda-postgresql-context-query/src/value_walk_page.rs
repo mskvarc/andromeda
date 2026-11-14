@@ -109,7 +109,7 @@ pub(crate) fn value_walk_order(query: &CompiledEntityQuery, names: &QueryNames, 
     };
     let selection = &query.selection;
     let unfiltered = match selection.considered {
-        ConsideredEntities::Selected => selection.q_expr.is_none() && selection.geo.is_none() && selection.scope_q.is_none(),
+        ConsideredEntities::Selected => selection.q.is_none() && selection.geo.is_none() && selection.scope_q.is_none(),
         ConsideredEntities::NoEntity => false,
     };
     let [term] = query.ordering.terms.as_slice() else {
@@ -256,7 +256,7 @@ mod tests {
         count_policy::CountPolicy,
         entity::compiled::CompiledEntityQuery,
         entity_selection::{EntitySelection, EntitySelector},
-        filter::{parser::parse, path::AttrPath},
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse, path::AttrPath},
         ordering::{
             geometry::OrderingGeometry,
             term::{CompiledOrderTerm, OrderDirection, OrderTarget},
@@ -459,7 +459,10 @@ mod tests {
     #[test]
     fn an_ordering_the_value_index_cannot_serve_keeps_the_plain_page() {
         let mut filtered = vehicles_by(vec![term(SPEED, OrderDirection::Asc)]);
-        filtered.selection.q_expr = Some(parse("\"https://example.com/speed\">1").expect("valid q"));
+        filtered.selection.q = Some(CompiledFilter::new(
+            parse("\"https://example.com/speed\">1").expect("valid q"),
+            LanguageMatching::TagEquality,
+        ));
         let two_terms = vehicles_by(vec![term(SPEED, OrderDirection::Asc), term(SPEED, OrderDirection::Desc)]);
         let mut sub_attribute = vehicles_by(vec![term(SPEED, OrderDirection::Asc)]);
         if let Some(CompiledOrderTerm {

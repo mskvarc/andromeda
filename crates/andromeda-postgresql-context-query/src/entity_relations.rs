@@ -257,7 +257,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         entity::compiled::CompiledEntityQuery,
         entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
-        filter::{parser, path::AttrPath},
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser, path::AttrPath},
         geo::query::GeoQuery,
         ordering::term::{CompiledOrderTerm, OrderDirection, OrderTarget},
         pattern::Pattern,
@@ -335,7 +335,10 @@ mod tests {
     #[test]
     fn a_q_filter_joins_nothing() {
         let mut filtered = empty_query();
-        filtered.selection.q_expr = Some(parser::parse("\"https://example.com/speed\">1").expect("valid q"));
+        filtered.selection.q = Some(CompiledFilter::new(
+            parser::parse("\"https://example.com/speed\">1").expect("valid q"),
+            LanguageMatching::TagEquality,
+        ));
         assert_statement_snapshot!("entity-relations-a-q-filter-joins-nothing", from_clause(relations(&filtered)));
     }
 
@@ -442,7 +445,10 @@ mod tests {
     #[test]
     fn a_walked_statement_joins_on_the_walks_key() {
         let mut query = typed_query();
-        query.selection.q_expr = Some(parser::parse("\"https://example.com/speed\">1").expect("valid q"));
+        query.selection.q = Some(CompiledFilter::new(
+            parser::parse("\"https://example.com/speed\">1").expect("valid q"),
+            LanguageMatching::TagEquality,
+        ));
         query.selection.attrs = vec![IriBuf::new("https://example.com/speed".to_string()).expect("valid IRI")];
         assert_statement_snapshot!("entity-relations-a-walked-statement-joins-on-the-walks-key", from_clause(relations(&query)));
     }

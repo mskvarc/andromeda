@@ -9,6 +9,7 @@
 
 pub mod compaction;
 pub mod compilation;
+pub mod compiled_filter;
 pub mod complexity;
 pub mod expansion;
 pub mod expectation;

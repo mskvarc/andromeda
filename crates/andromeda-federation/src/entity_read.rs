@@ -85,7 +85,7 @@ impl FederationService {
                 RegistrationSelection {
                     selectors: &request.client_query.selectors(),
                     reach: SourceReach::Every,
-                    csf: request.csf_expr,
+                    csf: request.csf,
                     scope_q: request.split.registration_scope_query(request.client_query.scope_q()),
                     geo: request.geo,
                     serving: RegistrationServing::EntityQuery(read_intent(request.delivery)),
@@ -128,7 +128,7 @@ impl FederationService {
                 split,
                 context,
                 triggering,
-                csf_expr: _,
+                csf: _,
                 geo: _,
                 entity_map,
                 budget,

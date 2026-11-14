@@ -3,12 +3,13 @@
 use crate::{
     filter::{
         path::QueryPath,
+        reading::operand::Comparison,
         scalar::{CompareValue, Scalar},
         token,
     },
     pattern::Pattern,
 };
-use andromeda_ngsi_ld_value_order::string_order::{StringRelation, string_order};
+use andromeda_ngsi_ld_value_order::string_order::string_order;
 use std::cmp::Ordering;
 
 /// A single filter predicate within a `q` expression.
@@ -125,19 +126,16 @@ impl CmpOp {
         }
     }
 
-    /// Whether the comparison holds between the text strings `lhs` and `rhs`.
-    ///
-    /// Clause 4.9 compares text strings following RFC 8259 section 8.3, which
-    /// makes equality code unit identity, and asks for the Unicode Collation
-    /// Algorithm where strings are ordered, so an equality compares code
-    /// points and an ordering compares under the collation.
+    /// Whether the comparison holds between the text strings `lhs` and `rhs`,
+    /// ordered by the relation [`Comparison::string_relation`] gives the
+    /// operator's comparison.
     #[must_use]
     pub fn holds_for_strings(self, lhs: &str, rhs: &str) -> bool {
-        let relation = match self {
-            CmpOp::Equal | CmpOp::Unequal => StringRelation::CodePoint,
-            CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => StringRelation::Collated,
+        let comparison = match self {
+            CmpOp::Equal | CmpOp::Unequal => Comparison::Equality,
+            CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => Comparison::Order,
         };
-        self.holds(string_order(lhs, rhs, relation))
+        self.holds(string_order(lhs, rhs, comparison.string_relation()))
     }
 }
 

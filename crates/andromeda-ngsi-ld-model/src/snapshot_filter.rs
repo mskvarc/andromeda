@@ -23,12 +23,17 @@ use andromeda_ngsi_ld_query::{
     error::QueryError,
     filter::{
         expression::Expr,
+        language_matching::LanguageMatching,
         path::QueryPath,
-        reading::family_reading::{MultiValueReading, TargetOrigin},
+        reading::{
+            family_reading::{MultiValueReading, TargetOrigin},
+            filter_reading::FilterReading,
+            term_reading::TermReading,
+        },
     },
 };
 use andromeda_ngsi_ld_query_evaluation::q::{
-    eval::evaluate_members,
+    filter_run::members_hold,
     target_value::{ResolvedTarget, TargetValue},
 };
 use std::{borrow::Cow, str::FromStr};
@@ -106,18 +111,18 @@ pub enum SnapshotQParseError {
 }
 
 /// A parsed `q` of Purge Snapshots whose every Query Term names a
-/// [`SnapshotMember`].
+/// [`SnapshotMember`], held as its reading.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SnapshotPurgeFilter(Expr);
+pub struct SnapshotPurgeFilter(FilterReading);
 
 impl SnapshotPurgeFilter {
     /// Whether the filter selects `candidate` (clause 5.16.7.4).
     #[must_use]
     pub fn selects(&self, candidate: &PurgeCandidate) -> bool {
-        evaluate_members(&self.0, &|path| {
-            // Parsing admitted only paths naming a member, so every path here
-            // names one.
-            let member = filtered_member(path).ok()?;
+        members_hold(&self.0, &|term| {
+            // Parsing admitted only terms naming a member by its plain name,
+            // so the attribute of every term here names one.
+            let member = term_member(term)?;
             Some(ResolvedTarget {
                 value: candidate.target(member)?,
                 origin: TargetOrigin::AttributeValue,
@@ -133,7 +138,9 @@ impl FromStr for SnapshotPurgeFilter {
     fn from_str(raw: &str) -> Result<SnapshotPurgeFilter, SnapshotQParseError> {
         let expr = raw.parse::<Expr>()?;
         every_path_names_a_member(&expr)?;
-        Ok(SnapshotPurgeFilter(expr))
+        // A Snapshot member holds no languageMap, so no term selects
+        // languageMap keys and the matching is the specification's own.
+        Ok(SnapshotPurgeFilter(FilterReading::of(&expr, LanguageMatching::TagEquality)))
     }
 }
 
@@ -155,6 +162,11 @@ fn filtered_member(path: &QueryPath) -> Result<SnapshotMember, SnapshotQParseErr
         QueryPath::Local(local) if local.is_simple() => local.attr.as_str().parse().map_err(|_unknown| SnapshotQParseError::UnknownMember),
         QueryPath::Local(_) | QueryPath::Linked { .. } => Err(SnapshotQParseError::UnknownMember),
     }
+}
+
+/// The member the attribute of an admitted term names.
+fn term_member(term: &TermReading) -> Option<SnapshotMember> {
+    term.attribute().as_str().parse().ok()
 }
 
 #[cfg(test)]

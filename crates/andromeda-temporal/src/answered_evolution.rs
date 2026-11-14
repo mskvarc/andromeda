@@ -95,6 +95,7 @@ mod tests {
     use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching},
         scope::query::ScopeQuery,
         split_filter::{LeafTruths, SplitFilter},
         temporal::window::{TemporalWindow, TimeInterval},
@@ -107,7 +108,7 @@ mod tests {
 
     fn selection(q: Option<&str>, scope: Option<&str>) -> EntitySelection {
         EntitySelection::builder()
-            .q_expr(q.map(|raw| raw.parse().expect("a valid q")))
+            .q(q.map(|raw| CompiledFilter::new(raw.parse().expect("a valid q"), LanguageMatching::TagEquality)))
             .scope_q(scope.map(|raw| ScopeQuery::parse(raw).expect("a valid scopeQ")))
             .build()
     }

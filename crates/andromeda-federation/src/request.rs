@@ -13,7 +13,7 @@ use andromeda_http_headers::via::Via;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
-use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::query::GeoQuery, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_query::{filter::reading::filter_reading::FilterReading, geo::query::GeoQuery, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use http::HeaderMap;
 
@@ -200,9 +200,9 @@ pub struct ForwardTemporalQueryRequest<'a> {
     pub operation: ForwardingOperation,
     /// The request that triggered this forwarding.
     pub triggering: TriggeringRequest<'a>,
-    /// The expanded context source filter selecting the registrations to
-    /// contact (clause 5.7.4.3), if the client sent one.
-    pub csf_expr: Option<&'a Expr>,
+    /// The reading of the expanded context source filter selecting the
+    /// registrations to contact (clause 5.7.4.3), if the client sent one.
+    pub csf: Option<&'a FilterReading>,
     /// The client's geoquery, compiled, which a registration's declared
     /// geometry has to admit for it to be contacted (clauses 4.3.6.1 and
     /// 5.10.2.4).
@@ -244,9 +244,10 @@ pub struct ForwardQueryRequest<'a> {
     pub context: &'a ContextSpec,
     /// The request that triggered this forwarding.
     pub triggering: TriggeringRequest<'a>,
-    /// The expanded context source filter selecting the registrations to
-    /// contact (Table 6.4.3.2-1 `csf`), if the client sent one.
-    pub csf_expr: Option<&'a Expr>,
+    /// The reading of the expanded context source filter selecting the
+    /// registrations to contact (Table 6.4.3.2-1 `csf`), if the client sent
+    /// one.
+    pub csf: Option<&'a FilterReading>,
     /// The client's geoquery, compiled, which a registration's declared
     /// geometry has to admit for it to be contacted (clauses 4.3.6.1 and
     /// 5.10.2.4).

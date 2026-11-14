@@ -31,7 +31,7 @@ use andromeda_http_response::declined_representation::single_source_declined;
 use andromeda_linked_retrieval::narrowing::list::ListInForce;
 use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use andromeda_ngsi_ld_query::filter::expression::Expr;
+use andromeda_ngsi_ld_query::filter::reading::filter_reading::FilterReading;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use axum::http::{HeaderMap, Uri as HttpUri};
 use tracing::warn;
@@ -158,13 +158,13 @@ impl QueryForwarding<'_> {
         // The expanded context source filter selects the registrations; the
         // raw expression is forwarded as the client wrote it (clause 5.7.2.4
         // propagates it into discovery).
-        let csf_expr = self.admitted.registration_filters.csf();
+        let csf = self.admitted.registration_filters.csf();
         // Clause 4.12: one budget bounds everything the query gathers, from
         // both phases' sources and, once they have answered, the local store.
         let budget = ResultBudget::new(self.forwarding.result_limits());
         // Both phases match the same registrations, so they are read once.
-        let phased = self.matched(csf_expr, &budget).await?;
-        let (primary, auxiliary) = in_phases(phased, |registrations| self.phase(registrations, csf_expr, &budget), self.uri).await?;
+        let phased = self.matched(csf, &budget).await?;
+        let (primary, auxiliary) = in_phases(phased, |registrations| self.phase(registrations, csf, &budget), self.uri).await?;
 
         let mut warnings = collect_warnings(&primary.results);
         warnings.extend(collect_warnings(&auxiliary.results));
@@ -182,7 +182,7 @@ impl QueryForwarding<'_> {
     }
 
     /// The forwarded query, as both phases send it.
-    fn request<'b>(&self, csf_expr: Option<&'b Expr>, budget: &'b ResultBudget) -> ForwardQueryRequest<'b>
+    fn request<'b>(&self, csf: Option<&'b FilterReading>, budget: &'b ResultBudget) -> ForwardQueryRequest<'b>
     where
         Self: 'b,
     {
@@ -195,7 +195,7 @@ impl QueryForwarding<'_> {
                 via: self.admitted.incoming_via.as_ref(),
                 headers: Some(self.headers),
             },
-            csf_expr,
+            csf,
             geo: self.admitted.registration_filters.geo(),
             entity_map: EntityMapInUse::from(&self.admitted.map_use),
             budget,
@@ -206,8 +206,8 @@ impl QueryForwarding<'_> {
     ///
     /// One that could not be read because this broker's own store is saturated
     /// or unreachable fails the query rather than hide every source.
-    async fn matched(&self, csf_expr: Option<&Expr>, budget: &ResultBudget) -> Result<PhasedRegistrations, ProblemResponse> {
-        match self.forwarding.match_query(self.target, &self.request(csf_expr, budget)).await {
+    async fn matched(&self, csf: Option<&FilterReading>, budget: &ResultBudget) -> Result<PhasedRegistrations, ProblemResponse> {
+        match self.forwarding.match_query(self.target, &self.request(csf, budget)).await {
             Ok(matched) => Ok(matched.into_phases()),
             Err(error) => self.failed(error).map(|()| PhasedRegistrations::default()),
         }
@@ -223,10 +223,10 @@ impl QueryForwarding<'_> {
     async fn phase(
         &self,
         registrations: Vec<ContextSourceRegistration>,
-        csf_expr: Option<&Expr>,
+        csf: Option<&FilterReading>,
         budget: &ResultBudget,
     ) -> Result<ForwardReadOutcome<ForwardedEntities>, ProblemResponse> {
-        match self.forwarding.forward_query(self.target, self.request(csf_expr, budget), registrations).await {
+        match self.forwarding.forward_query(self.target, self.request(csf, budget), registrations).await {
             Ok(outcome) => Ok(outcome),
             Err(error) => self.failed(error).map(|()| ForwardReadOutcome::empty()),
         }

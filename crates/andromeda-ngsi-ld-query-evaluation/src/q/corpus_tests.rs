@@ -8,10 +8,10 @@
 //! that comes to read the clause fails until its entry is removed.
 
 use crate::{
-    q::eval::evaluate,
+    q::filter_run::filter_holds,
     queried_entity::{corpus_fixture::corpus_entities, expanded_fixture::FixtureLinked},
 };
-use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
+use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, reading::filter_reading::FilterReading};
 use andromeda_q_corpus::{case_filter::expanded_filter, corpus::CORPUS, corpus_entity::CorpusEntity};
 use pretty_assertions::{assert_eq, assert_ne};
 use strum::IntoEnumIterator;
@@ -31,10 +31,11 @@ const OPEN_DIVERGENCES: [(&str, &str); 5] = [
 async fn selected(id: &str) -> Result<Vec<CorpusEntity>, String> {
     let case = CORPUS.iter().find(|case| case.id == id).expect("the case is in the corpus");
     let expr = expanded_filter(case).await.map_err(|refusal| refusal.to_string())?;
+    let reading = FilterReading::of(&expr, LanguageMatching::TagEquality);
     let entities = corpus_entities();
     Ok(CorpusEntity::iter()
         .zip(&entities)
-        .filter(|(_, entity)| evaluate(&expr, *entity, FixtureLinked(&entities), LanguageMatching::TagEquality))
+        .filter(|(_, entity)| filter_holds(&reading, *entity, FixtureLinked(&entities)))
         .map(|(corpus_entity, _)| corpus_entity)
         .collect())
 }

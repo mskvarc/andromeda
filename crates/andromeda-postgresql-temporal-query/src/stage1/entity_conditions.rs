@@ -132,7 +132,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         entity_selection::EntitySelector,
-        filter::parser,
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
         geo::query::GeoQuery,
         page_window::PageWindow,
         scope::query::ScopeQuery,
@@ -236,7 +236,10 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:9"])).build()];
         compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
-        compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">100").unwrap());
+        compiled.entities.q = Some(CompiledFilter::new(
+            parser::parse("\"https://example.com/speed\">100").unwrap(),
+            LanguageMatching::TagEquality,
+        ));
         compiled.entities.geo = Some(GeoQuery {
             georel: GeoRel::Within,
             geometry: point(&serde_json::json!([1.0, 2.0])),
@@ -289,7 +292,10 @@ mod tests {
     fn stage1_q_filter_probes_the_in_window_history_instances() {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
-        compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">100").unwrap());
+        compiled.entities.q = Some(CompiledFilter::new(
+            parser::parse("\"https://example.com/speed\">100").unwrap(),
+            LanguageMatching::TagEquality,
+        ));
         let statement = built(&compiled, &speed_and_address());
         assert_statement_snapshot!("entity-conditions-stage1-q-filter-probes-the-in-window-history-instances", statement);
     }
@@ -301,7 +307,10 @@ mod tests {
     fn the_count_carries_the_same_two_probes() {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
-        compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">100").unwrap());
+        compiled.entities.q = Some(CompiledFilter::new(
+            parser::parse("\"https://example.com/speed\">100").unwrap(),
+            LanguageMatching::TagEquality,
+        ));
         let count = built_count(&compiled, &speed_and_address());
         assert_statement_snapshot!("entity-conditions-the-count-carries-the-same-two-probes", count);
     }
@@ -312,7 +321,10 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.window.timeproperty = TimeProp::Modified;
         compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
-        compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\"==1").unwrap());
+        compiled.entities.q = Some(CompiledFilter::new(
+            parser::parse("\"https://example.com/speed\"==1").unwrap(),
+            LanguageMatching::TagEquality,
+        ));
         let statement = built(&compiled, &speed_and_address());
         assert_statement_snapshot!("entity-conditions-stage1-q-filter-reads-the-window-on-the-requested-timeproperty", statement);
     }
@@ -323,7 +335,10 @@ mod tests {
     #[test]
     fn the_terms_of_an_or_share_one_windowed_existential() {
         let mut compiled = minimal_compiled();
-        compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">100|\"https://example.com/speed\"<10").unwrap());
+        compiled.entities.q = Some(CompiledFilter::new(
+            parser::parse("\"https://example.com/speed\">100|\"https://example.com/speed\"<10").unwrap(),
+            LanguageMatching::TagEquality,
+        ));
         let statement = built(&compiled, &speed_and_address());
         assert_statement_snapshot!("entity-conditions-the-terms-of-an-or-share-one-windowed-existential", statement);
     }
@@ -331,7 +346,10 @@ mod tests {
     #[test]
     fn stage1_q_filter_on_an_unknown_attribute_is_unsatisfiable() {
         let mut compiled = minimal_compiled();
-        compiled.entities.q_expr = Some(parser::parse("\"https://example.com/never-written\">50").unwrap());
+        compiled.entities.q = Some(CompiledFilter::new(
+            parser::parse("\"https://example.com/never-written\">50").unwrap(),
+            LanguageMatching::TagEquality,
+        ));
         let statement = built(&compiled, &QueryNames::default());
         assert_statement_snapshot!("entity-conditions-stage1-q-filter-on-an-unknown-attribute-is-unsatisfiable", statement);
     }
@@ -358,7 +376,10 @@ mod tests {
     #[test]
     fn a_q_predicate_on_a_compound_value_reads_the_value_object() {
         let mut compiled = minimal_compiled();
-        compiled.entities.q_expr = Some(parser::parse("\"https://example.com/address\"[city]==\"Berlin\"").unwrap());
+        compiled.entities.q = Some(CompiledFilter::new(
+            parser::parse("\"https://example.com/address\"[city]==\"Berlin\"").unwrap(),
+            LanguageMatching::TagEquality,
+        ));
         let statement = built(&compiled, &speed_and_address());
         assert_statement_snapshot!("entity-conditions-a-q-predicate-on-a-compound-value-reads-the-value-object", statement);
     }
@@ -396,7 +417,7 @@ mod tests {
         for (index, q) in queries.into_iter().enumerate() {
             let mut compiled = minimal_compiled();
             compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
-            compiled.entities.q_expr = Some(parser::parse(q).expect("parse q"));
+            compiled.entities.q = Some(CompiledFilter::new(parser::parse(q).expect("parse q"), LanguageMatching::TagEquality));
             let statement = built(&compiled, &speed_address_and_their_sub_attributes());
             let name = format!("entity-conditions-no-temporal-statement-rebuilds-a-history-instance-document-{}", index + 1);
             assert_statement_snapshot!(name, statement);

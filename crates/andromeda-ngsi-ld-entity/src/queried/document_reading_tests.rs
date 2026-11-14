@@ -4,13 +4,13 @@
 use crate::document::EntityDocument;
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};
 use andromeda_ngsi_ld_query::{
-    filter::{language_matching::LanguageMatching, parser::parse},
+    filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading},
     geo::query::GeoQuery,
     scope::query::ScopeQuery,
 };
 use andromeda_ngsi_ld_query_evaluation::{
     geo_query::geo_query_matches,
-    q::eval::evaluate,
+    q::filter_run::filter_holds,
     queried_entity::{linked_entities::NoLinkedEntities, scoped_entity::ScopedEntity},
     scope_query::scope_query_matches,
 };
@@ -88,7 +88,11 @@ fn the_document_reading_answers_every_written_instance() {
         ("\"https://example.com/label\"[de]", false),
     ] {
         let expr = parse(q).expect("the Query Term parses");
-        pretty_assertions::assert_eq!(evaluate(&expr, &written, NoLinkedEntities, LanguageMatching::TagEquality), expected, "{q}");
+        pretty_assertions::assert_eq!(
+            filter_holds(&FilterReading::of(&expr, LanguageMatching::TagEquality), &written, NoLinkedEntities),
+            expected,
+            "{q}"
+        );
     }
 }
 
@@ -97,17 +101,18 @@ fn the_document_reading_answers_every_written_instance() {
 #[test]
 fn a_deleted_instance_holds_no_value() {
     let written = document();
-    assert!(!evaluate(
-        &parse("\"https://example.com/humidity\"==\"urn:ngsi-ld:null\"").expect("parses"),
+    assert!(!filter_holds(
+        &FilterReading::of(
+            &parse("\"https://example.com/humidity\"==\"urn:ngsi-ld:null\"").expect("parses"),
+            LanguageMatching::TagEquality
+        ),
         &written,
         NoLinkedEntities,
-        LanguageMatching::TagEquality
     ));
-    assert!(evaluate(
-        &parse("\"https://example.com/humidity\"").expect("parses"),
+    assert!(filter_holds(
+        &FilterReading::of(&parse("\"https://example.com/humidity\"").expect("parses"), LanguageMatching::TagEquality),
         &written,
         NoLinkedEntities,
-        LanguageMatching::TagEquality
     ));
 }
 

@@ -24,7 +24,14 @@
 use crate::{
     entity_filters::EntityFilters,
     entity_selection::EntitySelection,
-    filter::{expression::Expr, path::QueryPath, predicate::Predicate, referenced_attributes::referenced_attributes},
+    filter::{
+        expression::Expr,
+        language_matching::LanguageMatching,
+        path::QueryPath,
+        predicate::Predicate,
+        reading::term_reading::TermReading,
+        referenced_attributes::referenced_attributes,
+    },
     geo::query::GeoQuery,
     scope::pattern::ScopePattern,
 };
@@ -36,8 +43,16 @@ const STRUCTURAL_MEMBERS: [&str; 3] = ["id", "type", "scope"];
 /// One existential leaf of a query's value, geo and scope filters.
 #[derive(Debug, Clone, Copy)]
 pub enum FilterLeaf<'q> {
-    /// One Query Term of the `q` expression (clause 4.9).
-    Term(&'q Predicate),
+    /// One Query Term of the `q` filter (clause 4.9).
+    Term {
+        /// The expanded predicate, which a store renders.
+        predicate: &'q Predicate,
+        /// How the filter's target languages select languageMap keys, which
+        /// a store renders the predicate under.
+        matching: LanguageMatching,
+        /// Its reading, which the in-memory execution runs.
+        reading: &'q TermReading,
+    },
     /// The geo-query (clause 4.10).
     Geo(&'q GeoQuery),
     /// One requirement of one alternative of the scope query (clause 4.19).
@@ -139,17 +154,20 @@ impl<'q> SplitFilter<'q> {
     /// Every leaf: the Query Terms of `q` in pre-order, then the geo-query,
     /// then every pattern of every scope alternative in order.
     pub fn leaves(&self) -> impl Iterator<Item = FilterLeaf<'q>> + use<'q> {
-        let mut terms = Vec::new();
-        if let Some(expr) = self.filters.q {
-            collect_terms(expr, &mut terms);
-        }
+        let terms = self.filters.q.into_iter().flat_map(|q| {
+            q.terms().map(|(predicate, reading)| FilterLeaf::Term {
+                predicate,
+                matching: q.matching(),
+                reading,
+            })
+        });
         let geo = self.filters.geo.map(FilterLeaf::Geo);
         let scope = self
             .filters
             .scope
             .into_iter()
             .flat_map(|scope| scope.alternatives().flatten().map(FilterLeaf::ScopeRequirement));
-        terms.into_iter().map(FilterLeaf::Term).chain(geo).chain(scope)
+        terms.chain(geo).chain(scope)
     }
 
     /// The attributes the leaves read the instances of: the first attribute
@@ -158,7 +176,7 @@ impl<'q> SplitFilter<'q> {
     /// whether a leaf reads it.
     #[must_use]
     pub fn read_attributes(&self) -> Vec<&'q AttributeName> {
-        let mut attributes = self.filters.q.map_or_default(referenced_attributes);
+        let mut attributes = self.filters.q.map_or_default(|q| referenced_attributes(q.expr()));
         if let Some(geo) = self.filters.geo
             && !attributes.contains(&&geo.geoproperty)
         {
@@ -175,10 +193,10 @@ impl<'q> SplitFilter<'q> {
     pub fn hop_relationships(&self) -> Vec<Vec<&'q AttributeName>> {
         let mut levels: Vec<Vec<&'q AttributeName>> = Vec::new();
         for leaf in self.leaves() {
-            let FilterLeaf::Term(pred) = leaf else {
+            let FilterLeaf::Term { predicate, .. } = leaf else {
                 continue;
             };
-            let mut path = pred.path();
+            let mut path = predicate.path();
             let mut depth = 0;
             while let QueryPath::Linked { relationship, inner, .. } = path {
                 if levels.len() <= depth {
@@ -202,10 +220,10 @@ impl<'q> SplitFilter<'q> {
     pub fn hop_reads(&self) -> Vec<HopReads<'q>> {
         let mut levels: Vec<HopReads<'q>> = Vec::new();
         for leaf in self.leaves() {
-            let FilterLeaf::Term(pred) = leaf else {
+            let FilterLeaf::Term { predicate, .. } = leaf else {
                 continue;
             };
-            let mut path = pred.path();
+            let mut path = predicate.path();
             let mut depth = 0;
             while let QueryPath::Linked { inner, .. } = path {
                 if levels.len() <= depth {
@@ -250,7 +268,7 @@ impl<'q> SplitFilter<'q> {
     #[must_use]
     pub fn holds(&self, truths: &LeafTruths) -> bool {
         let mut cursor = 0;
-        let q = self.filters.q.is_none_or(|expr| expression_holds(expr, truths, &mut cursor));
+        let q = self.filters.q.is_none_or(|q| expression_holds(q.expr(), truths, &mut cursor));
         let geo = self.filters.geo.is_none_or(|_| next_truth(truths, &mut cursor));
         let scope = self.filters.scope.is_none_or(|scope| {
             // Every requirement takes its place in the leaf order whether or
@@ -268,14 +286,6 @@ impl<'q> SplitFilter<'q> {
     #[must_use]
     pub const fn filters(&self) -> EntityFilters<'q> {
         self.filters
-    }
-}
-
-/// Gather the Query Terms of `expr` in pre-order.
-fn collect_terms<'q>(expr: &'q Expr, terms: &mut Vec<&'q Predicate>) {
-    match expr {
-        Expr::And(inner) | Expr::Or(inner) => inner.iter().for_each(|term| collect_terms(term, terms)),
-        Expr::Pred(pred) => terms.push(pred),
     }
 }
 
@@ -315,7 +325,7 @@ fn expression_holds(expr: &Expr, truths: &LeafTruths, cursor: &mut usize) -> boo
 mod tests {
     use crate::{
         entity_selection::EntitySelection,
-        filter::parser::parse,
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
         geo::query::GeoQuery,
         scope::query::ScopeQuery,
         split_filter::{FilterLeaf, HopMembers, LeafTruths, SplitFilter},
@@ -341,7 +351,7 @@ mod tests {
 
     fn selection(q: Option<&str>, geo: Option<GeoQuery>, scope: Option<&str>) -> EntitySelection {
         EntitySelection::builder()
-            .q_expr(q.map(|raw| parse(raw).expect("q parses")))
+            .q(q.map(|raw| CompiledFilter::new(parse(raw).expect("q parses"), LanguageMatching::TagEquality)))
             .geo(geo)
             .scope_q(scope.map(|raw| ScopeQuery::parse(raw).expect("scopeQ parses")))
             .build()
@@ -366,7 +376,7 @@ mod tests {
         let leaves: Vec<String> = SplitFilter::of(&selection)
             .leaves()
             .map(|leaf| match leaf {
-                FilterLeaf::Term(pred) => format!("term {}", pred.path().terminal().attr),
+                FilterLeaf::Term { predicate, .. } => format!("term {}", predicate.path().terminal().attr),
                 FilterLeaf::Geo(geo) => format!("geo {}", geo.geoproperty),
                 FilterLeaf::ScopeRequirement(pattern) => format!("scope {pattern}"),
             })

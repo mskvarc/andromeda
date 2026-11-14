@@ -64,7 +64,7 @@ async fn listed_under(filters: CandidateFilters) -> EntitySelection {
 async fn a_deferred_listing_leaves_the_value_and_scope_filters_out() {
     let selection = listed_under(CandidateFilters::Deferred).await;
 
-    assert!(selection.q_expr.is_none(), "the value filter is left out");
+    assert!(selection.q.is_none(), "the value filter is left out");
     assert!(selection.scope_q.is_none(), "the scope query is left out");
     assert!(
         selection.selectors.iter().any(|selector| selector.id_pattern.is_some()),
@@ -78,7 +78,7 @@ async fn a_deferred_listing_leaves_the_value_and_scope_filters_out() {
 async fn an_applied_listing_holds_the_entities_to_every_filter() {
     let selection = listed_under(CandidateFilters::Applied).await;
 
-    assert!(selection.q_expr.is_some(), "the value filter applies");
+    assert!(selection.q.is_some(), "the value filter applies");
     assert!(selection.scope_q.is_some(), "the scope query applies");
     assert!(selection.selectors.iter().any(|selector| selector.id_pattern.is_some()));
 }

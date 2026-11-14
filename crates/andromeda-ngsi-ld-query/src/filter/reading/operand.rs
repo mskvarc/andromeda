@@ -2,6 +2,7 @@
 
 use crate::filter::reading::target_kind::TargetKind;
 use andromeda_ngsi_ld_number::JsonNumber;
+use andromeda_ngsi_ld_value_order::string_order::StringRelation;
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 
 /// A lowered operand, in the value types the grammar's scalar carries.
@@ -32,6 +33,22 @@ pub enum Comparison {
     Equality,
     /// The four ordering operators, and the bounds of a range.
     Order,
+}
+
+impl Comparison {
+    /// The relation text is ordered by after operators of this comparison.
+    ///
+    /// Clause 4.9 compares text strings following RFC 8259 section 8.3, which
+    /// makes equality code unit identity, and asks for the Unicode Collation
+    /// Algorithm where strings are ordered, so an equality compares code
+    /// points and an ordering compares under the collation.
+    #[must_use]
+    pub const fn string_relation(self) -> StringRelation {
+        match self {
+            Comparison::Equality => StringRelation::CodePoint,
+            Comparison::Order => StringRelation::Collated,
+        }
+    }
 }
 
 impl Operand {
