@@ -235,11 +235,11 @@ fn instance_members_cases() -> Vec<(&'static str, bool)> {
         ),
         ("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/modifiedAt\"", false),
         ("\"https://example.com/temperature\">30", true),
-        ("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/hasValue\">30", true),
+        ("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/hasValue\">30", false),
         ("\"https://example.com/address\"[\"https://example.com/city\"]==\"Berlin\"", true),
         (
             "\"https://example.com/address\".\"https://uri.etsi.org/ngsi-ld/hasValue\".\"https://example.com/city\"==\"Berlin\"",
-            true,
+            false,
         ),
         ("\"https://example.com/address\"[\"https://example.com/postcode\"]", false),
         (

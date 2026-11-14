@@ -1579,19 +1579,20 @@ mod tests {
         assert!(!holds_q("\"https://example.com/typed\"==\"2024-01-01T00:00:00Z\""));
     }
 
-    /// A segment naming the value member itself lands on the first value of
-    /// each instance.
+    /// Clause 4.9 makes each name after the first "a (sub)Property or
+    /// (sub)Relationship", and a Property's Value is neither, so a segment
+    /// naming the value member defines no target element: no operator
+    /// matches, `!=` included, while the attribute itself still compares.
     #[test]
-    fn a_segment_naming_the_value_member_compares_the_first_value() {
+    fn a_segment_naming_the_value_member_matches_no_operator() {
         let entity = instance_members_entity();
-        let value_above = |bound: u32| {
-            parse(&format!(
-                "\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/hasValue\">{bound}"
-            ))
-            .expect("parses")
-        };
-        assert!(holds(&value_above(30), &entity));
-        assert!(!holds(&value_above(40), &entity));
+        let holds_q = |q: &str| holds(&parse(q).expect("parses"), &entity);
+        let value_member = "\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/hasValue\"";
+        assert!(!holds_q(value_member));
+        assert!(!holds_q(&format!("{value_member}>30")));
+        assert!(!holds_q(&format!("{value_member}==21")));
+        assert!(!holds_q(&format!("{value_member}!=21")));
+        assert!(holds_q("\"https://example.com/temperature\">30"));
     }
 
     /// Clause 4.9: "If the data type of the target value and the data type of
@@ -1606,13 +1607,19 @@ mod tests {
         assert!(speed("\"https://example.com/speed\"==80"));
     }
 
-    /// A member of a structured value reached through the value member, and a
-    /// raw JSON literal held inside a structured value.
+    /// Clause 4.9 enters a compound value through the trailing path alone, so
+    /// a member of a structured value is reached in brackets and never through
+    /// a segment naming the value member, and a raw JSON literal held inside a
+    /// structured value is no member to descend into.
     #[test]
-    fn a_structured_value_is_walked_through_both_axes() {
+    fn a_structured_value_is_entered_through_the_trailing_path_alone() {
         let entity = instance_members_entity();
-        assert!(holds(
+        assert!(!holds(
             &parse("\"https://example.com/address\".\"https://uri.etsi.org/ngsi-ld/hasValue\".\"https://example.com/city\"==\"Berlin\"").expect("parses"),
+            &entity
+        ));
+        assert!(holds(
+            &parse("\"https://example.com/address\"[\"https://example.com/city\"]==\"Berlin\"").expect("parses"),
             &entity
         ));
         assert!(!holds(
