@@ -28,10 +28,10 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     error::QueryError,
-    filter::{eval::evaluate, expression::Expr, language_matching::LanguageMatching, parser::parse},
+    filter::{expression::Expr, language_matching::LanguageMatching, parser::parse},
     projection::compiled::Projection,
-    queried_entity::linked_entities::NoLinkedEntities,
 };
+use andromeda_ngsi_ld_query_evaluation::{q::eval::evaluate, queried_entity::linked_entities::NoLinkedEntities};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_subscription::{
     candidate_index::CandidateIndex,

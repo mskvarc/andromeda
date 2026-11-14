@@ -1,8 +1,8 @@
 //! What the query languages read of an entity state or a written document.
 //!
 //! The `q` language (clause 4.9), the geo-query (clause 4.10) and the scope
-//! query (clause 4.19) are evaluated by `andromeda-ngsi-ld-query` against the
-//! entity traits it defines. This module implements them for
+//! query (clause 4.19) are evaluated in memory against a set of entity traits.
+//! This module implements them for
 //! [`EntityState`](crate::entity_state::EntityState), the state a store holds
 //! and a notification carries, and for
 //! [`EntityDocument`](crate::document::EntityDocument), the instances a

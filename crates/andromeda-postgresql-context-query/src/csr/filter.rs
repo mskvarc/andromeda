@@ -278,11 +278,7 @@ fn csr_ordering_condition(path: &AttrPath, op: OrderingOp, rhs: &Scalar) -> Cond
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_ngsi_ld_entity::entity_state::EntityState;
-    use andromeda_ngsi_ld_query::{
-        filter::{eval::evaluate, language_matching::LanguageMatching, parser},
-        queried_entity::linked_entities::NoLinkedEntities,
-    };
+    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser};
     use andromeda_postgresql_query::{
         attribute_name_key::AttributeNameKey,
         dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
@@ -467,35 +463,6 @@ mod tests {
     /// An attribute IRI used by the conformance fixtures.
     const NAME: &str = "https://example.com/name";
 
-    /// The stored state an expanded document decodes to.
-    fn stored(document: &serde_json::Value) -> EntityState {
-        EntityState::from_slice(&serde_json::to_vec(document).expect("JSON")).expect("a stored state")
-    }
-
-    /// One Property instance holding `value`.
-    fn property(value: &serde_json::Value) -> serde_json::Value {
-        serde_json::json!([{
-            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
-            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": value}]
-        }])
-    }
-
-    /// An entity carrying one value for each of the three fixture attributes.
-    fn present(speed: i64, color: &str, name: &str) -> EntityState {
-        stored(&serde_json::json!([{
-            "@id": "urn:ngsi-ld:Vehicle:A1",
-            "@type": ["https://example.com/Vehicle"],
-            SPEED: property(&speed.into()),
-            COLOR: property(&color.into()),
-            NAME: property(&name.into()),
-        }]))
-    }
-
-    /// An entity carrying none of the three fixture attributes.
-    fn absent() -> EntityState {
-        stored(&serde_json::json!([{ "@id": "urn:ngsi-ld:Vehicle:A2", "@type": ["https://example.com/Vehicle"] }]))
-    }
-
     fn names() -> QueryNames {
         QueryNames {
             attributes: ResolvedNames::from_pairs([
@@ -512,95 +479,32 @@ mod tests {
         Query::select().column(Entities::Id).from(Entities::Table).cond_where(condition).to_owned()
     }
 
-    /// One row of the clause 4.9 conformance table.
-    struct Case {
-        /// The filter, written against the three fixture attribute IRIs.
-        expression: String,
-        /// Entities the predicate must select.
-        matching: Vec<EntityState>,
-        /// Entities carrying the attribute that the predicate must reject.
-        non_matching: Vec<EntityState>,
-    }
-
-    fn cases() -> Vec<Case> {
+    /// The clause 4.9 conformance filters, written against the three fixture
+    /// attribute IRIs.
+    fn expressions() -> Vec<String> {
         let quoted = |iri: &str| format!("\"{iri}\"");
         vec![
-            Case {
-                expression: format!("{}>50", quoted(SPEED)),
-                matching: vec![present(80, "red", "Alpha")],
-                non_matching: vec![present(10, "red", "Alpha")],
-            },
-            Case {
-                expression: format!("{}==10..20", quoted(SPEED)),
-                matching: vec![present(15, "red", "Alpha")],
-                non_matching: vec![present(25, "red", "Alpha")],
-            },
-            Case {
-                expression: format!("{}!=10..20", quoted(SPEED)),
-                matching: vec![present(25, "red", "Alpha")],
-                non_matching: vec![present(15, "red", "Alpha")],
-            },
-            Case {
-                expression: format!("{}==\"red\",\"blue\"", quoted(COLOR)),
-                matching: vec![present(80, "red", "Alpha")],
-                non_matching: vec![present(80, "green", "Alpha")],
-            },
-            Case {
-                expression: format!("{}!=\"red\",\"blue\"", quoted(COLOR)),
-                matching: vec![present(80, "green", "Alpha")],
-                non_matching: vec![present(80, "red", "Alpha")],
-            },
-            Case {
-                expression: format!("{}~=\"^A.*\"", quoted(NAME)),
-                matching: vec![present(80, "red", "Alpha")],
-                non_matching: vec![present(80, "red", "Beta")],
-            },
-            Case {
-                expression: format!("{}!~=\"^A.*\"", quoted(NAME)),
-                matching: vec![present(80, "red", "Beta")],
-                non_matching: vec![present(80, "red", "Alpha")],
-            },
-            Case {
-                expression: quoted(SPEED),
-                matching: vec![present(80, "red", "Alpha")],
-                non_matching: Vec::new(),
-            },
+            format!("{}>50", quoted(SPEED)),
+            format!("{}==10..20", quoted(SPEED)),
+            format!("{}!=10..20", quoted(SPEED)),
+            format!("{}==\"red\",\"blue\"", quoted(COLOR)),
+            format!("{}!=\"red\",\"blue\"", quoted(COLOR)),
+            format!("{}~=\"^A.*\"", quoted(NAME)),
+            format!("{}!~=\"^A.*\"", quoted(NAME)),
+            quoted(SPEED),
         ]
     }
 
     /// Clause 4.9: an entity that does not carry the addressed element never
-    /// satisfies a predicate over it, in either polarity. The in-memory
-    /// evaluator decides that directly; the two SQL renderings decide it
-    /// structurally, by conjoining the presence test rather than disjoining it,
-    /// which the snapshots of both renderings show. The one `IS NULL OR` a
-    /// projection probe holds is the clause 4.22 expiry guard of the instance,
-    /// not a test of the addressed element.
+    /// satisfies a predicate over it, in either polarity. The two SQL renderings
+    /// decide it structurally, by conjoining the presence test rather than
+    /// disjoining it, which the snapshots of both renderings show. The one
+    /// `IS NULL OR` a projection probe holds is the clause 4.22 expiry guard of
+    /// the instance, not a test of the addressed element.
     #[test]
     fn every_backend_reads_clause_four_nine_the_same_way() {
-        for (index, case) in cases().into_iter().enumerate() {
-            let expr = parser::parse(&case.expression).unwrap_or_else(|error| panic!("{}: {error}", case.expression));
-
-            for entity in &case.matching {
-                assert!(
-                    evaluate(&expr, entity, NoLinkedEntities, LanguageMatching::TagEquality),
-                    "{} must select {}",
-                    case.expression,
-                    entity.id()
-                );
-            }
-            for entity in &case.non_matching {
-                assert!(
-                    !evaluate(&expr, entity, NoLinkedEntities, LanguageMatching::TagEquality),
-                    "{} must reject {}",
-                    case.expression,
-                    entity.id()
-                );
-            }
-            assert!(
-                !evaluate(&expr, &absent(), NoLinkedEntities, LanguageMatching::TagEquality),
-                "{} must reject an entity without the attribute",
-                case.expression
-            );
+        for (index, expression) in expressions().into_iter().enumerate() {
+            let expr = parser::parse(&expression).unwrap_or_else(|error| panic!("{expression}: {error}"));
 
             let projection = entity_statement(compile(
                 &expr,

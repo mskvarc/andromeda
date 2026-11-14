@@ -12,9 +12,8 @@
 //! a compiled query is rendered as SQL is deliberately absent: that is a
 //! property of a backend. Nothing here names a database.
 //!
-//! The entities the languages are evaluated against in memory are inverted the
-//! same way: an evaluator reads an entity through the traits of
-//! [`queried_entity`], which whatever holds the entity implements.
+//! Evaluating a query against an entity held in memory is absent for the same
+//! reason: it is an execution of the languages, not part of them.
 //!
 //! Term expansion is likewise inverted rather than depended upon: compilation
 //! that needs a term expanded against an `@context` asks a
@@ -44,7 +43,6 @@ pub mod pattern;
 pub mod portable_pattern;
 pub mod posix_dialect;
 pub mod projection;
-pub mod queried_entity;
 pub mod read_order;
 pub mod scope;
 pub mod split_filter;
@@ -62,6 +60,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-representation",
+        "andromeda-ngsi-ld-value-order",
         "andromeda-ngsi-ld-vocabulary",
     ],
     allow_workspace_dev_dependencies: [

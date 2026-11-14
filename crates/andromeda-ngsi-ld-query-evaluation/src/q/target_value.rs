@@ -2,12 +2,14 @@
 //! readings clause 4.9 gives a target holding several values.
 //!
 //! What each attribute family's target is, is
-//! [`family_target`](crate::filter::family_target)'s.
+//! [`family_target`](crate::q::family_target)'s.
 
 use crate::queried_entity::value_item::LiteralValue;
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::value::TimeValue};
 use andromeda_ngsi_ld_number::{JsonNumber, declared_number::NonFinite};
+use andromeda_ngsi_ld_query::filter::instance_metadata::InstanceMetadata;
+use andromeda_ngsi_ld_value_order::number_order::{HeldNumber, number_order};
 use std::{borrow::Cow, cmp::Ordering};
 
 /// One resolved comparison target: the clause 4.9 target value a predicate
@@ -71,6 +73,38 @@ impl<'a> TargetValue<'a> {
         }
     }
 
+    /// The clause 4.9 target value of the instance member `member` holding
+    /// `texts`, or `None` when it holds none.
+    ///
+    /// Several texts are the array clause 4.9 compares by membership ("Is
+    /// included in the target value, if the latter is an array").
+    #[must_use]
+    pub fn of_metadata(member: InstanceMetadata, texts: impl Iterator<Item = Cow<'a, str>>) -> Option<TargetValue<'a>> {
+        let mut values = texts.map(|text| TargetValue::metadata_lexical(member, text));
+        let first = values.next()?;
+        Some(match values.next() {
+            None => first,
+            Some(second) => TargetValue::Array([first, second].into_iter().chain(values).collect()),
+        })
+    }
+
+    /// The target value one lexical form of the instance member `member` is.
+    ///
+    /// An instant the instance holds was admitted as a `DateTime` or stamped by
+    /// the broker, so its text always reads as one.
+    fn metadata_lexical(member: InstanceMetadata, text: Cow<'a, str>) -> TargetValue<'a> {
+        match member {
+            InstanceMetadata::ObservedAt | InstanceMetadata::CreatedAt | InstanceMetadata::ModifiedAt | InstanceMetadata::ExpiresAt => text
+                .parse()
+                .map_or(TargetValue::Text(text), |instant| TargetValue::Time(TimeValue::DateTime(instant))),
+            InstanceMetadata::DatasetId
+            | InstanceMetadata::InstanceId
+            | InstanceMetadata::UnitCode
+            | InstanceMetadata::ValueType
+            | InstanceMetadata::ObjectType => TargetValue::Text(text),
+        }
+    }
+
     /// The value when it is a finite number.
     ///
     /// A string spelling a number is a String, not a number: clause 4.9 makes a
@@ -89,18 +123,12 @@ impl<'a> TargetValue<'a> {
 
     /// How the value orders against the finite number `operand`, `None` when it
     /// is no number or is not-a-number.
-    ///
-    /// XSD orders positive infinity above every finite number and negative
-    /// infinity below; not-a-number is unordered, so it fails `==` and every
-    /// ordering and satisfies `!=`.
     #[must_use]
     pub fn number_ordering(&self, operand: &JsonNumber) -> Option<Ordering> {
         match self {
-            TargetValue::NonFiniteNumber(NonFinite::PositiveInfinity) => Some(Ordering::Greater),
-            TargetValue::NonFiniteNumber(NonFinite::NegativeInfinity) => Some(Ordering::Less),
-            TargetValue::NonFiniteNumber(NonFinite::NotANumber) => None,
+            TargetValue::NonFiniteNumber(value) => number_order(HeldNumber::NonFinite(*value), operand),
             TargetValue::Number(_) | TargetValue::Text(_) | TargetValue::Boolean(_) | TargetValue::Json(_) | TargetValue::Array(_) | TargetValue::Time(_) => {
-                Some(self.as_number()?.as_ref().cmp(operand))
+                number_order(HeldNumber::Finite(self.as_number()?.as_ref()), operand)
             }
         }
     }
@@ -203,7 +231,7 @@ pub fn json_member<'a>(seed: &ResolvedTarget<'a>, keys: &[AttributeName]) -> Opt
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue, json_member};
+    use crate::q::target_value::{MultiValueReading, ResolvedTarget, TargetOrigin, TargetValue, json_member};
     use andromeda_json_literal::JsonLiteral;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use std::borrow::Cow;

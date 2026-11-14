@@ -7,13 +7,11 @@ use crate::{
     attribute_value_datatype::{NULL_TYPE, OrderedValue},
     attribute_value_order::ELEMENT_COLUMN,
 };
-use andromeda_ngsi_ld_query::{
-    filter::{
-        path::AttrPath,
-        target_language::LanguageSelector,
-        trailing_path::{MemberPath, TrailingPath},
-    },
-    queried_entity::instance_metadata::InstanceMetadata,
+use andromeda_ngsi_ld_query::filter::{
+    instance_metadata::InstanceMetadata,
+    path::AttrPath,
+    target_language::LanguageSelector,
+    trailing_path::{MemberPath, TrailingPath},
 };
 use andromeda_ngsi_ld_vocabulary::{
     expanded::classes::{DATE, TIME},

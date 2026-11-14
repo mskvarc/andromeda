@@ -23,16 +23,8 @@
 
 use crate::{
     entity_selection::EntitySelection,
-    filter::{
-        eval::predicate_holds_in,
-        expression::Expr,
-        language_matching::LanguageMatching,
-        path::QueryPath,
-        predicate::Predicate,
-        referenced_attributes::referenced_attributes,
-    },
+    filter::{expression::Expr, language_matching::LanguageMatching, path::QueryPath, predicate::Predicate, referenced_attributes::referenced_attributes},
     geo::query::GeoQuery,
-    queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
     scope::{pattern::ScopePattern, query::ScopeQuery},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -279,22 +271,10 @@ impl<'q> SplitFilter<'q> {
         q && geo && scope
     }
 
-    /// The truth of every leaf over one part of an entity, read in memory, the
-    /// entities a Query Term's hops cross into read from `linked`.
-    pub fn truths_of<'a, E, L>(&self, entity: E, linked: L) -> LeafTruths
-    where
-        E: QueriedEntity<'a> + LocatedEntity<'a> + ScopedEntity<'a>,
-        L: LinkedEntities<'a>,
-    {
-        LeafTruths(
-            self.leaves()
-                .map(|leaf| match leaf {
-                    FilterLeaf::Term(pred) => predicate_holds_in(pred, entity, linked, self.language_matching),
-                    FilterLeaf::Geo(geo) => geo.matches_entity(entity),
-                    FilterLeaf::ScopeRequirement(pattern) => entity.scopes().any(|scope| pattern.matches(scope)),
-                })
-                .collect(),
-        )
+    /// How the target languages of `q` select languageMap keys.
+    #[must_use]
+    pub const fn language_matching(&self) -> LanguageMatching {
+        self.language_matching
     }
 }
 
@@ -342,22 +322,14 @@ fn expression_holds(expr: &Expr, truths: &LeafTruths, cursor: &mut usize) -> boo
 mod tests {
     use crate::{
         entity_selection::EntitySelection,
-        filter::{eval::evaluate, parser::parse},
+        filter::parser::parse,
         geo::query::GeoQuery,
-        queried_entity::{
-            attribute_reading::QueriedEntity,
-            expanded_fixture::{FixtureEntity, FixtureInstance},
-            linked_entities::NoLinkedEntities,
-            located_entity::LocatedEntity,
-            scoped_entity::ScopedEntity,
-        },
         scope::query::ScopeQuery,
         split_filter::{FilterLeaf, HopMembers, LeafTruths, SplitFilter},
     };
-    use andromeda_ngsi_ld_geometry::{form::GeometryForm, geo_rel::GeoRel, geometry::Geometry, position::Position};
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath};
-    use serde_json::{Value, json};
-    use std::borrow::Cow;
+    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use serde_json::json;
 
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
 
@@ -380,57 +352,6 @@ mod tests {
             .geo(geo)
             .scope_q(scope.map(|raw| ScopeQuery::parse(raw).expect("scopeQ parses")))
             .build()
-    }
-
-    /// One part of an entity: its attributes, its `location` points and its
-    /// scopes.
-    struct Part {
-        entity: FixtureEntity,
-        location: Vec<GeometryForm>,
-        scopes: Vec<ScopePath>,
-    }
-
-    impl<'a> QueriedEntity<'a> for &'a Part {
-        type Instance = &'a FixtureInstance;
-
-        fn attribute_instances(self, attribute: &AttributeName) -> impl Iterator<Item = &'a FixtureInstance> {
-            self.entity.attribute_instances(attribute)
-        }
-
-        fn types(self) -> impl Iterator<Item = &'a EntityTypeName> {
-            self.entity.types()
-        }
-    }
-
-    impl<'a> LocatedEntity<'a> for &'a Part {
-        fn geo_property_geometries(self, attribute: &AttributeName) -> impl Iterator<Item = Cow<'a, GeometryForm>> {
-            let location = attribute.as_str() == LOCATION;
-            self.location.iter().filter(move |_| location).map(Cow::Borrowed)
-        }
-    }
-
-    impl<'a> ScopedEntity<'a> for &'a Part {
-        fn scopes(self) -> impl Iterator<Item = &'a ScopePath> + Clone {
-            self.scopes.iter()
-        }
-    }
-
-    fn part(speed: Option<u32>, point: Option<[f64; 2]>, scopes: &[&str]) -> Part {
-        let mut document = json!({"@id": "urn:ngsi-ld:Vehicle:1", "@type": ["https://example.com/Vehicle"]});
-        if let (Some(speed), Value::Object(members)) = (speed, &mut document) {
-            members.insert(
-                "https://example.com/speed".into(),
-                json!([{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": speed}]}]),
-            );
-        }
-        Part {
-            entity: FixtureEntity::from_expanded(&document),
-            location: point
-                .map(|[longitude, latitude]| GeometryForm::Point(Position::try_new(longitude, latitude, None).expect("a CRS84 position")))
-                .into_iter()
-                .collect(),
-            scopes: scopes.iter().map(|path| path.parse().expect("a scope path")).collect(),
-        }
     }
 
     #[test]
@@ -577,41 +498,5 @@ mod tests {
         assert!(!filter.holds(&LeafTruths::from_vec(vec![true, false, false, false])));
         assert!(!filter.holds(&LeafTruths::from_vec(vec![false, true, false, true])));
         assert!(filter.holds(&LeafTruths::from_vec(vec![false, true, true, true])));
-    }
-
-    #[test]
-    fn in_memory_truths_match_whole_entity_evaluation() {
-        let parts = [
-            part(Some(60), Some([13.4, 52.5]), &["/Madrid", "/Spain"]),
-            part(Some(40), Some([13.4, 52.5]), &["/Madrid"]),
-            part(Some(60), Some([0.0, 0.0]), &["/Spain"]),
-            part(None, None, &[]),
-        ];
-        let filters = [
-            selection(Some("\"https://example.com/speed\">50"), Some(within_berlin()), Some("(/Madrid;/Spain)")),
-            selection(
-                Some("\"https://example.com/speed\">50|\"https://example.com/speed\"<45"),
-                None,
-                Some("/Madrid,/Spain"),
-            ),
-            selection(Some("\"https://example.com/speed\""), Some(within_berlin()), None),
-            selection(None, None, Some("/Spain")),
-        ];
-        for (filter_index, selection) in filters.iter().enumerate() {
-            let filter = SplitFilter::of(selection);
-            for (part_index, part) in parts.iter().enumerate() {
-                let whole = selection
-                    .q_expr
-                    .as_ref()
-                    .is_none_or(|expr| evaluate(expr, part, NoLinkedEntities, selection.language_matching))
-                    && selection.geo.as_ref().is_none_or(|geo| geo.matches_entity(part))
-                    && selection.scope_q.as_ref().is_none_or(|scope| scope.matches_entity(part));
-                pretty_assertions::assert_eq!(
-                    filter.holds(&filter.truths_of(part, NoLinkedEntities)),
-                    whole,
-                    "filter {filter_index} over part {part_index}"
-                );
-            }
-        }
     }
 }

@@ -21,6 +21,7 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-problem-details.workspace = true
 andromeda-ngsi-ld-query.workspace = true
+andromeda-ngsi-ld-query-evaluation.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 cefact-units = { version = "1.0.0", features = ["serde"] }

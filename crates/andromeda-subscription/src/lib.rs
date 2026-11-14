@@ -123,6 +123,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-query",
+        "andromeda-ngsi-ld-query-evaluation",
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-persistence-failure",

@@ -1,8 +1,7 @@
 //! The members of an attribute instance a `q` path names after `.` without
 //! naming a sub-attribute.
 
-use crate::filter::target_value::TargetValue;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::value::TimeValue};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{
     CREATED_AT,
     DATASET_ID,
@@ -15,7 +14,6 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties::{
     VALUE_TYPE,
 };
 use iri_rs::Iri;
-use std::borrow::Cow;
 use strum::{EnumIter, IntoEnumIterator};
 
 /// A member an attribute instance carries as data of its own rather than as a
@@ -66,38 +64,6 @@ impl InstanceMetadata {
         }
     }
 
-    /// The clause 4.9 target value of the member holding `texts`, or `None`
-    /// when it holds none.
-    ///
-    /// Several texts are the array clause 4.9 compares by membership ("Is
-    /// included in the target value, if the latter is an array").
-    #[must_use]
-    pub fn target_value<'a>(self, texts: impl Iterator<Item = Cow<'a, str>>) -> Option<TargetValue<'a>> {
-        let mut values = texts.map(|text| self.lexical_value(text));
-        let first = values.next()?;
-        Some(match values.next() {
-            None => first,
-            Some(second) => TargetValue::Array([first, second].into_iter().chain(values).collect()),
-        })
-    }
-
-    /// The target value one lexical form of the member is.
-    ///
-    /// An instant the instance holds was admitted as a `DateTime` or stamped by
-    /// the broker, so its text always reads as one.
-    fn lexical_value(self, text: Cow<'_, str>) -> TargetValue<'_> {
-        match self {
-            InstanceMetadata::ObservedAt | InstanceMetadata::CreatedAt | InstanceMetadata::ModifiedAt | InstanceMetadata::ExpiresAt => text
-                .parse()
-                .map_or(TargetValue::Text(text), |instant| TargetValue::Time(TimeValue::DateTime(instant))),
-            InstanceMetadata::DatasetId
-            | InstanceMetadata::InstanceId
-            | InstanceMetadata::UnitCode
-            | InstanceMetadata::ValueType
-            | InstanceMetadata::ObjectType => TargetValue::Text(text),
-        }
-    }
-
     /// Whether the member holds a vocabulary term, which the core `@context`
     /// coerces with `@vocab`: `valueType` (clause 4.5.2) and `objectType`
     /// (clause 4.5.3). The instance holds such a member expanded, so a Query
@@ -127,7 +93,7 @@ impl InstanceMetadata {
 
 #[cfg(test)]
 mod tests {
-    use crate::queried_entity::instance_metadata::InstanceMetadata;
+    use crate::filter::instance_metadata::InstanceMetadata;
     use strum::IntoEnumIterator;
 
     #[test]

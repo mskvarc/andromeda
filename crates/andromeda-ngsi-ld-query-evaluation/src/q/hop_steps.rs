@@ -7,10 +7,8 @@
 //! object names. Listing those steps here keeps the gathering and the
 //! evaluation on one reading of which objects a hop crosses.
 
-use crate::{
-    filter::{attribute_axis::relationship_objects, expression::Expr, path::QueryPath},
-    queried_entity::attribute_reading::QueriedEntity,
-};
+use crate::{q::attribute_axis::relationship_objects, queried_entity::attribute_reading::QueriedEntity};
+use andromeda_ngsi_ld_query::filter::{expression::Expr, path::QueryPath};
 
 /// One Relationship object a hop crosses, with the path the hop continues
 /// along in the entity it names.
@@ -53,13 +51,10 @@ pub fn hop_steps<'a, 'q, E: QueriedEntity<'a>>(entity: E, paths: &[&'q QueryPath
 #[cfg(test)]
 mod tests {
     use crate::{
-        filter::{
-            hop_steps::{hop_steps, linked_paths},
-            parser::parse,
-            path::QueryPath,
-        },
+        q::hop_steps::{hop_steps, linked_paths},
         queried_entity::expanded_fixture::FixtureEntity,
     };
+    use andromeda_ngsi_ld_query::filter::{parser::parse, path::QueryPath};
     use serde_json::json;
 
     /// An entity whose `a` Relationship names X through one instance and Y

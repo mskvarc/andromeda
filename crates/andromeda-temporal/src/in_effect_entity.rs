@@ -27,10 +27,8 @@ use andromeda_ngsi_ld_lexicon::{
     time_prop::TimeProp,
 };
 use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
-use andromeda_ngsi_ld_query::{
-    queried_entity::{attribute_reading::QueriedEntity, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
-    temporal::window::TemporalWindow,
-};
+use andromeda_ngsi_ld_query::temporal::window::TemporalWindow;
+use andromeda_ngsi_ld_query_evaluation::queried_entity::{attribute_reading::QueriedEntity, located_entity::LocatedEntity, scoped_entity::ScopedEntity};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
 use std::{
@@ -184,11 +182,11 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         geo::query::GeoQuery,
-        queried_entity::linked_entities::NoLinkedEntities,
         scope::query::ScopeQuery,
         split_filter::SplitFilter,
         temporal::window::{TemporalWindow, TimeInterval},
     };
+    use andromeda_ngsi_ld_query_evaluation::{queried_entity::linked_entities::NoLinkedEntities, split_filter::leaf_truths};
     use serde_json::{Value, json};
 
     /// The window from 12:00 to 13:00 on `observedAt`.
@@ -233,7 +231,7 @@ mod tests {
     fn holds(selection: &EntitySelection, parts: &[&TemporalDocument]) -> bool {
         let filter = SplitFilter::of(selection);
         let merged = InEffectEntity::merged(parts, noon_to_one()).expect("a window with a start");
-        filter.holds(&filter.truths_of(&merged, NoLinkedEntities))
+        filter.holds(&leaf_truths(&filter, &merged, NoLinkedEntities))
     }
 
     /// Clause 4.11 with clause 5.7.4.4: the instance in effect at 12:00 is the
@@ -367,8 +365,8 @@ mod tests {
                 .build()
         };
         let observed = InEffectEntity::merged(&[&older, &newer], on(TimeProp::Observed)).expect("a window with a start");
-        assert!(filter.holds(&filter.truths_of(&observed, NoLinkedEntities)));
+        assert!(filter.holds(&leaf_truths(&filter, &observed, NoLinkedEntities)));
         let modified = InEffectEntity::merged(&[&older, &newer], on(TimeProp::Modified)).expect("a window with a start");
-        assert!(!filter.holds(&filter.truths_of(&modified, NoLinkedEntities)));
+        assert!(!filter.holds(&leaf_truths(&filter, &modified, NoLinkedEntities)));
     }
 }

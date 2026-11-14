@@ -18,6 +18,7 @@ andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-query.workspace = true
+andromeda-ngsi-ld-query-evaluation.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 cefact-units = "1.0.0"

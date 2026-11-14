@@ -1,0 +1,32 @@
+[package]
+name = "andromeda-ngsi-ld-query-evaluation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+description = "Evaluating the NGSI-LD query languages against entities held in memory"
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-json-literal.workspace = true
+andromeda-ngsi-ld-geometry.workspace = true
+andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-number.workspace = true
+andromeda-ngsi-ld-query.workspace = true
+andromeda-ngsi-ld-value-order.workspace = true
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true
+andromeda-ngsi-ld-vocabulary.workspace = true
+iri-rs = { version = "4.1.1", features = ["serde", "static"] }
+langtag = { version = "1.1.0", features = ["serde"] }
+pretty_assertions = "1.4.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+strum = { version = "0.28.0", features = ["derive"] }
+tokio = { version = "1.54.1", features = ["full"] }

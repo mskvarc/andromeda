@@ -8,11 +8,10 @@
 //! fixtures drive the trait-based evaluators.
 
 use crate::{
-    filter::{language_matching::LanguageMatching, target_language::LanguageSelector, target_value::TargetValue},
+    q::target_value::TargetValue,
     queried_entity::{
         attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
         fixture_literal::FixtureLiteral,
-        instance_metadata::InstanceMetadata,
         linked_entities::LinkedEntities,
         value_item::ValueItem,
     },
@@ -20,6 +19,7 @@ use crate::{
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_number::JsonNumber;
+use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::OBJECT;
 use langtag::LangTag;
 use serde::Deserialize;

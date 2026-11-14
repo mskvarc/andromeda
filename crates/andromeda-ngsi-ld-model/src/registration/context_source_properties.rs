@@ -18,13 +18,10 @@ use andromeda_ngsi_ld_lexicon::{
     entity_type_name::EntityTypeName,
     time::value::{TimeValue, TimeValueForm},
 };
-use andromeda_ngsi_ld_query::{
-    filter::{language_matching::LanguageMatching, target_language::LanguageSelector},
-    queried_entity::{
-        attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
-        instance_metadata::InstanceMetadata,
-        value_item::{LiteralValue, ValueItem},
-    },
+use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
+use andromeda_ngsi_ld_query_evaluation::queried_entity::{
+    attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
+    value_item::{LiteralValue, ValueItem},
 };
 use andromeda_ngsi_ld_vocabulary::{compact::classes as compact_classes, keyword};
 use std::{
@@ -176,10 +173,8 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
 mod tests {
     use crate::registration::context_source_properties::ContextSourceProperties;
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_query::{
-        filter::{eval::evaluate, language_matching::LanguageMatching, parser::parse},
-        queried_entity::linked_entities::NoLinkedEntities,
-    };
+    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse};
+    use andromeda_ngsi_ld_query_evaluation::{q::eval::evaluate, queried_entity::linked_entities::NoLinkedEntities};
     use serde_json::{Value, json};
 
     /// Whether the filter holds over the properties, read through the entity

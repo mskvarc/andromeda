@@ -36,6 +36,7 @@ use andromeda_ngsi_ld_query::{
     projection::attrs_selection::AttrsAdmission,
     split_filter::{LeafTruths, SplitFilter},
 };
+use andromeda_ngsi_ld_query_evaluation::split_filter::leaf_truths;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use std::collections::{HashMap, HashSet};
@@ -131,7 +132,7 @@ impl TemporalService {
             truths
                 .entry(entity_id.clone())
                 .or_insert_with(|| LeafTruths::none(filter.leaf_count()))
-                .or(&filter.truths_of(&AnsweredEvolution::of(part, compiled.window), &linked));
+                .or(&leaf_truths(&filter, &AnsweredEvolution::of(part, compiled.window), &linked));
         }
         for (entity_id, mut held) in parts {
             held.extend(local.part_of(entity_id));
@@ -141,7 +142,7 @@ impl TemporalService {
             truths
                 .entry(entity_id.clone())
                 .or_insert_with(|| LeafTruths::none(filter.leaf_count()))
-                .or(&filter.truths_of(&in_effect, &linked));
+                .or(&leaf_truths(&filter, &in_effect, &linked));
         }
         let retained = entity_ids
             .into_iter()

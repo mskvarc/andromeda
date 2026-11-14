@@ -4,10 +4,15 @@
 use crate::document::EntityDocument;
 use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};
 use andromeda_ngsi_ld_query::{
-    filter::{eval::evaluate, language_matching::LanguageMatching, parser::parse},
+    filter::{language_matching::LanguageMatching, parser::parse},
     geo::query::GeoQuery,
-    queried_entity::linked_entities::NoLinkedEntities,
     scope::query::ScopeQuery,
+};
+use andromeda_ngsi_ld_query_evaluation::{
+    geo_query::geo_query_matches,
+    q::eval::evaluate,
+    queried_entity::linked_entities::NoLinkedEntities,
+    scope_query::scope_query_matches,
 };
 use serde_json::{Value, json};
 
@@ -115,7 +120,7 @@ fn a_geo_query_and_a_scope_query_read_what_the_document_writes() {
         geometry: Geometry::new(GeometryForm::Point(Position::try_new(13.4, 52.5, None).expect("a CRS84 position"))),
         geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("an attribute name"),
     };
-    assert!(near.matches_entity(&written));
-    assert!(ScopeQuery::parse("/Madrid/#").expect("a scope query").matches_entity(&written));
-    assert!(!ScopeQuery::parse("/Berlin").expect("a scope query").matches_entity(&written));
+    assert!(geo_query_matches(&near, &written));
+    assert!(scope_query_matches(&ScopeQuery::parse("/Madrid/#").expect("a scope query"), &written));
+    assert!(!scope_query_matches(&ScopeQuery::parse("/Berlin").expect("a scope query"), &written));
 }

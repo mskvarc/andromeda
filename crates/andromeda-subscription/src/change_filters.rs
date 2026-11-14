@@ -18,7 +18,7 @@ use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
-use andromeda_ngsi_ld_query::queried_entity::linked_entities::NoLinkedEntities;
+use andromeda_ngsi_ld_query_evaluation::queried_entity::linked_entities::NoLinkedEntities;
 use chrono::Utc;
 use std::sync::Arc;
 

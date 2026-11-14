@@ -72,6 +72,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-query",
+        "andromeda-ngsi-ld-value-order",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-postgresql-codes",
         "andromeda-postgresql-encoding",

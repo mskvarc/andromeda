@@ -16,12 +16,12 @@ use andromeda_ngsi_ld_expansion::received_state::ReceivedState;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     filter::{
-        eval::evaluate,
         expansion::{apply_expand_values, expand_attribute_names, expand_json_keys, expand_q_expr},
         language_matching::LanguageMatching,
     },
     geo::compile::compile_geo_query,
 };
+use andromeda_ngsi_ld_query_evaluation::{geo_query::geo_query_matches, q::eval::evaluate, scope_query::scope_query_matches};
 use andromeda_ngsi_ld_request::deferred_split_filters::DeferredSplitFilters;
 use axum::http::Uri as HttpUri;
 use chrono::Utc;
@@ -111,8 +111,8 @@ pub(crate) async fn retain_matching(
     let mut matching = Vec::with_capacity(documents.len());
     for (entity, document) in documents {
         let q_ok = compiled_q.as_ref().is_none_or(|expr| evaluate(expr, &document, &linked, language_matching));
-        let geo_ok = compiled_geo.as_ref().is_none_or(|geo| geo.matches_entity(&document));
-        let scope_ok = compiled_scope.as_ref().is_none_or(|scope| scope.matches_entity(&document));
+        let geo_ok = compiled_geo.as_ref().is_none_or(|geo| geo_query_matches(geo, &document));
+        let scope_ok = compiled_scope.as_ref().is_none_or(|scope| scope_query_matches(scope, &document));
 
         if q_ok && geo_ok && scope_ok {
             matching.push(entity);
