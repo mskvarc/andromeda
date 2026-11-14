@@ -21,6 +21,8 @@ pub mod name_keys;
 /// Minting the keys a write flattens with, and reading back the names a read
 /// assembles with.
 pub mod name_resolution;
+/// A stored value split into the one place its value kind is held in.
+pub mod placed_value;
 /// The scalar members of a stored array value.
 pub mod stored_array_members;
 /// The family value an instance's stored columns hold.

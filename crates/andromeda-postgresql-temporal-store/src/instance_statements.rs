@@ -15,12 +15,13 @@
 //! summary admits the identifier, across every stream of the chunk.
 
 use crate::{
-    attribute_history_value::AttributeHistoryValue,
+    history_value_columns::HistoryValueColumns,
     horizon_raise::{horizon_raise_statement, project_horizon},
     stream_shape_growth::shape_growth_statement,
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, instance_identity::InstanceIdentity};
+use andromeda_postgresql_attribute_instance::sub_attribute::EwkbGeometry;
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::{
     current::Entities,
@@ -39,8 +40,6 @@ use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use andromeda_postgresql_temporal_query::alias::{Ah, S, Te};
 use chrono::{DateTime, Utc};
 use sea_query::{Condition, DeleteStatement, Expr, ExprTrait, Func, JoinType, Query, SelectStatement, SimpleExpr, UpdateStatement};
-use serde_json::value::RawValue;
-use std::borrow::Cow;
 
 /// The `attribute_history` column the identity is addressed through: the bare
 /// UUID of a broker-minted identifier, or the verbatim text of a client's.
@@ -145,12 +144,8 @@ fn jsonb_text(text: Option<&str>) -> SimpleExpr {
 
 /// What an instance replacement writes beside the sub-attributes.
 pub(crate) struct InstanceReplacement<'a> {
-    /// The replacement's value, in the shape and column the row stores it in.
-    pub(crate) value: &'a AttributeHistoryValue,
-    /// The EWKB of the replacement's geometry, if it has one.
-    pub(crate) geometry: Option<&'a [u8]>,
-    /// The EWKB of the geometry's great-circle reach, if it has one.
-    pub(crate) reach: Option<&'a [u8]>,
+    /// The replacement's value, in the columns a history row holds it in.
+    pub(crate) value: &'a HistoryValueColumns,
     /// The observation instant the replacement declares, if any.
     pub(crate) observed_at: Option<DateTime<Utc>>,
     /// The `entity_type_names` key of `valueType`.
@@ -191,25 +186,31 @@ pub(crate) fn update_instance_statement(
     let object_type_keys = (!replacement.object_type_keys.is_empty()).then_some(replacement.object_type_keys);
     Query::update()
         .table(table_of(target, AttributeHistory::Table))
-        .values(geometry_writes(replacement.geometry, replacement.reach))
+        .values(geometry_writes(
+            value.value_geometry.as_ref().map(EwkbGeometry::as_bytes),
+            value.value_geometry_reach.as_ref().map(EwkbGeometry::as_bytes),
+        ))
         .values([
-            (AttributeHistory::ValueKind, Expr::val(value.kind().code())),
+            (AttributeHistory::ValueKind, Expr::val(value.value_kind)),
             (AttributeHistory::ValueNumber, replacement.number),
-            (AttributeHistory::ValueString, Expr::val(value.string().map(Cow::into_owned))),
+            (AttributeHistory::ValueString, Expr::val(value.value_string.clone())),
+            (AttributeHistory::ValueLanguage, Expr::val(value.value_language.clone())),
+            (AttributeHistory::ValueDatatypeKey, Expr::val(value.value_datatype_key)),
+            (AttributeHistory::ValueBoolean, Expr::val(value.value_boolean)),
             (
-                AttributeHistory::ValueLanguage,
-                Expr::val(value.language().map(|language| language.as_str().to_owned())),
+                AttributeHistory::ValueObject,
+                jsonb_text(value.value_object.as_ref().map(|object| object.get())),
             ),
-            (AttributeHistory::ValueDatatypeKey, Expr::val(value.datatype_key())),
-            (AttributeHistory::ValueBoolean, Expr::val(value.boolean())),
-            (AttributeHistory::ValueObject, jsonb_text(value.object().map(RawValue::get))),
-            (AttributeHistory::ValueDateTime, Expr::val(value.date_time())),
-            (AttributeHistory::ValueUri, Expr::val(value.uri().map(|uri| uri.as_str().to_owned()))),
+            (AttributeHistory::ValueDateTime, Expr::val(value.value_date_time)),
+            (AttributeHistory::ValueUri, Expr::val(value.value_uri.clone())),
             (AttributeHistory::ObservedAt, Expr::val(replacement.observed_at)),
             (AttributeHistory::ValueTypeKey, Expr::val(replacement.value_type_key)),
             (AttributeHistory::UnitCodeId, Expr::val(replacement.unit_code)),
             (AttributeHistory::AttributeKind, Expr::val(replacement.attribute_kind)),
-            (AttributeHistory::ValueGeometryMembers, jsonb_text(value.geometry_members().map(RawValue::get))),
+            (
+                AttributeHistory::ValueGeometryMembers,
+                jsonb_text(value.value_geometry_members.as_ref().map(|members| members.get())),
+            ),
             (AttributeHistory::ObjectTypeKeys, Expr::val(object_type_keys)),
             (AttributeHistory::ExpiresAt, Expr::val(replacement.expires_at)),
             (AttributeHistory::SubAttributes, sub_attributes),
@@ -299,6 +300,7 @@ pub(crate) fn select_instance_statement(
 mod tests {
     use crate::{
         attribute_history_value::AttributeHistoryValue,
+        history_value_columns::HistoryValueColumns,
         instance_statements::{
             InstanceReplacement,
             attribute_stream_keys_statement,
@@ -312,6 +314,7 @@ mod tests {
         },
     };
     use andromeda_context_space::context_target::ContextTarget;
+    use andromeda_ngsi_ld_geometry::geometry::Geometry;
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, instance_identity::InstanceIdentity};
     use andromeda_postgresql_attribute_instance::stored_value::StoredValue;
     use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
@@ -333,17 +336,15 @@ mod tests {
     /// The update of `instance` over the streams 4 and 5, replacing it with a
     /// boolean.
     fn update(instance: &InstanceIdentity) -> (String, usize) {
-        replacement_update(instance, None)
+        replacement_update(instance, StoredValue::Boolean { flag: true, datatype: None })
     }
 
-    /// The update of `instance` over the streams 4 and 5, replacing it with a
-    /// boolean beside `geometry`.
-    fn replacement_update(instance: &InstanceIdentity, geometry: Option<&[u8]>) -> (String, usize) {
-        let value = AttributeHistoryValue::Recorded(StoredValue::Boolean { flag: true, datatype: None });
+    /// The update of `instance` over the streams 4 and 5, replacing it with
+    /// `value`.
+    fn replacement_update(instance: &InstanceIdentity, value: StoredValue) -> (String, usize) {
+        let value = HistoryValueColumns::of_attribute(AttributeHistoryValue::Recorded(value)).expect("the value encodes");
         let replacement = InstanceReplacement {
             value: &value,
-            geometry,
-            reach: None,
             observed_at: None,
             value_type_key: None,
             unit_code: None,
@@ -525,7 +526,14 @@ mod tests {
     #[test]
     fn the_instance_modification_writes_the_geometry_as_given_its_repair_and_its_reach() {
         for instance in identities() {
-            let (statement, _) = replacement_update(&instance, Some(&[1, 2]));
+            let point = StoredValue::Geometry {
+                form: serde_json::from_value::<Geometry>(serde_json::json!({"type": "Point", "coordinates": [13.5, 52.25]}))
+                    .expect("a point")
+                    .into_parts()
+                    .0,
+                members: None,
+            };
+            let (statement, _) = replacement_update(&instance, point);
             assert!(
                 statement.starts_with(r#"UPDATE "attribute_history" SET "value_geometry" = ST_GeomFromEWKB($1), "value_geometry_valid" = (CASE WHEN (ST_IsValid(ST_GeomFromEWKB($2))) THEN NULL ELSE ST_MakeValid(ST_GeomFromEWKB($3)) END), "value_geometry_reach" = ST_GeomFromEWKB($4), "value_kind" = "#),
                 "{statement}"

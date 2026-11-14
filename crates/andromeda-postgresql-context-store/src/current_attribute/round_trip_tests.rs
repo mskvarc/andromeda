@@ -2,10 +2,9 @@
 //! the same state, for every family at every depth; assembly refuses rows that
 //! break the stored layout's invariants.
 
-use crate::current_attribute::{
-    assemble::assemble,
-    flatten::flatten,
-    row::{CurrentAttributeRow, row_column},
+use crate::{
+    current_attribute::{assemble::assemble, flatten::flatten, row::CurrentAttributeRow},
+    entity_state_record::instance_record::AttributeInstanceRecord,
 };
 use andromeda_ngsi_ld_entity::{
     attributes::Attributes,
@@ -39,7 +38,6 @@ use andromeda_postgresql_stored_values::{
 };
 use chrono::{TimeZone, Utc};
 use indexmap::IndexSet;
-use sea_query::Iden;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -587,9 +585,10 @@ fn a_single_object_relationship_stays_inline() {
     let state = committed(&document(
         &json!({ex("owner"): [{"@type": family("Relationship"), ngsi("hasObject"): [{"@id": "urn:a"}]}]}),
     ));
-    let rows = round_trip(&state);
+    let mut rows = round_trip(&state);
     assert!(matches!(only_value(&rows), StoredValue::Uri(uri) if uri.as_str() == "urn:a"));
-    pretty_assertions::assert_eq!(row_column(only_value(&rows)).map(|column| column.to_string()), Some("value_uri".to_owned()));
+    let record = AttributeInstanceRecord::try_from(rows.remove(0)).expect("the row encodes");
+    pretty_assertions::assert_eq!((record.value_uri.as_deref(), record.value_long_uri), (Some("urn:a"), None));
 }
 
 #[test]
@@ -638,11 +637,9 @@ fn an_object_longer_than_the_index_bound_goes_to_the_long_column() {
     let state = committed(&document(
         &json!({ex("owner"): [{"@type": family("Relationship"), ngsi("hasObject"): [{"@id": target}]}]}),
     ));
-    let rows = round_trip(&state);
-    pretty_assertions::assert_eq!(
-        row_column(only_value(&rows)).map(|column| column.to_string()),
-        Some("value_long_uri".to_owned())
-    );
+    let mut rows = round_trip(&state);
+    let record = AttributeInstanceRecord::try_from(rows.remove(0)).expect("the row encodes");
+    pretty_assertions::assert_eq!((record.value_uri, record.value_long_uri), (None, Some(target)));
 }
 
 #[test]

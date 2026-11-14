@@ -1,8 +1,8 @@
 //! One temporal append intent as the `temporal_intent` composite a commit
 //! enqueues it as, and each of its entries as the `temporal_entry` it waits in.
 //!
-//! An entry holds exactly the columns its history row will hold: the value as
-//! [`AttributeHistoryValue`] stores it, the metadata as [`HistoryMembers`]
+//! An entry holds exactly the columns its history row will hold: the value in
+//! the field its value kind is placed in, the metadata as [`HistoryMembers`]
 //! stores it, every name as its dictionary key. Applying an intent therefore
 //! moves its entries into history in SQL, and nothing is read back into the
 //! broker on the way.
@@ -11,10 +11,11 @@ use crate::{
     attribute_history_value::AttributeHistoryValue,
     error::TemporalStoreError,
     history_members::{HistoryMembers, mention},
+    history_value_columns::HistoryValueColumns,
     scope_history_value::ScopeHistoryValue,
     semantic_time_axes::SemanticTimeAxes,
     temporal_entry_record::{
-        entry_fields::{Grain, MemberColumns, ValueColumns, attribute_record, record},
+        entry_fields::{Grain, MemberColumns, attribute_record, record},
         entry_needs::meets,
     },
     temporal_store_invariant::TemporalStoreInvariant,
@@ -252,7 +253,7 @@ fn entry_record(entry: &TemporalAppendEntry, recorded_at: DateTime<Utc>, keys: &
                 stored_attribute_kind(*attribute_type),
                 keys,
             )?,
-            ValueColumns::of_attribute(&AttributeHistoryValue::Tombstone { deleted_at: recorded_at })?,
+            HistoryValueColumns::of_attribute(AttributeHistoryValue::Tombstone { deleted_at: recorded_at })?,
             MemberColumns::of(HistoryMembers::default())?,
             SemanticTimeAxes::default(),
             instance,
@@ -270,7 +271,7 @@ fn entry_record(entry: &TemporalAppendEntry, recorded_at: DateTime<Utc>, keys: &
             };
             let mut entry = record(
                 Grain::scope(*kind),
-                ValueColumns::of_scope(&value),
+                HistoryValueColumns::of_scope(&value),
                 MemberColumns::of(HistoryMembers::default())?,
                 // Clause 4.5.6: the temporal Scope carries `observedAt`,
                 // `createdAt` and `modifiedAt`; a Scope appended by this write
@@ -369,7 +370,7 @@ fn observation_record(
             stored_attribute_kind(row.attribute_type),
             keys,
         )?,
-        ValueColumns::of_attribute(&AttributeHistoryValue::of_observation(value, keys)?)?,
+        HistoryValueColumns::of_attribute(AttributeHistoryValue::of_observation(value, keys)?)?,
         MemberColumns::of(members)?,
         // Each axis is kept exactly as the observation carried it: one that
         // declared none matches no window on that Temporal Property (clauses

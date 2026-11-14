@@ -5,13 +5,12 @@
 //! bound sits in its overflow field, so SQL moves a record into a row field
 //! for field.
 
-use crate::current_attribute::row::{CurrentAttributeRow, row_column};
+use crate::current_attribute::{row::CurrentAttributeRow, text_columns::TextColumns};
 use andromeda_postgresql_attribute_instance::{
     stored_members::{InstanceMembers, MemberColumns, RowColumnsError, StoredInstanceError},
     stored_number::StoredNumber,
     sub_attribute::{EwkbGeometry, SubAttributeElement, SubAttributeRecord},
 };
-use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_stored_values::{dataset_key::DatasetKey, value_kind::ValueKind};
 use chrono::{DateTime, Utc};
 use serde_json::value::RawValue;
@@ -85,7 +84,6 @@ impl TryFrom<CurrentAttributeRow> for AttributeInstanceRecord {
             modified_at,
             sub_attributes,
         } = row;
-        let column = row_column(&members.value).ok_or(RowColumnsError::Seal)?;
         let (dataset_id, columns) = members.into_columns()?;
         let MemberColumns {
             attribute_name_key,
@@ -107,16 +105,8 @@ impl TryFrom<CurrentAttributeRow> for AttributeInstanceRecord {
             observed_at,
             expires_at,
         } = columns;
-        let (value_string, value_long_text) = if column == CurrentAttributes::ValueLongText {
-            (None, value_string)
-        } else {
-            (value_string, None)
-        };
-        let (value_uri, value_long_uri) = if column == CurrentAttributes::ValueLongUri {
-            (None, value_uri)
-        } else {
-            (value_uri, None)
-        };
+        let strings = value_string.map_or_default(TextColumns::of_string);
+        let uris = value_uri.map_or_default(TextColumns::of_uri);
         let sub_attributes = if sub_attributes.is_empty() {
             None
         } else {
@@ -138,14 +128,14 @@ impl TryFrom<CurrentAttributeRow> for AttributeInstanceRecord {
             value_boolean,
             dataset_key: DatasetKey::of(dataset_id.as_ref()).as_str().to_owned(),
             value_number,
-            value_string,
+            value_string: strings.indexed,
             value_language,
             value_geometry,
             value_geometry_members,
             value_object,
-            value_uri,
-            value_long_text,
-            value_long_uri,
+            value_uri: uris.indexed,
+            value_long_text: strings.overflow,
+            value_long_uri: uris.overflow,
             object_type_keys,
             sub_attributes,
         })

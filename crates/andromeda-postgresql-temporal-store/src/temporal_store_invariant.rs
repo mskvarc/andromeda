@@ -32,6 +32,10 @@ pub enum TemporalStoreInvariant {
     /// asked about holds.
     #[error("the held-shapes statement answered combination {0}, which it was not asked about")]
     HeldShapeUnasked(i32),
+    /// A history row was handed a data-integrity seal, which is only ever a
+    /// sub-attribute (clause 4.5.2.2), so no observation records one.
+    #[error("a data-integrity seal is stored only as a sub-attribute, never as a history value")]
+    SealInHistory,
     /// A count does not fit the width it is reported at.
     #[error("a temporal store count is out of range: {0}")]
     CountOutOfRange(#[source] TryFromIntError),

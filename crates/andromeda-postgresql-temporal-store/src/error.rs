@@ -160,7 +160,8 @@ impl TemporalStoreError {
                 | TemporalStoreInvariant::CountStatementMissing
                 | TemporalStoreInvariant::CountRowMissing
                 | TemporalStoreInvariant::CountOutOfRange(_)
-                | TemporalStoreInvariant::HeldShapeUnasked(_),
+                | TemporalStoreInvariant::HeldShapeUnasked(_)
+                | TemporalStoreInvariant::SealInHistory,
             )
             | TemporalStoreError::WriteRecordMismatch { .. }
             | TemporalStoreError::RetentionHorizon(_)

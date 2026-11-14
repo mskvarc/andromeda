@@ -25,5 +25,7 @@ pub mod staged_grains;
 pub mod staged_rows;
 /// The `instances` staging every statement writing rows reads them from.
 pub mod staging;
+/// The two columns a row holds its String field in, and the two its URI field.
+pub mod text_columns;
 /// The statements that write an Entity's rows beside its Entity row.
 pub(crate) mod write;
