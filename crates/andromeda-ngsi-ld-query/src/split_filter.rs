@@ -22,10 +22,11 @@
 //! with the others.
 
 use crate::{
+    entity_filters::EntityFilters,
     entity_selection::EntitySelection,
-    filter::{expression::Expr, language_matching::LanguageMatching, path::QueryPath, predicate::Predicate, referenced_attributes::referenced_attributes},
+    filter::{expression::Expr, path::QueryPath, predicate::Predicate, referenced_attributes::referenced_attributes},
     geo::query::GeoQuery,
-    scope::{pattern::ScopePattern, query::ScopeQuery},
+    scope::pattern::ScopePattern,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
@@ -114,14 +115,8 @@ impl HopReads<'_> {
 /// formula over their leaves.
 #[derive(Debug, Clone, Copy)]
 pub struct SplitFilter<'q> {
-    /// The `q` expression (clause 4.9), when the query carries one.
-    q: Option<&'q Expr>,
-    /// How the target languages of `q` select languageMap keys.
-    language_matching: LanguageMatching,
-    /// The geo-query (clause 4.10), when the query carries one.
-    geo: Option<&'q GeoQuery>,
-    /// The scope query (clause 4.19), when the query carries one.
-    scope: Option<&'q ScopeQuery>,
+    /// The filters the formula is read from.
+    filters: EntityFilters<'q>,
 }
 
 impl<'q> SplitFilter<'q> {
@@ -130,10 +125,7 @@ impl<'q> SplitFilter<'q> {
     #[must_use]
     pub const fn of(selection: &'q EntitySelection) -> SplitFilter<'q> {
         SplitFilter {
-            q: selection.q_expr.as_ref(),
-            language_matching: selection.language_matching,
-            geo: selection.geo.as_ref(),
-            scope: selection.scope_q.as_ref(),
+            filters: EntityFilters::of(selection),
         }
     }
 
@@ -141,18 +133,19 @@ impl<'q> SplitFilter<'q> {
     /// clause 5.7.4.4 makes S7 equal to S4 and nothing is evaluated.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.q.is_none() && self.geo.is_none() && self.scope.is_none()
+        self.filters.q.is_none() && self.filters.geo.is_none() && self.filters.scope.is_none()
     }
 
     /// Every leaf: the Query Terms of `q` in pre-order, then the geo-query,
     /// then every pattern of every scope alternative in order.
     pub fn leaves(&self) -> impl Iterator<Item = FilterLeaf<'q>> + use<'q> {
         let mut terms = Vec::new();
-        if let Some(expr) = self.q {
+        if let Some(expr) = self.filters.q {
             collect_terms(expr, &mut terms);
         }
-        let geo = self.geo.map(FilterLeaf::Geo);
+        let geo = self.filters.geo.map(FilterLeaf::Geo);
         let scope = self
+            .filters
             .scope
             .into_iter()
             .flat_map(|scope| scope.alternatives().flatten().map(FilterLeaf::ScopeRequirement));
@@ -165,8 +158,8 @@ impl<'q> SplitFilter<'q> {
     /// whether a leaf reads it.
     #[must_use]
     pub fn read_attributes(&self) -> Vec<&'q AttributeName> {
-        let mut attributes = self.q.map_or_default(referenced_attributes);
-        if let Some(geo) = self.geo
+        let mut attributes = self.filters.q.map_or_default(referenced_attributes);
+        if let Some(geo) = self.filters.geo
             && !attributes.contains(&&geo.geoproperty)
         {
             attributes.push(&geo.geoproperty);
@@ -243,7 +236,7 @@ impl<'q> SplitFilter<'q> {
     /// Whether a leaf reads the entity's Scope.
     #[must_use]
     pub const fn reads_scope(&self) -> bool {
-        self.scope.is_some()
+        self.filters.scope.is_some()
     }
 
     /// How many leaves [`Self::leaves`] yields.
@@ -257,9 +250,9 @@ impl<'q> SplitFilter<'q> {
     #[must_use]
     pub fn holds(&self, truths: &LeafTruths) -> bool {
         let mut cursor = 0;
-        let q = self.q.is_none_or(|expr| expression_holds(expr, truths, &mut cursor));
-        let geo = self.geo.is_none_or(|_| next_truth(truths, &mut cursor));
-        let scope = self.scope.is_none_or(|scope| {
+        let q = self.filters.q.is_none_or(|expr| expression_holds(expr, truths, &mut cursor));
+        let geo = self.filters.geo.is_none_or(|_| next_truth(truths, &mut cursor));
+        let scope = self.filters.scope.is_none_or(|scope| {
             // Every requirement takes its place in the leaf order whether or
             // not an earlier alternative already held, so the walk folds
             // rather than short-circuiting.
@@ -271,10 +264,10 @@ impl<'q> SplitFilter<'q> {
         q && geo && scope
     }
 
-    /// How the target languages of `q` select languageMap keys.
+    /// The filters the formula is read from.
     #[must_use]
-    pub const fn language_matching(&self) -> LanguageMatching {
-        self.language_matching
+    pub const fn filters(&self) -> EntityFilters<'q> {
+        self.filters
     }
 }
 

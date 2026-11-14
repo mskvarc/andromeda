@@ -9,10 +9,9 @@ use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::notification::ChangeOrigin;
 use andromeda_ngsi_ld_query_evaluation::{
-    geo_query::geo_query_matches,
+    entity_filters::entity_filters_admit,
     q::eval::evaluate,
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
-    scope_query::scope_query_matches,
 };
 use chrono::Utc;
 use tracing::debug;
@@ -89,31 +88,23 @@ pub fn selects_entity(sub: &CompiledSubscription, types: &[EntityTypeName], id: 
 /// `linked`.
 ///
 /// Returns `true` if the entity passes all configured filters on the subscription.
-/// Filters that are not configured (None) are skipped. On an entity
-/// subscription `csf` is a second Query Language expression over the same
-/// entity. The entity is a stored state or a received document, read through
-/// the query language's own reading of an entity.
+/// Filters that are not configured (None) are skipped, and a stored `geoQ`
+/// that no longer compiles admits no entity. On an entity subscription `csf`
+/// is a second Query Language expression over the same entity. The entity is
+/// a stored state or a received document, read through the query language's
+/// own reading of an entity.
 pub fn matches_entity_filters<'a, E, L>(sub: &CompiledSubscription, entity: E, linked: L) -> bool
 where
     E: QueriedEntity<'a> + LocatedEntity<'a> + ScopedEntity<'a>,
     L: LinkedEntities<'a>,
 {
-    if let Some(ref expr) = sub.compiled_q
-        && !evaluate(expr, entity, linked, sub.language_matching)
-    {
-        debug!("Subscription {} skipped: q filter did not match entity", sub.id);
+    let Some(filters) = sub.entity_filters() else {
+        debug!("Subscription {} skipped: its stored geoQ does not compile and admits no entity", sub.id);
         return false;
-    }
+    };
 
-    if !sub.compiled_geo_q.admits(|geo_q| geo_query_matches(geo_q, entity)) {
-        debug!("Subscription {} skipped: geoQ filter did not admit entity", sub.id);
-        return false;
-    }
-
-    if let Some(ref scope_q) = sub.compiled_scope_q
-        && !scope_query_matches(scope_q, entity)
-    {
-        debug!("Subscription {} skipped: scopeQ filter did not match entity", sub.id);
+    if !entity_filters_admit(filters, entity, linked) {
+        debug!("Subscription {} skipped: q, geoQ or scopeQ did not admit entity", sub.id);
         return false;
     }
 

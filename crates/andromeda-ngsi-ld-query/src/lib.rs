@@ -30,6 +30,7 @@ pub mod cursor;
 pub mod dataset;
 pub mod defined_token;
 pub mod entity;
+pub mod entity_filters;
 pub mod entity_selection;
 pub mod error;
 pub mod filter;

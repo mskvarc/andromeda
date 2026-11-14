@@ -9,6 +9,7 @@
 //! model. No storage backend lists it, so a backend cannot answer a query by
 //! evaluating it in memory.
 
+pub mod entity_filters;
 pub mod geo_query;
 pub mod q;
 pub mod queried_entity;
