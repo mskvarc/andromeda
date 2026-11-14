@@ -1,11 +1,10 @@
 use crate::{
     query_reading::QueryReading,
     requested_identifiers::RequestedIdentifiers,
-    stub_broker::{StubBroker, live_target, service_over},
+    stub_broker::{StubBroker, admitted, live_target, service_over},
 };
 use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_linked_retrieval::admission::{LinkedOperation, TemporalJoin};
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_rel::TimeRel};
 use andromeda_ngsi_ld_query::{
     candidate_filters::CandidateFilters,
@@ -15,7 +14,7 @@ use andromeda_ngsi_ld_query::{
     pattern::Pattern,
     scope::query::ScopeQuery,
 };
-use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, admitted::AdmittedTemporalRequest};
 use serde_json::json;
 use std::{iter, sync::Arc};
 
@@ -25,15 +24,15 @@ fn context() -> ContextSpec {
 
 /// A temporal query selecting by id pattern and filtering by value and by
 /// scope, over the instants before 2024.
-fn filtered_query() -> TemporalQueryParameters {
-    TemporalQueryParameters {
+fn filtered_query() -> AdmittedTemporalRequest {
+    admitted(TemporalQueryParameters {
         id_pattern: Some(Pattern::parse("^urn:ngsi-ld:Vehicle:").expect("valid pattern")),
         q: Some(parse("speed>10").expect("q parses")),
         scope_q: Some(ScopeQuery::parse("/Madrid").expect("scopeQ parses")),
         timerel: Some(TimeRel::Before),
         time_at: Some("2024-01-01T00:00:00Z".parse().expect("a valid instant")),
         ..TemporalQueryParameters::default()
-    }
+    })
 }
 
 /// The one selection the stubbed store listed the identifiers under.
@@ -48,7 +47,6 @@ async fn listed_under(filters: CandidateFilters) -> EntitySelection {
             QueryReading {
                 context: &context(),
                 language_targeting: LanguageTargeting::Specification,
-                operation: LinkedOperation::QueryTemporal(TemporalJoin::Spec),
             },
             RequestedIdentifiers::Narrow,
             filters,

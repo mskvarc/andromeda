@@ -154,7 +154,7 @@ where
         let context = subscription_context.spec();
         let result: Result<Identifier, SubscriptionError> = async {
             self.variant.validate_members(&request)?;
-            request_validation::validate_create_request(&request, self.filter_admission)?;
+            let admitted_q = request_validation::validate_create_request(&request, self.filter_admission)?;
 
             validate_endpoint(
                 request.notification.as_ref().and_then(|notification| notification.endpoint.as_ref()),
@@ -178,7 +178,7 @@ where
             // member initialised from the `@context` applicable to it, so by the
             // time the request is read the member reflects that initialisation.
             notification_context::initialize_notification_context(&mut request.jsonld_context, subscription_context, &self.engine).await?;
-            self.variant.expand_terms(&mut request, context, self.filter_admission).await?;
+            self.variant.expand_terms(&mut request, context, admitted_q.as_ref()).await?;
 
             let status = compute_updated_status(SubscriptionStatus::Active, &requested_status_change(&request));
             let values = SubscriptionWriteValues::from_create(request, self.variant.dataset_id_policy())?;
@@ -231,13 +231,13 @@ where
             )?;
 
             self.variant.validate_members(&request)?;
-            request_validation::validate_common_members(&request, self.filter_admission)?;
+            let admitted_q = request_validation::validate_common_members(&request, self.filter_admission)?;
             self.variant.validate_update_extra(&request)?;
             request_validation::validate_notification_fragment(&request)?;
 
             self.admit_jsonld_context(request.jsonld_context.as_set()).await?;
 
-            self.variant.expand_terms(&mut request, context, self.filter_admission).await?;
+            self.variant.expand_terms(&mut request, context, admitted_q.as_ref()).await?;
 
             let deleted = DeletedMembers::of(&request);
             let existing = self.get(target, id).await?;

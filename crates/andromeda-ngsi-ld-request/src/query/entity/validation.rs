@@ -4,14 +4,21 @@ use crate::{
     entity_map_lifetime::require_entity_map_for_lifetime,
     error::ParameterError,
     query::entity::{
+        admitted::AdmittedEntityQuery,
         operation::EntityQueryOperation,
         parameters::{EntityQueryParameters, EntityQueryParametersOptions},
     },
     query_narrowing::{AdmittedNarrowings, ExecutionScope, NarrowingInputs, require_narrowing, require_wildcard_locality},
     representation_parameter::{resolve_representation, supported_option},
 };
-use andromeda_linked_retrieval::admission::{LinkedRequest, admit_request};
-use andromeda_ngsi_ld_query::projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity};
+use andromeda_linked_retrieval::{
+    admission::{LinkedRequest, admit_request},
+    filter_hops::FilterHops,
+};
+use andromeda_ngsi_ld_query::{
+    filter::compilation::{FilterAdmission, admit_q_filter},
+    projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
+};
 
 impl EntityQueryParameters {
     /// The response shaping the `format` and `options` parameters selected.
@@ -56,7 +63,9 @@ impl EntityQueryParameters {
             .build()
     }
 
-    /// Validate entity-query semantic constraints for `operation`.
+    /// Validate entity-query semantic constraints for `operation` and admit
+    /// the `q` under `admission`, the broker's complexity limits and
+    /// `q_target_languages` level.
     ///
     /// # Errors
     ///
@@ -67,10 +76,12 @@ impl EntityQueryParameters {
     /// `count` option, the Linked Entity admission errors when a nested
     /// projection term or a `q` hop references a Linked Entity the operation
     /// does not reach (clauses 5.7.2.4 and 5.14.4.4) or a join parameter meets
-    /// none of the parameters it applies beside, and
+    /// none of the parameters it applies beside,
+    /// [`ParameterError::Query`] when the `q` is too complex (clause 5.5.6) or
+    /// names a target language `admission` does not admit, and
     /// [`ParameterError::EntityMapLifetimeWithoutEntityMap`] when a query
     /// names a map lifetime without asking for a map.
-    pub fn validate(&self, operation: EntityQueryOperation) -> Result<(), ParameterError> {
+    pub fn admit(self, operation: EntityQueryOperation, admission: FilterAdmission) -> Result<AdmittedEntityQuery, ParameterError> {
         // Clause 6.3.20: a `format` or `options` value Table 6.3.7-1 does not
         // define is refused here rather than during deserialisation, where the
         // error type would have been lost.
@@ -87,15 +98,17 @@ impl EntityQueryParameters {
         let linked = LinkedRequest::builder()
             .pick(self.pick.as_deref())
             .omit(self.omit.as_deref())
-            .q(self.q.as_ref())
             .join(self.join)
             .join_level(self.join_level)
             .contained_by(self.contained_by.as_deref())
             .build();
         admit_request(operation.linked(), &linked)?;
+        let hops = FilterHops::new(operation.linked(), self.join, self.join_level);
+        let filter = self.q.as_ref().map(|q| admit_q_filter::<ParameterError, _>(q, admission, &hops)).transpose()?;
         match operation {
-            EntityQueryOperation::Query => require_entity_map_for_lifetime(self.entity_map, self.entity_map_lifetime.as_ref()),
-            EntityQueryOperation::EntityMap => Ok(()),
+            EntityQueryOperation::Query => require_entity_map_for_lifetime(self.entity_map, self.entity_map_lifetime.as_ref())?,
+            EntityQueryOperation::EntityMap => {}
         }
+        Ok(AdmittedEntityQuery::admitted(self, filter))
     }
 }

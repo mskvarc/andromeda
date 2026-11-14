@@ -6,13 +6,12 @@
 //! pre-count guards the [`TooManyResults`](TemporalError::TooManyResults) bound,
 //! so an oversized delete is refused whole rather than half-executed, and a
 //! `dryRun` returns that count without removing anything. The operation is
-//! local-only: [`selection_params`](TemporalDeleteParameters::selection_params)
-//! pins the local scope, so entity resolution never forwards.
+//! local-only: [`TemporalDeleteParameters::admit`] pins the local scope of the
+//! selection, so entity resolution never forwards.
 
 use crate::{error::TemporalError, port::read_scope::ScopeReach, query_reading::QueryReading, result_bound::ResultBound, service::TemporalService};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext};
-use andromeda_linked_retrieval::admission::LinkedOperation;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
@@ -24,7 +23,7 @@ use andromeda_ngsi_ld_query::{
         history_delete::{AttributeDeleteScope, TemporalHistoryDeleteScope},
     },
 };
-use andromeda_ngsi_ld_request::query::temporal::delete_parameters::TemporalDeleteParameters;
+use andromeda_ngsi_ld_request::query::temporal::{admitted_delete::AdmittedTemporalDelete, delete_parameters::TemporalDeleteParameters};
 use iri_rs::IriBuf;
 
 /// What one temporal history delete-by-query did.
@@ -48,8 +47,8 @@ impl TemporalService {
     ///
     /// # Errors
     ///
-    /// Returns [`TemporalError::Request`] when the parameters do not satisfy the
-    /// delete's validation, [`TemporalError::JsonLd`] when a `drop`/`keep`
+    /// Returns [`TemporalError::Query`] when the selection does not compile,
+    /// [`TemporalError::JsonLd`] when a `drop`/`keep`
     /// attribute cannot be expanded against `context`,
     /// [`TemporalError::TooManyResults`] when the delete would remove more
     /// instances than the configured bound, and [`TemporalError::Persistence`]
@@ -58,19 +57,16 @@ impl TemporalService {
     pub async fn delete_by_query(
         &self,
         target: &ContextTarget,
-        params: &TemporalDeleteParameters,
+        params: &AdmittedTemporalDelete,
         context: &ContextSpec,
     ) -> Result<TemporalDeleteOutcome, TemporalError> {
-        params.validate()?;
-        let selection = params.selection_params();
         // The delete selection carries no `attrs`, so the admission never sees a name.
         let compiled = self
             .compile_temporal_query(
-                &selection,
+                params.selection(),
                 QueryReading {
                     context,
                     language_targeting: self.language_targeting(),
-                    operation: LinkedOperation::TemporalDeleteByQuery,
                 },
                 AttrsAdmission::ReifiedScopeAdmitted,
             )

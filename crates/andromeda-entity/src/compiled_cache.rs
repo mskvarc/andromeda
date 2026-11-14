@@ -18,7 +18,6 @@
 //! and does not need to be part of the key.
 
 use andromeda_jsonld::engine::expansion_context_id::ExpansionContextId;
-use andromeda_linked_retrieval::filter_hops::FilterHops;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
@@ -62,9 +61,6 @@ pub struct CompiledQueryKey {
     /// The level the compiled `q`'s target languages were admitted and are
     /// matched under.
     language_targeting: LanguageTargeting,
-    /// The Linked Entity rule the compiled `q`'s hops were admitted under:
-    /// the operation, its `join` and its `joinLevel` (clause 4.5.23).
-    hops: FilterHops,
 }
 
 impl CompiledQueryKey {
@@ -75,12 +71,7 @@ impl CompiledQueryKey {
     /// against. The page the query answers with is not part of the key: it
     /// never takes part in compilation, so every page of one query shares one
     /// entry.
-    pub fn from_params(
-        params: &EntityQueryParameters,
-        context: ExpansionContextId,
-        language_targeting: LanguageTargeting,
-        hops: FilterHops,
-    ) -> CompiledQueryKey {
+    pub fn from_params(params: &EntityQueryParameters, context: ExpansionContextId, language_targeting: LanguageTargeting) -> CompiledQueryKey {
         let mut parameters = String::new();
         let id_pattern = params.id_pattern.as_ref().map(ToString::to_string);
         let q = params.q.as_ref().map(ToString::to_string);
@@ -130,7 +121,6 @@ impl CompiledQueryKey {
             context,
             parameters: parameters.into_boxed_str(),
             language_targeting,
-            hops,
         }
     }
 }
@@ -299,21 +289,13 @@ mod tests {
         context_spec::ContextSpec,
         engine::{expansion_context_id::ExpansionContextId, processor::JsonLdEngine},
     };
-    use andromeda_linked_retrieval::{admission::LinkedOperation, filter_hops::FilterHops};
     use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
-    use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
     use pretty_assertions::{assert_eq, assert_ne};
     use serde_json::json;
-    use std::num::NonZeroU32;
 
     fn params(query: &str) -> EntityQueryParameters {
         serde_urlencoded::from_str(query).expect("valid query string")
-    }
-
-    /// The hops a Query Entities request naming no `join` admits.
-    const fn query_hops() -> FilterHops {
-        FilterHops::new(LinkedOperation::QueryEntities, None, None)
     }
 
     /// The identity `context` processes to on an engine that fetches nothing.
@@ -325,12 +307,7 @@ mod tests {
 
     /// The key of `query` under the core context.
     async fn key(query: &str) -> CompiledQueryKey {
-        CompiledQueryKey::from_params(
-            &params(query),
-            processed(&ContextSpec::none()).await,
-            LanguageTargeting::Specification,
-            query_hops(),
-        )
+        CompiledQueryKey::from_params(&params(query), processed(&ContextSpec::none()).await, LanguageTargeting::Specification)
     }
 
     #[tokio::test]
@@ -346,7 +323,6 @@ mod tests {
             &params("q=name[en]==\"Lift\""),
             processed(&ContextSpec::none()).await,
             LanguageTargeting::LanguageRanges,
-            query_hops(),
         );
         assert_ne!(key("q=name[en]==\"Lift\"").await, filtered);
     }
@@ -397,21 +373,8 @@ mod tests {
     #[tokio::test]
     async fn the_processed_context_is_part_of_the_key() {
         let inline = ContextSpec::from_body(JsonLiteral::admit(&json!({ "speed": "https://example.com/speed" }).to_string()).expect("an admissible literal"));
-        let under_inline = CompiledQueryKey::from_params(&params("q=speed>50"), processed(&inline).await, LanguageTargeting::Specification, query_hops());
+        let under_inline = CompiledQueryKey::from_params(&params("q=speed>50"), processed(&inline).await, LanguageTargeting::Specification);
 
         assert_ne!(key("q=speed>50").await, under_inline);
-    }
-
-    /// One `q` admits its hops for one operation under one `join` and
-    /// `joinLevel` (clause 4.5.23), so a compilation that admitted a hop is
-    /// never handed to an operation or a join that refuses it.
-    #[tokio::test]
-    async fn the_hop_admission_is_part_of_the_key() {
-        let context = processed(&ContextSpec::none()).await;
-        let joined = FilterHops::new(LinkedOperation::QueryEntities, Some(JoinMode::Flat), NonZeroU32::new(1));
-        let purged = FilterHops::new(LinkedOperation::PurgeEntities, Some(JoinMode::Flat), NonZeroU32::new(1));
-        let under = |hops| CompiledQueryKey::from_params(&params("q=r{a}==1"), context, LanguageTargeting::Specification, hops);
-        assert_ne!(under(joined), under(purged));
-        assert_ne!(under(joined), under(query_hops()));
     }
 }

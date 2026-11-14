@@ -48,7 +48,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_query_evaluation::queried_entity::linked_entities::LinkedEntities;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
-use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroU32,
@@ -145,7 +145,7 @@ impl TemporalService {
     pub(crate) async fn read_hop_targets(
         &self,
         target: &ContextTarget,
-        params: &TemporalQueryParameters,
+        params: &AdmittedTemporalRequest,
         query_reading: QueryReading<'_>,
         (hops, reads): (&[Vec<&AttributeName>], &[HopReads<'_>]),
         parts: &[&TemporalDocument],
@@ -175,7 +175,7 @@ impl TemporalService {
             };
             let compiled = self
                 .compile_temporal_query(
-                    &window.to_parameters(),
+                    &window.to_admitted_parameters()?,
                     QueryReading {
                         language_targeting: self.language_targeting(),
                         ..query_reading

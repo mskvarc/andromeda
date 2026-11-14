@@ -14,25 +14,33 @@ use crate::{
     notification_validation::{validate_endpoint_present, validate_notification},
     subscription_validation_reason::SubscriptionValidationReason,
 };
+use andromeda_linked_retrieval::{admission::LinkedOperation, filter_hops::FilterHops};
 use andromeda_ngsi_ld_model::{
     notification_media_type::NotificationMediaType,
     subscription::standing::SubscriptionStanding,
     subscription_request::SubscriptionRequest,
 };
-use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
+use andromeda_ngsi_ld_query::{
+    filter::compilation::{AdmittedFilter, admit_q_filter},
+    temporal::window::TimeInterval,
+};
 use chrono::Utc;
 
 /// Validate a subscription create body, admitting its filters under
-/// `admission`.
+/// `admission`, and answer the `q` it admitted, none when the body writes no
+/// `q`.
 ///
 /// # Errors
 ///
 /// Returns the [`SubscriptionError::Validation`] of the first rule the body
 /// breaks (an NGSI-LD Null written into any member among them, clause 5.2.1),
 /// [`SubscriptionError::GeoQTooLarge`] for a reference geometry past the `geoQ`
-/// limits, and [`SubscriptionError::Query`] for a `csf` target language the
-/// level does not admit.
-pub(crate) fn validate_create_request(request: &SubscriptionRequest, admission: SubscriptionFilterAdmission) -> Result<(), SubscriptionError> {
+/// limits, and [`SubscriptionError::Query`] for a `q` too complex to resolve
+/// (clause 5.5.6) or a `q` or `csf` target language the level does not admit.
+pub(crate) fn validate_create_request(
+    request: &SubscriptionRequest,
+    admission: SubscriptionFilterAdmission,
+) -> Result<Option<AdmittedFilter>, SubscriptionError> {
     // Clause 5.2.1: an NGSI-LD Null is refused outside clauses 5.5.8 and 5.5.12,
     // and a create deletes nothing (clause 5.8.1.4, bullet 1). A JSON `null` is
     // no value of any member and never reads into the request.
@@ -55,8 +63,9 @@ pub(crate) fn validate_create_request(request: &SubscriptionRequest, admission: 
     // expiresAt must be in the future at creation time.
     validate_expires_at_not_in_past(request)?;
 
-    validate_common_members(request, admission)?;
-    validate_subscribed_scope(request)
+    let admitted_q = validate_common_members(request, admission)?;
+    validate_subscribed_scope(request)?;
+    Ok(admitted_q)
 }
 
 /// Reject a subscription that names nothing to match against (clause 5.2.12).
@@ -108,17 +117,43 @@ pub(crate) fn validate_expires_at_not_in_past(request: &SubscriptionRequest) -> 
     }
 }
 
-/// Validate the members shared between create and update, admitting the
-/// `geoQ` and the `csf` under `admission`. The `q` is admitted by the one
-/// compile entry of its language when the request is expanded.
+/// Admit the `q` a request writes under `admission` (clause 5.5.6 and the
+/// `q_target_languages` level), together with the hops a Subscription admits
+/// (clause 5.8.1.4). An update fragment's NGSI-LD Null removes the `q`, which
+/// has nothing to admit.
+///
+/// # Errors
+///
+/// Returns [`SubscriptionError::Query`] for a `q` too complex to resolve or
+/// naming a target language the level does not admit.
+pub(crate) fn admit_q(request: &SubscriptionRequest, admission: SubscriptionFilterAdmission) -> Result<Option<AdmittedFilter>, SubscriptionError> {
+    let Some(q) = request.q.as_set() else {
+        return Ok(None);
+    };
+    let notification = request.notification.as_ref();
+    let hops = FilterHops::new(
+        LinkedOperation::Subscription,
+        notification.and_then(|notification| notification.join),
+        notification.and_then(|notification| notification.join_level),
+    );
+    admit_q_filter::<SubscriptionError, _>(q, admission.q(), &hops).map(Some)
+}
+
+/// Validate the members shared between create and update, admitting the `q`,
+/// the `geoQ` and the `csf` under `admission`, and answer the `q` it admitted,
+/// none when the request writes none or deletes it.
 ///
 /// # Errors
 ///
 /// Returns the [`SubscriptionError::Validation`] of the first rule the request
 /// breaks, [`SubscriptionError::GeoQTooLarge`] for a reference geometry past
-/// the `geoQ` limits, and [`SubscriptionError::Query`] for a `csf` target
-/// language the level does not admit.
-pub(crate) fn validate_common_members(request: &SubscriptionRequest, admission: SubscriptionFilterAdmission) -> Result<(), SubscriptionError> {
+/// the `geoQ` limits, and [`SubscriptionError::Query`] for a `q` too complex
+/// to resolve (clause 5.5.6) or a `q` or `csf` target language the level does
+/// not admit.
+pub(crate) fn validate_common_members(
+    request: &SubscriptionRequest,
+    admission: SubscriptionFilterAdmission,
+) -> Result<Option<AdmittedFilter>, SubscriptionError> {
     if request.time_interval.as_set().is_some() && request.watched_attributes.as_set().is_some() {
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::TimeIntervalWithWatchedAttributes));
     }
@@ -136,6 +171,8 @@ pub(crate) fn validate_common_members(request: &SubscriptionRequest, admission: 
     if request.time_interval.as_set().is_some_and(|time_interval| *time_interval <= 0.0) {
         return Err(SubscriptionError::Validation(SubscriptionValidationReason::TimeIntervalNotPositive));
     }
+
+    let admitted_q = admit_q(request, admission)?;
 
     // A full tag or a range is admitted only at the `q_target_languages`
     // level that serves it; below it the clause 4.9 `AttrName` spells neither.
@@ -178,10 +215,10 @@ pub(crate) fn validate_common_members(request: &SubscriptionRequest, admission: 
     }
 
     if let Some(notification) = &request.notification {
-        validate_notification(notification, request.q.as_set())?;
+        validate_notification(notification)?;
     }
 
-    Ok(())
+    Ok(admitted_q)
 }
 
 /// Refuse a `temporalQ` on an entity subscription (Table 5.2.12-1: "to be used
@@ -697,31 +734,103 @@ mod tests {
         assert!(validate_notification_fragment(&request(&json!({"q": "speed>1"}))).is_ok());
     }
 
-    /// A wildcard range has no clause 4.9 tag-equality reading, so only the
-    /// `language-ranges` level admits one in a `csf`.
+    /// Clause 5.5.6: a `q` making more comparisons, or nesting deeper, than the
+    /// broker resolves is `TooComplexQuery`, on create and update alike; one at
+    /// the limits is admitted.
     #[test]
-    fn a_csf_language_range_is_admitted_only_at_the_ranges_level() {
-        let body = json!({"csf": "name[*-GB]==\"Lift\""});
-        for level in [LanguageTargeting::Specification, LanguageTargeting::LanguageTags] {
-            let refused = validate_common_members(&request(&body), broker_defaults(level));
-            assert!(
-                matches!(refused, Err(SubscriptionError::Query(QueryError::LanguageRangeNotAdmitted(_)))),
-                "{level}: {refused:?}"
-            );
+    fn a_q_past_the_complexity_limits_is_refused_and_one_at_them_admitted() {
+        let notification = json!({"endpoint": {"uri": "https://receiver.example.com/notify"}});
+        let values = |count: usize| (0..count).map(|value| value.to_string()).collect::<Vec<_>>().join(",");
+        let nested = |levels: usize| (1..levels).fold("a>1;b>1".to_owned(), |inner, level| format!("c{level}>1|({inner})"));
+        for (q, admitted) in [
+            (format!("speed=={}", values(1000)), true),
+            (format!("speed=={}", values(1001)), false),
+            (nested(16), true),
+            (nested(17), false),
+        ] {
+            let body = json!({"type": "Subscription", "entities": [{"type": "Vehicle"}], "notification": notification, "q": q});
+            let created = validate_create_request(&request(&body), broker_defaults(LanguageTargeting::Specification));
+            let updated = validate_common_members(&request(&json!({"q": q})), broker_defaults(LanguageTargeting::Specification));
+            for result in [created, updated] {
+                if admitted {
+                    assert!(result.is_ok(), "{q}: {result:?}");
+                } else {
+                    assert!(
+                        matches!(
+                            result,
+                            Err(SubscriptionError::Query(
+                                QueryError::QTooManyComparisons { .. } | QueryError::QNestedTooDeep { .. }
+                            ))
+                        ),
+                        "{q}: {result:?}"
+                    );
+                }
+            }
         }
-        assert!(validate_common_members(&request(&body), broker_defaults(LanguageTargeting::LanguageRanges)).is_ok());
     }
 
-    /// Validation leaves the `q` to its compile entry, which admits it when
-    /// the request is expanded.
+    /// A wildcard range has no clause 4.9 tag-equality reading, so only the
+    /// `language-ranges` level admits one, in `q` and `csf` alike.
     #[test]
-    fn validation_leaves_the_q_to_its_compile_entry() {
-        let values = (0..1001).map(|value| value.to_string()).collect::<Vec<_>>().join(",");
-        for q in [format!("speed=={values}"), "name[en-GB]==\"Lift\"".to_owned()] {
+    fn a_language_range_is_admitted_only_at_the_ranges_level() {
+        for body in [json!({"q": "name[de-*-DE]==\"Aufzug\""}), json!({"csf": "name[*-GB]==\"Lift\""})] {
+            for level in [LanguageTargeting::Specification, LanguageTargeting::LanguageTags] {
+                let refused = validate_common_members(&request(&body), broker_defaults(level));
+                assert!(
+                    matches!(refused, Err(SubscriptionError::Query(QueryError::LanguageRangeNotAdmitted(_)))),
+                    "{body} at {level}: {refused:?}"
+                );
+            }
             assert!(
-                validate_common_members(&request(&json!({"q": q})), broker_defaults(LanguageTargeting::Specification)).is_ok(),
-                "{q}"
+                validate_common_members(&request(&body), broker_defaults(LanguageTargeting::LanguageRanges)).is_ok(),
+                "{body}"
             );
+        }
+    }
+
+    /// The clause 4.9 `AttrName` admits no `-`, so a full tag needs the
+    /// `language-tags` level, in `q` and `csf` alike.
+    #[test]
+    fn a_full_tag_is_admitted_from_the_tags_level_up() {
+        for body in [json!({"q": "name[en-GB]==\"Lift\""}), json!({"csf": "name[en-GB]==\"Lift\""})] {
+            let refused = validate_common_members(&request(&body), broker_defaults(LanguageTargeting::Specification));
+            assert!(
+                matches!(refused, Err(SubscriptionError::Query(QueryError::LanguageTagNotAdmitted(_)))),
+                "{body}: {refused:?}"
+            );
+            for level in [LanguageTargeting::LanguageTags, LanguageTargeting::LanguageRanges] {
+                assert!(validate_common_members(&request(&body), broker_defaults(level)).is_ok(), "{body} at {level}");
+            }
+        }
+        assert!(validate_common_members(&request(&json!({"q": "name[en]==\"Lift\""})), broker_defaults(LanguageTargeting::Specification)).is_ok());
+    }
+
+    /// Clause 5.8.1.4: no clause bounds a Subscription's hops, so a hop with no
+    /// `join` and one deeper than any `joinLevel` are both admitted.
+    #[test]
+    fn a_q_hop_is_admitted_without_a_join() {
+        for body in [
+            json!({"q": "r{a}==1"}),
+            json!({"q": "r{s{a}}==1"}),
+            json!({"q": "r{s{a}}==1", "notification": {"join": "flat", "joinLevel": 1, "endpoint": {"uri": "https://receiver.example.com/notify"}}}),
+        ] {
+            let result = validate_common_members(&request(&body), broker_defaults(LanguageTargeting::Specification));
+            assert!(result.is_ok(), "{body}: {result:?}");
+        }
+    }
+
+    /// Validation answers the filter it admitted, as the request wrote it, and
+    /// none when the request writes no `q` or deletes it.
+    #[test]
+    fn validation_answers_the_q_it_admitted() {
+        let admitted = validate_common_members(&request(&json!({"q": "speed>1"})), broker_defaults(LanguageTargeting::Specification))
+            .expect("the q is admitted")
+            .expect("a written q is admitted");
+        let written = request(&json!({"q": "speed>1"}));
+        assert_eq!(written.q.as_set(), Some(admitted.written()));
+        for body in [json!({}), json!({"q": "urn:ngsi-ld:null"})] {
+            let none = validate_common_members(&request(&body), broker_defaults(LanguageTargeting::Specification)).expect("nothing to refuse");
+            assert!(none.is_none(), "{body}");
         }
     }
 }

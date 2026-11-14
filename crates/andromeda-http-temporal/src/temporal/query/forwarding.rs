@@ -30,6 +30,7 @@ use andromeda_federation::{
 };
 use andromeda_http_response::declined_representation::single_source_declined;
 use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
+use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
 use axum::http::{HeaderMap, Uri};
 use tracing::warn;
 
@@ -336,7 +337,7 @@ pub(crate) async fn forward_in_effect_probes(
 #[derive(Clone, Copy)]
 pub(crate) struct InEffectRequest<'r> {
     /// The client's query.
-    pub(crate) params: &'r TemporalQueryParameters,
+    pub(crate) params: &'r AdmittedTemporalRequest,
     /// The request context.
     pub(crate) context: &'r ContextSpec,
     /// What the query's target languages may be and how they select

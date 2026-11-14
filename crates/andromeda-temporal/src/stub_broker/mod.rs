@@ -42,10 +42,11 @@ use andromeda_ngsi_ld_model::temporal::{StreamExtent, TemporalAggregationRow, Te
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelection,
-    filter::language_targeting::LanguageTargeting,
+    filter::{compilation::FilterAdmission, language_targeting::LanguageTargeting},
     geo::near_distance_band::NearDistanceBand,
     split_filter::LeafTruths,
 };
+use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, admitted::AdmittedTemporalRequest, operation::TemporalQueryOperation};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_retry::retry_delay::RetryDelay;
 use async_trait::async_trait;
@@ -306,6 +307,21 @@ pub(crate) fn limits() -> TemporalServiceLimits {
         language_targeting: LanguageTargeting::Specification,
         filter_complexity: filter_complexity_limits(&RequestLimitsConfig::default()),
     }
+}
+
+/// The query `params` describe, validated as a retrieval under the temporal
+/// Linked Entity extension and the default admission of the test service.
+pub(crate) fn admitted(params: TemporalQueryParameters) -> AdmittedTemporalRequest {
+    params
+        .admit(
+            TemporalQueryOperation::Retrieve,
+            TemporalJoin::Extended,
+            FilterAdmission {
+                complexity: filter_complexity_limits(&RequestLimitsConfig::default()),
+                language_targeting: LanguageTargeting::Specification,
+            },
+        )
+        .expect("a query validation admits")
 }
 
 /// A service whose history is the stubbed `broker`, whose non-local half is

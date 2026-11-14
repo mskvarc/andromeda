@@ -61,7 +61,7 @@ use andromeda_ngsi_ld_query::{
     page_window::{PageStart, PageWindow},
     temporal::window::TimeInterval,
 };
-use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation};
+use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, admitted::AdmittedTemporalRequest, operation::TemporalQueryOperation};
 use andromeda_temporal::{error::TemporalError, query_reading::QueryReading, requested_identifiers::RequestedIdentifiers};
 use std::{collections::HashSet, vec::IntoIter};
 use tracing::warn;
@@ -75,7 +75,7 @@ pub(super) struct TemporalCapture<'q> {
     /// The query's position in `snapshotTemporalQueries`.
     pub(super) index: usize,
     /// The query as the Snapshot asked it.
-    pub(super) params: &'q TemporalQueryParameters,
+    pub(super) params: &'q AdmittedTemporalRequest,
     /// The window the query asked for.
     pub(super) interval: TimeInterval,
     /// The context the query is expanded under.
@@ -161,6 +161,11 @@ impl SnapshotExecutor {
         let interval = match TimeInterval::from_parts(params.timerel, params.time_at, params.end_time_at) {
             Ok(interval) => interval,
             Err(error) => return Ok(failure_detail(classify_query_error(&error).into_problem())),
+        };
+        let temporal = &self.sources.temporal;
+        let params = match params.admit(TemporalQueryOperation::Query, temporal.linked_retrieval(), temporal.filter_admission()) {
+            Ok(params) => params,
+            Err(error) => return Ok(failure_detail(classify_parameter_error(&error).into_problem())),
         };
         let filters = match self.temporal_registration_filters(&params, context).await {
             Ok(filters) => filters,
@@ -300,7 +305,7 @@ impl SnapshotExecutor {
         shortfall: &mut SourceShortfall,
         captured: &mut HashSet<Identifier>,
     ) -> Result<Option<ExecutionResultDetails>, SnapshotError> {
-        let mut resumed: Option<TemporalQueryParameters> = None;
+        let mut resumed: Option<AdmittedTemporalRequest> = None;
         loop {
             let interval = match sources.next_pass() {
                 Ok(Some(interval)) => interval,
@@ -345,7 +350,6 @@ impl SnapshotExecutor {
                 QueryReading {
                     context: capture.context,
                     language_targeting: self.sources.temporal.language_targeting(),
-                    operation: TemporalQueryOperation::Query.linked(self.sources.temporal.linked_retrieval()),
                 },
                 RequestedIdentifiers::Narrow,
                 CandidateFilters::Applied,

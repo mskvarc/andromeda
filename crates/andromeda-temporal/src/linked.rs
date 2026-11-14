@@ -39,7 +39,7 @@ use andromeda_ngsi_ld_query::projection::{
 };
 use andromeda_ngsi_ld_render::temporal::temporal_evolutions::TemporalEvolutions;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailure;
-use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
 use iri_rs::IriBuf;
 
 /// A traversed temporal join, ready to be planned and written.
@@ -98,7 +98,7 @@ impl TemporalService {
         &self,
         target: &ContextTarget,
         roots: &[TemporalBody],
-        params: &TemporalQueryParameters,
+        params: &AdmittedTemporalRequest,
         reading: QueryReading<'_>,
         attrs_admission: AttrsAdmission,
     ) -> Result<Option<TemporalLinkedJoin>, TemporalError> {
@@ -109,7 +109,7 @@ impl TemporalService {
         let window = TemporalLinkedWindow::of_request(params);
         let compiled = self
             .compile_temporal_query(
-                &window.to_parameters(),
+                &window.to_admitted_parameters()?,
                 QueryReading {
                     language_targeting: self.language_targeting(),
                     ..reading

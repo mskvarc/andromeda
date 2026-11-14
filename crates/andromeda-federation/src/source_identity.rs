@@ -35,7 +35,7 @@ use andromeda_json_literal::JsonLiteral;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-use andromeda_ngsi_ld_query::entity_selector_params::EntitySelectorParams;
+use andromeda_ngsi_ld_query::written_entity_selector::WrittenEntitySelector;
 use dashmap::DashMap;
 use serde::Deserialize;
 use std::time::{Duration, Instant};
@@ -151,9 +151,9 @@ impl FederationService {
             .select_registrations(
                 context,
                 RegistrationSelection {
-                    selectors: &[EntitySelectorParams {
+                    selectors: &[WrittenEntitySelector {
                         id: Some(vec![entity_id.clone()]),
-                        ..EntitySelectorParams::default()
+                        ..WrittenEntitySelector::default()
                     }],
                     reach: SourceReach::Every,
                     csf: None,

@@ -8,7 +8,7 @@
 //! it is looking at.
 
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
-use andromeda_ngsi_ld_query::{entity_selector_params::EntitySelectorParams, filter::expression::Expr, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::{filter::expression::Expr, scope::query::ScopeQuery, written_entity_selector::WrittenEntitySelector};
 use andromeda_ngsi_ld_request::{
     entity::GetEntityParams,
     query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
@@ -67,18 +67,18 @@ impl ClientQuery<'_> {
     /// selector of its flat parameters. A retrieval is the one selector naming
     /// the entity of its path and the client's type, if any.
     #[must_use]
-    pub fn selectors(&self) -> Cow<'_, [EntitySelectorParams]> {
+    pub fn selectors(&self) -> Cow<'_, [WrittenEntitySelector]> {
         match self {
             ClientQuery::EntityQuery(params) => params.selectors(),
             ClientQuery::TemporalQuery(params) => params.selectors(),
-            ClientQuery::EntityRetrieve { id, params } => Cow::Owned(vec![EntitySelectorParams {
+            ClientQuery::EntityRetrieve { id, params } => Cow::Owned(vec![WrittenEntitySelector {
                 id: Some(vec![(*id).clone()]),
                 type_: params.entity_type.clone(),
                 id_pattern: None,
             }]),
-            ClientQuery::TemporalRetrieve { id, .. } => Cow::Owned(vec![EntitySelectorParams {
+            ClientQuery::TemporalRetrieve { id, .. } => Cow::Owned(vec![WrittenEntitySelector {
                 id: Some(vec![(*id).clone()]),
-                ..EntitySelectorParams::default()
+                ..WrittenEntitySelector::default()
             }]),
         }
     }

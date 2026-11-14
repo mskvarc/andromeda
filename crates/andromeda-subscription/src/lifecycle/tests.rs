@@ -36,6 +36,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
 use andromeda_ngsi_ld_query::{
     cursor::PageCursor,
+    error::QueryError,
     filter::{complexity::FilterComplexityLimits, language_targeting::LanguageTargeting},
     geo::{admission::GeoQueryAdmission, near_distance_band::NearDistanceBand},
     page_window::{PageStart, PageWindow},
@@ -386,7 +387,7 @@ impl SubscriptionStore for UpdatingStore {
     }
 
     async fn exists(&self, _target: &ContextTarget, _id: &Identifier) -> Result<bool, SubscriptionError> {
-        Err(unused("exists"))
+        Ok(true)
     }
 
     async fn list_active(&self, _target: &ContextTarget) -> Result<Vec<StoredSubscription>, SubscriptionError> {
@@ -799,6 +800,56 @@ async fn a_subscription_created_without_its_type_is_refused_on_both_kinds() {
         matches!(csource, Err(SubscriptionError::Validation(SubscriptionValidationReason::TypeRequired))),
         "{csource:?}"
     );
+}
+
+/// Clause 5.8.1.4 lists the `BadRequestData` of the clause 5.2.12 restrictions
+/// before `AlreadyExists`, so a `q` too complex to resolve is refused as such
+/// whether or not the identifier is taken.
+#[tokio::test]
+async fn a_too_complex_q_is_refused_before_the_identifier_is_looked_up() {
+    let (service, written) = service_serving_a_scoped_context();
+    let values = (0..1001).map(|value| value.to_string()).collect::<Vec<_>>().join(",");
+    let request = SubscriptionRequest::from_request_text(
+        json!({
+            "id": "urn:ngsi-ld:Subscription:stored",
+            "type": "Subscription",
+            "entities": [{ "type": "https://example.com/Vehicle" }],
+            "notification": { "endpoint": { "uri": "http://receiver.example.com/notify" } },
+            "q": format!("speed=={values}")
+        })
+        .to_string()
+        .as_bytes(),
+        ContextReading::keyword_spellings(),
+    )
+    .expect("a readable subscription");
+    let error = service
+        .create(&ContextTarget::Live, request, SubscriptionContext::CoreOnly, &[])
+        .await
+        .expect_err("clause 5.5.6 refuses it");
+    assert!(matches!(error, SubscriptionError::Query(QueryError::QTooManyComparisons { .. })), "{error:?}");
+    assert_eq!(*written.lock().expect("the written context is never poisoned"), None);
+}
+
+#[tokio::test]
+async fn a_create_with_a_taken_identifier_is_refused_as_already_existing() {
+    let (service, _) = service_serving_a_scoped_context();
+    let request = SubscriptionRequest::from_request_text(
+        json!({
+            "id": "urn:ngsi-ld:Subscription:stored",
+            "type": "Subscription",
+            "entities": [{ "type": "https://example.com/Vehicle" }],
+            "notification": { "endpoint": { "uri": "http://receiver.example.com/notify" } }
+        })
+        .to_string()
+        .as_bytes(),
+        ContextReading::keyword_spellings(),
+    )
+    .expect("a readable subscription");
+    let error = service
+        .create(&ContextTarget::Live, request, SubscriptionContext::CoreOnly, &[])
+        .await
+        .expect_err("the identifier is taken");
+    assert!(matches!(error, SubscriptionError::AlreadyExists { .. }), "{error:?}");
 }
 
 #[tokio::test]

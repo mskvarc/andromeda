@@ -193,7 +193,10 @@ impl From<TemporalRetrieveParameters> for TemporalQueryParameters {
 mod tests {
     use crate::{
         error::ParameterError,
-        query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation, retrieve_parameters::TemporalRetrieveParameters},
+        query::{
+            permissive_admission::PERMISSIVE,
+            temporal::{TemporalQueryParameters, operation::TemporalQueryOperation, retrieve_parameters::TemporalRetrieveParameters},
+        },
     };
     use andromeda_linked_retrieval::admission::TemporalJoin;
     use pretty_assertions::assert_eq;
@@ -227,12 +230,12 @@ mod tests {
         let admitted = TemporalQueryParameters::from(params(
             "timerel=after&timeAt=2024-01-01T00:00:00Z&format=temporalValues&options=aggregatedValues&aggrMethods=sum",
         ));
-        assert!(admitted.validate(TemporalQueryOperation::Retrieve, TemporalJoin::Spec).is_ok());
+        assert!(admitted.admit(TemporalQueryOperation::Retrieve, TemporalJoin::Spec, PERMISSIVE).is_ok());
         let refused = TemporalQueryParameters::from(params(
             "timerel=after&timeAt=2024-01-01T00:00:00Z&format=temporalValues&aggrMethods=sum&aggrPeriodDuration=PT1H",
         ));
         let error = refused
-            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Spec)
+            .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Spec, PERMISSIVE)
             .expect_err("no aggregated values named");
         assert!(matches!(error, ParameterError::AggregationWithoutAggregatedValues), "{error:?}");
     }

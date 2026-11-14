@@ -220,7 +220,6 @@ async fn compact_all(names: &[AttributeName], compactor: &impl TermCompactor) ->
 #[cfg(test)]
 mod tests {
     use crate::{
-        error::QueryError,
         filter::{
             compaction::{compact_csf_expr, compact_q_expr, revert_expand_values},
             expansion::{apply_expand_values, expand_csf_expr, expand_q_expr},
@@ -228,12 +227,12 @@ mod tests {
             parser,
             serialize::serialize,
         },
+        namespace_expander::{EXAMPLE_NAMESPACE_TYPED, NamespaceExpander},
         term_compactor::TermCompactor,
-        term_expander::TermExpander,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBJECT_TYPE, VALUE_TYPE};
-    use iri_rs::IriBuf;
+    use iri_rs::Iri;
     use std::{
         collections::HashSet,
         future::{Future, ready},
@@ -242,35 +241,21 @@ mod tests {
     const TERM_PREFIX: &str = "https://example.com/";
     const TYPE_PREFIX: &str = "https://example.com/types/";
 
-    /// An expander that prefixes every term, paired below with the compactor
-    /// that strips the same prefix, so the pair is an exact inverse.
-    struct PrefixExpander;
-
     /// The core members a path ends on in [`SHAPES`], each with the term the
     /// pair below expands to its core IRI and compacts back to.
-    fn core_members() -> [(&'static str, &'static str); 2] {
-        [("valueType", VALUE_TYPE.as_str()), ("objectType", OBJECT_TYPE.as_str())]
-    }
+    const CORE_MEMBERS: &[(&str, Iri<&str>)] = &[("valueType", VALUE_TYPE), ("objectType", OBJECT_TYPE)];
 
-    impl TermExpander for PrefixExpander {
-        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            let core = core_members().into_iter().find(|(core_term, _)| *core_term == term);
-            let iri = core.map_or_else(|| format!("{TERM_PREFIX}{term}"), |(_, iri)| iri.to_owned());
-            ready(Ok(IriBuf::new(iri).expect("valid IRI")))
-        }
+    /// The expander paired below with the compactor that strips the same
+    /// prefixes, so the pair is an exact inverse.
+    const EXPANDER: NamespaceExpander = EXAMPLE_NAMESPACE_TYPED.with_core_members(CORE_MEMBERS);
 
-        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            ready(Ok(IriBuf::new(format!("{TYPE_PREFIX}{term}")).expect("valid IRI")))
-        }
-    }
-
-    /// The inverse of [`PrefixExpander`]: a name carrying the prefix loses it,
+    /// The inverse of [`EXPANDER`]: a name carrying the prefix loses it,
     /// any other name is answered as given, which is the clause 4.5.1 rule an
     /// implementation follows for an IRI no term abbreviates.
     struct PrefixCompactor;
 
     fn strip(name: &AttributeName, prefix: &str) -> AttributeName {
-        let core = core_members().into_iter().find(|(_, iri)| *iri == name.as_str()).map(|(term, _)| term);
+        let core = CORE_MEMBERS.iter().find(|(_, iri)| iri.as_str() == name.as_str()).map(|(term, _)| *term);
         match core.or_else(|| name.as_str().strip_prefix(prefix)) {
             Some(term) => term.parse().expect("a stripped term is a valid attribute name"),
             None => name.clone(),
@@ -320,9 +305,7 @@ mod tests {
     async fn compacting_an_expanded_filter_restores_what_the_client_wrote() {
         for shape in SHAPES {
             let parsed = parser::parse(shape).unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
-            let expanded = expand_q_expr(parsed.clone(), &JsonKeyAttributes::default(), &PrefixExpander)
-                .await
-                .expect("expands");
+            let expanded = expand_q_expr(parsed.clone(), &JsonKeyAttributes::default(), &EXPANDER).await.expect("expands");
             assert_ne!(serialize(&expanded), shape, "the expansion of {shape} must differ from it");
 
             let compacted = compact_q_expr(expanded, &PrefixCompactor).await;
@@ -339,12 +322,10 @@ mod tests {
     async fn expanding_a_compacted_filter_restores_the_stored_expansion() {
         for shape in SHAPES {
             let parsed = parser::parse(shape).unwrap_or_else(|error| panic!("{shape} must parse: {error}"));
-            let expanded = expand_q_expr(parsed, &JsonKeyAttributes::default(), &PrefixExpander).await.expect("expands");
+            let expanded = expand_q_expr(parsed, &JsonKeyAttributes::default(), &EXPANDER).await.expect("expands");
 
             let compacted = compact_q_expr(expanded.clone(), &PrefixCompactor).await;
-            let re_expanded = expand_q_expr(compacted, &JsonKeyAttributes::default(), &PrefixExpander)
-                .await
-                .expect("expands again");
+            let re_expanded = expand_q_expr(compacted, &JsonKeyAttributes::default(), &EXPANDER).await.expect("expands again");
 
             pretty_assertions::assert_eq!(re_expanded, expanded, "expand after compact of {shape}");
         }
@@ -383,7 +364,7 @@ mod tests {
     async fn a_csf_round_trips_with_its_trailing_members_as_written() {
         let written = "coverage.since[\"https://example.com/area\".region]==\"north\"";
         let parsed = parser::parse(written).expect("parses");
-        let expanded = expand_csf_expr(parsed.clone(), &PrefixExpander).await.expect("expands");
+        let expanded = expand_csf_expr(parsed.clone(), &EXPANDER).await.expect("expands");
 
         let compacted = compact_csf_expr(expanded.clone(), &PrefixCompactor).await;
 
@@ -401,9 +382,9 @@ mod tests {
     async fn an_expanded_quoted_word_reverts_to_the_quoted_word() {
         let written = "gender==\"Male\"";
         let parsed = parser::parse(written).expect("parses");
-        let expanded = expand_q_expr(parsed, &JsonKeyAttributes::default(), &PrefixExpander).await.expect("expands");
+        let expanded = expand_q_expr(parsed, &JsonKeyAttributes::default(), &EXPANDER).await.expect("expands");
         let opted_in: HashSet<AttributeName> = HashSet::from([format!("{TERM_PREFIX}gender").parse().expect("a valid name")]);
-        let coerced = apply_expand_values(expanded, &opted_in, &PrefixExpander).await.expect("expands");
+        let coerced = apply_expand_values(expanded, &opted_in, &EXPANDER).await.expect("expands");
 
         let reverted = compact_q_expr(revert_expand_values(coerced, &opted_in, &PrefixCompactor).await, &PrefixCompactor).await;
 

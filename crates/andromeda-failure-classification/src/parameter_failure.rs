@@ -60,11 +60,58 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
 
 #[cfg(test)]
 mod tests {
-    use crate::parameter_failure::classify_parameter_error;
+    use crate::{parameter_failure::classify_parameter_error, query_failure::classify_query_error};
     use andromeda_http_headers::media_type::ResponseMediaType;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use andromeda_ngsi_ld_query::filter::{complexity::FilterComplexityLimits, expression::Expr, language_targeting::LanguageTargeting};
     use andromeda_ngsi_ld_request::{error::ParameterError, pagination::page_size::PageSizeExceeded};
     use pretty_assertions::assert_eq;
+    use std::num::NonZeroUsize;
+
+    /// A `q` refused once, at request validation, is the parameter error
+    /// wrapping the language's own refusal, and answers exactly as that
+    /// refusal does: `TooComplexQuery` naming the count for a filter past the
+    /// limits (clause 5.5.6), `BadRequestData` for a target language the level
+    /// does not admit.
+    #[test]
+    fn a_q_refused_at_validation_is_answered_as_the_language_refuses_it() {
+        let limits = FilterComplexityLimits::new(
+            NonZeroUsize::new(2).expect("a positive comparison limit"),
+            NonZeroUsize::new(1).expect("a positive nesting limit"),
+        );
+        let too_many = limits.admit(&"a==1,2,3".parse::<Expr>().expect("a filter")).expect_err("too many comparisons");
+        let too_deep = limits.admit(&"a;(b|c)".parse::<Expr>().expect("a filter")).expect_err("nested too deep");
+        let tagged: Expr = "name[en-GB]==\"x\"".parse().expect("a filter");
+        let tag = LanguageTargeting::Specification.admit(&tagged).expect_err("a full tag needs the tags level");
+        let expected = [
+            NgsiLdErrorType::TooComplexQuery,
+            NgsiLdErrorType::TooComplexQuery,
+            NgsiLdErrorType::BadRequestData,
+        ];
+        for (refusal, error_type) in [too_many, too_deep, tag].into_iter().zip(expected) {
+            let direct = classify_query_error(&refusal);
+            let wrapped = classify_parameter_error(&ParameterError::Query(refusal));
+            assert_eq!(wrapped, direct);
+            assert_eq!(wrapped.error_type(), error_type);
+        }
+        let comparisons = classify_parameter_error(&ParameterError::Query(
+            limits.admit(&"a==1,2,3".parse::<Expr>().expect("a filter")).expect_err("too many comparisons"),
+        ));
+        assert!(comparisons.detail().contains("3 comparisons"), "{}", comparisons.detail());
+    }
+
+    /// Clauses 5.7.2.4 and 5.14.4.4: a hop refused at validation answers
+    /// `BadRequestData`, whichever variant of the Linked Entity admission
+    /// refused it.
+    #[test]
+    fn a_hop_refused_at_validation_is_bad_request_data() {
+        for error in [
+            ParameterError::FilterTraversalWithoutJoin,
+            ParameterError::FilterDepthExceedsJoinLevel { depth: 2, join_level: 1 },
+        ] {
+            assert_eq!(classify_parameter_error(&error).error_type(), NgsiLdErrorType::BadRequestData, "{error:?}");
+        }
+    }
 
     /// Clause 6.3.20: a cursor where the collection offers no cursor walk is a
     /// parameter the operation does not offer.

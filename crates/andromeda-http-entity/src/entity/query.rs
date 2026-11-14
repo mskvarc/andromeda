@@ -166,13 +166,13 @@ pub(crate) async fn run(request: EntityQueryRequest) -> Result<Response, Problem
         api_root,
         headers,
         context,
-        mut query,
+        query,
         binding,
         pagination,
     } = request;
     Box::pin(async move {
         let service = &state.entity_query;
-        let admitted = admit_request(&state, &target, &context, protocol, &mut query, &binding, &uri).await?;
+        let (mut query, admitted) = admit_request(&state, &target, &context, protocol, query, &binding, &uri).await?;
         let opts = &admitted.opts;
         // Clauses 5.7.2.4 and 6.3.4: refused before the store is read.
         require_geojson_for_geometry_property(query.geometry_property.as_ref(), accept.media_type()).with_entity_instance(&uri)?;

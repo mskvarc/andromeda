@@ -20,10 +20,13 @@ use andromeda_entity_map::{
 };
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_linked_retrieval::{admission::LinkedOperation, plan::JoinPlan, typed::TypedEntities};
+use andromeda_linked_retrieval::{plan::JoinPlan, typed::TypedEntities};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, page_window::PageWindow};
-use andromeda_ngsi_ld_request::{entity::GetEntityParams, query::entity::parameters::EntityQueryParameters};
+use andromeda_ngsi_ld_request::{
+    entity::GetEntityParams,
+    query::{entity::admitted::AdmittedEntityQuery, selection_mut::SelectionMut},
+};
 use axum::http::Uri as HttpUri;
 
 /// Where the entities a map attributes to this broker come from.
@@ -43,7 +46,7 @@ pub(crate) enum LocalEntitySource<'a> {
         /// Live or snapshot branch the query read.
         target: &'a ContextTarget,
         /// The query, as it ran against the store.
-        query: &'a EntityQueryParameters,
+        query: &'a AdmittedEntityQuery,
         /// The request's JSON-LD context.
         context: &'a ContextSpec,
         /// What the query's target languages could be and how they selected languageMap keys.
@@ -66,7 +69,7 @@ impl<'a> LocalEntitySource<'a> {
     pub(crate) const fn queried(
         service: &'a EntityQueryService,
         target: &'a ContextTarget,
-        query: &'a EntityQueryParameters,
+        query: &'a AdmittedEntityQuery,
         context: &'a ContextSpec,
         targeting: LanguageTargeting,
         join: Option<&'a JoinPlan<'a, TypedEntities>>,
@@ -113,10 +116,7 @@ impl LocalMapEntities for LocalEntitySource<'_> {
                 join,
                 instance,
             } => {
-                let mut compiled = service
-                    .compile_query_public(query, context, targeting, LinkedOperation::QueryEntities)
-                    .await
-                    .with_entity_instance(instance)?;
+                let mut compiled = service.compile_query_public(query, context, targeting).await.with_entity_instance(instance)?;
                 match listing {
                     MapListing::Minted => {}
                     // Clause 4.3.6.7 rechecks the filters of the request the map
@@ -165,7 +165,7 @@ impl LocalMapEntities for LocalEntitySource<'_> {
 pub(crate) async fn resolve_query_map_use(
     maps: &EntityMapService,
     target: &ContextTarget,
-    query: &mut EntityQueryParameters,
+    query: &mut AdmittedEntityQuery,
     referenced: Option<&Identifier>,
     instance: &HttpUri,
 ) -> Result<EntityMapUse, ProblemResponse> {
@@ -183,7 +183,8 @@ pub(crate) async fn resolve_query_map_use(
         .await
         .with_entity_instance(instance)?;
     if let Some(map) = map_use.reused() {
-        hold_selection_to_map(map, &mut query.id, &mut query.entity_selectors);
+        let SelectionMut { id, entity_selectors } = query.selection_mut();
+        hold_selection_to_map(map, id, entity_selectors);
     }
     Ok(map_use)
 }

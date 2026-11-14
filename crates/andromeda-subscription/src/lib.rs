@@ -138,6 +138,7 @@ andromeda_architecture_checks::dependency_boundary! {
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-number",
+        "andromeda-ngsi-ld-query",
         "andromeda-retry",
     ],
     allow_production_dependencies: [],

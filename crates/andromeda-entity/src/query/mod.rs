@@ -55,7 +55,7 @@ use crate::{
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_query::{
-    filter::{complexity::FilterComplexityLimits, language_targeting::LanguageTargeting},
+    filter::{compilation::FilterAdmission, complexity::FilterComplexityLimits, language_targeting::LanguageTargeting},
     geo::admission::GeoQueryAdmission,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -117,9 +117,13 @@ impl EntityQueryService {
         self.language_targeting
     }
 
-    /// The most a query's `q` filter may ask of the broker.
+    /// What request validation admits a query's `q` under: the complexity
+    /// limits and the `q_target_languages` level of the broker.
     #[must_use]
-    pub const fn filter_complexity(&self) -> FilterComplexityLimits {
-        self.filter_complexity
+    pub const fn filter_admission(&self) -> FilterAdmission {
+        FilterAdmission {
+            complexity: self.filter_complexity,
+            language_targeting: self.language_targeting,
+        }
     }
 }

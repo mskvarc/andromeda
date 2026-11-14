@@ -12,6 +12,9 @@ description = "The NGSI-LD query languages: their grammars, their ASTs and their
 [lints]
 workspace = true
 
+[features]
+test-support = []
+
 [dependencies]
 andromeda-json-literal.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
@@ -44,3 +47,4 @@ tokio = { version = "1.54.1", features = ["full"] }
 [[bench]]
 name = "filter_compilation"
 harness = false
+required-features = ["test-support"]

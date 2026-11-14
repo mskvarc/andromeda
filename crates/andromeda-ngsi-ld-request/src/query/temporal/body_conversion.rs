@@ -9,8 +9,8 @@ use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
-    entity_selector_params::EntitySelectorParams,
     projection::exclusivity::{Presence, ProjectionSelectors, check_projection_exclusivity},
+    written_entity_selector::WrittenEntitySelector,
 };
 
 impl TryFrom<Query> for TemporalQueryParameters {
@@ -27,11 +27,11 @@ impl TryFrom<Query> for TemporalQueryParameters {
             Some(aggregation) => (Some(aggregation.aggr_methods), aggregation.aggr_period_duration, aggregation.aggr_group_by),
             None => (temporal.aggr_methods, temporal.aggr_period_duration, None),
         };
-        let entity_selectors: Vec<EntitySelectorParams> = query
+        let entity_selectors: Vec<WrittenEntitySelector> = query
             .entities
             .unwrap_or_default()
             .into_iter()
-            .map(|selector| EntitySelectorParams {
+            .map(|selector| WrittenEntitySelector {
                 id: selector.id,
                 id_pattern: selector.id_pattern,
                 type_: Some(selector.type_),
@@ -95,7 +95,10 @@ impl TryFrom<Query> for TemporalQueryParameters {
 
 #[cfg(test)]
 mod tests {
-    use crate::query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation, post_parameters::TemporalPostQueryParams};
+    use crate::query::{
+        permissive_admission::PERMISSIVE,
+        temporal::{TemporalQueryParameters, operation::TemporalQueryOperation, post_parameters::TemporalPostQueryParams},
+    };
     use andromeda_linked_retrieval::admission::TemporalJoin;
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, identifier::Identifier, time_prop::TimeProp, time_rel::TimeRel};
     use andromeda_ngsi_ld_model::query::body::Query;
@@ -182,6 +185,6 @@ mod tests {
         serde_urlencoded::from_str::<TemporalPostQueryParams>("format=temporalValues&options=aggregatedValues")
             .expect("query parses")
             .apply_to(&mut params);
-        assert!(params.validate(TemporalQueryOperation::Query, TemporalJoin::Spec).is_ok());
+        assert!(params.admit(TemporalQueryOperation::Query, TemporalJoin::Spec, PERMISSIVE).is_ok());
     }
 }

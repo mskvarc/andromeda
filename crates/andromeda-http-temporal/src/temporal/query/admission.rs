@@ -25,9 +25,11 @@ use andromeda_federation::{
 use andromeda_http_extraction::prefer::PreferHeader;
 use andromeda_http_headers::via::Via;
 use andromeda_jsonld::user_context_admission::AdmittedContext;
-use andromeda_linked_retrieval::admission::LinkedOperation;
 use andromeda_ngsi_ld_query::ordering::parameters::OrderingParameters;
-use andromeda_ngsi_ld_request::{error::ParameterError, query::temporal::operation::TemporalQueryOperation};
+use andromeda_ngsi_ld_request::{
+    error::ParameterError,
+    query::temporal::{admitted::AdmittedTemporalRequest, operation::TemporalQueryOperation},
+};
 use andromeda_temporal::query_reading::QueryReading;
 use axum::http::Uri;
 
@@ -49,9 +51,6 @@ pub(super) struct AdmittedQuery {
     /// languageMap keys, locally and at every source it reaches, and the
     /// warning a fallback to tag equality carries.
     pub(super) language: NegotiatedLanguageTargeting,
-    /// The operation the query is, under the broker's temporal Linked Entity
-    /// mode, which admits or refuses the hops of its `q`.
-    pub(super) operation: LinkedOperation,
 }
 
 impl AdmittedQuery {
@@ -60,12 +59,12 @@ impl AdmittedQuery {
         QueryReading {
             context,
             language_targeting: self.language.targeting,
-            operation: self.operation,
         }
     }
 }
 
-/// Hold the query to every rule that can be decided before it runs, and
+/// Hold the query to every rule that can be decided before it runs, admitting
+/// its `q` under the broker's complexity limits and target-language level, and
 /// resolve the Entity Map it runs under.
 ///
 /// A branch that cannot federate is confined to the local scope first: clause
@@ -75,38 +74,31 @@ impl AdmittedQuery {
 /// # Errors
 ///
 /// The classified failure of resolving the Entity Map, of the clause 5.7.4.4
-/// validation, of expanding the registration filters, of the clause 5.7.4.4 ordering rule,
-/// of the clause 5.5.6 `q` complexity limits, and of admitting the `q` target
-/// languages under the broker's
-/// `q_target_languages` level and the levels of the sources the query reaches.
+/// validation, of the clause 5.5.6 `q` complexity limits and the broker's
+/// `q_target_languages` level, of expanding the registration filters, of the
+/// clause 5.7.4.4 ordering rule, and of the levels of the sources the query
+/// reaches.
 pub(super) async fn admit_request(
     state: &TemporalRouteServices,
     target: &ContextTarget,
     context: &AdmittedContext,
     protocol: NgsiLdProtocolHeaders,
-    params: &mut TemporalQueryParameters,
+    mut params: TemporalQueryParameters,
     instance: &Uri,
-) -> Result<AdmittedQuery, ProblemResponse> {
+) -> Result<(AdmittedTemporalRequest, AdmittedQuery), ProblemResponse> {
     params.lang = params.lang.take().or(protocol.language_filter);
-    let map_use = resolve_query_map(&state.entity_maps, target, params, protocol.entity_map.as_ref(), instance).await?;
+    let map_use = resolve_query_map(&state.entity_maps, target, &mut params, protocol.entity_map.as_ref(), instance).await?;
     if !target.permits_federation() {
         params.local = Some(true);
     }
-    params
-        .validate(TemporalQueryOperation::Query, state.temporal.linked_retrieval())
-        .with_instance(instance)?;
-    let registration_filters = registration_filters(state, context, params, instance).await?;
     let service = &state.temporal;
-    // The broker refuses a filter too complex for it to resolve, and a target
-    // language its own `q_target_languages` level does not admit, before any
-    // source is asked.
-    if let Some(q) = &params.q {
-        service.filter_complexity().admit(q).with_instance(instance)?;
-        service.language_targeting().admit(q).with_instance(instance)?;
-    }
+    let params = params
+        .admit(TemporalQueryOperation::Query, service.linked_retrieval(), service.filter_admission())
+        .with_instance(instance)?;
+    let registration_filters = registration_filters(state, context, &params, instance).await?;
     let read = ParticipatingRead {
         requested_scope: params.execution_scope(),
-        client_query: ClientQuery::TemporalQuery(params),
+        client_query: ClientQuery::TemporalQuery(&params),
         geo: registration_filters.geo(),
         operation: ForwardingOperation::QueryTemporalEntity,
         entity_map: EntityMapInUse::from(&map_use),
@@ -117,14 +109,14 @@ pub(super) async fn admit_request(
         .negotiate_language_targeting(target, context, &read, service.language_targeting(), advertised_language_targeting)
         .await
         .with_instance(instance)?;
-    Ok(AdmittedQuery {
+    let admitted = AdmittedQuery {
         prefer: protocol.prefer,
         incoming_via: protocol.incoming_via,
         map_use,
         registration_filters,
         language,
-        operation: TemporalQueryOperation::Query.linked(state.temporal.linked_retrieval()),
-    })
+    };
+    Ok((params, admitted))
 }
 
 /// The query's context source filter and geoquery expanded under the

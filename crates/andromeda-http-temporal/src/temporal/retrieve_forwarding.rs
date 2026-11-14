@@ -43,6 +43,7 @@ use andromeda_http_headers::{ngsild_entity_map::NgsiLdEntityMap, ngsild_warning:
 use andromeda_http_response::declined_representation::single_source_declined;
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::projection::compiled::Projection;
+use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
 use andromeda_temporal::{
     error::TemporalError,
     service::{TemporalRange, TemporalReadResult, TemporalService},
@@ -148,7 +149,7 @@ pub(crate) async fn distributed_retrieval(
     sources: RetrievalSources<'_>,
     target: &ContextTarget,
     id: &Identifier,
-    params: &TemporalQueryParameters,
+    params: &AdmittedTemporalRequest,
     context: &ContextSpec,
     local_result: Result<TemporalReadResult, TemporalError>,
     instance: &RequestUri,

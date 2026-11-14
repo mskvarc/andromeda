@@ -10,11 +10,10 @@ use crate::{
         read_scope::{ScopeReach, TemporalReadScope, UnrecordedHistory},
     },
     query_reading::QueryReading,
-    stub_broker::{live_target, service_reading, uri},
+    stub_broker::{admitted, live_target, service_reading, uri},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_linked_retrieval::admission::{LinkedOperation, TemporalJoin};
 use andromeda_ngsi_ld_lexicon::{
     aggr_method::AggrMethod,
     attribute_name::AttributeName,
@@ -32,7 +31,11 @@ use andromeda_ngsi_ld_query::{
     split_filter::LeafTruths,
     temporal::{compiled::CompiledTemporalQuery, contributed_entities::ContributedEntities},
 };
-use andromeda_ngsi_ld_request::{error::ParameterError, query::temporal::TemporalQueryParameters, representation_parameter::WrittenValue};
+use andromeda_ngsi_ld_request::{
+    error::ParameterError,
+    query::temporal::{TemporalQueryParameters, admitted::AdmittedTemporalRequest},
+    representation_parameter::WrittenValue,
+};
 use async_trait::async_trait;
 use std::{
     collections::{HashMap, HashSet},
@@ -210,15 +213,15 @@ fn load_as(kind: RecordedValueKind) -> EntityShapes {
 }
 
 /// `avg` of `load` over every instance after 2024.
-fn average_load() -> TemporalQueryParameters {
-    TemporalQueryParameters {
+fn average_load() -> AdmittedTemporalRequest {
+    admitted(TemporalQueryParameters {
         timerel: Some(TimeRel::After),
         time_at: Some("2024-01-01T00:00:00Z".parse().expect("a valid instant")),
         format: Some(WrittenValue::Supported(TemporalFormat::AggregatedValues)),
         aggr_methods: Some(vec![AggrMethod::Avg]),
         attrs: Some(vec![load()]),
         ..TemporalQueryParameters::default()
-    }
+    })
 }
 
 fn array_holder() -> Identifier {
@@ -261,7 +264,6 @@ async fn query(reader: Arc<ShapedReader>) -> Result<(), TemporalError> {
             QueryReading {
                 context: &ContextSpec::core_only(),
                 language_targeting: LanguageTargeting::Specification,
-                operation: LinkedOperation::QueryTemporal(TemporalJoin::Spec),
             },
             ContributedEntities::default(),
         )

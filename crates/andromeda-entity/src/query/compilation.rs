@@ -4,13 +4,12 @@
 
 use crate::{compiled_cache::CompiledQueryKey, error::EntityError, query::EntityQueryService};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander};
-use andromeda_linked_retrieval::{admission::LinkedOperation, filter_hops::FilterHops};
 use andromeda_ngsi_ld_geometry::geometry_census::GeometryCensusLimits;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::{ConsideredEntities, EntitySelection},
     filter::{
-        compilation::{FilterAdmission, FilterOptIns, compile_q_filter},
+        compilation::{FilterOptIns, compile_q_filter},
         expansion::expand_attr_path,
         json_key_attributes::JsonKeyAttributes,
         language_targeting::LanguageTargeting,
@@ -30,13 +29,12 @@ use andromeda_ngsi_ld_query::{
     selector_compilation::compile_entity_selectors,
     term_expander::TermExpander,
 };
-use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
+use andromeda_ngsi_ld_request::query::entity::{admitted::AdmittedEntityQuery, parameters::EntityQueryParameters};
 use std::sync::Arc;
 
 impl EntityQueryService {
-    /// Compile an entity query, its target languages admitted and matched
-    /// under `language_targeting` and the hops of its `q` admitted for
-    /// `operation` (clause 4.5.23).
+    /// Compile an admitted entity query, its target languages matched under
+    /// `language_targeting`.
     ///
     /// The page the query answers with is no part of the compilation: it is
     /// handed to the store beside the compiled query, so every page of one
@@ -48,19 +46,16 @@ impl EntityQueryService {
     /// Reports [`EntityError::JsonLd`] when `context` does not resolve or
     /// process, or a term of the request cannot be expanded against it,
     /// [`EntityError::Query`] when the `q`, `geoQ`
-    /// or `orderBy` expression is not well formed, names a target language
-    /// `language_targeting` does not admit, or is too complex to resolve
-    /// (clause 5.5.6), and
-    /// [`EntityError::Request`] when a query parameter cannot be interpreted
-    /// or a hop of the `q` is one `operation` does not admit.
+    /// or `orderBy` expression is not well formed, or a reference geometry is
+    /// too complex to resolve (clause 5.5.6), and
+    /// [`EntityError::Request`] when a query parameter cannot be interpreted.
     pub async fn compile_query_public(
         &self,
-        params: &EntityQueryParameters,
+        params: &AdmittedEntityQuery,
         context: &ContextSpec,
         language_targeting: LanguageTargeting,
-        operation: LinkedOperation,
     ) -> Result<CompiledEntityQuery, EntityError> {
-        let compiled = self.compile_query_cached(params, context, language_targeting, operation).await?;
+        let compiled = self.compile_query_cached(params, context, language_targeting).await?;
         Ok(Arc::unwrap_or_clone(compiled))
     }
 
@@ -79,17 +74,15 @@ impl EntityQueryService {
     /// documents on a miss.
     pub(super) async fn compile_query_cached(
         &self,
-        params: &EntityQueryParameters,
+        params: &AdmittedEntityQuery,
         context: &ContextSpec,
         language_targeting: LanguageTargeting,
-        operation: LinkedOperation,
     ) -> Result<Arc<CompiledEntityQuery>, EntityError> {
         let prepared_context = self.engine().prepare_term_context(context);
         let processed = prepared_context.expansion(self.engine()).await?.id();
-        let hops = FilterHops::new(operation, params.join, params.join_level);
-        let key = CompiledQueryKey::from_params(params, processed, language_targeting, hops);
+        let key = CompiledQueryKey::from_params(params, processed, language_targeting);
         self.compiled_cache
-            .get_or_compile(key, || self.compile_query(params, &prepared_context, language_targeting, hops))
+            .get_or_compile(key, || self.compile_query(params, &prepared_context, language_targeting))
             .await
     }
 
@@ -97,10 +90,9 @@ impl EntityQueryService {
     /// cache, the `q` filter through the one compile entry of its language.
     async fn compile_query(
         &self,
-        params: &EntityQueryParameters,
+        params: &AdmittedEntityQuery,
         prepared_context: &PreparedTermContext,
         language_targeting: LanguageTargeting,
-        hops: FilterHops,
     ) -> Result<CompiledEntityQuery, EntityError> {
         let expander = ContextualExpander::new(self.engine(), prepared_context);
         let selectors = compile_entity_selectors(&params.selectors(), &expander).await?;
@@ -110,13 +102,8 @@ impl EntityQueryService {
         // row admits.
         let attrs = expand_attrs_admitted(params.attrs.as_deref().unwrap_or_default(), AttrsAdmission::AttributeNamesOnly, &expander).await?;
         let opt_ins = FilterOptIns::expanded(params.json_keys.as_deref(), params.expand_values.as_deref(), &expander).await?;
-        let admission = FilterAdmission {
-            complexity: self.filter_complexity,
-            language_targeting,
-        };
-        // Expansion consumes its AST; the cache-owned request remains immutable across lookups.
-        let q_expr = match params.q.clone() {
-            Some(filter) => Some(compile_q_filter::<EntityError, _, _>(filter, &opt_ins, admission, &hops, &expander).await?),
+        let q_expr = match params.filter() {
+            Some(filter) => Some(compile_q_filter(filter, &opt_ins, &expander).await?),
             None => None,
         };
         let geo = self.compile_geo_query(params, prepared_context).await?;
@@ -239,7 +226,7 @@ mod tests {
         error::EntityError,
         query::{
             EntityQueryService,
-            service_test_double::{service_expanding_through, service_resolving},
+            service_test_double::{admitted_query, service_expanding_through, service_resolving},
         },
     };
     use andromeda_json_literal::JsonLiteral;
@@ -249,7 +236,6 @@ mod tests {
         engine::processor::JsonLdEngine,
         loader::cache_lifetime::{CacheLifetime, ResidualLifetime},
     };
-    use andromeda_linked_retrieval::admission::LinkedOperation;
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
     use andromeda_ngsi_ld_query::{
@@ -258,7 +244,6 @@ mod tests {
         filter::language_targeting::LanguageTargeting,
         ordering::term::OrderTarget,
     };
-    use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
     use iri_rs::IriBuf;
     use serde_json::{Value, json};
     use std::{
@@ -273,10 +258,6 @@ mod tests {
     /// positions (clause 5.2.43).
     const ORDERED_FROM_A_LINE: &str = "type=Vehicle&orderFrom=%5B%5B2.3%2C48.8%5D%2C%5B2.4%2C48.9%5D%2C%5B2.5%2C49.0%5D%5D&orderGeometry=LineString";
 
-    fn params(query: &str) -> EntityQueryParameters {
-        serde_urlencoded::from_str(query).expect("a valid query string")
-    }
-
     fn limit(positions: usize) -> GeometryCensusLimits {
         GeometryCensusLimits {
             positions: GeometryPositionLimit::new(NonZeroUsize::new(positions).expect("the fixture limit admits a position")),
@@ -288,12 +269,7 @@ mod tests {
     /// most `positions` positions.
     async fn compiled(query: &str, positions: usize) -> Result<(), EntityError> {
         service_resolving(limit(positions))
-            .compile_query_public(
-                &params(query),
-                &ContextSpec::core_only(),
-                LanguageTargeting::Specification,
-                LinkedOperation::QueryEntities,
-            )
+            .compile_query_public(&admitted_query(query), &ContextSpec::core_only(), LanguageTargeting::Specification)
             .await
             .map(drop)
     }
@@ -309,12 +285,7 @@ mod tests {
     /// compiled under the core context.
     async fn ordered_members(query: &str) -> Vec<String> {
         let compiled = service_resolving(limit(5))
-            .compile_query_public(
-                &params(query),
-                &ContextSpec::core_only(),
-                LanguageTargeting::Specification,
-                LinkedOperation::QueryEntities,
-            )
+            .compile_query_public(&admitted_query(query), &ContextSpec::core_only(), LanguageTargeting::Specification)
             .await
             .expect("the query compiles");
         let path = compiled
@@ -366,31 +337,16 @@ mod tests {
         assert_too_complex(compiled(ORDERED_FROM_A_LINE, 2).await);
     }
 
-    /// Clause 5.5.6: a `q` making more comparisons, or nesting deeper, than
-    /// the broker's default limits (1000 and 16) is `TooComplexQuery`; one at
-    /// them compiles.
+    /// Clause 5.5.6: a `q` at the broker's default limits (1000 comparisons and
+    /// 16 levels), which request validation admits, compiles. Past them it is
+    /// refused at validation and never reaches a compilation.
     #[tokio::test]
-    async fn a_q_past_the_complexity_limits_is_too_complex_and_one_at_them_compiles() {
-        let values = |count: usize| (0..count).map(|value| value.to_string()).collect::<Vec<_>>().join("%2C");
-        let nested = |levels: usize| (1..levels).fold("a%3E1%3Bb%3E1".to_owned(), |inner, level| format!("c{level}%3E1%7C%28{inner}%29"));
-        for (q, admitted) in [
-            (format!("speed%3D%3D{}", values(1000)), true),
-            (format!("speed%3D%3D{}", values(1001)), false),
-            (nested(16), true),
-            (nested(17), false),
-        ] {
+    async fn a_q_at_the_complexity_limits_compiles() {
+        let values = (0..1000).map(|value| value.to_string()).collect::<Vec<_>>().join("%2C");
+        let nested = (1..16).fold("a%3E1%3Bb%3E1".to_owned(), |inner, level| format!("c{level}%3E1%7C%28{inner}%29"));
+        for q in [format!("speed%3D%3D{values}"), nested] {
             let result = compiled(&format!("type=Vehicle&q={q}"), 5).await;
-            if admitted {
-                assert!(result.is_ok(), "{q}: {result:?}");
-            } else {
-                assert!(
-                    matches!(
-                        result,
-                        Err(EntityError::Query(QueryError::QTooManyComparisons { .. } | QueryError::QNestedTooDeep { .. }))
-                    ),
-                    "{q}: {result:?}"
-                );
-            }
+            assert!(result.is_ok(), "{q}: {result:?}");
         }
     }
 
@@ -462,10 +418,9 @@ mod tests {
     async fn compiled_under_the_stored_context(service: &EntityQueryService) -> Result<Arc<CompiledEntityQuery>, EntityError> {
         service
             .compile_query_cached(
-                &params("type=Vehicle&attrs=speed"),
+                &admitted_query("type=Vehicle&attrs=speed"),
                 &ContextSpec::from_link(stored_url()),
                 LanguageTargeting::Specification,
-                LinkedOperation::QueryEntities,
             )
             .await
     }

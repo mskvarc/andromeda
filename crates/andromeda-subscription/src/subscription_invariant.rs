@@ -20,4 +20,9 @@ pub enum SubscriptionInvariant {
     /// key.
     #[error("an attribute name was not interned by the name dictionary")]
     AttributeNotInterned,
+    /// A written `q` reached term expansion without the admission of the
+    /// request that wrote it, or an admission reached it with no `q` to
+    /// compile.
+    #[error("the q of a subscription request was not admitted exactly once before it was compiled")]
+    QNotAdmitted,
 }

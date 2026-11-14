@@ -26,7 +26,7 @@ use andromeda_ngsi_ld_model::{
         selection::{RegistrationFilters, ScopeFilter, TemporalPartition},
     },
 };
-use andromeda_ngsi_ld_query::{entity_selector_params::EntitySelectorParams, filter::expression::Expr, geo::query::GeoQuery, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::query::GeoQuery, scope::query::ScopeQuery, written_entity_selector::WrittenEntitySelector};
 use chrono::Utc;
 use tracing::warn;
 
@@ -35,7 +35,7 @@ pub(crate) struct RegistrationSelection<'a> {
     /// The union of entity selectors the operation asks for (clause 5.2.33): a
     /// registration is contacted when some selector matches it (clause 5.12), each
     /// by its own type selector, identifiers and identifier pattern.
-    pub(crate) selectors: &'a [EntitySelectorParams],
+    pub(crate) selectors: &'a [WrittenEntitySelector],
     /// Which of the matching registrations are contacted.
     pub(crate) reach: SourceReach<'a>,
     /// The expanded context source filter, evaluated against each

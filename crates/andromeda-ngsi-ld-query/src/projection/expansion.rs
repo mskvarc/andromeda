@@ -89,25 +89,13 @@ fn keyword_term(term: &RawProjectionTerm, expanded: ProjectionTerm) -> Result<Pr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::projection::grammar::ProjectionList;
+    use crate::{namespace_expander::EXAMPLE_NAMESPACE_TYPED, projection::grammar::ProjectionList};
     use pretty_assertions::assert_eq;
     use std::future::ready;
 
-    struct PrefixExpander;
-
-    impl TermExpander for PrefixExpander {
-        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            ready(Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI")))
-        }
-
-        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            ready(Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI")))
-        }
-    }
-
     #[tokio::test]
     async fn every_attribute_name_is_expanded() {
-        let expanded = expand_attrs(&["speed".to_string(), "colour".to_string()], &PrefixExpander)
+        let expanded = expand_attrs(&["speed".to_string(), "colour".to_string()], &EXAMPLE_NAMESPACE_TYPED)
             .await
             .expect("expands");
         let rendered: Vec<&str> = expanded.iter().map(IriBuf::as_str).collect();
@@ -128,7 +116,7 @@ mod tests {
     #[tokio::test]
     async fn a_projection_term_of_id_type_or_scope_is_not_expanded() {
         let raw = [leaf("id"), leaf("type"), leaf("scope"), leaf("speed")];
-        let expanded = expand_projection_terms(&raw, &PrefixExpander).await.expect("expands");
+        let expanded = expand_projection_terms(&raw, &EXAMPLE_NAMESPACE_TYPED).await.expect("expands");
         assert_eq!(
             expanded,
             vec![
@@ -150,7 +138,7 @@ mod tests {
             name: "observation".parse().expect("valid attribute name"),
             linked: vec![leaf("temperature")],
         }];
-        let expanded = expand_projection_terms(&raw, &PrefixExpander).await.expect("expands");
+        let expanded = expand_projection_terms(&raw, &EXAMPLE_NAMESPACE_TYPED).await.expect("expands");
         assert_eq!(
             expanded,
             vec![ProjectionTerm::Attribute {
@@ -171,7 +159,7 @@ mod tests {
             name: "observation".parse().expect("valid attribute name"),
             linked: vec![leaf("id"), leaf("type"), leaf("scope")],
         }];
-        let expanded = expand_projection_terms(&raw, &PrefixExpander).await.expect("expands");
+        let expanded = expand_projection_terms(&raw, &EXAMPLE_NAMESPACE_TYPED).await.expect("expands");
         assert_eq!(
             expanded,
             vec![ProjectionTerm::Attribute {
@@ -257,7 +245,7 @@ mod tests {
             name: "id".parse().expect("valid attribute name"),
             linked: vec![leaf("a")],
         }];
-        let error = expand_projection_terms(&raw, &PrefixExpander).await.expect_err("must reject");
+        let error = expand_projection_terms(&raw, &EXAMPLE_NAMESPACE_TYPED).await.expect_err("must reject");
         assert!(
             matches!(&error, QueryError::ProjectionKeywordWithLinkedTerm { keyword } if keyword.as_str() == "id"),
             "got {error:?}"

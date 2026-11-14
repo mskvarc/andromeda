@@ -5,7 +5,7 @@
 //! to them again, and a lowered limit leaves it readable.
 
 use andromeda_ngsi_ld_query::{
-    filter::{complexity::FilterComplexityLimits, language_targeting::LanguageTargeting},
+    filter::{compilation::FilterAdmission, complexity::FilterComplexityLimits, language_targeting::LanguageTargeting},
     geo::admission::GeoQueryAdmission,
 };
 
@@ -21,4 +21,15 @@ pub struct SubscriptionFilterAdmission {
     /// The broker's `q_target_languages` level, which the target languages of
     /// a written `q` and `csf` are admitted under.
     pub language_targeting: LanguageTargeting,
+}
+
+impl SubscriptionFilterAdmission {
+    /// The terms a written `q` is admitted under.
+    #[must_use]
+    pub const fn q(self) -> FilterAdmission {
+        FilterAdmission {
+            complexity: self.q_complexity,
+            language_targeting: self.language_targeting,
+        }
+    }
 }

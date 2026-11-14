@@ -49,18 +49,12 @@ mod tests {
     use crate::{
         error::QueryError,
         geo::{admission::GeoQueryAdmission, compile::compile_geo_query, input::GeoQueryInput, near_distance_band::NearDistanceBand},
-        term_expander::TermExpander,
+        namespace_expander::EXAMPLE_NAMESPACE_TYPED,
     };
     use andromeda_ngsi_ld_geometry::geometry_census::{GeometryCensusLimits, GeometryPositionLimit};
     use andromeda_ngsi_ld_number::json_value::value_census::JsonValueLimit;
-    use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
-    use std::{
-        future::{Future, ready},
-        num::NonZeroUsize,
-    };
-
-    struct PrefixExpander;
+    use std::num::NonZeroUsize;
 
     /// Limits no fixture of this module reaches, under `near_band`.
     fn unbounded(near_band: NearDistanceBand) -> GeoQueryAdmission {
@@ -73,16 +67,6 @@ mod tests {
         }
     }
 
-    impl TermExpander for PrefixExpander {
-        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            ready(Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI")))
-        }
-
-        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            ready(Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI")))
-        }
-    }
-
     #[tokio::test]
     async fn expansion_consumes_a_decoded_geo_query_without_reparsing_components() {
         let input = GeoQueryInput::from_wire(
@@ -92,7 +76,7 @@ mod tests {
             None,
         )
         .expect("valid decoded geo query");
-        let compiled = compile_geo_query(Some(&input), &PrefixExpander, unbounded(NearDistanceBand::Refused))
+        let compiled = compile_geo_query(Some(&input), &EXAMPLE_NAMESPACE_TYPED, unbounded(NearDistanceBand::Refused))
             .await
             .expect("expansion succeeds")
             .expect("geo query present");
@@ -109,11 +93,11 @@ mod tests {
         )
         .expect("valid decoded geo query");
         assert!(matches!(
-            compile_geo_query(Some(&input), &PrefixExpander, unbounded(NearDistanceBand::Refused)).await,
+            compile_geo_query(Some(&input), &EXAMPLE_NAMESPACE_TYPED, unbounded(NearDistanceBand::Refused)).await,
             Err(QueryError::NearDistanceBand)
         ));
         assert!(
-            compile_geo_query(Some(&input), &PrefixExpander, unbounded(NearDistanceBand::Admitted))
+            compile_geo_query(Some(&input), &EXAMPLE_NAMESPACE_TYPED, unbounded(NearDistanceBand::Admitted))
                 .await
                 .expect("the band compiles")
                 .is_some()

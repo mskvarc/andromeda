@@ -8,6 +8,7 @@ use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_compaction::compaction_error::CompactionError;
 use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReferenceError, time::date_time::NgsiLdDateTimeError};
 use andromeda_ngsi_ld_render::temporal::history_row::HistoryRowRenderError;
+use andromeda_ngsi_ld_request::query::filter_not_admitted::FilterNotAdmitted;
 use thiserror::Error;
 
 /// A temporal policy invariant that did not hold.
@@ -40,4 +41,8 @@ pub enum TemporalInvariant {
     /// A joined retrieval came back without its root entity.
     #[error("the join left the retrieval without its root")]
     RetrievalWithoutRoot,
+    /// A query the broker derived to read a Linked Entity carried a `q` no
+    /// request validation admitted.
+    #[error("a derived query carries a filter no request admitted: {0}")]
+    DerivedQueryFilter(#[source] FilterNotAdmitted),
 }

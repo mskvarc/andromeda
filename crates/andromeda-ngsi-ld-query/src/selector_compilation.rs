@@ -8,16 +8,16 @@
 
 use crate::{
     entity_selection::EntitySelector,
-    entity_selector_params::EntitySelectorParams,
     error::QueryError,
     term_expander::TermExpander,
     type_selection::expansion::expand_type_expression,
+    written_entity_selector::WrittenEntitySelector,
 };
 
 /// Compile a query's effective entity selectors through `expander`.
 ///
 /// `selectors` is the union the query asks for (see
-/// [`EntitySelectorParams::effective`]): a POST `entities[]` body contributes
+/// [`WrittenEntitySelector::effective`]): a POST `entities[]` body contributes
 /// one per array entry, each compiled independently so their union is not
 /// flattened into a cross product, and a GET request contributes its one
 /// implicit selector.
@@ -26,7 +26,7 @@ use crate::{
 ///
 /// Reports [`QueryError`] when a selector's type expression has a term that
 /// cannot be expanded through `expander`.
-pub async fn compile_entity_selectors(selectors: &[EntitySelectorParams], expander: &impl TermExpander) -> Result<Vec<EntitySelector>, QueryError> {
+pub async fn compile_entity_selectors(selectors: &[WrittenEntitySelector], expander: &impl TermExpander) -> Result<Vec<EntitySelector>, QueryError> {
     let mut compiled = Vec::with_capacity(selectors.len());
     for selector in selectors {
         let type_expr = match selector.type_.as_ref() {
@@ -47,20 +47,24 @@ pub async fn compile_entity_selectors(selectors: &[EntitySelectorParams], expand
 #[cfg(test)]
 mod tests {
     use crate::{
-        entity_selector_params::EntitySelectorParams,
+        namespace_expander::NamespaceExpander,
         pattern::Pattern,
-        prefix_expander::{PrefixExpander, namespaced},
         selector_compilation::compile_entity_selectors,
         type_selection::grammar::{TypeExpr, TypeExprRaw},
+        written_entity_selector::WrittenEntitySelector,
     };
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use iri_rs::iri;
+
+    /// Expands every term and type under `https://example.org/`.
+    const EXPANDER: NamespaceExpander = NamespaceExpander::uniform(iri!("https://example.org/"));
 
     fn identifier(text: &str) -> Identifier {
         text.parse().expect("a valid identifier")
     }
 
     fn type_iri(name: &str) -> TypeExpr {
-        TypeExpr::Type(namespaced(name))
+        TypeExpr::Type(EXPANDER.type_iri(name).expect("a type resolves against the namespace"))
     }
 
     /// Clause 5.2.33: each selector of a union keeps its own identifiers,
@@ -68,18 +72,18 @@ mod tests {
     #[tokio::test]
     async fn each_selector_compiles_on_its_own() {
         let selectors = [
-            EntitySelectorParams {
+            WrittenEntitySelector {
                 id: Some(vec![identifier("urn:ngsi-ld:A:1")]),
                 type_: Some("A".parse::<TypeExprRaw>().expect("a valid type")),
-                ..EntitySelectorParams::default()
+                ..WrittenEntitySelector::default()
             },
-            EntitySelectorParams {
+            WrittenEntitySelector {
                 id_pattern: Some("^urn:ngsi-ld:B:.*".parse::<Pattern>().expect("a valid pattern")),
                 type_: Some("B|C".parse::<TypeExprRaw>().expect("a valid type")),
-                ..EntitySelectorParams::default()
+                ..WrittenEntitySelector::default()
             },
         ];
-        let compiled = compile_entity_selectors(&selectors, &PrefixExpander).await.expect("the selectors compile");
+        let compiled = compile_entity_selectors(&selectors, &EXPANDER).await.expect("the selectors compile");
 
         pretty_assertions::assert_eq!(compiled.len(), 2);
         pretty_assertions::assert_eq!(compiled[0].ids, vec![identifier("urn:ngsi-ld:A:1")]);
@@ -94,7 +98,7 @@ mod tests {
     /// without one constrains no type.
     #[tokio::test]
     async fn a_selector_without_a_type_constrains_none() {
-        let compiled = compile_entity_selectors(&[EntitySelectorParams::default()], &PrefixExpander)
+        let compiled = compile_entity_selectors(&[WrittenEntitySelector::default()], &EXPANDER)
             .await
             .expect("the selector compiles");
         pretty_assertions::assert_eq!(compiled.len(), 1);

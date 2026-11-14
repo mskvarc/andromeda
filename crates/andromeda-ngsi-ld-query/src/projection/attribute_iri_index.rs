@@ -96,7 +96,12 @@ impl AttributeIriIndex {
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::QueryError, projection::attribute_iri_index::AttributeIriIndex, term_expander::TermExpander};
+    use crate::{
+        error::QueryError,
+        namespace_expander::EXAMPLE_NAMESPACE_TYPED,
+        projection::attribute_iri_index::AttributeIriIndex,
+        term_expander::TermExpander,
+    };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
@@ -130,7 +135,7 @@ mod tests {
         assert!(index.expanded("speed").is_none());
     }
 
-    /// An expander prefixing every term, counting what it was asked.
+    /// The shared expander, counting every attribute term it is asked.
     #[derive(Default)]
     struct CountingExpander {
         asked: Mutex<Vec<String>>,
@@ -139,11 +144,11 @@ mod tests {
     impl TermExpander for CountingExpander {
         fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
             self.asked.lock().expect("never poisoned").push(term.to_owned());
-            ready(Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI")))
+            ready(EXAMPLE_NAMESPACE_TYPED.term_iri(term))
         }
 
         fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
-            ready(Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI")))
+            ready(EXAMPLE_NAMESPACE_TYPED.type_iri(term))
         }
     }
 

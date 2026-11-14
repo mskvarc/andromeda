@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::temporal_history::TemporalHistory;
 use andromeda_ngsi_ld_query::projection::attrs_selection::AttrsAdmission;
 use andromeda_ngsi_ld_render::temporal::whole_range::WholeRange;
-use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
 use chrono::Utc;
 
 /// The aggregated representations of the contributed entities, and the
@@ -63,7 +63,7 @@ impl TemporalService {
     pub async fn render_merged_aggregations(
         &self,
         target: &ContextTarget,
-        params: &TemporalQueryParameters,
+        params: &AdmittedTemporalRequest,
         reading: QueryReading<'_>,
         parts: Vec<EntityParts>,
     ) -> Result<MergedRendering, TemporalError> {

@@ -1,10 +1,7 @@
 //! Filters held back from the local query when `splitEntities` is in effect.
 
-use crate::query::entity::parameters::EntityQueryParameters;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::input::GeoQueryInput, scope::query::ScopeQuery};
-use andromeda_ngsi_ld_representation::join_mode::JoinMode;
-use std::num::NonZeroU32;
+use andromeda_ngsi_ld_query::{filter::compilation::AdmittedFilter, geo::input::GeoQueryInput, scope::query::ScopeQuery};
 
 /// The `q`, `geoQ` and `scopeQ` parameters a `splitEntities` request removes
 /// from the query it runs locally, so they can be evaluated once against the
@@ -19,8 +16,8 @@ use std::num::NonZeroU32;
 /// request without `splitEntities` needs.
 #[derive(Debug, Default)]
 pub struct DeferredSplitFilters {
-    /// Deferred `q` query expression parsed at request extraction.
-    pub q: Option<Expr>,
+    /// The deferred `q`, as the request's validation admitted it.
+    pub q: Option<AdmittedFilter>,
     /// Deferred complete geo-query.
     pub geo: Option<GeoQueryInput>,
     /// Deferred `scopeQ` scope query.
@@ -40,53 +37,26 @@ pub struct DeferredSplitFilters {
     /// because it decides which operands are terms to expand, and so where a
     /// bare word may stand (clause 4.9 EXAMPLE 12).
     pub expand_values: Option<Vec<AttributeName>>,
-    /// The request's clause 4.5.23 `join`, which bounds the hops the
-    /// deferred `q` may take (clause 5.7.2.4). The query keeps it for its own
-    /// traversal.
-    pub join: Option<JoinMode>,
-    /// The request's clause 4.5.23 `joinLevel`, which bounds how deep a hop
-    /// of the deferred `q` may reach. The query keeps it for its own
-    /// traversal.
-    pub join_level: Option<NonZeroU32>,
-}
-
-impl EntityQueryParameters {
-    /// Take the attribute-reading filters out of the query, leaving it selecting
-    /// on identity alone so every source (and the local read) answers with
-    /// whatever it holds (clause 5.7.2.4).
-    ///
-    /// With `splitEntities` an entity's attributes may be spread across several
-    /// context sources, so no single reader can decide whether the entity
-    /// matches: `q`, the geoquery and `scopeQ` are held back and evaluated once
-    /// over the merged result. `jsonKeys` leaves with `q`, the filter whose
-    /// term expansion it governs (clause 4.9 EXAMPLE 11), and so does
-    /// `expandValues`, which governs its operands; with `q` deferred neither
-    /// has anything left to say to the local query.
-    pub const fn defer_split_filters(&mut self) -> DeferredSplitFilters {
-        DeferredSplitFilters {
-            q: self.q.take(),
-            geo: self.geo.0.take(),
-            scope_q: self.scope_q.take(),
-            json_keys: self.json_keys.take(),
-            expand_values: self.expand_values.take(),
-            join: self.join,
-            join_level: self.join_level,
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::query::entity::parameters::EntityQueryParameters;
+    use crate::query::{
+        entity::{admitted::AdmittedEntityQuery, operation::EntityQueryOperation, parameters::EntityQueryParameters},
+        permissive_admission::PERMISSIVE,
+    };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::query::body::Query;
     use serde_json::json;
 
     /// The query a clause 5.2.23 body describes, which is the cheapest way to
-    /// build a complete set of parameters.
-    fn query_of(body: serde_json::Value) -> EntityQueryParameters {
+    /// build a complete set of parameters, admitted for Query Entities.
+    fn query_of(body: serde_json::Value) -> AdmittedEntityQuery {
         let body: Query = serde_json::from_value(body).expect("a valid clause 5.2.23 body");
-        EntityQueryParameters::try_from(body).expect("an entity-applicable query")
+        EntityQueryParameters::try_from(body)
+            .expect("an entity-applicable query")
+            .admit(EntityQueryOperation::Query, PERMISSIVE)
+            .expect("a query validation admits")
     }
 
     /// Clause 4.9 EXAMPLE 11: with
@@ -121,6 +91,7 @@ mod tests {
             query.json_keys.is_none(),
             "with `q` deferred the declaration has nothing left to say to the local query"
         );
+        assert!(query.q.is_none() && query.filter().is_none(), "the admission leaves with the filter it covers");
     }
 
     /// A query that declared nothing defers nothing, and the expansion of its

@@ -33,7 +33,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::language_targeting::LanguageTargeting, temporal::window::TemporalWindow};
-use andromeda_ngsi_ld_request::query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation};
+use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
 use andromeda_temporal::{
     deletion_follow_up::{SourcedDocuments, follow_earlier_deletions},
     in_effect_follow_up::follow_up_datasets,
@@ -105,7 +105,7 @@ impl<'r> GatheringRequest<'r> {
     /// `instance`.
     pub(crate) const fn new(
         target: &'r ContextTarget,
-        params: &'r TemporalQueryParameters,
+        params: &'r AdmittedTemporalRequest,
         context: &'r ContextSpec,
         language_targeting: LanguageTargeting,
         instance: &'r Uri,
@@ -163,7 +163,6 @@ pub(crate) async fn gather_in_effect(
             QueryReading {
                 context: query.context,
                 language_targeting: query.language_targeting,
-                operation: TemporalQueryOperation::Query.linked(service.linked_retrieval()),
             },
             &entity_ids,
         )

@@ -39,7 +39,6 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     dataset::DatasetSelector,
     defined_token::deserialize_optional_token,
-    entity_selector_params::EntitySelectorParams,
     filter::expression::Expr,
     ordering::parameters::OrderingParameters,
     pattern::Pattern,
@@ -50,12 +49,17 @@ use andromeda_ngsi_ld_query::{
         window::TimeInterval,
     },
     type_selection::grammar::TypeExprRaw,
+    written_entity_selector::WrittenEntitySelector,
 };
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::{borrow::Cow, num::NonZeroU32};
 
+/// A temporal query whose `q` filter request validation admitted.
+pub mod admitted;
+/// A temporal delete-by-query whose selection `q` request validation admitted.
+pub mod admitted_delete;
 /// Conversion of the canonical clause-5.2.23 body into these parameters.
 pub mod body_conversion;
 /// Reusing the query machinery to resolve a delete-by-query's entity set.
@@ -102,7 +106,7 @@ pub struct TemporalQueryParameters {
     /// above are a flattened summary of it. Never a query string parameter, so
     /// serde skips it and the POST body conversion populates it.
     #[serde(skip)]
-    pub entity_selectors: Vec<EntitySelectorParams>,
+    pub entity_selectors: Vec<WrittenEntitySelector>,
     /// Attributes the response is narrowed to, comma-separated (`attrs`).
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
     pub attrs: Option<Vec<AttributeName>>,
@@ -280,8 +284,8 @@ impl_shared_query_params!(TemporalQueryParameters {
 impl TemporalQueryParameters {
     /// The entity selectors the query is the union of (clause 5.2.33).
     #[must_use]
-    pub fn selectors(&self) -> Cow<'_, [EntitySelectorParams]> {
-        EntitySelectorParams::effective(&self.entity_selectors, self.id.as_deref(), self.id_pattern.as_ref(), self.entity_type.as_ref())
+    pub fn selectors(&self) -> Cow<'_, [WrittenEntitySelector]> {
+        WrittenEntitySelector::effective(&self.entity_selectors, self.id.as_deref(), self.id_pattern.as_ref(), self.entity_type.as_ref())
     }
 
     /// Ask the query of `entities` alone, entities its selection has already
@@ -307,12 +311,18 @@ impl TemporalQueryParameters {
 }
 
 #[cfg(test)]
+mod admission_tests;
+
+#[cfg(test)]
 mod tests {
     use crate::{
         error::ParameterError,
         pagination::cursor_request::CursorRequest,
         params_from_query,
-        query::temporal::{TemporalQueryParameters, operation::TemporalQueryOperation},
+        query::{
+            permissive_admission::PERMISSIVE,
+            temporal::{TemporalQueryParameters, operation::TemporalQueryOperation},
+        },
     };
     use andromeda_linked_retrieval::admission::{LinkedMember, LinkedOperation, ReachingMember, TemporalJoin};
     use andromeda_ngsi_ld_lexicon::{
@@ -324,11 +334,11 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{
         cursor::PageCursor,
-        entity_selector_params::EntitySelectorParams,
         error::QueryError,
         filter::serialize::serialize_attr_path,
         projection::exclusivity::ProjectionConflict,
         temporal::window::TimeInterval,
+        written_entity_selector::WrittenEntitySelector,
     };
     use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use std::num::NonZeroU32;
@@ -340,18 +350,15 @@ mod tests {
     #[test]
     fn a_query_asked_of_listed_entities_narrows_every_selector_and_keeps_its_narrowing() {
         let mut params = params_from_query("type=Vehicle&idPattern=urn:ngsi-ld:Vehicle:.*&q=speed>10&timerel=after&timeAt=2024-01-01T00:00:00Z");
-        params.entity_selectors.push(EntitySelectorParams::default());
-        params.entity_selectors.push(EntitySelectorParams::default());
+        params.entity_selectors.push(WrittenEntitySelector::default());
+        params.entity_selectors.push(WrittenEntitySelector::default());
         let listed: Vec<Identifier> = vec!["urn:ngsi-ld:Vehicle:A".parse().expect("a valid identifier")];
         params.select_only(listed.clone());
         pretty_assertions::assert_eq!(params.id.as_ref(), Some(&listed));
         assert!(params.entity_selectors.iter().all(|selector| selector.id.as_ref() == Some(&listed)));
         assert!(params.entity_type.is_some() && params.id_pattern.is_some() && params.q.is_some());
-        assert!(
-            params.validate(TemporalQueryOperation::Query, TemporalJoin::Spec).is_ok(),
-            "{:?}",
-            params.validate(TemporalQueryOperation::Query, TemporalJoin::Spec)
-        );
+        let admitted = params.admit(TemporalQueryOperation::Query, TemporalJoin::Spec, PERMISSIVE);
+        assert!(admitted.is_ok(), "{admitted:?}");
     }
 
     #[test]
@@ -392,7 +399,7 @@ mod tests {
     #[test]
     fn validate_between_requires_end_time_at() {
         let p = params_from_query("timerel=between&timeAt=2024-01-01T00:00:00Z");
-        assert!(p.validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended).is_err());
+        assert!(p.admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE).is_err());
     }
 
     /// Clause 4.6.3: a comma fraction separator is accepted in a request.
@@ -427,14 +434,14 @@ mod tests {
         ] {
             let p = params_from_query(&format!("type=Vehicle&{query}"));
             for operation in [TemporalQueryOperation::Retrieve, TemporalQueryOperation::Query] {
-                let error = p.validate(operation, TemporalJoin::Extended).expect_err(query);
+                let error = p.clone().admit(operation, TemporalJoin::Extended, PERMISSIVE).expect_err(query);
                 assert!(matches!(error, ParameterError::Query(_)), "{query}: {error:?}");
                 assert!(error.to_string().contains(expected), "{query}: {error}");
             }
         }
         // The query requires `timerel` and `timeAt` before it reads the window.
         let error = params_from_query("type=Vehicle&endTimeAt=2024-01-03T00:00:00Z")
-            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+            .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
             .expect_err("a lone endTimeAt");
         assert!(matches!(error, ParameterError::Query(QueryError::ParamEndTimeAtWithoutBetween)), "{error:?}");
     }
@@ -442,19 +449,19 @@ mod tests {
     #[test]
     fn validate_between_with_end_time_at_ok() {
         let p = params_from_query("timerel=between&timeAt=2024-01-01T00:00:00Z&endTimeAt=2024-01-02T00:00:00Z");
-        assert!(p.validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended).is_ok());
+        assert!(p.admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE).is_ok());
     }
 
     #[test]
     fn validate_aggregated_requires_aggr_methods() {
         let p = params_from_query("format=aggregatedValues");
-        assert!(p.validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended).is_err());
+        assert!(p.admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE).is_err());
     }
 
     #[test]
     fn validate_aggregated_with_aggr_methods_ok() {
         let p = params_from_query("format=aggregatedValues&aggrMethods=avg");
-        assert!(p.validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended).is_ok());
+        assert!(p.admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE).is_ok());
     }
 
     /// Tables 6.18.3.2-1 and 6.19.3.1-1: `aggrMethods` and `aggrPeriodDuration`
@@ -471,7 +478,7 @@ mod tests {
         ] {
             let p = params_from_query(&format!("{WINDOW}&{aggregation}"));
             for operation in [TemporalQueryOperation::Retrieve, TemporalQueryOperation::Query] {
-                let err = p.validate(operation, TemporalJoin::Spec).expect_err(aggregation);
+                let err = p.clone().admit(operation, TemporalJoin::Spec, PERMISSIVE).expect_err(aggregation);
                 assert!(matches!(err, ParameterError::AggregationWithoutAggregatedValues), "{aggregation}: {err:?}");
             }
         }
@@ -496,10 +503,10 @@ mod tests {
     fn options_naming_aggregated_values_under_a_winning_format_do_not_require_methods() {
         const WINDOW: &str = "type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z";
         let admitted = params_from_query(&format!("{WINDOW}&format=temporalValues&options=aggregatedValues"));
-        assert!(admitted.validate(TemporalQueryOperation::Query, TemporalJoin::Spec).is_ok());
+        assert!(admitted.admit(TemporalQueryOperation::Query, TemporalJoin::Spec, PERMISSIVE).is_ok());
         let required = params_from_query(&format!("{WINDOW}&format=aggregatedValues"));
         let error = required
-            .validate(TemporalQueryOperation::Query, TemporalJoin::Spec)
+            .admit(TemporalQueryOperation::Query, TemporalJoin::Spec, PERMISSIVE)
             .expect_err("methods are required");
         assert!(matches!(error, ParameterError::AggrMethodsRequired), "{error:?}");
     }
@@ -519,7 +526,7 @@ mod tests {
         ] {
             let p = params_from_query(&format!("{WINDOW}&{aggregation}"));
             for operation in [TemporalQueryOperation::Retrieve, TemporalQueryOperation::Query] {
-                let result = p.validate(operation, TemporalJoin::Spec);
+                let result = p.clone().admit(operation, TemporalJoin::Spec, PERMISSIVE);
                 assert!(result.is_ok(), "{aggregation}: {result:?}");
             }
         }
@@ -530,7 +537,7 @@ mod tests {
     fn a_grouped_query_with_methods_and_a_group_key_is_admitted() {
         assert!(
             params_from_query("format=groupedValues&aggrMethods=avg&aggrGroupBy=unitCode")
-                .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+                .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
                 .is_ok()
         );
     }
@@ -540,7 +547,7 @@ mod tests {
     #[test]
     fn aggr_group_by_without_the_grouped_format_is_rejected() {
         let err = params_from_query("format=aggregatedValues&aggrMethods=avg&aggrGroupBy=unitCode")
-            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+            .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
             .expect_err("grouping needs the grouped format");
         assert!(matches!(err, ParameterError::AggrGroupByWithoutGroupedValues), "got {err:?}");
     }
@@ -550,7 +557,7 @@ mod tests {
     #[test]
     fn the_grouped_format_requires_aggr_methods() {
         let err = params_from_query("format=groupedValues&aggrGroupBy=unitCode")
-            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+            .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
             .expect_err("the grouped format aggregates");
         assert!(matches!(err, ParameterError::AggrMethodsRequired), "got {err:?}");
     }
@@ -559,7 +566,7 @@ mod tests {
     #[test]
     fn an_unparseable_aggr_group_by_is_rejected() {
         let err = params_from_query("format=groupedValues&aggrMethods=avg&aggrGroupBy=speed%3Bbogus")
-            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+            .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
             .expect_err("bogus is no bucket");
         assert!(matches!(err, ParameterError::AggrGroupByInvalid(_)), "got {err:?}");
     }
@@ -569,7 +576,7 @@ mod tests {
     #[test]
     fn grouping_by_an_aggregation_target_is_rejected() {
         let err = params_from_query("format=groupedValues&aggrMethods=avg&attrs=speed&aggrGroupBy=speed")
-            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+            .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
             .expect_err("a self-referential group key is ambiguous");
         assert!(matches!(err, ParameterError::AggrGroupByOnAggregatedAttribute(_)), "got {err:?}");
     }
@@ -579,7 +586,7 @@ mod tests {
     #[test]
     fn last_n_with_grouping_is_rejected() {
         let err = params_from_query("format=groupedValues&aggrMethods=avg&aggrGroupBy=unitCode&lastN=5")
-            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+            .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
             .expect_err("lastN and grouping do not combine");
         assert!(matches!(err, ParameterError::LastNWithGrouping), "got {err:?}");
     }
@@ -589,7 +596,7 @@ mod tests {
     #[test]
     fn an_inline_join_over_grouped_values_is_rejected() {
         let err = params_from_query("join=inline&format=groupedValues&aggrMethods=avg&aggrGroupBy=unitCode")
-            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+            .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
             .expect_err("inline join has no nesting site");
         assert!(
             matches!(err, ParameterError::InlineJoinWithoutInstances(TemporalFormat::GroupedValues)),
@@ -616,7 +623,7 @@ mod tests {
     #[test]
     fn pick_and_omit_together_are_admitted() {
         let p = params_from_query("pick=speed&omit=fuel");
-        assert!(p.validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended).is_ok());
+        assert!(p.admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE).is_ok());
     }
 
     #[test]
@@ -626,7 +633,7 @@ mod tests {
             "timerel=after&timeAt=2024-01-01T00:00:00Z&omit=speed&attrs=fuelLevel",
         ] {
             let err = params_from_query(query)
-                .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+                .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
                 .expect_err("projection and attrs are mutually exclusive");
             assert!(matches!(err, ParameterError::Projection(ProjectionConflict::ProjectionWithAttrs)));
         }
@@ -641,7 +648,7 @@ mod tests {
         let p = params_from_query("join=inline&format=temporalValues");
 
         let err = p
-            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+            .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
             .expect_err("inline join has no nesting site");
 
         assert!(matches!(err, ParameterError::InlineJoinWithoutInstances(TemporalFormat::TemporalValues)));
@@ -655,7 +662,7 @@ mod tests {
         let p = params_from_query("join=inline&format=aggregatedValues&aggrMethods=avg");
 
         let err = p
-            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+            .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
             .expect_err("inline join has no nesting site");
 
         assert!(matches!(err, ParameterError::InlineJoinWithoutInstances(TemporalFormat::AggregatedValues)));
@@ -668,7 +675,7 @@ mod tests {
         let p = params_from_query("join=inline&options=temporalValues");
 
         assert!(matches!(
-            p.validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended),
+            p.admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE),
             Err(ParameterError::InlineJoinWithoutInstances(TemporalFormat::TemporalValues))
         ));
     }
@@ -684,7 +691,7 @@ mod tests {
         ] {
             assert!(
                 params_from_query(query)
-                    .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+                    .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
                     .is_ok(),
                 "flat join rejected for {query}"
             );
@@ -703,7 +710,7 @@ mod tests {
             ("type=Vehicle&join=flat", LinkedMember::Join),
         ] {
             let err = params_from_query(raw)
-                .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Spec)
+                .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Spec, PERMISSIVE)
                 .expect_err("no Linked Entity retrieval");
             assert!(
                 matches!(err, ParameterError::LinkedRetrievalUnavailable { operation: LinkedOperation::RetrieveTemporal(TemporalJoin::Spec), member: m } if m == member),
@@ -711,10 +718,14 @@ mod tests {
             );
         }
         let window = "type=Vehicle&timerel=before&timeAt=2030-01-01T00:00:00Z";
-        assert!(params_from_query(&format!("{window}&join=%40none")).validate(query, TemporalJoin::Spec).is_ok());
+        assert!(
+            params_from_query(&format!("{window}&join=%40none"))
+                .admit(query, TemporalJoin::Spec, PERMISSIVE)
+                .is_ok()
+        );
         assert!(
             params_from_query(&format!("{window}&pick=speed&q=speed%3E1"))
-                .validate(query, TemporalJoin::Spec)
+                .admit(query, TemporalJoin::Spec, PERMISSIVE)
                 .is_ok()
         );
     }
@@ -731,14 +742,14 @@ mod tests {
             "type=Vehicle&join=%40none&q=isParkedIn%7Bcategory%7D",
         ] {
             let err = params_from_query(query)
-                .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+                .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
                 .expect_err("a traversing filter needs a retrieving join");
             assert!(matches!(err, ParameterError::FilterTraversalWithoutJoin), "got {err:?} for {query}");
         }
 
         let too_deep = params_from_query("type=Vehicle&join=flat&joinLevel=1&q=isParkedIn%7BinDistrict%7Bzone%7D%7D");
         let err = too_deep
-            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+            .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
             .expect_err("two hops overspend a one-hop traversal");
         assert!(
             matches!(err, ParameterError::FilterDepthExceedsJoinLevel { depth: 2, join_level: 1 }),
@@ -746,7 +757,7 @@ mod tests {
         );
 
         let deep_enough = params_from_query("type=Vehicle&join=flat&joinLevel=2&q=isParkedIn%7BinDistrict%7Bzone%7D%7D");
-        assert!(deep_enough.validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended).is_ok());
+        assert!(deep_enough.admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE).is_ok());
     }
 
     /// The projection half of the same bullet pair: a nested `pick` term
@@ -756,13 +767,13 @@ mod tests {
     fn a_nested_projection_is_bounded_by_the_requested_join() {
         let unrequested = params_from_query("type=Vehicle&pick=isParkedIn%7Bcategory%7D");
         let err = unrequested
-            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+            .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
             .expect_err("a nested projection needs a retrieving join");
         assert!(matches!(err, ParameterError::ProjectionLinkedTermsWithoutJoin), "got {err:?}");
 
         let too_deep = params_from_query("type=Vehicle&join=flat&joinLevel=1&pick=a%7Bb%7Bc%7D%7D");
         let err = too_deep
-            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+            .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
             .expect_err("two levels overspend a one-hop traversal");
         assert!(
             matches!(err, ParameterError::ProjectionDepthExceedsJoinLevel { depth: 2, join_level: 1 }),
@@ -771,7 +782,7 @@ mod tests {
 
         assert!(
             params_from_query("type=Vehicle&join=flat&joinLevel=1&pick=isParkedIn%7Bcategory%7D")
-                .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+                .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
                 .is_ok()
         );
     }
@@ -783,7 +794,7 @@ mod tests {
         for linked_retrieval in [TemporalJoin::Spec, TemporalJoin::Extended] {
             for raw in ["type=Vehicle&joinLevel=2", "type=Vehicle&join=%40none&joinLevel=2"] {
                 let err = params_from_query(raw)
-                    .validate(TemporalQueryOperation::Retrieve, linked_retrieval)
+                    .admit(TemporalQueryOperation::Retrieve, linked_retrieval, PERMISSIVE)
                     .expect_err(raw);
                 assert!(matches!(err, ParameterError::JoinLevelWithoutJoin), "{linked_retrieval:?} {raw}: {err:?}");
             }
@@ -795,12 +806,12 @@ mod tests {
     #[test]
     fn a_contained_by_without_a_join_level_is_refused() {
         let err = params_from_query("type=Vehicle&join=flat&containedBy=urn:ngsi-ld:Person:1")
-            .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+            .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
             .expect_err("containedBy without joinLevel");
         assert!(matches!(err, ParameterError::ContainedByWithoutJoinLevel), "{err:?}");
         assert!(
             params_from_query("type=Vehicle&join=flat&joinLevel=1&containedBy=urn:ngsi-ld:Person:1")
-                .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+                .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
                 .is_ok()
         );
     }
@@ -812,13 +823,16 @@ mod tests {
         const WINDOW: &str = "type=Vehicle&timerel=after&timeAt=2024-01-01T00:00:00Z";
         for lifetime in ["entityMapLifetime=PT1H", "entityMap=false&entityMapLifetime=PT1H"] {
             let p = params_from_query(&format!("{WINDOW}&{lifetime}"));
-            let err = p.validate(TemporalQueryOperation::Query, TemporalJoin::Spec).expect_err(lifetime);
+            let err = p
+                .clone()
+                .admit(TemporalQueryOperation::Query, TemporalJoin::Spec, PERMISSIVE)
+                .expect_err(lifetime);
             assert!(matches!(err, ParameterError::EntityMapLifetimeWithoutEntityMap), "{lifetime}: {err:?}");
-            assert!(p.validate(TemporalQueryOperation::EntityMap, TemporalJoin::Spec).is_ok(), "{lifetime}");
+            assert!(p.admit(TemporalQueryOperation::EntityMap, TemporalJoin::Spec, PERMISSIVE).is_ok(), "{lifetime}");
         }
         assert!(
             params_from_query(&format!("{WINDOW}&entityMap=true&entityMapLifetime=PT1H"))
-                .validate(TemporalQueryOperation::Query, TemporalJoin::Spec)
+                .admit(TemporalQueryOperation::Query, TemporalJoin::Spec, PERMISSIVE)
                 .is_ok()
         );
     }
@@ -829,7 +843,7 @@ mod tests {
     fn an_inline_join_over_the_normalized_representation_is_accepted() {
         assert!(
             params_from_query("join=inline")
-                .validate(TemporalQueryOperation::Retrieve, TemporalJoin::Extended)
+                .admit(TemporalQueryOperation::Retrieve, TemporalJoin::Extended, PERMISSIVE)
                 .is_ok()
         );
     }
@@ -888,16 +902,16 @@ mod tests {
         let window = "type=Vehicle&timerel=before&timeAt=2030-01-01T00:00:00Z";
         assert!(
             params_from_query(&format!("{window}&orderBy=id"))
-                .validate(TemporalQueryOperation::Query, TemporalJoin::Extended)
+                .admit(TemporalQueryOperation::Query, TemporalJoin::Extended, PERMISSIVE)
                 .is_ok()
         );
         assert!(matches!(
-            params_from_query(&format!("{window}&local=true&orderBy=speed")).validate(TemporalQueryOperation::Query, TemporalJoin::Extended),
+            params_from_query(&format!("{window}&local=true&orderBy=speed")).admit(TemporalQueryOperation::Query, TemporalJoin::Extended, PERMISSIVE),
             Err(ParameterError::Query(QueryError::TemporalOrderingMember(member))) if serialize_attr_path(&member) == "speed"
         ));
         assert!(
             params_from_query(&format!("{window}&local=true&orderBy=id"))
-                .validate(TemporalQueryOperation::Query, TemporalJoin::Extended)
+                .admit(TemporalQueryOperation::Query, TemporalJoin::Extended, PERMISSIVE)
                 .is_ok()
         );
     }
@@ -909,8 +923,11 @@ mod tests {
     fn a_distance_sorting_style_does_not_order_a_temporal_query() {
         let window = "type=Vehicle&timerel=before&timeAt=2030-01-01T00:00:00Z";
         assert!(matches!(
-            params_from_query(&format!("{window}&local=true&orderBy=id;dist-asc&orderFrom=%5B8%2C40%5D"))
-                .validate(TemporalQueryOperation::Query, TemporalJoin::Extended),
+            params_from_query(&format!("{window}&local=true&orderBy=id;dist-asc&orderFrom=%5B8%2C40%5D")).admit(
+                TemporalQueryOperation::Query,
+                TemporalJoin::Extended,
+                PERMISSIVE
+            ),
             Err(ParameterError::Query(QueryError::TemporalOrderingDirection(_)))
         ));
     }
@@ -922,7 +939,7 @@ mod tests {
         let window = "type=Vehicle&timerel=before&timeAt=2030-01-01T00:00:00Z";
         assert!(
             params_from_query(&format!("{window}&collation=de-u-co-phonebk"))
-                .validate(TemporalQueryOperation::Query, TemporalJoin::Extended)
+                .admit(TemporalQueryOperation::Query, TemporalJoin::Extended, PERMISSIVE)
                 .is_ok()
         );
     }
@@ -980,13 +997,13 @@ mod tests {
         const WINDOW: &str = "timerel=after&timeAt=2024-01-01T00:00:00Z";
         for operation in [TemporalQueryOperation::Query, TemporalQueryOperation::EntityMap] {
             let err = params_from_query(&format!("type=*&local=false&{WINDOW}"))
-                .validate(operation, TemporalJoin::Spec)
+                .admit(operation, TemporalJoin::Spec, PERMISSIVE)
                 .expect_err("type=* contradicts local=false");
             assert!(matches!(err, ParameterError::WildcardTypeWithLocalFalse), "{operation:?}: {err:?}");
             for admitted in ["type=*", "type=*&local=true", "type=Vehicle&local=false"] {
                 assert!(
                     params_from_query(&format!("{admitted}&{WINDOW}"))
-                        .validate(operation, TemporalJoin::Spec)
+                        .admit(operation, TemporalJoin::Spec, PERMISSIVE)
                         .is_ok(),
                     "{operation:?}: {admitted}"
                 );
@@ -999,16 +1016,16 @@ mod tests {
     #[test]
     fn a_wildcard_among_several_body_selectors_refuses_local_false() {
         const WINDOW: &str = "timerel=after&timeAt=2024-01-01T00:00:00Z";
-        let selector = |selection: &str| EntitySelectorParams {
+        let selector = |selection: &str| WrittenEntitySelector {
             type_: Some(selection.parse().expect("a valid type selector")),
-            ..EntitySelectorParams::default()
+            ..WrittenEntitySelector::default()
         };
         for operation in [TemporalQueryOperation::Query, TemporalQueryOperation::EntityMap] {
             for local in ["", "&local=true", "&local=false"] {
                 let mut wildcard = params_from_query(&format!("{WINDOW}{local}"));
                 wildcard.entity_selectors = vec![selector("Vehicle"), selector("*")];
                 assert!(wildcard.is_local(), "{operation:?}: {local}");
-                let validated = wildcard.validate(operation, TemporalJoin::Spec);
+                let validated = wildcard.admit(operation, TemporalJoin::Spec, PERMISSIVE);
                 if local == "&local=false" {
                     assert!(
                         matches!(validated, Err(ParameterError::WildcardTypeWithLocalFalse)),
@@ -1021,7 +1038,7 @@ mod tests {
             let mut named = params_from_query(&format!("{WINDOW}&local=false"));
             named.entity_selectors = vec![selector("Vehicle"), selector("Building")];
             assert!(!named.is_local());
-            assert!(named.validate(operation, TemporalJoin::Spec).is_ok(), "{operation:?}");
+            assert!(named.admit(operation, TemporalJoin::Spec, PERMISSIVE).is_ok(), "{operation:?}");
         }
     }
 
