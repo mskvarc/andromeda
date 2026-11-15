@@ -1,6 +1,5 @@
-use crate::q_reading::{BaselineComparison, compare_with_baseline, is_scanned, source_sites};
+use crate::q_reading::{is_scanned, source_sites};
 use pretty_assertions::assert_eq;
-use std::collections::BTreeMap;
 
 /// A production source outside the owner.
 const OUTSIDE: &str = "crates/andromeda-subscription/src/matching.rs";
@@ -188,38 +187,4 @@ fn the_owner_directory_and_test_files_are_not_scanned() {
     assert!(!is_scanned("crates/andromeda-subscription/src/matching_tests.rs"));
     assert!(is_scanned("crates/andromeda-ngsi-ld-query/src/split_filter.rs"));
     assert!(is_scanned(OUTSIDE));
-}
-
-fn found(entries: &[(&str, usize)]) -> BTreeMap<String, Vec<String>> {
-    entries
-        .iter()
-        .map(|(path, count)| {
-            (
-                (*path).to_owned(),
-                (1..=*count).map(|line| format!("{path}:{line}: matches on `Predicate::Exists`")).collect(),
-            )
-        })
-        .collect()
-}
-
-#[test]
-fn a_file_within_its_baseline_count_passes() {
-    assert_eq!(compare_with_baseline(&found(&[("a.rs", 2)]), &[("a.rs", 2)]), BaselineComparison::default());
-}
-
-#[test]
-fn a_file_past_its_baseline_count_reports_its_sites() {
-    let comparison = compare_with_baseline(&found(&[("a.rs", 3), ("b.rs", 1)]), &[("a.rs", 2)]);
-    assert_eq!(comparison.unexpected.len(), 4);
-    assert_eq!(comparison.stale, Vec::<String>::new());
-}
-
-#[test]
-fn a_file_below_its_baseline_count_is_stale() {
-    let comparison = compare_with_baseline(&found(&[("a.rs", 1)]), &[("a.rs", 2), ("c.rs", 1)]);
-    assert_eq!(comparison.unexpected, Vec::<String>::new());
-    assert_eq!(
-        comparison.stale,
-        vec!["a.rs: 1 sites, baseline 2".to_owned(), "c.rs: 0 sites, baseline 1".to_owned()]
-    );
 }

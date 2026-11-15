@@ -16,15 +16,10 @@
 //! `Predicate::path()` and building a variant stay free, since neither
 //! decides what a term means.
 //!
-//! The baseline counts, per file, the sites the in-memory evaluator and the
-//! SQL renderings hold. A file may hold no more sites than its count, and a
-//! file that holds fewer must lower its count, so the baseline only shrinks.
+//! Every site fails the gate.
 
 use crate::{q_reading::visitor::QReadingVisitor, source_scan::workspace_sources};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::Path,
-};
+use std::{collections::BTreeMap, path::Path};
 use syn::{File, visit::Visit};
 
 mod imports;
@@ -32,11 +27,6 @@ mod visitor;
 
 /// The directory that owns the reading of a `q` term.
 const OWNER: &str = "crates/andromeda-ngsi-ld-query/src/filter/";
-
-/// The sites outside the owner, as the file and the number of sites it
-/// holds. Each change that moves a reading into the owner lowers or removes
-/// its file's entry.
-pub const Q_READING_BASELINE: &[(&str, usize)] = &[];
 
 /// Every production site outside the owner that matches on a `q` term's
 /// syntax tree, as `path:line: what`, grouped by file.
@@ -63,56 +53,18 @@ fn source_sites(path: &str, syntax: &File) -> Vec<String> {
     visitor.into_sites().into_iter().map(|(line, what)| format!("{path}:{line}: {what}")).collect()
 }
 
-/// How the sites found compare with the baseline.
-#[derive(Debug, Default, Eq, PartialEq)]
-pub struct BaselineComparison {
-    /// The sites of every file holding more sites than its baseline count.
-    pub unexpected: Vec<String>,
-    /// Every baseline entry whose file holds fewer sites than its count, with
-    /// the count it holds now.
-    pub stale: Vec<String>,
-}
-
-/// Compare `sites` with `baseline`.
-#[must_use]
-pub fn compare_with_baseline(sites: &BTreeMap<String, Vec<String>>, baseline: &[(&str, usize)]) -> BaselineComparison {
-    let counted: BTreeMap<&str, usize> = baseline.iter().copied().collect();
-    let unexpected = sites
-        .iter()
-        .filter(|(path, found)| found.len() > counted.get(path.as_str()).copied().unwrap_or(0))
-        .flat_map(|(_, found)| found.iter().cloned())
-        .collect();
-    let stale = counted
-        .iter()
-        .filter_map(|(path, count)| {
-            let held = sites.get(*path).map_or(0, Vec::len);
-            (held < *count).then(|| format!("{path}: {held} sites, baseline {count}"))
-        })
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    BaselineComparison { unexpected, stale }
-}
-
-/// Assert that no production source outside the owner reads a `q` term
-/// beyond `baseline`.
+/// Assert that no production source outside the owner reads a `q` term.
 ///
 /// # Panics
 ///
-/// Panics when a file holds more sites than its baseline count, when a
-/// baseline count is higher than the sites its file holds, or when the
-/// workspace source tree cannot be read or parsed.
-pub fn assert_q_reading_has_one_owner(workspace_root: &str, baseline: &[(&str, usize)]) {
-    let comparison = compare_with_baseline(&q_reading_sites(workspace_root), baseline);
+/// Panics when a file outside the owner holds a site, or when the workspace
+/// source tree cannot be read or parsed.
+pub fn assert_q_reading_has_one_owner(workspace_root: &str) {
+    let sites: Vec<String> = q_reading_sites(workspace_root).into_values().flatten().collect();
     assert!(
-        comparison.unexpected.is_empty(),
+        sites.is_empty(),
         "a q term is read outside {OWNER}; decide its meaning in the language crate and read the result:\n{}",
-        comparison.unexpected.join("\n")
-    );
-    assert!(
-        comparison.stale.is_empty(),
-        "these files read fewer q terms than the baseline counts; lower their entries:\n{}",
-        comparison.stale.join("\n")
+        sites.join("\n")
     );
 }
 
