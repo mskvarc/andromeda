@@ -48,7 +48,8 @@ use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::SelectStatement;
 use std::slice::from_ref;
 
-/// What reading one candidate costs.
+/// How the index path reads one candidate, which sets how many it reads
+/// before the page walks instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CandidateRead {
     /// The index offers rows that may match and the term's condition rechecks
@@ -75,13 +76,13 @@ pub struct KeyedCandidates<'q> {
     pub term: &'q TermReading,
     /// `SELECT "entity_key" …`, every candidate.
     pub select: SelectStatement,
-    /// What reading one candidate costs.
+    /// How one candidate is read.
     pub read: CandidateRead,
 }
 
 /// The term of the top-level conjunction of `reading` the index path answers
 /// for the page, with its candidates read in the branch `rows` names, read as
-/// far as `bound` admits for what one costs to read.
+/// far as `bound` admits for how they are read.
 ///
 /// Only a conjunct can narrow the page to its candidates: an entity a
 /// disjunction keeps for another arm need not be one of them. A filter no
