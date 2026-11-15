@@ -153,7 +153,7 @@ mod tests {
 
     /// The reading a compiled `csf` holds.
     fn reading(q: &str) -> FilterReading {
-        FilterReading::of(&parse(q).expect("the filter parses"), LanguageMatching::TagEquality)
+        FilterReading::of_context_source_filter(&parse(q).expect("the filter parses"))
     }
 
     fn document() -> ColumnReference {
@@ -207,20 +207,29 @@ mod tests {
     fn a_member_a_node_carries_for_itself_has_no_target() {
         let sql = |q: &str| render(q).to_string(PostgresQueryBuilder);
         let no_target = sql("owner{name}==1");
-        for q in ["a.value==1", "a.type==1", "a.object==1", "a.valueList==1", "a.unitCode.b==1"] {
+        for q in [
+            "a.value==1",
+            "a.type==1",
+            "a.object==1",
+            "a.valueList==1",
+            "a.unitCode.b==1",
+            "a.unitCode[x]==1",
+            "a.lang==1",
+        ] {
             assert_eq!(sql(q), no_target, "{q}");
         }
         assert_ne!(sql("a.name==1"), no_target);
     }
 
-    /// A path ending on an instance member reads it as one more member of the
-    /// node, under the term clause 4.5.2.2 writes it by.
+    /// A path ending on an instance member, which a `csf` names by its core
+    /// `@context` term, reads it as one more member of the node, under the term
+    /// clause 4.5.2.2 writes it by; its IRI names the same member.
     #[test]
     fn an_instance_member_is_read_as_a_member_of_the_node() {
-        assert_statement_snapshot!(
-            "document-condition-an-instance-member-is-read-as-a-member-of-the-node",
-            render("a.\"https://uri.etsi.org/ngsi-ld/observedAt\">2030-01-01T00:00:00Z")
-        );
+        let by_term = render("a.observedAt>2030-01-01T00:00:00Z");
+        let by_iri = render("a.\"https://uri.etsi.org/ngsi-ld/observedAt\">2030-01-01T00:00:00Z");
+        assert_eq!(by_iri.to_string(PostgresQueryBuilder), by_term.to_string(PostgresQueryBuilder));
+        assert_statement_snapshot!("document-condition-an-instance-member-is-read-as-a-member-of-the-node", by_term);
     }
 
     /// An apostrophe cannot appear in a short attribute name (the clause 5.2.4

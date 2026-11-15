@@ -1351,6 +1351,7 @@ dependencies = [
  "iso8601-duration",
  "pretty_assertions",
  "rdfx",
+ "regex",
  "serde",
  "serde_json",
  "serde_with",

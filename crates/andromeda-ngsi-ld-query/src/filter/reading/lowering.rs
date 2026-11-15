@@ -12,7 +12,7 @@
 //! value is a String or a `DateTime`, which has no member a `MemberExpression`
 //! could reach, so "the target element shall be considered as non-existent".
 //! A member named anywhere else is a sub-attribute name no Attribute carries,
-//! since clause 4.6.2 bars the Core Context's non-reified Properties as
+//! since clause 4.5.1 bars the Core Context's non-reified Properties as
 //! Attribute names, and a family's value member is no (sub)Property at all.
 //! No trailing group and `[*]` read the instance's own value.
 //!
@@ -26,6 +26,7 @@
 
 use crate::filter::{
     expression::Expr,
+    instance_metadata::InstanceMetadata,
     language_matching::LanguageMatching,
     path::{AttrPath, QueryPath},
     predicate::{Predicate, SetMembership},
@@ -56,6 +57,31 @@ impl FilterReading {
             Expr::And(terms) => FilterReading::All(terms.iter().map(|term| FilterReading::lowered(term, matching)).collect()),
             Expr::Or(terms) => FilterReading::Any(terms.iter().map(|term| FilterReading::lowered(term, matching)).collect()),
             Expr::Pred(predicate) => FilterReading::Term(Box::new(TermReading::of(predicate, matching))),
+        }
+    }
+
+    /// The reading of a parsed, expanded `csf` filter as written, term for
+    /// term: what the normal form of a Context Source filter is taken of.
+    ///
+    /// A `csf` keeps the names below a Context Source Property as its client
+    /// wrote them, so a last one naming an instance member does so by the core
+    /// `@context` term clause 4.5.2.2 writes the member by (`tier.unitCode`),
+    /// not by the IRI an Entity filter expands it to, and is that member: the
+    /// core `@context` is protected, so the term names it under every
+    /// `@context`. Before a trailing group it stays a sub-attribute name, as
+    /// the IRI does.
+    #[must_use]
+    pub fn lowered_context_source_filter(expr: &Expr) -> FilterReading {
+        FilterReading::lowered(expr, LanguageMatching::TagEquality).ending_on_member_terms()
+    }
+
+    /// The reading with every term whose last sub-attribute is an instance
+    /// member's core `@context` term ending on that member.
+    fn ending_on_member_terms(self) -> FilterReading {
+        match self {
+            FilterReading::All(children) => FilterReading::All(children.into_iter().map(FilterReading::ending_on_member_terms).collect()),
+            FilterReading::Any(children) => FilterReading::Any(children.into_iter().map(FilterReading::ending_on_member_terms).collect()),
+            FilterReading::Term(term) => FilterReading::Term(Box::new(term.ending_on_member_term())),
         }
     }
 
@@ -98,6 +124,19 @@ impl TermReading {
             terminal,
             test: test_of(predicate),
         }
+    }
+
+    /// The term ending on the instance member its last sub-attribute names by
+    /// the member's core `@context` term, when the path ends there; the term
+    /// as it is otherwise.
+    fn ending_on_member_term(mut self) -> TermReading {
+        if matches!(self.terminal, Terminal::OwnValue)
+            && let Some(member) = self.sub_attributes.last().and_then(InstanceMetadata::termed)
+        {
+            self.sub_attributes.pop();
+            self.terminal = Terminal::InstanceMember(member);
+        }
+        self
     }
 }
 

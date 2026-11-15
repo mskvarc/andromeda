@@ -59,6 +59,11 @@ impl AsRef<str> for AttributeType {
     }
 }
 
+/// The non-reified sub-Properties the core `@context` defines beside every
+/// family's own members: `lang`, which a language-filtered answer adds
+/// (clause 4.15).
+const NON_REIFIED_SUB_PROPERTIES: [&str; 1] = [compact_properties::LANG];
+
 /// Expands to the reserved compacted member names of one attribute type: the
 /// type-specific names passed in, followed by the members every attribute
 /// instance reserves whatever its type: `observedAt` and `expiresAt` (clause
@@ -317,17 +322,19 @@ impl AttributeType {
 
     /// Whether the compact member `member` is one an attribute instance's
     /// node carries for itself rather than a sub-attribute, whatever family it
-    /// names by `type`: `type`, or a member some family defines
-    /// ([`AttributeType::defines_member`]).
+    /// names by `type`: `type`, a member some family defines
+    /// ([`AttributeType::defines_member`]), or `lang`, the non-reified
+    /// sub-Property the core `@context` defines beside them.
     ///
     /// Clause 4.5.1 bars the terms the core `@context` defines as non-reified
-    /// Properties as Attribute names, and every member a family defines is one
-    /// of them, so none names a sub-attribute of any node. A term the core
-    /// `@context` does not define, such as `name`, is a sub-attribute name like
-    /// any other.
+    /// Properties as Attribute names, and each of these is one of them, so none
+    /// names a sub-attribute of any node. A term the core `@context` does not
+    /// define, such as `name`, is a sub-attribute name like any other.
     #[must_use]
     pub fn is_own_member(member: &str) -> bool {
-        member == keyword::TYPE_ALIAS || AttributeType::ALL.into_iter().any(|family| family.defines_member(member))
+        member == keyword::TYPE_ALIAS
+            || NON_REIFIED_SUB_PROPERTIES.contains(&member)
+            || AttributeType::ALL.into_iter().any(|family| family.defines_member(member))
     }
 
     /// Returns the short (compacted) name for this attribute type as a static string.
@@ -359,7 +366,7 @@ impl AttributeType {
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute_type::{AttributeType, SimplifiedValueEncoding};
+    use crate::attribute_type::{AttributeType, NON_REIFIED_SUB_PROPERTIES, SimplifiedValueEncoding};
     use andromeda_ngsi_ld_vocabulary::{
         compact::properties as compact_properties,
         core_context::NGSI_LD_CORE_CONTEXT_V19,
@@ -380,11 +387,15 @@ mod tests {
                 assert!(terms.contains_key(*member), "{variant} defines {member}, which the core context does not");
             }
         }
+        for member in NON_REIFIED_SUB_PROPERTIES {
+            assert!(terms.contains_key(member), "{member} is no core context term");
+        }
     }
 
-    /// A node may name any family by `type`, so `type` and every family's
-    /// members are its own; `name`, which the core `@context` does not
-    /// define, and any other name are sub-attribute names.
+    /// A node may name any family by `type`, so `type`, every family's
+    /// members and `lang` are its own; `name` and `entityIdSealed`, which the
+    /// core `@context` does not define, and any other name are sub-attribute
+    /// names.
     #[test]
     fn type_and_every_familys_members_are_a_nodes_own_and_other_names_are_not() {
         for member in [
@@ -406,12 +417,14 @@ mod tests {
             "datasetId",
             "instanceId",
             "deletedAt",
+            "lang",
         ] {
             assert!(AttributeType::is_own_member(member), "{member}");
         }
         for member in [
             "name",
             "speed",
+            "entityIdSealed",
             "https://uri.etsi.org/ngsi-ld/hasValue",
             "https://uri.etsi.org/ngsi-ld/unitCode",
         ] {

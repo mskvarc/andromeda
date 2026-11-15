@@ -4,7 +4,8 @@
 use crate::fixtures::test_error::UpgradeTestError;
 use andromeda_postgresql_seaquery::{
     cast::cast,
-    json_record::{composite_from_json, to_jsonb},
+    json_record::composite_from_json,
+    jsonb::to_jsonb,
     pg_array::array_literal,
     pg_type::PostgresType,
     statement::Statement,

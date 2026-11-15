@@ -17,11 +17,6 @@ use sea_query::{Func, Iden, SimpleExpr};
 #[iden = "jsonb_populate_record"]
 struct JsonbPopulateRecord;
 
-/// The `to_jsonb` function.
-#[derive(Iden, Clone, Copy)]
-#[iden = "to_jsonb"]
-struct ToJsonb;
-
 /// A value of the composite type `composite` whose fields `document` names,
 /// the fields it omits left NULL.
 ///
@@ -36,19 +31,9 @@ pub fn composite_from_json(composite: PostgresType, document: SimpleExpr) -> Sim
         .into()
 }
 
-/// The JSON document of `value`, a composite as an object keyed by field
-/// name and an array as an array of such objects.
-#[must_use]
-pub fn to_jsonb(value: SimpleExpr) -> SimpleExpr {
-    Func::cust(ToJsonb).args([value]).into()
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::{
-        json_record::{composite_from_json, to_jsonb},
-        pg_type::PostgresType,
-    };
+    use crate::{json_record::composite_from_json, jsonb::to_jsonb, pg_type::PostgresType};
     use pretty_assertions::assert_eq;
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
 
