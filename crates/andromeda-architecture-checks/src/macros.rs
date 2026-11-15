@@ -92,7 +92,7 @@ macro_rules! workspace_architecture {
                 $crate::raw_sql::assert_no_raw_sql(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
-            /// Retired architecture surfaces remain absent.
+            /// The surfaces the architecture bans stay absent from the workspace.
             #[test]
             fn retired_architecture_surfaces_do_not_return() {
                 $crate::architecture::assert_retired_architecture_invariants(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));

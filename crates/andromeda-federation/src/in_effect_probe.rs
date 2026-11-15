@@ -35,8 +35,9 @@ pub enum InEffectReading {
 
 impl InEffectReading {
     /// The temporal query a source is sent for this probe of `client`, or
-    /// `None` when the client's window has no instance in effect before it
-    /// ([`TemporalWindow::in_effect_start`]) or its filters read no Scope.
+    /// `None` when the client's window opens where no Scope set before it can
+    /// be in force ([`TemporalWindow::in_effect_start`]) or its filters read
+    /// no Scope.
     ///
     /// The probe keeps the client's entity selection and context source
     /// filter. No filter travels, as under `splitEntities`. A scope query reads
@@ -185,6 +186,34 @@ mod tests {
             .await
             .expect("probed");
         assert!(query.contains("timeproperty=deletedAt") && query.contains("lastN=1"), "{query}");
+    }
+
+    /// Clause 4.8: an instance carries its system times only when asked, so a
+    /// probe on `modifiedAt` asks for them, and the deletion probe, on
+    /// `deletedAt`, does not.
+    #[tokio::test]
+    async fn a_probe_on_a_system_time_asks_for_system_attributes() {
+        let query = format!("type=Vehicle&{WINDOW}&timeproperty=modifiedAt&scopeQ=/Madrid");
+        let placed = forwarded(&query, InEffectReading::Placed).await.expect("probed");
+        assert!(placed.contains("timeproperty=modifiedAt") && placed.contains("options=sysAttrs"), "{placed}");
+        let deleted = forwarded(&query, InEffectReading::Deletion).await.expect("probed");
+        assert!(deleted.contains("timeproperty=deletedAt") && !deleted.contains("sysAttrs"), "{deleted}");
+    }
+
+    /// The probe reaches the entities the client's query selects, so the
+    /// identifiers, the identifier pattern and the context source filter
+    /// travel as they do with the window query.
+    #[tokio::test]
+    async fn a_probe_keeps_the_selection_and_the_context_source_filter() {
+        let query = forwarded(
+            &format!("type=Vehicle&id=urn:ngsi-ld:Vehicle:1&idPattern=urn:ngsi-ld:Vehicle:.*&csf=region==%22north%22&{WINDOW}&scopeQ=/Madrid"),
+            InEffectReading::Placed,
+        )
+        .await
+        .expect("probed");
+        for fragment in ["id=urn%3Angsi-ld%3AVehicle%3A1", "idPattern=urn%3Angsi-ld%3AVehicle%3A.*", "csf="] {
+            assert!(query.contains(fragment), "{fragment} missing: {query}");
+        }
     }
 
     /// Clause 5.7.4.4 steps S2 and S3: a query filtering by `q` or the

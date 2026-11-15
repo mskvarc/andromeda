@@ -230,17 +230,21 @@ pub(crate) fn unsatisfiable() -> Condition {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{
         entity_row_refs::EntityRowRefs,
-        q_predicate::lowered_filter::{reading_of, term_of},
+        q_predicate::{
+            instance_scan::InstanceScan,
+            lowered_filter::{reading_of, term_of},
+            projection::{compile, compile_except},
+        },
+        query_names::QueryNames,
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::filter::parser::parse;
+    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading};
     use andromeda_postgresql_schema::{current::Entities, string_value_column::INDEXED_STRING_BYTE_LIMIT};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
-    use sea_query::{Alias, Query, SelectStatement};
+    use sea_query::{Alias, Condition, Query, SelectStatement};
 
     const SPEED: &str = "https://example.com/speed";
 

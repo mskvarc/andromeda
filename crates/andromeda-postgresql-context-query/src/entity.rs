@@ -270,12 +270,17 @@ pub(crate) fn build_entity_conditions(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        entity::{build_ids_query, build_query},
+        entity_total::EntityTotal,
+    };
+    use andromeda_context_space::context_target::ContextTarget;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, positive_distance::PositiveDistance};
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
     use andromeda_ngsi_ld_query::{
         count_policy::CountPolicy,
         cursor::PageCursor,
+        entity::compiled::CompiledEntityQuery,
         entity_selection::{ConsideredEntities, EntitySelection, EntitySelector},
         error::QueryError,
         filter::{
@@ -296,13 +301,14 @@ mod tests {
         page_window::{PageStart, PageWindow},
         pattern::Pattern,
         projection::{compiled::Projection, projected_members::ProjectedMembers, term::ProjectionTerm},
+        read_order::ReadOrder,
         scope::query::ScopeQuery,
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
-    use andromeda_postgresql_query::error::RenderError;
+    use andromeda_postgresql_query::{error::RenderError, query_names::QueryNames};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
-    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use iri_rs::IriBuf;
     use pretty_assertions::{assert_eq, assert_ne};
     use sea_query::{PostgresQueryBuilder, SelectStatement, Value};

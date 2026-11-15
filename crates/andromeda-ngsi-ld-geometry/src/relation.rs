@@ -16,7 +16,7 @@ use crate::{
     proximity::{Boundary, Proximity},
     relation_reading::{Operand, RelationReading, SpatialTest, TopologicalTest},
 };
-use geo::algorithm::{Contains, Intersects};
+use geo::algorithm::{Contains, Intersects, Relate};
 
 /// Whether `subject` stands in the relation `georel` to `reference`.
 ///
@@ -46,30 +46,11 @@ fn topological(test: TopologicalTest, subject: &geo::Geometry<f64>, reference: &
         // Mutual containment is `geo`'s equivalent of topological equality,
         // which it has no predicate for.
         TopologicalTest::Equals => subject.contains(reference) && reference.contains(subject),
-        // Plain `intersects` would match a geometry lying wholly inside the
-        // other, which OGC 06-103r4 `Overlaps` excludes.
-        TopologicalTest::Overlaps => {
-            topological_dimension(subject) == topological_dimension(reference)
-                && subject.intersects(reference)
-                && !subject.contains(reference)
-                && !reference.contains(subject)
-        }
-    }
-}
-
-/// The topological dimension of a geometry, or `None` for a collection, whose
-/// members may differ.
-///
-/// This is the point/line/area distinction of OGC 06-103r4, unrelated to
-/// whether the geometry's positions carry altitude. `ST_Overlaps` is defined
-/// only between geometries of equal dimension: a point and a polygon intersect
-/// but never overlap.
-const fn topological_dimension(geometry: &geo::Geometry<f64>) -> Option<u8> {
-    match geometry {
-        geo::Geometry::Point(_) | geo::Geometry::MultiPoint(_) => Some(0),
-        geo::Geometry::Line(_) | geo::Geometry::LineString(_) | geo::Geometry::MultiLineString(_) => Some(1),
-        geo::Geometry::Polygon(_) | geo::Geometry::MultiPolygon(_) | geo::Geometry::Rect(_) | geo::Geometry::Triangle(_) => Some(2),
-        geo::Geometry::GeometryCollection(_) => None,
+        // OGC 06-103r4 `Overlaps` by its DE-9IM pattern, as `ST_Overlaps`
+        // reads it: the interiors meet, each geometry reaches outside the
+        // other, and both are of one dimension, so two polygons sharing only
+        // an edge do not overlap.
+        TopologicalTest::Overlaps => subject.relate(reference).is_overlaps(),
     }
 }
 
@@ -327,6 +308,22 @@ mod tests {
                 expected: false,
             },
             Case {
+                // `ST_Overlaps` asks the interiors to meet, and two areas
+                // sharing an edge meet on their boundaries alone.
+                description: "areas sharing only an edge do not overlap",
+                georel: GeoRel::Overlaps,
+                subject: &fixtures.adjacent_area,
+                reference: &fixtures.area,
+                expected: false,
+            },
+            Case {
+                description: "lines meeting at an end point do not overlap",
+                georel: GeoRel::Overlaps,
+                subject: &fixtures.meeting_line_west,
+                reference: &fixtures.meeting_line_east,
+                expected: false,
+            },
+            Case {
                 // Dimensions differ, so the pair can intersect but never
                 // overlap.
                 description: "a point inside an area does not overlap it",
@@ -558,6 +555,12 @@ mod tests {
         inner_area: Geometry,
         /// An area far from `area`.
         far_area: Geometry,
+        /// An area sharing only its west edge with `area`'s east edge.
+        adjacent_area: Geometry,
+        /// A line ending where `meeting_line_east` starts.
+        meeting_line_west: Geometry,
+        /// A line starting where `meeting_line_west` ends.
+        meeting_line_east: Geometry,
         /// The reference point the minimum-distance fixtures are placed
         /// around, in Bremen.
         bremen: Geometry,
@@ -600,6 +603,9 @@ mod tests {
                 shifted_area: square(1.0, 0.0, 1.0),
                 inner_area: square(0.0, 0.0, 0.25),
                 far_area: square(50.0, 50.0, 1.0),
+                adjacent_area: square(2.0, 0.0, 1.0),
+                meeting_line_west: line(&[(-1.0, -1.0), (0.0, 0.0)]),
+                meeting_line_east: line(&[(0.0, 0.0), (1.0, 1.0)]),
                 bremen: point(x, y),
                 east_square: polygon(vec![box_ring(8.808_693, 53.075_171, 8.810_783, 53.076_429)]),
                 bremen_area: polygon(vec![box_ring(8.8069, 53.0753, 8.8372, 53.0763)]),
@@ -630,6 +636,9 @@ mod tests {
                 shifted_area: lift(&flat.shifted_area, 50.0),
                 inner_area: lift(&flat.inner_area, 60.0),
                 far_area: lift(&flat.far_area, 70.0),
+                adjacent_area: lift(&flat.adjacent_area, 70.0),
+                meeting_line_west: lift(&flat.meeting_line_west, 70.0),
+                meeting_line_east: lift(&flat.meeting_line_east, 70.0),
                 bremen: lift(&flat.bremen, 80.0),
                 east_square: lift(&flat.east_square, 500.0),
                 bremen_area: lift(&flat.bremen_area, 90.0),

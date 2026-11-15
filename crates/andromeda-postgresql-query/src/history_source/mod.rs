@@ -250,6 +250,20 @@ impl HistoryOf {
         }
     }
 
+    /// The identifier of the Entity a row of the source this reads belongs
+    /// to, the row read under `alias`: the identifier the read is narrowed to,
+    /// else the row's own [`HistoryGrain::EntityId`]. A source read for an
+    /// Evolution by its key projects no identifier, so the narrowed identifier
+    /// is the one that names its rows.
+    #[must_use]
+    pub fn entity_id_of_row(&self, alias: impl IntoIden) -> SimpleExpr {
+        match self {
+            // clone: the identifier stays with the read, which every reader of it shares.
+            HistoryOf::Entity(id) | HistoryOf::Evolution(EvolutionColumns { id, .. }) => id.clone(),
+            HistoryOf::EveryEntity => Expr::col((alias.into_iden(), HistoryGrain::EntityId)),
+        }
+    }
+
     /// The Evolution a row of the source this reads names, read under
     /// `alias`: by what the source projects, the surrogate key where it reads
     /// [`HistoryOf::Evolution`] and the identifier otherwise.

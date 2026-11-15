@@ -170,7 +170,7 @@ mod tests {
         FilterReading::lowered(&parse(q).expect("a clause 4.9 filter"), LanguageMatching::TagEquality)
     }
 
-    /// NF-1: a conjunction inside a conjunction is spliced into it.
+    /// A conjunction inside a conjunction is spliced into it.
     #[test]
     fn a_conjunction_inside_a_conjunction_is_one_conjunction() {
         let reading = normal("a==1;(b==2;c==3)");
@@ -178,7 +178,6 @@ mod tests {
         assert_eq!(reading, lowered("a==1;b==2;c==3"));
     }
 
-    /// NF-2.
     #[test]
     fn a_term_written_twice_is_one_term() {
         assert_eq!(normal("a==1;a==1"), lowered("a==1"));
@@ -186,7 +185,6 @@ mod tests {
         assert_eq!(normal("a;a"), lowered("a"));
     }
 
-    /// NF-3.
     #[test]
     fn the_children_of_a_group_are_in_canonical_order() {
         assert_eq!(normal("b==2;a==1"), normal("a==1;b==2"));
@@ -194,7 +192,6 @@ mod tests {
         assert_eq!(normal("(c|b);a"), normal("a;(b|c)"));
     }
 
-    /// NF-4.
     #[test]
     fn a_disjunction_of_equalities_over_one_path_is_one_value_list() {
         let reading = normal("a==1|a==2");
@@ -204,7 +201,7 @@ mod tests {
         assert_eq!(normal("a==\"x\"|a==5"), lowered("a==5,\"x\""));
     }
 
-    /// NF-5: `a!=1|a!=2` holds for every present `a`, and `a!=1,2` does not.
+    /// `a!=1|a!=2` holds for every present `a`, and `a!=1,2` does not.
     #[test]
     fn complements_are_never_joined() {
         let reading = normal("a!=1|a!=2");
@@ -213,7 +210,7 @@ mod tests {
         assert_eq!(normal("a==1|a!=2"), lowered("a==1|a!=2"));
     }
 
-    /// NF-6: each term is its own existential over the instances, so an
+    /// Each term is its own existential over the instances, so an
     /// Entity whose instances are 3 and 12 satisfies the conjunction and not
     /// the range.
     #[test]
@@ -223,7 +220,7 @@ mod tests {
         assert_eq!(reading, lowered("a>=5;a<=10"));
     }
 
-    /// NF-7: `1.0` and `1` are one value.
+    /// `1.0` and `1` are one value.
     #[test]
     fn operands_are_compared_by_value() {
         assert_eq!(normal("a==1.0|a==1"), lowered("a==1"));

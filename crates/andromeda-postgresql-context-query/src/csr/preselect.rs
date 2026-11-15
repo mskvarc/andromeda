@@ -135,13 +135,28 @@ pub fn attribute_name_candidate<N: fmt::Display>(attribute_names: &[N]) -> Simpl
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::csr::{
+        information_row::ri_col,
+        preselect::{
+            attribute_name_candidate,
+            declares_no_name,
+            entity_id_candidate,
+            entity_id_or_none,
+            entity_id_pattern_candidate,
+            entity_type_candidate,
+            entity_types_or_wildcard,
+        },
+    };
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_query::pattern::Pattern;
+    use andromeda_postgresql_schema::csr::RegistrationInformation;
     use andromeda_postgresql_seaquery::{
         assert_statement_snapshot,
         collation::{PostgresCollation, collate},
         literal::int_literal,
     };
-    use sea_query::{PostgresQueryBuilder, Query, SelectStatement};
+    use iri_rs::IriBuf;
+    use sea_query::{PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 
     /// The migration that declares the indexes the tests here must hit.
     const MIGRATION: &str = include_str!("../../../../migrations/tenant/0011_registration_information.sql");

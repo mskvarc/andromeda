@@ -14,6 +14,6 @@ pub enum WindowReach {
     /// The events inside the interval.
     Inside,
     /// The events inside the interval and, for an interval with a start,
-    /// the one each stream held when it opens.
+    /// the one in force when it opens.
     InsideAndInEffect,
 }

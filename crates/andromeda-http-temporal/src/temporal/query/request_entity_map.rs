@@ -8,7 +8,14 @@
 use crate::{
     error::TemporalHttpClassify,
     history_read::TemporalHistoryRead,
-    temporal::{ProblemResponse, ResultInstanceExt, TemporalQueryParameters, TimeRel, local_map_entities::LocalHistoryEntities},
+    temporal::{
+        ProblemResponse,
+        ResultInstanceExt,
+        TemporalQueryParameters,
+        TimeRel,
+        local_map_entities::LocalHistoryEntities,
+        query::written_query::WrittenQuery,
+    },
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::{
@@ -21,7 +28,7 @@ use andromeda_entity_map::{
 };
 use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::date_time::NgsiLdDateTime};
-use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, filter::reading::filter_reading::FilterReading};
+use andromeda_ngsi_ld_query::filter::reading::filter_reading::FilterReading;
 use andromeda_temporal::{error::TemporalError, temporal_invariant::TemporalInvariant};
 use axum::http::Uri;
 
@@ -31,35 +38,37 @@ use axum::http::Uri;
 /// and the sources it contacts, and holds the query to the creating request's
 /// filters (the temporal window excepted); an expired or unknown one yields no
 /// inference, so a fresh map is created instead. The fingerprint is taken over
-/// `selection` and `csf`, the compiled query as written before it is
-/// narrowed. A map-scoped follow-up may omit the temporal window, which then
-/// stands for all history up to a far-future horizon.
+/// `query` and `csf`, the compiled query as written before it is narrowed,
+/// which compiles only for a read that runs under a map. A map-scoped follow-up
+/// may omit the temporal window, which then stands for all history up to a
+/// far-future horizon.
 ///
 /// # Errors
 ///
 /// The classified failure of fingerprinting the request or of reading the map
 /// store, and [`TemporalError::Validation`] when the far-future horizon cannot
 /// be parsed.
-pub(crate) async fn resolve_query_map(
+pub(super) async fn resolve_query_map(
     entity_maps: &EntityMapService,
     target: &ContextTarget,
     params: &mut TemporalQueryParameters,
-    selection: &EntitySelection,
+    query: &WrittenQuery<'_>,
     csf: Option<&FilterReading>,
     referenced: Option<&NgsiLdEntityMap>,
     instance: &Uri,
 ) -> Result<EntityMapUse, ProblemResponse> {
-    if !target.permits_federation() {
+    let referenced = referenced.map(NgsiLdEntityMap::as_inner);
+    let flag = EntityMapFlag::from_parameter(params.entity_map);
+    if !target.permits_federation() || !flag.involves_a_map(referenced) {
         return Ok(EntityMapUse::None);
     }
-    let fingerprint = fingerprint_of(FingerprintedRequest::QueryTemporal { selection, csf }).with_instance(instance)?;
+    let fingerprint = fingerprint_of(FingerprintedRequest::QueryTemporal {
+        query: query.compiled().await?,
+        csf,
+    })
+    .with_instance(instance)?;
     let map_use = entity_maps
-        .resolve_use(
-            referenced.map(NgsiLdEntityMap::as_inner),
-            EntityMapFlag::from_parameter(params.entity_map),
-            &fingerprint,
-            params.entity_map_lifetime.as_ref(),
-        )
+        .resolve_use(referenced, flag, &fingerprint, params.entity_map_lifetime.as_ref())
         .await
         .with_instance(instance)?;
     if let Some(map) = map_use.reused() {

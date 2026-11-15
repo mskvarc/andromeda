@@ -188,7 +188,7 @@ fn equality_operand(scalar: &Scalar) -> Operand {
         return Operand::from(scalar);
     };
     match written.parse::<Identifier>() {
-        Ok(parsed) if parsed.as_str() != written => Operand::Uri(UriOperand::new(written.clone(), parsed.as_str().to_owned())),
+        Ok(parsed) if parsed.as_str() != written => Operand::Uri(UriOperand::new(written.clone(), parsed)),
         Ok(_) | Err(_) => Operand::from(scalar),
     }
 }

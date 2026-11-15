@@ -320,7 +320,7 @@ mod tests {
         QueryDigest::of_identified(b"identity", Some(query))
     }
 
-    /// QI-3: paging and presentation parameters never decide a walk.
+    /// Paging and presentation parameters never decide a walk.
     #[test]
     fn an_identified_digest_ignores_paging_and_presentation_parameters() {
         let walked = identified("timerel=after&timeAt=2020-01-01T00:00:00Z");

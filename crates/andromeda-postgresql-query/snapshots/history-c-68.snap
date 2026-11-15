@@ -450,7 +450,7 @@ WHERE
           AND "qh"."observed_at" < $7
       )
   )
-1: Int 22
+1: Int 23
 2: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
 3: ChronoDateTimeUtc '2025-01-01 00:00:00.000000 +00:00'
 4: Int 1

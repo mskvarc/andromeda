@@ -66,19 +66,20 @@ pub(crate) fn met_restrictions(
         }
         met = met.add(holds);
     }
-    Ok(Some(exempting_contributed(met, &compiled.contributed, Expr::col((Ah, HistoryGrain::EntityId)))))
+    Ok(Some(exempting_contributed(met, &compiled.contributed, of.entity_id_of_row(Ah))))
 }
 
-/// The dictionary keys of the Attributes `reading` names and of the geo-query's
-/// `GeoProperty` key `geoproperty`, each once: every term's own Attribute, a
-/// Relationship a hop crosses from the Entity included. A name the dictionary
-/// never keyed has no history and narrows nothing.
+/// The dictionary keys of the Attributes of the Entity `reading` names and of
+/// the geo-query's `GeoProperty` key `geoproperty`, each once: every term's own
+/// Attribute, or for a term behind a hop the Relationship the hop crosses from
+/// the Entity, since the Attribute the hop ends on is the linked Entity's. A
+/// name the dictionary never keyed has no history and narrows nothing.
 fn named_attributes(reading: Option<&FilterReading>, geoproperty: Option<AttributeNameKey>, names: &QueryNames) -> Vec<AttributeNameKey> {
     let mut keys: Vec<AttributeNameKey> = Vec::new();
     let candidates = reading
         .into_iter()
         .flat_map(FilterReading::terms)
-        .filter_map(|term| names.attributes.get(term.attribute()))
+        .filter_map(|term| names.attributes.get(term.hops().first().map_or(term.attribute(), |hop| hop.relationship())))
         .chain(geoproperty);
     for key in candidates {
         if !keys.contains(&key) {
@@ -107,23 +108,25 @@ mod tests {
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_postgresql_query::{
-        history_source::{HistoryBranch, HistoryOf},
+        history_source::{EvolutionColumns, HistoryBranch, HistoryOf},
         query_names::QueryNames,
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
-    use sea_query::{Expr, Query, SelectStatement};
+    use pretty_assertions::assert_eq;
+    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SelectStatement, Value};
     use std::str::FromStr;
 
     const SPEED: &str = "https://example.com/speed";
     const BRAND: &str = "https://example.com/brand";
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
+    const PARKED: &str = "https://example.com/parkedIn";
 
-    /// `speed` = 1, `brand` = 2, `location` = 3.
+    /// `speed` = 1, `brand` = 2, `location` = 3, `parkedIn` = 4.
     fn names() -> QueryNames {
         QueryNames {
             attributes: ResolvedNames::from_pairs(
-                [SPEED, BRAND, LOCATION]
+                [SPEED, BRAND, LOCATION, PARKED]
                     .into_iter()
                     .zip(1..)
                     .map(|(name, key)| (name.parse().expect("valid attribute name"), AttributeNameKey::from(key))),
@@ -195,6 +198,17 @@ mod tests {
         );
     }
 
+    /// A term behind a hop keeps the instances of the Relationship it crosses
+    /// from the Entity whose linked Entity meets it; the Attribute it ends on
+    /// is the linked Entity's, which the representation does not hold.
+    #[test]
+    fn a_hop_reduces_the_relationship_it_crosses() {
+        let statement = rendered(&with_q(&format!("\"{PARKED}\"{{\"{SPEED}\"}}>50"))).expect("a narrowing");
+        let (_, values) = statement.build(PostgresQueryBuilder);
+        assert_eq!(values.0.get(1), Some(&Value::Int(Some(4))), "the reduced Attribute is parkedIn");
+        assert_statement_snapshot!("represented-filters-a-hop-reduces-the-relationship-it-crosses", statement);
+    }
+
     /// Clause 5.7.4.4 keeps the `GeoProperty` instances that meet the
     /// geo-query, read as step S3 reads them.
     #[test]
@@ -203,12 +217,69 @@ mod tests {
         assert_statement_snapshot!("represented-filters-a-geo-query-reduces-its-geo-property-to-the-represented-row", statement);
     }
 
+    /// A disjunction across Attributes keeps a row of each when the whole
+    /// filter holds with that Attribute reduced to it, the other term read
+    /// over the window.
+    #[test]
+    fn a_disjunction_reduces_each_attribute_it_names() {
+        let statement = rendered(&with_q(&format!("\"{SPEED}\">50|\"{BRAND}\"==\"Audi\""))).expect("a narrowing");
+        assert_statement_snapshot!("represented-filters-a-disjunction-reduces-each-attribute-it-names", statement);
+    }
+
+    /// An inequality is a term like any other: a row of `speed` is kept when
+    /// it is unequal to the operand.
+    #[test]
+    fn an_inequality_reduces_its_attribute_to_the_unequal_rows() {
+        let statement = rendered(&with_q(&format!("\"{SPEED}\"!=50"))).expect("a narrowing");
+        assert_statement_snapshot!("represented-filters-an-inequality-reduces-its-attribute-to-the-unequal-rows", statement);
+    }
+
+    /// A source read for an Evolution by its key reads the same reduction
+    /// through the keyed rows.
+    #[test]
+    fn an_evolution_read_by_its_key_reduces_through_the_keyed_rows() {
+        let of = HistoryOf::Evolution(EvolutionColumns {
+            id: Expr::col((Alias::new("e"), Alias::new("id"))),
+            key: Expr::col((Alias::new("e"), Alias::new("entity_key"))),
+        });
+        let condition = met_restrictions(&HistoryBranch::live_recorded(), &of, &with_q(&format!("\"{SPEED}\">50")), &names())
+            .expect("renders")
+            .expect("a narrowing");
+        let statement = Query::select().expr(Expr::val(1)).cond_where(condition).to_owned();
+        assert_statement_snapshot!("represented-filters-an-evolution-read-by-its-key-reduces-through-the-keyed-rows", statement);
+    }
+
     /// No filter, a Scope query alone and a name the dictionary never keyed
     /// narrow nothing.
     #[test]
     fn no_filter_or_an_unknown_name_narrows_nothing() {
         assert!(rendered(&compiled()).is_none());
         assert!(rendered(&with_q("\"https://example.com/missing\">1")).is_none());
+    }
+
+    /// A source read for an Evolution by its key projects no identifier, so a
+    /// contributed Entity is named by the identifier the read is narrowed to.
+    #[test]
+    fn a_contributed_entity_read_by_its_key_is_named_by_the_narrowed_identifier() {
+        let mut compiled = with_q(&format!("\"{SPEED}\">50"));
+        compiled.contributed = ContributedEntities::new(
+            ["urn:ngsi-ld:Vehicle:1".parse::<Identifier>().expect("an identifier")],
+            ContributedRendering::Merged,
+        );
+        let of = HistoryOf::Evolution(EvolutionColumns {
+            id: Expr::col((Alias::new("e"), Alias::new("id"))),
+            key: Expr::col((Alias::new("e"), Alias::new("entity_key"))),
+        });
+        let condition = met_restrictions(&HistoryBranch::live_recorded(), &of, &compiled, &names())
+            .expect("renders")
+            .expect("a narrowing");
+        let statement = Query::select().expr(Expr::val(1)).cond_where(condition).to_owned();
+        let text = statement.to_string(PostgresQueryBuilder);
+        assert!(!text.contains("\"ah\".\"entity_id\""), "{text}");
+        assert_statement_snapshot!(
+            "represented-filters-a-contributed-entity-read-by-its-key-is-named-by-the-narrowed-identifier",
+            statement
+        );
     }
 
     /// An Entity a Context Source contributed to a split query is judged over

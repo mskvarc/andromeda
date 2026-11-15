@@ -80,6 +80,11 @@ pub enum TargetValue<'a> {
     Time(TimeValue),
     /// A number beyond the decimals, declared as `xsd:float` or `xsd:double`.
     NonFiniteNumber(NonFinite),
+    /// A value that holds no literal of its own (a structured Property value,
+    /// a geometry, a value no member reads), an Object: no operand is
+    /// identical to or included in it, so an asserted test fails over it and
+    /// its complement holds (clause 4.9, "of different data types").
+    Structure,
 }
 
 impl<'a> TargetValue<'a> {
@@ -121,18 +126,16 @@ impl<'a> TargetValue<'a> {
 
     /// The target value one lexical form of the instance member `member` is.
     ///
-    /// An instant the instance holds was admitted as a `DateTime` or stamped by
-    /// the broker, so its text always reads as one.
+    /// The text of a member holding an instant is the `DateTime` it spells. An
+    /// Entity's always spells one, admitted as one or stamped by the broker; a
+    /// Context Source Property's is kept as written, and a text spelling none
+    /// is a String.
     fn metadata_lexical(member: InstanceMetadata, text: Cow<'a, str>) -> TargetValue<'a> {
-        match member {
-            InstanceMetadata::ObservedAt | InstanceMetadata::CreatedAt | InstanceMetadata::ModifiedAt | InstanceMetadata::ExpiresAt => text
-                .parse()
-                .map_or(TargetValue::Text(text), |instant| TargetValue::Time(TimeValue::DateTime(instant))),
-            InstanceMetadata::DatasetId
-            | InstanceMetadata::InstanceId
-            | InstanceMetadata::UnitCode
-            | InstanceMetadata::ValueType
-            | InstanceMetadata::ObjectType => TargetValue::Text(text),
+        if member.holds_instant() {
+            text.parse()
+                .map_or(TargetValue::Text(text), |instant| TargetValue::Time(TimeValue::DateTime(instant)))
+        } else {
+            TargetValue::Text(text)
         }
     }
 
@@ -148,7 +151,12 @@ impl<'a> TargetValue<'a> {
                 JsonKind::Number => json.as_number().map(Cow::Owned),
                 JsonKind::Null | JsonKind::String | JsonKind::Boolean | JsonKind::Array | JsonKind::Object => None,
             },
-            TargetValue::Text(_) | TargetValue::Boolean(_) | TargetValue::Array(_) | TargetValue::Time(_) | TargetValue::NonFiniteNumber(_) => None,
+            TargetValue::Text(_)
+            | TargetValue::Boolean(_)
+            | TargetValue::Array(_)
+            | TargetValue::Time(_)
+            | TargetValue::NonFiniteNumber(_)
+            | TargetValue::Structure => None,
         }
     }
 
@@ -161,6 +169,7 @@ impl<'a> TargetValue<'a> {
             TargetValue::Number(_) | TargetValue::Text(_) | TargetValue::Boolean(_) | TargetValue::Json(_) | TargetValue::Array(_) | TargetValue::Time(_) => {
                 number_order(HeldNumber::Finite(self.as_number()?.as_ref()), operand)
             }
+            TargetValue::Structure => None,
         }
     }
 
@@ -173,7 +182,12 @@ impl<'a> TargetValue<'a> {
                 JsonKind::Boolean => json.as_bool(),
                 JsonKind::Null | JsonKind::String | JsonKind::Number | JsonKind::Array | JsonKind::Object => None,
             },
-            TargetValue::Text(_) | TargetValue::Number(_) | TargetValue::Array(_) | TargetValue::Time(_) | TargetValue::NonFiniteNumber(_) => None,
+            TargetValue::Text(_)
+            | TargetValue::Number(_)
+            | TargetValue::Array(_)
+            | TargetValue::Time(_)
+            | TargetValue::NonFiniteNumber(_)
+            | TargetValue::Structure => None,
         }
     }
 
@@ -187,7 +201,8 @@ impl<'a> TargetValue<'a> {
             | TargetValue::Boolean(_)
             | TargetValue::Json(_)
             | TargetValue::Array(_)
-            | TargetValue::NonFiniteNumber(_) => None,
+            | TargetValue::NonFiniteNumber(_)
+            | TargetValue::Structure => None,
         }
     }
 
@@ -222,6 +237,7 @@ impl<'a> TargetValue<'a> {
             TargetValue::NonFiniteNumber(NonFinite::NotANumber) => ValueShape::One(TargetKind::NotANumber),
             TargetValue::NonFiniteNumber(NonFinite::PositiveInfinity) => ValueShape::One(TargetKind::PositiveInfinity),
             TargetValue::NonFiniteNumber(NonFinite::NegativeInfinity) => ValueShape::One(TargetKind::NegativeInfinity),
+            TargetValue::Structure => ValueShape::One(TargetKind::Object),
         }
     }
 
@@ -233,7 +249,12 @@ impl<'a> TargetValue<'a> {
         match self {
             TargetValue::Text(text) => Some(Cow::Borrowed(text.as_ref())),
             TargetValue::Json(json) => json.as_str(),
-            TargetValue::Number(_) | TargetValue::Boolean(_) | TargetValue::Array(_) | TargetValue::Time(_) | TargetValue::NonFiniteNumber(_) => None,
+            TargetValue::Number(_)
+            | TargetValue::Boolean(_)
+            | TargetValue::Array(_)
+            | TargetValue::Time(_)
+            | TargetValue::NonFiniteNumber(_)
+            | TargetValue::Structure => None,
         }
     }
 }

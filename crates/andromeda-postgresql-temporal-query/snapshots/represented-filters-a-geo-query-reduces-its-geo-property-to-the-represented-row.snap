@@ -173,6 +173,7 @@ WHERE
       WHERE
         "qh"."attribute_name_key" = $6
         AND "qh"."dataset_key" = "ah"."dataset_key"
+        AND "qh"."observed_at" = "ah"."observed_at"
         AND "qh"."recorded_at" = "ah"."recorded_at"
         AND "qh"."write_id" = "ah"."write_id"
         AND "qh"."write_ordinal" = "ah"."write_ordinal"

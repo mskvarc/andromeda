@@ -9,6 +9,7 @@
 //! "(re)created".
 
 use crate::{error::EntityMapError, service::ReferencedEntityMap};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
 
 /// Whether the request asked for the map's location (Table 6.4.3.2-1 `entityMap`).
@@ -27,6 +28,17 @@ impl EntityMapFlag {
         match value {
             Some(true) => EntityMapFlag::Requested,
             Some(false) | None => EntityMapFlag::NotRequested,
+        }
+    }
+
+    /// Whether a read asking for a map as this flag says runs under one:
+    /// unless it references none and asks for none, it reuses or mints one, so
+    /// only then is its request fingerprinted.
+    #[must_use]
+    pub const fn involves_a_map(self, referenced: Option<&Identifier>) -> bool {
+        match (referenced, self) {
+            (None, EntityMapFlag::NotRequested) => false,
+            (Some(_), EntityMapFlag::Requested | EntityMapFlag::NotRequested) | (None, EntityMapFlag::Requested) => true,
         }
     }
 }
@@ -101,6 +113,7 @@ mod tests {
         reuse::{EntityMapFlag, EntityMapUse},
         service::ReferencedEntityMap,
     };
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use andromeda_ngsi_ld_model::entity_map::EntityMap;
     use chrono::{TimeZone, Utc};
 
@@ -118,6 +131,17 @@ mod tests {
 
     fn fresh() -> EntityMap {
         map("urn:ngsi-ld:EntityMap:fresh")
+    }
+
+    /// A read referencing no map and asking for none runs under none, and
+    /// every other read reuses or mints one.
+    #[test]
+    fn only_a_read_referencing_or_asking_for_a_map_involves_one() {
+        let referenced: Identifier = "urn:ngsi-ld:EntityMap:live".parse().expect("valid URI");
+        assert!(!EntityMapFlag::NotRequested.involves_a_map(None));
+        assert!(EntityMapFlag::Requested.involves_a_map(None));
+        assert!(EntityMapFlag::NotRequested.involves_a_map(Some(&referenced)));
+        assert!(EntityMapFlag::Requested.involves_a_map(Some(&referenced)));
     }
 
     #[test]

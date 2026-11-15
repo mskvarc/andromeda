@@ -31,7 +31,7 @@ use crate::{
         HistoryBranch,
         HistoryOf,
         attribute_rows::{IDENTITY_COLUMNS, attribute_rows},
-        axis::{axis_present, axis_window},
+        axis::{axis_order, axis_present, axis_window},
         entity_rows::entity_rows,
     },
     q_predicate::{
@@ -80,14 +80,19 @@ struct ReducedAttribute {
 
 impl ReducedAttribute {
     /// Whether the instance a probe reads under `aliases` is the row: the same
-    /// dataset and the same write identity, which a queued entry carries as
-    /// its recorded row will.
-    fn is_the_row(&self, aliases: &HistoryAliases) -> impl Iterator<Item = SimpleExpr> {
+    /// dataset, the same instant on `timeproperty` and the same write
+    /// identity, which a queued entry carries as its recorded row will.
+    ///
+    /// The instant and the write identity are the keys the axis's stream-led
+    /// index orders a stream's rows by after the stream, so the probe finds
+    /// the row by one index lookup rather than a range over the window.
+    fn is_the_row(&self, aliases: &HistoryAliases, timeproperty: TimeProp) -> impl Iterator<Item = SimpleExpr> {
         let dataset = aliases
             .instance_grain(HistoryGrain::DatasetKey)
-            .eq(SeaExpr::col((self.row.clone(), HistoryGrain::DatasetKey))); // clone: each column names the row's alias
+            .eq(SeaExpr::col((self.row.clone(), HistoryGrain::DatasetKey)));
+        let instant = axis_order(aliases.instance(), timeproperty).eq(axis_order(self.row.clone(), timeproperty));
         let identity = IDENTITY_COLUMNS.map(|column| aliases.instance_column(column).eq(SeaExpr::col((self.row.clone(), column))));
-        [dataset].into_iter().chain(identity)
+        [dataset, instant].into_iter().chain(identity)
     }
 }
 
@@ -198,7 +203,7 @@ impl HistoryWindow {
     fn of_attribute(&self, id: AttributeNameKey, aliases: &HistoryAliases) -> SimpleExpr {
         let attribute = SeaExpr::expr(aliases.instance_grain(HistoryGrain::AttributeNameKey)).eq(id.get());
         match &self.reduced {
-            Some(reduced) if reduced.attribute == id => reduced.is_the_row(aliases).fold(attribute, ExprTrait::and),
+            Some(reduced) if reduced.attribute == id => reduced.is_the_row(aliases, self.timeproperty).fold(attribute, ExprTrait::and),
             Some(_) | None => attribute,
         }
     }

@@ -5,6 +5,12 @@
 
 use strum::{EnumIter, EnumString, IntoStaticStr};
 
+/// The decimal places a coordinate member is read and compared at: fifteen,
+/// the most a stored geometry is written back with as `GeoJSON`, so a `q` over
+/// a `GeoProperty`'s `coordinates` compares a coordinate alike in memory and in
+/// the store whatever digits beyond them the double holds.
+pub const COORDINATE_DECIMALS: u8 = 15;
+
 /// A member RFC 7946 describes for a geometry object.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter, EnumString, IntoStaticStr)]
 #[strum(serialize_all = "camelCase")]

@@ -43,10 +43,13 @@ pub enum CorpusEntity {
     E14,
     /// `vp` a `VocabProperty` holding the term `Male`.
     E15,
-    /// `lp` a `ListProperty` 1, 2, and `jp` a `JsonProperty` `{value: "x"}`.
+    /// `lp` a `ListProperty` 1, 2, `jp` a `JsonProperty` `{value: "x"}` and
+    /// `jn` a `JsonProperty` `{a: [1, [2]]}`.
     E16,
     /// `link` a Relationship to [`CorpusEntity::E1`], `link2` one to
-    /// [`CorpusEntity::E6`], created after both.
+    /// [`CorpusEntity::E6`], `llink` a `ListRelationship` to
+    /// [`CorpusEntity::E1`], created after both, and `hm` a Relationship to
+    /// `http://example.com/a` and `urn:x:9`.
     E17,
     /// `n1` the one-element array 10, which reads back as 10.
     E18,

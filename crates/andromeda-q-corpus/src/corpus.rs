@@ -148,6 +148,22 @@ pub const CORPUS: &[CorpusCase] = &[
     local("C-75", "d!~=\"^a\"", &[]),
     local("C-76", "rl!=1..5", &[E7]),
     local("C-77", "r!=\"a\"..\"b\"", &[E7]),
+    local("C-78", "addr!=\"X\"", &[E13]),
+    local("C-79", "location!=\"x\"", &[E14]),
+    hop("C-80", "llink{n}==10", &[E17]),
+    local("C-81", "hm==\"HTTP://Example.com/a\"", &[E17]),
+    CorpusCase {
+        json_keys: &["jn"],
+        ..local("C-82", "jn[a]==1", &[E16])
+    },
+    CorpusCase {
+        json_keys: &["jn"],
+        ..local("C-83", "jn[a]==2", &[])
+    },
+    CorpusCase {
+        json_keys: &["jn"],
+        ..local("C-84", "jn[a]!=2", &[E16])
+    },
 ];
 
 #[cfg(test)]

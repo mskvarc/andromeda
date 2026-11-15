@@ -84,6 +84,21 @@ impl InstanceMetadata {
         }
     }
 
+    /// Whether the member holds an instant: `observedAt` and the clause 4.8
+    /// timestamps are `DateTime` strings, as `expiresAt` is (clause 4.22), so
+    /// a time operand compares with the instant their text spells.
+    #[must_use]
+    pub const fn holds_instant(self) -> bool {
+        match self {
+            InstanceMetadata::ObservedAt | InstanceMetadata::CreatedAt | InstanceMetadata::ModifiedAt | InstanceMetadata::ExpiresAt => true,
+            InstanceMetadata::DatasetId
+            | InstanceMetadata::InstanceId
+            | InstanceMetadata::UnitCode
+            | InstanceMetadata::ValueType
+            | InstanceMetadata::ObjectType => false,
+        }
+    }
+
     /// The member an expanded path segment names, or `None` when it names a
     /// sub-attribute or a family's value member instead.
     #[must_use]

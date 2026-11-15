@@ -9,12 +9,7 @@ WHERE
   (
     (
       SELECT
-        (
-          CASE
-            WHEN (("j" ->> ('type')) = ('Property')) THEN "j" -> ('value')
-            ELSE "j"
-          END
-        )
+        COALESCE("j" -> ('value'), "j")
       FROM
         (
           SELECT
@@ -29,12 +24,7 @@ WHERE
       jsonb_path_query(
         (
           SELECT
-            (
-              CASE
-                WHEN (("j" ->> ('type')) = ('Property')) THEN "j" -> ('value')
-                ELSE "j"
-              END
-            )
+            COALESCE("j" -> ('value'), "j")
           FROM
             (
               SELECT

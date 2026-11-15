@@ -375,5 +375,6 @@ pub(crate) fn target_json(value: &TargetValue<'_>) -> Value {
         TargetValue::Array(elements) => Value::Array(elements.iter().map(target_json).collect()),
         TargetValue::Time(time) => Value::String(time.to_string()),
         TargetValue::NonFiniteNumber(value) => Value::String(value.to_string()),
+        TargetValue::Structure => Value::Object(Map::new()),
     }
 }

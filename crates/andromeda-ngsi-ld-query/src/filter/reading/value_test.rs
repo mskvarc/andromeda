@@ -132,8 +132,9 @@ impl ValueTest {
     }
 
     /// What the asserted test makes of a target holding several values, as
-    /// `target`: the rule an element of an array target that holds several
-    /// values itself is tested by, at every depth.
+    /// `target`, whatever the term's polarity: the rule a rendering that
+    /// decides a complement as the failure of the asserted test reads the
+    /// array by.
     #[must_use]
     pub const fn asserted_array_rule(&self, target: ArrayTarget) -> ArrayRule {
         array_rule_under(&self.test, Polarity::Asserted, target)

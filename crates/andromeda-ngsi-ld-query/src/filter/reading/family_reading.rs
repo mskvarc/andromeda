@@ -137,6 +137,16 @@ pub struct FamilyReading {
     pub members: MemberSource,
 }
 
+/// The families a clause 4.9 hop crosses into the Entities their objects
+/// name: those whose target is a Relationship's object, a Relationship and a
+/// `ListRelationship`, whose objects the Linked Entity retrieval of clause
+/// 4.5.23 follows alike.
+pub fn hop_families() -> impl Iterator<Item = AttributeType> {
+    AttributeType::ALL
+        .into_iter()
+        .filter(|family| matches!(family_reading(*family).origin, TargetOrigin::RelationshipObject))
+}
+
 /// How clause 4.9 reads the values of `family`, covering all eight attribute
 /// families of clause 5.2.4 so a `q` over any of them resolves.
 #[must_use]

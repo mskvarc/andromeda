@@ -152,7 +152,11 @@ impl DatasetFilter {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        dataset::{DatasetFilter, DatasetSelector},
+        error::QueryError,
+    };
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 
     fn dataset_uri(raw: &str) -> Identifier {
         raw.parse().expect("valid URI")

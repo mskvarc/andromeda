@@ -4,6 +4,10 @@ use crate::filter::{
     reading::{target_kind::TargetKind, uri_operand::UriOperand},
     scalar::Scalar,
 };
+use andromeda_ngsi_ld_lexicon::time::{
+    calendar_serde::{date, time_of_day},
+    instant_serde::required,
+};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_value_order::string_order::StringRelation;
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
@@ -27,11 +31,11 @@ pub enum Operand {
     /// `true` or `false`.
     Boolean(bool),
     /// A clause 4.6.3 `DateTime`, normalised to UTC.
-    DateTime(#[serde(serialize_with = "andromeda_ngsi_ld_lexicon::time::instant_serde::required::serialize")] DateTime<Utc>),
+    DateTime(#[serde(serialize_with = "required::serialize")] DateTime<Utc>),
     /// A clause 4.6.3 `Date`.
-    Date(#[serde(serialize_with = "andromeda_ngsi_ld_lexicon::time::calendar_serde::date::serialize")] NaiveDate),
+    Date(#[serde(serialize_with = "date::serialize")] NaiveDate),
     /// A clause 4.6.3 `Time`, normalised to UTC.
-    Time(#[serde(serialize_with = "andromeda_ngsi_ld_lexicon::time::calendar_serde::time_of_day::serialize")] NaiveTime),
+    Time(#[serde(serialize_with = "time_of_day::serialize")] NaiveTime),
 }
 
 /// Which operators an operand stands after.

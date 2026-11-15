@@ -1,17 +1,29 @@
 //! A cursor followed under a context expanding a q term to another IRI is refused.
 
-use andromeda_test_suite::{broker, hosted_context::HostedContext, namespace::Namespace, outcome::Done, problem::problem};
+use andromeda_test_suite::{
+    broker,
+    followed_link::request_without,
+    hosted_context::HostedContext,
+    namespace::Namespace,
+    outcome::Done,
+    problem::problem,
+    unchecked_page::entities,
+};
 use googletest::prelude::*;
-use http::StatusCode;
+use http::{HeaderValue, StatusCode, header::ACCEPT};
 use ngsi_ld::{
-    http::{ContextDelivery, headers::Accept},
+    http::{
+        ContextDelivery,
+        headers::{Accept, Link, RelationType},
+    },
     model::{Context, ContextEntry, Entity, ErrorType, InlineContext, NgsiLdMediaType},
     query::{Locality, q},
 };
 
 /// Pins: following the next Link of a Query Entities through GET sent under a user @context, whose `q` names a term
-/// of it, answers the next page under that @context, and answers 400 `BadRequestData` under another @context that
-/// expands the term to another IRI
+/// of it, answers the next page under that @context with or without the `pageContext` the Link carries, and answers
+/// 400 `BadRequestData` under another @context that expands the term to another IRI, the `pageContext` left out so
+/// only the identity of the query can tell the two @contexts apart
 /// Clause: 5.5.9.1, 6.3.10
 #[gtest]
 #[tokio::test]
@@ -53,6 +65,7 @@ async fn a_qry_pag_9100_a_cursor_followed_under_a_context_expanding_a_q_term_to_
         .with_context(Context::Single(user.entry()?))?
         .with_accept(Accept::new(NgsiLdMediaType::Json));
     let first = linked
+        .with_heads()
         .entities()
         .query()
         .entity_type(&building_type)
@@ -62,15 +75,20 @@ async fn a_qry_pag_9100_a_cursor_followed_under_a_context_expanding_a_q_term_to_
         .limit(2)
         .send()
         .await?;
-    let next = first.next_page().or_fail()?;
+    let next = first.outcome.next_page().or_fail()?;
     let same = linked.send(&next).await?;
     expect_that!(same.items(), len(eq(1)));
-    let answer = broker
-        .with_context(Context::Single(other.entry()?))?
-        .with_responses()
-        .with_accept(Accept::new(NgsiLdMediaType::Json))
-        .send(&next)
-        .await;
+    let link = first.head.typed::<Link>().valid().cloned().or_fail()?;
+    let user_client = broker.with_context(Context::Single(user.entry()?))?;
+    let unpinned =
+        request_without(&user_client, &link, &RelationType::Next, "pageContext")?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
+    let admitted = user_client.send_unchecked(unpinned).await?;
+    expect_that!(admitted.status(), eq(StatusCode::OK));
+    expect_that!(entities(&admitted)?, len(eq(1)));
+    let other_client = broker.with_context(Context::Single(other.entry()?))?;
+    let replayed =
+        request_without(&other_client, &link, &RelationType::Next, "pageContext")?.append_header(ACCEPT, HeaderValue::from_static("application/json"));
+    let answer = other_client.send_unchecked(replayed).await;
     expect_that!(&answer, problem(StatusCode::BAD_REQUEST, ErrorType::BadRequestData));
     Ok(())
 }

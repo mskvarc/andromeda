@@ -33,6 +33,7 @@ use crate::{
     history_source::HistoryOf,
     q_predicate::{history_aliases::HistoryAliases, history_window::HistoryWindow, instance_scan::InstanceScan, resolved_filter::HopGuard},
 };
+use andromeda_ngsi_ld_query::filter::reading::family_reading::hop_families;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, Entities, EntitySearch},
     temporal::AttributeHistory,
@@ -45,7 +46,11 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
 };
 use andromeda_postgresql_stored_form::{entity_sides::holds_standing_state, expiry::unexpired};
-use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
+use andromeda_postgresql_stored_values::{
+    attribute_kind_code::stored_attribute_kind,
+    attribute_name_key::AttributeNameKey,
+    entity_type_name_key::EntityTypeNameKey,
+};
 use sea_query::{Alias, Condition, DynIden, Expr as SeaExpr, ExprTrait, Func, JoinType, Query, SelectStatement, SimpleExpr, TableRef};
 
 /// One hop of a traversal: the relations its probe introduces, and the probe
@@ -319,9 +324,12 @@ enum GuardedRow<'s> {
     Catalogue,
 }
 
-/// The attribute kinds whose instances hold objects a hop follows.
-fn relationship_kinds() -> [SimpleExpr; 2] {
-    [AttributeKind::Relationship, AttributeKind::ListRelationship].map(|kind| int_literal(i64::from(kind.code())))
+/// The attribute kinds whose instances hold objects a hop follows, the
+/// families [`hop_families`] names.
+fn relationship_kinds() -> Vec<SimpleExpr> {
+    hop_families()
+        .map(|family| int_literal(i64::from(stored_attribute_kind(family).code())))
+        .collect()
 }
 
 /// The hop's entity-type constraint against the linked entity's
@@ -331,8 +339,9 @@ fn relationship_kinds() -> [SimpleExpr; 2] {
 /// disjunction of array-membership tests on the resolved dictionary keys, the
 /// same leaf shape a `type` selection renders (clause 4.17), built through the
 /// same [`array_contains`] helper so the two cannot drift. A guard type the
-/// dictionary never recorded was never carried by any entity, so its arm is
-/// constant `FALSE`.
+/// dictionary never recorded was never carried by any entity, so the resolved
+/// guard holds only recorded types, and a hop whose guard holds none is
+/// resolved to no target before it renders.
 ///
 /// An array-overlap operator would state the disjunction in one term instead of
 /// one arm per type, but it cannot be written here: `&& ARRAY[$1, $2]` puts the

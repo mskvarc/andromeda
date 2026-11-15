@@ -90,7 +90,7 @@ fn disagreement(text: &str, states: &[FixtureEntity], linked: &[FixtureEntity]) 
 proptest! {
     #![proptest_config(Config::with_cases(2048))]
 
-    /// PR-5 over generated Entities: the required attributes never refuse a
+    /// Over generated Entities, the required attributes never refuse a
     /// state the filter holds for, and the preparation never changes an answer.
     #[test]
     fn the_required_attributes_never_refuse_a_state_a_generated_filter_holds_for((documents, text) in generated_case()) {
@@ -99,7 +99,7 @@ proptest! {
         prop_assert_eq!(disagreement(&text, &states, &linked), None, "{}", text);
     }
 
-    /// PR-5 over the corpus Entities, each as a creation leaves it.
+    /// Over the corpus Entities, each as a creation leaves it.
     #[test]
     fn the_required_attributes_never_refuse_a_corpus_state_a_filter_holds_for(text in filter_over(corpus_path())) {
         prop_assert_eq!(disagreement(&text, &CORPUS_ENTITIES, &CORPUS_ENTITIES), None, "{}", text);

@@ -74,7 +74,7 @@ async fn every_corpus_filter_renders_the_statements_its_snapshots_fix() {
         match expanded_filter(case).await {
             Err(refusal) => assert_named_snapshot!(format!("refused-{name}"), format!("{}\n{refusal}", case.q)),
             Ok(expr) => {
-                let reading = FilterReading::lowered(&expr, LanguageMatching::TagEquality);
+                let reading = FilterReading::of(&expr, LanguageMatching::TagEquality);
                 let current = compile(&reading, &InstanceScan::Current(&rows), &names);
                 assert_statement_snapshot!(
                     format!("current-{name}"),

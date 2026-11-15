@@ -176,17 +176,13 @@ pub(crate) async fn resolve_query_map_use(
     referenced: Option<&Identifier>,
     instance: &HttpUri,
 ) -> Result<EntityMapUse, ProblemResponse> {
-    if !target.permits_federation() {
+    let flag = EntityMapFlag::from_parameter(query.entity_map);
+    if !target.permits_federation() || !flag.involves_a_map(referenced) {
         return Ok(EntityMapUse::None);
     }
     let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities { selection, csf }).with_entity_instance(instance)?;
     let map_use = maps
-        .resolve_use(
-            referenced,
-            EntityMapFlag::from_parameter(query.entity_map),
-            &fingerprint,
-            query.entity_map_lifetime.as_ref(),
-        )
+        .resolve_use(referenced, flag, &fingerprint, query.entity_map_lifetime.as_ref())
         .await
         .with_entity_instance(instance)?;
     if let Some(map) = map_use.reused() {
@@ -216,7 +212,8 @@ pub(crate) async fn resolve_retrieval_map_use(
     referenced: Option<&Identifier>,
     instance: &HttpUri,
 ) -> Result<EntityMapUse, ProblemResponse> {
-    if !target.permits_federation() || params.local.unwrap_or(false) {
+    let flag = EntityMapFlag::from_parameter(params.entity_map);
+    if !target.permits_federation() || params.local.unwrap_or(false) || !flag.involves_a_map(referenced) {
         return Ok(EntityMapUse::None);
     }
     let entity_type = match params.entity_type.as_ref() {
@@ -232,14 +229,9 @@ pub(crate) async fn resolve_retrieval_map_use(
         attrs: &attrs,
     })
     .with_entity_instance(instance)?;
-    maps.resolve_use(
-        referenced,
-        EntityMapFlag::from_parameter(params.entity_map),
-        &fingerprint,
-        params.entity_map_lifetime.as_ref(),
-    )
-    .await
-    .with_entity_instance(instance)
+    maps.resolve_use(referenced, flag, &fingerprint, params.entity_map_lifetime.as_ref())
+        .await
+        .with_entity_instance(instance)
 }
 
 /// Record what the read's sources contributed to the map it ran under, and

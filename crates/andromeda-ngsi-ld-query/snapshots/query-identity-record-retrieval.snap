@@ -1,0 +1,4 @@
+---
+source: crates/andromeda-ngsi-ld-query/src/query_identity.rs
+---
+{"entities":{"excepted":[{"type":"https://example.com/Car"}]},"attrs":["https://example.com/speed"],"q":null,"geo":null,"scope_q":null,"csf":null,"members":"unconditional"}

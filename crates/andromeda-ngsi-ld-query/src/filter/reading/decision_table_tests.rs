@@ -90,7 +90,7 @@ const NO_ELEMENT: [ArrayRule; 3] = [ArrayRule::NoElement; 3];
 /// target value.
 const ONE_OF_A_MAP: [ArrayRule; 3] = [ArrayRule::Never, ArrayRule::Never, ArrayRule::SomeElement];
 
-/// DT-1. Clause 4.9 Equal: "If there is no equality between the target value
+/// Clause 4.9 Equal: "If there is no equality between the target value
 /// data type and the Query Term value data type, then it shall be considered as
 /// not matching"; an array includes the value.
 #[test]
@@ -101,7 +101,7 @@ fn an_equality_with_a_number_holds_on_numbers_alone() {
     assert_eq!(array_rules(&test), SOME_ELEMENT);
 }
 
-/// DT-2. Clause 4.9 Unequal: "If the data type of the target value and the data
+/// Clause 4.9 Unequal: "If the data type of the target value and the data
 /// type of the Query Term value are different, then they shall be considered
 /// unequal".
 #[test]
@@ -112,7 +112,7 @@ fn an_inequality_with_a_number_holds_on_every_other_kind() {
     assert_eq!(array_rules(&test), NO_ELEMENT);
 }
 
-/// DT-3 to DT-6. The infinities order around every finite number, and
+/// The infinities order around every finite number, and
 /// not-a-number is unordered, a recorded ruling.
 #[test]
 fn an_ordering_with_a_number_places_the_infinities_by_sign() {
@@ -144,7 +144,7 @@ fn an_ordering_with_a_number_places_the_infinities_by_sign() {
     }
 }
 
-/// DT-7 and DT-8. Clause 4.9 compares a String operand with a Relationship's
+/// Clause 4.9 compares a String operand with a Relationship's
 /// object under equality.
 #[test]
 fn an_equality_with_text_holds_on_strings_and_relationship_objects() {
@@ -168,7 +168,7 @@ fn an_equality_with_text_holds_on_strings_and_relationship_objects() {
     );
 }
 
-/// DT-9. Clause 4.9 bars a Relationship from "any operator different than
+/// Clause 4.9 bars a Relationship from "any operator different than
 /// equal or unequal".
 #[test]
 fn an_ordering_with_text_holds_on_strings_and_never_on_relationship_objects() {
@@ -179,14 +179,13 @@ fn an_ordering_with_text_holds_on_strings_and_never_on_relationship_objects() {
     );
 }
 
-/// DT-10. A bare `URI` compares as the text it is, exactly as its quoted
+/// A bare `URI` compares as the text it is, exactly as its quoted
 /// spelling.
 #[test]
 fn a_bare_uri_lowers_to_the_test_of_its_quoted_spelling() {
     assert_eq!(value_test("x==urn:a:b"), value_test("x==\"urn:a:b\""));
 }
 
-/// DT-11 and DT-12.
 #[test]
 fn an_equality_with_a_boolean_holds_on_booleans_alone() {
     let yes = equals(vec![Operand::Boolean(true)]);
@@ -200,7 +199,7 @@ fn an_equality_with_a_boolean_holds_on_booleans_alone() {
     );
 }
 
-/// DT-13 to DT-16. A time operand matches only a value of its own clause
+/// A time operand matches only a value of its own clause
 /// 4.6.3 form.
 #[test]
 fn a_time_operand_holds_on_its_own_form_alone() {
@@ -222,7 +221,6 @@ fn a_time_operand_holds_on_its_own_form_alone() {
     );
 }
 
-/// DT-17.
 #[test]
 fn a_number_range_holds_on_finite_numbers_alone() {
     let test = value_test("x==1..5");
@@ -231,7 +229,7 @@ fn a_number_range_holds_on_finite_numbers_alone() {
     assert_eq!(array_rules(&test), ONE_OF_A_MAP);
 }
 
-/// DT-18. A range is a value of the `unequal` production, so a Relationship's
+/// A range is a value of the `unequal` production, so a Relationship's
 /// object is unequal to it like any other kind.
 #[test]
 fn a_negated_number_range_holds_on_every_other_kind_relationship_objects_included() {
@@ -241,7 +239,7 @@ fn a_negated_number_range_holds_on_every_other_kind_relationship_objects_include
     assert_eq!(array_rules(&test), [ArrayRule::Always, ArrayRule::Always, ArrayRule::NoElement]);
 }
 
-/// DT-19. Its bounds are ordered, which clause 4.9 bars a Relationship from.
+/// The bounds of a text range are ordered, which clause 4.9 bars a Relationship from.
 #[test]
 fn a_text_range_holds_on_strings_and_never_on_relationship_objects() {
     let range = within(text("a"), text("m"));
@@ -251,7 +249,6 @@ fn a_text_range_holds_on_strings_and_never_on_relationship_objects() {
     );
 }
 
-/// DT-20 and DT-21.
 #[test]
 fn a_number_list_holds_on_numbers_and_its_complement_on_every_other_kind() {
     let list = equals(vec![number("1"), number("2")]);
@@ -263,7 +260,7 @@ fn a_number_list_holds_on_numbers_and_its_complement_on_every_other_kind() {
     assert_eq!(array_rules(&negated), NO_ELEMENT);
 }
 
-/// DT-22. One test holds both operands, and each compares with its own kinds.
+/// One test holds both operands, and each compares with its own kinds.
 #[test]
 fn a_mixed_list_holds_each_operand_against_its_own_kinds() {
     let list = equals(vec![text("a"), number("5")]);
@@ -280,7 +277,7 @@ fn a_mixed_list_holds_each_operand_against_its_own_kinds() {
     );
 }
 
-/// DT-23 and DT-24. Clause 4.9 applies both pattern operators to a String
+/// Clause 4.9 applies both pattern operators to a String
 /// target only: "If the target value data type is different than String then
 /// it shall be considered as not matching."
 #[test]
@@ -298,7 +295,7 @@ fn a_pattern_and_its_negation_hold_on_strings_alone() {
     assert_eq!(array_rules(&negated), [ArrayRule::Never, ArrayRule::Never, ArrayRule::NoElement]);
 }
 
-/// DT-25. Clause 4.9 Existence: "A matching entity shall contain the target
+/// Clause 4.9 Existence: "A matching entity shall contain the target
 /// element."
 #[test]
 fn an_attribute_alone_tests_existence() {
@@ -309,7 +306,7 @@ fn an_attribute_alone_tests_existence() {
     assert_eq!(term.test(), &Test::Exists);
 }
 
-/// DT-31. A recorded ruling extends "No matching value is found" to a range.
+/// A recorded ruling extends "No matching value is found" to a range.
 #[test]
 fn a_negated_text_range_holds_on_a_map_with_no_value_inside_it() {
     let test = value_test("x!=\"a\"..\"m\"");
@@ -318,7 +315,7 @@ fn a_negated_text_range_holds_on_a_map_with_no_value_inside_it() {
     assert_eq!(test.array_rule(ArrayTarget::AnyOneValue), ArrayRule::NoElement);
 }
 
-/// DT-32. A recorded ruling extends "No matching value is found" to `!~=`.
+/// A recorded ruling extends "No matching value is found" to `!~=`.
 #[test]
 fn a_negated_pattern_holds_on_a_map_with_no_value_matching_it() {
     let test = value_test("x!~=\"a\"");
@@ -326,7 +323,7 @@ fn a_negated_pattern_holds_on_a_map_with_no_value_matching_it() {
     assert_eq!(test.array_rule(ArrayTarget::AnyOneValue), ArrayRule::NoElement);
 }
 
-/// DT-33 and DT-34. Clause 4.9 defines no interval between values of two data
+/// Clause 4.9 defines no interval between values of two data
 /// types, a recorded ruling.
 #[test]
 fn a_range_of_two_kinds_holds_for_no_target_and_its_complement_for_every_one() {
@@ -340,9 +337,9 @@ fn a_range_of_two_kinds_holds_for_no_target_and_its_complement_for_every_one() {
 }
 
 /// "No element satisfies the asserted test": an element of an array target is
-/// tested with the asserted test under either polarity, at every depth, so a
-/// negated equality tests each element for equality and a negated range finds
-/// no element inside it of an array that is no target of a range.
+/// tested with the asserted test under either polarity, so a negated equality
+/// tests each element for equality and a negated range finds no element inside
+/// it of an array that is no target of a range.
 #[test]
 fn an_element_is_tested_with_the_asserted_test_whatever_the_polarity() {
     let negated = value_test("x!=1");
@@ -463,7 +460,6 @@ fn table(terms: &[&str]) -> String {
     out
 }
 
-/// DT-26.
 #[test]
 fn the_equality_operators_decide_every_kind_as_the_table_prints() {
     assert_named_snapshot!(
@@ -485,7 +481,6 @@ fn the_equality_operators_decide_every_kind_as_the_table_prints() {
     );
 }
 
-/// DT-27.
 #[test]
 fn the_ordering_operators_decide_every_kind_as_the_table_prints() {
     assert_named_snapshot!(
@@ -504,7 +499,6 @@ fn the_ordering_operators_decide_every_kind_as_the_table_prints() {
     );
 }
 
-/// DT-28.
 #[test]
 fn the_ranges_decide_every_kind_as_the_table_prints() {
     assert_named_snapshot!(
@@ -522,7 +516,6 @@ fn the_ranges_decide_every_kind_as_the_table_prints() {
     );
 }
 
-/// DT-29.
 #[test]
 fn the_value_lists_decide_every_kind_as_the_table_prints() {
     assert_named_snapshot!(
@@ -531,7 +524,6 @@ fn the_value_lists_decide_every_kind_as_the_table_prints() {
     );
 }
 
-/// DT-30.
 #[test]
 fn the_pattern_operators_decide_every_kind_as_the_table_prints() {
     assert_named_snapshot!("decision-table-pattern", table(&["x~=\"a.*\"", "x!~=\"a.*\""]));

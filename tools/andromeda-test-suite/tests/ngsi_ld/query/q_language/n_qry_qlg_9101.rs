@@ -98,4 +98,11 @@ corpus_cases! {
     n_qry_qlg_9175_a_negated_pattern_skips_a_declared_date => "C-75",
     n_qry_qlg_9176_a_list_relationship_is_unequal_to_a_range => "C-76",
     n_qry_qlg_9177_a_relationship_is_unequal_to_a_string_range => "C-77",
+    n_qry_qlg_9178_a_structured_value_is_unequal_to_a_string => "C-78",
+    n_qry_qlg_9179_a_geometry_is_unequal_to_a_string => "C-79",
+    n_qry_qlg_9180_a_hop_crosses_a_list_relationship => "C-80",
+    n_qry_qlg_9181_a_uri_matches_one_of_several_objects_in_its_normal_form => "C-81",
+    n_qry_qlg_9182_an_element_of_an_array_member_matches => "C-82",
+    n_qry_qlg_9183_an_element_of_a_nested_array_is_no_element_of_the_member => "C-83",
+    n_qry_qlg_9184_a_nested_array_includes_no_operand => "C-84",
 }

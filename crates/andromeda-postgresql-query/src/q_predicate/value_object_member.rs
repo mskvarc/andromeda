@@ -6,7 +6,9 @@
 //! whose members are IRI-keyed arrays of value nodes, so the path walks the
 //! expanded member names; a `JsonProperty` stores its JSON literal itself
 //! (clause 4.9 EXAMPLE 11), whose members keep the keys the writer chose, so
-//! the path walks the names as the client wrote them. A `GeoProperty` stores
+//! the path walks the names as the client wrote them, as it walks a Property
+//! holding one JSON literal (`@type` `@json`), whose literal is the `@value`
+//! of the value object it is stored as. A `GeoProperty` stores
 //! its geometry, so the path walks the names as the client wrote them through
 //! the `GeoJSON` object the geometry is ([`MemberSource::Geometry`]). A member
 //! of an expanded value is read with the datatype its own `@type` declares; a
@@ -28,6 +30,7 @@ use crate::q_predicate::{
     value_column::ValueColumn,
     verdict_condition::{ComplementTarget, array_rule_condition, verdict_condition},
 };
+use andromeda_ngsi_ld_geometry::geometry_member::COORDINATE_DECIMALS;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_ngsi_ld_query::filter::{
     reading::{
@@ -50,7 +53,7 @@ use andromeda_postgresql_seaquery::{
     postgis::st_as_geojson,
 };
 use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, attribute_kind_code::stored_attribute_kind, value_placement::ValueField};
-use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
 
 /// The alias the member a path reaches is read under, which is also the name
 /// of its one column.
@@ -169,14 +172,20 @@ fn literal_target(value: SimpleExpr) -> JsonTarget {
 /// A Query Term against the member `members` addresses in the value of
 /// `row`.
 ///
-/// The expanded reading, the JSON-literal reading and the geometry reading are
-/// disjoined: a `JsonProperty` holds no IRI-keyed member nodes, only a
-/// `JsonProperty` is read as a literal, and only a family whose members are its
+/// The expanded reading, the JSON-literal readings and the geometry reading
+/// are disjoined: a `JsonProperty` holds no IRI-keyed member nodes, only a
+/// `JsonProperty` is read as a literal, a Property's value object declaring
+/// `@json` keys no member by an IRI, and only a family whose members are its
 /// geometry's reads the geometry, which no other reading reads, so at most one
 /// of them reaches a member.
 pub(crate) fn member_term(test: &Test, members: &MemberPath, row: InstanceRow) -> Condition {
     let object = row.value(ValueColumn::Field(ValueField::Object));
-    let expanded = reading_term(test, MemberShape::ValueNodes.member_source(object.clone(), members), MemberShape::ValueNodes); // clone: both readings walk the one value
+    let expanded = reading_term(test, MemberShape::ValueNodes.member_source(object.clone(), members), MemberShape::ValueNodes); // clone: every reading walks the one value
+    let declared = reading_term(
+        test,
+        MemberShape::JsonLiteral.member_source(declared_json_literal(object.clone()), members), // clone: every reading walks the one value
+        MemberShape::JsonLiteral,
+    );
     let literal = reading_term(test, MemberShape::JsonLiteral.member_source(object, members), MemberShape::JsonLiteral);
     let geometry = reading_term(
         test,
@@ -187,7 +196,7 @@ pub(crate) fn member_term(test: &Test, members: &MemberPath, row: InstanceRow) -
         .add(
             Condition::all()
                 .add(reads_members_from(MemberSource::Value, row.attribute_family()))
-                .add(expanded),
+                .add(Condition::any().add(expanded).add(declared)),
         )
         .add(Condition::all().add(is_json_property(row.attribute_family())).add(literal))
         .add(
@@ -197,10 +206,22 @@ pub(crate) fn member_term(test: &Test, members: &MemberPath, row: InstanceRow) -
         )
 }
 
-/// The `GeoJSON` geometry object of the geometry `row` holds, as `jsonb`; NULL
-/// for an instance holding none.
+/// The JSON literal a stored value object declaring `@json` holds, its
+/// `@value`; NULL for any other stored value, a Property holding several
+/// values included, whose stored array keys no `@type`.
+fn declared_json_literal(object: SimpleExpr) -> SimpleExpr {
+    let declares_json = SeaExpr::expr(object.clone().json_get_text(text_literal(keyword::TYPE))).eq(text_literal(keyword::JSON)); // clone: the guard and the literal read one value
+    CaseStatement::new().case(declares_json, object.json_get(text_literal(keyword::VALUE))).into()
+}
+
+/// The `GeoJSON` geometry object of the geometry `row` holds, as `jsonb`, its
+/// coordinates at the decimal places they are compared at; NULL for an
+/// instance holding none.
 fn geometry_object(row: InstanceRow) -> SimpleExpr {
-    cast(st_as_geojson(row.value(ValueColumn::Field(ValueField::Geometry))), PostgresType::Jsonb)
+    cast(
+        st_as_geojson(row.value(ValueColumn::Field(ValueField::Geometry)), COORDINATE_DECIMALS),
+        PostgresType::Jsonb,
+    )
 }
 
 /// Whether an instance of the attribute family `family` has its members read

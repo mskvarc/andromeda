@@ -263,7 +263,7 @@ impl Fixture {
     }
 }
 
-/// B-1: each filter evaluated over the Vehicle, as its reading and as the
+/// Each filter evaluated over the Vehicle, as its reading and as the
 /// preparation the matching path runs.
 fn one_filter_over_one_entity(criterion: &mut Criterion, fixture: &Fixture) {
     let mut group = criterion.benchmark_group("evaluate");
@@ -284,7 +284,7 @@ fn one_filter_over_one_entity(criterion: &mut Criterion, fixture: &Fixture) {
     group.finish();
 }
 
-/// B-2: one change against many Subscriptions sharing ten filters.
+/// One change against many Subscriptions sharing ten filters.
 fn one_change_against_many_subscriptions(criterion: &mut Criterion, fixture: &Fixture) -> Result<(), SetupError> {
     let mut group = criterion.benchmark_group("match");
     group.sample_size(10);
@@ -302,7 +302,7 @@ fn one_change_against_many_subscriptions(criterion: &mut Criterion, fixture: &Fi
     Ok(())
 }
 
-/// B-3: one change against Subscriptions whose filters each need an
+/// One change against Subscriptions whose filters each need an
 /// Attribute the Vehicle lacks.
 fn one_change_against_subscriptions_needing_an_absent_attribute(criterion: &mut Criterion, fixture: &Fixture) -> Result<(), SetupError> {
     let index = index_of(10_000, &fixture.absent, &fixture.terms)?;

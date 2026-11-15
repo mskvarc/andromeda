@@ -29,15 +29,19 @@ pub(crate) fn terminal_value<'a, N: QueriedValueNode<'a>>(keyword: TerminalKeywo
 }
 
 /// The clause 4.9 target value an attribute instance's family carries, or
-/// `None` when none of its values is one.
+/// `None` when it holds none.
 ///
 /// A structured Property value carries no literal of its own, and neither does
-/// a geometry, so neither is a target: a path addressing a member of a
-/// structured value descends into it instead.
+/// a geometry or a value no member reads: each is an Object target
+/// ([`TargetValue::Structure`]), which no operand is identical to, so an
+/// asserted test fails over it and its complement holds, as the SQL rendering
+/// probes the instance whatever its value. A path addressing a member of a
+/// structured value descends into it instead. A Relationship's node without an
+/// object names nothing and is no target.
 #[must_use]
 pub fn family_target<'a, I: QueriedInstance<'a>>(instance: I) -> Option<ResolvedTarget<'a>> {
     let reading = family_reading(instance.family());
-    let terminals = instance.values().filter_map(|item| terminal_value(reading.terminal, item));
+    let terminals = instance.values().filter_map(|item| own_value(reading.terminal, item));
     let value = match reading.layout {
         ValueLayout::Nodes => held_values_target(terminals)?,
         ValueLayout::OrderedList => TargetValue::Array(terminals.collect()),
@@ -47,6 +51,19 @@ pub fn family_target<'a, I: QueriedInstance<'a>>(instance: I) -> Option<Resolved
         origin: reading.origin,
         reading: reading.reading,
     })
+}
+
+/// The target value one item of an instance's own value carries under
+/// `keyword`: its literal, or an Object target for a literal-keyed item that
+/// holds none.
+fn own_value<'a, N: QueriedValueNode<'a>>(keyword: TerminalKeyword, item: ValueItem<'a, N>) -> Option<TargetValue<'a>> {
+    match (keyword, &item) {
+        (TerminalKeyword::Literal, ValueItem::Reference(_) | ValueItem::Node(_) | ValueItem::Geometry(_) | ValueItem::Opaque) => Some(TargetValue::Structure),
+        (TerminalKeyword::Literal | TerminalKeyword::Identifier, ValueItem::Literal(_) | ValueItem::Json(_))
+        | (TerminalKeyword::Identifier, ValueItem::Reference(_) | ValueItem::Node(_) | ValueItem::Geometry(_) | ValueItem::Opaque) => {
+            terminal_value(keyword, item)
+        }
+    }
 }
 
 /// The target value a member holding one value node per value the client
@@ -76,7 +93,7 @@ pub fn first_family_value<'a, I: QueriedInstance<'a>>(instance: I) -> Option<Val
 #[cfg(test)]
 mod tests {
     use crate::{
-        q::family_target::family_target,
+        q::{family_target::family_target, target_value::TargetValue},
         queried_entity::expanded_fixture::{FixtureInstance, target_json},
     };
     use andromeda_ngsi_ld_query::filter::reading::family_reading::TargetOrigin;
@@ -88,6 +105,19 @@ mod tests {
         let instance = FixtureInstance::from_expanded(instance);
         let target = family_target(&instance).expect("a target value");
         (target_json(&target.value), target.origin)
+    }
+
+    /// A Property holding a literal beside a structured value holds two
+    /// values, so its target is an array whatever its values are: the node is
+    /// an Object element no operand is included as, and the literal one element
+    /// beside it, as the stored array holds them.
+    #[test]
+    fn a_literal_beside_a_node_is_an_array_target() {
+        let (value, origin) = target_of(&json!({
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "x"}, {"https://example.com/a": [{"@value": 1}]}]
+        }));
+        pretty_assertions::assert_eq!(value, json!(["x", {}]));
+        assert_eq!(origin, TargetOrigin::AttributeValue);
     }
 
     /// Clause 4.9: "If the target element is a `ListProperty`, the target value
@@ -223,20 +253,21 @@ mod tests {
     }
 
     /// An expanded structured Property value carries no `@value` of its own, so
-    /// it is not a terminal target: a path descends into its member nodes
-    /// instead.
+    /// it is an Object target no operand is identical to; a path descends into
+    /// its member nodes instead.
     #[test]
-    fn a_structured_property_value_resolves_no_terminal_target() {
+    fn a_structured_property_value_is_an_object_target() {
         let instance = FixtureInstance::from_expanded(&json!({
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"https://example.com/city": [{"@value": "Berlin"}]}]
         }));
-        assert!(family_target(&instance).is_none());
+        assert!(matches!(family_target(&instance).map(|target| target.value), Some(TargetValue::Structure)));
     }
 
     /// A `GeoProperty` held as a geometry carries no literal clause 4.9 could
-    /// compare, while the clause 4.7.2 string form is a String like any other.
+    /// compare, so it is an Object target, while the clause 4.7.2 string form
+    /// is a String like any other.
     #[test]
-    fn a_geometry_is_no_target_and_its_string_form_is_text() {
+    fn a_geometry_is_an_object_target_and_its_string_form_is_text() {
         let geometry = FixtureInstance::from_expanded(&json!({
             "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
             "https://uri.etsi.org/ngsi-ld/hasValue": [{
@@ -244,7 +275,7 @@ mod tests {
                 "https://purl.org/geojson/vocab#coordinates": [{"@list": [{"@value": 1}, {"@value": 2}]}]
             }]
         }));
-        assert!(family_target(&geometry).is_none());
+        assert!(matches!(family_target(&geometry).map(|target| target.value), Some(TargetValue::Structure)));
         let (value, _) = target_of(&json!({
             "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "{\"type\":\"Point\",\"coordinates\":[1,2]}"}]

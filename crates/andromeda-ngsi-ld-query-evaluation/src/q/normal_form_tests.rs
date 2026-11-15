@@ -314,14 +314,14 @@ fn disagreement(expr: &Expr, entities: &[FixtureEntity]) -> Option<String> {
 proptest! {
     #![proptest_config(Config::with_cases(4096))]
 
-    /// PR-3 over generated Entities.
+    /// The normal form agrees with the lowered filter over generated Entities.
     #[test]
     fn the_normal_form_holds_for_the_generated_entities_the_filter_holds_for((documents, text) in generated_case()) {
         let expr = parse(&text).unwrap_or_else(|error| panic!("the generator writes grammatical filters, and {text} is refused: {error}"));
         prop_assert_eq!(disagreement(&expr, &decoded(&documents)), None, "{}", text);
     }
 
-    /// PR-3 over the corpus Entities.
+    /// The normal form agrees with the lowered filter over the corpus Entities.
     #[test]
     fn the_normal_form_holds_for_the_corpus_entities_the_filter_holds_for(text in filter_over(corpus_path())) {
         let expr = parse(&text).unwrap_or_else(|error| panic!("the generator writes grammatical filters, and {text} is refused: {error}"));
@@ -329,7 +329,7 @@ proptest! {
     }
 }
 
-/// PR-3 for every corpus filter over the corpus Entities.
+/// The normal form agrees with the lowered filter for every corpus filter over the corpus Entities.
 #[tokio::test]
 async fn the_normal_form_of_every_corpus_filter_holds_for_the_entities_it_holds_for() {
     for case in CORPUS {

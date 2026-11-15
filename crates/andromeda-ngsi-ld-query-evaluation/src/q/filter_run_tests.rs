@@ -1198,6 +1198,49 @@ fn instance_members_entity() -> Value {
     }])
 }
 
+/// A literal beside a structured value is one element of an array target,
+/// which clause 4.9 compares by membership alone: an equality finds the
+/// literal, and an order or a pattern holds for no array.
+#[test]
+fn a_literal_beside_a_node_is_compared_as_an_element() {
+    let entity = serde_json::json!([{
+        "@id": "urn:ngsi-ld:Sensor:4",
+        "@type": ["https://example.com/Sensor"],
+        "https://example.com/p": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "x"}, {"https://example.com/a": [{"@value": 1}]}]
+        }]
+    }]);
+    assert!(holds(&parse("\"https://example.com/p\"==\"x\"").unwrap(), &entity));
+    assert!(!holds(&parse("\"https://example.com/p\"~=\"x\"").unwrap(), &entity));
+    assert!(!holds(&parse("\"https://example.com/p\">\"a\"").unwrap(), &entity));
+    assert!(holds(&parse("\"https://example.com/p\"!=\"y\"").unwrap(), &entity));
+    assert!(!holds(&parse("\"https://example.com/p\"!=\"x\"").unwrap(), &entity));
+}
+
+/// A Property whose one value is a JSON literal (`@type` `@json`) is raw
+/// JSON, so a trailing path reads its keys as written, as the SQL rendering
+/// reads the `@value` of the value object it stores; a Property holding
+/// several literals has no member.
+#[test]
+fn a_json_literal_value_is_read_by_its_written_keys() {
+    let entity = serde_json::json!([{
+        "@id": "urn:ngsi-ld:Sensor:3",
+        "@type": ["https://example.com/Sensor"],
+        "https://example.com/one": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": {"city": "X"}, "@type": "@json"}]
+        }],
+        "https://example.com/several": [{
+            "https://uri.etsi.org/ngsi-ld/hasValue": [
+                {"@value": {"city": "X"}, "@type": "@json"},
+                {"@value": {"city": "Y"}, "@type": "@json"}
+            ]
+        }]
+    }]);
+    assert!(holds(&parse("\"https://example.com/one\"[city]==\"X\"").unwrap(), &entity));
+    assert!(!holds(&parse("\"https://example.com/one\"[city]==\"Y\"").unwrap(), &entity));
+    assert!(!holds(&parse("\"https://example.com/several\"[city]==\"X\"").unwrap(), &entity));
+}
+
 /// Clause 4.9 addresses `datasetId` with `.` like a sub-attribute, and
 /// every instance answers for its own.
 #[test]

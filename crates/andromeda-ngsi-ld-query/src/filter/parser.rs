@@ -217,14 +217,20 @@ fn parse_operator_and_operand(cursor: &mut TokenCursor<'_>, path: QueryPath) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::filter::{
-        expectation::{QExpectation, QFound},
-        lexer::TokenKind,
-        path::AttrPath,
-        scalar::{CompareValue, Scalar},
-        serialize::serialize,
-        value_path::MAX_SUB_ATTRIBUTE_DEPTH,
+    use crate::{
+        error::QueryError,
+        filter::{
+            complexity::WRITTEN_NESTING_CEILING,
+            expectation::{QExpectation, QFound},
+            expression::Expr,
+            lexer::TokenKind,
+            parser::parse,
+            path::{AttrPath, QueryPath},
+            predicate::{OrderingOp, Predicate, SetMembership},
+            scalar::{CompareValue, Scalar},
+            serialize::serialize,
+            value_path::MAX_SUB_ATTRIBUTE_DEPTH,
+        },
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::rendering::instant_text};
     use andromeda_ngsi_ld_number::JsonNumber;

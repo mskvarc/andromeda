@@ -8,12 +8,7 @@ FROM
 WHERE
   (
     SELECT
-      (
-        CASE
-          WHEN (("j" ->> ('type')) = ('Property')) THEN "j" -> ('value')
-          ELSE "j"
-        END
-      )
+      COALESCE("j" -> ('value'), "j")
     FROM
       (
         SELECT
@@ -24,12 +19,7 @@ WHERE
     jsonb_typeof(
       (
         SELECT
-          (
-            CASE
-              WHEN (("j" ->> ('type')) = ('Property')) THEN "j" -> ('value')
-              ELSE "j"
-            END
-          )
+          COALESCE("j" -> ('value'), "j")
         FROM
           (
             SELECT
@@ -42,12 +32,7 @@ WHERE
         jsonb_typeof(
           (
             SELECT
-              (
-                CASE
-                  WHEN (("j" ->> ('type')) = ('Property')) THEN "j" -> ('value')
-                  ELSE "j"
-                END
-              )
+              COALESCE("j" -> ('value'), "j")
             FROM
               (
                 SELECT
@@ -59,12 +44,7 @@ WHERE
           (
             (
               SELECT
-                (
-                  CASE
-                    WHEN (("j" ->> ('type')) = ('Property')) THEN "j" -> ('value')
-                    ELSE "j"
-                  END
-                )
+                COALESCE("j" -> ('value'), "j")
               FROM
                 (
                   SELECT

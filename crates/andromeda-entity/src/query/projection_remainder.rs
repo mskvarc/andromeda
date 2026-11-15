@@ -19,7 +19,10 @@
 
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::projection::{compiled::Projection, projected_members::ProjectedMembers};
+use andromeda_ngsi_ld_query::projection::{
+    compiled::Projection,
+    projected_members::{ProjectedMembers, ScopePresence},
+};
 use chrono::{DateTime, Utc};
 use derive_more::IsVariant;
 
@@ -45,7 +48,11 @@ pub fn state_remainder(state: &EntityState, projection: &Projection, now: DateTi
         .names()
         .filter(|name| state.attribute_stands(name.as_str(), now))
         .map(AttributeName::as_str);
-    if ProjectedMembers::of(projection).admits(standing, state.scope().is_some()) {
+    let scope_presence = match state.scope() {
+        Some(_) => ScopePresence::Held,
+        None => ScopePresence::Absent,
+    };
+    if ProjectedMembers::of(projection).admits(standing, scope_presence) {
         ProjectionRemainder::Members
     } else {
         ProjectionRemainder::Nothing

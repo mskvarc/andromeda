@@ -26,10 +26,10 @@ use crate::{
         value_item::ValueItem,
     },
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_query::filter::{
     reading::{
-        family_reading::{MemberSource, MultiValueReading, TargetOrigin, ValueKeys, family_reading},
+        family_reading::{MemberSource, MultiValueReading, TargetOrigin, ValueKeys, family_reading, hop_families},
         hop::Hop,
         term_reading::TermReading,
         terminal::Terminal,
@@ -74,17 +74,19 @@ fn target_beyond<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(
     }
 }
 
-/// The objects of every instance of the Relationship `relationship` an entity
-/// holds: the target objects a hop through it crosses into.
+/// The objects of every instance of the Relationship or `ListRelationship`
+/// `relationship` an entity holds: the target objects a hop through it crosses
+/// into.
 ///
 /// Clause 4.9: the target object of a Relationship is "the object associated
-/// (represented as a URI or array of URIs)", and with several instances "any
-/// object of such instances". An attribute of another family names no linked
-/// entity, whatever its value spells.
+/// (represented as a URI or array of URIs)", that of a `ListRelationship` "the
+/// array of objects", and with several instances "any object of such
+/// instances". An attribute of a family no hop crosses ([`hop_families`])
+/// names no linked entity, whatever its value spells.
 pub fn relationship_objects<'a, E: QueriedEntity<'a>>(entity: E, relationship: &AttributeName) -> impl Iterator<Item = &'a str> {
     entity
         .attribute_instances(relationship)
-        .filter(|instance| instance.family() == AttributeType::Relationship)
+        .filter(|instance| hop_families().any(|family| family == instance.family()))
         .flat_map(QueriedInstance::values)
         .filter_map(|item| match item {
             ValueItem::Reference(object) => Some(object),

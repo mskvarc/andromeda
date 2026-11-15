@@ -20,13 +20,6 @@ WHERE
         (
           "ca"."attribute_name_key" = $1
           AND (
-            "ca"."value_number" > $2
-            AND "ca"."value_number" <> ('NaN'::numeric)
-          )
-        )
-        OR (
-          "ca"."attribute_name_key" = $3
-          AND (
             "ca"."value_boolean" = TRUE
             OR (
               "ca"."attribute_kind" <> (6)
@@ -39,10 +32,10 @@ WHERE
                     "ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', TRUE::boolean))
                   )
                   OR (
-                    "ca"."value_object" @> jsonb_build_array($4::text)
+                    "ca"."value_object" @> jsonb_build_array($2::text)
                   )
                   OR (
-                    "ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $5::text))
+                    "ca"."value_object" @> jsonb_build_array(jsonb_build_object('@value', $3::text))
                   )
                 )
                 AND EXISTS (
@@ -69,10 +62,10 @@ WHERE
                             COALESCE("dm"."value" -> ('@value'), "dm"."value")
                           ) = ('boolean')
                         ) THEN (
-                          COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::boolean WHEN (jsonb_typeof(COALESCE("dm"."value" -> ('@value'), "dm"."value")) = ('string') AND COALESCE("dmt"."name", "dm"."value" ->> ('@type')) = ('http://www.w3.org/2001/XMLSchema#boolean') AND pg_input_is_valid(COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'), 'boolean')) THEN (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::boolean END) = ($6::boolean))))))) AND "ca"."entity_key" = "entities"."entity_key")
-1: Int 1
-2: BigDecimal 15
-3: Int 3
+                          COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::boolean WHEN (jsonb_typeof(COALESCE("dm"."value" -> ('@value'), "dm"."value")) = ('string') AND COALESCE("dmt"."name", "dm"."value" ->> ('@type')) = ('http://www.w3.org/2001/XMLSchema#boolean') AND pg_input_is_valid(COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'), 'boolean')) THEN (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::boolean END) = ($4::boolean)))))) OR ("ca"."attribute_name_key" = $5 AND ("ca"."value_number" > $6 AND "ca"."value_number" <> ('NaN'::numeric)))) AND "ca"."entity_key" = "entities"."entity_key")
+1: Int 3
+2: String 'true'
+3: String 'true'
 4: String 'true'
-5: String 'true'
-6: String 'true'
+5: Int 1
+6: BigDecimal 15

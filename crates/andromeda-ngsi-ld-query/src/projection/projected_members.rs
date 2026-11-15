@@ -26,6 +26,7 @@
 use crate::projection::{compiled::Projection, term::ProjectionTerm};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use iri_rs::{Iri, IriBuf};
+use serde::Serialize;
 
 /// The expanded members clause 5.2.4 defines on an Entity beside its
 /// Attributes that a stored Entity can carry under an expanded name: `scope`
@@ -43,12 +44,22 @@ const NON_ATTRIBUTE_MEMBERS: [Iri<&'static str>; 5] = [
 ];
 
 /// Whether a projection keeps the `scope` member of the Entities it reduces.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ScopeRetention {
     /// An Entity with a `scope` keeps it, and with it a member.
     Kept,
     /// The projection takes `scope` away.
     Removed,
+}
+
+/// Whether an Entity carries a `scope`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopePresence {
+    /// The Entity carries a `scope`.
+    Held,
+    /// The Entity carries none.
+    Absent,
 }
 
 /// What an Entity has to carry for the projection to leave it a member.
@@ -129,14 +140,14 @@ impl ProjectedMembers {
     }
 
     /// Whether an Entity carrying the Attributes named `carried`, and a
-    /// `scope` when `has_scope`, keeps a member under the projection: the one
-    /// statement of the rule, which each execution reads with the names of the
-    /// Attributes that stand.
+    /// `scope` as `scope_presence` says, keeps a member under the projection:
+    /// the one statement of the rule, which each execution reads with the
+    /// names of the Attributes that stand.
     #[must_use]
-    pub fn admits<'n>(&self, carried: impl IntoIterator<Item = &'n str>, has_scope: bool) -> bool {
-        let scoped = |scope: ScopeRetention| match scope {
-            ScopeRetention::Kept => has_scope,
-            ScopeRetention::Removed => false,
+    pub fn admits<'n>(&self, carried: impl IntoIterator<Item = &'n str>, scope_presence: ScopePresence) -> bool {
+        let scoped = |scope: ScopeRetention| match (scope, scope_presence) {
+            (ScopeRetention::Kept, ScopePresence::Held) => true,
+            (ScopeRetention::Kept, ScopePresence::Absent) | (ScopeRetention::Removed, ScopePresence::Held | ScopePresence::Absent) => false,
         };
         match self {
             ProjectedMembers::Unconditional => true,
@@ -167,7 +178,7 @@ impl ProjectedMembers {
 mod tests {
     use crate::projection::{
         compiled::Projection,
-        projected_members::{ProjectedMembers, ScopeRetention},
+        projected_members::{ProjectedMembers, ScopePresence, ScopeRetention},
         term::ProjectionTerm,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties;
@@ -201,11 +212,11 @@ mod tests {
     #[test]
     fn a_pick_admits_an_entity_carrying_a_picked_attribute() {
         let members = ProjectedMembers::of(&Projection::builder().pick(vec![attribute("name"), attribute("location")]).build());
-        assert!(!members.admits([], false));
-        assert!(!members.admits(["https://example.com/speed"], false));
-        assert!(members.admits([NAME], false));
-        assert!(members.admits(["https://example.com/location"], false));
-        assert!(!members.admits([], true), "the pick does not keep scope");
+        assert!(!members.admits([], ScopePresence::Absent));
+        assert!(!members.admits(["https://example.com/speed"], ScopePresence::Absent));
+        assert!(members.admits([NAME], ScopePresence::Absent));
+        assert!(members.admits(["https://example.com/location"], ScopePresence::Absent));
+        assert!(!members.admits([], ScopePresence::Held), "the pick does not keep scope");
     }
 
     /// Clause 5.7.1.5: an `omit` naming every member the entity has, `id` and
@@ -219,18 +230,18 @@ mod tests {
                 .omit(vec![ProjectionTerm::Id, ProjectionTerm::Type, attribute("name")])
                 .build(),
         );
-        assert!(!members.admits([NAME], false));
-        assert!(!members.admits([properties::EXPIRES_AT.as_str()], false));
-        assert!(members.admits([NAME, "https://example.com/speed"], false));
-        assert!(members.admits([], true), "the omit spares scope");
+        assert!(!members.admits([NAME], ScopePresence::Absent));
+        assert!(!members.admits([properties::EXPIRES_AT.as_str()], ScopePresence::Absent));
+        assert!(members.admits([NAME, "https://example.com/speed"], ScopePresence::Absent));
+        assert!(members.admits([], ScopePresence::Held), "the omit spares scope");
     }
 
     /// A projection keeping `id` or `type`, and no projection, leave every
     /// Entity a member, whatever it carries.
     #[test]
     fn an_unconditional_requirement_admits_every_entity() {
-        assert!(ProjectedMembers::Unconditional.admits([], false));
-        assert!(ProjectedMembers::of(&Projection::builder().pick(vec![ProjectionTerm::Id]).build()).admits([], false));
+        assert!(ProjectedMembers::Unconditional.admits([], ScopePresence::Absent));
+        assert!(ProjectedMembers::of(&Projection::builder().pick(vec![ProjectionTerm::Id]).build()).admits([], ScopePresence::Absent));
     }
 
     /// A request that named no projection leaves every Entity whole.

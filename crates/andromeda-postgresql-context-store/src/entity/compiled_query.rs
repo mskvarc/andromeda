@@ -221,20 +221,29 @@ impl EntityRepository {
         }
         let rows = self.fetch_on(PoolLane::Reads, &carriers_query(schema_iden(target).as_ref(), &keys)).await?;
         let counted = rows.iter().map(census_count).collect::<Result<Vec<_>, sqlx::Error>>()?;
-        names.carriers = AttributeCarriers::new(&keys, counted);
+        // A ledger summing below zero counts nothing, so its attribute is left
+        // uncounted rather than read as having no instance.
+        let covered: Vec<AttributeNameKey> = keys
+            .iter()
+            .copied()
+            .filter(|key| !counted.iter().any(|(counted_key, instances)| counted_key == key && instances.is_none()))
+            .collect();
+        let counts = counted.into_iter().filter_map(|(key, instances)| instances.map(|count| (key, count)));
+        names.carriers = AttributeCarriers::new(&covered, counts);
         Ok(names)
     }
 }
 
-/// One row of the census read: an attribute and the instances counted of it.
+/// One row of the census read: an attribute and the instances counted of it,
+/// `None` for a ledger summing below zero, which counts nothing.
 ///
 /// # Errors
 ///
 /// Returns [`sqlx::Error`] when the row lacks either column.
-fn census_count(row: &PgRow) -> Result<(AttributeNameKey, u64), sqlx::Error> {
+fn census_count(row: &PgRow) -> Result<(AttributeNameKey, Option<u64>), sqlx::Error> {
     let attribute: i32 = row.try_get(Iden::to_string(&AttributeCensus::AttributeNameKey).as_str())?;
     let instances: i64 = row.try_get(Iden::to_string(&CountedInstances).as_str())?;
-    Ok((AttributeNameKey::from(attribute), instances.unsigned_abs()))
+    Ok((AttributeNameKey::from(attribute), u64::try_from(instances).ok()))
 }
 
 /// The piggybacked total of a page, read off its first row when the page
