@@ -41,6 +41,16 @@ pub(crate) struct QueriedPage {
     pointing: PagePointing,
 }
 
+/// How the element page of a request is decided.
+pub(crate) enum PageSource {
+    /// The page was decided before the query was admitted: the broker holds the
+    /// query, and the walk is paged under the digest of the held query.
+    Decided(QueriedPage),
+    /// The query is written in the request URI, so its walk is paged under the
+    /// identity of the compiled query once that is known (clause 5.5.9.1).
+    OverRequestUri(RequestPagination),
+}
+
 /// What the local temporal store reads for one query.
 pub(crate) struct LocalRead<'page> {
     /// The element window the store reads.
@@ -50,6 +60,22 @@ pub(crate) struct LocalRead<'page> {
     /// The client's window, withheld until the merge when context sources
     /// contributed entities, and cut from the merged collection then.
     pub(crate) merged: Option<&'page PageWindow>,
+}
+
+impl PageSource {
+    /// The element page of `params`, the query admitted, under the identity of
+    /// the query as the client wrote it.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever the pagination policy refuses (clauses 5.5.9 and
+    /// 6.3.10).
+    pub(crate) fn decided(self, identity: &[u8], params: &TemporalQueryParameters) -> Result<QueriedPage, ParameterError> {
+        match self {
+            PageSource::Decided(page) => Ok(page),
+            PageSource::OverRequestUri(pagination) => QueriedPage::requested(pagination.identified(identity), params, PagePointers::OverRequestUri),
+        }
+    }
 }
 
 impl QueriedPage {

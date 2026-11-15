@@ -12,7 +12,7 @@ use crate::filter::reading::target_kind::TargetKind;
 /// scheme-based normal form (RFC 3986 sections 6.2.2 and 6.2.3). A String
 /// target holds the text its writer wrote, which clause 4.9 compares as the
 /// text it is.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub struct UriOperand {
     /// The URI as the client wrote it.
     written: String,

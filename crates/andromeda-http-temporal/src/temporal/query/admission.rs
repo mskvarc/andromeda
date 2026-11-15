@@ -7,7 +7,14 @@
 
 use crate::{
     state::TemporalRouteServices,
-    temporal::{ContextSpec, NgsiLdProtocolHeaders, ProblemResponse, ResultInstanceExt, TemporalQueryParameters, query::request_entity_map::resolve_query_map},
+    temporal::{
+        ContextSpec,
+        NgsiLdProtocolHeaders,
+        ProblemResponse,
+        ResultInstanceExt,
+        TemporalQueryParameters,
+        query::request_entity_map::{open_window, resolve_query_map},
+    },
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::reuse::EntityMapUse;
@@ -25,12 +32,17 @@ use andromeda_federation::{
 use andromeda_http_extraction::prefer::PreferHeader;
 use andromeda_http_headers::via::Via;
 use andromeda_jsonld::user_context_admission::AdmittedContext;
-use andromeda_ngsi_ld_query::ordering::parameters::OrderingParameters;
+use andromeda_ngsi_ld_query::{
+    ordering::parameters::OrderingParameters,
+    projection::attrs_selection::AttrsAdmission,
+    query_identity::{IdentifierScope, QueryIdentity},
+    temporal::compiled::CompiledTemporalQuery,
+};
 use andromeda_ngsi_ld_request::{
     error::ParameterError,
     query::temporal::{admitted::AdmittedTemporalRequest, operation::TemporalQueryOperation},
 };
-use andromeda_temporal::query_reading::QueryReading;
+use andromeda_temporal::{query_reading::QueryReading, service::TemporalService};
 use axum::http::Uri;
 
 /// One temporal query, decoded and admitted: what the protocol headers
@@ -51,6 +63,9 @@ pub(super) struct AdmittedQuery {
     /// languageMap keys, locally and at every source it reaches, and the
     /// warning a fallback to tag equality carries.
     pub(super) language: NegotiatedLanguageTargeting,
+    /// The canonical identity of the query as the client wrote it, which a walk
+    /// over the request's URI is paged under (clause 5.5.9.1).
+    pub(super) walk_identity: Vec<u8>,
 }
 
 impl AdmittedQuery {
@@ -87,15 +102,30 @@ pub(super) async fn admit_request(
     instance: &Uri,
 ) -> Result<(AdmittedTemporalRequest, AdmittedQuery), ProblemResponse> {
     params.lang = params.lang.take().or(protocol.language_filter);
-    let map_use = resolve_query_map(&state.entity_maps, target, &mut params, protocol.entity_map.as_ref(), instance).await?;
     if !target.permits_federation() {
         params.local = Some(true);
     }
     let service = &state.temporal;
+    let registration_filters = registration_filters(state, context, &params, instance).await?;
+    // The query as the client wrote it: an Entity Map narrows its identifiers
+    // below, and split entities defer its filters, after this identity is taken.
+    let written = written_query(service, context, &params, instance).await?;
+    let walk_identity = QueryIdentity::of(&written.entities, registration_filters.csf(), IdentifierScope::Kept)
+        .record()
+        .with_instance(instance)?;
+    let map_use = resolve_query_map(
+        &state.entity_maps,
+        target,
+        &mut params,
+        &written.entities,
+        registration_filters.csf(),
+        protocol.entity_map.as_ref(),
+        instance,
+    )
+    .await?;
     let params = params
         .admit(TemporalQueryOperation::Query, service.linked_retrieval(), service.filter_admission())
         .with_instance(instance)?;
-    let registration_filters = registration_filters(state, context, &params, instance).await?;
     let read = ParticipatingRead {
         requested_scope: params.execution_scope(),
         client_query: ClientQuery::TemporalQuery(&params),
@@ -115,8 +145,44 @@ pub(super) async fn admit_request(
         map_use,
         registration_filters,
         language,
+        walk_identity,
     };
     Ok((params, admitted))
+}
+
+/// The compilation of `params` as the client wrote them, under the broker's own
+/// language targeting.
+///
+/// A follow-up under an Entity Map may omit the temporal window, which the
+/// identity does not carry, so an omitted one is stood for the open window the
+/// compilation needs.
+///
+/// # Errors
+///
+/// The classified failure of admitting and compiling the query.
+async fn written_query(
+    service: &TemporalService,
+    context: &ContextSpec,
+    params: &TemporalQueryParameters,
+    instance: &Uri,
+) -> Result<CompiledTemporalQuery, ProblemResponse> {
+    // clone: the identity is taken of the query as written, while the request's own parameters are narrowed to the map afterwards
+    let mut written = params.clone();
+    open_window(&mut written).with_instance(instance)?;
+    let admitted = written
+        .admit(TemporalQueryOperation::Query, service.linked_retrieval(), service.filter_admission())
+        .with_instance(instance)?;
+    service
+        .compile_temporal_query(
+            &admitted,
+            QueryReading {
+                context,
+                language_targeting: service.language_targeting(),
+            },
+            AttrsAdmission::ReifiedScopeAdmitted,
+        )
+        .await
+        .with_instance(instance)
 }
 
 /// The query's context source filter and geoquery expanded under the

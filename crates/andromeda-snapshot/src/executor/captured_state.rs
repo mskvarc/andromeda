@@ -8,8 +8,7 @@
 //! rendering and back.
 
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::dataset::{DatasetFilter, DatasetSelector};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
@@ -24,20 +23,17 @@ pub(crate) fn narrow_captured(state: &mut EntityState, captured_at: DateTime<Utc
     }
 }
 
-/// Keep only the attribute instances one of `selectors` selects. An attribute
+/// Keep only the attribute instances `selectors` select, decided as every
+/// execution that narrows instances by `datasetId` decides it. An attribute
 /// every instance of which is selected is left shared with the stored state.
 fn retain_selected_datasets(state: &mut EntityState, selectors: &[DatasetSelector]) {
+    let filter = DatasetFilter::from_selectors(selectors);
     state.attributes_mut().retain(|_, instances| {
-        if instances.iter().all(|(dataset_id, _)| selected(selectors, dataset_id)) {
+        if instances.iter().all(|(dataset_id, _)| filter.selects(dataset_id)) {
             return true;
         }
-        Arc::make_mut(instances).retain(|dataset_id, _| selected(selectors, dataset_id))
+        Arc::make_mut(instances).retain(|dataset_id, _| filter.selects(dataset_id))
     });
-}
-
-/// Whether one of `selectors` selects the instance of `dataset_id`.
-fn selected(selectors: &[DatasetSelector], dataset_id: Option<&Identifier>) -> bool {
-    selectors.iter().any(|selector| selector.selects(dataset_id))
 }
 
 #[cfg(test)]

@@ -3,7 +3,8 @@
 use std::cmp::Ordering;
 
 /// An ordering operator's relation of the target to the operand.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum OrderRelation {
     /// `>`.
     Greater,

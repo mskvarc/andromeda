@@ -24,7 +24,8 @@ use strum::{EnumIter, IntoEnumIterator};
 /// `DateTime` values (clauses 4.8 and 4.22), every other member a String, and
 /// an `objectType` naming several types the array of them. A path ends at such
 /// a member; nothing is addressable beneath it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, EnumIter)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, EnumIter, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum InstanceMetadata {
     /// When the value was observed, `observedAt`.
     ObservedAt,

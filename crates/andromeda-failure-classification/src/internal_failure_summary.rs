@@ -31,6 +31,8 @@ impl InternalFailureSummary {
     /// A context source could not be reached, or its response could not be used.
     pub const CONTEXT_FEDERATION: InternalFailureSummary =
         InternalFailureSummary::new("a context source could not be reached or its response could not be used");
+    /// The identity of a compiled query could not be written as bytes.
+    pub const QUERY_IDENTITY: InternalFailureSummary = InternalFailureSummary::new("the broker could not identify the query");
     /// The entity store failed an operation for a reason no retry mends.
     ///
     /// The store-fault phrases are kept together because each answers a 500:

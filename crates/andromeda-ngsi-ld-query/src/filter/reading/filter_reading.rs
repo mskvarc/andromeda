@@ -18,7 +18,8 @@ use std::ops::ControlFlow;
 /// group in: groups before terms, terms by path and then by test, operands by
 /// their value and patterns by their source text. It says nothing of what a
 /// filter selects.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum FilterReading {
     /// Every child holds (`;`).
     All(Vec<FilterReading>),

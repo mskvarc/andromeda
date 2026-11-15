@@ -124,7 +124,7 @@ impl EntityRepository {
     /// Returns [`ContextStoreError`] when a name the query reads cannot be
     /// resolved through the dictionaries, when the statement cannot be rendered
     /// from the compiled query, when the select fails, or when a returned
-    /// identifier is no longer a valid URI.
+    /// identifier does not read back as a URI.
     pub async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery, window: &PageWindow) -> Result<Vec<Identifier>, ContextStoreError> {
         self.ensure_collations(&compiled.ordering).await?;
         let names = self.resolve_names(target, compiled).await?;

@@ -60,7 +60,8 @@ impl EntityQueryService {
         Ok(Arc::unwrap_or_clone(compiled))
     }
 
-    /// Cache-aware compilation entry point used by every caller.
+    /// Cache-aware compilation entry point used by every caller, shared with
+    /// whoever else asks for the same compilation.
     ///
     /// Resolves `context` first, so a compiled query is reused only while the
     /// documents it resolved to are still the ones the loader holds, and a
@@ -73,7 +74,7 @@ impl EntityQueryService {
     /// Reports [`EntityError::JsonLd`] when `context` does not resolve or
     /// process, and every error [`EntityQueryService::compile_query_public`]
     /// documents on a miss.
-    pub(super) async fn compile_query_cached(
+    pub async fn compile_query_cached(
         &self,
         params: &AdmittedEntityQuery,
         context: &ContextSpec,

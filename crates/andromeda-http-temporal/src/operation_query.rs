@@ -21,7 +21,11 @@ use crate::{
     extension_gate::TemporalExtensionGate,
     request_context_admission::admit_request_context,
     state::TemporalTenantState,
-    temporal::query::{page::QueriedPage, request::TemporalQueryRequest, run},
+    temporal::query::{
+        page::{PageSource, QueriedPage},
+        request::TemporalQueryRequest,
+        run,
+    },
 };
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
@@ -76,7 +80,7 @@ pub(crate) async fn query(
         .headers(headers)
         .context(context)
         .params(params)
-        .page(page)
+        .page(PageSource::Decided(page))
         .posted(Some(Box::new(posted)))
         .build()))
     .await

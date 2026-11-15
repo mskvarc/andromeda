@@ -120,7 +120,8 @@ pub(crate) async fn delete_by_query(
     // determining the set of Entities requested during the purge operation."
     // The narrowing runs before the query is compiled, so both the local phase
     // below and the identifiers it reports are the map's.
-    let entity_map = resolve_purge_map(&state.entity_maps, &target, &mut query, protocol.entity_map.as_ref(), &uri).await?;
+    let filters = registration_filters(&state, &context, &query, &uri).await?;
+    let entity_map = resolve_purge_map(&state, &target, &mut query, &context, filters.csf(), protocol.entity_map.as_ref(), &uri).await?;
 
     // The dataset scope is the `purge_dataset_scope` extension: gated here (the
     // extractor has no config access), following clause 6.3.12's pattern of
@@ -186,7 +187,6 @@ pub(crate) async fn delete_by_query(
     let forwarded = if is_local || considers_nothing {
         Vec::new()
     } else {
-        let filters = registration_filters(&state, &context, &query, &uri).await?;
         state
             .forwarding
             .forward_purge(

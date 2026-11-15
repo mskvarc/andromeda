@@ -65,21 +65,6 @@ impl TypeExprRaw {
         }
     }
 
-    /// The operands of the expression's top-level disjunction (clause 4.17 `|`
-    /// or `,`), in the order written, or the expression itself when it is no
-    /// disjunction.
-    ///
-    /// Clause 4.17 nests no disjunction inside another group, so each
-    /// alternative of a parsed expression is one type, a parenthesised
-    /// conjunction, or the wildcard standing alone.
-    #[must_use]
-    pub const fn alternatives(&self) -> &[TypeExprRaw] {
-        match self {
-            TypeExprRaw::Or(children) => children.as_slice(),
-            TypeExprRaw::Wildcard | TypeExprRaw::Type(_) | TypeExprRaw::And(_) => slice::from_ref(self),
-        }
-    }
-
     /// The type names the expression names, in order of appearance.
     ///
     /// The wildcard names none. As [`TypeExpr::named_types`], this
@@ -202,7 +187,8 @@ impl From<TypeExprRaw> for String {
 /// Supports AND (`And`), OR (`Or`), and single type (`Type`) nodes.
 /// Constructed by parsing the `type` query parameter's selection language
 /// grammar and expanding compact type names to full IRIs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum TypeExpr {
     /// The clause-4.17 wildcard, selecting every expanded entity type.
     Wildcard,
@@ -229,6 +215,21 @@ impl TypeExpr {
             TypeExpr::Type(iri) => type_iris.iter().any(|candidate| candidate.as_ref() == iri.as_str()),
             TypeExpr::And(children) => children.iter().all(|child| child.matches(type_iris)),
             TypeExpr::Or(children) => children.iter().any(|child| child.matches(type_iris)),
+        }
+    }
+
+    /// The operands of the expression's top-level disjunction (clause 4.17 `|`
+    /// or `,`), in the order written, or the expression itself when it is no
+    /// disjunction.
+    ///
+    /// Clause 4.17 nests no disjunction inside another group, so each
+    /// alternative of a parsed expression is one type, a parenthesised
+    /// conjunction, or the wildcard standing alone.
+    #[must_use]
+    pub const fn alternatives(&self) -> &[TypeExpr] {
+        match self {
+            TypeExpr::Or(children) => children.as_slice(),
+            TypeExpr::Wildcard | TypeExpr::Type(_) | TypeExpr::And(_) => slice::from_ref(self),
         }
     }
 
@@ -278,6 +279,8 @@ impl TypeExpr {
 mod tests {
     use crate::type_selection::grammar::{TypeExpr, TypeExprRaw};
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+    use iri_rs::IriBuf;
+    use std::slice;
 
     #[test]
     fn a_type_expression_round_trips_through_its_clause_4_17_text() {
@@ -342,13 +345,13 @@ mod tests {
 
     #[test]
     fn an_expanded_expression_names_its_leaf_types_in_order() {
-        let iri = |name: &str| iri_rs::IriBuf::new(format!("https://example.org/{name}")).expect("valid IRI");
+        let iri = |name: &str| IriBuf::new(format!("https://example.org/{name}")).expect("valid IRI");
         let expr = TypeExpr::Or(vec![
             TypeExpr::Type(iri("Vehicle")),
             TypeExpr::And(vec![TypeExpr::Type(iri("Home")), TypeExpr::Type(iri("Asset"))]),
         ]);
         pretty_assertions::assert_eq!(expr.named_types(), vec![iri("Vehicle"), iri("Home"), iri("Asset")]);
-        pretty_assertions::assert_eq!(TypeExpr::Wildcard.named_types(), Vec::<iri_rs::IriBuf>::new());
+        pretty_assertions::assert_eq!(TypeExpr::Wildcard.named_types(), Vec::<IriBuf>::new());
     }
 
     #[test]
@@ -361,20 +364,19 @@ mod tests {
 
     #[test]
     fn the_alternatives_are_the_operands_of_the_top_level_disjunction() {
-        let rendered = |raw: &str| -> Vec<String> {
-            raw.parse::<TypeExprRaw>()
-                .expect("valid type expression")
-                .alternatives()
-                .iter()
-                .map(ToString::to_string)
-                .collect()
-        };
-        pretty_assertions::assert_eq!(rendered("Vehicle"), ["Vehicle"]);
-        pretty_assertions::assert_eq!(rendered("Building|Tower"), ["Building", "Tower"]);
-        pretty_assertions::assert_eq!(rendered("Tower,Building"), ["Tower", "Building"]);
-        pretty_assertions::assert_eq!(rendered("(Home;Vehicle)|Motorhome"), ["(Home;Vehicle)", "Motorhome"]);
-        pretty_assertions::assert_eq!(rendered("(Home;Vehicle)"), ["(Home;Vehicle)"]);
-        pretty_assertions::assert_eq!(rendered("*"), ["*"]);
+        let name = |value: &str| TypeExpr::Type(IriBuf::new(format!("https://example.com/{value}")).expect("valid IRI"));
+        let conjunction = TypeExpr::And(vec![name("Home"), name("Vehicle")]);
+        pretty_assertions::assert_eq!(name("Vehicle").alternatives(), [name("Vehicle")]);
+        pretty_assertions::assert_eq!(
+            TypeExpr::Or(vec![name("Building"), name("Tower")]).alternatives(),
+            [name("Building"), name("Tower")]
+        );
+        pretty_assertions::assert_eq!(
+            TypeExpr::Or(vec![conjunction.clone(), name("Motorhome")]).alternatives(),
+            [conjunction.clone(), name("Motorhome")]
+        );
+        pretty_assertions::assert_eq!(conjunction.alternatives(), slice::from_ref(&conjunction));
+        pretty_assertions::assert_eq!(TypeExpr::Wildcard.alternatives(), [TypeExpr::Wildcard]);
     }
 
     #[test]

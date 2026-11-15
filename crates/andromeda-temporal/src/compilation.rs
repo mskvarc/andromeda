@@ -2,7 +2,7 @@
 
 use crate::{error::TemporalError, instance_limits::TemporalInstanceLimits, query_reading::QueryReading, service::TemporalService};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_query::{
     entity_selection::{ConsideredEntities, EntitySelection},
     filter::{
@@ -36,6 +36,7 @@ use andromeda_ngsi_ld_request::{
     error::ParameterError,
     query::temporal::{TemporalQueryParameters, admitted::AdmittedTemporalRequest},
 };
+use iri_rs::IriBuf;
 use std::num::NonZeroU32;
 
 impl TemporalService {
@@ -123,6 +124,24 @@ impl TemporalService {
             // names no term.
             .ordering(TemporalEntityOrdering::of_parameters(&params.ordering)?)
             .build())
+    }
+
+    /// Expand a request's `attrs` names against `context`, as `admission` reads
+    /// them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalError::Query`] when a name names a member `admission`
+    /// refuses, and [`TemporalError::JsonLd`] when a name cannot be expanded
+    /// against the context.
+    pub async fn expand_attribute_names(
+        &self,
+        names: &[AttributeName],
+        context: &ContextSpec,
+        admission: AttrsAdmission,
+    ) -> Result<Vec<IriBuf>, TemporalError> {
+        let prepared_context = self.engine.prepare_term_context(context);
+        Ok(expand_attrs_admitted(names, admission, &ContextualExpander::new(&self.engine, &prepared_context)).await?)
     }
 
     /// Expand the request's clause 4.21 `pick` / `omit` projection against one

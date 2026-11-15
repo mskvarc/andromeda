@@ -13,7 +13,8 @@ use crate::{
 use andromeda_ngsi_ld_number::declared_number::NonFinite;
 
 /// What a Query Term asks of one target value, before any negation.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ScalarTest {
     /// Equal to one of the operands: one for `==` and `!=` with a value,
     /// several for a value list, each comparing with its own kinds.

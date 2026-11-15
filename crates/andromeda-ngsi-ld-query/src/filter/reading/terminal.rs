@@ -4,7 +4,8 @@ use crate::filter::{instance_metadata::InstanceMetadata, language_matching::Lang
 use langtag::LangTagBuf;
 
 /// The target a path reaches at the last instance it walks to.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Terminal {
     /// The instance's own value, read as its family's reading says.
     OwnValue,

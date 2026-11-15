@@ -23,7 +23,7 @@ const MAX_SUBTAG_LENGTH: usize = 8;
 ///
 /// The grammar is `(1*8ALPHA / "*") *("-" (1*8alphanum / "*"))`. A `*` alone
 /// is not one: clause 4.9 gives `[*]` to the every-language marker.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, derive_more::Display, serde::Serialize)]
 #[display("{_0}")]
 pub struct LanguageRange(String);
 

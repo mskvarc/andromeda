@@ -17,7 +17,8 @@ use crate::filter::reading::{
 };
 
 /// Whether a term asserts its test or its complement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Polarity {
     /// The test holds on the target.
     Asserted,
@@ -41,7 +42,7 @@ pub enum ComplementScope {
 }
 
 /// A comparison and what a target makes of it.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub struct ValueTest {
     /// The comparison, stated positively.
     test: ScalarTest,

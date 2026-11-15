@@ -24,7 +24,10 @@ use andromeda_ngsi_ld_query::{
     filter::language_targeting::LanguageTargeting,
     page_window::PageWindow,
     projection::{compiled::Projection, returned_attributes::ReturnedAttributes},
-    type_selection::{expansion::expand_type_expression, grammar::TypeExprRaw},
+    type_selection::{
+        expansion::expand_type_expression,
+        grammar::{TypeExpr, TypeExprRaw},
+    },
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::entity::admitted::AdmittedEntityQuery;
@@ -97,8 +100,7 @@ impl EntityQueryService {
             // where specified type, is equivalent", so an entity outside the
             // selector is not held locally for this retrieval.
             if let Some(raw) = narrowing.entity_type {
-                let prepared = self.engine().prepare_term_context(context);
-                let selector = expand_type_expression(raw, &ContextualExpander::new(self.engine(), &prepared)).await?;
+                let selector = self.expand_type_selector(raw, context).await?;
                 if !selector.matches(state.types().as_slice()) {
                     return Err(EntityError::not_found(id));
                 }
@@ -120,6 +122,18 @@ impl EntityQueryService {
         .await;
         timer.finish_result(&result);
         result
+    }
+
+    /// Expand the clause 4.17 type selector of a request against the active
+    /// context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityError`] when a type name cannot be expanded through the
+    /// context.
+    pub async fn expand_type_selector(&self, selector: &TypeExprRaw, context: &ContextSpec) -> Result<TypeExpr, EntityError> {
+        let prepared = self.engine().prepare_term_context(context);
+        Ok(expand_type_expression(selector, &ContextualExpander::new(self.engine(), &prepared)).await?)
     }
 
     /// Select the page `window` selects of a parameterized entity query
