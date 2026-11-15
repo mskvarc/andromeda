@@ -10,7 +10,7 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 /// during compilation. Everything downstream receives a geometry that is known
 /// to be well formed, and a malformed one is a 400 from the request rather than
 /// a failure part-way through building SQL.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct GeoQuery {
     /// The spatial relationship to evaluate.
     pub georel: GeoRel,

@@ -21,6 +21,7 @@ use andromeda_entity_map::{
 };
 use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::date_time::NgsiLdDateTime};
+use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, filter::reading::filter_reading::FilterReading};
 use andromeda_temporal::{error::TemporalError, temporal_invariant::TemporalInvariant};
 use axum::http::Uri;
 
@@ -29,9 +30,10 @@ use axum::http::Uri;
 /// Clause 5.5.14: a referenced live map fixes the entities the query considers
 /// and the sources it contacts, and holds the query to the creating request's
 /// filters (the temporal window excepted); an expired or unknown one yields no
-/// inference, so a fresh map is created instead. The fingerprint is taken
-/// before the query is narrowed. A map-scoped follow-up may omit the temporal
-/// window, which then stands for all history up to a far-future horizon.
+/// inference, so a fresh map is created instead. The fingerprint is taken over
+/// `selection` and `csf`, the compiled query as written before it is
+/// narrowed. A map-scoped follow-up may omit the temporal window, which then
+/// stands for all history up to a far-future horizon.
 ///
 /// # Errors
 ///
@@ -42,13 +44,15 @@ pub(crate) async fn resolve_query_map(
     entity_maps: &EntityMapService,
     target: &ContextTarget,
     params: &mut TemporalQueryParameters,
+    selection: &EntitySelection,
+    csf: Option<&FilterReading>,
     referenced: Option<&NgsiLdEntityMap>,
     instance: &Uri,
 ) -> Result<EntityMapUse, ProblemResponse> {
     if !target.permits_federation() {
         return Ok(EntityMapUse::None);
     }
-    let fingerprint = fingerprint_of(FingerprintedRequest::QueryTemporal(params)).with_instance(instance)?;
+    let fingerprint = fingerprint_of(FingerprintedRequest::QueryTemporal { selection, csf }).with_instance(instance)?;
     let map_use = entity_maps
         .resolve_use(
             referenced.map(NgsiLdEntityMap::as_inner),
@@ -60,18 +64,28 @@ pub(crate) async fn resolve_query_map(
         .with_instance(instance)?;
     if let Some(map) = map_use.reused() {
         hold_selection_to_map(map, &mut params.id, &mut params.entity_selectors);
-        if params.timerel.is_none() && params.time_at.is_none() {
-            params.timerel = Some(TimeRel::Before);
-            params.time_at = Some(
-                "9999-12-31T23:59:59Z"
-                    .parse::<NgsiLdDateTime>()
-                    .map(NgsiLdDateTime::get)
-                    .map_err(|source| TemporalError::from(TemporalInvariant::EntityMapHorizon(source)))
-                    .with_instance(instance)?,
-            );
-        }
+        open_window(params).with_instance(instance)?;
     }
     Ok(map_use)
+}
+
+/// Stand an omitted temporal window for all history up to a far-future
+/// horizon, which is what a follow-up under a map may leave to the map.
+///
+/// # Errors
+///
+/// [`TemporalError`] when the far-future horizon cannot be parsed.
+pub(crate) fn open_window(params: &mut TemporalQueryParameters) -> Result<(), TemporalError> {
+    if params.timerel.is_none() && params.time_at.is_none() {
+        params.timerel = Some(TimeRel::Before);
+        params.time_at = Some(
+            "9999-12-31T23:59:59Z"
+                .parse::<NgsiLdDateTime>()
+                .map(NgsiLdDateTime::get)
+                .map_err(|source| TemporalError::from(TemporalInvariant::EntityMapHorizon(source)))?,
+        );
+    }
+    Ok(())
 }
 
 /// Record the Entity Map the query ran under and return its location.

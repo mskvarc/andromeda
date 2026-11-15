@@ -42,6 +42,9 @@ pub(crate) struct MapCreation<'a> {
     pub(crate) lifetime: Option<&'a Iso8601Duration>,
     /// The digest of the creating request's filters (clause 5.5.14).
     pub(crate) fingerprint: RequestFingerprint,
+    /// The query's context source filter and geoquery, expanded under the
+    /// request's context.
+    pub(crate) filters: ExpandedRegistrationFilters,
     /// The query the map is created for, which also decides the creation
     /// resource the peers are asked through.
     pub(crate) query: EntityMapQuery<'a>,
@@ -82,12 +85,11 @@ pub(crate) async fn create_map(
     let mut warnings: Vec<NgsiLdWarning> = Vec::new();
     // Clause 5.5.13: local scope forwards nothing.
     if !creation.local {
-        let filters = registration_filters(state, creation.query, rendering).await?;
         let forwarded: ForwardReadOutcome<ForwardedEntityMap> = state
             .forwarding
             .forward_entity_map_query(ForwardEntityMapRequest {
                 query: creation.query,
-                filters: &filters,
+                filters: &creation.filters,
                 query_string: &creation.forwarded_query,
                 context: rendering.context,
                 triggering,
@@ -117,20 +119,29 @@ pub(crate) async fn create_map(
 /// The query's context source filter and geoquery expanded under the
 /// request's context, each geoquery admitted under the terms of the service
 /// that runs its query: the registrations a source map is asked of have to
-/// pass them (clauses 4.9 and 5.10.2.4).
+/// pass them (clauses 4.9 and 5.10.2.4). A query limited to the local scope
+/// places none on registrations (clause 5.5.13).
 ///
 /// # Errors
 ///
 /// The classified failure of compiling the geoquery or expanding the filter.
-async fn registration_filters(
+pub(crate) async fn registration_filters(
     state: &EntityMapRouteServices,
     query: EntityMapQuery<'_>,
     rendering: &CreationRendering<'_>,
 ) -> Result<ExpandedRegistrationFilters, ProblemResponse> {
-    let (csf, geo, admission) = match query {
-        EntityMapQuery::Entities(params) => (params.csf.as_ref(), params.geo.0.as_ref(), state.entity_query.geo_admission()),
-        EntityMapQuery::TemporalEntities(params) => (params.csf.as_ref(), params.geo.0.as_ref(), state.temporal.geo_admission()),
+    let (csf, geo, admission, local) = match query {
+        EntityMapQuery::Entities(params) => (
+            params.csf.as_ref(),
+            params.geo.0.as_ref(),
+            state.entity_query.geo_admission(),
+            params.is_local(),
+        ),
+        EntityMapQuery::TemporalEntities(params) => (params.csf.as_ref(), params.geo.0.as_ref(), state.temporal.geo_admission(), params.is_local()),
     };
+    if local {
+        return Ok(ExpandedRegistrationFilters::default());
+    }
     ExpandedRegistrationFilters::expand(state.entity_query.engine(), rendering.context, csf, geo, admission)
         .await
         .with_entity_map_instance(rendering.uri)

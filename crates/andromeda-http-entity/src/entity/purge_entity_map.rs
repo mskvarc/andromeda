@@ -25,17 +25,19 @@
 //! inference" (clause 5.5.14) and leaves the purge scoped by its own query
 //! alone, answering with no map location because it used no map.
 
-use crate::error::EntityResultExt;
+use crate::{error::EntityResultExt, state::EntityRouteServices};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::{
     fingerprint::{FingerprintedRequest, fingerprint_of},
     query_scoping::hold_selection_to_map,
-    service::{EntityMapService, ReferencedEntityMap},
+    service::ReferencedEntityMap,
 };
 use andromeda_federation::request::EntityMapInUse;
 use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
 use andromeda_http_response::{headers::with_entity_map, problem_response::ProblemResponse};
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
+use andromeda_ngsi_ld_query::filter::reading::filter_reading::FilterReading;
 use andromeda_ngsi_ld_request::query::{entity::admitted::AdmittedEntityQuery, selection_mut::SelectionMut};
 use axum::{http::Uri as HttpUri, response::Response};
 
@@ -74,8 +76,9 @@ impl PurgeEntityMap {
 /// Resolve the map the purge determines its entities from, and hold the query
 /// to it.
 ///
-/// The fingerprint is taken before the query is narrowed, so a purge under a
-/// map is compared against the request as written. Clause 5.6.21.4 has the
+/// The fingerprint is taken over the query compiled as written before it is
+/// narrowed, with the context source filter `csf`, so a purge under a map is compared against
+/// the request as written. Clause 5.6.21.4 has the
 /// purge "run a Query Entities operation (clause 5.6.2) to retrieve a list of
 /// ids of Entities for deletion" (the cross-reference is the spec's own, and
 /// misnumbered: Query Entities is clause 5.7.2). The request the map fixes is
@@ -93,9 +96,11 @@ impl PurgeEntityMap {
 /// the map store cannot be read, or when the purge changed a filter parameter
 /// of the request that created the map it references.
 pub(crate) async fn resolve_purge_map(
-    maps: &EntityMapService,
+    state: &EntityRouteServices,
     target: &ContextTarget,
     query: &mut AdmittedEntityQuery,
+    context: &ContextSpec,
+    csf: Option<&FilterReading>,
     referenced: Option<&NgsiLdEntityMap>,
     instance: &HttpUri,
 ) -> Result<PurgeEntityMap, ProblemResponse> {
@@ -105,8 +110,21 @@ pub(crate) async fn resolve_purge_map(
     let Some(referenced) = referenced else {
         return Ok(PurgeEntityMap::None);
     };
-    let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities(query)).with_entity_instance(instance)?;
-    let resolved = maps.resolve_reuse(referenced.as_inner(), &fingerprint).await.with_entity_instance(instance)?;
+    let written = state
+        .entity_query
+        .compile_query_cached(query, context, state.entity_query.language_targeting())
+        .await
+        .with_entity_instance(instance)?;
+    let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities {
+        selection: &written.selection,
+        csf,
+    })
+    .with_entity_instance(instance)?;
+    let resolved = state
+        .entity_maps
+        .resolve_reuse(referenced.as_inner(), &fingerprint)
+        .await
+        .with_entity_instance(instance)?;
     match resolved {
         ReferencedEntityMap::Live(map) => {
             let SelectionMut { id, entity_selectors } = query.selection_mut();

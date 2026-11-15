@@ -17,9 +17,10 @@
 //! * [`spelled_date_time`] holds a `DateTime` a signature covers with the
 //!   width it was written at, the one value served as written;
 //! * [`resolution`] brings a broker-produced value to the microsecond;
-//! * [`instant_serde`] carries the rules into serde models;
+//! * [`instant_serde`] and [`calendar_serde`] carry the rules into serde models;
 //! * [`system_instant`] is an instant the broker stamps from its clock.
 
+pub mod calendar_serde;
 pub mod date;
 pub mod date_time;
 pub mod instant_serde;

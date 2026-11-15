@@ -16,12 +16,11 @@ use crate::{
         NgsiLdRequestEnvelope,
         ProblemResponse,
         Response,
-        ResultInstanceExt,
         TemporalQueryParameters,
         TenantState,
         query::{
             followed_query::{FollowedQuery, followed_query},
-            page::QueriedPage,
+            page::PageSource,
             run,
         },
     },
@@ -36,7 +35,6 @@ use andromeda_http_extraction::{
     temporal_query_source::TemporalQuerySource,
 };
 use andromeda_jsonld::user_context_admission::{AdmittedContext, SubmittedContext};
-use andromeda_ngsi_ld_request::pagination::page_pointers::PagePointers;
 use andromeda_posted_query::posted_query::PostedQuery;
 use axum::http::{HeaderMap, Uri};
 use std::sync::Arc;
@@ -79,7 +77,7 @@ pub(crate) struct TemporalQueryRequest {
     /// pagination policy from the query and from what the clause 6.3.10
     /// pointers to the neighbouring pages are built over: the request URI of
     /// the query-string binding, or the posted query the broker holds.
-    pub(crate) page: QueriedPage,
+    pub(crate) page: PageSource,
     /// The query a client sent by POST on this request, which the broker holds
     /// when its page points at another page; absent on the query-string
     /// binding, whether the query is written in the URL or followed by a
@@ -112,13 +110,13 @@ pub(crate) async fn query(
             // query is forwarded or anything is expanded against it.
             let context = admit_request_context(services.temporal.engine(), SubmittedContext::from(context), &uri).await?;
             // Clause 6.18.3.2 carries the whole query in the request URI, so a
-            // pointer built from it retrieves the next page on its own.
-            let page = QueriedPage::requested(pagination, &params, PagePointers::OverRequestUri).with_instance(&uri)?;
-            (context, params, page)
+            // pointer built from it retrieves the next page on its own. The page
+            // is decided once the query is compiled, under its identity.
+            (context, params, PageSource::OverRequestUri(pagination))
         }
         TemporalQuerySource::Posted { reference, admission } => {
             let FollowedQuery { context, params, page } = followed_query(&services, reference, &admission, &context, pagination, &uri).await?;
-            (context, params, page)
+            (context, params, PageSource::Decided(page))
         }
     };
     // Boxed: a temporal query parameter set is wide enough that the operation's

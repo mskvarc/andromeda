@@ -9,7 +9,7 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 /// A term is existential over the instances of its attribute and over the
 /// instances of each sub-attribute on the way, and two terms of one
 /// conjunction may be satisfied by two different instances.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub struct TermReading {
     /// The linked-entity hops, outermost first.
     pub(super) hops: Vec<Hop>,
@@ -24,7 +24,8 @@ pub struct TermReading {
 }
 
 /// What a term asks of the target its path reaches.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Test {
     /// That the target element exists: "the matching Entities shall be those
     /// which define the target element ... regardless of any target value or

@@ -23,7 +23,7 @@ use andromeda_http_response::{
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
-use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_query::{error::QueryError, query_identity::QueryIdentityError};
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::{error::ParameterError, fragment_entity_id::FragmentEntityIdError};
 use andromeda_posted_query::error::PostedQueryError;
@@ -53,6 +53,14 @@ pub trait EntityHttpClassify {
 impl EntityHttpClassify for EntityError {
     fn classify_for_entity_http(&self) -> ClassifiedReport {
         classify_entity_error(self)
+    }
+}
+
+// The identity of a query the broker already compiled is always writable, so a
+// failure to write it is a fault of the broker.
+impl EntityHttpClassify for QueryIdentityError {
+    fn classify_for_entity_http(&self) -> ClassifiedReport {
+        ClassifiedReport::internal(self, InternalFailureSummary::QUERY_IDENTITY)
     }
 }
 

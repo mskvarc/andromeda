@@ -32,7 +32,7 @@ pub enum TrailingPath {
 /// the addressed members and a raw JSON object by the written ones, so paths
 /// addressing the same members under two written spellings select different
 /// keys of a `JsonProperty`.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub struct MemberPath {
     /// The members as the path addresses them.
     ///

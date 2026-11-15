@@ -20,7 +20,7 @@ use andromeda_http_response::{
     problem_response::ProblemResponse,
 };
 use andromeda_jsonld::error::JsonLdError;
-use andromeda_ngsi_ld_query::error::QueryError;
+use andromeda_ngsi_ld_query::{error::QueryError, query_identity::QueryIdentityError};
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_posted_query::error::PostedQueryError;
@@ -80,6 +80,14 @@ impl TemporalHttpClassify for NotAPostedQuery {
 impl TemporalHttpClassify for QueryError {
     fn classify_for_temporal_http(&self) -> ClassifiedReport {
         classify_query_error(self)
+    }
+}
+
+// The identity of a query the broker already compiled is always writable, so a
+// failure to write it is a fault of the broker.
+impl TemporalHttpClassify for QueryIdentityError {
+    fn classify_for_temporal_http(&self) -> ClassifiedReport {
+        ClassifiedReport::internal(self, InternalFailureSummary::QUERY_IDENTITY)
     }
 }
 

@@ -46,6 +46,7 @@ pub mod pattern;
 pub mod portable_pattern;
 pub mod posix_dialect;
 pub mod projection;
+pub mod query_identity;
 pub mod read_order;
 pub mod scope;
 pub mod selector_compilation;

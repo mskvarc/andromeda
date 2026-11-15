@@ -3,7 +3,7 @@
 //! and 6.35).
 
 use crate::{
-    creation::{CreationRendering, MapCreation, create_map},
+    creation::{CreationRendering, MapCreation, create_map, registration_filters},
     error::EntityMapResultExt,
     forwarded_query_string::{ForwardedFilters, body_query_string, forwarded_query_string, forwarded_temporal_query_string, temporal_body_query_string},
     membership_window::membership_window,
@@ -29,7 +29,7 @@ use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_http_temporal::extension_gate::TemporalExtensionGate;
 use andromeda_jsonld::user_context_admission::{SubmittedContext, admit_user_context};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{candidate_filters::CandidateFilters, page_window::PageWindow};
+use andromeda_ngsi_ld_query::{candidate_filters::CandidateFilters, page_window::PageWindow, projection::attrs_selection::AttrsAdmission};
 use andromeda_ngsi_ld_request::{
     empty::EmptyParams,
     query::{
@@ -100,7 +100,17 @@ async fn create_from_entity_query(
     rendering: &CreationRendering<'_>,
     triggering: TriggeringRequest<'_>,
 ) -> Result<Response, ProblemResponse> {
-    let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities(query)).with_entity_map_instance(rendering.uri)?;
+    let registration_filters = registration_filters(state, EntityMapQuery::Entities(query), rendering).await?;
+    let written = state
+        .entity_query
+        .compile_query_cached(query, rendering.context, state.entity_query.language_targeting())
+        .await
+        .with_entity_map_instance(rendering.uri)?;
+    let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities {
+        selection: &written.selection,
+        csf: registration_filters.csf(),
+    })
+    .with_entity_map_instance(rendering.uri)?;
     let filters = candidate_filters(state, query.split_entities, query.execution_scope());
     let local_ids = local_entity_ids(state, query, window, filters, rendering).await?;
     create_map(
@@ -109,6 +119,7 @@ async fn create_from_entity_query(
             local_ids,
             lifetime: query.entity_map_lifetime.as_ref(),
             fingerprint,
+            filters: registration_filters,
             query: EntityMapQuery::Entities(query),
             forwarded_query,
             local: query.is_local(),
@@ -128,7 +139,24 @@ async fn create_from_temporal_query(
     rendering: &CreationRendering<'_>,
     triggering: TriggeringRequest<'_>,
 ) -> Result<Response, ProblemResponse> {
-    let fingerprint = fingerprint_of(FingerprintedRequest::QueryTemporal(params)).with_entity_map_instance(rendering.uri)?;
+    let registration_filters = registration_filters(state, EntityMapQuery::TemporalEntities(params), rendering).await?;
+    let written = state
+        .temporal
+        .compile_temporal_query(
+            params,
+            QueryReading {
+                context: rendering.context,
+                language_targeting: state.temporal.language_targeting(),
+            },
+            AttrsAdmission::ReifiedScopeAdmitted,
+        )
+        .await
+        .with_entity_map_instance(rendering.uri)?;
+    let fingerprint = fingerprint_of(FingerprintedRequest::QueryTemporal {
+        selection: &written.entities,
+        csf: registration_filters.csf(),
+    })
+    .with_entity_map_instance(rendering.uri)?;
     // Table 6.18.3.2-1: the temporal window, `timeproperty` and `lastN` bound
     // the candidates the same way they bound a temporal query.
     let local_ids = state
@@ -154,6 +182,7 @@ async fn create_from_temporal_query(
             local_ids,
             lifetime: params.entity_map_lifetime.as_ref(),
             fingerprint,
+            filters: registration_filters,
             query: EntityMapQuery::TemporalEntities(params),
             forwarded_query,
             local: params.is_local(),

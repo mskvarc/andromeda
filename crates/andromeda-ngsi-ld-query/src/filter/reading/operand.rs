@@ -14,7 +14,8 @@ use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 /// operand. A bare `URI` and a `quotedStr` holding the same text are one
 /// operand too: both compare as the text they are, but for a URI an equality
 /// compares in two spellings.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Operand {
     /// An exact number.
     Number(JsonNumber),
@@ -26,11 +27,11 @@ pub enum Operand {
     /// `true` or `false`.
     Boolean(bool),
     /// A clause 4.6.3 `DateTime`, normalised to UTC.
-    DateTime(DateTime<Utc>),
+    DateTime(#[serde(serialize_with = "andromeda_ngsi_ld_lexicon::time::instant_serde::required::serialize")] DateTime<Utc>),
     /// A clause 4.6.3 `Date`.
-    Date(NaiveDate),
+    Date(#[serde(serialize_with = "andromeda_ngsi_ld_lexicon::time::calendar_serde::date::serialize")] NaiveDate),
     /// A clause 4.6.3 `Time`, normalised to UTC.
-    Time(NaiveTime),
+    Time(#[serde(serialize_with = "andromeda_ngsi_ld_lexicon::time::calendar_serde::time_of_day::serialize")] NaiveTime),
 }
 
 /// Which operators an operand stands after.

@@ -140,7 +140,7 @@ pub(crate) async fn get(
 
     let is_local = !target.permits_federation() || params.local.unwrap_or(false);
     let referenced = entity_map_header.as_ref().map(NgsiLdEntityMap::as_inner);
-    let map_use = resolve_retrieval_map_use(&state.entity_maps, &target, &params, referenced, &uri).await?;
+    let map_use = resolve_retrieval_map_use(&state.entity_maps, service, &target, &params, &context, referenced, &uri).await?;
 
     let (mut held, warnings, entity_map_uri) = if is_local {
         (local_result.with_entity_instance(&uri)?, Vec::new(), None)

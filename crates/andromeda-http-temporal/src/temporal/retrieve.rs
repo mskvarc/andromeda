@@ -80,7 +80,7 @@ pub(crate) async fn get(
     let map_use = if is_local {
         EntityMapUse::None
     } else {
-        resolve_retrieve_map(&state.entity_maps, &params, protocol.entity_map.as_ref(), &uri).await?
+        resolve_retrieve_map(&state.entity_maps, service, &params, &context, protocol.entity_map.as_ref(), &uri).await?
     };
     let map_created = map_use.mints();
 

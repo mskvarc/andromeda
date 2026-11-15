@@ -22,7 +22,11 @@ use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_linked_retrieval::{plan::JoinPlan, typed::TypedEntities};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{filter::language_targeting::LanguageTargeting, page_window::PageWindow};
+use andromeda_ngsi_ld_query::{
+    entity_selection::EntitySelection,
+    filter::{language_targeting::LanguageTargeting, reading::filter_reading::FilterReading},
+    page_window::PageWindow,
+};
 use andromeda_ngsi_ld_request::{
     entity::GetEntityParams,
     query::{entity::admitted::AdmittedEntityQuery, selection_mut::SelectionMut},
@@ -152,8 +156,9 @@ impl LocalMapEntities for LocalEntitySource<'_> {
 /// Clause 5.5.14: a referenced live map fixes the entities the query considers
 /// and the sources it contacts, and holds the query to the creating request's
 /// filters; an expired or unknown one yields no inference, so a fresh map is
-/// created instead. The fingerprint is taken before the query is narrowed, so
-/// that a follow-up under the map is compared against the request as written.
+/// created instead. The fingerprint is taken over `selection` and `csf`, the
+/// compiled query as written before it is narrowed, so that a follow-up under
+/// the map is compared against the request as written.
 /// Both the query string's flat identifier list and a clause 5.2.23 body's
 /// clause 5.2.33 selectors are narrowed, since compilation reads the selectors
 /// alone whenever the body carried one.
@@ -166,13 +171,15 @@ pub(crate) async fn resolve_query_map_use(
     maps: &EntityMapService,
     target: &ContextTarget,
     query: &mut AdmittedEntityQuery,
+    selection: &EntitySelection,
+    csf: Option<&FilterReading>,
     referenced: Option<&Identifier>,
     instance: &HttpUri,
 ) -> Result<EntityMapUse, ProblemResponse> {
     if !target.permits_federation() {
         return Ok(EntityMapUse::None);
     }
-    let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities(query)).with_entity_instance(instance)?;
+    let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities { selection, csf }).with_entity_instance(instance)?;
     let map_use = maps
         .resolve_use(
             referenced,
@@ -189,7 +196,8 @@ pub(crate) async fn resolve_query_map_use(
     Ok(map_use)
 }
 
-/// Resolve the map a single-entity retrieval runs under.
+/// Resolve the map a single-entity retrieval runs under, fingerprinted by the
+/// type selector and `attrs` expanded under `context`.
 ///
 /// Clause 5.7.1.4: a referenced live map fixes the registrations the retrieval
 /// contacts; an expired or unknown one yields no inference, so a fresh map is
@@ -201,15 +209,29 @@ pub(crate) async fn resolve_query_map_use(
 /// the map store cannot be read.
 pub(crate) async fn resolve_retrieval_map_use(
     maps: &EntityMapService,
+    service: &EntityQueryService,
     target: &ContextTarget,
     params: &GetEntityParams,
+    context: &ContextSpec,
     referenced: Option<&Identifier>,
     instance: &HttpUri,
 ) -> Result<EntityMapUse, ProblemResponse> {
     if !target.permits_federation() || params.local.unwrap_or(false) {
         return Ok(EntityMapUse::None);
     }
-    let fingerprint = fingerprint_of(FingerprintedRequest::RetrieveEntity(params)).with_entity_instance(instance)?;
+    let entity_type = match params.entity_type.as_ref() {
+        Some(raw) => Some(service.expand_type_selector(raw, context).await.with_entity_instance(instance)?),
+        None => None,
+    };
+    let attrs = service
+        .expand_attribute_names(params.attrs.as_deref().unwrap_or_default(), context)
+        .await
+        .with_entity_instance(instance)?;
+    let fingerprint = fingerprint_of(FingerprintedRequest::RetrieveEntity {
+        entity_type: entity_type.as_ref(),
+        attrs: &attrs,
+    })
+    .with_entity_instance(instance)?;
     maps.resolve_use(
         referenced,
         EntityMapFlag::from_parameter(params.entity_map),

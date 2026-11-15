@@ -13,11 +13,16 @@
 //!
 //! A query a request carries in its body has no query string to digest, so it
 //! is digested from the parts that hold it, under the same construction.
+//!
+//! A query that is compiled before its walk is paged is digested from its
+//! identity (clause 5.5.9.1): the parameters the compiled query carries are
+//! read off its normal form, so `q=a==1;b==2` and `q=b==2;a==1` are one walk,
+//! and the parameters it does not carry stay as written.
 
 use crate::query_parameter::QueryParameter;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use sha2::{Digest, Sha256};
-use std::str::FromStr;
+use std::{borrow::Cow, str::FromStr};
 use thiserror::Error;
 
 /// The query-string parameter a cursor pointer carries the walk's query digest
@@ -44,6 +49,10 @@ enum ParameterRole {
     /// it lists the entities the query matches and changes none of them. A
     /// map is reused through the `NGSILD-EntityMap` header, never a parameter.
     Artefact,
+    /// A parameter a compiled query's identity carries: which entities the
+    /// walk passes, read in the normal form of the compiled query rather than
+    /// as written.
+    Identity,
     /// Which elements the walk passes, or anything not known to be paging or
     /// presentation.
     Selection,
@@ -55,15 +64,38 @@ impl QueryDigest {
     ///
     /// The parameters are digested decoded and sorted, so a pointer rebuilt
     /// with another percent-encoding or parameter order digests alike. A name
-    /// outside the vocabulary counts as selection.
+    /// outside the vocabulary counts as selection. This is the digest of a
+    /// collection no compiled query selects from: the parameters a compiled
+    /// query's identity carries count as selection here, as written.
     #[must_use]
     pub fn of(query: Option<&str>) -> QueryDigest {
-        let mut pairs: Vec<_> = form_urlencoded::parse(query.unwrap_or_default().as_bytes())
-            .filter(|(name, _)| QueryParameter::from_str(name).map_or(ParameterRole::Selection, role) == ParameterRole::Selection)
-            .collect();
-        pairs.sort_unstable();
-        let pairs = pairs;
-        QueryDigest::of_parts(pairs.iter().flat_map(|(name, value)| [name.as_bytes(), value.as_bytes()]))
+        QueryDigest::of_pairs(
+            None,
+            &selected_pairs(query, |role| matches!(role, ParameterRole::Identity | ParameterRole::Selection)),
+        )
+    }
+
+    /// The digest of a compiled query: its `identity` record, then the
+    /// selection parameters of `query` that the identity does not carry.
+    ///
+    /// The identity is the first part, so the sequence has an odd number of
+    /// parts and never meets the digest of a query string alone
+    /// ([`QueryDigest::of`]). The remaining parameters (the temporal window,
+    /// `lastN`, the aggregation parameters, the ordering, `datasetId`, `local`
+    /// and the rest) are digested decoded and sorted, as written.
+    #[must_use]
+    pub fn of_identified(identity: &[u8], query: Option<&str>) -> QueryDigest {
+        QueryDigest::of_pairs(Some(identity), &selected_pairs(query, |role| role == ParameterRole::Selection))
+    }
+
+    /// The digest of `identity`, when there is one, followed by the name and
+    /// value of every pair of `pairs`.
+    fn of_pairs(identity: Option<&[u8]>, pairs: &[(Cow<'_, str>, Cow<'_, str>)]) -> QueryDigest {
+        QueryDigest::of_parts(
+            identity
+                .into_iter()
+                .chain(pairs.iter().flat_map(|(name, value)| [name.as_bytes(), value.as_bytes()])),
+        )
     }
 
     /// The digest of the sequence `parts`.
@@ -99,6 +131,15 @@ impl QueryDigest {
     }
 }
 
+/// The decoded pairs of `query` whose role `admits`, sorted.
+fn selected_pairs(query: Option<&str>, admits: impl Fn(ParameterRole) -> bool) -> Vec<(Cow<'_, str>, Cow<'_, str>)> {
+    let mut pairs: Vec<_> = form_urlencoded::parse(query.unwrap_or_default().as_bytes())
+        .filter(|(name, _)| admits(QueryParameter::from_str(name).map_or(ParameterRole::Selection, role)))
+        .collect();
+    pairs.sort_unstable();
+    pairs
+}
+
 /// What `parameter` decides about a paged walk.
 const fn role(parameter: QueryParameter) -> ParameterRole {
     match parameter {
@@ -129,8 +170,8 @@ const fn role(parameter: QueryParameter) -> ParameterRole {
         | QueryParameter::Geometry
         | QueryParameter::Coordinates
         | QueryParameter::Geoproperty
-        | QueryParameter::ScopeQ
-        | QueryParameter::Timerel
+        | QueryParameter::ScopeQ => ParameterRole::Identity,
+        QueryParameter::Timerel
         | QueryParameter::TimeAt
         | QueryParameter::EndTimeAt
         | QueryParameter::Timeproperty
@@ -273,5 +314,68 @@ mod tests {
         let shifted: [&[u8]; 2] = [b"ab", b"c"];
         let original: [&[u8]; 2] = [b"a", b"bc"];
         assert_ne!(QueryDigest::of_parts(shifted), QueryDigest::of_parts(original));
+    }
+
+    fn identified(query: &str) -> QueryDigest {
+        QueryDigest::of_identified(b"identity", Some(query))
+    }
+
+    /// QI-3: paging and presentation parameters never decide a walk.
+    #[test]
+    fn an_identified_digest_ignores_paging_and_presentation_parameters() {
+        let walked = identified("timerel=after&timeAt=2020-01-01T00:00:00Z");
+        assert_eq!(
+            identified("timerel=after&timeAt=2020-01-01T00:00:00Z&limit=3&offset=2&count=true&options=keyValues&pick=speed&omit=brand&lang=en&cursor=YWJj"),
+            walked
+        );
+    }
+
+    /// The identity record carries these parameters in their normal form, so
+    /// their written text is not digested a second time.
+    #[test]
+    fn an_identified_digest_ignores_the_text_of_the_parameters_the_identity_carries() {
+        let walked = identified("lastN=2");
+        assert_eq!(
+            identified("lastN=2&q=b%3D%3D2%3Ba%3D%3D1&type=Vehicle&id=urn:ngsi-ld:Vehicle:1&idPattern=.*&attrs=speed&csf=g%3D%3D1&scopeQ=/a"),
+            walked
+        );
+        assert_eq!(
+            identified("lastN=2&georel=near%3BmaxDistance%3D%3D10&geometry=Point&coordinates=%5B0%2C0%5D&geoproperty=location"),
+            walked
+        );
+    }
+
+    #[test]
+    fn an_identified_digest_changes_with_the_identity() {
+        assert_ne!(
+            QueryDigest::of_identified(b"one", Some("lastN=2")),
+            QueryDigest::of_identified(b"two", Some("lastN=2"))
+        );
+    }
+
+    #[test]
+    fn an_identified_digest_changes_with_the_parameters_the_identity_does_not_carry() {
+        let walked = identified("timerel=after&timeAt=2020-01-01T00:00:00Z&lastN=2&orderBy=id&datasetId=urn:ngsi-ld:Dataset:1");
+        for changed in [
+            "timerel=after&timeAt=2021-01-01T00:00:00Z&lastN=2&orderBy=id&datasetId=urn:ngsi-ld:Dataset:1",
+            "timerel=after&timeAt=2020-01-01T00:00:00Z&lastN=3&orderBy=id&datasetId=urn:ngsi-ld:Dataset:1",
+            "timerel=after&timeAt=2020-01-01T00:00:00Z&lastN=2&orderBy=!id&datasetId=urn:ngsi-ld:Dataset:1",
+            "timerel=after&timeAt=2020-01-01T00:00:00Z&lastN=2&orderBy=id&datasetId=urn:ngsi-ld:Dataset:2",
+        ] {
+            assert_ne!(identified(changed), walked, "{changed}");
+        }
+    }
+
+    /// An identified digest has an odd number of parts, which no query string
+    /// digests as.
+    #[test]
+    fn an_identified_digest_never_meets_the_digest_of_a_query_string() {
+        assert_ne!(QueryDigest::of_identified(b"", None), QueryDigest::of(None));
+        assert_ne!(QueryDigest::of_identified(b"q", Some("lastN=2")), of("q=lastN&2="));
+    }
+
+    #[test]
+    fn the_raw_digest_still_counts_the_identity_parameters_as_selection() {
+        assert_ne!(of("q=a%3D%3D1%3Bb%3D%3D2"), of("q=b%3D%3D2%3Ba%3D%3D1"));
     }
 }

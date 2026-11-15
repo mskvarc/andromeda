@@ -98,6 +98,7 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
     } = request;
     let service = &state.temporal;
     let (params, admitted) = admit_request(&state, &target, &context, protocol, params, &uri).await?;
+    let page = page.decided(&admitted.walk_identity, &params).with_instance(&uri)?;
     let scope = QueryScope::of(&target, &params);
 
     let split = state.forwarding.split_entities(params.split_entities);

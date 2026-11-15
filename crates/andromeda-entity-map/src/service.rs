@@ -260,7 +260,11 @@ mod tests {
         entity_map::EntityMap,
         entity_map_fingerprint::{MapRequestKind, RequestFingerprint},
     };
-    use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
+    use andromeda_ngsi_ld_query::{
+        entity_selection::{EntitySelection, EntitySelector},
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
+        type_selection::grammar::TypeExpr,
+    };
     use chrono::{DateTime, Utc};
     use std::sync::{Arc, Mutex};
 
@@ -357,9 +361,21 @@ mod tests {
         EntityMapService::new(Arc::new(VecStore::default()))
     }
 
-    fn query(raw: &str) -> Result<RequestFingerprint, EntityMapError> {
-        let params: EntityQueryParameters = serde_urlencoded::from_str(raw).expect("a valid test fixture");
-        fingerprint_of(FingerprintedRequest::QueryEntities(&params))
+    /// The fingerprint of a query for `entity_type` entities, over `ids` and
+    /// holding the `q` filter when one is given.
+    fn query(entity_type: &str, ids: &[&str], q: Option<&str>) -> Result<RequestFingerprint, EntityMapError> {
+        let selector = EntitySelector::builder()
+            .ids(ids.iter().copied().map(identifier).collect())
+            .type_expr(Some(TypeExpr::Type(format!("https://example.com/{entity_type}").parse().expect("a valid IRI"))))
+            .build();
+        let selection = EntitySelection::builder()
+            .selectors(vec![selector])
+            .q(q.map(|text| CompiledFilter::new(parse(text).expect("a clause 4.9 filter"), LanguageMatching::TagEquality)))
+            .build();
+        fingerprint_of(FingerprintedRequest::QueryEntities {
+            selection: &selection,
+            csf: None,
+        })
     }
 
     fn any_fingerprint() -> RequestFingerprint {
@@ -419,15 +435,15 @@ mod tests {
     #[tokio::test]
     async fn a_reused_map_holds_the_follow_up_to_the_creating_parameters() -> Result<(), EntityMapError> {
         let service = service();
-        let map = stored_map(&service, vec![identifier("urn:a")], query("type=Vehicle")?).await?;
+        let map = stored_map(&service, vec![identifier("urn:a")], query("Vehicle", &[], None)?).await?;
 
         let reused = service
-            .resolve_use(Some(&map.id), EntityMapFlag::NotRequested, &query("type=Vehicle&limit=1&id=urn:a")?, None)
+            .resolve_use(Some(&map.id), EntityMapFlag::NotRequested, &query("Vehicle", &["urn:a"], None)?, None)
             .await?;
         assert!(matches!(&reused, EntityMapUse::Reuse(stored) if stored.id == map.id));
 
         let changed_filter = service
-            .resolve_use(Some(&map.id), EntityMapFlag::Requested, &query("type=Vehicle&q=speed%3E99")?, None)
+            .resolve_use(Some(&map.id), EntityMapFlag::Requested, &query("Vehicle", &[], Some("speed>99"))?, None)
             .await;
         assert!(matches!(changed_filter, Err(EntityMapError::RequestChanged { identifier }) if identifier == map.id));
 
@@ -443,17 +459,17 @@ mod tests {
     #[tokio::test]
     async fn a_reuse_only_reference_never_mints_a_replacement() -> Result<(), EntityMapError> {
         let service = service();
-        let map = stored_map(&service, vec![identifier("urn:a")], query("type=Vehicle")?).await?;
+        let map = stored_map(&service, vec![identifier("urn:a")], query("Vehicle", &[], None)?).await?;
 
-        let live = service.resolve_reuse(&map.id, &query("type=Vehicle&id=urn:a")?).await?;
+        let live = service.resolve_reuse(&map.id, &query("Vehicle", &["urn:a"], None)?).await?;
         assert!(matches!(&live, ReferencedEntityMap::Live(stored) if stored.id == map.id));
 
         let missing = service
-            .resolve_reuse(&identifier("urn:ngsi-ld:EntityMap:missing"), &query("type=Vehicle")?)
+            .resolve_reuse(&identifier("urn:ngsi-ld:EntityMap:missing"), &query("Vehicle", &[], None)?)
             .await?;
         assert!(matches!(missing, ReferencedEntityMap::Unavailable));
 
-        let changed = service.resolve_reuse(&map.id, &query("type=Building")?).await;
+        let changed = service.resolve_reuse(&map.id, &query("Building", &[], None)?).await;
         assert!(matches!(changed, Err(EntityMapError::RequestChanged { identifier }) if identifier == map.id));
         Ok(())
     }
@@ -461,7 +477,7 @@ mod tests {
     #[tokio::test]
     async fn an_unavailable_reference_or_the_flag_alone_mints_a_map() -> Result<(), EntityMapError> {
         let service = service();
-        let fingerprint = query("type=Vehicle")?;
+        let fingerprint = query("Vehicle", &[], None)?;
         let bogus = identifier("urn:ngsi-ld:EntityMap:bogus");
         assert!(
             service

@@ -24,16 +24,15 @@ use andromeda_ngsi_ld_query::{
     identifier_axis::IdentifierAxis,
     type_selection::grammar::TypeExpr,
 };
+use andromeda_postgresql_query::type_predicate::{names_condition, names_decide};
 use andromeda_postgresql_schema::csr::RegistrationInformation;
 use andromeda_postgresql_seaquery::{
     literal::int_literal,
     operator::regex_match,
     pg_array::{is_any_of, text_array},
-    pg_operator::PgBinaryOperator,
     unnest::unnest_of,
 };
-use iri_rs::IriBuf;
-use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, Query, SelectStatement};
 
 /// The condition a `registration_information` row meets when its `EntityInfo`
 /// matches `specification`, or `None` when every row does.
@@ -67,85 +66,16 @@ fn identifier_axis(specification: &ExpandedEntitySpecification<'_>) -> Option<Co
 /// selection that is not a disjunction of names, the residual on rows that
 /// carry types. `None` when the selection admits every row.
 fn type_axis(selection: &TypeExpr) -> Option<Condition> {
-    let residual = types_satisfy(selection)?;
+    let residual = names_condition(selection, &ri_col(RegistrationInformation::EntityTypes))?;
     let named = selection.named_types();
     if named.is_empty() {
         return None;
     }
     let axis = Condition::all().add(entity_type_candidate(&named));
-    if is_disjunction_of_names(selection) {
+    if names_decide(selection) {
         return Some(axis);
     }
     Some(axis.add(Condition::any().add(ri_col(RegistrationInformation::EntityTypes).is_null()).add(residual)))
-}
-
-/// Whether the overlap with the selection's names decides it exactly: one
-/// name, or a disjunction of names.
-fn is_disjunction_of_names(selection: &TypeExpr) -> bool {
-    match selection {
-        TypeExpr::Type(_) => true,
-        TypeExpr::Or(children) => children.iter().all(|child| matches!(child, TypeExpr::Type(_))),
-        TypeExpr::Wildcard | TypeExpr::And(_) => false,
-    }
-}
-
-/// Whether the row's `entity_types` satisfy the clause 4.17 `selection`, or
-/// `None` when the selection admits every row (the wildcard).
-///
-/// Clause 5.12 matches the type selector against the entity types of the
-/// `EntityInfo`: a conjunction needs every named type among them and a
-/// disjunction one of them, so the names a conjunction lists directly are one
-/// `@>` and those a disjunction lists one `&&`.
-fn types_satisfy(selection: &TypeExpr) -> Option<SimpleExpr> {
-    match selection {
-        TypeExpr::Wildcard => None,
-        TypeExpr::Type(entity_type) => Some(entity_types_hold(entity_type)),
-        TypeExpr::And(children) => {
-            let names = direct_names(children);
-            let all = children
-                .iter()
-                .filter(|child| !matches!(child, TypeExpr::Type(_)))
-                .filter_map(types_satisfy)
-                .fold(Condition::all(), Condition::add);
-            let all = if names.is_empty() {
-                all
-            } else {
-                all.add(ri_col(RegistrationInformation::EntityTypes).array_contains(text_array(&names)))
-            };
-            Some(all.into())
-        }
-        TypeExpr::Or(children) => {
-            let names = direct_names(children);
-            let others = children
-                .iter()
-                .filter(|child| !matches!(child, TypeExpr::Type(_)))
-                .map(types_satisfy)
-                .collect::<Option<Vec<_>>>()?;
-            let any = others.into_iter().fold(Condition::any(), Condition::add);
-            let any = if names.is_empty() {
-                any
-            } else {
-                any.add(ri_col(RegistrationInformation::EntityTypes).array_overlaps(text_array(&names)))
-            };
-            Some(any.into())
-        }
-    }
-}
-
-/// `ri.entity_types @> ARRAY[entity_type]`.
-fn entity_types_hold(entity_type: &IriBuf) -> SimpleExpr {
-    ri_col(RegistrationInformation::EntityTypes).array_contains(text_array(&[entity_type.as_str()]))
-}
-
-/// The names `children` list directly, each a leaf of the expression.
-fn direct_names(children: &[TypeExpr]) -> Vec<&str> {
-    children
-        .iter()
-        .filter_map(|child| match child {
-            TypeExpr::Type(entity_type) => Some(entity_type.as_str()),
-            TypeExpr::Wildcard | TypeExpr::And(_) | TypeExpr::Or(_) => None,
-        })
-        .collect()
 }
 
 /// Clause 5.12 second and third bullets, and the first: one of `ids` equals
@@ -179,10 +109,13 @@ fn some_identifier_matches_registered_pattern(ids: &[&str]) -> SelectStatement {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use andromeda_ngsi_ld_query::pattern::Pattern;
-    use andromeda_postgresql_seaquery::assert_statement_snapshot;
-    use sea_query::SelectStatement;
+    use crate::csr::{entity_specification::row_matches, information_row::ri_col};
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_query::{csr::expanded_entity_specification::ExpandedEntitySpecification, pattern::Pattern, type_selection::grammar::TypeExpr};
+    use andromeda_postgresql_schema::csr::RegistrationInformation;
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
+    use iri_rs::IriBuf;
+    use sea_query::{ExprTrait, Query, SelectStatement};
 
     fn iri(value: &str) -> IriBuf {
         IriBuf::new(value.to_string()).expect("valid IRI")

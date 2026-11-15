@@ -1,16 +1,22 @@
-//! SQL rendering of an expanded type selection expression (clause 4.17).
+//! SQL rendering of an expanded type selection expression (clause 4.17), over
+//! the two forms the types of a subject are stored in.
 //!
-//! Entity types are stored as an `integer[]` of `entity_type_names` keys, so
-//! every leaf of the expression renders to one array-containment test on the
-//! key the type resolved to, and the boolean structure renders to `AND` /
-//! `OR` around them. A type the dictionary has never recorded has no key, and
-//! no entity can carry a type that was never interned, so its leaf renders as
+//! An Entity's types are an `integer[]` of `entity_type_names` keys, so every
+//! leaf of the expression renders to one array-containment test on the key
+//! the type resolved to, and the boolean structure renders to `AND` / `OR`
+//! around them. A type the dictionary has never recorded has no key, and no
+//! entity can carry a type that was never interned, so its leaf renders as
 //! constant `FALSE`. The only thing that varies between callers is which
 //! relation's `entity_type_name_keys` column is read.
+//!
+//! A registration's `EntityInfo` holds its types as a `text[]` of the expanded
+//! names it was registered with (clause 5.12), which no dictionary keys, so
+//! [`names_condition`] tests the names themselves, the names a group lists
+//! directly in one `@>` for a conjunction and one `&&` for a disjunction.
 
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
-use andromeda_postgresql_seaquery::{literal::false_literal, operator::array_contains_key};
+use andromeda_postgresql_seaquery::{literal::false_literal, operator::array_contains_key, pg_array::text_array, pg_operator::PgBinaryOperator};
 use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
 use sea_query::{Condition, SimpleExpr};
 
@@ -32,9 +38,76 @@ pub fn condition(expr: &TypeExpr, entity_type_name_keys: &SimpleExpr, types: &Re
     }
 }
 
+/// Whether the `text[]` of expanded type names `entity_types` satisfies
+/// `selection`, or `None` when the selection admits every subject (the
+/// wildcard).
+///
+/// Clause 5.12 matches the type selector against the entity types of an
+/// `EntityInfo`: a conjunction needs every named type among them and a
+/// disjunction one of them, so the names a conjunction lists directly are one
+/// `@>` and those a disjunction lists one `&&`.
+#[must_use]
+pub fn names_condition(selection: &TypeExpr, entity_types: &SimpleExpr) -> Option<SimpleExpr> {
+    match selection {
+        TypeExpr::Wildcard => None,
+        TypeExpr::Type(entity_type) => Some(entity_types.clone().array_contains(text_array(&[entity_type.as_str()]))), // clone: each leaf names the same column
+        TypeExpr::And(children) => {
+            let names = direct_names(children);
+            let all = children
+                .iter()
+                .filter(|child| !matches!(child, TypeExpr::Type(_)))
+                .filter_map(|child| names_condition(child, entity_types))
+                .fold(Condition::all(), Condition::add);
+            let all = if names.is_empty() {
+                all
+            } else {
+                all.add(entity_types.clone().array_contains(text_array(&names))) // clone: the group's names test the same column
+            };
+            Some(all.into())
+        }
+        TypeExpr::Or(children) => {
+            let names = direct_names(children);
+            let others = children
+                .iter()
+                .filter(|child| !matches!(child, TypeExpr::Type(_)))
+                .map(|child| names_condition(child, entity_types))
+                .collect::<Option<Vec<_>>>()?;
+            let any = others.into_iter().fold(Condition::any(), Condition::add);
+            let any = if names.is_empty() {
+                any
+            } else {
+                any.add(entity_types.clone().array_overlaps(text_array(&names))) // clone: the group's names test the same column
+            };
+            Some(any.into())
+        }
+    }
+}
+
+/// Whether the overlap of a subject's names with the names `selection` lists
+/// decides the selection exactly: one name, or a disjunction of names.
+#[must_use]
+pub fn names_decide(selection: &TypeExpr) -> bool {
+    match selection {
+        TypeExpr::Type(_) => true,
+        TypeExpr::Or(children) => children.iter().all(|child| matches!(child, TypeExpr::Type(_))),
+        TypeExpr::Wildcard | TypeExpr::And(_) => false,
+    }
+}
+
+/// The names `children` list directly, each a leaf of the expression.
+fn direct_names(children: &[TypeExpr]) -> Vec<&str> {
+    children
+        .iter()
+        .filter_map(|child| match child {
+            TypeExpr::Type(entity_type) => Some(entity_type.as_str()),
+            TypeExpr::Wildcard | TypeExpr::And(_) | TypeExpr::Or(_) => None,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::type_predicate::condition;
+    use crate::type_predicate::{condition, names_decide};
     use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
     use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
     use andromeda_postgresql_schema::current::{E, Entities, EntitySearch};
@@ -157,5 +230,18 @@ mod tests {
                 .replace("\"entity_type_name_keys\"", "\"e\".\"evolution_type_name_keys\""),
             aliased.to_string(PostgresQueryBuilder)
         );
+    }
+
+    /// The overlap with the names a selection lists decides one name and a
+    /// disjunction of names, and no conjunction, group or wildcard.
+    #[test]
+    fn the_name_overlap_decides_one_name_and_a_disjunction_of_names_alone() {
+        let name = |value: &str| TypeExpr::Type(iri(value));
+        let (a, b) = ("https://example.com/A", "https://example.com/B");
+        assert!(names_decide(&name(a)));
+        assert!(names_decide(&TypeExpr::Or(vec![name(a), name(b)])));
+        assert!(!names_decide(&TypeExpr::And(vec![name(a), name(b)])));
+        assert!(!names_decide(&TypeExpr::Or(vec![name(a), TypeExpr::And(vec![name(a), name(b)])])));
+        assert!(!names_decide(&TypeExpr::Wildcard));
     }
 }

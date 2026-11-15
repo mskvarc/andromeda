@@ -53,6 +53,20 @@ impl RequestPagination {
         })
     }
 
+    /// The pagination of a query written in the request's query string, paged
+    /// under the digest of its compiled `identity` and of the parameters the
+    /// identity does not carry.
+    ///
+    /// Clause 5.5.9.1 holds a followed pointer to the query it walks, so two
+    /// spellings of one query are one walk and a change of `q` is another. A
+    /// posted query's walk keeps the digest of the query the broker holds, which
+    /// running it runs exactly.
+    #[must_use]
+    pub fn identified(self, identity: &[u8]) -> RequestPagination {
+        let query = QueryDigest::of_identified(identity, self.pointed.query());
+        RequestPagination { query, ..self }
+    }
+
     /// The pagination of a followed pointer naming the posted query `digest`:
     /// paged under the digest, which stands for the query and its `@context`.
     #[must_use]
@@ -174,6 +188,25 @@ mod tests {
         assert_eq!(posted.query, digest);
         assert_eq!(posted.pointed, PointedRequest::new(None, Uri::from_static("/ngsi-ld/v1/entities?limit=2")));
         assert_eq!(extracted.following(digest.clone()).query, digest);
+    }
+
+    /// A query written in the URL is paged under its identity and the
+    /// parameters the identity does not carry, never under its raw text.
+    #[tokio::test]
+    async fn an_identified_walk_is_paged_under_the_identity_and_the_remaining_parameters() {
+        let paged = |uri: &'static str| async move {
+            let (mut parts, ()) = Request::get(uri).body(()).expect("a request").into_parts();
+            parts.extensions.insert(PaginationPolicy::OffsetDefault);
+            RequestPagination::from_request_parts(&mut parts, &()).await.expect("installed")
+        };
+        let walked = paged("/ngsi-ld/v1/entities?q=a%3D%3D1%3Bb%3D%3D2&lastN=2&limit=1")
+            .await
+            .identified(b"identity");
+        assert_eq!(walked.query, QueryDigest::of_identified(b"identity", Some("lastN=2")));
+        let reordered = paged("/ngsi-ld/v1/entities?q=b%3D%3D2%3Ba%3D%3D1&lastN=2&limit=5")
+            .await
+            .identified(b"identity");
+        assert_eq!(reordered.query, walked.query);
     }
 
     /// The request is paged under the context its `Link` header named.
