@@ -10,7 +10,8 @@ use andromeda_ngsi_ld_query::{
     filter::{
         expression::Expr,
         path::{AttrPath, QueryPath},
-        predicate::{CmpOp, OrderingOp, PatternPolarity, Predicate, SetMembership},
+        predicate::{OrderingOp, Predicate, SetMembership},
+        reading::{comparator::Comparator, operand::Operand, order_relation::OrderRelation, value_test::Polarity},
         scalar::{CompareValue, Scalar},
         trailing_path::TrailingPath,
     },
@@ -83,8 +84,8 @@ fn csr_pred_to_condition(pred: &Predicate) -> Condition {
         Predicate::Exists(_) => Condition::all().add(present(csr_target_element(path))),
         Predicate::Equality { membership, rhs, .. } => csr_equality_condition(path, *membership, rhs),
         Predicate::Ordering { op, rhs, .. } => csr_ordering_condition(path, *op, rhs),
-        Predicate::MatchPattern { pattern, .. } => csr_pattern_condition(path, pattern, PatternPolarity::Match),
-        Predicate::NotMatchPattern { pattern, .. } => csr_pattern_condition(path, pattern, PatternPolarity::NotMatch),
+        Predicate::MatchPattern { pattern, .. } => csr_pattern_condition(path, pattern, Polarity::Asserted),
+        Predicate::NotMatchPattern { pattern, .. } => csr_pattern_condition(path, pattern, Polarity::Complement),
     }
 }
 
@@ -117,7 +118,7 @@ fn present(extract: SimpleExpr) -> SimpleExpr {
 /// (clause 4.9: "If the target value data type is different than String then
 /// it shall be considered as not matching"), so both build through
 /// [`present_and`].
-fn csr_pattern_condition(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity) -> Condition {
+fn csr_pattern_condition(path: &AttrPath, pattern: &Pattern, polarity: Polarity) -> Condition {
     let extract = csr_value_extract(path);
     // `#>> '{}'` unwraps the jsonb value to its text form without the surrounding
     // quotes a `::text` cast would keep, so a stored `"Alpha"` is matched as
@@ -226,11 +227,11 @@ fn csr_reading(extract: SimpleExpr, scalar: &Scalar) -> (SimpleExpr, SimpleExpr)
 
 /// Build the present-guarded single-scalar comparison against
 /// `context_source_properties`.
-fn csr_scalar_comparison(extract: SimpleExpr, scalar: &Scalar, op: CmpOp) -> SimpleExpr {
+fn csr_scalar_comparison(extract: SimpleExpr, scalar: &Scalar, comparator: Comparator) -> SimpleExpr {
     let guard = present(extract.clone());
     let (text, datatype) = csr_reading(extract, scalar);
-    let lifted = lift_comparison(scalar, text, datatype);
-    present_and(guard, compare(lifted.stored, op, lifted.operand))
+    let lifted = lift_comparison(&Operand::from(scalar), text, datatype);
+    present_and(guard, compare(lifted.stored, comparator, lifted.operand))
 }
 
 /// Compile an equality predicate (`==`/`!=`) against `context_source_properties`.
@@ -242,10 +243,14 @@ fn csr_equality_condition(path: &AttrPath, membership: SetMembership, rhs: &Comp
         CompareValue::Range { min, max } => {
             let guard = present(extract.clone());
             let (stored, datatype) = csr_reading(extract, min);
-            let lower = lift_comparison(min, stored.clone(), datatype.clone());
-            let upper_operand = lift_comparison(max, stored, datatype).operand;
+            let lower = lift_comparison(&Operand::from(min), stored.clone(), datatype.clone());
+            let upper_operand = lift_comparison(&Operand::from(max), stored, datatype).operand;
             let stored_side = lower.stored;
-            let within = compare(stored_side.clone(), CmpOp::GreaterEq, lower.operand).and(compare(stored_side, CmpOp::LessEq, upper_operand));
+            let within = compare(stored_side.clone(), Comparator::Ordered(OrderRelation::GreaterOrEqual), lower.operand).and(compare(
+                stored_side,
+                Comparator::Ordered(OrderRelation::LessOrEqual),
+                upper_operand,
+            ));
             // Outside is the total negation of within over a present property: a
             // value of another data type lifts to NULL, and clause 4.9 makes it
             // unequal to the range.
@@ -272,8 +277,8 @@ fn csr_membership_condition(extract: SimpleExpr, membership: SetMembership, valu
     let element = || SimpleExpr::from(SeaExpr::col((Alias::new(ELEMENT), Alias::new(ELEMENT))));
     let equal_to_one = values.iter().fold(Condition::any(), |cond, value| {
         let (stored, datatype) = csr_reading(element(), value);
-        let lifted = lift_comparison(value, stored, datatype);
-        cond.add(compare(lifted.stored, CmpOp::Equal, lifted.operand))
+        let lifted = lift_comparison(&Operand::from(value), stored, datatype);
+        cond.add(compare(lifted.stored, Comparator::Equal, lifted.operand))
     });
     let mut scan = Query::select();
     scan.expr(int_literal(1))
@@ -290,13 +295,13 @@ fn csr_membership_condition(extract: SimpleExpr, membership: SetMembership, valu
 /// Compile an ordering predicate (`>`/`>=`/`<`/`<=`) against `context_source_properties`.
 fn csr_ordering_condition(path: &AttrPath, op: OrderingOp, rhs: &Scalar) -> Condition {
     let extract = csr_value_extract(path);
-    Condition::all().add(csr_scalar_comparison(extract, rhs, op.as_cmp_op()))
+    Condition::all().add(csr_scalar_comparison(extract, rhs, Comparator::Ordered(op.relation())))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser};
+    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser, reading::filter_reading::FilterReading};
     use andromeda_postgresql_query::{
         entity_row_refs::EntityRowRefs,
         q_predicate::{instance_scan::InstanceScan, projection::compile},
@@ -507,10 +512,9 @@ mod tests {
             let expr = parser::parse(case.filter).unwrap_or_else(|error| panic!("{}: {error}", case.filter));
 
             let projection = entity_statement(compile(
-                &expr,
+                &FilterReading::lowered(&expr, LanguageMatching::TagEquality),
                 &InstanceScan::Current(&EntityRowRefs::unaliased(None)),
                 &names(),
-                LanguageMatching::TagEquality,
             ));
             assert_statement_snapshot!(format!("filter-every-backend-reads-clause-four-nine-the-same-way-{}-1", index + 1), projection);
             assert_statement_snapshot!(

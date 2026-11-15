@@ -8,38 +8,21 @@
 //! columns of the grain constraint. The candidates are then exactly the
 //! Entities the term keeps.
 
-use crate::{
-    entity_row_refs::EntityRowRefs,
-    q_predicate::{
-        local_target::{LocalTarget, local_target},
-        projection_probe::exists_on_projection,
-    },
-    query_names::QueryNames,
-};
-use andromeda_ngsi_ld_query::filter::{path::QueryPath, predicate::Predicate};
+use crate::{entity_row_refs::EntityRowRefs, q_predicate::projection_probe::exists_on_projection, query_names::QueryNames};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_postgresql_schema::current::EntitySearch;
 use andromeda_postgresql_seaquery::operator::array_contains_key;
 use sea_query::{Condition, Query, SelectStatement};
 
-/// `SELECT "entity_key"` over the search rows naming the attribute whose
-/// Entity holds a standing instance of it, `None` unless `pred` is the
-/// existence of a recorded attribute.
+/// `SELECT "entity_key"` over the search rows naming `attribute` whose Entity
+/// holds a standing instance of it, the candidates of its existence; `None`
+/// when the attribute was never recorded.
 ///
-/// A path with a trailing member or a sub-attribute asks for an element inside
-/// an instance, which the search row does not record, and a hop asks about the
-/// Entity the Relationship names.
-pub(crate) fn existence_candidates(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> Option<SelectStatement> {
-    let Predicate::Exists(QueryPath::Local(path)) = pred else {
-        return None;
-    };
-    if !path.sub_attrs.is_empty() {
-        return None;
-    }
-    match local_target(path) {
-        LocalTarget::OwnValue => {}
-        LocalTarget::TrailingMember { .. } | LocalTarget::TargetLanguage(_) | LocalTarget::NestedMember(_) => return None,
-    }
-    let attribute = names.attributes.get(&path.attr)?;
+/// Only the existence of an attribute is offered: an element inside an
+/// instance, a trailing member or a sub-attribute, is not recorded in the
+/// search row, and a hop asks about the Entity the Relationship names.
+pub(crate) fn existence_candidates(attribute: &AttributeName, rows: &EntityRowRefs, names: &QueryNames) -> Option<SelectStatement> {
+    let attribute = names.attributes.get(attribute)?;
     let carriers = EntityRowRefs::unaliased(rows.schema().cloned()).keyed_by(EntitySearch::Table);
     let mut candidates = Query::select();
     candidates
@@ -52,8 +35,14 @@ pub(crate) fn existence_candidates(pred: &Predicate, rows: &EntityRowRefs, names
 
 #[cfg(test)]
 mod tests {
-    use crate::{entity_row_refs::EntityRowRefs, q_predicate::keyed_existence::existence_candidates, query_names::QueryNames};
-    use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse};
+    use crate::{
+        entity_row_refs::EntityRowRefs,
+        q_predicate::{
+            keyed_term::{CandidateRead, keyed_candidates},
+            lowered_filter::reading_of,
+        },
+        query_names::QueryNames,
+    };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::assert_eq;
@@ -71,10 +60,7 @@ mod tests {
     }
 
     fn candidates_in(q: &str, rows: &EntityRowRefs) -> Option<SelectStatement> {
-        let Expr::Pred(pred) = parse(q).expect("parse q") else {
-            panic!("a single predicate");
-        };
-        existence_candidates(&pred, rows, &names())
+        keyed_candidates(&reading_of(q), rows, &names()).map(|keyed| keyed.select)
     }
 
     fn candidates(q: &str) -> Option<SelectStatement> {
@@ -100,14 +86,16 @@ mod tests {
     }
 
     #[test]
-    fn an_existence_inside_an_instance_or_through_a_hop_is_not_keyed() {
+    fn an_existence_inside_an_instance_is_not_keyed_and_one_through_a_hop_is_read_inward() {
         for q in [
             "\"https://example.com/speed\".\"https://example.com/source\"",
             "\"https://example.com/speed\"[en]",
-            "\"https://example.com/isParked\"{\"https://example.com/speed\"}",
         ] {
             assert_eq!(candidates(q), None, "{q}");
         }
+        let hop = reading_of("\"https://example.com/isParked\"{\"https://example.com/speed\"}");
+        let keyed = keyed_candidates(&hop, &EntityRowRefs::unaliased(None), &names());
+        assert_eq!(keyed.map(|keyed| keyed.read), Some(CandidateRead::Linked));
     }
 
     #[test]

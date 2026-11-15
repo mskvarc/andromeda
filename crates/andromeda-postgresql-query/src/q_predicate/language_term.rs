@@ -1,9 +1,10 @@
 //! A clause 4.9 Query Term decided over the strings of a `languageMap`.
 //!
-//! Each operator is the positive or the complementary existential of
-//! [`LanguageMap`]: `==`, a range, the ordering operators and `~=` hold when
-//! some string under the selection satisfies them; `!=`, `!~=` and an excluded
-//! range when the map exists and no string under the selection does. One string is
+//! Each term is the positive or the complementary existential of
+//! [`LanguageMap`]: an asserted test (`==`, a range, the ordering operators
+//! and `~=`) holds when some string under the selection passes it, and a
+//! complement (`!=`, `!~=` and an excluded range) when the map exists and no
+//! string under the selection passes the test. One string is
 //! compared the way a String Property's value is compared in its typed column
 //! (`crate::q_predicate::typed_column`), so a language map and a plain String
 //! answer every operand alike.
@@ -16,9 +17,14 @@ use crate::{
     },
 };
 use andromeda_ngsi_ld_query::{
-    filter::{
-        predicate::{CmpOp, PatternPolarity, Predicate, SetMembership},
-        scalar::{CompareValue, Scalar},
+    filter::reading::{
+        comparator::Comparator,
+        interval::Interval,
+        operand::Operand,
+        order_relation::OrderRelation,
+        scalar_test::ScalarTest,
+        term_reading::Test,
+        value_test::{Polarity, ValueTest},
     },
     pattern::Pattern,
 };
@@ -39,60 +45,83 @@ pub enum StringComparability {
     Incomparable,
 }
 
-/// Whether a string can compare with `scalar`.
+/// Whether a string can compare with `operand`.
 #[must_use]
-pub const fn string_comparability(scalar: &Scalar) -> StringComparability {
-    match scalar {
-        Scalar::Str(_) | Scalar::Uri(_) => StringComparability::Comparable,
-        Scalar::Number(_) | Scalar::Bool(_) | Scalar::Date(_) | Scalar::Time(_) | Scalar::DateTime(_) => StringComparability::Incomparable,
+pub const fn string_comparability(operand: &Operand) -> StringComparability {
+    match operand {
+        Operand::Text(_) => StringComparability::Comparable,
+        Operand::Number(_) | Operand::Boolean(_) | Operand::Date(_) | Operand::Time(_) | Operand::DateTime(_) => StringComparability::Incomparable,
     }
 }
 
-/// Whether the strings of `map` under `selection` satisfy `pred`.
+/// Whether the strings of `map` under `selection` satisfy `test`: existence
+/// asks for a string under the selection.
 #[must_use]
-pub fn language_term(pred: &Predicate, map: &LanguageMap, selection: LanguageSelection<'_>) -> SimpleExpr {
-    match pred {
-        Predicate::Exists(_) => map.holds(selection),
-        Predicate::Equality { membership, rhs, .. } => {
-            let test = |text: SimpleExpr| equality_test(text, rhs);
-            match membership {
-                SetMembership::Within => map.some_string(selection, test),
-                SetMembership::Outside => map.no_string(selection, test),
-            }
-        }
-        Predicate::Ordering { op, rhs, .. } => map.some_string(selection, |text| string_comparison(text, op.as_cmp_op(), rhs)),
-        Predicate::MatchPattern { pattern, .. } => map.some_string(selection, |text| string_pattern(text, pattern)),
-        Predicate::NotMatchPattern { pattern, .. } => map.no_string(selection, |text| string_pattern(text, pattern)),
+pub fn language_term(test: &Test, map: &LanguageMap, selection: LanguageSelection<'_>) -> SimpleExpr {
+    match test {
+        Test::Exists => map.holds(selection),
+        Test::Value(value) => language_value_term(value, map, selection),
     }
 }
 
-/// Whether some string of `map` under `selection` lies within a range, both
-/// bounds included (clause 4.9 `Range`).
+/// Whether the strings of `map` under `selection` satisfy `value`: some
+/// string passes an asserted test, and no string passes a complemented one.
 #[must_use]
-pub fn some_string_in_range(map: &LanguageMap, selection: LanguageSelection<'_>, min: &Scalar, max: &Scalar) -> SimpleExpr {
-    map.some_string(selection, |text| string_in_range(text, min, max))
-}
-
-/// The positive form of an equality operand against one string: identical to
-/// the scalar, to one member of a value list, or within a range.
-fn equality_test(text: SimpleExpr, rhs: &CompareValue) -> SimpleExpr {
-    match rhs {
-        CompareValue::Scalar(scalar) => string_comparison(text, CmpOp::Equal, scalar),
-        CompareValue::Range { min, max } => string_in_range(text, min, max),
-        CompareValue::ValueList(values) => values
-            .iter()
-            // clone: the one string is compared against every member
-            .fold(Condition::any(), |any, value| any.add(string_comparison(text.clone(), CmpOp::Equal, value)))
-            .into(),
+pub fn language_value_term(value: &ValueTest, map: &LanguageMap, selection: LanguageSelection<'_>) -> SimpleExpr {
+    let passes = |text: SimpleExpr| string_test(text, value.test());
+    match value.polarity() {
+        Polarity::Asserted => map.some_string(selection, passes),
+        Polarity::Complement => map.no_string(selection, passes),
     }
 }
 
-/// Whether one string lies within a range, both bounds included.
-fn string_in_range(text: SimpleExpr, min: &Scalar, max: &Scalar) -> SimpleExpr {
+/// Whether some string of `map` under `selection` lies within `interval`,
+/// both bounds included (clause 4.9 `Range`).
+#[must_use]
+pub fn some_string_in_range(map: &LanguageMap, selection: LanguageSelection<'_>, interval: &Interval) -> SimpleExpr {
+    map.some_string(selection, |text| string_in_range(text, interval))
+}
+
+/// Whether some string of `map` under `selection` stands in `relation` to
+/// `operand`.
+#[must_use]
+pub fn some_string_ordered(map: &LanguageMap, selection: LanguageSelection<'_>, relation: OrderRelation, operand: &Operand) -> SimpleExpr {
+    map.some_string(selection, |text| string_comparison(text, Comparator::Ordered(relation), operand))
+}
+
+/// Whether one string passes `asked`: identical to the one operand or to one
+/// member of a value list, ordered against the operand, within a range, or in
+/// the language of a pattern. A range whose bounds are of two kinds holds for
+/// no string.
+fn string_test(text: SimpleExpr, asked: &ScalarTest) -> SimpleExpr {
+    match asked {
+        ScalarTest::EqualsAny(operands) => match operands.as_slice() {
+            [operand] => string_comparison(text, Comparator::Equal, operand),
+            operands => operands
+                .iter()
+                // clone: the one string is compared against every member
+                .fold(Condition::any(), |any, operand| {
+                    any.add(string_comparison(text.clone(), Comparator::Equal, operand))
+                })
+                .into(),
+        },
+        ScalarTest::Ordered { relation, operand } => string_comparison(text, Comparator::Ordered(*relation), operand),
+        ScalarTest::Within(interval) => string_in_range(text, interval),
+        ScalarTest::Matches(pattern) => string_pattern(text, pattern),
+        ScalarTest::Unsatisfiable => false_literal(),
+    }
+}
+
+/// Whether one string lies within `interval`, both bounds included.
+fn string_in_range(text: SimpleExpr, interval: &Interval) -> SimpleExpr {
     Condition::all()
         // clone: the one string is compared against both bounds
-        .add(string_comparison(text.clone(), CmpOp::GreaterEq, min))
-        .add(string_comparison(text, CmpOp::LessEq, max))
+        .add(string_comparison(
+            text.clone(),
+            Comparator::Ordered(OrderRelation::GreaterOrEqual),
+            interval.min(),
+        ))
+        .add(string_comparison(text, Comparator::Ordered(OrderRelation::LessOrEqual), interval.max()))
         .into()
 }
 
@@ -103,20 +132,20 @@ fn string_in_range(text: SimpleExpr, min: &Scalar, max: &Scalar) -> SimpleExpr {
 /// language string carries, which clause 4.9 makes a non-match. A String
 /// ordering compares under the collation [`string_ordering_collation`] picks,
 /// any other comparison under the String column's byte order.
-fn string_comparison(text: SimpleExpr, op: CmpOp, scalar: &Scalar) -> SimpleExpr {
-    let value = match scalar {
-        Scalar::Str(value) | Scalar::Uri(value) => value,
-        Scalar::Number(_) | Scalar::Bool(_) | Scalar::Date(_) | Scalar::Time(_) | Scalar::DateTime(_) => return false_literal(),
+fn string_comparison(text: SimpleExpr, comparator: Comparator, operand: &Operand) -> SimpleExpr {
+    let value = match operand {
+        Operand::Text(value) => value,
+        Operand::Number(_) | Operand::Boolean(_) | Operand::Date(_) | Operand::Time(_) | Operand::DateTime(_) => return false_literal(),
     };
     // The collation the stored String columns are declared under, so a string
     // read out of a map orders exactly as one read from `value_string` does.
-    let collation = string_ordering_collation(scalar, op).unwrap_or_else(PostgresCollation::byte_order);
-    compare(collate(text, &collation), op, SeaExpr::val(value.as_str()))
+    let collation = string_ordering_collation(operand, comparator).unwrap_or_else(PostgresCollation::byte_order);
+    compare(collate(text, &collation), comparator, SeaExpr::val(value.as_str()))
 }
 
 /// Whether one string is in the language of a pattern.
 fn string_pattern(text: SimpleExpr, pattern: &Pattern) -> SimpleExpr {
-    pattern_predicate(text, PatternPolarity::Match, pattern, PatternIndexes::None)
+    pattern_predicate(text, Polarity::Asserted, pattern, PatternIndexes::None)
 }
 
 #[cfg(test)]
@@ -124,18 +153,15 @@ mod tests {
     use crate::q_predicate::{
         language_map::{LanguageMap, LanguageSelection},
         language_term::language_term,
+        lowered_filter::term_of,
     };
-    use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::{Alias, Expr as SeaExpr, Query, SelectStatement};
 
-    /// The term of a one-predicate filter over a stand-in map.
+    /// The term of a one-term filter over a stand-in map.
     fn render(q: &str, selection: LanguageSelection<'_>) -> SelectStatement {
-        let Expr::Pred(pred) = parse(q).expect("parses") else {
-            panic!("a single predicate");
-        };
         let map = LanguageMap::of_column(SeaExpr::col(Alias::new("map")));
-        Query::select().expr(language_term(&pred, &map, selection)).to_owned()
+        Query::select().expr(language_term(term_of(q).test(), &map, selection)).to_owned()
     }
 
     /// Clause 4.9 recommends the UCA for ordering text strings, under the ICU

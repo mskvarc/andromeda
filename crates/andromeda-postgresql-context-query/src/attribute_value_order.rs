@@ -20,7 +20,10 @@ use crate::{
     attribute_value_holder::ordered_value,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::{filter::path::AttrPath, ordering::sort_direction::SortDirection};
+use andromeda_ngsi_ld_query::{
+    filter::{instance_metadata::InstanceMetadata, path::AttrPath},
+    ordering::sort_direction::SortDirection,
+};
 use andromeda_ngsi_ld_vocabulary::{
     expanded::classes::{DATE_TIME, TIME},
     keyword,
@@ -114,7 +117,8 @@ impl AttributeValue {
     pub fn lateral(&self, rows: &EntityRowRefs, path: &AttrPath, attributes: &ResolvedNames<AttributeName>) -> SelectStatement {
         let source = Alias::new(SOURCE_ALIAS);
         let read = instance_read(rows, path, attributes);
-        let value = ordered_value(path, ElementPath::resolve(path, ProbedRow::Current, attributes).as_ref(), &source);
+        let (element, member) = ordered_element(path, attributes);
+        let value = ordered_value(path, element.as_ref(), member, &source);
         let mut projection = Query::select();
         projection
             .from_subquery(read, source)
@@ -196,6 +200,16 @@ impl AttributeValue {
     }
 }
 
+/// The instance of current state `path` orders by, `None` when one of its
+/// names was never recorded, and the member of it the path ends on.
+fn ordered_element(path: &AttrPath, attributes: &ResolvedNames<AttributeName>) -> (Option<ElementPath>, Option<InstanceMetadata>) {
+    let (sub_attributes, member) = match path.ending_member() {
+        Some((member, above)) => (above, Some(member)),
+        None => (path.sub_attrs.as_slice(), None),
+    };
+    (ElementPath::of_names(&path.attr, sub_attributes, ProbedRow::Current, attributes), member)
+}
+
 /// The one instance of the entity the term orders by, read from
 /// `current_attributes`: the row of the attribute with the lowest `ordinal`
 /// that holds the path's target, carrying the element at the end of the path
@@ -207,7 +221,7 @@ fn instance_read(rows: &EntityRowRefs, path: &AttrPath, attributes: &ResolvedNam
         .and_where(projection_column(CurrentAttributes::EntityKey).eq(rows.entity_key_column()))
         .order_by_expr(projection_column(CurrentAttributes::Ordinal), Order::Asc)
         .limit(1);
-    match ElementPath::resolve(path, ProbedRow::Current, attributes) {
+    match ordered_element(path, attributes).0 {
         // No dictionary row means no instance was ever written.
         None => {
             read.and_where(false_literal());

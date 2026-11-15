@@ -3,14 +3,12 @@
 use crate::{
     filter::{
         path::QueryPath,
-        reading::operand::Comparison,
+        reading::order_relation::OrderRelation,
         scalar::{CompareValue, Scalar},
         token,
     },
     pattern::Pattern,
 };
-use andromeda_ngsi_ld_value_order::string_order::string_order;
-use std::cmp::Ordering;
 
 /// A single filter predicate within a `q` expression.
 ///
@@ -88,57 +86,6 @@ impl Predicate {
     }
 }
 
-/// The internal comparison primitive: any of the six clause 4.9 comparison
-/// operators.
-///
-/// Not carried by [`Predicate`]: its two comparison variants carry the
-/// parser-facing [`SetMembership`] and [`OrderingOp`] instead. This is the
-/// operator an evaluator or a backend renders a single scalar comparison with,
-/// including the internal `>=`/`<=`/`=` a range or a value list expands into.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CmpOp {
-    /// Equal (`=`).
-    Equal,
-    /// Not equal (`!=`).
-    Unequal,
-    /// Greater than (`>`).
-    Greater,
-    /// Greater than or equal (`>=`).
-    GreaterEq,
-    /// Less than (`<`).
-    Less,
-    /// Less than or equal (`<=`).
-    LessEq,
-}
-
-impl CmpOp {
-    /// Whether a target ordered `ord` against the operand satisfies the
-    /// comparison.
-    #[must_use]
-    pub const fn holds(self, ord: Ordering) -> bool {
-        match self {
-            CmpOp::Equal => ord.is_eq(),
-            CmpOp::Unequal => !ord.is_eq(),
-            CmpOp::Greater => ord.is_gt(),
-            CmpOp::GreaterEq => ord.is_ge(),
-            CmpOp::Less => ord.is_lt(),
-            CmpOp::LessEq => ord.is_le(),
-        }
-    }
-
-    /// Whether the comparison holds between the text strings `lhs` and `rhs`,
-    /// ordered by the relation [`Comparison::string_relation`] gives the
-    /// operator's comparison.
-    #[must_use]
-    pub fn holds_for_strings(self, lhs: &str, rhs: &str) -> bool {
-        let comparison = match self {
-            CmpOp::Equal | CmpOp::Unequal => Comparison::Equality,
-            CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => Comparison::Order,
-        };
-        self.holds(string_order(lhs, rhs, comparison.string_relation()))
-    }
-}
-
 /// The four clause 4.9 ordering operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderingOp {
@@ -167,14 +114,14 @@ impl OrderingOp {
         }
     }
 
-    /// The comparison primitive this ordering operator renders as.
+    /// The relation of the target to the operand the operator tests.
     #[must_use]
-    pub const fn as_cmp_op(self) -> CmpOp {
+    pub const fn relation(self) -> OrderRelation {
         match self {
-            OrderingOp::Greater => CmpOp::Greater,
-            OrderingOp::GreaterEq => CmpOp::GreaterEq,
-            OrderingOp::Less => CmpOp::Less,
-            OrderingOp::LessEq => CmpOp::LessEq,
+            OrderingOp::Greater => OrderRelation::Greater,
+            OrderingOp::GreaterEq => OrderRelation::GreaterOrEqual,
+            OrderingOp::Less => OrderRelation::Less,
+            OrderingOp::LessEq => OrderRelation::LessOrEqual,
         }
     }
 }
@@ -197,26 +144,6 @@ impl SetMembership {
             SetMembership::Outside => token::UNEQUAL,
         }
     }
-
-    /// The comparison primitive a single scalar operand renders as under this
-    /// membership: `==` for [`SetMembership::Within`], `!=` for
-    /// [`SetMembership::Outside`].
-    #[must_use]
-    pub const fn as_cmp_op(self) -> CmpOp {
-        match self {
-            SetMembership::Within => CmpOp::Equal,
-            SetMembership::Outside => CmpOp::Unequal,
-        }
-    }
-}
-
-/// Whether a pattern predicate asserts a match or the absence of one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PatternPolarity {
-    /// `~=`
-    Match,
-    /// `!~=`
-    NotMatch,
 }
 
 #[cfg(test)]
@@ -225,37 +152,21 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn set_membership_maps_to_the_equality_comparison_primitive() {
-        // Clause 4.9 Table 4.9-1: `==`/`!=` are the only operators over a
-        // compound operand, and a single scalar under them compares by equality.
-        assert_eq!(SetMembership::Within.as_cmp_op(), CmpOp::Equal);
-        assert_eq!(SetMembership::Outside.as_cmp_op(), CmpOp::Unequal);
+    fn set_membership_writes_the_equality_tokens() {
         assert_eq!(SetMembership::Within.ngsi_token(), "==");
         assert_eq!(SetMembership::Outside.ngsi_token(), "!=");
     }
 
     #[test]
-    fn ordering_operators_map_to_their_comparison_primitive_and_token() {
-        // Clause 4.9 Table 4.9-1: the four ordering operators take a single
-        // scalar, which a backend renders with the matching primitive.
-        for (op, primitive, token) in [
-            (OrderingOp::Greater, CmpOp::Greater, ">"),
-            (OrderingOp::GreaterEq, CmpOp::GreaterEq, ">="),
-            (OrderingOp::Less, CmpOp::Less, "<"),
-            (OrderingOp::LessEq, CmpOp::LessEq, "<="),
+    fn ordering_operators_write_their_token_and_test_their_relation() {
+        for (op, relation, token) in [
+            (OrderingOp::Greater, OrderRelation::Greater, ">"),
+            (OrderingOp::GreaterEq, OrderRelation::GreaterOrEqual, ">="),
+            (OrderingOp::Less, OrderRelation::Less, "<"),
+            (OrderingOp::LessEq, OrderRelation::LessOrEqual, "<="),
         ] {
-            assert_eq!(op.as_cmp_op(), primitive, "{op:?}");
+            assert_eq!(op.relation(), relation, "{op:?}");
             assert_eq!(op.ngsi_token(), token, "{op:?}");
         }
-    }
-
-    #[test]
-    fn an_equality_compares_strings_by_code_point_and_an_ordering_by_collation() {
-        assert!(!CmpOp::Equal.holds_for_strings("\u{e9}", "e\u{301}"));
-        assert!(CmpOp::Unequal.holds_for_strings("\u{e9}", "e\u{301}"));
-        assert!(CmpOp::Greater.holds_for_strings("\u{e9}", "e\u{301}"));
-        assert!(CmpOp::Less.holds_for_strings("\u{e9}", "f"));
-        assert!(CmpOp::LessEq.holds_for_strings("a", "B"));
-        assert!(!CmpOp::GreaterEq.holds_for_strings("a", "B"));
     }
 }

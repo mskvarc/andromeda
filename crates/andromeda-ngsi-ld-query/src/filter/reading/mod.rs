@@ -12,6 +12,7 @@
 
 pub mod array_rule;
 pub mod array_target;
+pub mod comparator;
 #[cfg(test)]
 mod decision_table_tests;
 pub mod family_reading;

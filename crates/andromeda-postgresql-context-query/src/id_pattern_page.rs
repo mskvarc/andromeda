@@ -25,7 +25,7 @@ use crate::{
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::ConsideredEntities,
-    filter::predicate::PatternPolarity,
+    filter::reading::value_test::Polarity,
     pattern::Pattern,
     projection::projected_members::ProjectedMembers,
     read_order::ReadOrder,
@@ -79,7 +79,7 @@ pub(crate) fn pattern_matches<'q>(query: &'q CompiledEntityQuery, relations: &En
         .from(rows.table(Entities::Table))
         .and_where(pattern_predicate(
             rows.identity_column(Entities::Id),
-            PatternPolarity::Match,
+            Polarity::Asserted,
             pattern,
             PatternIndexes::TrigramsAndByteOrder,
         ))
@@ -104,12 +104,7 @@ pub(crate) fn id_pattern_page(source: &PageSource<'_>, matches: PatternMatches<'
     let short = ShortWalk {
         source: *source,
         walked: Condition::all(),
-        probe: Condition::all().add(pattern_predicate(
-            walked_identifier,
-            PatternPolarity::Match,
-            matches.pattern,
-            PatternIndexes::None,
-        )),
+        probe: Condition::all().add(pattern_predicate(walked_identifier, Polarity::Asserted, matches.pattern, PatternIndexes::None)),
         length: ID_PATTERN_SHORT_WALK,
     };
     let rest = IndexOrWalk {

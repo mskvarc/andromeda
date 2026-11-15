@@ -4,14 +4,11 @@
 use crate::q_predicate::{
     instance_row::InstanceRow,
     language_map::{LanguageMap, LanguageSelection},
-    language_term::{StringComparability, language_term, string_comparability},
+    language_term::{StringComparability, some_string_ordered, string_comparability},
     own_value_arms::OwnValueArms,
     typed_column::typed_column_condition,
 };
-use andromeda_ngsi_ld_query::filter::{
-    predicate::{OrderingOp, Predicate},
-    scalar::Scalar,
-};
+use andromeda_ngsi_ld_query::filter::reading::{comparator::Comparator, operand::Operand, order_relation::OrderRelation};
 use sea_query::Condition;
 
 /// Compare the instance's own value: the typed field holding the operand's
@@ -22,19 +19,24 @@ use sea_query::Condition;
 /// A number or a boolean is compared against its typed field alone, which no
 /// string can satisfy anyway, so a row's probe stays on that column's index.
 #[must_use]
-pub(crate) fn ordering_value(pred: &Predicate, op: OrderingOp, rhs: &Scalar, row: InstanceRow) -> Condition {
-    ordering_arms(pred, op, rhs, row).either()
+pub(crate) fn ordering_value(relation: OrderRelation, operand: &Operand, row: InstanceRow) -> Condition {
+    ordering_arms(relation, operand, row).either()
 }
 
 /// The readings [`ordering_value`] disjoins.
 #[must_use]
-pub(crate) fn ordering_arms(pred: &Predicate, op: OrderingOp, rhs: &Scalar, row: InstanceRow) -> OwnValueArms {
-    let language = match string_comparability(rhs) {
-        StringComparability::Comparable => Some(language_term(pred, &LanguageMap::of_instance(row), LanguageSelection::AnyLanguage)),
+pub(crate) fn ordering_arms(relation: OrderRelation, operand: &Operand, row: InstanceRow) -> OwnValueArms {
+    let language = match string_comparability(operand) {
+        StringComparability::Comparable => Some(some_string_ordered(
+            &LanguageMap::of_instance(row),
+            LanguageSelection::AnyLanguage,
+            relation,
+            operand,
+        )),
         StringComparability::Incomparable => None,
     };
     OwnValueArms {
-        typed: Condition::all().add(typed_column_condition(rhs, op.as_cmp_op(), row)),
+        typed: Condition::all().add(typed_column_condition(operand, Comparator::Ordered(relation), row)),
         language,
     }
 }

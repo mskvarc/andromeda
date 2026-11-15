@@ -13,28 +13,30 @@
 //! never collates here.
 
 use andromeda_ngsi_ld_query::{
-    filter::{predicate::CmpOp, scalar::Scalar},
+    filter::reading::{comparator::Comparator, operand::Operand},
     ordering::collation::IcuCollation,
 };
 use andromeda_postgresql_seaquery::collation::{PostgresCollation, collate};
 use sea_query::SimpleExpr;
 
-/// The collation `scalar` orders a stored string under with `op`, or `None`
-/// when the comparison is not a String ordering.
+/// The collation a stored string is compared with `operand` under by
+/// `comparator`, or `None` when the comparison is not a String ordering.
 #[must_use]
-pub fn string_ordering_collation(scalar: &Scalar, op: CmpOp) -> Option<PostgresCollation> {
-    match (scalar, op) {
-        (Scalar::Str(_), CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq) => Some(PostgresCollation::new(IcuCollation::ROOT)),
-        (Scalar::Str(_), CmpOp::Equal | CmpOp::Unequal)
-        | (Scalar::Uri(_) | Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_), _) => None,
+pub fn string_ordering_collation(operand: &Operand, comparator: Comparator) -> Option<PostgresCollation> {
+    match (operand, comparator) {
+        (Operand::Text(_), Comparator::Ordered(_)) => Some(PostgresCollation::new(IcuCollation::ROOT)),
+        (Operand::Text(_), Comparator::Equal)
+        | (Operand::Number(_) | Operand::Boolean(_) | Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_), Comparator::Equal | Comparator::Ordered(_)) => {
+            None
+        }
     }
 }
 
 /// `stored` under the collation [`string_ordering_collation`] picks, or
 /// unchanged when it picks none.
 #[must_use]
-pub fn ordered_string(stored: SimpleExpr, scalar: &Scalar, op: CmpOp) -> SimpleExpr {
-    match string_ordering_collation(scalar, op) {
+pub fn ordered_string(stored: SimpleExpr, operand: &Operand, comparator: Comparator) -> SimpleExpr {
+    match string_ordering_collation(operand, comparator) {
         Some(collation) => collate(stored, &collation),
         None => stored,
     }
@@ -44,26 +46,39 @@ pub fn ordered_string(stored: SimpleExpr, scalar: &Scalar, op: CmpOp) -> SimpleE
 mod tests {
     use crate::q_predicate::string_ordering::{ordered_string, string_ordering_collation};
     use andromeda_ngsi_ld_query::filter::{
-        predicate::CmpOp,
-        scalar::{Scalar, parse_date, parse_time},
+        reading::{comparator::Comparator, operand::Operand, order_relation::OrderRelation},
+        scalar::{parse_date, parse_time},
     };
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, collation::PostgresCollation};
     use sea_query::{Alias, Expr, Query, SelectStatement};
 
-    fn render(scalar: &Scalar, op: CmpOp) -> SelectStatement {
-        Query::select().expr(ordered_string(Expr::col(Alias::new("s")), scalar, op)).to_owned()
+    fn render(operand: &Operand, comparator: Comparator) -> SelectStatement {
+        Query::select().expr(ordered_string(Expr::col(Alias::new("s")), operand, comparator)).to_owned()
+    }
+
+    fn text(value: &str) -> Operand {
+        Operand::Text(value.to_owned())
     }
 
     /// Clause 4.9 recommends the UCA for comparing text strings, and clause
     /// 4.23.1 makes the ICU root collation the default string order.
     #[test]
     fn a_string_ordering_compares_under_the_icu_root_collation() {
-        for (index, op) in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq].into_iter().enumerate() {
-            let collation = string_ordering_collation(&Scalar::Str("a".to_owned()), op).expect("a String ordering collates");
-            assert_eq!(collation, PostgresCollation::new("und-x-icu"), "{op:?}");
+        for (index, relation) in [
+            OrderRelation::Greater,
+            OrderRelation::GreaterOrEqual,
+            OrderRelation::Less,
+            OrderRelation::LessOrEqual,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let comparator = Comparator::Ordered(relation);
+            let collation = string_ordering_collation(&text("a"), comparator).expect("a String ordering collates");
+            assert_eq!(collation, PostgresCollation::new("und-x-icu"), "{relation:?}");
             assert_statement_snapshot!(
                 format!("string-ordering-a-string-ordering-compares-under-the-icu-root-collation-{}", index + 1),
-                render(&Scalar::Str("a".to_owned()), op)
+                render(&text("a"), comparator)
             );
         }
     }
@@ -72,13 +87,8 @@ mod tests {
     /// collation must not loosen.
     #[test]
     fn a_string_equality_is_not_collated() {
-        for (index, op) in [CmpOp::Equal, CmpOp::Unequal].into_iter().enumerate() {
-            assert!(string_ordering_collation(&Scalar::Str("a".to_owned()), op).is_none(), "{op:?}");
-            assert_statement_snapshot!(
-                format!("string-ordering-a-string-equality-is-not-collated-{}", index + 1),
-                render(&Scalar::Str("a".to_owned()), op)
-            );
-        }
+        assert!(string_ordering_collation(&text("a"), Comparator::Equal).is_none());
+        assert_statement_snapshot!("string-ordering-a-string-equality-is-not-collated", render(&text("a"), Comparator::Equal));
     }
 
     /// A date or time of day orders by its fixed-width canonical text, whose
@@ -88,8 +98,11 @@ mod tests {
     fn a_non_string_operand_is_not_collated() {
         let date = parse_date("2024-01-15").expect("a date");
         let time = parse_time("12:00:00Z").expect("a time");
-        for scalar in [Scalar::Date(date), Scalar::Time(time), Scalar::Number(1.into()), Scalar::Bool(true)] {
-            assert!(string_ordering_collation(&scalar, CmpOp::Greater).is_none(), "{scalar:?}");
+        for operand in [Operand::Date(date), Operand::Time(time), Operand::Number(1.into()), Operand::Boolean(true)] {
+            assert!(
+                string_ordering_collation(&operand, Comparator::Ordered(OrderRelation::Greater)).is_none(),
+                "{operand:?}"
+            );
         }
     }
 }

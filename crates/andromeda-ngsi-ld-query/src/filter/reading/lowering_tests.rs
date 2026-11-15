@@ -12,7 +12,7 @@ use crate::filter::{
         scalar_test::ScalarTest,
         term_reading::{TermReading, Test},
         terminal::Terminal,
-        value_test::{ComplementScope, Polarity},
+        value_test::Polarity,
     },
     target_language::TargetLanguage,
     trailing_path::MemberPath,
@@ -242,12 +242,12 @@ fn a_negated_operator_lowers_to_the_complement_of_its_positive_test() {
     let Test::Value(unequal) = term("a!=1").test().clone() else {
         panic!("a value test");
     };
-    assert_eq!(unequal.polarity(), Polarity::Complement(ComplementScope::AnyKind));
+    assert_eq!(unequal.polarity(), Polarity::Complement);
     assert_eq!(unequal.test(), &ScalarTest::EqualsAny(vec![Operand::Number("1".parse().expect("a number"))]));
     let Test::Value(unmatched) = term("a!~=\"x\"").test().clone() else {
         panic!("a value test");
     };
-    assert_eq!(unmatched.polarity(), Polarity::Complement(ComplementScope::StringTarget));
+    assert_eq!(unmatched.polarity(), Polarity::Complement);
     assert_eq!(term("a").test(), &Test::Exists);
 }
 

@@ -1,6 +1,0 @@
----
-source: crates/andromeda-postgresql-query/src/operator.rs
----
-SELECT
-  "stored" != $1
-1: String 'x'

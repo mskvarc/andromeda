@@ -25,19 +25,18 @@ use crate::filter::{
     expression::Expr,
     language_matching::LanguageMatching,
     path::{AttrPath, QueryPath},
-    predicate::{OrderingOp, Predicate, SetMembership},
+    predicate::{Predicate, SetMembership},
     reading::{
         filter_reading::FilterReading,
         hop::Hop,
         interval::Interval,
         operand::Operand,
-        order_relation::OrderRelation,
         scalar_test::ScalarTest,
         term_reading::{TermReading, Test},
         terminal::Terminal,
-        value_test::{ComplementScope, Polarity, ValueTest},
+        value_test::{Polarity, ValueTest},
     },
-    scalar::{CompareValue, Scalar},
+    scalar::CompareValue,
     target_language::LanguageSelector,
     trailing_path::TrailingPath,
 };
@@ -131,55 +130,29 @@ fn test_of(predicate: &Predicate) -> Test {
         Predicate::Equality { membership, rhs, .. } => Test::Value(ValueTest::new(equality_test(rhs), equality_polarity(*membership))),
         Predicate::Ordering { op, rhs, .. } => Test::Value(ValueTest::new(
             ScalarTest::Ordered {
-                relation: order_relation(*op),
-                operand: operand_of(rhs),
+                relation: op.relation(),
+                operand: Operand::from(rhs),
             },
             Polarity::Asserted,
         )),
         Predicate::MatchPattern { pattern, .. } => Test::Value(ValueTest::new(ScalarTest::Matches(pattern.clone()), Polarity::Asserted)),
-        Predicate::NotMatchPattern { pattern, .. } => Test::Value(ValueTest::new(
-            ScalarTest::Matches(pattern.clone()),
-            Polarity::Complement(ComplementScope::StringTarget),
-        )),
+        Predicate::NotMatchPattern { pattern, .. } => Test::Value(ValueTest::new(ScalarTest::Matches(pattern.clone()), Polarity::Complement)),
     }
 }
 
 /// The comparison `==` and `!=` make with a value, a value list or a range.
 fn equality_test(rhs: &CompareValue) -> ScalarTest {
     match rhs {
-        CompareValue::Scalar(scalar) => ScalarTest::EqualsAny(vec![operand_of(scalar)]),
-        CompareValue::ValueList(values) => ScalarTest::EqualsAny(values.iter().map(operand_of).collect()),
-        CompareValue::Range { min, max } => Interval::new(operand_of(min), operand_of(max)).map_or(ScalarTest::Unsatisfiable, ScalarTest::Within),
+        CompareValue::Scalar(scalar) => ScalarTest::EqualsAny(vec![Operand::from(scalar)]),
+        CompareValue::ValueList(values) => ScalarTest::EqualsAny(values.iter().map(Operand::from).collect()),
+        CompareValue::Range { min, max } => Interval::new(Operand::from(min), Operand::from(max)).map_or(ScalarTest::Unsatisfiable, ScalarTest::Within),
     }
 }
 
-/// `==` asserts its test and `!=` its complement over every kind.
+/// `==` asserts its test and `!=` its complement.
 const fn equality_polarity(membership: SetMembership) -> Polarity {
     match membership {
         SetMembership::Within => Polarity::Asserted,
-        SetMembership::Outside => Polarity::Complement(ComplementScope::AnyKind),
-    }
-}
-
-/// The relation an ordering operator tests.
-const fn order_relation(op: OrderingOp) -> OrderRelation {
-    match op {
-        OrderingOp::Greater => OrderRelation::Greater,
-        OrderingOp::GreaterEq => OrderRelation::GreaterOrEqual,
-        OrderingOp::Less => OrderRelation::Less,
-        OrderingOp::LessEq => OrderRelation::LessOrEqual,
-    }
-}
-
-/// The operand a parsed scalar is: a bare `URI` compares as the text it is,
-/// exactly as a `quotedStr` holding it.
-fn operand_of(scalar: &Scalar) -> Operand {
-    match scalar {
-        Scalar::Number(number) => Operand::Number(number.clone()),
-        Scalar::Bool(value) => Operand::Boolean(*value),
-        Scalar::Str(text) | Scalar::Uri(text) => Operand::Text(text.clone()),
-        Scalar::DateTime(instant) => Operand::DateTime(*instant),
-        Scalar::Date(date) => Operand::Date(*date),
-        Scalar::Time(time) => Operand::Time(*time),
+        SetMembership::Outside => Polarity::Complement,
     }
 }

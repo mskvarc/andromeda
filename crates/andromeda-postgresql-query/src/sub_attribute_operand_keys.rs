@@ -13,34 +13,34 @@ use andromeda_ngsi_ld_lexicon::time::{
     rendering::{instant_text, time_of_day_text},
     time_of_day::NgsiLdTime,
 };
-use andromeda_ngsi_ld_query::filter::scalar::Scalar;
+use andromeda_ngsi_ld_query::filter::reading::operand::Operand;
 use andromeda_postgresql_stored_values::sub_attribute_key::{
     key::{KeyedValue, SubAttributeKey, TextKind},
     path_hash::PathHash,
 };
 
-/// The keys `scalar` reads at `path`.
+/// The keys `operand` reads at `path`.
 ///
-/// A String or a URI operand may equal a String or a Relationship object,
+/// A text operand may equal a String or a Relationship object,
 /// which are keyed under two kinds, so it reads both keys. A time operand reads
 /// the key of its kind and the String key of its served spelling. A number or
 /// a boolean reads one.
 #[must_use]
-pub fn operand_keys(path: PathHash, scalar: &Scalar) -> Vec<SubAttributeKey> {
+pub fn operand_keys(path: PathHash, operand: &Operand) -> Vec<SubAttributeKey> {
     let key = |value: KeyedValue<'_>| SubAttributeKey::of(path, value);
-    match scalar {
-        Scalar::Number(number) => vec![key(KeyedValue::Number(number.decimal()))],
-        Scalar::Bool(flag) => vec![key(KeyedValue::Boolean(*flag))],
-        Scalar::Str(text) | Scalar::Uri(text) => vec![key(KeyedValue::Text(text, TextKind::String)), key(KeyedValue::Text(text, TextKind::Uri))],
-        Scalar::DateTime(instant) => vec![
+    match operand {
+        Operand::Number(number) => vec![key(KeyedValue::Number(number.decimal()))],
+        Operand::Boolean(flag) => vec![key(KeyedValue::Boolean(*flag))],
+        Operand::Text(text) => vec![key(KeyedValue::Text(text, TextKind::String)), key(KeyedValue::Text(text, TextKind::Uri))],
+        Operand::DateTime(instant) => vec![
             key(KeyedValue::Instant(*instant)),
             key(KeyedValue::Text(&instant_text(*instant), TextKind::String)),
         ],
-        Scalar::Date(date) => {
+        Operand::Date(date) => {
             let text = NgsiLdDate::from(*date).to_string();
             vec![key(KeyedValue::Text(&text, TextKind::Date)), key(KeyedValue::Text(&text, TextKind::String))]
         }
-        Scalar::Time(time) => vec![
+        Operand::Time(time) => vec![
             key(KeyedValue::Text(&NgsiLdTime::normalise(*time).to_string(), TextKind::Time)),
             key(KeyedValue::Text(&time_of_day_text(*time), TextKind::String)),
         ],
@@ -50,7 +50,10 @@ pub fn operand_keys(path: PathHash, scalar: &Scalar) -> Vec<SubAttributeKey> {
 #[cfg(test)]
 mod tests {
     use crate::sub_attribute_operand_keys::operand_keys;
-    use andromeda_ngsi_ld_query::filter::scalar::{Scalar, parse_date, parse_time};
+    use andromeda_ngsi_ld_query::filter::{
+        reading::operand::Operand,
+        scalar::{parse_date, parse_time},
+    };
     use andromeda_postgresql_stored_values::{
         attribute_name_key::AttributeNameKey,
         sub_attribute_key::{
@@ -66,8 +69,8 @@ mod tests {
 
     #[test]
     fn a_number_operand_reads_the_key_of_its_value() {
-        let one = operand_keys(path(), &Scalar::Number("1".parse().expect("a number")));
-        assert_eq!(operand_keys(path(), &Scalar::Number("1.00".parse().expect("a number"))), one);
+        let one = operand_keys(path(), &Operand::Number("1".parse().expect("a number")));
+        assert_eq!(operand_keys(path(), &Operand::Number("1.00".parse().expect("a number"))), one);
         assert_eq!(one.len(), 1);
     }
 
@@ -77,8 +80,7 @@ mod tests {
             SubAttributeKey::of(path(), KeyedValue::Text("urn:a", TextKind::String)),
             SubAttributeKey::of(path(), KeyedValue::Text("urn:a", TextKind::Uri)),
         ];
-        assert_eq!(operand_keys(path(), &Scalar::Str("urn:a".to_owned())), expected);
-        assert_eq!(operand_keys(path(), &Scalar::Uri("urn:a".to_owned())), expected);
+        assert_eq!(operand_keys(path(), &Operand::Text("urn:a".to_owned())), expected);
     }
 
     /// A `Time` reads the key of its kind over its fixed-width encoding, and
@@ -87,7 +89,7 @@ mod tests {
     fn a_time_operand_reads_its_kind_key_and_the_string_key_of_its_served_spelling() {
         let time = parse_time("12:00:00,5Z").expect("a time");
         assert_eq!(
-            operand_keys(path(), &Scalar::Time(time)),
+            operand_keys(path(), &Operand::Time(time)),
             vec![
                 SubAttributeKey::of(path(), KeyedValue::Text("12:00:00.500000Z", TextKind::Time)),
                 SubAttributeKey::of(path(), KeyedValue::Text("12:00:00.500Z", TextKind::String)),
@@ -99,7 +101,7 @@ mod tests {
     fn a_date_operand_reads_its_kind_key_and_its_string_key() {
         let date = parse_date("2024-01-01").expect("a date");
         assert_eq!(
-            operand_keys(path(), &Scalar::Date(date)),
+            operand_keys(path(), &Operand::Date(date)),
             vec![
                 SubAttributeKey::of(path(), KeyedValue::Text("2024-01-01", TextKind::Date)),
                 SubAttributeKey::of(path(), KeyedValue::Text("2024-01-01", TextKind::String)),

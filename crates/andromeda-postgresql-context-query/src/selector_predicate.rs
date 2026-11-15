@@ -15,7 +15,7 @@ use crate::entity_relations::RowSource;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     entity_selection::{EntitySelection, EntitySelector},
-    filter::predicate::PatternPolarity,
+    filter::reading::value_test::Polarity,
     identifier_axis::IdentifierAxis,
 };
 use andromeda_postgresql_query::{
@@ -86,7 +86,7 @@ fn selector_condition(rows: &EntityRowRefs, selector: &EntitySelector, types: &R
         IdentifierAxis::Pattern(pattern) => {
             condition = condition.add(pattern_predicate(
                 rows.identity_column(Entities::Id),
-                PatternPolarity::Match,
+                Polarity::Asserted,
                 pattern,
                 PatternIndexes::TrigramsAndByteOrder,
             ));

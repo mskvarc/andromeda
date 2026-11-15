@@ -25,11 +25,7 @@ use crate::{
     entity_filters::EntityFilters,
     entity_selection::EntitySelection,
     filter::{
-        expression::Expr,
-        language_matching::LanguageMatching,
-        path::QueryPath,
-        predicate::Predicate,
-        reading::term_reading::TermReading,
+        reading::{filter_reading::FilterReading, term_reading::TermReading},
         referenced_attributes::referenced_attributes,
     },
     geo::query::GeoQuery,
@@ -43,16 +39,9 @@ const STRUCTURAL_MEMBERS: [&str; 3] = ["id", "type", "scope"];
 /// One existential leaf of a query's value, geo and scope filters.
 #[derive(Debug, Clone, Copy)]
 pub enum FilterLeaf<'q> {
-    /// One Query Term of the `q` filter (clause 4.9).
-    Term {
-        /// The expanded predicate, which a store renders.
-        predicate: &'q Predicate,
-        /// How the filter's target languages select languageMap keys, which
-        /// a store renders the predicate under.
-        matching: LanguageMatching,
-        /// Its reading, which the in-memory execution runs.
-        reading: &'q TermReading,
-    },
+    /// One Query Term of the `q` filter as lowered (clause 4.9), which a
+    /// store renders and the in-memory execution runs.
+    Term(&'q TermReading),
     /// The geo-query (clause 4.10).
     Geo(&'q GeoQuery),
     /// One requirement of one alternative of the scope query (clause 4.19).
@@ -151,16 +140,10 @@ impl<'q> SplitFilter<'q> {
         self.filters.q.is_none() && self.filters.geo.is_none() && self.filters.scope.is_none()
     }
 
-    /// Every leaf: the Query Terms of `q` in pre-order, then the geo-query,
-    /// then every pattern of every scope alternative in order.
+    /// Every leaf: the Query Terms of `q` as lowered, in pre-order, then the
+    /// geo-query, then every pattern of every scope alternative in order.
     pub fn leaves(&self) -> impl Iterator<Item = FilterLeaf<'q>> + use<'q> {
-        let terms = self.filters.q.into_iter().flat_map(|q| {
-            q.terms().map(|(predicate, reading)| FilterLeaf::Term {
-                predicate,
-                matching: q.matching(),
-                reading,
-            })
-        });
+        let terms = self.filters.q.into_iter().flat_map(|q| q.lowered().terms()).map(FilterLeaf::Term);
         let geo = self.filters.geo.map(FilterLeaf::Geo);
         let scope = self
             .filters
@@ -193,22 +176,18 @@ impl<'q> SplitFilter<'q> {
     pub fn hop_relationships(&self) -> Vec<Vec<&'q AttributeName>> {
         let mut levels: Vec<Vec<&'q AttributeName>> = Vec::new();
         for leaf in self.leaves() {
-            let FilterLeaf::Term { predicate, .. } = leaf else {
+            let FilterLeaf::Term(term) = leaf else {
                 continue;
             };
-            let mut path = predicate.path();
-            let mut depth = 0;
-            while let QueryPath::Linked { relationship, inner, .. } = path {
+            for (depth, hop) in term.hops().iter().enumerate() {
                 if levels.len() <= depth {
                     levels.push(Vec::new());
                 }
                 if let Some(level) = levels.get_mut(depth)
-                    && !level.contains(&relationship)
+                    && !level.contains(&hop.relationship())
                 {
-                    level.push(relationship);
+                    level.push(hop.relationship());
                 }
-                path = inner;
-                depth += 1;
             }
         }
         levels
@@ -220,22 +199,21 @@ impl<'q> SplitFilter<'q> {
     pub fn hop_reads(&self) -> Vec<HopReads<'q>> {
         let mut levels: Vec<HopReads<'q>> = Vec::new();
         for leaf in self.leaves() {
-            let FilterLeaf::Term { predicate, .. } = leaf else {
+            let FilterLeaf::Term(term) = leaf else {
                 continue;
             };
-            let mut path = predicate.path();
-            let mut depth = 0;
-            while let QueryPath::Linked { inner, .. } = path {
+            let hops = term.hops();
+            for depth in 0..hops.len() {
                 if levels.len() <= depth {
                     levels.push(HopReads {
                         attributes: Vec::new(),
                         members: HopMembers::Attributes,
                     });
                 }
-                let read = match inner.as_ref() {
-                    QueryPath::Linked { relationship, .. } => Some(relationship),
-                    QueryPath::Local(local) if STRUCTURAL_MEMBERS.contains(&local.attr.as_str()) => None,
-                    QueryPath::Local(local) => Some(&local.attr),
+                let read = match hops.get(depth + 1) {
+                    Some(next) => Some(next.relationship()),
+                    None if STRUCTURAL_MEMBERS.contains(&term.attribute().as_str()) => None,
+                    None => Some(term.attribute()),
                 };
                 if let Some(level) = levels.get_mut(depth) {
                     match read {
@@ -244,8 +222,6 @@ impl<'q> SplitFilter<'q> {
                         Some(_) => {}
                     }
                 }
-                path = inner;
-                depth += 1;
             }
         }
         levels
@@ -268,7 +244,7 @@ impl<'q> SplitFilter<'q> {
     #[must_use]
     pub fn holds(&self, truths: &LeafTruths) -> bool {
         let mut cursor = 0;
-        let q = self.filters.q.is_none_or(|q| expression_holds(q.expr(), truths, &mut cursor));
+        let q = self.filters.q.is_none_or(|q| reading_holds(q.lowered(), truths, &mut cursor));
         let geo = self.filters.geo.is_none_or(|_| next_truth(truths, &mut cursor));
         let scope = self.filters.scope.is_none_or(|scope| {
             // Every requirement takes its place in the leaf order whether or
@@ -296,28 +272,28 @@ fn next_truth(truths: &LeafTruths, cursor: &mut usize) -> bool {
     held
 }
 
-/// Whether `expr` holds when its Query Terms, from `cursor` on in pre-order,
-/// hold as `truths` says.
+/// Whether `reading` holds when its Query Terms, from `cursor` on in
+/// pre-order, hold as `truths` says.
 ///
 /// Every term advances the cursor whether or not the connective above it is
 /// already decided, so no term is skipped once the outcome is known.
-fn expression_holds(expr: &Expr, truths: &LeafTruths, cursor: &mut usize) -> bool {
-    match expr {
-        Expr::And(terms) => {
+fn reading_holds(reading: &FilterReading, truths: &LeafTruths, cursor: &mut usize) -> bool {
+    match reading {
+        FilterReading::All(children) => {
             let mut all = true;
-            for term in terms {
-                all &= expression_holds(term, truths, cursor);
+            for child in children {
+                all &= reading_holds(child, truths, cursor);
             }
             all
         }
-        Expr::Or(terms) => {
+        FilterReading::Any(children) => {
             let mut any = false;
-            for term in terms {
-                any |= expression_holds(term, truths, cursor);
+            for child in children {
+                any |= reading_holds(child, truths, cursor);
             }
             any
         }
-        Expr::Pred(_) => next_truth(truths, cursor),
+        FilterReading::Term(_) => next_truth(truths, cursor),
     }
 }
 
@@ -376,7 +352,7 @@ mod tests {
         let leaves: Vec<String> = SplitFilter::of(&selection)
             .leaves()
             .map(|leaf| match leaf {
-                FilterLeaf::Term { predicate, .. } => format!("term {}", predicate.path().terminal().attr),
+                FilterLeaf::Term(term) => format!("term {}", term.attribute()),
                 FilterLeaf::Geo(geo) => format!("geo {}", geo.geoproperty),
                 FilterLeaf::ScopeRequirement(pattern) => format!("scope {pattern}"),
             })

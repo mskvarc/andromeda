@@ -20,17 +20,13 @@ use crate::{
         equality_term::range_arms,
         instance_row::InstanceRow,
         keyed_branches::{branch, language_property_rows, union_of},
-        local_target::{LocalTarget, local_target},
         ordering_term::ordering_arms,
         own_value_arms::OwnValueArms,
     },
     query_names::QueryNames,
 };
-use andromeda_ngsi_ld_query::filter::{
-    path::QueryPath,
-    predicate::{Predicate, SetMembership},
-    scalar::{CompareValue, Scalar},
-};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_query::filter::reading::{operand::Operand, scalar_test::ScalarTest};
 use sea_query::{Condition, SelectStatement};
 
 /// Whether a value index orders an operand the way the term compares it.
@@ -43,58 +39,34 @@ enum OperandOrder {
     Unindexed,
 }
 
-/// The order a value index gives `scalar`.
-const fn operand_order(scalar: &Scalar) -> OperandOrder {
-    match scalar {
-        Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_) => OperandOrder::Indexed,
-        Scalar::Number(_) | Scalar::Bool(_) | Scalar::Str(_) | Scalar::Uri(_) => OperandOrder::Unindexed,
+/// The order a value index gives `operand`.
+const fn operand_order(operand: &Operand) -> OperandOrder {
+    match operand {
+        Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_) => OperandOrder::Indexed,
+        Operand::Number(_) | Operand::Boolean(_) | Operand::Text(_) => OperandOrder::Unindexed,
     }
 }
 
-/// `SELECT "entity_key"` over the rows of the attribute whose own value
-/// satisfies `pred`, `None` unless `pred` is an ordering or a range with
-/// indexed operands on a recorded attribute's own value.
+/// `SELECT "entity_key"` over the rows of `attribute` whose own value passes
+/// `test`, asserted; `None` unless `test` is an ordering or a range with
+/// indexed operands and the attribute was recorded.
 ///
-/// A range outside its bounds (`!=a..b`) never narrows: an Entity holds when
-/// its value lies outside, which an index of values inside cannot enumerate.
-pub(crate) fn ordering_candidates(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> Option<SelectStatement> {
+/// The bounds of a range are of one kind, so the lower one says how both
+/// are ordered. A range outside its bounds (`!=a..b`) is a complement, which
+/// never narrows: an Entity holds when its value lies outside, which an index
+/// of values inside cannot enumerate.
+pub(crate) fn ordering_candidates(attribute: &AttributeName, test: &ScalarTest, rows: &EntityRowRefs, names: &QueryNames) -> Option<SelectStatement> {
     let row = InstanceRow::Current;
-    let (path, arms) = match pred {
-        Predicate::Ordering {
-            path: QueryPath::Local(path),
-            op,
-            rhs,
-        } => match operand_order(rhs) {
-            OperandOrder::Indexed => (path, ordering_arms(pred, *op, rhs, row)),
-            OperandOrder::Unindexed => return None,
-        },
-        Predicate::Equality {
-            path: QueryPath::Local(path),
-            membership: SetMembership::Within,
-            rhs: CompareValue::Range { min, max },
-        } => match (operand_order(min), operand_order(max)) {
-            (OperandOrder::Indexed, OperandOrder::Indexed) => (path, range_arms(min, max, row)),
-            (OperandOrder::Indexed | OperandOrder::Unindexed, OperandOrder::Unindexed) | (OperandOrder::Unindexed, OperandOrder::Indexed) => {
-                return None;
-            }
-        },
-        Predicate::Ordering {
-            path: QueryPath::Linked { .. },
-            ..
-        }
-        | Predicate::Equality { .. }
-        | Predicate::Exists(_)
-        | Predicate::MatchPattern { .. }
-        | Predicate::NotMatchPattern { .. } => return None,
+    let (operand, arms) = match test {
+        ScalarTest::Ordered { relation, operand } => (operand, ordering_arms(*relation, operand, row)),
+        ScalarTest::Within(interval) => (interval.min(), range_arms(interval, row)),
+        ScalarTest::EqualsAny(_) | ScalarTest::Matches(_) | ScalarTest::Unsatisfiable => return None,
     };
-    if !path.sub_attrs.is_empty() {
-        return None;
+    match operand_order(operand) {
+        OperandOrder::Indexed => {}
+        OperandOrder::Unindexed => return None,
     }
-    match local_target(path) {
-        LocalTarget::OwnValue => {}
-        LocalTarget::TrailingMember { .. } | LocalTarget::TargetLanguage(_) | LocalTarget::NestedMember(_) => return None,
-    }
-    let attribute = names.attributes.get(&path.attr)?;
+    let attribute = names.attributes.get(attribute)?;
     let OwnValueArms { typed, language } = arms;
     let typed = branch(rows, attribute, None, typed);
     let language = language.map(|language| branch(rows, attribute, Some(language_property_rows()), Condition::all().add(language)));
@@ -103,8 +75,11 @@ pub(crate) fn ordering_candidates(pred: &Predicate, rows: &EntityRowRefs, names:
 
 #[cfg(test)]
 mod tests {
-    use crate::{entity_row_refs::EntityRowRefs, q_predicate::keyed_ordering::ordering_candidates, query_names::QueryNames};
-    use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse};
+    use crate::{
+        entity_row_refs::EntityRowRefs,
+        q_predicate::{keyed_term::keyed_candidates, lowered_filter::reading_of},
+        query_names::QueryNames,
+    };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::assert_eq;
@@ -122,10 +97,7 @@ mod tests {
     }
 
     fn candidates(q: &str) -> Option<SelectStatement> {
-        let Expr::Pred(pred) = parse(q).expect("parse q") else {
-            panic!("a single predicate");
-        };
-        ordering_candidates(&pred, &EntityRowRefs::unaliased(None), &names())
+        keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names()).map(|keyed| keyed.select)
     }
 
     /// A `languageMap` holds no time value, so the one branch ranges over the

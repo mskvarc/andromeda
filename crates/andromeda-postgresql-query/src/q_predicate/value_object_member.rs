@@ -24,14 +24,19 @@ use crate::{
     operator::does_not_hold,
     q_predicate::{
         instance_row::InstanceRow,
-        json_value_term::{JsonTarget, json_equal, json_ordering, json_pattern},
+        json_value_term::{JsonTarget, json_equals_any, json_ordering, json_pattern, json_within},
+        projection::unsatisfiable,
         value_column::ValueColumn,
     },
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::{
-    predicate::{PatternPolarity, Predicate, SetMembership},
-    scalar::CompareValue,
+    reading::{
+        operand::Operand,
+        scalar_test::ScalarTest,
+        term_reading::Test,
+        value_test::{Polarity, ValueTest},
+    },
     trailing_path::MemberPath,
 };
 use andromeda_ngsi_ld_vocabulary::keyword;
@@ -166,58 +171,78 @@ fn literal_target(value: SimpleExpr) -> JsonTarget {
 /// The expanded reading and the JSON-literal reading are disjoined: a
 /// `JsonProperty` holds no IRI-keyed member nodes, and only a `JsonProperty`
 /// is read as a literal, so at most one of them reaches a member.
-pub(crate) fn member_term(pred: &Predicate, members: &MemberPath, row: InstanceRow) -> Condition {
+pub(crate) fn member_term(test: &Test, members: &MemberPath, row: InstanceRow) -> Condition {
     let object = row.value(ValueColumn::Field(ValueField::Object));
-    let expanded = reading_term(pred, MemberShape::ValueNodes.member_source(object.clone(), members), MemberShape::ValueNodes); // clone: both readings walk the one value
-    let literal = reading_term(pred, MemberShape::JsonLiteral.member_source(object, members), MemberShape::JsonLiteral);
+    let expanded = reading_term(test, MemberShape::ValueNodes.member_source(object.clone(), members), MemberShape::ValueNodes); // clone: both readings walk the one value
+    let literal = reading_term(test, MemberShape::JsonLiteral.member_source(object, members), MemberShape::JsonLiteral);
     Condition::any()
         .add(expanded)
         .add(Condition::all().add(is_json_property(row.attribute_family())).add(literal))
 }
 
-/// `EXISTS` over the member `source` reads, held to `pred`.
-fn reading_term(pred: &Predicate, source: SelectStatement, shape: MemberShape) -> SimpleExpr {
-    let member = || SimpleExpr::from(SeaExpr::col((Alias::new(MEMBER), Alias::new(MEMBER))));
-    let scalar = Condition::all().add(shape.holds_scalar(member()));
-    let target = shape.scalar(member());
-    let condition = match pred {
+/// The member a path reaches, as read in the `source` of a member term.
+fn reached_member() -> SimpleExpr {
+    SimpleExpr::from(SeaExpr::col((Alias::new(MEMBER), Alias::new(MEMBER))))
+}
+
+/// `EXISTS` over the member `source` reads, held to `test`.
+fn reading_term(test: &Test, source: SelectStatement, shape: MemberShape) -> SimpleExpr {
+    let condition = match test {
         // The member was reached, which is the target element (clause 4.9:
         // "the matching Entities shall be those which define the target
         // element").
-        Predicate::Exists(_) => Condition::all().add(true_literal()),
-        Predicate::Equality { membership, rhs, .. } => {
-            let equal = Condition::any().add(scalar.add(json_equal(&target, rhs)));
-            // A range is two ordering comparisons, which no array satisfies;
-            // a scalar and a value list are tested for inclusion.
-            let equal = match rhs {
-                CompareValue::Scalar(_) | CompareValue::ValueList(_) => {
-                    equal.add(Condition::all().add(shape.holds_array(member())).add(some_element(member(), shape, rhs)))
-                }
-                CompareValue::Range { .. } => equal,
-            };
-            match membership {
-                SetMembership::Within => equal,
-                // `unequal` asks for the target element and for no match in
-                // it, a value of another data type being unequal.
-                SetMembership::Outside => Condition::all().add(shape.holds_target(member())).add(does_not_hold(equal)),
-            }
-        }
-        Predicate::Ordering { op, rhs, .. } => scalar.add(json_ordering(&target, *op, rhs)),
-        Predicate::MatchPattern { pattern, .. } => scalar.add(json_pattern(&target, pattern, PatternPolarity::Match)),
-        Predicate::NotMatchPattern { pattern, .. } => scalar.add(json_pattern(&target, pattern, PatternPolarity::NotMatch)),
+        Test::Exists => Condition::all().add(true_literal()),
+        Test::Value(value) => value_term(value, shape),
     };
     let mut scan = Query::select();
     scan.expr(int_literal(1)).from_subquery(source, Alias::new(MEMBER)).cond_where(condition);
     SeaExpr::exists(scan)
 }
 
-/// Whether one value of the array target `member` holds equals the operand.
-fn some_element(member: SimpleExpr, shape: MemberShape, rhs: &CompareValue) -> SimpleExpr {
+/// What `value` asks of the member reached, read under `shape`.
+///
+/// A scalar target is compared directly. Of the tests, only an equality is
+/// tested for inclusion in an array target; the ordering, range and pattern
+/// tests match no array. A pattern states its own complement, over a String
+/// target alone.
+fn value_term(value: &ValueTest, shape: MemberShape) -> Condition {
+    let scalar = Condition::all().add(shape.holds_scalar(reached_member()));
+    let target = shape.scalar(reached_member());
+    match value.test() {
+        ScalarTest::Matches(pattern) => scalar.add(json_pattern(&target, pattern, value.polarity())),
+        ScalarTest::EqualsAny(operands) => {
+            let included = Condition::all()
+                .add(shape.holds_array(reached_member()))
+                .add(some_element(reached_member(), shape, operands));
+            complemented(
+                value.polarity(),
+                shape,
+                Condition::any().add(scalar.add(json_equals_any(&target, operands))).add(included),
+            )
+        }
+        ScalarTest::Within(interval) => complemented(value.polarity(), shape, Condition::any().add(scalar.add(json_within(&target, interval)))),
+        ScalarTest::Ordered { relation, operand } => complemented(value.polarity(), shape, scalar.add(json_ordering(&target, *relation, operand))),
+        ScalarTest::Unsatisfiable => complemented(value.polarity(), shape, unsatisfiable()),
+    }
+}
+
+/// `positive` under `polarity`. A complement asks for the target element and
+/// for no match in it, a value of another data type being unequal.
+fn complemented(polarity: Polarity, shape: MemberShape, positive: Condition) -> Condition {
+    match polarity {
+        Polarity::Asserted => positive,
+        Polarity::Complement => Condition::all().add(shape.holds_target(reached_member())).add(does_not_hold(positive)),
+    }
+}
+
+/// Whether one value of the array target `member` holds equals one of the
+/// operands.
+fn some_element(member: SimpleExpr, shape: MemberShape, operands: &[Operand]) -> SimpleExpr {
     let element = shape.element(SeaExpr::col((Alias::new(ELEMENT), Alias::new(ELEMENT))));
     let mut scan = Query::select();
     scan.expr(int_literal(1))
         .from_function(jsonb_path_query(member, EVERY_ELEMENT), Alias::new(ELEMENT))
-        .cond_where(json_equal(&element, rhs));
+        .cond_where(json_equals_any(&element, operands));
     SeaExpr::exists(scan)
 }
 
@@ -281,10 +306,11 @@ pub fn literal_jsonpath(members: &[AttributeName]) -> String {
 mod tests {
     use crate::q_predicate::{
         instance_row::InstanceRow,
+        lowered_filter::term_of,
         value_object_member::{expanded_jsonpath, expanded_member_jsonpath, literal_jsonpath, literal_member_jsonpath, member_term},
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse, path::QueryPath};
+    use andromeda_ngsi_ld_query::filter::reading::terminal::Terminal;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use pretty_assertions::assert_eq;
     use sea_query::{Query, SelectStatement};
@@ -295,14 +321,11 @@ mod tests {
 
     /// The statement the one member term of `q` compiles to over `row`.
     fn member_sql(q: &str, row: InstanceRow) -> SelectStatement {
-        let Expr::Pred(pred) = parse(q).expect("parse q") else {
-            panic!("a single predicate");
+        let term = term_of(q);
+        let (Terminal::Members(members) | Terminal::ByFamily { members, .. }) = term.terminal() else {
+            panic!("a member path");
         };
-        let QueryPath::Local(path) = pred.path() else {
-            panic!("a local path");
-        };
-        let members = path.members().expect("a member path");
-        Query::select().cond_where(member_term(&pred, members, row)).to_owned()
+        Query::select().cond_where(member_term(term.test(), members, row)).to_owned()
     }
 
     /// Expansion turns the members of a structured value into IRI-keyed nodes,

@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_query::{
     count_policy::CountPolicy,
     entity::compiled::CompiledEntityQuery,
     entity_selection::ConsideredEntities,
-    filter::predicate::Predicate,
+    filter::reading::term_reading::TermReading,
     page_window::{PageStart, PageWindow},
     read_order::ReadOrder,
 };
@@ -199,7 +199,7 @@ pub(crate) enum QFilter<'q> {
     Whole,
     /// The expression without one term of its top-level conjunction, which
     /// the statement answers by other means.
-    Except(&'q Predicate),
+    Except(&'q TermReading),
     /// None of it: the statement's rows are filtered by `q` further out.
     Omitted,
 }
@@ -249,9 +249,9 @@ pub(crate) fn build_entity_conditions(
     if let Some(compiled) = &query.selection.q {
         let scan = InstanceScan::Current(rows);
         match q {
-            QFilter::Whole => condition = condition.add(q_filter::compile(compiled.expr(), &scan, names, compiled.matching())),
+            QFilter::Whole => condition = condition.add(q_filter::compile(compiled.lowered(), &scan, names)),
             QFilter::Except(answered) => {
-                condition = condition.add(q_filter::compile_except(compiled.expr(), answered, &scan, names, compiled.matching()));
+                condition = condition.add(q_filter::compile_except(compiled.lowered(), answered, &scan, names));
             }
             QFilter::Omitted => {}
         }
