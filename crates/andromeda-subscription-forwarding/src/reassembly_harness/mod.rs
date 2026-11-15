@@ -364,6 +364,12 @@ impl ReassemblyScene {
             .await
     }
 
+    /// Tell the service the local subscription was created as the store
+    /// holds it, by a request that passed through no context source.
+    pub(crate) async fn create(&self) -> Result<(), SubscriptionError> {
+        SubscriptionForwardingHook::created(&self.service, &self.stored().await, &[]).await
+    }
+
     /// Run one pass of the background resumption of abandoned placements.
     pub(crate) async fn resume_stale_placements(&self) -> Result<(), SubscriptionForwardingError> {
         self.service.resume_stale_placements().await

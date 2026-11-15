@@ -80,6 +80,9 @@ mod relayed_join;
 mod relayed_join_tests;
 /// The service tying the parts together.
 pub mod service;
+/// Which sources a subscription's context source filter places its copies at.
+#[cfg(test)]
+mod source_filter_tests;
 /// Tearing down what a local subscription left at the context sources.
 mod teardown;
 

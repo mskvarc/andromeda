@@ -2,11 +2,11 @@
 //! subscription (clauses 5.8.1.4, 5.8.2.4 and 5.8.5.4).
 //!
 //! A local subscription that is not `localOnly` is mirrored by a registration
-//! subscription over the same entities and attributes whose notifications reach
-//! this broker's receiver; those notifications drive the reduced copies placed
-//! at the matching context sources. An update follows the original, and a
-//! deletion or an expiry tears down the companion together with every
-//! forwarded copy.
+//! subscription over the same entities, attributes and context source filter
+//! whose notifications reach this broker's receiver; those notifications drive
+//! the reduced copies placed at the matching context sources. An update
+//! follows the original, and a deletion or an expiry tears down the companion
+//! together with every forwarded copy.
 
 use crate::{
     error::SubscriptionForwardingError,
@@ -41,22 +41,39 @@ use chrono::Utc;
 use futures::future::BoxFuture;
 use tracing::debug;
 
-/// The companion request mirroring `subscription` (clause 5.11.2): the same
-/// entity selectors, watched attributes and notified attributes, matched
-/// against registrations rather than entities, notifying this broker.
+/// The companion fragment mirroring `subscription` (clause 5.11.2): the same
+/// entity selectors, watched attributes, notified attributes and context
+/// source filter, matched against registrations rather than entities,
+/// notifying this broker.
 ///
-/// It names neither an identifier nor a type, so it is an update fragment as
-/// it stands; a create adds both.
+/// The `csf` is mirrored because Table 5.2.12-1 has it "met by Context Source
+/// Registrations describing Context Sources to be used for Entity
+/// Subscriptions", and clause 5.11.2.4 matches a registration to the companion
+/// only where it is met. Each mirrored member the subscription does not hold
+/// is the NGSI-LD Null, so an update leaves the companion holding what the
+/// subscription holds and nothing it deleted.
 fn companion_request(subscription: &Subscription, receiver: &ReceiverEndpoint) -> SubscriptionRequest {
     SubscriptionRequest {
-        entities: Clearable::from_option(subscription.selection.entities.clone()),
-        watched_attributes: Clearable::from_option(subscription.selection.watched_attributes.clone()),
+        entities: Clearable::replacing(subscription.selection.entities.clone()),
+        watched_attributes: Clearable::replacing(subscription.selection.watched_attributes.clone()),
+        csf: Clearable::replacing(subscription.filters.csf.clone()),
         notification: Some(NotificationRequest {
             attributes: subscription.notification.attributes.clone(),
             endpoint: Some(receiver.notification_endpoint()),
             ..NotificationRequest::default()
         }),
         ..SubscriptionRequest::default()
+    }
+}
+
+/// The create body of the companion mirroring `subscription` under the
+/// identifier `id`: the companion fragment without its deletions, which a
+/// create refuses (clause 5.2.1), with the identifier and the type.
+fn companion_creation(subscription: &Subscription, receiver: &ReceiverEndpoint, id: Identifier) -> SubscriptionRequest {
+    SubscriptionRequest {
+        id: Some(id),
+        type_: Some(SubscriptionType),
+        ..companion_request(subscription, receiver).without_deletions()
     }
 }
 
@@ -79,11 +96,7 @@ impl SubscriptionForwardingService {
         subscription: &Subscription,
         encountered_sources: &[ContextSourcePseudonym],
     ) -> Result<Identifier, SubscriptionForwardingError> {
-        let request = SubscriptionRequest {
-            id: Some(mint_subscription_id()?),
-            type_: Some(SubscriptionType),
-            ..companion_request(subscription, &self.receiver)
-        };
+        let request = companion_creation(subscription, &self.receiver, mint_subscription_id()?);
         // The companion is a local resource; its own creation passes through no
         // context source, so it carries no `Via` chain of its own.
         let companion = self
@@ -353,18 +366,29 @@ fn into_subscription_error(error: SubscriptionForwardingError) -> SubscriptionEr
 
 #[cfg(test)]
 mod tests {
-    use crate::{companion::companion_request, forwarder::ForwardDecision, receiver::ReceiverEndpoint, service::SubscriptionForwardingService};
-    use andromeda_ngsi_ld_model::{
-        registration::ContextSourceRegistration,
-        subscription::{Subscription, SubscriptionType},
-        subscription_request::SubscriptionRequest,
+    use crate::{
+        companion::{companion_creation, companion_request},
+        forwarder::ForwardDecision,
+        receiver::ReceiverEndpoint,
+        service::SubscriptionForwardingService,
     };
+    use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription::Subscription};
     use andromeda_subscription::{compilation::compile_csource_subscription, forwarding_hook::ForwardedCopy};
-    use serde_json::json;
+    use serde_json::{Value, json};
     use url::Url;
 
+    /// A stored context source filter selecting the registrations whose `tier`
+    /// is "gold", its property term expanded.
+    const GOLD_TIER: &str = r#""https://uri.etsi.org/ngsi-ld/default-context/tier"=="gold""#;
+
     fn registration(entity_type: &str, mode: &str) -> ContextSourceRegistration {
-        serde_json::from_value(json!({
+        registration_with(entity_type, mode, &json!({}))
+    }
+
+    /// A registration of `entity_type` in `mode` that also holds the members of
+    /// `members`, an object.
+    fn registration_with(entity_type: &str, mode: &str, members: &Value) -> ContextSourceRegistration {
+        let mut document = json!({
             "id": "urn:ngsi-ld:ContextSourceRegistration:b",
             "type": "ContextSourceRegistration",
             "endpoint": "http://broker-b:1056",
@@ -373,8 +397,11 @@ mod tests {
             "status": "ok",
             "createdAt": "2024-01-01T00:00:00Z",
             "modifiedAt": "2024-01-01T00:00:00Z"
-        }))
-        .expect("valid registration")
+        });
+        if let (Some(target), Some(members)) = (document.as_object_mut(), members.as_object()) {
+            target.extend(members.iter().map(|(key, value)| (key.clone(), value.clone())));
+        }
+        serde_json::from_value(document).expect("valid registration")
     }
 
     fn copy() -> ForwardedCopy {
@@ -384,21 +411,33 @@ mod tests {
         }
     }
 
+    fn receiver() -> ReceiverEndpoint {
+        ReceiverEndpoint::from_advertised(&Url::parse("http://broker-a:1056").expect("valid URL")).expect("receiver")
+    }
+
+    /// A local subscription holding the members of `members`, an object, beside
+    /// its notification and its generated members.
+    fn local_subscription(members: &Value) -> Subscription {
+        let mut document = json!({
+            "id": "urn:ngsi-ld:Subscription:local",
+            "type": "Subscription",
+            "notification": {"endpoint": {"uri": "http://subscriber/notify"}},
+            "status": "active",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:00Z"
+        });
+        if let (Some(target), Some(members)) = (document.as_object_mut(), members.as_object()) {
+            target.extend(members.iter().map(|(key, value)| (key.clone(), value.clone())));
+        }
+        serde_json::from_value(document).expect("valid subscription")
+    }
+
     /// Clause 5.8.1.4: after an update, a source whose registration still
     /// matches is updated, one that no longer matches is relieved of its copy,
     /// and an auxiliary source never holds one.
     #[test]
     fn an_update_updates_matching_copies_and_deletes_the_rest() {
-        let subscription: Subscription = serde_json::from_value(json!({
-            "id": "urn:ngsi-ld:Subscription:companion",
-            "type": "Subscription",
-            "entities": [{"type": "https://example.org/Device"}],
-            "notification": {"endpoint": {"uri": "http://broker-a/notify"}},
-            "status": "active",
-            "createdAt": "2024-01-01T00:00:00Z",
-            "modifiedAt": "2024-01-01T00:00:00Z"
-        }))
-        .expect("valid subscription");
+        let subscription = local_subscription(&json!({"entities": [{"type": "https://example.org/Device"}]}));
         let compiled = compile_csource_subscription(&subscription);
 
         let still_matching = SubscriptionForwardingService::decision_after_update(&compiled, &registration("https://example.org/Device", "inclusive"), &copy());
@@ -421,26 +460,55 @@ mod tests {
         pretty_assertions::assert_eq!(auxiliary, ForwardDecision::Nothing);
     }
 
+    /// Table 5.2.12-1 and clause 5.11.2.4: a companion holding the
+    /// subscription's `csf` keeps the copy at a source whose registration meets
+    /// it and relieves one whose registration does not, or holds no `tier`.
+    #[test]
+    fn an_update_keeps_the_copies_only_at_the_sources_meeting_the_context_source_filter() {
+        let companion = local_subscription(&json!({"entities": [{"type": "https://example.org/Device"}], "csf": GOLD_TIER}));
+        let compiled = compile_csource_subscription(&companion);
+        let tier = "https://uri.etsi.org/ngsi-ld/default-context/tier";
+        for (members, expected) in [
+            (
+                json!({tier: {"type": "Property", "value": "gold"}}),
+                ForwardDecision::Update {
+                    remote: copy().remote_subscription,
+                },
+            ),
+            (
+                json!({tier: {"type": "Property", "value": "silver"}}),
+                ForwardDecision::Delete {
+                    remote: copy().remote_subscription,
+                },
+            ),
+            (
+                json!({}),
+                ForwardDecision::Delete {
+                    remote: copy().remote_subscription,
+                },
+            ),
+        ] {
+            let registration = registration_with("https://example.org/Device", "inclusive", &members);
+            pretty_assertions::assert_eq!(
+                SubscriptionForwardingService::decision_after_update(&compiled, &registration, &copy()),
+                expected,
+                "{members}"
+            );
+        }
+    }
+
+    /// Clauses 5.11.2 and 5.2.12: the companion is created with the
+    /// subscription's selectors, notified attributes and `csf`, notifying this
+    /// broker, and with no NGSI-LD Null, which a create refuses.
     #[test]
     fn the_companion_mirrors_the_selection_and_notifies_the_receiver() {
-        let subscription: Subscription = serde_json::from_value(json!({
-            "id": "urn:ngsi-ld:Subscription:local",
-            "type": "Subscription",
+        let subscription = local_subscription(&json!({
             "entities": [{"type": "https://example.org/Vehicle"}],
             "watchedAttributes": ["https://example.org/speed"],
-            "notification": {"attributes": ["https://example.org/speed"], "endpoint": {"uri": "http://subscriber/notify"}},
-            "status": "active",
-            "createdAt": "2024-01-01T00:00:00Z",
-            "modifiedAt": "2024-01-01T00:00:00Z"
-        }))
-        .expect("valid subscription");
-        let receiver = ReceiverEndpoint::from_advertised(&Url::parse("http://broker-a:1056").expect("valid URL")).expect("receiver");
-        // A create adds the identifier and the type to the companion request.
-        let request = SubscriptionRequest {
-            id: Some("urn:ngsi-ld:Subscription:forwarded-1".parse().expect("valid URI")),
-            type_: Some(SubscriptionType),
-            ..companion_request(&subscription, &receiver)
-        };
+            "csf": GOLD_TIER,
+            "notification": {"attributes": ["https://example.org/speed"], "endpoint": {"uri": "http://subscriber/notify"}}
+        }));
+        let request = companion_creation(&subscription, &receiver(), "urn:ngsi-ld:Subscription:forwarded-1".parse().expect("valid URI"));
         pretty_assertions::assert_eq!(
             serde_json::to_value(&request).expect("the request writes"),
             json!({
@@ -448,11 +516,34 @@ mod tests {
                 "type": "Subscription",
                 "entities": [{"type": "https://example.org/Vehicle"}],
                 "watchedAttributes": ["https://example.org/speed"],
+                "csf": GOLD_TIER,
                 "notification": {
                     "attributes": ["https://example.org/speed"],
                     "endpoint": {"uri": "http://broker-a:1056/ngsi-ld/andromeda/v1/notifications", "accept": "application/json"}
                 }
             })
         );
+        let unfiltered = companion_creation(
+            &local_subscription(&json!({"entities": [{"type": "https://example.org/Vehicle"}]})),
+            &receiver(),
+            "urn:ngsi-ld:Subscription:forwarded-2".parse().expect("valid URI"),
+        );
+        assert!(unfiltered.deleted_members().next().is_none(), "{unfiltered:?}");
+    }
+
+    /// Clause 5.5.8: the companion update deletes each mirrored member the
+    /// subscription no longer holds, so a deleted `csf` or `watchedAttributes`
+    /// stops narrowing the registrations the companion matches.
+    #[test]
+    fn the_companion_update_deletes_what_the_subscription_no_longer_holds() {
+        let subscription = local_subscription(&json!({"entities": [{"type": "https://example.org/Vehicle"}]}));
+        let fragment = serde_json::to_value(companion_request(&subscription, &receiver())).expect("the fragment writes");
+        pretty_assertions::assert_eq!(fragment["entities"], json!([{"type": "https://example.org/Vehicle"}]));
+        pretty_assertions::assert_eq!(fragment["watchedAttributes"], json!(["urn:ngsi-ld:null"]));
+        pretty_assertions::assert_eq!(fragment["csf"], json!("urn:ngsi-ld:null"));
+        let filtered = local_subscription(&json!({"watchedAttributes": ["https://example.org/speed"], "csf": GOLD_TIER}));
+        let fragment = serde_json::to_value(companion_request(&filtered, &receiver())).expect("the fragment writes");
+        pretty_assertions::assert_eq!(fragment["entities"], json!(["urn:ngsi-ld:null"]));
+        pretty_assertions::assert_eq!(fragment["csf"], json!(GOLD_TIER));
     }
 }

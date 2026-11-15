@@ -7,6 +7,7 @@ use crate::{
     broker::BrokerClient,
     config::SuiteConfig,
     context_source::ContextSource,
+    context_source_property::property_value,
     forwarded_body,
     namespace::Namespace,
     source_answer,
@@ -79,7 +80,7 @@ pub async fn register_copy_source_of(
     entities: Vec<EntityInfo>,
 ) -> Result<()> {
     accept_copies(source, prefix).await?;
-    register_offering(broker, source.endpoint(prefix)?, namespace, 1, None, entities).await
+    register_offering(broker, source.endpoint(prefix)?, namespace, 1, None, entities, None).await
 }
 
 /// As [`register_copy_source`], the registration carrying the test's registration number `number`, so a test can
@@ -90,6 +91,25 @@ pub async fn register_copy_source_of(
 /// Returns the failure to mount an answer or to register the source.
 pub async fn register_numbered_copy_source(broker: &BrokerClient, source: &ContextSource, namespace: &Namespace, prefix: &str, number: u32) -> Result<()> {
     register_with(broker, source, namespace, prefix, number, None).await
+}
+
+/// As [`register_numbered_copy_source`], the registration carrying the Context Source Property `tier` with the value
+/// `tier`, which a context source filter reads (clause 4.9).
+///
+/// # Errors
+///
+/// Returns the failure to mount an answer or to register the source.
+pub async fn register_tiered_copy_source(
+    broker: &BrokerClient,
+    source: &ContextSource,
+    namespace: &Namespace,
+    prefix: &str,
+    number: u32,
+    tier: &str,
+) -> Result<()> {
+    accept_copies(source, prefix).await?;
+    let vehicles = EntityInfo::new(namespace.entity_type("Vehicle")?).with_id_pattern(namespace.id_pattern("Vehicle")?);
+    register_offering(broker, source.endpoint(prefix)?, namespace, number, None, vec![vehicles], Some(tier)).await
 }
 
 /// As [`register_copy_source`], the registration naming the `ngsildConformance` version `conformance` in its
@@ -114,11 +134,12 @@ async fn register_with(
 ) -> Result<()> {
     accept_copies(source, prefix).await?;
     let vehicles = EntityInfo::new(namespace.entity_type("Vehicle")?).with_id_pattern(namespace.id_pattern("Vehicle")?);
-    register_offering(broker, source.endpoint(prefix)?, namespace, number, conformance, vec![vehicles]).await
+    register_offering(broker, source.endpoint(prefix)?, namespace, number, conformance, vec![vehicles], None).await
 }
 
 /// Registers `endpoint` as an inclusive source advertising `federationOps` for `entities`, under the test's
-/// registration number `number`, naming `conformance` in its `contextSourceInfo` when there is one.
+/// registration number `number`, naming `conformance` in its `contextSourceInfo` and carrying the Context Source
+/// Property `tier` with the value `tier` when there is one.
 async fn register_offering(
     broker: &BrokerClient,
     endpoint: Url,
@@ -126,10 +147,15 @@ async fn register_offering(
     number: u32,
     conformance: Option<&str>,
     entities: Vec<EntityInfo>,
+    tier: Option<&str>,
 ) -> Result<()> {
     let builder = CSourceRegistration::builder(endpoint);
     let builder = match conformance {
         Some(version) => builder.context_source_info(("ngsildConformance", version)),
+        None => builder,
+    };
+    let builder = match tier {
+        Some(tier) => builder.property("tier", property_value(tier)),
         None => builder,
     };
     let registration = builder
