@@ -37,6 +37,17 @@ impl FilterReading {
         FilterReading::lowered(expr, matching).normal_form()
     }
 
+    /// The reading the executions run of a `csf` filter, parsed and
+    /// expanded, which reads a registration's Context Source Properties.
+    ///
+    /// Clause 5.2.9 makes those Properties, never a `LanguageProperty`, so no
+    /// target language selects a string of theirs and the reading takes tag
+    /// equality whatever the language-targeting level.
+    #[must_use]
+    pub fn of_context_source_filter(expr: &Expr) -> FilterReading {
+        FilterReading::of(expr, LanguageMatching::TagEquality)
+    }
+
     /// The reading in normal form, which holds for exactly the Entities this
     /// one holds for.
     ///

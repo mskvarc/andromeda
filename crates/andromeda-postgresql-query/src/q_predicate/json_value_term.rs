@@ -15,14 +15,7 @@ use crate::{
     q_predicate::string_ordering::ordered_string,
 };
 use andromeda_ngsi_ld_query::{
-    filter::reading::{
-        comparator::Comparator,
-        interval::Interval,
-        operand::Operand,
-        order_relation::OrderRelation,
-        scalar_test::ScalarTest,
-        value_test::Polarity,
-    },
+    filter::reading::{comparator::Comparator, interval::Interval, operand::Operand, order_relation::OrderRelation, scalar_test::ScalarTest},
     pattern::Pattern,
 };
 use andromeda_postgresql_seaquery::{
@@ -118,7 +111,7 @@ pub(crate) fn json_ordering(target: &JsonTarget, relation: OrderRelation, operan
 /// states once for every backend, and a String ([`json_string`]).
 pub(crate) fn json_pattern(target: &JsonTarget, pattern: &Pattern) -> Condition {
     let text = cast_compound(jsonb_whole_text(target.value.clone()), PostgresType::Text); // clone: the target may be read by further terms
-    let value = pattern_predicate(text, Polarity::Asserted, pattern, PatternIndexes::None);
+    let value = pattern_predicate(text, pattern, PatternIndexes::None);
     Condition::all().add(present_and(json_string(target), value))
 }
 

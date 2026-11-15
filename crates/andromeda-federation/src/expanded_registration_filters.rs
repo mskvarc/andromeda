@@ -10,7 +10,7 @@
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_query::{
     error::QueryError,
-    filter::{expansion::expand_csf_expr, expression::Expr, language_matching::LanguageMatching, reading::filter_reading::FilterReading},
+    filter::{expansion::expand_csf_expr, expression::Expr, reading::filter_reading::FilterReading},
     geo::{admission::GeoQueryAdmission, compile::compile_geo_query, input::GeoQueryInput, query::GeoQuery},
 };
 
@@ -52,13 +52,9 @@ impl ExpandedRegistrationFilters {
         let expander = ContextualExpander::new(engine, &prepared_context);
         let geo = compile_geo_query(geo, &expander, admission).await?;
         let csf = match csf {
-            // Context Source Properties are Properties, never a
-            // `LanguageProperty`, so no target language selects a string of
-            // theirs whatever the matching.
-            Some(expression) => Some(FilterReading::of(
+            Some(expression) => Some(FilterReading::of_context_source_filter(
                 // clone: the raw filter stays in the query, which forwards it as the client wrote it
                 &expand_csf_expr(expression.clone(), &expander).await?,
-                LanguageMatching::TagEquality,
             )),
             None => None,
         };

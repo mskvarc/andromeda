@@ -103,10 +103,7 @@ pub fn compile_csource_subscription(sub: &Subscription) -> CompiledCsrSubscripti
         throttling_secs: sub.delivery.throttling,
         time_interval_secs: sub.delivery.time_interval,
         jsonld_context: sub.delivery.jsonld_context.clone(), // clone: compiled state owns the context URL.
-        // Context Source Properties are Properties, never a
-        // `LanguageProperty`, so no target language selects a string of
-        // theirs whatever the matching.
-        compiled_csf: sub.filters.csf.as_ref().map(|csf| FilterReading::of(csf, LanguageMatching::TagEquality)),
+        compiled_csf: sub.filters.csf.as_ref().map(FilterReading::of_context_source_filter),
     }
 }
 

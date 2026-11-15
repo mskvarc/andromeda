@@ -28,7 +28,7 @@ use andromeda_ngsi_ld_query::{
             scalar_test::ScalarTest,
             target_kind::TargetKind,
             term_reading::Test,
-            value_test::{ComplementScope, Polarity},
+            value_test::ComplementScope,
         },
     },
     pattern::Pattern,
@@ -226,8 +226,8 @@ impl StoredMember {
     fn matched(&self, pattern: &Pattern) -> SimpleExpr {
         match self {
             StoredMember::UnitCode(field) => listed_code_where(field, |code| pattern.is_match(code)),
-            StoredMember::Text(text) => pattern_test(text.clone(), Polarity::Asserted, pattern, PatternIndexes::None),
-            StoredMember::TypeKeys(keys) => pattern_test(single_type_name(keys), Polarity::Asserted, pattern, PatternIndexes::None),
+            StoredMember::Text(text) => pattern_test(text.clone(), pattern, PatternIndexes::None),
+            StoredMember::TypeKeys(keys) => pattern_test(single_type_name(keys), pattern, PatternIndexes::None),
             StoredMember::Instant(_) | StoredMember::Unheld => false_literal(),
         }
     }

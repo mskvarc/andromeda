@@ -1,0 +1,11 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/document/condition.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  (
+    "context_source_properties" -> ('https://example.com/speed')
+  ) IS NOT NULL

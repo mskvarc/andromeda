@@ -1,0 +1,104 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/document/condition.rs
+---
+SELECT
+  1
+FROM
+  "context_source_registrations"
+WHERE
+  (
+    SELECT
+      (
+        CASE
+          WHEN (("j" ->> ('type')) = ('Property')) THEN "j" -> ('value')
+          ELSE "j"
+        END
+      )
+    FROM
+      (
+        SELECT
+          ("context_source_properties" -> ('a')) -> ('https://uri.etsi.org/ngsi-ld/observedAt') AS "j"
+      ) AS "s"
+  ) IS NOT NULL
+  AND (
+    CASE
+      WHEN (
+        (
+          CASE
+            WHEN (
+              (
+                (
+                  SELECT
+                    (
+                      CASE
+                        WHEN (("j" ->> ('type')) = ('Property')) THEN "j" -> ('value')
+                        ELSE "j"
+                      END
+                    )
+                  FROM
+                    (
+                      SELECT
+                        ("context_source_properties" -> ('a')) -> ('https://uri.etsi.org/ngsi-ld/observedAt') AS "j"
+                    ) AS "s"
+                ) ->> ('@type')
+              ) IN (
+                'DateTime',
+                'https://uri.etsi.org/ngsi-ld/DateTime'
+              )
+            ) THEN 'https://uri.etsi.org/ngsi-ld/DateTime'
+            WHEN (
+              (
+                (
+                  SELECT
+                    (
+                      CASE
+                        WHEN (("j" ->> ('type')) = ('Property')) THEN "j" -> ('value')
+                        ELSE "j"
+                      END
+                    )
+                  FROM
+                    (
+                      SELECT
+                        ("context_source_properties" -> ('a')) -> ('https://uri.etsi.org/ngsi-ld/observedAt') AS "j"
+                    ) AS "s"
+                ) ->> ('@type')
+              ) IN ('Date', 'https://uri.etsi.org/ngsi-ld/Date')
+            ) THEN 'https://uri.etsi.org/ngsi-ld/Date'
+            WHEN (
+              (
+                (
+                  SELECT
+                    (
+                      CASE
+                        WHEN (("j" ->> ('type')) = ('Property')) THEN "j" -> ('value')
+                        ELSE "j"
+                      END
+                    )
+                  FROM
+                    (
+                      SELECT
+                        ("context_source_properties" -> ('a')) -> ('https://uri.etsi.org/ngsi-ld/observedAt') AS "j"
+                    ) AS "s"
+                ) ->> ('@type')
+              ) IN ('Time', 'https://uri.etsi.org/ngsi-ld/Time')
+            ) THEN 'https://uri.etsi.org/ngsi-ld/Time'
+          END
+        ) = ('https://uri.etsi.org/ngsi-ld/DateTime')
+        AND pg_input_is_valid(
+          (
+            (
+              SELECT
+                (
+                  CASE
+                    WHEN (("j" ->> ('type')) = ('Property')) THEN "j" -> ('value')
+                    ELSE "j"
+                  END
+                )
+              FROM
+                (
+                  SELECT
+                    ("context_source_properties" -> ('a')) -> ('https://uri.etsi.org/ngsi-ld/observedAt') AS "j"
+                ) AS "s"
+            ) -> ('@value')
+          ) #>> ('{}'), 'timestamptz')) THEN (((SELECT (CASE WHEN (("j" ->> ('type')) = ('Property')) THEN "j" -> ('value') ELSE "j" END) FROM (SELECT ("context_source_properties" -> ('a')) -> ('https://uri.etsi.org/ngsi-ld/observedAt') AS "j") AS "s") -> ('@value')) #>> ('{}'))::timestamptz END) > $1
+1: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'

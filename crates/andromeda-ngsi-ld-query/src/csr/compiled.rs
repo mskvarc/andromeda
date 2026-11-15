@@ -1,7 +1,7 @@
 //! The compiled form of a Context Source Registration discovery query.
 
 use crate::{
-    filter::expression::Expr,
+    filter::reading::filter_reading::FilterReading,
     geo::query::GeoQuery,
     pattern::Pattern,
     scope::query::ScopeQuery,
@@ -37,9 +37,9 @@ pub struct CompiledCsrQuery {
     /// attributes the `q` filter names (clause 5.10.2.4). Empty means no
     /// attribute constraint.
     pub attrs: Vec<IriBuf>,
-    /// The expanded context source filter, evaluated against the
-    /// registrations' Context Source Properties (clause 4.9 `csf`).
-    pub csf_expr: Option<Expr>,
+    /// The reading of the expanded context source filter, evaluated against
+    /// the registrations' Context Source Properties (clause 4.9 `csf`).
+    pub csf: Option<FilterReading>,
     /// Geo-spatial filter against the registration's `location`.
     pub geo: Option<GeoQuery>,
     /// Scope query matched against the registration's `scope` (clause 4.19).

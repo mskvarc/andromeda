@@ -36,7 +36,7 @@ const OWNER: &str = "crates/andromeda-ngsi-ld-query/src/filter/";
 /// The sites outside the owner, as the file and the number of sites it
 /// holds. Each change that moves a reading into the owner lowers or removes
 /// its file's entry.
-pub const Q_READING_BASELINE: &[(&str, usize)] = &[("crates/andromeda-postgresql-context-query/src/csr/filter.rs", 19)];
+pub const Q_READING_BASELINE: &[(&str, usize)] = &[];
 
 /// Every production site outside the owner that matches on a `q` term's
 /// syntax tree, as `path:line: what`, grouped by file.

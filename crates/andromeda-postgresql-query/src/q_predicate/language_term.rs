@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_query::{
         scalar_test::ScalarTest,
         target_kind::TargetKind,
         term_reading::Test,
-        value_test::{Polarity, ValueTest},
+        value_test::ValueTest,
     },
     pattern::Pattern,
 };
@@ -135,7 +135,7 @@ fn string_comparison(text: SimpleExpr, comparator: Comparator, operand: &Operand
 
 /// Whether one string is in the language of a pattern.
 fn string_pattern(text: SimpleExpr, pattern: &Pattern) -> SimpleExpr {
-    pattern_predicate(text, Polarity::Asserted, pattern, PatternIndexes::None)
+    pattern_predicate(text, pattern, PatternIndexes::None)
 }
 
 #[cfg(test)]

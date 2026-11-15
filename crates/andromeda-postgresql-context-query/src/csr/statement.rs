@@ -4,7 +4,6 @@ use crate::csr::{
     encountered_sources::not_encountered,
     entity_specification::row_matches,
     expiry_predicate::not_expired,
-    filter::csr_expr_to_condition,
     geometry_parts::{GeometryParts, geometry_parts},
     information_row::some_information_row,
     preselect::attribute_name_candidate,
@@ -19,11 +18,13 @@ use andromeda_ngsi_ld_query::{
 use andromeda_postgresql_query::{
     error::RenderError,
     page_window::apply_identifier_window,
+    q_predicate::document::condition::document_condition,
     scope_predicate::{ScopeTarget, condition as scope_condition},
 };
 use andromeda_postgresql_schema::csr::Csr;
 use andromeda_postgresql_seaquery::{
     aggregate::count_all,
+    column_reference::ColumnReference,
     pg_array::{any, array_cat, array_of_subquery},
     scalar_subquery::scalar_subquery,
 };
@@ -137,8 +138,8 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Condition {
 
     // Clause 4.9: the context source filter reads the registration's own
     // Context Source Properties.
-    if let Some(expr) = &query.csf_expr {
-        condition = condition.add(csr_expr_to_condition(expr));
+    if let Some(csf) = &query.csf {
+        condition = condition.add(document_condition(csf, &ColumnReference::bare(Csr::ContextSourceProperties)));
     }
 
     // Clause 4.19: a registration's scopes are stored as the same `ltree`
@@ -170,7 +171,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         csr::compiled::CompiledCsrTemporalFilter,
         cursor::PageCursor,
-        filter::parser,
+        filter::{language_matching::LanguageMatching, parser, reading::filter_reading::FilterReading},
         geo::query::GeoQuery,
         page_window::{PageStart, PageWindow},
         pattern::Pattern,
@@ -579,7 +580,10 @@ mod tests {
     #[test]
     fn csf_reads_the_context_source_properties_column() {
         let mut q = empty_query();
-        q.csf_expr = Some(parser::parse("\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\"").unwrap());
+        q.csf = Some(FilterReading::of(
+            &parser::parse("\"https://uri.etsi.org/ngsi-ld/mode\"==\"exclusive\"").unwrap(),
+            LanguageMatching::TagEquality,
+        ));
         assert_statement_snapshot!("statement-csf-reads-the-context-source-properties-column", build(&q).select);
     }
 

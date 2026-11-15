@@ -29,7 +29,7 @@
 
 use crate::csr::information_row::ri_col;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
-use andromeda_ngsi_ld_query::{filter::reading::value_test::Polarity, pattern::Pattern};
+use andromeda_ngsi_ld_query::pattern::Pattern;
 use andromeda_postgresql_query::operator::{PatternIndexes, pattern as pattern_predicate};
 use andromeda_postgresql_schema::{csr::RegistrationInformation, name_dictionary::AttributeNames};
 use andromeda_postgresql_seaquery::{
@@ -95,12 +95,9 @@ pub fn entity_id_candidate(entity_ids: &[Identifier]) -> SimpleExpr {
 /// can drive the whole disjunction.
 #[must_use]
 pub fn entity_id_pattern_candidate(pattern: &Pattern) -> SimpleExpr {
-    entity_id_or_none().eq(text_literal(ANY_IDENTIFIER)).or(pattern_predicate(
-        ri_col(RegistrationInformation::EntityId),
-        Polarity::Asserted,
-        pattern,
-        PatternIndexes::Trigrams,
-    ))
+    entity_id_or_none()
+        .eq(text_literal(ANY_IDENTIFIER))
+        .or(pattern_predicate(ri_col(RegistrationInformation::EntityId), pattern, PatternIndexes::Trigrams))
 }
 
 /// The alias of one requested attribute name's dictionary row, `an`.
