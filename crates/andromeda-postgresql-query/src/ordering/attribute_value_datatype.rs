@@ -13,6 +13,11 @@
 //! value is declared as (annex C.6) is read beside its text. A string declared
 //! as none ranks as a String, whatever it looks like.
 //!
+//! A stored scalar is the datatype of the target kind its value kind is
+//! ([`stored_target_kinds`]), the table a `q` comparison reads its kinds from,
+//! so a value is the same kind in a filter and in an order; a value a
+//! structure holds is read by its JSON type and its declared datatype.
+//!
 //! The order is rendered as a rank rather than as a chain of comparisons. The
 //! datatype is read as a single token, and the token's position in a
 //! nine-element sequence *is* its rank, so a descending sort is the same
@@ -20,7 +25,8 @@
 //! nowhere at all, which, sorted `NULLS LAST`, is exactly where "attribute does
 //! not exist" belongs, in both directions.
 
-use andromeda_ngsi_ld_query::ordering::sort_direction::SortDirection;
+use crate::q_predicate::stored_kind::stored_target_kinds;
+use andromeda_ngsi_ld_query::{filter::reading::target_kind::TargetKind, ordering::sort_direction::SortDirection};
 use andromeda_ngsi_ld_vocabulary::{
     expanded::classes::{DATE, DATE_TIME, TIME},
     keyword,
@@ -29,11 +35,12 @@ use andromeda_postgresql_seaquery::{
     cast::cast,
     json_type::{JsonType, jsonb_type_is},
     jsonb::jsonb_key_exists,
-    literal::text_literal,
+    literal::{int_literal, text_literal},
     pg_array::{array_position, text_array},
     pg_type::PostgresType,
 };
-use sea_query::{CaseStatement, ExprTrait, SimpleExpr};
+use andromeda_postgresql_stored_values::value_kind::ValueKind;
+use sea_query::{CaseStatement, ExprTrait, Func, SimpleExpr};
 
 /// The token for a number.
 pub const NUMBER_TYPE: &str = "number";
@@ -74,6 +81,9 @@ pub(crate) struct OrderedValue {
     pub(crate) object: SimpleExpr,
     /// Whether the value is the JSON literal `null`.
     pub(crate) json_null: SimpleExpr,
+    /// The value kind a stored instance records for its own value; `None` for
+    /// a value read out of a structure or a member of the instance.
+    pub(crate) kind: Option<SimpleExpr>,
 }
 
 /// The one token that names the value's clause-4.23.2 datatype, `NULL` for
@@ -88,7 +98,7 @@ pub(crate) fn datatype_token(value: &OrderedValue) -> SimpleExpr {
     // clone: sea-query owns every expression in its AST, so each reading takes
     // its own copy of the value's columns.
     let listed = jsonb_type_is(value.object.clone(), JsonType::Array).or(jsonb_key_exists(value.object.clone(), text_literal(keyword::LIST)));
-    CaseStatement::new()
+    let read: SimpleExpr = CaseStatement::new()
         .case(value.number.clone().is_not_null(), text_literal(NUMBER_TYPE))
         .case(value.boolean.clone().is_not_null(), text_literal(BOOLEAN_TYPE))
         .case(value.date_time.clone().is_not_null(), text_literal(date_time.as_str()))
@@ -99,7 +109,40 @@ pub(crate) fn datatype_token(value: &OrderedValue) -> SimpleExpr {
         .case(value.json_null.clone(), text_literal(NULL_TYPE))
         .case(listed, text_literal(ARRAY_TYPE))
         .case(value.object.clone().is_not_null(), text_literal(OBJECT_TYPE))
+        .into();
+    match &value.kind {
+        Some(kind) => Func::coalesce([kind_token(kind), read]).into(),
+        None => read,
+    }
+}
+
+/// The token of the datatype a stored value of the kind `kind` is, `NULL` for
+/// a kind that is no scalar a comparison reads: the clause 4.23.2 datatype of
+/// the first target kind [`stored_target_kinds`] gives it.
+fn kind_token(kind: &SimpleExpr) -> SimpleExpr {
+    ValueKind::ALL
+        .iter()
+        .filter_map(|stored| Some((*stored, target_token(*stored_target_kinds(*stored).first()?))))
+        .fold(CaseStatement::new(), |case, (stored, token)| {
+            // clone: each arm compares the one kind
+            case.case(kind.clone().eq(int_literal(i64::from(stored.code()))), text_literal(token))
+        })
         .into()
+}
+
+/// The clause 4.23.2 token of a target kind: every number a Number, a
+/// Relationship's object a String, as its target object is one.
+fn target_token(kind: TargetKind) -> &'static str {
+    match kind {
+        TargetKind::Number | TargetKind::NotANumber | TargetKind::PositiveInfinity | TargetKind::NegativeInfinity => NUMBER_TYPE,
+        TargetKind::String | TargetKind::RelationshipObject => STRING_TYPE,
+        TargetKind::Boolean => BOOLEAN_TYPE,
+        TargetKind::DateTime => DATE_TIME.as_str(),
+        TargetKind::Date => DATE.as_str(),
+        TargetKind::Time => TIME.as_str(),
+        TargetKind::Null => NULL_TYPE,
+        TargetKind::Object => OBJECT_TYPE,
+    }
 }
 
 /// The clause-4.23.2 rank of `datatype`, `NULL` when the entity carries no such
@@ -161,6 +204,7 @@ mod tests {
             datatype: column("d"),
             object: column("o"),
             json_null: column("j"),
+            kind: Some(column("k")),
         };
         Query::select().expr(datatype_token(&value)).to_owned()
     }
