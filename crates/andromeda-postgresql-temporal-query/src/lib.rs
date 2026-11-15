@@ -23,6 +23,7 @@ mod listed_period_page;
 mod period_edge;
 pub mod projected_members;
 pub mod recorded_shape;
+mod represented_filters;
 pub mod scope_history;
 pub mod shape_mask;
 pub mod shape_mask_walk;

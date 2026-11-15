@@ -49,12 +49,12 @@ struct ReadEntity;
 /// reads every stream of the branch, and runs each stream's page read, before
 /// it drops the streams of the Entities the page does not name.
 pub(crate) fn each_entity(entity_ids: &[Identifier], alias: impl IntoIden, read: impl FnOnce(&HistoryOf) -> SelectStatement) -> SelectStatement {
-    let entity = Expr::col((ReadEntity, ReadEntity));
+    let entity = read_entity();
     let identifiers = match entity_ids {
         [entity_id] => array_literal([Expr::val(entity_id.to_string())]),
         [] | [_, _, ..] => Expr::val(entity_ids.iter().map(Identifier::to_string).collect::<Vec<String>>()),
     };
-    let mut read = read(&HistoryOf::Entity(entity.clone()));
+    let mut read = read(&read_entity_of());
     read.offset(0);
     let mut select = Query::select();
     select
@@ -63,6 +63,17 @@ pub(crate) fn each_entity(entity_ids: &[Identifier], alias: impl IntoIden, read:
         .join_lateral(JoinType::Join, read, alias, SimpleExpr::from(true))
         .order_by((ReadEntity, ReadEntity), Order::Asc);
     select
+}
+
+/// The identifier of the Entity [`each_entity`] reads at a time.
+fn read_entity() -> SimpleExpr {
+    Expr::col((ReadEntity, ReadEntity))
+}
+
+/// The Temporal Evolution [`each_entity`] hands its read, which a condition
+/// built ahead of the read names it by.
+pub(crate) fn read_entity_of() -> HistoryOf {
+    HistoryOf::Entity(read_entity())
 }
 
 /// How PostgreSQL may plan a statement [`each_entity`] builds over

@@ -30,7 +30,7 @@ use crate::{
     history_source::{
         HistoryBranch,
         HistoryOf,
-        attribute_rows::attribute_rows,
+        attribute_rows::{IDENTITY_COLUMNS, attribute_rows},
         axis::{axis_present, axis_window},
         entity_rows::entity_rows,
     },
@@ -61,6 +61,34 @@ pub struct HistoryWindow {
     timeproperty: TimeProp,
     /// The interval the query selected on that axis.
     interval: TimeInterval,
+    /// The attribute whose instances the probes read as the one history row
+    /// a representation tests; `None` for a window reading every instance
+    /// inside it.
+    #[builder(default = None, setter(skip))]
+    reduced: Option<ReducedAttribute>,
+}
+
+/// An attribute reduced to one of its instances: the history row an enclosing
+/// statement reads under `row`.
+#[derive(Debug, Clone)]
+struct ReducedAttribute {
+    /// The attribute's dictionary key.
+    attribute: AttributeNameKey,
+    /// The alias the enclosing statement reads the history row under.
+    row: DynIden,
+}
+
+impl ReducedAttribute {
+    /// Whether the instance a probe reads under `aliases` is the row: the same
+    /// dataset and the same write identity, which a queued entry carries as
+    /// its recorded row will.
+    fn is_the_row(&self, aliases: &HistoryAliases) -> impl Iterator<Item = SimpleExpr> {
+        let dataset = aliases
+            .instance_grain(HistoryGrain::DatasetKey)
+            .eq(SeaExpr::col((self.row.clone(), HistoryGrain::DatasetKey))); // clone: each column names the row's alias
+        let identity = IDENTITY_COLUMNS.map(|column| aliases.instance_column(column).eq(SeaExpr::col((self.row.clone(), column))));
+        [dataset].into_iter().chain(identity)
+    }
 }
 
 impl HistoryWindow {
@@ -78,6 +106,21 @@ impl HistoryWindow {
             of,
             timeproperty: self.timeproperty,
             interval: self.interval,
+            reduced: None,
+        }
+    }
+
+    /// The same window with the instances of `attribute` reduced to the one
+    /// history row the enclosing statement reads under `row`, which a
+    /// representation tests the filters against (clause 5.7.4.4, last step).
+    #[must_use]
+    pub fn reduced_to(&self, attribute: AttributeNameKey, row: impl IntoIden) -> HistoryWindow {
+        HistoryWindow {
+            reduced: Some(ReducedAttribute {
+                attribute,
+                row: row.into_iden(),
+            }),
+            ..self.clone() // clone: the reduced window reads the branch and the Evolution this one reads
         }
     }
 
@@ -94,7 +137,7 @@ impl HistoryWindow {
     /// binds ahead of the value's operands, exactly as the current-state probe
     /// orders them.
     pub(crate) fn exists(&self, id: AttributeNameKey, value: Condition, aliases: &HistoryAliases) -> Condition {
-        let test = Condition::all().add(Self::of_attribute(id, aliases)).add_option(non_empty(value));
+        let test = Condition::all().add(self.of_attribute(id, aliases)).add_option(non_empty(value));
         Condition::all().add(SeaExpr::exists(self.probe(test, aliases)))
     }
 
@@ -102,7 +145,7 @@ impl HistoryWindow {
     /// holding when one instance passes any of them under its own attribute key.
     pub(crate) fn exists_any(&self, tests: Vec<InstanceTest>, aliases: &HistoryAliases) -> Condition {
         let any = tests.into_iter().fold(Condition::any(), |any, test| {
-            let of_attribute = Self::of_attribute(test.attribute, aliases);
+            let of_attribute = self.of_attribute(test.attribute, aliases);
             any.add(test.arm(of_attribute))
         });
         Condition::all().add(SeaExpr::exists(self.probe(any, aliases)))
@@ -147,12 +190,17 @@ impl HistoryWindow {
     /// The window's correlated probe over the instances of one attribute,
     /// for a traversal to join the entities it names.
     pub(crate) fn probe_of(&self, id: AttributeNameKey, aliases: &HistoryAliases) -> SelectStatement {
-        self.probe(Condition::all().add(Self::of_attribute(id, aliases)), aliases)
+        self.probe(Condition::all().add(self.of_attribute(id, aliases)), aliases)
     }
 
-    /// An instance of the attribute with this dictionary key.
-    fn of_attribute(id: AttributeNameKey, aliases: &HistoryAliases) -> SimpleExpr {
-        SeaExpr::expr(aliases.instance_grain(HistoryGrain::AttributeNameKey)).eq(id.get())
+    /// An instance of the attribute with this dictionary key, the reduced
+    /// row alone where the window reduces the attribute.
+    fn of_attribute(&self, id: AttributeNameKey, aliases: &HistoryAliases) -> SimpleExpr {
+        let attribute = SeaExpr::expr(aliases.instance_grain(HistoryGrain::AttributeNameKey)).eq(id.get());
+        match &self.reduced {
+            Some(reduced) if reduced.attribute == id => reduced.is_the_row(aliases).fold(attribute, ExprTrait::and),
+            Some(_) | None => attribute,
+        }
     }
 
     /// The instances of the Entity, of every dataset, narrowed to those inside
@@ -218,7 +266,7 @@ mod tests {
     fn probe_of(window: &HistoryWindow, value: Condition) -> SelectStatement {
         let aliases = HistoryAliases::top_level();
         let test = Condition::all()
-            .add(HistoryWindow::of_attribute(AttributeNameKey::from(7), &aliases))
+            .add(window.of_attribute(AttributeNameKey::from(7), &aliases))
             .add_option(non_empty(value));
         window.probe(test, &aliases)
     }

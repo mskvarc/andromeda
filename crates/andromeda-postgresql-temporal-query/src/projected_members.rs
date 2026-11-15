@@ -17,6 +17,7 @@ use andromeda_ngsi_ld_query::{
     temporal::compiled::CompiledTemporalQuery,
 };
 use andromeda_postgresql_query::{
+    error::RenderError,
     history_source::{HistoryBranch, HistoryOf, attribute_rows::attribute_rows, scope_rows::scope_rows},
     query_names::QueryNames,
     scope_validity::{ScopeEvent, overlaps_window, positioned_on_axis, scope_history_axis},
@@ -33,8 +34,11 @@ use sea_query::{Condition, Expr, Query, SelectStatement, SimpleExpr};
 
 /// The condition an entity of the stage 1 `e` relation has to satisfy for the
 /// query's projection to leave it a member; `None` when every entity does.
-#[must_use]
-pub fn projected_member_condition(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Option<Condition> {
+///
+/// # Errors
+///
+/// Returns [`RenderError`] as rendering the geo-query does.
+pub fn projected_member_condition(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Option<Condition>, RenderError> {
     let projected = &compiled.entities.projected_members;
     // The projected names are compared by the dictionary keys they resolved
     // to: a name never keyed names no recorded attribute, so it neither keeps
@@ -42,27 +46,33 @@ pub fn projected_member_condition(branch: &HistoryBranch, compiled: &CompiledTem
     let attribute = Expr::col((Ah, HistoryGrain::AttributeNameKey));
     let keys = names.attributes.keys_of(projected.names()).into_iter().map(AttributeNameKey::get);
     let (kept_names, scope) = match projected {
-        ProjectedMembers::Unconditional => return None,
+        ProjectedMembers::Unconditional => return Ok(None),
         ProjectedMembers::AnyOf { scope, .. } => (is_any_of(attribute, keys), *scope),
         ProjectedMembers::AnyBesides { scope, .. } => (is_none_of(attribute, keys), *scope),
     };
-    let attribute = Expr::exists(represented_attribute(branch, compiled, names, kept_names));
-    Some(match scope {
+    let attribute = Expr::exists(represented_attribute(branch, compiled, names, kept_names)?);
+    Ok(Some(match scope {
         ScopeRetention::Kept if scope_is_selected(compiled) => Condition::any().add(attribute).add(Expr::exists(represented_scope(branch, compiled))),
         ScopeRetention::Kept | ScopeRetention::Removed => Condition::all().add(attribute),
-    })
+    }))
 }
 
 /// The instances of the entity stage 2 would represent, restricted to the
 /// Attributes whose names satisfy `kept_names`.
-fn represented_attribute(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames, kept_names: SimpleExpr) -> SelectStatement {
+fn represented_attribute(
+    branch: &HistoryBranch,
+    compiled: &CompiledTemporalQuery,
+    names: &QueryNames,
+    kept_names: SimpleExpr,
+) -> Result<SelectStatement, RenderError> {
+    let of = of_selected_entity();
     let mut probe = Query::select();
     probe
         .expr(int_literal(1))
-        .from(attribute_rows(branch, &of_selected_entity(), Ah))
-        .cond_where(represented_instances(compiled, names))
+        .from(attribute_rows(branch, &of, Ah))
+        .cond_where(represented_instances(branch, &of, compiled, names)?)
         .cond_where(kept_names);
-    probe.take()
+    Ok(probe.take())
 }
 
 /// The scope events of the entity whose clause 4.18 validity overlaps the
@@ -149,7 +159,9 @@ mod tests {
     }
 
     fn rendered(compiled: &CompiledTemporalQuery) -> Option<SelectStatement> {
-        projected_member_condition(&HistoryBranch::live(), compiled, &names()).map(|condition| Query::select().cond_where(condition).to_owned())
+        projected_member_condition(&HistoryBranch::live(), compiled, &names())
+            .expect("a renderable projection")
+            .map(|condition| Query::select().cond_where(condition).to_owned())
     }
 
     /// A projection that keeps `id` leaves every entity a member.
