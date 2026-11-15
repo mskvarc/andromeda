@@ -119,7 +119,7 @@ fn candidates_of(term: &TermReading, rows: &EntityRowRefs, names: &QueryNames) -
         (ScalarTest::Ordered { .. } | ScalarTest::Within(_), Polarity::Asserted) => {
             ordering_candidates(own_value_attribute(term)?, value.test(), rows, names).map(ranged)
         }
-        (ScalarTest::Matches(pattern), Polarity::Asserted) => pattern_candidates(own_value_attribute(term)?, value, pattern, rows, names).map(rechecked),
+        (ScalarTest::Matches(pattern), Polarity::Asserted) => pattern_candidates(own_value_attribute(term)?, pattern, rows, names).map(rechecked),
         (ScalarTest::Unsatisfiable, Polarity::Asserted)
         | (
             ScalarTest::EqualsAny(_) | ScalarTest::Ordered { .. } | ScalarTest::Within(_) | ScalarTest::Matches(_) | ScalarTest::Unsatisfiable,

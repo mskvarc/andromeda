@@ -18,7 +18,7 @@ use crate::filter::{
         scalar_test::ScalarTest,
         target_kind::TargetKind,
         term_reading::Test,
-        value_test::{Polarity, ValueTest},
+        value_test::{ComplementScope, Polarity, ValueTest},
         verdict::Verdict,
     },
 };
@@ -348,13 +348,32 @@ fn an_element_is_tested_with_the_asserted_test_whatever_the_polarity() {
     let negated = value_test("x!=1");
     let ones = equals(vec![number("1")]);
     assert_eq!(negated.verdict(TargetKind::Number), Verdict::HoldsNot(&ones));
-    assert_eq!(negated.element_verdict(TargetKind::Number), Verdict::Holds(&ones));
-    assert_eq!(negated.element_verdict(TargetKind::String), Verdict::Never);
-    assert_eq!(negated.element_array_rule(ArrayTarget::ValueArray), ArrayRule::SomeElement);
+    assert_eq!(negated.asserted_verdict(TargetKind::Number), Verdict::Holds(&ones));
+    assert_eq!(negated.asserted_verdict(TargetKind::String), Verdict::Never);
+    assert_eq!(negated.asserted_array_rule(ArrayTarget::ValueArray), ArrayRule::SomeElement);
     let negated_range = value_test("x!=1..5");
     assert_eq!(negated_range.array_rule(ArrayTarget::ValueArray), ArrayRule::Always);
-    assert_eq!(negated_range.element_array_rule(ArrayTarget::ValueArray), ArrayRule::Never);
-    assert_eq!(negated_range.element_array_rule(ArrayTarget::AnyOneValue), ArrayRule::SomeElement);
+    assert_eq!(negated_range.asserted_array_rule(ArrayTarget::ValueArray), ArrayRule::Never);
+    assert_eq!(negated_range.asserted_array_rule(ArrayTarget::AnyOneValue), ArrayRule::SomeElement);
+}
+
+/// Clause 4.9 Unequal makes a target of another data type unequal, and Do
+/// not match pattern makes it not matching, so `!=` complements over every
+/// kind and `!~=` over Strings; an asserted test has no complement.
+#[test]
+fn the_scope_of_a_complement_follows_from_its_test() {
+    for (q, scope) in [
+        ("x!=1", Some(ComplementScope::AnyKind)),
+        ("x!=1,2", Some(ComplementScope::AnyKind)),
+        ("x!=1..5", Some(ComplementScope::AnyKind)),
+        ("x!=1..\"z\"", Some(ComplementScope::AnyKind)),
+        ("x!~=\"a.*\"", Some(ComplementScope::StringTarget)),
+        ("x==1", None),
+        ("x>1", None),
+        ("x~=\"a.*\"", None),
+    ] {
+        assert_eq!(value_test(q).complement_scope(), scope, "{q}");
+    }
 }
 
 /// A recorded ruling an answer of the table rests on, or `None` when a

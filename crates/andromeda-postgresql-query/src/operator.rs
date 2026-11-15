@@ -7,10 +7,9 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_postgresql_seaquery::{
     collation::{PostgresCollation, collate},
-    operator::negate_total,
     pg_operator::PgBinaryOperator,
 };
-use sea_query::{Condition, Expr, ExprTrait, SimpleExpr};
+use sea_query::{Expr, ExprTrait, SimpleExpr};
 
 /// Build one clause 4.9 comparison between two already-lifted operands.
 ///
@@ -18,7 +17,8 @@ use sea_query::{Condition, Expr, ExprTrait, SimpleExpr};
 /// operator against `current_attributes`, another against a JSON value and a
 /// third against a registration's properties. The operator token differs from
 /// the clause 4.9 spelling only at `==`, which SQL writes `=`. No comparison is
-/// unequal: `!=` is the complement of `==` ([`does_not_hold`]).
+/// unequal: `!=` is the complement of `==`, which
+/// [`verdict_condition`](crate::q_predicate::verdict_condition) states.
 #[must_use]
 pub fn compare(lhs: SimpleExpr, comparator: Comparator, rhs: SimpleExpr) -> SimpleExpr {
     let lhs = Expr::expr(lhs);
@@ -29,19 +29,6 @@ pub fn compare(lhs: SimpleExpr, comparator: Comparator, rhs: SimpleExpr) -> Simp
         Comparator::Ordered(OrderRelation::Less) => lhs.lt(rhs),
         Comparator::Ordered(OrderRelation::LessOrEqual) => lhs.lte(rhs),
     }
-}
-
-/// Whether a comparison does not hold, counting an unknown as a non-match.
-///
-/// SQL's `NOT` propagates unknown: a comparison against a column the row leaves
-/// empty is NULL, and `NOT NULL` is NULL, which the enclosing `WHERE` drops.
-/// Clause 4.9's `unequal` requires the opposite reading: "If the data type of
-/// the target value and the data type of the Query Term value are different,
-/// then they shall be considered unequal", so a target the comparison could not
-/// even be evaluated against is a match, not a silent rejection.
-#[must_use]
-pub fn does_not_hold(comparison: Condition) -> SimpleExpr {
-    negate_total(SimpleExpr::from(comparison))
 }
 
 /// The indexes over the stored text a pattern is tested against, which

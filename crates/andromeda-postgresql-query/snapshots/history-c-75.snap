@@ -173,11 +173,8 @@ WHERE
       "qh"."attribute_name_key" = $1
       AND (
         (
-          ("qh"."value_string" !~ $2)
-          AND nullif("qh"."value_kind" = (2), FALSE)
-        )
-        OR (
-          EXISTS (
+          nullif("qh"."value_kind" = (2), FALSE)
+          OR EXISTS (
             SELECT
               1
             FROM
@@ -189,8 +186,14 @@ WHERE
                 )
               ) AS "ls"
           )
-          AND (
-            NOT EXISTS (
+        )
+        AND (
+          NOT COALESCE(
+            (
+              ("qh"."value_string" ~ $2)
+              AND nullif("qh"."value_kind" = (2), FALSE)
+            )
+            OR EXISTS (
               SELECT
                 1
               FROM
@@ -203,7 +206,8 @@ WHERE
                 ) AS "ls"
               WHERE
                 ("ls"."value" ->> ('@value')) ~ $3
-            )
+            ),
+            FALSE
           )
         )
       )
@@ -702,11 +706,8 @@ WHERE
       AND "qh"."attribute_name_key" = $12
       AND (
         (
-          ("qh"."value_string" !~ $13)
-          AND nullif("qh"."value_kind" = (2), FALSE)
-        )
-        OR (
-          EXISTS (
+          nullif("qh"."value_kind" = (2), FALSE)
+          OR EXISTS (
             SELECT
               1
             FROM
@@ -718,8 +719,14 @@ WHERE
                 )
               ) AS "ls"
           )
-          AND (
-            NOT EXISTS (
+        )
+        AND (
+          NOT COALESCE(
+            (
+              ("qh"."value_string" ~ $13)
+              AND nullif("qh"."value_kind" = (2), FALSE)
+            )
+            OR EXISTS (
               SELECT
                 1
               FROM
@@ -732,7 +739,8 @@ WHERE
                 ) AS "ls"
               WHERE
                 ("ls"."value" ->> ('@value')) ~ $14
-            )
+            ),
+            FALSE
           )
         )
       )

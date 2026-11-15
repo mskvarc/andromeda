@@ -32,27 +32,30 @@ WHERE
               ) AS "ls"
           )
           AND (
-            NOT EXISTS (
-              SELECT
-                1
-              FROM
-                jsonb_array_elements(
-                  (
-                    CASE
-                      WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
-                    END
-                  )
-                ) AS "ls"
-              WHERE
-                LOWER(("ls"."value" ->> ('@language')) COLLATE "C") = LOWER(($2::text) COLLATE "C")
-                AND (
-                  (
-                    ("ls"."value" ->> ('@value')) COLLATE "und-x-icu"
-                  ) >= $3
+            NOT COALESCE(
+              EXISTS (
+                SELECT
+                  1
+                FROM
+                  jsonb_array_elements(
+                    (
+                      CASE
+                        WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                      END
+                    )
+                  ) AS "ls"
+                WHERE
+                  LOWER(("ls"."value" ->> ('@language')) COLLATE "C") = LOWER(($2::text) COLLATE "C")
                   AND (
-                    ("ls"."value" ->> ('@value')) COLLATE "und-x-icu"
-                  ) <= $4
-                )
+                    (
+                      ("ls"."value" ->> ('@value')) COLLATE "und-x-icu"
+                    ) >= $3
+                    AND (
+                      ("ls"."value" ->> ('@value')) COLLATE "und-x-icu"
+                    ) <= $4
+                  )
+              ),
+              FALSE
             )
           )
         )

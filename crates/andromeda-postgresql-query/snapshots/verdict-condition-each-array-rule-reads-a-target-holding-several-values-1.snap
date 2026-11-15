@@ -1,0 +1,6 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/verdict_condition.rs
+---
+SELECT
+WHERE
+  "array"

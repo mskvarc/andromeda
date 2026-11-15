@@ -271,10 +271,7 @@ WHERE
         )
         OR (
           "qh"."attribute_name_key" = $3
-          AND (
-            "qh"."value_number" < $4
-            AND "qh"."value_number" <> ('NaN'::numeric)
-          )
+          AND "qh"."value_number" < $4
         )
       )
       AND "qh"."value_kind" <> (0)

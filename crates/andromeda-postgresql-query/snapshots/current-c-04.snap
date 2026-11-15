@@ -17,10 +17,7 @@ WHERE
         "ca"."expires_at" IS NULL
         OR "ca"."expires_at" > NOW()
       )
-      AND (
-        "ca"."value_number" <= $2
-        AND "ca"."value_number" <> ('NaN'::numeric)
-      )
+      AND "ca"."value_number" <= $2
       AND "ca"."entity_key" = "entities"."entity_key"
   )
 1: Int 1

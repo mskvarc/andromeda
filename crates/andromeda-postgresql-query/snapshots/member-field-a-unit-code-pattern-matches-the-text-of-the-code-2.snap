@@ -3,5 +3,8 @@ source: crates/andromeda-postgresql-query/src/q_predicate/sub_attribute/member_f
 ---
 SELECT
 WHERE
-  "ca"."unit_code_id" <> ALL ($1)
+  "ca"."unit_code_id" IS NOT NULL
+  AND (
+    NOT COALESCE("ca"."unit_code_id" = ANY($1), FALSE)
+  )
 1: Array ARRAY [367,368]

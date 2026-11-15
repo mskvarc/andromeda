@@ -1,11 +1,11 @@
 //! A clause 4.9 Query Term decided over the strings of a `languageMap`.
 //!
-//! Each term is the positive or the complementary existential of
-//! [`LanguageMap`]: an asserted test (`==`, a range, the ordering operators
-//! and `~=`) holds when some string under the selection passes it, and a
-//! complement (`!=`, `!~=` and an excluded range) when the map exists and no
-//! string under the selection passes the test. One string is
-//! compared the way a String Property's value is compared in its typed column
+//! Any one string of a `languageMap` is the target value, so an asserted test
+//! (`==`, a range, the ordering operators and `~=`) holds when some string
+//! under the selection passes it, and its complement (`!=`, `!~=` and an
+//! excluded range) is the failure of that test over a map the instance holds
+//! ([`verdict_condition`]). One string is compared the way a String
+//! Property's value is compared in its typed column
 //! (`crate::q_predicate::typed_column`), so a language map and a plain String
 //! answer every operand alike.
 
@@ -14,6 +14,8 @@ use crate::{
     q_predicate::{
         language_map::{LanguageMap, LanguageSelection},
         string_ordering::string_ordering_collation,
+        typed_column::bound_operand,
+        verdict_condition::{ComplementTarget, verdict_condition},
     },
 };
 use andromeda_ngsi_ld_query::{
@@ -23,6 +25,7 @@ use andromeda_ngsi_ld_query::{
         operand::Operand,
         order_relation::OrderRelation,
         scalar_test::ScalarTest,
+        target_kind::TargetKind,
         term_reading::Test,
         value_test::{Polarity, ValueTest},
     },
@@ -32,27 +35,7 @@ use andromeda_postgresql_seaquery::{
     collation::{PostgresCollation, collate},
     literal::false_literal,
 };
-use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
-
-/// Whether a string can compare with an operand at all.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StringComparability {
-    /// A String operand, which a language string may equal or order against.
-    Comparable,
-    /// A number, a boolean or a time value: a datatype no language string
-    /// carries, which clause 4.9 makes a non-match under every operator but
-    /// `!=`.
-    Incomparable,
-}
-
-/// Whether a string can compare with `operand`.
-#[must_use]
-pub const fn string_comparability(operand: &Operand) -> StringComparability {
-    match operand {
-        Operand::Text(_) => StringComparability::Comparable,
-        Operand::Number(_) | Operand::Boolean(_) | Operand::Date(_) | Operand::Time(_) | Operand::DateTime(_) => StringComparability::Incomparable,
-    }
-}
+use sea_query::{Condition, SimpleExpr};
 
 /// Whether the strings of `map` under `selection` satisfy `test`: existence
 /// asks for a string under the selection.
@@ -60,19 +43,20 @@ pub const fn string_comparability(operand: &Operand) -> StringComparability {
 pub fn language_term(test: &Test, map: &LanguageMap, selection: LanguageSelection<'_>) -> SimpleExpr {
     match test {
         Test::Exists => map.holds(selection),
-        Test::Value(value) => language_value_term(value, map, selection),
+        Test::Value(value) => language_value_term(value, map, selection).into(),
     }
 }
 
-/// Whether the strings of `map` under `selection` satisfy `value`: some
-/// string passes an asserted test, and no string passes a complemented one.
+/// Whether the strings of `map` under `selection` satisfy `value`.
+///
+/// A complement ranges over a map the instance holds in any language, whose
+/// target element, the `LanguageProperty`, the matching Entity contains:
+/// clause 4.9 has "No matching value is found as the value of the specified
+/// language key" hold for a language the map does not hold.
 #[must_use]
-pub fn language_value_term(value: &ValueTest, map: &LanguageMap, selection: LanguageSelection<'_>) -> SimpleExpr {
-    let passes = |text: SimpleExpr| string_test(text, value.test());
-    match value.polarity() {
-        Polarity::Asserted => map.some_string(selection, passes),
-        Polarity::Complement => map.no_string(selection, passes),
-    }
+pub fn language_value_term(value: &ValueTest, map: &LanguageMap, selection: LanguageSelection<'_>) -> Condition {
+    let positive = Condition::all().add(map.some_string(selection, |text| string_test(text, value.test())));
+    verdict_condition(value, positive, |_| ComplementTarget::Where(map.holds(LanguageSelection::AnyLanguage)))
 }
 
 /// Whether some string of `map` under `selection` lies within `interval`,
@@ -87,6 +71,13 @@ pub fn some_string_in_range(map: &LanguageMap, selection: LanguageSelection<'_>,
 #[must_use]
 pub fn some_string_ordered(map: &LanguageMap, selection: LanguageSelection<'_>, relation: OrderRelation, operand: &Operand) -> SimpleExpr {
     map.some_string(selection, |text| string_comparison(text, Comparator::Ordered(relation), operand))
+}
+
+/// Whether some string of `map` under `selection` is in the language of
+/// `pattern`.
+#[must_use]
+pub fn some_string_matching(map: &LanguageMap, selection: LanguageSelection<'_>, pattern: &Pattern) -> SimpleExpr {
+    map.some_string(selection, |text| string_pattern(text, pattern))
 }
 
 /// Whether one string passes `asked`: identical to the one operand or to one
@@ -127,20 +118,19 @@ fn string_in_range(text: SimpleExpr, interval: &Interval) -> SimpleExpr {
 
 /// Compare one string against one operand.
 ///
-/// A `languageMap` holds `rdf:langString` values, so only a String operand
-/// compares with one: a number, a boolean and a time value are data types no
-/// language string carries, which clause 4.9 makes a non-match. A String
-/// ordering compares under the collation [`string_ordering_collation`] picks,
-/// any other comparison under the String column's byte order.
+/// A `languageMap` holds `rdf:langString` values, each a String target, so
+/// an operand of another data type, which clause 4.9 makes a non-match,
+/// compares with none. A String ordering compares under the collation
+/// [`string_ordering_collation`] picks, any other comparison under the String
+/// column's byte order.
 fn string_comparison(text: SimpleExpr, comparator: Comparator, operand: &Operand) -> SimpleExpr {
-    let value = match operand {
-        Operand::Text(value) => value,
-        Operand::Number(_) | Operand::Boolean(_) | Operand::Date(_) | Operand::Time(_) | Operand::DateTime(_) => return false_literal(),
-    };
+    if !operand.compares_with(TargetKind::String, comparator.comparison()) {
+        return false_literal();
+    }
     // The collation the stored String columns are declared under, so a string
     // read out of a map orders exactly as one read from `value_string` does.
     let collation = string_ordering_collation(operand, comparator).unwrap_or_else(PostgresCollation::byte_order);
-    compare(collate(text, &collation), comparator, SeaExpr::val(value.as_str()))
+    compare(collate(text, &collation), comparator, bound_operand(operand))
 }
 
 /// Whether one string is in the language of a pattern.

@@ -68,6 +68,15 @@ impl From<&Scalar> for Operand {
 }
 
 impl Operand {
+    /// The text the operand is, `None` for any other operand.
+    #[must_use]
+    pub const fn text(&self) -> Option<&str> {
+        match self {
+            Operand::Text(text) => Some(text.as_str()),
+            Operand::Number(_) | Operand::Boolean(_) | Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_) => None,
+        }
+    }
+
     /// The number the operand is, `None` for any other operand.
     #[must_use]
     pub const fn number(&self) -> Option<&JsonNumber> {

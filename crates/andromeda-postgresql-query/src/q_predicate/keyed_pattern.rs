@@ -21,26 +21,19 @@ use crate::{
     query_names::QueryNames,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::{filter::reading::value_test::ValueTest, pattern::Pattern};
+use andromeda_ngsi_ld_query::pattern::Pattern;
 use sea_query::{Condition, SelectStatement, SimpleExpr};
 
-/// `SELECT "entity_key"` over the rows of `attribute` whose own value passes
-/// `value`, an asserted test of `pattern` (`~=`); `None` when the attribute
-/// was never recorded.
+/// `SELECT "entity_key"` over the rows of `attribute` whose own value matches
+/// `pattern` (`~=`); `None` when the attribute was never recorded.
 ///
 /// Only an attribute's own value is offered: a trailing member, a
 /// sub-attribute or a hop reads a value no trigram index covers.
-pub(crate) fn pattern_candidates(
-    attribute: &AttributeName,
-    value: &ValueTest,
-    pattern: &Pattern,
-    rows: &EntityRowRefs,
-    names: &QueryNames,
-) -> Option<SelectStatement> {
+pub(crate) fn pattern_candidates(attribute: &AttributeName, pattern: &Pattern, rows: &EntityRowRefs, names: &QueryNames) -> Option<SelectStatement> {
     let attribute = names.attributes.get(attribute)?;
     let row = InstanceRow::Current;
     union_of(pattern_targets(row).map(|target| {
-        let test = Condition::all().add(pattern_on(target, value, pattern, row));
+        let test = Condition::all().add(pattern_on(target, pattern, row));
         branch(rows, attribute, holds_target(target), test)
     }))
 }

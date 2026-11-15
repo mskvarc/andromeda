@@ -29,7 +29,7 @@ pub enum Polarity {
 
 /// The targets a negated operator matches when the test fails on them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ComplementScope {
+pub enum ComplementScope {
     /// Every kind. A target the operand does not compare with "shall be
     /// considered unequal" (clause 4.9, Unequal): `!=` with a value, a list or
     /// a range.
@@ -66,6 +66,16 @@ impl ValueTest {
     #[must_use]
     pub const fn polarity(&self) -> Polarity {
         self.polarity
+    }
+
+    /// The targets the complement the term asserts ranges over, `None` when
+    /// the term asserts its test.
+    #[must_use]
+    pub const fn complement_scope(&self) -> Option<ComplementScope> {
+        match self.polarity {
+            Polarity::Asserted => None,
+            Polarity::Complement => Some(scope_of(&self.test)),
+        }
     }
 
     /// Puts the operands of a value list in canonical order, each once.
@@ -110,20 +120,21 @@ impl ValueTest {
         array_rule_under(&self.test, self.polarity, target)
     }
 
-    /// What the asserted test makes of one element of `kind` of an array
-    /// target: an element is tested with the asserted test whatever the
-    /// term's polarity, and the array rule decides what the term makes of the
-    /// answers.
+    /// What the asserted test makes of one value of `kind`, whatever the
+    /// term's polarity: an element of an array target is tested with it, the
+    /// array rule deciding what the term makes of the answers, and a
+    /// complement is the failure of the asserted test over the targets in its
+    /// scope.
     #[must_use]
-    pub fn element_verdict(&self, kind: TargetKind) -> Verdict<'_> {
+    pub fn asserted_verdict(&self, kind: TargetKind) -> Verdict<'_> {
         verdict_under(&self.test, Polarity::Asserted, kind)
     }
 
-    /// What the asserted test makes of an element of an array target that
-    /// holds several values itself, as `target`: the test an element is
-    /// tested with is the asserted one at every depth.
+    /// What the asserted test makes of a target holding several values, as
+    /// `target`: the rule an element of an array target that holds several
+    /// values itself is tested by, at every depth.
     #[must_use]
-    pub const fn element_array_rule(&self, target: ArrayTarget) -> ArrayRule {
+    pub const fn asserted_array_rule(&self, target: ArrayTarget) -> ArrayRule {
         array_rule_under(&self.test, Polarity::Asserted, target)
     }
 }
@@ -133,7 +144,7 @@ impl ValueTest {
 /// The pattern is negated by `!~=`, whose complement is over Strings, and every
 /// other test by `!=`, whose complement is over every kind. An order is never
 /// negated, and is read as `!=` reads a range.
-const fn complement_scope(test: &ScalarTest) -> ComplementScope {
+const fn scope_of(test: &ScalarTest) -> ComplementScope {
     match test {
         ScalarTest::Matches(_) => ComplementScope::StringTarget,
         ScalarTest::EqualsAny(_) | ScalarTest::Ordered { .. } | ScalarTest::Within(_) | ScalarTest::Unsatisfiable => ComplementScope::AnyKind,
@@ -143,7 +154,7 @@ const fn complement_scope(test: &ScalarTest) -> ComplementScope {
 /// What `test` under `polarity` makes of one target of `kind`.
 fn verdict_under(test: &ScalarTest, polarity: Polarity, kind: TargetKind) -> Verdict<'_> {
     if !test.compares_with(kind) {
-        return match (polarity, complement_scope(test)) {
+        return match (polarity, scope_of(test)) {
             (Polarity::Complement, ComplementScope::AnyKind) => Verdict::Always,
             (Polarity::Asserted, ComplementScope::AnyKind | ComplementScope::StringTarget) | (Polarity::Complement, ComplementScope::StringTarget) => {
                 Verdict::Never
@@ -172,7 +183,7 @@ const fn array_rule_under(test: &ScalarTest, polarity: Polarity, target: ArrayTa
             (ScalarTest::EqualsAny(_), Polarity::Complement) => ArrayRule::NoElement,
             (ScalarTest::Ordered { .. } | ScalarTest::Within(_) | ScalarTest::Matches(_) | ScalarTest::Unsatisfiable, Polarity::Asserted) => ArrayRule::Never,
             (ScalarTest::Ordered { .. } | ScalarTest::Within(_) | ScalarTest::Matches(_) | ScalarTest::Unsatisfiable, Polarity::Complement) => {
-                match complement_scope(test) {
+                match scope_of(test) {
                     ComplementScope::AnyKind => ArrayRule::Always,
                     ComplementScope::StringTarget => ArrayRule::Never,
                 }

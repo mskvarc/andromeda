@@ -19,7 +19,7 @@ use crate::{
     query_names::QueryNames,
     sub_attribute_operand_keys::operand_keys,
 };
-use andromeda_ngsi_ld_query::filter::reading::{operand::Operand, term_reading::TermReading, terminal::Terminal, value_test::Polarity};
+use andromeda_ngsi_ld_query::filter::reading::{operand::Operand, term_reading::TermReading, terminal::Terminal};
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::{operator::hash_key_array, pg_operator::PgBinaryOperator};
 use andromeda_postgresql_stored_values::sub_attribute_key::key::SubAttributeKey;
@@ -40,7 +40,7 @@ pub(crate) fn equality_candidates(term: &TermReading, operand: &Operand, rows: &
         .into_iter()
         .map(SubAttributeKey::get)
         .collect::<Vec<_>>();
-    let value = equals_any_value(slice::from_ref(operand), Polarity::Asserted, element.holder());
+    let value = equals_any_value(slice::from_ref(operand), element.holder());
     let mut select = Query::select();
     select
         .expr(projection_column(CurrentAttributes::EntityKey))

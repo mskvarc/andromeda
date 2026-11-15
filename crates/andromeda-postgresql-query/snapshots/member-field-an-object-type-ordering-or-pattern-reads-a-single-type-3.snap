@@ -14,5 +14,22 @@ WHERE
           "mt"."entity_type_name_key" = (("ca"."object_type_keys")[1])
       )
     END
-  ) !~ $1
+  ) IS NOT NULL
+  AND (
+    NOT COALESCE(
+      (
+        CASE
+          WHEN (cardinality("ca"."object_type_keys") = (1)) THEN (
+            SELECT
+              "mt"."name"
+            FROM
+              "entity_type_names" AS "mt"
+            WHERE
+              "mt"."entity_type_name_key" = (("ca"."object_type_keys")[1])
+          )
+        END
+      ) ~ $1,
+      FALSE
+    )
+  )
 1: String 'Dev'

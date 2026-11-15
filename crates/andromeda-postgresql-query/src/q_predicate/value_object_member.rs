@@ -20,22 +20,19 @@
 //! and under `unequal` "Is not included"), and the ordering, range and pattern
 //! operators match no array.
 
-use crate::{
-    operator::does_not_hold,
-    q_predicate::{
-        instance_row::InstanceRow,
-        json_value_term::{JsonTarget, json_equals_any, json_ordering, json_pattern, json_within},
-        projection::unsatisfiable,
-        value_column::ValueColumn,
-    },
+use crate::q_predicate::{
+    instance_row::InstanceRow,
+    json_value_term::{JsonTarget, json_passes, json_string},
+    value_column::ValueColumn,
+    verdict_condition::{ComplementTarget, array_rule_condition, verdict_condition},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::{
     reading::{
-        operand::Operand,
+        array_target::ArrayTarget,
         scalar_test::ScalarTest,
         term_reading::Test,
-        value_test::{Polarity, ValueTest},
+        value_test::{ComplementScope, ValueTest},
     },
     trailing_path::MemberPath,
 };
@@ -201,48 +198,37 @@ fn reading_term(test: &Test, source: SelectStatement, shape: MemberShape) -> Sim
 
 /// What `value` asks of the member reached, read under `shape`.
 ///
-/// A scalar target is compared directly. Of the tests, only an equality is
-/// tested for inclusion in an array target; the ordering, range and pattern
-/// tests match no array. A pattern states its own complement, over a String
-/// target alone.
+/// A scalar target is tested directly, and an array target by the rule the
+/// reading gives it, each of its values tested alike. A complement of `!=`
+/// ranges over a member holding a target value, and one of `!~=` over a
+/// member holding one String.
 fn value_term(value: &ValueTest, shape: MemberShape) -> Condition {
-    let scalar = Condition::all().add(shape.holds_scalar(reached_member()));
     let target = shape.scalar(reached_member());
-    match value.test() {
-        ScalarTest::Matches(pattern) => scalar.add(json_pattern(&target, pattern, value.polarity())),
-        ScalarTest::EqualsAny(operands) => {
-            let included = Condition::all()
-                .add(shape.holds_array(reached_member()))
-                .add(some_element(reached_member(), shape, operands));
-            complemented(
-                value.polarity(),
-                shape,
-                Condition::any().add(scalar.add(json_equals_any(&target, operands))).add(included),
-            )
-        }
-        ScalarTest::Within(interval) => complemented(value.polarity(), shape, Condition::any().add(scalar.add(json_within(&target, interval)))),
-        ScalarTest::Ordered { relation, operand } => complemented(value.polarity(), shape, scalar.add(json_ordering(&target, *relation, operand))),
-        ScalarTest::Unsatisfiable => complemented(value.polarity(), shape, unsatisfiable()),
-    }
+    let scalar = Condition::all()
+        .add(shape.holds_scalar(reached_member()))
+        .add(json_passes(&target, value.test()));
+    let array = array_rule_condition(value.asserted_array_rule(ArrayTarget::ValueArray), shape.holds_array(reached_member()), || {
+        some_element(reached_member(), shape, value.test())
+    });
+    let positive = match array {
+        Some(array) => Condition::any().add(scalar).add(array),
+        None => scalar,
+    };
+    verdict_condition(value, positive, |scope| {
+        ComplementTarget::Where(match scope {
+            ComplementScope::AnyKind => shape.holds_target(reached_member()),
+            ComplementScope::StringTarget => shape.holds_scalar(reached_member()).and(json_string(&target)),
+        })
+    })
 }
 
-/// `positive` under `polarity`. A complement asks for the target element and
-/// for no match in it, a value of another data type being unequal.
-fn complemented(polarity: Polarity, shape: MemberShape, positive: Condition) -> Condition {
-    match polarity {
-        Polarity::Asserted => positive,
-        Polarity::Complement => Condition::all().add(shape.holds_target(reached_member())).add(does_not_hold(positive)),
-    }
-}
-
-/// Whether one value of the array target `member` holds equals one of the
-/// operands.
-fn some_element(member: SimpleExpr, shape: MemberShape, operands: &[Operand]) -> SimpleExpr {
+/// Whether one value of the array target `member` holds passes `test`.
+fn some_element(member: SimpleExpr, shape: MemberShape, test: &ScalarTest) -> SimpleExpr {
     let element = shape.element(SeaExpr::col((Alias::new(ELEMENT), Alias::new(ELEMENT))));
     let mut scan = Query::select();
     scan.expr(int_literal(1))
         .from_function(jsonb_path_query(member, EVERY_ELEMENT), Alias::new(ELEMENT))
-        .cond_where(json_equals_any(&element, operands));
+        .cond_where(json_passes(&element, test));
     SeaExpr::exists(scan)
 }
 
