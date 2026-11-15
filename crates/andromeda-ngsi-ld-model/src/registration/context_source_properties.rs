@@ -6,7 +6,8 @@
 //! entity: each is held under its expanded name as the registration spells it,
 //! a normalized `{"type": "Property", "value": ...}` node, a bare JSON value,
 //! or an array of either, every element of which is one value of the property,
-//! and the value is raw JSON whose keys a compound path addresses verbatim. A
+//! and the value is raw JSON whose keys a compound path addresses verbatim and
+//! whose sub-properties are members under the names the registrant wrote. A
 //! value object whose `@type` declares a clause 4.6.3 time value, by the core
 //! context's term or by its IRI, is that time value (annex C.6), the one
 //! reading a time operand compares with.
@@ -237,12 +238,12 @@ mod tests {
         let nested = json!({"https://example.com/a": {
             "type": "Property",
             "value": {"m": 1},
-            "https://example.com/b": {"type": "Property", "value": 2}
+            "b": {"type": "Property", "value": 2}
         }});
         let flat = json!({"https://example.com/a": {"type": "Property", "value": 1}});
-        assert!(holds("\"https://example.com/a\".\"https://example.com/b\"", &nested));
-        assert!(holds("\"https://example.com/a\".\"https://example.com/b\"==2", &nested));
-        assert!(!holds("\"https://example.com/a\".\"https://example.com/b\"", &flat));
+        assert!(holds("\"https://example.com/a\".b", &nested));
+        assert!(holds("\"https://example.com/a\".b==2", &nested));
+        assert!(!holds("\"https://example.com/a\".b", &flat));
         assert!(holds("\"https://example.com/a\"[m]", &nested));
         assert!(!holds("\"https://example.com/a\"[m]", &flat));
         assert!(holds("\"https://example.com/a\"", &flat));

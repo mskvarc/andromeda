@@ -78,10 +78,11 @@ async fn expand_q_pred(pred: Predicate, members: TrailingMembers<'_>, expander: 
 
 /// Recursively expand the property terms of a `csf` expression.
 ///
-/// Every attribute path's property and sub-properties expand to full IRIs, as
-/// a registration's Context Source Properties are held under their expanded
-/// names (clause 5.5.7); the compound-value members never do, because those
-/// values are raw JSON (see [`TrailingMembers::Verbatim`]).
+/// Every attribute path's property expands to a full IRI, as a registration's
+/// Context Source Properties are held under their expanded names (clause
+/// 5.5.7). Its sub-properties and compound-value members never do, because a
+/// property's value is the raw JSON its registrant wrote, keyed as written
+/// (see [`TrailingMembers::Verbatim`]).
 ///
 /// # Errors
 ///
@@ -216,8 +217,8 @@ where
     Box::pin(expand_query_path(path, members, expander))
 }
 
-/// Expand an attribute path (main attribute, sub-attributes and, when
-/// `members` makes them terms, compound-value member names) to full IRIs.
+/// Expand an attribute path (main attribute and, when `members` makes them
+/// terms, sub-attributes and compound-value member names) to full IRIs.
 ///
 /// The member names of a compound value expand for the same reason the attribute name does: JSON-LD expansion of a structured Property value turns its members into IRI-keyed nodes, so `address[city]` addresses the expansion of `city` under the request `@context`, not the four letters the client typed.
 ///
@@ -229,7 +230,9 @@ where
 /// usable attribute name.
 pub async fn expand_attr_path(mut path: AttrPath, members: TrailingMembers<'_>, expander: &impl TermExpander) -> Result<AttrPath, QueryError> {
     path.attr = expanded_attribute_name(&expander.expand_term(path.attr.as_str()).await?)?;
-    path.sub_attrs = expand_attribute_names(&path.sub_attrs, expander).await?;
+    if members.sub_attributes_are_terms() {
+        path.sub_attrs = expand_attribute_names(&path.sub_attrs, expander).await?;
+    }
     // A value that is raw JSON (an attribute the request declared in `jsonKeys`,
     // clause 4.9 EXAMPLE 11, or any Context Source Property) is
     // addressed by literal object keys, which no `@context` expands.
@@ -678,19 +681,16 @@ mod tests {
     }
 
     /// Clause 4.9: a `csf` targets the Context Source Properties of a
-    /// registration, whose values are the raw JSON the registrant wrote, so a
-    /// trailing path addresses their literal keys while the property and its
-    /// sub-properties still expand.
+    /// registration, held under their expanded names with values that are the
+    /// raw JSON the registrant wrote, so the property expands while its
+    /// sub-properties and trailing members address the literal keys.
     #[tokio::test]
-    async fn a_csf_expands_its_properties_and_keeps_its_trailing_members_verbatim() {
+    async fn a_csf_expands_its_property_and_keeps_its_sub_properties_and_trailing_members_verbatim() {
         let expr = parser::parse("coverage.since[area.region]==\"north\"").expect("parses");
         let expanded = expand_csf_expr(expr, &CORE_MEMBER_EXPANDER).await.expect("expands");
         let path = path_of(&expanded);
         assert_eq!(path.attr.as_str(), "https://example.com/coverage");
-        assert_eq!(
-            path.sub_attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
-            vec!["https://example.com/since"]
-        );
+        assert_eq!(path.sub_attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["since"]);
         assert_eq!(
             path.members()
                 .expect("a member path")
