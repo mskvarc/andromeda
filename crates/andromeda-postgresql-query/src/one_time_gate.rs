@@ -104,6 +104,16 @@ impl CandidateBound {
         }
     }
 
+    /// Whether `count` candidates stay within the bound, so a statement past
+    /// it reads them all and never walks.
+    #[must_use]
+    pub const fn admits(self, count: u64) -> bool {
+        match self {
+            CandidateBound::AtMost(bound) => count <= bound,
+            CandidateBound::Whole => true,
+        }
+    }
+
     /// Whether a statement past `self` never reads more candidates than one
     /// past `other` would.
     #[must_use]

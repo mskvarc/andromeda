@@ -25,7 +25,7 @@ pub fn projected_type_names(selection: &EntitySelection) -> Vec<EntityTypeName> 
         }
     }
     if let Some(q) = &selection.q {
-        collect_guards(q.lowered(), &mut names);
+        collect_guards(q.reading(), &mut names);
     }
     names
 }

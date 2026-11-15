@@ -75,7 +75,7 @@ impl TemporalRepository {
                 .map(IriBuf::as_str)
                 .chain(compiled.entities.projected_members.names())
                 .chain(grouped),
-            compiled.entities.q.as_ref().map(CompiledFilter::lowered),
+            compiled.entities.q.as_ref().map(CompiledFilter::reading),
             compiled.entities.geo.as_ref(),
             &[],
         );

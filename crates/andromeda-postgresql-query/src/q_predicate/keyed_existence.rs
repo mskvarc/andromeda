@@ -36,6 +36,7 @@ pub(crate) fn existence_candidates(attribute: AttributeNameKey, rows: &EntityRow
 mod tests {
     use crate::{
         entity_row_refs::EntityRowRefs,
+        one_time_gate::CandidateBound,
         q_predicate::{
             keyed_term::{CandidateRead, keyed_candidates},
             lowered_filter::reading_of,
@@ -59,7 +60,7 @@ mod tests {
     }
 
     fn candidates_in(q: &str, rows: &EntityRowRefs) -> Option<SelectStatement> {
-        keyed_candidates(&reading_of(q), rows, &names()).map(|keyed| keyed.select)
+        keyed_candidates(&reading_of(q), rows, &names(), |_| CandidateBound::Whole).map(|keyed| keyed.select)
     }
 
     fn candidates(q: &str) -> Option<SelectStatement> {
@@ -93,7 +94,7 @@ mod tests {
             assert_eq!(candidates(q), None, "{q}");
         }
         let hop = reading_of("\"https://example.com/isParked\"{\"https://example.com/speed\"}");
-        let keyed = keyed_candidates(&hop, &EntityRowRefs::unaliased(None), &names());
+        let keyed = keyed_candidates(&hop, &EntityRowRefs::unaliased(None), &names(), |_| CandidateBound::Whole);
         assert_eq!(keyed.map(|keyed| keyed.read), Some(CandidateRead::Linked));
     }
 

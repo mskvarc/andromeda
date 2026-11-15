@@ -10,7 +10,7 @@ use crate::{
     entity_total::TotalCandidates,
     gated_page::{GatedColumns, PageSource},
     id_pattern_page::{PatternMatches, id_pattern_page, pattern_matches},
-    keyed_page::keyed_page,
+    keyed_page::{keyed_page, page_bound},
     value_walk_page::{ValueWalkOrder, value_walk_order, value_walk_page},
 };
 use andromeda_ngsi_ld_query::{
@@ -80,7 +80,7 @@ impl<'q> PageShape<'q> {
             .selection
             .q
             .as_ref()
-            .and_then(|q| keyed_candidates(q.lowered(), rows, names).map(|keyed| (q, keyed)));
+            .and_then(|q| keyed_candidates(q.reading(), rows, names, page_bound).map(|keyed| (q, keyed)));
         match keyed {
             Some((q, keyed)) => PageShape::Keyed(q, keyed),
             None => carriers(query, names, schema)

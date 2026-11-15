@@ -118,6 +118,15 @@ impl<'r> ResolvedTerm<'r> {
     pub const fn chain(&self) -> &[AttributeNameKey] {
         self.chain.as_slice()
     }
+
+    /// The key of the attribute of the Entity under evaluation the term reads
+    /// first: the first hop's Relationship, else the attribute. An Entity the
+    /// term holds for holds an instance of it, since every term is existential
+    /// over the instances of what it reads (clause 4.9).
+    #[must_use]
+    pub fn carrier(&self) -> AttributeNameKey {
+        self.hops.first().map_or(self.attribute, |hop| hop.relationship)
+    }
 }
 
 impl ResolvedHop {

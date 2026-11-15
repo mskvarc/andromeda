@@ -49,7 +49,7 @@ pub(crate) fn value_filter_condition(branch: &HistoryBranch, compiled: &Compiled
     let mut present = false;
     if let Some(q) = compiled.entities.q.as_ref() {
         filters = filters.add(q_filter::compile(
-            q.lowered(),
+            q.reading(),
             &InstanceScan::History(&windowed_instances(branch, compiled, &of)),
             names,
         ));

@@ -1,7 +1,7 @@
 //! The dictionary keys and the catalogue facts one query resolves before it
 //! can be rendered.
 
-use crate::history_source::attribute_holders::AttributeHolders;
+use crate::{attribute_carriers::AttributeCarriers, history_source::attribute_holders::AttributeHolders};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
 
@@ -12,7 +12,8 @@ use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
 /// entity types by key. Both sets are resolved once, before rendering, and
 /// travel together so a fragment that needs either has it. A temporal
 /// selection by attribute alone also reads the types holding each attribute,
-/// resolved the same way.
+/// and a `q` with two or more conjuncts an index answers the census count of
+/// each, resolved the same way.
 #[derive(Debug, Clone, Default)]
 pub struct QueryNames {
     /// The attribute names the query reads by dictionary key.
@@ -22,4 +23,7 @@ pub struct QueryNames {
     /// The types holding streams of each attribute a temporal selection by
     /// attribute alone pages the holders of; empty for every other query.
     pub holders: AttributeHolders,
+    /// The census counts of the attributes the keyed conjuncts of a `q` are
+    /// read through, when two or more of them contend; empty otherwise.
+    pub carriers: AttributeCarriers,
 }

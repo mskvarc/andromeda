@@ -93,7 +93,7 @@ pub(crate) fn keyed_page(
     let short = ShortWalk {
         source: *source,
         walked: source.condition(QFilter::Omitted)?,
-        probe: compile(q.lowered(), &InstanceScan::Current(&walked), source.names),
+        probe: compile(q.reading(), &InstanceScan::Current(&walked), source.names),
         length: SHORT_WALK,
     };
     let rest = IndexOrWalk {
@@ -116,7 +116,7 @@ mod tests {
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse},
         page_window::PageWindow,
     };
-    use andromeda_postgresql_query::query_names::QueryNames;
+    use andromeda_postgresql_query::{attribute_carriers::AttributeCarriers, query_names::QueryNames};
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, statement_planning::StatementPlanning};
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::assert_eq;
@@ -136,6 +136,26 @@ mod tests {
         let mut query = CompiledEntityQuery::builder().selection(EntitySelection::builder().build()).build();
         query.selection.q = Some(CompiledFilter::new(parse(q).expect("valid q"), LanguageMatching::TagEquality));
         query
+    }
+
+    /// The census counts 40 instances of `temperature` and 100 000 of
+    /// `source`: the pattern's candidates fit its bound of 1 000, so it is
+    /// keyed ahead of the canonical first conjunct, the existence of `source`,
+    /// whose carriers pass its bound of 10 000.
+    #[test]
+    fn a_census_count_within_its_bound_keys_a_later_conjunct() {
+        let mut names = names();
+        let read = [AttributeNameKey::from(12), AttributeNameKey::from(13)];
+        names.carriers = AttributeCarriers::new(&read, [(AttributeNameKey::from(12), 40), (AttributeNameKey::from(13), 100_000)]);
+        let built = build_query(
+            &ContextTarget::Live,
+            &query("\"https://example.com/source\";\"https://example.com/temperature\"~=\"text-71.*\""),
+            &PageWindow::offset(100, 0),
+            CountPolicy::Omit,
+            &names,
+        )
+        .expect("valid entity query");
+        assert_statement_snapshot!("keyed-page-a-census-count-within-its-bound-keys-a-later-conjunct", built.select);
     }
 
     /// The page tries the short walk, then the bounded index, then the full

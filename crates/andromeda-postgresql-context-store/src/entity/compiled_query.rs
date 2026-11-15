@@ -20,17 +20,25 @@ use andromeda_ngsi_ld_query::{
     page_window::PageWindow,
     projection::returned_attributes::ReturnedAttributes,
 };
+use andromeda_postgresql_branch::schema_iden;
 use andromeda_postgresql_context_query::{
     entity as entity_sql,
     entity_page::{GATED_STEP_COLUMN, GatedStep, TOTAL_COUNT_COLUMN},
     entity_total::EntityTotal,
 };
 use andromeda_postgresql_pool::pool_share::PoolLane;
-use andromeda_postgresql_query::{projected_attribute_names::projected_attribute_names, projected_type_names::projected_type_names, query_names::QueryNames};
+use andromeda_postgresql_query::{
+    attribute_carriers::{AttributeCarriers, CountedInstances, carriers_query},
+    projected_attribute_names::projected_attribute_names,
+    projected_type_names::projected_type_names,
+    q_predicate::keyed_term::contended_carriers,
+    query_names::QueryNames,
+};
+use andromeda_postgresql_schema::census::AttributeCensus;
 use andromeda_postgresql_seaquery::statement_planning::StatementPlanning;
-use andromeda_postgresql_stored_values::resolved_names::ResolvedNames;
+use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
 use iri_rs::IriBuf;
-use sea_query::SelectStatement;
+use sea_query::{Iden, SelectStatement};
 use sqlx::{Row, postgres::PgRow};
 
 impl EntityRepository {
@@ -62,7 +70,7 @@ impl EntityRepository {
         count: CountPolicy,
     ) -> Result<QueryOutcome, ContextStoreError> {
         self.ensure_collations(&compiled.ordering).await?;
-        let names = self.resolve_names(compiled).await?;
+        let names = self.resolve_names(target, compiled).await?;
         let built = entity_sql::build_query(target, compiled, window, count, &names)?;
 
         let head_rows = self.reads.acquire().await?.fetch_planned(&built.select, built.planning).await?;
@@ -119,7 +127,7 @@ impl EntityRepository {
     /// identifier is no longer a valid URI.
     pub async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery, window: &PageWindow) -> Result<Vec<Identifier>, ContextStoreError> {
         self.ensure_collations(&compiled.ordering).await?;
-        let names = self.resolve_names(compiled).await?;
+        let names = self.resolve_names(target, compiled).await?;
         let statement = entity_sql::build_ids_query(target, compiled, window, &names)?;
 
         let rows = self.fetch_on(PoolLane::Reads, &statement.select).await?;
@@ -152,7 +160,7 @@ impl EntityRepository {
     /// rows keyed on them are written in the entity's own transaction, so a
     /// name that resolves to nothing is a name nothing has ever written, not
     /// one written moments ago.
-    async fn resolve_names(&self, compiled: &CompiledEntityQuery) -> Result<QueryNames, ContextStoreError> {
+    async fn resolve_names(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryNames, ContextStoreError> {
         let returned = match ReturnedAttributes::of(&compiled.projection, &compiled.selection.attrs) {
             ReturnedAttributes::Every => Vec::new(),
             ReturnedAttributes::Named(iris) | ReturnedAttributes::AllBut(iris) => iris,
@@ -166,7 +174,7 @@ impl EntityRepository {
             .chain(compiled.selection.projected_members.names());
         let attribute_names = projected_attribute_names(
             members,
-            compiled.selection.q.as_ref().map(CompiledFilter::lowered),
+            compiled.selection.q.as_ref().map(CompiledFilter::reading),
             compiled.selection.geo.as_ref(),
             &compiled.ordering.terms,
         );
@@ -181,12 +189,52 @@ impl EntityRepository {
         } else {
             self.entity_type_names.lookup(&type_names).await?
         };
-        Ok(QueryNames {
+        let names = QueryNames {
             attributes,
             types,
             ..QueryNames::default()
-        })
+        };
+        self.with_contended_carriers(target, compiled, names).await
     }
+
+    /// `names` with the census counts of the attributes the keyed conjuncts
+    /// of the query's `q` are read through, read from the branch `target`
+    /// names when two or more of them contend for the page's index, and left
+    /// without counts otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextStoreError`] when no connection is free within the
+    /// acquire deadline or the census read fails.
+    async fn with_contended_carriers(
+        &self,
+        target: &ContextTarget,
+        compiled: &CompiledEntityQuery,
+        mut names: QueryNames,
+    ) -> Result<QueryNames, ContextStoreError> {
+        let Some(q) = compiled.selection.q.as_ref() else {
+            return Ok(names);
+        };
+        let keys = contended_carriers(q.reading(), &names);
+        if keys.is_empty() {
+            return Ok(names);
+        }
+        let rows = self.fetch_on(PoolLane::Reads, &carriers_query(schema_iden(target).as_ref(), &keys)).await?;
+        let counted = rows.iter().map(census_count).collect::<Result<Vec<_>, sqlx::Error>>()?;
+        names.carriers = AttributeCarriers::new(&keys, counted);
+        Ok(names)
+    }
+}
+
+/// One row of the census read: an attribute and the instances counted of it.
+///
+/// # Errors
+///
+/// Returns [`sqlx::Error`] when the row lacks either column.
+fn census_count(row: &PgRow) -> Result<(AttributeNameKey, u64), sqlx::Error> {
+    let attribute: i32 = row.try_get(Iden::to_string(&AttributeCensus::AttributeNameKey).as_str())?;
+    let instances: i64 = row.try_get(Iden::to_string(&CountedInstances).as_str())?;
+    Ok((AttributeNameKey::from(attribute), instances.unsigned_abs()))
 }
 
 /// The piggybacked total of a page, read off its first row when the page

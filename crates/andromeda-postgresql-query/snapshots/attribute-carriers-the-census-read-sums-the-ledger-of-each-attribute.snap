@@ -1,0 +1,13 @@
+---
+source: crates/andromeda-postgresql-query/src/attribute_carriers.rs
+---
+SELECT
+  "attribute_name_key",
+  SUM("instance_delta")::bigint AS "instances"
+FROM
+  "attribute_census"
+WHERE
+  "attribute_name_key" = ANY($1)
+GROUP BY
+  "attribute_name_key"
+1: Array ARRAY [4,9]

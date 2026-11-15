@@ -26,6 +26,7 @@
 
 use crate::{
     entity_row_refs::EntityRowRefs,
+    one_time_gate::CandidateBound,
     q_predicate::{
         keyed_existence::existence_candidates,
         keyed_hop::hop_candidates,
@@ -78,27 +79,82 @@ pub struct KeyedCandidates<'q> {
     pub read: CandidateRead,
 }
 
-/// The first term of the top-level conjunction of `reading` the index path
-/// answers, with its candidates read in the branch `rows` names.
+/// The term of the top-level conjunction of `reading` the index path answers
+/// for the page, with its candidates read in the branch `rows` names, read as
+/// far as `bound` admits for what one costs to read.
 ///
 /// Only a conjunct can narrow the page to its candidates: an entity a
 /// disjunction keeps for another arm need not be one of them. A filter no
 /// Entity can match, its names resolved through `names`, offers none.
+///
+/// Of several conjuncts an index answers, the one taken is one whose census
+/// count (`names.carriers`) fits its bound, the smallest such count first:
+/// its candidates are Entities holding an instance of the attribute it is read
+/// through, so the index answers it whole and the page never walks. When no
+/// count fits, or none was read, the first in canonical order is taken: the
+/// census bounds a value test's candidates and says nothing of how few it
+/// keeps.
 #[must_use]
-pub fn keyed_candidates<'q>(reading: &'q FilterReading, rows: &EntityRowRefs, names: &QueryNames) -> Option<KeyedCandidates<'q>> {
-    let resolved = ResolvedFilter::of(reading, names)?;
+pub fn keyed_candidates<'q>(
+    reading: &'q FilterReading,
+    rows: &EntityRowRefs,
+    names: &QueryNames,
+    bound: impl Fn(CandidateRead) -> CandidateBound,
+) -> Option<KeyedCandidates<'q>> {
+    let mut keyable = keyable_conjuncts(reading, rows, names);
+    let fitting = keyable
+        .iter()
+        .enumerate()
+        .filter_map(|(position, (keyed, carrier))| {
+            let instances = names.carriers.instances(*carrier)?;
+            bound(keyed.read).admits(instances).then_some((instances, position))
+        })
+        .min()
+        .map_or(0, |(_, position)| position);
+    (fitting < keyable.len()).then(|| keyable.swap_remove(fitting).0)
+}
+
+/// The attributes the census is read for before `reading` is rendered: the
+/// attribute each conjunct an index answers is read through, when two or more
+/// contend, and none otherwise, since one conjunct is taken without a count.
+#[must_use]
+pub fn contended_carriers(reading: &FilterReading, names: &QueryNames) -> Vec<AttributeNameKey> {
+    let keyable = keyable_conjuncts(reading, &EntityRowRefs::unaliased(None), names);
+    if keyable.len() < 2 {
+        return Vec::new();
+    }
+    let mut carriers: Vec<AttributeNameKey> = keyable.into_iter().map(|(_, carrier)| carrier).collect();
+    carriers.sort_unstable_by_key(|carrier| carrier.get());
+    carriers.dedup();
+    carriers
+}
+
+/// Every term of the top-level conjunction of `reading` an index answers, in
+/// canonical order, each with the attribute its candidates are read through.
+fn keyable_conjuncts<'q>(reading: &'q FilterReading, rows: &EntityRowRefs, names: &QueryNames) -> Vec<(KeyedCandidates<'q>, AttributeNameKey)> {
+    let Some(resolved) = ResolvedFilter::of(reading, names) else {
+        return Vec::new();
+    };
     let conjuncts = match &resolved {
         ResolvedFilter::All(children) => children.as_slice(),
         ResolvedFilter::Any(_) | ResolvedFilter::Term(_) => from_ref(&resolved),
     };
-    conjuncts.iter().find_map(|conjunct| match conjunct {
-        ResolvedFilter::Term(term) => candidates_of(term, rows).map(|(select, read)| KeyedCandidates {
-            term: term.term(),
-            select,
-            read,
-        }),
-        ResolvedFilter::All(_) | ResolvedFilter::Any(_) => None,
-    })
+    conjuncts
+        .iter()
+        .filter_map(|conjunct| match conjunct {
+            ResolvedFilter::Term(term) => candidates_of(term, rows).map(|(select, read)| {
+                (
+                    KeyedCandidates {
+                        term: term.term(),
+                        select,
+                        read,
+                    },
+                    term.carrier(),
+                )
+            }),
+            ResolvedFilter::All(_) | ResolvedFilter::Any(_) => None,
+        })
+        .collect()
 }
 
 /// The candidate statement of one term and what reading it costs, `None`
@@ -146,13 +202,16 @@ fn own_value_attribute(term: &ResolvedTerm<'_>) -> Option<AttributeNameKey> {
 #[cfg(test)]
 mod tests {
     use crate::{
+        attribute_carriers::AttributeCarriers,
         entity_row_refs::EntityRowRefs,
+        one_time_gate::CandidateBound,
         q_predicate::{
-            keyed_term::{CandidateRead, keyed_candidates},
+            keyed_term::{CandidateRead, contended_carriers, keyed_candidates},
             lowered_filter::reading_of,
         },
         query_names::QueryNames,
     };
+    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading};
 
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
@@ -171,11 +230,11 @@ mod tests {
     }
 
     fn candidates(q: &str) -> Option<SelectStatement> {
-        keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names()).map(|keyed| keyed.select)
+        keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names(), |_| CandidateBound::Whole).map(|keyed| keyed.select)
     }
 
     fn read(q: &str) -> Option<CandidateRead> {
-        keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names()).map(|keyed| keyed.read)
+        keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names(), |_| CandidateBound::Whole).map(|keyed| keyed.read)
     }
 
     /// A trigram or key match is rechecked against the value; a range of the
@@ -266,5 +325,72 @@ mod tests {
         ] {
             assert_eq!(candidates(q), None, "{q}");
         }
+    }
+
+    /// The names of the census tests: `count` (key 9) and `name` (key 2).
+    const COUNT_AND_NAME: &str = "\"https://example.com/count\";\"https://example.com/name\"~=\"text-.*\"";
+
+    /// The attribute key of the conjunct taken for `q` in normal form, under
+    /// the census `counts` and a bound of 1 000 for every read.
+    fn keyed_attribute(q: &str, counts: &[(i32, u64)]) -> Option<String> {
+        let mut names = names();
+        let read: Vec<AttributeNameKey> = counts.iter().map(|(key, _)| AttributeNameKey::from(*key)).collect();
+        names.carriers = AttributeCarriers::new(&read, counts.iter().map(|(key, count)| (AttributeNameKey::from(*key), *count)));
+        let reading = FilterReading::of(&parse(q).expect("the filter parses"), LanguageMatching::TagEquality);
+        keyed_candidates(&reading, &EntityRowRefs::unaliased(None), &names, |_| CandidateBound::AtMost(1000))
+            .map(|keyed| keyed.term.attribute().as_str().to_owned())
+    }
+
+    /// The census bounds a conjunct's candidates by the instances of the
+    /// attribute it is read through, so a count within the bound is answered
+    /// by the index whole, ahead of the canonical first conjunct, whose count
+    /// is past it.
+    #[test]
+    fn a_count_within_its_bound_is_keyed_ahead_of_the_canonical_first_conjunct() {
+        assert_eq!(
+            keyed_attribute(COUNT_AND_NAME, &[(9, 100_000), (2, 50)]).as_deref(),
+            Some("https://example.com/name")
+        );
+    }
+
+    #[test]
+    fn of_two_counts_within_their_bounds_the_smaller_is_keyed() {
+        assert_eq!(
+            keyed_attribute(COUNT_AND_NAME, &[(9, 10), (2, 500)]).as_deref(),
+            Some("https://example.com/count")
+        );
+        assert_eq!(
+            keyed_attribute(COUNT_AND_NAME, &[(9, 500), (2, 10)]).as_deref(),
+            Some("https://example.com/name")
+        );
+    }
+
+    /// A count past the bound says nothing of how few Entities a value test
+    /// keeps, so the canonical first conjunct stays keyed.
+    #[test]
+    fn with_no_count_within_its_bound_the_canonical_first_conjunct_is_keyed() {
+        assert_eq!(
+            keyed_attribute(COUNT_AND_NAME, &[(9, 5000), (2, 5000)]).as_deref(),
+            Some("https://example.com/count")
+        );
+        assert_eq!(keyed_attribute(COUNT_AND_NAME, &[]).as_deref(), Some("https://example.com/count"));
+    }
+
+    #[test]
+    fn the_census_is_read_only_when_two_conjuncts_contend() {
+        let reading = |q: &str| FilterReading::of(&parse(q).expect("the filter parses"), LanguageMatching::TagEquality);
+        assert_eq!(
+            contended_carriers(&reading(COUNT_AND_NAME), &names()),
+            [AttributeNameKey::from(2), AttributeNameKey::from(9)]
+        );
+        assert_eq!(
+            contended_carriers(&reading("\"https://example.com/count\""), &names()),
+            Vec::<AttributeNameKey>::new()
+        );
+        assert_eq!(
+            contended_carriers(&reading("\"https://example.com/count\"|\"https://example.com/name\"~=\"x\""), &names()),
+            Vec::<AttributeNameKey>::new(),
+            "a disjunction offers no conjunct"
+        );
     }
 }
