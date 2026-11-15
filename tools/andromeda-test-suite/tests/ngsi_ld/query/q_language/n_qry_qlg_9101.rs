@@ -119,4 +119,6 @@ corpus_cases! {
     n_qry_qlg_9196_a_structured_compound_member_is_unequal_to_a_string => "C-96",
     n_qry_qlg_9197_an_element_of_a_compound_member_beside_a_structured_value_matches => "C-97",
     n_qry_qlg_9198_an_ordering_never_selects_a_compound_member_holding_an_array => "C-98",
+    n_qry_qlg_9199_a_compound_member_declared_a_year_zero_date_time_precedes_year_one => "C-99",
+    n_qry_qlg_9200_a_compound_member_declared_a_year_zero_date_time_equals_its_instant => "C-100",
 }

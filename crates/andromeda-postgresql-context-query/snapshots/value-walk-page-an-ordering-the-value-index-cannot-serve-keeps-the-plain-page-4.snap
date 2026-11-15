@@ -52,8 +52,21 @@ FROM
               CASE
                 WHEN (
                   "order_value_0"."value_declared_datatype" = ('https://uri.etsi.org/ngsi-ld/DateTime')
-                  AND pg_input_is_valid("order_value_0"."value_text", 'timestamptz')
-                ) THEN ("order_value_0"."value_text")::timestamptz
+                  AND pg_input_is_valid(
+                    regexp_replace(
+                      "order_value_0"."value_text",
+                      '^0000(.*)$',
+                      E'0001\\1 BC'
+                    ),
+                    'timestamptz'
+                  )
+                ) THEN (
+                  regexp_replace(
+                    "order_value_0"."value_text",
+                    '^0000(.*)$',
+                    E'0001\\1 BC'
+                  )
+                )::timestamptz
               END
             )
           )

@@ -407,6 +407,25 @@ mod tests {
         }
     }
 
+    /// ISO 8601, which clause 4.6.3 defines its `DateTime` by, counts the
+    /// year before year 1 as `0000`, a leap year: an instant member or a
+    /// declared value of that year is the time value it spells, and precedes
+    /// year 1.
+    #[test]
+    fn a_time_value_of_the_year_zero_is_the_value_it_spells() {
+        let properties = json!({
+            "https://example.com/seen": {"value": 1, "observedAt": "0000-01-01T00:00:00Z"},
+            "https://example.com/epoch": {"@type": "DateTime", "@value": "0000-02-29T12:00:00Z"},
+            "https://example.com/dawn": {"@type": "Date", "@value": "0000-02-29"},
+            "https://example.com/no-day": {"@type": "Date", "@value": "0000-02-30"}
+        });
+        assert!(holds("\"https://example.com/seen\".observedAt<0001-01-01T00:00:00Z", &properties));
+        assert!(holds("\"https://example.com/epoch\"<0001-01-01T00:00:00Z", &properties));
+        assert!(holds("\"https://example.com/epoch\"==0000-02-29T12:00:00Z", &properties));
+        assert!(holds("\"https://example.com/dawn\"<0001-01-01", &properties));
+        assert!(!holds("\"https://example.com/no-day\"<0001-01-01", &properties));
+    }
+
     /// An instance member is read off the node under the term clause 4.5.2.2
     /// writes it by, which a `csf` names it by. One holding an instant (clause
     /// 4.8) is the `DateTime` its text spells in the clause 4.6.3 form, a

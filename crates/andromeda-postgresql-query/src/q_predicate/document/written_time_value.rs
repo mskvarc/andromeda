@@ -8,13 +8,15 @@
 //! the literal `Z`, at most six fractional digits after a point or the comma
 //! clause 4.6.3 admits in requests, a real calendar day. PostgreSQL's input
 //! functions read more (an offset, a bare date, an unpadded month, `now`) and
-//! no decimal comma, so a text is matched against the form's pattern before an
-//! input function checks its day, and its comma is read as the point
-//! ([`with_decimal_point`]) wherever an input function reads it.
+//! no decimal comma and no year `0000`, so a text is matched against the form's
+//! pattern before an input function checks its day, its comma is read as the
+//! point ([`with_decimal_point`]) and its ISO 8601 year `0000` as the year that
+//! function names it by ([`with_iso_year_zero`]) wherever an input function
+//! reads it.
 
 use andromeda_ngsi_ld_lexicon::time::value::TimeValueForm;
 use andromeda_postgresql_seaquery::{
-    datetime::{pg_input_is_valid, with_decimal_point},
+    datetime::{pg_input_is_valid, with_decimal_point, with_iso_year_zero},
     literal::text_literal,
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
@@ -31,8 +33,8 @@ use sea_query::{ExprTrait, SimpleExpr};
 pub fn spells(form: TimeValueForm, text: impl Fn() -> SimpleExpr) -> SimpleExpr {
     let written_in_form = text().posix_matches(text_literal(form.lexical_pattern()));
     match form {
-        TimeValueForm::DateTime => written_in_form.and(pg_input_is_valid(with_decimal_point(text()), PostgresType::Timestamptz)),
-        TimeValueForm::Date => written_in_form.and(pg_input_is_valid(text(), PostgresType::Date)),
+        TimeValueForm::DateTime => written_in_form.and(pg_input_is_valid(with_iso_year_zero(with_decimal_point(text())), PostgresType::Timestamptz)),
+        TimeValueForm::Date => written_in_form.and(pg_input_is_valid(with_iso_year_zero(text()), PostgresType::Date)),
         TimeValueForm::Time => written_in_form,
     }
 }

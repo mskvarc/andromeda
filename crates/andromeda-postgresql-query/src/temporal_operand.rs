@@ -10,7 +10,8 @@
 //!
 //! The cast is also guarded by `pg_input_is_valid` (PostgreSQL 16+), which asks
 //! the `timestamptz` input function whether the text is a real instant without
-//! raising: a document member is only supposed to hold what admission let in,
+//! raising, the ISO 8601 year `0000` written as that function reads it
+//! ([`with_iso_year_zero`]): a document member is only supposed to hold what admission let in,
 //! and an unguarded cast over one that does not aborts the whole statement
 //! rather than declining to match that one row. Neither check can raise, so the
 //! `CASE`'s `WHEN` is always safe to evaluate, whatever order PostgreSQL
@@ -20,7 +21,7 @@
 use andromeda_ngsi_ld_lexicon::time::value::TimeValueForm;
 use andromeda_postgresql_seaquery::{
     cast::cast_compound,
-    datetime::{pg_input_is_valid, to_char},
+    datetime::{pg_input_is_valid, to_char, with_iso_year_zero},
     literal::text_literal,
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
@@ -57,6 +58,7 @@ pub fn declares_time_value(datatype: SimpleExpr) -> SimpleExpr {
 /// A text declared as a `DateTime`, lifted to `timestamptz`; `NULL` otherwise.
 #[must_use]
 pub fn declared_date_time(text: SimpleExpr, datatype: SimpleExpr) -> SimpleExpr {
+    let text = with_iso_year_zero(text);
     let guard = declares(datatype, TimeValueForm::DateTime).and(pg_input_is_valid(text.clone(), PostgresType::Timestamptz)); // clone: the guard and the cast read one text
     CaseStatement::new().case(guard, cast_compound(text, PostgresType::Timestamptz)).into()
 }

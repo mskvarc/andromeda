@@ -1,0 +1,70 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/corpus_statement_tests.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        EXISTS (
+          SELECT
+            1
+          FROM
+            jsonb_array_elements(
+              (
+                CASE
+                  WHEN ("ca"."attribute_kind" = (5)) THEN "ca"."value_object"
+                END
+              )
+            ) AS "ls"
+          WHERE
+            LOWER(("ls"."value" ->> ('@language')) COLLATE "C") = LOWER(($2::text) COLLATE "C")
+            AND (FALSE)
+        )
+        OR (
+          (
+            "ca"."attribute_kind" IN (1, 2, 4, 5, 6, 7, 8)
+            AND (NOT "ca"."attribute_kind" = (6))
+            AND (
+              EXISTS (
+                SELECT
+                  1
+                FROM
+                  (
+                    SELECT
+                      "member"."member" AS "member"
+                    FROM
+                      jsonb_path_query(
+                        "ca"."value_object",
+                        'strict $."https://example.com/since"',
+                        '{}',
+                        TRUE
+                      ) AS "member"
+                  ) AS "member"
+                WHERE
+                  jsonb_array_length("member"."member") = (1)
+                  AND (
+                    CASE
+                      WHEN (
+                        (("member"."member" -> (0)) ->> ('@type')) = ('https://uri.etsi.org/ngsi-ld/DateTime')
+                        AND pg_input_is_valid(
+                          regexp_replace(
+                            (("member"."member" -> (0)) -> ('@value')) #>> ('{}'), '^0000(.*)$', E'0001\\1 BC'), 'timestamptz')) THEN (regexp_replace((("member"."member" -> (0)) -> ('@value')) #>> ('{}'), '^0000(.*)$', E'0001\\1 BC'))::timestamptz END) < $3) OR EXISTS(SELECT 1 FROM (SELECT "member"."member" AS "member" FROM jsonb_path_query((CASE WHEN (("ca"."value_object" ->> ('@type')) = ('@json')) THEN "ca"."value_object" -> ('@value') END), 'strict $."since"', '{}', TRUE) AS "member") AS "member" WHERE (NOT jsonb_typeof("member"."member") = ('array')) AND (CASE WHEN ((NULL::text) = ('https://uri.etsi.org/ngsi-ld/DateTime') AND pg_input_is_valid(regexp_replace("member"."member" #>> ('{}'), '^0000(.*)$', E'0001\\1 BC'), 'timestamptz')) THEN (regexp_replace("member"."member" #>> ('{}'), '^0000(.*)$', E'0001\\1 BC'))::timestamptz END) < $4))) OR ("ca"."attribute_kind" = (6) AND EXISTS(SELECT 1 FROM (SELECT "member"."member" AS "member" FROM jsonb_path_query("ca"."value_object", 'strict $."since"', '{}', TRUE) AS "member") AS "member" WHERE (NOT jsonb_typeof("member"."member") = ('array')) AND (CASE WHEN ((NULL::text) = ('https://uri.etsi.org/ngsi-ld/DateTime') AND pg_input_is_valid(regexp_replace("member"."member" #>> ('{}'), '^0000(.*)$', E'0001\\1 BC'), 'timestamptz')) THEN (regexp_replace("member"."member" #>> ('{}'), '^0000(.*)$', E'0001\\1 BC'))::timestamptz END) < $5)) OR ("ca"."attribute_kind" IN (3) AND EXISTS(SELECT 1 FROM (SELECT "member"."member" AS "member" FROM jsonb_path_query(ST_AsGeoJSON("ca"."value_geometry", 15)::jsonb, 'strict $."since"', '{}', TRUE) AS "member") AS "member" WHERE (NOT jsonb_typeof("member"."member") = ('array')) AND (CASE WHEN ((NULL::text) = ('https://uri.etsi.org/ngsi-ld/DateTime') AND pg_input_is_valid(regexp_replace("member"."member" #>> ('{}'), '^0000(.*)$', E'0001\\1 BC'), 'timestamptz')) THEN (regexp_replace("member"."member" #>> ('{}'), '^0000(.*)$', E'0001\\1 BC'))::timestamptz END) < $6)))) AND "ca"."entity_key" = "entities"."entity_key")
+1: Int 15
+2: String 'since'
+3: ChronoDateTimeUtc '0001-01-01 00:00:00.000000 +00:00'
+4: ChronoDateTimeUtc '0001-01-01 00:00:00.000000 +00:00'
+5: ChronoDateTimeUtc '0001-01-01 00:00:00.000000 +00:00'
+6: ChronoDateTimeUtc '0001-01-01 00:00:00.000000 +00:00'
