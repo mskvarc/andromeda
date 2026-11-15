@@ -185,7 +185,11 @@ fn generated_path(held: Vec<&'static str>) -> BoxedStrategy<String> {
         1 => select(vec!["[*]", "[en]", "[fr]", "[en-GB]", "[de-*-DE]"]),
     ];
     let local = (select(held.clone()), segment, trailing).prop_map(|(name, segment, trailing)| format!("{}{segment}{trailing}", quoted(&generated_iri(name))));
-    let guard = select(vec![String::new(), format!("{},{}:", quoted("https://example.com/U"), quoted(ENTITY_TYPE))]);
+    let guard = select(vec![
+        String::new(),
+        format!("{}:", quoted(ENTITY_TYPE)),
+        format!("{},{}:", quoted("https://example.com/U"), quoted(ENTITY_TYPE)),
+    ]);
     prop_oneof![
         5 => local.clone(),
         1 => (select(held), guard, local).prop_map(|(relationship, guard, inner)| format!("{}{{{guard}{inner}}}", quoted(&generated_iri(relationship)))),

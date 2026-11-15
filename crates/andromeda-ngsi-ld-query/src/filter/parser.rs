@@ -777,23 +777,63 @@ mod tests {
         }
     }
 
+    /// Clause 4.9 EXAMPLE 14 writes a guard of one type,
+    /// `sensor{Device:humidity}`, and no `AttrName` or `EntityType` of its
+    /// grammar holds a colon, so a name before a colon at the head of a hop is
+    /// the one type of its guard, written bare or quoted.
     #[test]
-    fn a_single_prefixed_name_inside_a_hop_is_an_attribute_name_not_a_type_guard() {
-        // This is what makes the clause 4.9 grammar unambiguous: a guard needs
-        // two or more comma-separated types, so a lone `prefix:name` can only be
-        // a prefixed attribute name.
-        let expr = parse("a{prefix:name}==\"v\"").expect("parses");
-        match predicate_of(&expr) {
-            Predicate::Equality { path, .. } => {
-                let (relationship, guard, inner) = hop_of(path);
-                pretty_assertions::assert_eq!(relationship, "a");
-                assert!(guard.is_empty(), "a lone prefixed name is not a guard: {guard:?}");
-                pretty_assertions::assert_eq!(local_of(inner).attr.as_str(), "prefix:name");
-            }
-            other @ (Predicate::Exists(_) | Predicate::Ordering { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. }) => {
-                panic!("expected an equality predicate, got {other:?}")
-            }
+    fn a_single_name_before_a_colon_inside_a_hop_is_a_type_guard() {
+        for (q, relationship, guard, attribute) in [
+            ("sensor{Device:humidity}==40", "sensor", "Device", "humidity"),
+            ("sensor{Device: humidity}==40", "sensor", "Device", "humidity"),
+            ("a{prefix:name}==\"v\"", "a", "prefix", "name"),
+            (
+                "\"https://example.com/sensor\"{\"https://example.com/Device\":\"https://example.com/humidity\"}==40",
+                "https://example.com/sensor",
+                "https://example.com/Device",
+                "https://example.com/humidity",
+            ),
+            ("sensor{\"ex:Device\":humidity}==40", "sensor", "ex:Device", "humidity"),
+        ] {
+            let expr = parse(q).unwrap_or_else(|error| panic!("{q}: {error}"));
+            let (read_relationship, read_guard, inner) = hop_of(predicate_of(&expr).path());
+            pretty_assertions::assert_eq!(
+                (read_relationship, read_guard, local_of(inner).attr.as_str()),
+                (relationship, vec![guard], attribute),
+                "{q}"
+            );
         }
+    }
+
+    /// The guard of one type opens each hop of a chain, outermost first.
+    #[test]
+    fn each_hop_of_a_chain_takes_a_guard_of_one_type() {
+        let expr = parse("r{T1:s{T2:a}}==1").expect("parses");
+        let (relationship, guard, inner) = hop_of(predicate_of(&expr).path());
+        pretty_assertions::assert_eq!((relationship, guard), ("r", vec!["T1"]));
+        let (relationship, guard, inner) = hop_of(inner);
+        pretty_assertions::assert_eq!((relationship, guard), ("s", vec!["T2"]));
+        pretty_assertions::assert_eq!(local_of(inner).attr.as_str(), "a");
+    }
+
+    /// A prefixed attribute name at the head of a hop is written quoted, since
+    /// its colon would otherwise end a type guard.
+    #[test]
+    fn a_quoted_prefixed_name_inside_a_hop_is_an_attribute_name() {
+        let expr = parse("a{\"prefix:name\"}==\"v\"").expect("parses");
+        let (relationship, guard, inner) = hop_of(predicate_of(&expr).path());
+        pretty_assertions::assert_eq!(relationship, "a");
+        assert!(guard.is_empty(), "a quoted name is no guard: {guard:?}");
+        pretty_assertions::assert_eq!(local_of(inner).attr.as_str(), "prefix:name");
+    }
+
+    /// A bare name at the head of a hop holding two colons reads equally well
+    /// as a prefixed type before an attribute or a type before a prefixed
+    /// attribute, so it is refused and the client quotes what it meant.
+    #[test]
+    fn a_bare_name_with_two_colons_at_the_head_of_a_hop_is_ambiguous() {
+        let error = parse("rel{ex:Store:category}==\"x\"").expect_err("must reject");
+        assert!(matches!(error, QueryError::QAmbiguousTypeGuard), "got {error:?}");
     }
 
     #[test]
