@@ -77,6 +77,14 @@ impl<T> Clearable<T> {
         value.map_or(Clearable::Absent, Clearable::Set)
     }
 
+    /// The member of a fragment that leaves the target holding `value`
+    /// whatever it held before: the value, or the NGSI-LD Null that deletes
+    /// the target's member where `value` is none (clause 5.5.8).
+    #[must_use]
+    pub fn replacing(value: Option<T>) -> Clearable<T> {
+        value.map_or(Clearable::NgsiLdNull, Clearable::Set)
+    }
+
     /// The member a fragment wrote as the string `text`: the NGSI-LD Null, or
     /// the value `parse` reads from it.
     ///
@@ -427,6 +435,17 @@ mod tests {
         pretty_assertions::assert_eq!(Clearable::<u8>::NgsiLdNull.applied_over(Some(1)), None);
         pretty_assertions::assert_eq!(Clearable::Set(2).applied_over(Some(1)), Some(2));
         pretty_assertions::assert_eq!(Clearable::Set(2).applied_over(None), Some(2));
+    }
+
+    /// Clause 5.5.8: a replacing member leaves the stored one holding the
+    /// value, or nothing where there is no value, whatever it held.
+    #[test]
+    fn a_replacing_member_leaves_the_stored_one_holding_exactly_the_value() {
+        for stored in [None, Some(1)] {
+            pretty_assertions::assert_eq!(Clearable::replacing(Some(2)).applied_over(stored), Some(2));
+            pretty_assertions::assert_eq!(Clearable::<u8>::replacing(None).applied_over(stored), None);
+        }
+        pretty_assertions::assert_eq!(Clearable::<u8>::replacing(None), Clearable::NgsiLdNull);
     }
 
     /// A create has nothing stored, so only a set member survives.

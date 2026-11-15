@@ -10,7 +10,10 @@
 //! source that had already narrowed its part would leave nothing to
 //! re-assemble from. The filters `q`, `geoQ` and `scopeQ` go only when
 //! entities may be split, because only then can they not be decided at one
-//! source.
+//! source. The context source filter `csf` goes as the subscription holds it
+//! whatever the carriage: it decides no entity, only the further sources the
+//! copy reaches from the source it is placed at (Table 5.2.12-1), and clause
+//! 5.8.1.4 reduces no member but those.
 
 use crate::receiver::ReceiverEndpoint;
 use andromeda_federation::split_entities::SplitEntities;
@@ -118,6 +121,7 @@ impl ReducedSubscription {
                 q: Clearable::from_option(subscription.filters.q.as_ref().filter(|_| keeps_filters).cloned()),
                 geo_q: Clearable::from_option(subscription.filters.geo_q.as_ref().filter(|_| keeps_filters).cloned()),
                 scope_q: Clearable::from_option(subscription.filters.scope_q.as_ref().filter(|_| keeps_filters).cloned()),
+                csf: Clearable::from_option(subscription.filters.csf.clone()),
                 dataset_id: Clearable::from_option(subscription.filters.dataset_id.clone()),
                 notification: Some(notification),
                 throttling: Clearable::from_option(subscription.delivery.throttling),
@@ -149,6 +153,7 @@ impl ReducedSubscription {
         fragment.description = deleting(fragment.description, DeletableMember::Description, deleted);
         fragment.notification_trigger = deleting(fragment.notification_trigger, DeletableMember::NotificationTrigger, deleted);
         fragment.time_interval = deleting(fragment.time_interval, DeletableMember::TimeInterval, deleted);
+        fragment.csf = deleting(fragment.csf, DeletableMember::Csf, deleted);
         fragment.dataset_id = deleting(fragment.dataset_id, DeletableMember::DatasetId, deleted);
         fragment.throttling = deleting(fragment.throttling, DeletableMember::Throttling, deleted);
         fragment.expires_at = deleting(fragment.expires_at, DeletableMember::ExpiresAt, deleted);
@@ -405,6 +410,70 @@ mod tests {
                 pretty_assertions::assert_eq!(document.get("q").is_some(), filters_travel, "q under {carriage:?}: {document}");
                 pretty_assertions::assert_eq!(document.get("scopeQ").is_some(), filters_travel, "scopeQ under {carriage:?}: {document}");
             }
+        }
+    }
+
+    /// The `csf` of the subscriptions below, as the store holds it, its
+    /// property term expanded.
+    const GOLD_TIER: &str = r#""https://uri.etsi.org/ngsi-ld/default-context/tier"=="gold""#;
+
+    /// A subscription of vehicles with the context source filter `csf`, when
+    /// there is one.
+    fn subscription_filtering_sources(csf: Option<&str>) -> Subscription {
+        let mut document = json!({
+            "id": "urn:ngsi-ld:Subscription:local",
+            "type": "Subscription",
+            "entities": [{"type": VEHICLE}],
+            "q": "speed>10",
+            "notification": {"endpoint": {"uri": "http://subscriber.example.org/notify"}},
+            "status": "active",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-01T00:00:00Z"
+        });
+        if let (Some(target), Some(csf)) = (document.as_object_mut(), csf) {
+            target.insert("csf".to_owned(), json!(csf));
+        }
+        serde_json::from_value(document).expect("valid subscription")
+    }
+
+    /// Clause 5.8.1.4 reduces the copy by `q`, `geoQ`, `scopeQ` and the
+    /// notification's projection alone, and `csf` decides no entity (Table
+    /// 5.2.12-1), so it travels with the copy and with every update fragment
+    /// as the subscription holds it, under split entities and without.
+    #[test]
+    fn the_copy_keeps_the_context_source_filter_whatever_the_carriage() {
+        let registration = registration(&json!([{"entities": [{"type": VEHICLE}]}]));
+        let local = subscription_filtering_sources(Some(GOLD_TIER));
+        for carriage in [FilterCarriage::Keep, FilterCarriage::Strip] {
+            let copy = ReducedSubscription::reduce(&local, &registration, &receiver(), &minted(), carriage);
+            pretty_assertions::assert_eq!(written(&copy.request)["csf"], json!(GOLD_TIER), "{carriage:?}");
+            let fragment = written(&copy.as_fragment(&DeletedMembers::default(), carriage));
+            pretty_assertions::assert_eq!(fragment["csf"], json!(GOLD_TIER), "{carriage:?}");
+        }
+        let unfiltered = written(
+            &ReducedSubscription::reduce(
+                &subscription_filtering_sources(None),
+                &registration,
+                &receiver(),
+                &minted(),
+                FilterCarriage::Keep,
+            )
+            .request,
+        );
+        assert!(unfiltered.get("csf").is_none(), "{unfiltered}");
+    }
+
+    /// Clauses 5.5.8 and 5.8.2.4: an update deleting `csf` reaches the copy as
+    /// the NGSI-LD Null whatever the carriage, since the copy always carries
+    /// it, and one leaving it out sends none.
+    #[test]
+    fn a_deleted_context_source_filter_is_forwarded_as_the_ngsi_ld_null() {
+        let local = subscription_filtering_sources(None);
+        for carriage in [FilterCarriage::Keep, FilterCarriage::Strip] {
+            let deleted = fragment_after(&local, &json!({"csf": "urn:ngsi-ld:null"}), carriage);
+            pretty_assertions::assert_eq!(deleted["csf"], json!("urn:ngsi-ld:null"), "{carriage:?}");
+            let untouched = fragment_after(&local, &json!({"throttling": 5}), carriage);
+            assert!(untouched.get("csf").is_none(), "{carriage:?}: {untouched}");
         }
     }
 

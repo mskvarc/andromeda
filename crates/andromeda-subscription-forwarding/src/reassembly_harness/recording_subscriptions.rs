@@ -210,8 +210,9 @@ impl SubscriptionStore for RecordingSubscriptions {
         Err(SubscriptionError::StoreUnavailable)
     }
 
-    /// Stores the selection of the subscription created, which is all a
-    /// companion is matched against registrations by.
+    /// Stores the selection and the context source filter of the
+    /// subscription created, which are all a companion is matched against
+    /// registrations by.
     async fn create_subscription(
         &self,
         _target: &ContextTarget,
@@ -230,6 +231,9 @@ impl SubscriptionStore for RecordingSubscriptions {
         });
         if let Some(watched) = fields.watched_attributes {
             document["watchedAttributes"] = json!(watched);
+        }
+        if let Some(csf) = fields.csf {
+            document["csf"] = json!(csf);
         }
         self.replace(document);
         Ok(())

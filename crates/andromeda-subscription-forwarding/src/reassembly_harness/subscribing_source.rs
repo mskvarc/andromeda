@@ -71,6 +71,15 @@ impl SubscribingSource {
         serde_json::from_value(self.registration.clone()).expect("a valid registration")
     }
 
+    /// The registration as the registration store keeps it, with the Context
+    /// Source Property `tier` holding `tier` under the name the default
+    /// context expands it to (clause 4.9).
+    pub(crate) fn stored_in_tier(&self, tier: &str) -> ContextSourceRegistration {
+        let mut registration = self.registration.clone();
+        registration[default_iri("tier")] = json!({"type": "Property", "value": tier});
+        serde_json::from_value(registration).expect("a valid registration")
+    }
+
     /// The registration as the registration store keeps it, with a
     /// `management.timeout` of `timeout` (clause 5.2.34).
     pub(crate) fn stored_timing_out_after(&self, timeout: Duration) -> ContextSourceRegistration {

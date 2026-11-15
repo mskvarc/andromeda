@@ -30,6 +30,8 @@ pub enum DeletableMember {
     GeoQ,
     /// `scopeQ`.
     ScopeQ,
+    /// `csf`.
+    Csf,
     /// `datasetId`.
     DatasetId,
     /// `throttling`.
@@ -56,6 +58,7 @@ impl DeletedMembers {
             (DeletableMember::Q, fragment.q.is_ngsi_ld_null()),
             (DeletableMember::GeoQ, fragment.geo_q.is_ngsi_ld_null()),
             (DeletableMember::ScopeQ, fragment.scope_q.is_ngsi_ld_null()),
+            (DeletableMember::Csf, fragment.csf.is_ngsi_ld_null()),
             (DeletableMember::DatasetId, fragment.dataset_id.is_ngsi_ld_null()),
             (DeletableMember::Throttling, fragment.throttling.is_ngsi_ld_null()),
             (DeletableMember::ExpiresAt, fragment.expires_at.is_ngsi_ld_null()),
@@ -85,10 +88,11 @@ mod tests {
     #[test]
     fn a_member_written_as_the_null_is_deleted_and_a_set_or_absent_member_is_not() {
         let deleted = DeletedMembers::of(&fragment(
-            &json!({"expiresAt": "urn:ngsi-ld:null", "description": "kept", "q": "urn:ngsi-ld:null"}),
+            &json!({"expiresAt": "urn:ngsi-ld:null", "description": "kept", "q": "urn:ngsi-ld:null", "csf": "urn:ngsi-ld:null"}),
         ));
         assert!(deleted.contains(DeletableMember::ExpiresAt));
         assert!(deleted.contains(DeletableMember::Q));
+        assert!(deleted.contains(DeletableMember::Csf));
         assert!(!deleted.contains(DeletableMember::Description));
         assert!(!deleted.contains(DeletableMember::SubscriptionName));
     }
