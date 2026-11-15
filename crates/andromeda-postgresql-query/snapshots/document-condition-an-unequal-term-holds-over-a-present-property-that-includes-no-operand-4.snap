@@ -22,7 +22,7 @@ WHERE
               'ListProperty',
               'ListRelationship'
             )
-          ) THEN COALESCE("j" -> ('value'), '[]'::jsonb)
+          ) THEN "j" -> ('value')
           ELSE "j"
         END
       )
@@ -55,7 +55,7 @@ WHERE
                         'ListProperty',
                         'ListRelationship'
                       )
-                    ) THEN COALESCE("j" -> ('value'), '[]'::jsonb)
+                    ) THEN "j" -> ('value')
                     ELSE "j"
                   END
                 )

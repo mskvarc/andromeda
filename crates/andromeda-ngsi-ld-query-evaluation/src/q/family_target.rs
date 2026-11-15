@@ -4,7 +4,7 @@
 use crate::{
     q::target_value::{ResolvedTarget, TargetValue},
     queried_entity::{
-        attribute_reading::{QueriedInstance, QueriedValueNode},
+        attribute_reading::{QueriedInstance, QueriedValueNode, ValuePresence},
         value_item::ValueItem,
     },
 };
@@ -37,7 +37,8 @@ pub(crate) fn terminal_value<'a, N: QueriedValueNode<'a>>(keyword: TerminalKeywo
 /// asserted test fails over it and its complement holds, as the SQL rendering
 /// probes the instance whatever its value. A Property holding the empty array
 /// holds an empty array target, which includes no operand, so `==` fails over
-/// it and `!=` holds alike. A path addressing a member of a structured value
+/// it and `!=` holds alike; an instance holding no value, a deletion among
+/// them, has no target value. A path addressing a member of a structured value
 /// descends into it instead. A Relationship's node without an object names
 /// nothing and is no target.
 #[must_use]
@@ -45,10 +46,12 @@ pub fn family_target<'a, I: QueriedInstance<'a>>(instance: I) -> Option<Resolved
     let reading = family_reading(instance.family());
     let terminals = instance.values().filter_map(|item| own_value(reading.terminal, item));
     let value = match reading.layout {
-        ValueLayout::Nodes => match (held_values_target(terminals), reading.terminal) {
-            (Some(value), TerminalKeyword::Literal | TerminalKeyword::Identifier) => value,
-            (None, TerminalKeyword::Literal) => TargetValue::Array(Vec::new()),
-            (None, TerminalKeyword::Identifier) => return None,
+        ValueLayout::Nodes => match (held_values_target(terminals), reading.terminal, instance.value_presence()) {
+            (Some(value), TerminalKeyword::Literal | TerminalKeyword::Identifier, ValuePresence::Held | ValuePresence::Absent) => value,
+            (None, TerminalKeyword::Literal, ValuePresence::Held) => TargetValue::Array(Vec::new()),
+            (None, TerminalKeyword::Literal, ValuePresence::Absent) | (None, TerminalKeyword::Identifier, ValuePresence::Held | ValuePresence::Absent) => {
+                return None;
+            }
         },
         ValueLayout::OrderedList => TargetValue::Array(terminals.collect()),
     };

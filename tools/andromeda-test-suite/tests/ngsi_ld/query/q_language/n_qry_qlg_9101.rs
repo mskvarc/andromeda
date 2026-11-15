@@ -108,4 +108,8 @@ corpus_cases! {
     n_qry_qlg_9185_an_empty_array_is_unequal_to_a_string => "C-85",
     n_qry_qlg_9186_an_empty_array_includes_no_operand => "C-86",
     n_qry_qlg_9187_an_empty_array_value_defines_the_attribute => "C-87",
+    n_qry_qlg_9188_a_json_property_is_read_by_its_own_keys => "C-88",
+    n_qry_qlg_9189_a_json_property_holds_no_key_its_literal_does_not_write => "C-89",
+    n_qry_qlg_9190_a_coordinate_compares_as_its_shortest_spelling => "C-90",
+    n_qry_qlg_9191_a_longitude_compares_as_its_shortest_spelling => "C-91",
 }

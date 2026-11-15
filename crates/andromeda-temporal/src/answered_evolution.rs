@@ -61,11 +61,12 @@ fn counts_in(instance: &InstanceDocument, window: TemporalWindow) -> bool {
 }
 
 /// Whether an answered instance carries a value of its attribute rather than
-/// recording its deletion.
+/// recording its deletion or holding no value member, which no local history
+/// row does.
 const fn carries_a_value(instance: &InstanceDocument) -> bool {
     match instance.value() {
-        ValueSlot::Set(_) | ValueSlot::Absent => true,
-        ValueSlot::Remove(_) => false,
+        ValueSlot::Set(_) => true,
+        ValueSlot::Absent | ValueSlot::Remove(_) => false,
     }
 }
 

@@ -1,0 +1,107 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/corpus_statement_tests.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        (
+          "ca"."attribute_kind" IN (1, 2, 4, 5, 6, 7, 8)
+          AND (
+            EXISTS (
+              SELECT
+                1
+              FROM
+                (
+                  SELECT
+                    jsonb_path_query_array(
+                      "member"."member",
+                      'lax $[*] ? (exists(@."@value"))'
+                    ) AS "member"
+                  FROM
+                    jsonb_path_query("ca"."value_object", 'strict $."a"', '{}', TRUE) AS "member"
+                ) AS "member"
+              WHERE
+                TRUE
+            )
+            OR (
+              (NOT "ca"."attribute_kind" = (6))
+              AND EXISTS (
+                SELECT
+                  1
+                FROM
+                  (
+                    SELECT
+                      "member"."member" AS "member"
+                    FROM
+                      jsonb_path_query(
+                        (
+                          CASE
+                            WHEN (("ca"."value_object" ->> ('@type')) = ('@json')) THEN "ca"."value_object" -> ('@value')
+                          END
+                        ),
+                        'strict $."a"',
+                        '{}',
+                        TRUE
+                      ) AS "member"
+                  ) AS "member"
+                WHERE
+                  TRUE
+              )
+            )
+          )
+        )
+        OR (
+          "ca"."attribute_kind" = (6)
+          AND EXISTS (
+            SELECT
+              1
+            FROM
+              (
+                SELECT
+                  "member"."member" AS "member"
+                FROM
+                  jsonb_path_query("ca"."value_object", 'strict $."a"', '{}', TRUE) AS "member"
+              ) AS "member"
+            WHERE
+              TRUE
+          )
+        )
+        OR (
+          "ca"."attribute_kind" IN (3)
+          AND EXISTS (
+            SELECT
+              1
+            FROM
+              (
+                SELECT
+                  "member"."member" AS "member"
+                FROM
+                  jsonb_path_query(
+                    ST_AsGeoJSON("ca"."value_geometry", 15)::jsonb,
+                    'strict $."a"',
+                    '{}',
+                    TRUE
+                  ) AS "member"
+              ) AS "member"
+            WHERE
+              TRUE
+          )
+        )
+      )
+      AND "ca"."entity_key" = "entities"."entity_key"
+  )
+1: Int 30

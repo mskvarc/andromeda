@@ -129,11 +129,7 @@ pub fn deletion_history(previous: &EntityState) -> Vec<HistoryRecord> {
             attribute_type,
         )
     });
-    let scope = match previous.scope() {
-        Some(_) => ScopePresence::Held,
-        None => ScopePresence::Absent,
-    };
-    deletion_tombstones(instances, scope)
+    deletion_tombstones(instances, previous.scope_presence())
 }
 
 /// The tombstones a deleted entity's history records, from the instances it
