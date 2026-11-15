@@ -44,7 +44,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
 use andromeda_ngsi_ld_number::declared_number::NonFinite;
-use andromeda_ngsi_ld_query::filter::reading::{comparator::Comparator, operand::Operand};
+use andromeda_ngsi_ld_query::filter::reading::{comparator::Comparator, operand::Operand, target_kind::TargetKind};
 use andromeda_postgresql_seaquery::{
     literal::false_literal,
     numeric_special::{NumericSpecial, is_not_special, is_special},
@@ -174,7 +174,10 @@ impl FieldArm {
     /// reading orders them, where the comparison on the column answers them
     /// otherwise ([`beyond_decimals`]).
     fn condition(&self, operand: &Operand, comparator: Comparator, row: InstanceRow) -> SimpleExpr {
-        let compared = field_comparison(operand, comparator, self.field, row);
+        let Some(kind) = self.compared_kind(operand, comparator) else {
+            return false_literal();
+        };
+        let compared = field_comparison(operand, comparator, self.field, kind, row);
         let compared = self
             .kinds
             .iter()
@@ -188,9 +191,21 @@ impl FieldArm {
             None => compared,
         }
     }
+
+    /// The target kind the field is compared with `operand` as: the first of
+    /// its kinds the operand compares with after `comparator`.
+    fn compared_kind(&self, operand: &Operand, comparator: Comparator) -> Option<TargetKind> {
+        self.kinds
+            .iter()
+            .flat_map(|kind| stored_target_kinds(*kind))
+            .copied()
+            .find(|target| operand.compares_with(*target, comparator.comparison()))
+    }
 }
 
-/// `operand` compared by `comparator` with the value `field` of `row` holds.
+/// `operand` compared by `comparator` with the value of `kind` `field` of
+/// `row` holds, a text operand in the spelling a target of `kind` is compared
+/// with.
 ///
 /// Equality of text is byte identity under `COLLATE "C"`: a stored value equal
 /// to the operand has the operand's length, so it sits in the one column the
@@ -200,31 +215,32 @@ impl FieldArm {
 /// length may order on either side of the operand; a row whose value is in the
 /// other column yields NULL for that arm, which the disjunction absorbs. It
 /// compares under the collation [`ordered_string`] picks.
-fn field_comparison(operand: &Operand, comparator: Comparator, field: ValueField, row: InstanceRow) -> SimpleExpr {
-    match (operand, comparator) {
-        (Operand::Text(text), Comparator::Equal) => compare(row.value(ValueColumn::holding(field, text)), comparator, bound_operand(operand)),
-        (Operand::Text(_), Comparator::Ordered(_)) => row
+fn field_comparison(operand: &Operand, comparator: Comparator, field: ValueField, kind: TargetKind, row: InstanceRow) -> SimpleExpr {
+    match (operand.text_against(kind), comparator) {
+        (Some(text), Comparator::Equal) => compare(row.value(ValueColumn::holding(field, text)), comparator, bound_operand(operand, kind)),
+        (Some(_), Comparator::Ordered(_)) => row
             .columns(field)
-            .map(|column| compare(ordered_string(row.value(column), operand, comparator), comparator, bound_operand(operand)))
+            .map(|column| compare(ordered_string(row.value(column), operand, comparator), comparator, bound_operand(operand, kind)))
             .reduce(ExprTrait::or)
             .unwrap_or_else(false_literal),
-        (Operand::Number(_) | Operand::Boolean(_) | Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_), Comparator::Equal | Comparator::Ordered(_)) => {
-            compare(row.value(ValueColumn::Field(field)), comparator, bound_operand(operand))
-        }
+        (None, Comparator::Equal | Comparator::Ordered(_)) => compare(row.value(ValueColumn::Field(field)), comparator, bound_operand(operand, kind)),
     }
 }
 
-/// The value `operand` is bound as against the field holding its kind.
+/// The value `operand` is bound as against the field holding a target of
+/// `kind`.
 ///
 /// sea-query owns every value in its AST, so a number is the one necessary
-/// clone between the borrowed query domain value and the `NUMERIC` bind. A
-/// `Date` binds as its one spelling and a `Time` in the fixed-width encoding
-/// the string column holds it in.
+/// clone between the borrowed query domain value and the `NUMERIC` bind. A URI
+/// binds in the spelling a target of `kind` is compared with, a `Date` as its
+/// one spelling and a `Time` in the fixed-width encoding the string column
+/// holds it in.
 #[must_use]
-pub fn bound_operand(operand: &Operand) -> SimpleExpr {
+pub fn bound_operand(operand: &Operand, kind: TargetKind) -> SimpleExpr {
     match operand {
         Operand::Number(number) => SeaExpr::val(number.decimal().clone()),
         Operand::Text(text) => SeaExpr::val(text.as_str()),
+        Operand::Uri(uri) => SeaExpr::val(uri.against(kind)),
         Operand::Boolean(value) => SeaExpr::val(*value),
         Operand::DateTime(instant) => SeaExpr::val(*instant),
         Operand::Date(date) => SeaExpr::val(NgsiLdDate::from(*date).to_string()),

@@ -1,4 +1,5 @@
-//! What the query languages read of an entity.
+//! What the query languages read of an entity, and of a resource that is not
+//! one.
 //!
 //! The `q` language (clause 4.9), the geo-query (clause 4.10) and the scope
 //! query (clause 4.19) are evaluated in memory against entities this crate does
@@ -11,10 +12,12 @@
 //! instance holds as data of its own. [`linked_entities`] is where a `q` hop
 //! reads the entities a Relationship links to. [`located_entity`] is what a
 //! geo-query reads and [`scoped_entity`] what a scope query reads.
+//! [`resource_members`] is what `q` reads of a resource that is no entity.
 
 pub mod attribute_reading;
 pub mod linked_entities;
 pub mod located_entity;
+pub mod resource_members;
 pub mod scoped_entity;
 pub mod value_item;
 

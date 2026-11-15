@@ -42,7 +42,7 @@ enum OperandOrder {
 const fn operand_order(operand: &Operand) -> OperandOrder {
     match operand {
         Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_) => OperandOrder::Indexed,
-        Operand::Number(_) | Operand::Boolean(_) | Operand::Text(_) => OperandOrder::Unindexed,
+        Operand::Number(_) | Operand::Boolean(_) | Operand::Text(_) | Operand::Uri(_) => OperandOrder::Unindexed,
     }
 }
 

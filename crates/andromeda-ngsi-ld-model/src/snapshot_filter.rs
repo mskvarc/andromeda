@@ -32,9 +32,12 @@ use andromeda_ngsi_ld_query::{
         },
     },
 };
-use andromeda_ngsi_ld_query_evaluation::q::{
-    filter_run::members_hold,
-    target_value::{ResolvedTarget, TargetValue},
+use andromeda_ngsi_ld_query_evaluation::{
+    q::{
+        filter_run::members_hold,
+        target_value::{ResolvedTarget, TargetValue},
+    },
+    queried_entity::resource_members::ResourceMembers,
 };
 use std::{borrow::Cow, str::FromStr};
 use strum::{Display as StrumDisplay, EnumString};
@@ -98,6 +101,18 @@ impl PurgeCandidate {
     }
 }
 
+impl<'t> ResourceMembers<'t> for &'t PurgeCandidate {
+    /// Parsing admitted only terms naming a member by its plain name, so the
+    /// attribute of every term names one.
+    fn member_target(self, term: &TermReading) -> Option<ResolvedTarget<'t>> {
+        Some(ResolvedTarget {
+            value: self.target(term_member(term)?)?,
+            origin: TargetOrigin::AttributeValue,
+            reading: MultiValueReading::WholeArray,
+        })
+    }
+}
+
 /// Why a `q` expression is not a purge filter.
 #[derive(Debug, Error)]
 pub enum SnapshotQParseError {
@@ -119,16 +134,7 @@ impl SnapshotPurgeFilter {
     /// Whether the filter selects `candidate` (clause 5.16.7.4).
     #[must_use]
     pub fn selects(&self, candidate: &PurgeCandidate) -> bool {
-        members_hold(&self.0, &|term| {
-            // Parsing admitted only terms naming a member by its plain name,
-            // so the attribute of every term here names one.
-            let member = term_member(term)?;
-            Some(ResolvedTarget {
-                value: candidate.target(member)?,
-                origin: TargetOrigin::AttributeValue,
-                reading: MultiValueReading::WholeArray,
-            })
-        })
+        members_hold(&self.0, candidate)
     }
 }
 

@@ -406,6 +406,7 @@ fn spelled_operand(operand: &Operand) -> String {
     match operand {
         Operand::Number(number) => number.to_string(),
         Operand::Text(text) => format!("{text:?}"),
+        Operand::Uri(uri) => format!("{:?} or the object {:?}", uri.written(), uri.against(TargetKind::RelationshipObject)),
         Operand::Boolean(value) => value.to_string(),
         Operand::DateTime(instant) => instant_text(*instant),
         Operand::Date(date) => NgsiLdDate::from(*date).to_string(),

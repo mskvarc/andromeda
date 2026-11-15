@@ -9,6 +9,7 @@ use crate::{
     queried_entity::{
         expanded_fixture::{FixtureEntity, FixtureLinked},
         linked_entities::NoLinkedEntities,
+        resource_members::ResourceMembers,
     },
 };
 use andromeda_ngsi_ld_query::{
@@ -1447,20 +1448,29 @@ fn unequal_under_filtering_holds_when_no_selected_string_matches() {
     assert!(holds_under(&not_door, &entity, LanguageMatching::ExtendedFiltering));
 }
 
+/// A resource holding one member, `priority`, of value 7.
+#[derive(Clone, Copy)]
+struct PriorityOnly;
+
+impl ResourceMembers<'static> for PriorityOnly {
+    fn member_target(self, term: &TermReading) -> Option<ResolvedTarget<'static>> {
+        match term.attribute().as_str() {
+            "priority" => Some(ResolvedTarget {
+                value: TargetValue::Number(Cow::Owned(7.into())),
+                origin: TargetOrigin::AttributeValue,
+                reading: MultiValueReading::WholeArray,
+            }),
+            _absent => None,
+        }
+    }
+}
+
 /// A resource that is not an entity answers each Query Term from the one
 /// member its path names, and clause 4.9 requires the target element under
 /// every operator, so a member it does not hold matches no comparison,
 /// `unequal` included.
 #[test]
 fn a_resource_member_is_compared_and_one_it_does_not_hold_matches_nothing() {
-    let member_of = |term: &TermReading| match term.attribute().as_str() {
-        "priority" => Some(ResolvedTarget {
-            value: TargetValue::Number(Cow::Owned(7.into())),
-            origin: TargetOrigin::AttributeValue,
-            reading: MultiValueReading::WholeArray,
-        }),
-        _absent => None,
-    };
     for (q, expected) in [
         ("priority>5", true),
         ("priority==1..6", false),
@@ -1472,7 +1482,7 @@ fn a_resource_member_is_compared_and_one_it_does_not_hold_matches_nothing() {
         ("endpoint!=\"x\"|priority==7", true),
     ] {
         assert_eq!(
-            members_hold(&FilterReading::of(&parse(q).unwrap(), LanguageMatching::TagEquality), &member_of),
+            members_hold(&FilterReading::of(&parse(q).unwrap(), LanguageMatching::TagEquality), PriorityOnly),
             expected,
             "{q}"
         );

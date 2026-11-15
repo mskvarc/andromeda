@@ -19,7 +19,10 @@
 //! The test. `!=` is the complement of `==` over every kind and `!~=` the
 //! complement of `~=` over Strings, so no unequal comparison exists. A range
 //! whose bounds are of two kinds holds for no target: clause 4.9 defines no
-//! interval between values of two data types.
+//! interval between values of two data types. A text operand of `==` or `!=`,
+//! alone or in a value list, that RFC 3986 section 6 normalises to another
+//! spelling is a [`UriOperand`]: the stored and forwarded filter keeps what the
+//! client wrote, and the reading holds both spellings.
 
 use crate::filter::{
     expression::Expr,
@@ -34,13 +37,14 @@ use crate::filter::{
         scalar_test::ScalarTest,
         term_reading::{TermReading, Test},
         terminal::Terminal,
+        uri_operand::UriOperand,
         value_test::{Polarity, ValueTest},
     },
-    scalar::CompareValue,
+    scalar::{CompareValue, Scalar},
     target_language::LanguageSelector,
     trailing_path::TrailingPath,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 
 impl FilterReading {
     /// The reading of a parsed, expanded filter as written, term for term, its
@@ -167,9 +171,25 @@ fn test_of(predicate: &Predicate) -> Test {
 /// The comparison `==` and `!=` make with a value, a value list or a range.
 fn equality_test(rhs: &CompareValue) -> ScalarTest {
     match rhs {
-        CompareValue::Scalar(scalar) => ScalarTest::EqualsAny(vec![Operand::from(scalar)]),
-        CompareValue::ValueList(values) => ScalarTest::EqualsAny(values.iter().map(Operand::from).collect()),
+        CompareValue::Scalar(scalar) => ScalarTest::EqualsAny(vec![equality_operand(scalar)]),
+        CompareValue::ValueList(values) => ScalarTest::EqualsAny(values.iter().map(equality_operand).collect()),
         CompareValue::Range { min, max } => Interval::new(Operand::from(min), Operand::from(max)).map_or(ScalarTest::Unsatisfiable, ScalarTest::Within),
+    }
+}
+
+/// The operand `==` and `!=` compare with `scalar`.
+///
+/// A text that parses as a URI the write path would store in another
+/// spelling, the RFC 3986 section 6.2.2 and 6.2.3 normalisation `Identifier`
+/// applies, compares in both: clause 4.9 asks that "URI comparison should be
+/// performed so that the number of false negatives is minimized".
+fn equality_operand(scalar: &Scalar) -> Operand {
+    let (Scalar::Str(written) | Scalar::Uri(written)) = scalar else {
+        return Operand::from(scalar);
+    };
+    match written.parse::<Identifier>() {
+        Ok(parsed) if parsed.as_str() != written => Operand::Uri(UriOperand::new(written.clone(), parsed.as_str().to_owned())),
+        Ok(_) | Err(_) => Operand::from(scalar),
     }
 }
 

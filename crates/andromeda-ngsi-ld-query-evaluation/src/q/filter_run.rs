@@ -10,10 +10,9 @@
 use crate::{
     q::{
         attribute_axis::{addresses_element, resolve_targets},
-        target_value::ResolvedTarget,
         verdict_run::target_passes,
     },
-    queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities},
+    queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities, resource_members::ResourceMembers},
 };
 use andromeda_ngsi_ld_query::filter::reading::{
     filter_reading::FilterReading,
@@ -46,22 +45,16 @@ pub fn term_holds<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(term: &TermRe
     }
 }
 
-/// Whether a resource that is not an entity, whose members `member_of` reads,
-/// satisfies a filter's reading.
+/// Whether a resource that is not an entity satisfies a filter's reading,
+/// each term read from the one member it names.
 ///
-/// Such a resource, a Snapshot that Purge Snapshots selects by its members
-/// (clause 5.16.7.3) for one, holds at most one value per member, so
-/// `member_of` answers the one target a term names, or `None` when the
-/// resource does not hold that member. Clause 4.9 makes every operator
-/// require the target element, `unequal` and `notPatternOp` included, so a
-/// member the resource does not hold matches no comparison.
-pub fn members_hold<'t, M>(filter: &FilterReading, member_of: &M) -> bool
-where
-    M: Fn(&TermReading) -> Option<ResolvedTarget<'t>>,
-{
+/// Clause 4.9 makes every operator require the target element, `unequal` and
+/// `notPatternOp` included, so a member the resource does not hold matches no
+/// comparison.
+pub fn members_hold<'t, M: ResourceMembers<'t>>(filter: &FilterReading, resource: M) -> bool {
     holds_by(filter, &|term| match term.test() {
-        Test::Exists => member_of(term).is_some(),
-        Test::Value(test) => member_of(term).is_some_and(|target| target_passes(test, &target)),
+        Test::Exists => resource.member_target(term).is_some(),
+        Test::Value(test) => resource.member_target(term).is_some_and(|target| target_passes(test, &target)),
     })
 }
 

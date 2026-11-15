@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_lexicon::time::{
     rendering::{instant_text, time_of_day_text},
     time_of_day::NgsiLdTime,
 };
-use andromeda_ngsi_ld_query::filter::reading::operand::Operand;
+use andromeda_ngsi_ld_query::filter::reading::{operand::Operand, target_kind::TargetKind};
 use andromeda_postgresql_stored_values::sub_attribute_key::{
     key::{KeyedValue, SubAttributeKey, TextKind},
     path_hash::PathHash,
@@ -22,7 +22,8 @@ use andromeda_postgresql_stored_values::sub_attribute_key::{
 /// The keys `operand` reads at `path`.
 ///
 /// A text operand may equal a String or a Relationship object,
-/// which are keyed under two kinds, so it reads both keys. A time operand reads
+/// which are keyed under two kinds, so it reads both keys, a URI each in the
+/// spelling a target of that kind is compared with. A time operand reads
 /// the key of its kind and the String key of its served spelling. A number or
 /// a boolean reads one.
 #[must_use]
@@ -32,6 +33,10 @@ pub fn operand_keys(path: PathHash, operand: &Operand) -> Vec<SubAttributeKey> {
         Operand::Number(number) => vec![key(KeyedValue::Number(number.decimal()))],
         Operand::Boolean(flag) => vec![key(KeyedValue::Boolean(*flag))],
         Operand::Text(text) => vec![key(KeyedValue::Text(text, TextKind::String)), key(KeyedValue::Text(text, TextKind::Uri))],
+        Operand::Uri(uri) => vec![
+            key(KeyedValue::Text(uri.against(TargetKind::String), TextKind::String)),
+            key(KeyedValue::Text(uri.against(TargetKind::RelationshipObject), TextKind::Uri)),
+        ],
         Operand::DateTime(instant) => vec![
             key(KeyedValue::Instant(*instant)),
             key(KeyedValue::Text(&instant_text(*instant), TextKind::String)),
