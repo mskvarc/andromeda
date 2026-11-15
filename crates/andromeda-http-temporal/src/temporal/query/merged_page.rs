@@ -117,7 +117,7 @@ mod tests {
         held_history(json!({"id": id, "type": "Vehicle", "https://example.com/speed": speed})).await
     }
 
-    /// Clause 5.7.4.4 (T-D4): `lastN` bounds the instances of the merged
+    /// Clause 5.7.4.4: `lastN` bounds the instances of the merged
     /// history, keeping the most recent ones, and every response lists its
     /// instances oldest first.
     #[tokio::test]

@@ -35,15 +35,21 @@ pub(crate) fn terminal_value<'a, N: QueriedValueNode<'a>>(keyword: TerminalKeywo
 /// a geometry or a value no member reads: each is an Object target
 /// ([`TargetValue::Structure`]), which no operand is identical to, so an
 /// asserted test fails over it and its complement holds, as the SQL rendering
-/// probes the instance whatever its value. A path addressing a member of a
-/// structured value descends into it instead. A Relationship's node without an
-/// object names nothing and is no target.
+/// probes the instance whatever its value. A Property holding the empty array
+/// holds an empty array target, which includes no operand, so `==` fails over
+/// it and `!=` holds alike. A path addressing a member of a structured value
+/// descends into it instead. A Relationship's node without an object names
+/// nothing and is no target.
 #[must_use]
 pub fn family_target<'a, I: QueriedInstance<'a>>(instance: I) -> Option<ResolvedTarget<'a>> {
     let reading = family_reading(instance.family());
     let terminals = instance.values().filter_map(|item| own_value(reading.terminal, item));
     let value = match reading.layout {
-        ValueLayout::Nodes => held_values_target(terminals)?,
+        ValueLayout::Nodes => match (held_values_target(terminals), reading.terminal) {
+            (Some(value), TerminalKeyword::Literal | TerminalKeyword::Identifier) => value,
+            (None, TerminalKeyword::Literal) => TargetValue::Array(Vec::new()),
+            (None, TerminalKeyword::Identifier) => return None,
+        },
         ValueLayout::OrderedList => TargetValue::Array(terminals.collect()),
     };
     Some(ResolvedTarget {
@@ -179,12 +185,13 @@ mod tests {
     }
 
     /// Clause 4.9: the empty array includes no operand, so a Property holding it
-    /// resolves no target value and no `==` term matches it; existence reads
-    /// the attribute, not its target value.
+    /// holds an empty array target, which no `==` term matches and every `!=`
+    /// term does.
     #[test]
-    fn an_empty_array_valued_property_resolves_no_target() {
-        let instance = FixtureInstance::from_expanded(&json!({"https://uri.etsi.org/ngsi-ld/hasValue": []}));
-        assert!(family_target(&instance).is_none());
+    fn an_empty_array_valued_property_resolves_an_empty_array() {
+        let (value, origin) = target_of(&json!({"https://uri.etsi.org/ngsi-ld/hasValue": []}));
+        pretty_assertions::assert_eq!(value, json!([]));
+        assert_eq!(origin, TargetOrigin::AttributeValue);
     }
 
     /// A scalar Property value stays a scalar: only a client-written array

@@ -327,7 +327,7 @@ mod tests {
         assert_eq!(answer.warnings, [] as [NgsiLdWarning; 0]);
     }
 
-    /// F-D6: an answer entity carrying its own `@context` is read under it,
+    /// An answer entity carrying its own `@context` is read under it,
     /// not under the context the answer is spelled in.
     #[tokio::test]
     async fn the_entity_context_wins_over_the_forwarding_context() {

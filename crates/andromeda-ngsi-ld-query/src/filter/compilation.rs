@@ -222,7 +222,7 @@ mod tests {
         serialize(&compile_q_filter(&filter, opt_ins, &EXPANDER).await.expect("the filter compiles"))
     }
 
-    /// CP-1: a term expands to the IRI the context maps it to.
+    /// A term expands to the IRI the context maps it to.
     #[tokio::test]
     async fn a_filter_term_expands_to_its_iri() {
         pretty_assertions::assert_eq!(
@@ -231,7 +231,7 @@ mod tests {
         );
     }
 
-    /// CP-2, clause 6.4.3.2: an operand of an attribute `expandValues` names
+    /// Clause 6.4.3.2: an operand of an attribute `expandValues` names
     /// expands, and one of any other attribute stays as written.
     #[tokio::test]
     async fn an_operand_of_an_expand_values_attribute_expands() {
@@ -243,7 +243,7 @@ mod tests {
         pretty_assertions::assert_eq!(compiled_text("colour==\"Red\"", &opted).await, format!("\"{}\"==\"Red\"", namespaced("colour")));
     }
 
-    /// CP-3, clause 5.5.6: a filter of 1 001 comparisons is too complex under
+    /// Clause 5.5.6: a filter of 1 001 comparisons is too complex under
     /// the default limits, and one admitted under no limit past the parser's,
     /// as a stored filter is read, is not.
     #[test]
@@ -259,7 +259,7 @@ mod tests {
         admitted(&q, stored, &Hops::Admitted).expect("a stored filter is read under no limit");
     }
 
-    /// CP-4, clause 4.9: a full language tag as a target language is admitted
+    /// Clause 4.9: a full language tag as a target language is admitted
     /// at the language-tags level and refused at the specification level.
     #[test]
     fn a_language_tag_target_is_admitted_only_at_the_language_tags_level() {
@@ -268,7 +268,7 @@ mod tests {
         assert!(matches!(refused, Err(Refused::Query(QueryError::LanguageTagNotAdmitted(_)))), "{refused:?}");
     }
 
-    /// CP-9, clause 4.9 EXAMPLE 11: the member under a `jsonKeys` attribute
+    /// Clause 4.9 EXAMPLE 11: the member under a `jsonKeys` attribute
     /// stays the literal key, and under any other attribute it expands.
     #[tokio::test]
     async fn a_member_under_a_json_keys_attribute_stays_literal() {

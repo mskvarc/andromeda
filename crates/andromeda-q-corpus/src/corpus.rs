@@ -164,6 +164,9 @@ pub const CORPUS: &[CorpusCase] = &[
         json_keys: &["jn"],
         ..local("C-84", "jn[a]!=2", &[E16])
     },
+    local("C-85", "e0!=\"x\"", &[E18]),
+    local("C-86", "e0==\"x\"", &[]),
+    local("C-87", "e0", &[E18]),
 ];
 
 #[cfg(test)]

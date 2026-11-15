@@ -46,7 +46,7 @@ fn too_many_comparisons(count: usize) -> String {
     format!("type=Vehicle&q=speed%3D%3D{values}")
 }
 
-/// CP-3, clause 5.5.6: a filter of 1 001 comparisons is too complex under the
+/// Clause 5.5.6: a filter of 1 001 comparisons is too complex under the
 /// default limits and one of 1 000 is not, for Query Entities, the Entity Map it
 /// creates and Purge Entities alike.
 #[test]
@@ -76,7 +76,7 @@ fn a_q_nested_past_the_depth_limit_is_refused_at_validation() {
     assert!(matches!(refused, ParameterError::Query(QueryError::QNestedTooDeep { .. })), "{refused:?}");
 }
 
-/// CP-4, clause 4.9: a full language tag as a target language is admitted at
+/// Clause 4.9: a full language tag as a target language is admitted at
 /// the language-tags level and refused at the specification level.
 #[test]
 fn a_language_tag_target_is_admitted_only_at_the_language_tags_level() {
@@ -94,7 +94,7 @@ fn a_language_tag_target_is_admitted_only_at_the_language_tags_level() {
     assert!(matches!(refused, ParameterError::Query(QueryError::LanguageTagNotAdmitted(_))), "{refused:?}");
 }
 
-/// CP-5, clauses 5.7.2.4 and 5.14.4.4: a hop without a retrieving `join`
+/// Clauses 5.7.2.4 and 5.14.4.4: a hop without a retrieving `join`
 /// reaches no Linked Entity.
 #[test]
 fn a_hop_without_a_join_is_refused_by_query_entities_and_entity_map_creation() {
@@ -109,7 +109,7 @@ fn a_hop_without_a_join_is_refused_by_query_entities_and_entity_map_creation() {
     }
 }
 
-/// CP-6, the same clauses: a hop deeper than `joinLevel` is a too deep query.
+/// Clauses 5.7.2.4 and 5.14.4.4: a hop deeper than `joinLevel` is a too deep query.
 #[test]
 fn a_hop_deeper_than_the_join_level_is_refused() {
     for operation in BOTH_OPERATIONS {

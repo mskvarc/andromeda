@@ -51,7 +51,8 @@ pub enum CorpusEntity {
     /// [`CorpusEntity::E1`], created after both, and `hm` a Relationship to
     /// `http://example.com/a` and `urn:x:9`.
     E17,
-    /// `n1` the one-element array 10, which reads back as 10.
+    /// `n1` the one-element array 10, which reads back as 10, and `e0` the
+    /// empty array.
     E18,
     /// `t` "12:00:00Z" declared a Time.
     E19,

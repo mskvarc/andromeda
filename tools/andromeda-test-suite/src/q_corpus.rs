@@ -113,7 +113,9 @@ impl CorpusEntities {
                     "hm",
                     Relationship::builder(vec!["http://example.com/a".parse::<EntityId>()?, "urn:x:9".parse()?]),
                 ),
-            CorpusEntity::E18 => builder.property("n1", Value::Array(vec![number("10")?])),
+            CorpusEntity::E18 => builder
+                .property("n1", Value::Array(vec![number("10")?]))
+                .property("e0", Value::Array(Vec::new())),
             CorpusEntity::E19 => builder.property("t", Property::builder("12:00:00Z").value_type("Time".parse::<VocabTerm>()?)),
         };
         Ok(builder.build()?)

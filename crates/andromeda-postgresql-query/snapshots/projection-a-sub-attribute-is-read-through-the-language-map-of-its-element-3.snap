@@ -82,39 +82,42 @@ WHERE
                         WHERE
                           TRUE
                       )
-                      OR EXISTS (
-                        SELECT
-                          1
-                        FROM
-                          (
-                            SELECT
-                              "member"."member" AS "member"
-                            FROM
-                              jsonb_path_query(
-                                (
-                                  CASE
-                                    WHEN (
-                                      (
-                                        sub_attribute_value_object(
-                                          "l0"."value_kind",
-                                          "l0"."value_object",
-                                          "l0"."value_proof"
-                                        ) ->> ('@type')
-                                      ) = ('@json')
-                                    ) THEN sub_attribute_value_object(
-                                      "l0"."value_kind",
-                                      "l0"."value_object",
-                                      "l0"."value_proof"
-                                    ) -> ('@value')
-                                  END
-                                ),
-                                'strict $."en"',
-                                '{}',
-                                TRUE
-                              ) AS "member"
-                          ) AS "member"
-                        WHERE
-                          TRUE
+                      OR (
+                        (NOT "l0"."attribute_kind" = (6))
+                        AND EXISTS (
+                          SELECT
+                            1
+                          FROM
+                            (
+                              SELECT
+                                "member"."member" AS "member"
+                              FROM
+                                jsonb_path_query(
+                                  (
+                                    CASE
+                                      WHEN (
+                                        (
+                                          sub_attribute_value_object(
+                                            "l0"."value_kind",
+                                            "l0"."value_object",
+                                            "l0"."value_proof"
+                                          ) ->> ('@type')
+                                        ) = ('@json')
+                                      ) THEN sub_attribute_value_object(
+                                        "l0"."value_kind",
+                                        "l0"."value_object",
+                                        "l0"."value_proof"
+                                      ) -> ('@value')
+                                    END
+                                  ),
+                                  'strict $."en"',
+                                  '{}',
+                                  TRUE
+                                ) AS "member"
+                            ) AS "member"
+                          WHERE
+                            TRUE
+                        )
                       )
                     )
                   )

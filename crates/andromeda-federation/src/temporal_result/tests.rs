@@ -321,7 +321,7 @@ async fn a_source_entity_or_attribute_with_nothing_in_the_window_does_not_join()
     assert!(document.emptied().is_empty(), "{document:?}");
 }
 
-/// Clause 4.5.9 (T-D2): a read asked for `temporalValues` is gathered as
+/// Clause 4.5.9: a read asked for `temporalValues` is gathered as
 /// instances, so what two holders answer for one `datasetId` is the instances
 /// of one dataset, which the writer then writes as one object of pairs.
 #[tokio::test]

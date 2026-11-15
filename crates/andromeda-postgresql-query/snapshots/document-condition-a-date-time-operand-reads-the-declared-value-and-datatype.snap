@@ -8,7 +8,24 @@ FROM
 WHERE
   (
     SELECT
-      COALESCE("j" -> ('value'), "j")
+      (
+        CASE
+          WHEN (
+            ("j" -> ('value')) IS NOT NULL
+            OR ("j" ->> ('type')) IN (
+              'Property',
+              'Relationship',
+              'GeoProperty',
+              'VocabProperty',
+              'LanguageProperty',
+              'JsonProperty',
+              'ListProperty',
+              'ListRelationship'
+            )
+          ) THEN COALESCE("j" -> ('value'), '[]'::jsonb)
+          ELSE "j"
+        END
+      )
     FROM
       (
         SELECT
@@ -24,7 +41,24 @@ WHERE
               (
                 (
                   SELECT
-                    COALESCE("j" -> ('value'), "j")
+                    (
+                      CASE
+                        WHEN (
+                          ("j" -> ('value')) IS NOT NULL
+                          OR ("j" ->> ('type')) IN (
+                            'Property',
+                            'Relationship',
+                            'GeoProperty',
+                            'VocabProperty',
+                            'LanguageProperty',
+                            'JsonProperty',
+                            'ListProperty',
+                            'ListRelationship'
+                          )
+                        ) THEN COALESCE("j" -> ('value'), '[]'::jsonb)
+                        ELSE "j"
+                      END
+                    )
                   FROM
                     (
                       SELECT
@@ -40,7 +74,24 @@ WHERE
               (
                 (
                   SELECT
-                    COALESCE("j" -> ('value'), "j")
+                    (
+                      CASE
+                        WHEN (
+                          ("j" -> ('value')) IS NOT NULL
+                          OR ("j" ->> ('type')) IN (
+                            'Property',
+                            'Relationship',
+                            'GeoProperty',
+                            'VocabProperty',
+                            'LanguageProperty',
+                            'JsonProperty',
+                            'ListProperty',
+                            'ListRelationship'
+                          )
+                        ) THEN COALESCE("j" -> ('value'), '[]'::jsonb)
+                        ELSE "j"
+                      END
+                    )
                   FROM
                     (
                       SELECT
@@ -53,7 +104,24 @@ WHERE
               (
                 (
                   SELECT
-                    COALESCE("j" -> ('value'), "j")
+                    (
+                      CASE
+                        WHEN (
+                          ("j" -> ('value')) IS NOT NULL
+                          OR ("j" ->> ('type')) IN (
+                            'Property',
+                            'Relationship',
+                            'GeoProperty',
+                            'VocabProperty',
+                            'LanguageProperty',
+                            'JsonProperty',
+                            'ListProperty',
+                            'ListRelationship'
+                          )
+                        ) THEN COALESCE("j" -> ('value'), '[]'::jsonb)
+                        ELSE "j"
+                      END
+                    )
                   FROM
                     (
                       SELECT
@@ -68,12 +136,29 @@ WHERE
           (
             (
               SELECT
-                COALESCE("j" -> ('value'), "j")
+                (
+                  CASE
+                    WHEN (
+                      ("j" -> ('value')) IS NOT NULL
+                      OR ("j" ->> ('type')) IN (
+                        'Property',
+                        'Relationship',
+                        'GeoProperty',
+                        'VocabProperty',
+                        'LanguageProperty',
+                        'JsonProperty',
+                        'ListProperty',
+                        'ListRelationship'
+                      )
+                    ) THEN COALESCE("j" -> ('value'), '[]'::jsonb)
+                    ELSE "j"
+                  END
+                )
               FROM
                 (
                   SELECT
                     "context_source_properties" -> ('https://uri.etsi.org/ngsi-ld/expiresAt') AS "j"
                 ) AS "s"
             ) -> ('@value')
-          ) #>> ('{}'), 'timestamptz')) THEN (((SELECT COALESCE("j" -> ('value'), "j") FROM (SELECT "context_source_properties" -> ('https://uri.etsi.org/ngsi-ld/expiresAt') AS "j") AS "s") -> ('@value')) #>> ('{}'))::timestamptz END) > $1
+          ) #>> ('{}'), 'timestamptz')) THEN (((SELECT (CASE WHEN (("j" -> ('value')) IS NOT NULL OR ("j" ->> ('type')) IN ('Property', 'Relationship', 'GeoProperty', 'VocabProperty', 'LanguageProperty', 'JsonProperty', 'ListProperty', 'ListRelationship')) THEN COALESCE("j" -> ('value'), '[]'::jsonb) ELSE "j" END) FROM (SELECT "context_source_properties" -> ('https://uri.etsi.org/ngsi-ld/expiresAt') AS "j") AS "s") -> ('@value')) #>> ('{}'))::timestamptz END) > $1
 1: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'

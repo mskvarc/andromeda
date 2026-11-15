@@ -90,15 +90,15 @@ impl AdmittedQuery {
 /// setting a local scope to false".
 ///
 /// The page is decided before the Entity Map is resolved and before any
-/// context source is contacted, so a pagination parameter the collection
-/// cannot honour is refused first. A walk over the request's URI is paged
-/// under the identity of the query as the client wrote it, so its page is
-/// decided once that query compiles.
+/// context source is contacted. A walk over the request's URI is paged under
+/// the identity of the query as the client wrote it, so its page is decided
+/// once that query is admitted and compiles.
 ///
 /// # Errors
 ///
-/// The classified failure of expanding the registration filters, of the
-/// pagination policy, of resolving the Entity Map, of the clause 5.7.4.4
+/// The classified failure of expanding the registration filters, of
+/// admitting the query as written, of the pagination policy, of resolving the
+/// Entity Map, of the clause 5.7.4.4
 /// validation, of the clause 5.5.6 `q` complexity limits and the broker's
 /// `q_target_languages` level, of the clause 5.7.4.4 ordering rule, and of the
 /// levels of the sources the query reaches.
@@ -118,7 +118,7 @@ pub(super) async fn admit_request(
     let service = &state.temporal;
     let registration_filters = registration_filters(state, context, &params, instance).await?;
     // clone: the query as written is read beside the request's own parameters, which an Entity Map narrows
-    let written = WrittenQuery::new(service, context, params.clone(), instance);
+    let written = WrittenQuery::new(service, context, params.clone(), instance)?;
     let page = match page {
         PageSource::Decided(page) => page,
         PageSource::OverRequestUri(pagination) => {

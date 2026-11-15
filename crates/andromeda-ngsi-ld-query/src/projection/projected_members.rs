@@ -24,6 +24,7 @@
 //! away.
 
 use crate::projection::{compiled::Projection, term::ProjectionTerm};
+use andromeda_ngsi_ld_lexicon::scope::presence::ScopePresence;
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use iri_rs::{Iri, IriBuf};
 use serde::Serialize;
@@ -51,15 +52,6 @@ pub enum ScopeRetention {
     Kept,
     /// The projection takes `scope` away.
     Removed,
-}
-
-/// Whether an Entity carries a `scope`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScopePresence {
-    /// The Entity carries a `scope`.
-    Held,
-    /// The Entity carries none.
-    Absent,
 }
 
 /// What an Entity has to carry for the projection to leave it a member.
@@ -178,9 +170,10 @@ impl ProjectedMembers {
 mod tests {
     use crate::projection::{
         compiled::Projection,
-        projected_members::{ProjectedMembers, ScopePresence, ScopeRetention},
+        projected_members::{ProjectedMembers, ScopeRetention},
         term::ProjectionTerm,
     };
+    use andromeda_ngsi_ld_lexicon::scope::presence::ScopePresence;
     use andromeda_ngsi_ld_vocabulary::expanded::properties;
     use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;

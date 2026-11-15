@@ -53,7 +53,7 @@ mod tests {
         NonZeroU32::new(hops).expect("a hop count above zero")
     }
 
-    /// CP-5, clauses 5.7.2.4 and 5.14.4.4: a hop without a retrieving `join`
+    /// Clauses 5.7.2.4 and 5.14.4.4: a hop without a retrieving `join`
     /// reaches no Linked Entity.
     #[test]
     fn a_hop_without_join_is_refused_by_query_entities_and_entity_map_creation() {
@@ -66,7 +66,7 @@ mod tests {
         }
     }
 
-    /// CP-6, the same clauses: a hop deeper than `joinLevel` is a too deep
+    /// Clauses 5.7.2.4 and 5.14.4.4: a hop deeper than `joinLevel` is a too deep
     /// query.
     #[test]
     fn a_hop_deeper_than_join_level_is_refused() {
@@ -81,7 +81,7 @@ mod tests {
         admitted(LinkedOperation::QueryEntities, Some(JoinMode::Flat), Some(2), "r{s{a}}==1").expect("two levels reach two hops");
     }
 
-    /// CP-7, clause 5.7.4.4: a temporal query retrieves no Linked Entity, and
+    /// Clause 5.7.4.4: a temporal query retrieves no Linked Entity, and
     /// with the temporal Linked Entity extension it follows the Core rule.
     #[test]
     fn a_temporal_query_refuses_a_hop_unless_the_extension_retrieves_it() {
@@ -96,7 +96,7 @@ mod tests {
             .expect("the extension retrieves a hop within its join");
     }
 
-    /// CP-8, clause 5.8.1.4: no clause bounds a Subscription's hops. Clause
+    /// Clause 5.8.1.4: no clause bounds a Subscription's hops. Clause
     /// 5.10.2.4 bounds none of a discovery query's either.
     #[test]
     fn a_subscription_and_discovery_admit_every_hop() {

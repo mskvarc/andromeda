@@ -83,9 +83,10 @@ impl ReducedAttribute {
     /// dataset, the same instant on `timeproperty` and the same write
     /// identity, which a queued entry carries as its recorded row will.
     ///
-    /// The instant and the write identity are the keys the axis's stream-led
-    /// index orders a stream's rows by after the stream, so the probe finds
-    /// the row by one index lookup rather than a range over the window.
+    /// The instant is the key the axis's stream-led index orders a stream's
+    /// rows by, so the probe reads the rows of one instant, one index range as
+    /// short as the stream's instances sharing it, rather than a range over
+    /// the window.
     fn is_the_row(&self, aliases: &HistoryAliases, timeproperty: TimeProp) -> impl Iterator<Item = SimpleExpr> {
         let dataset = aliases
             .instance_grain(HistoryGrain::DatasetKey)

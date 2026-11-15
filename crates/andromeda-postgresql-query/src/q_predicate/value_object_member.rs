@@ -174,10 +174,11 @@ fn literal_target(value: SimpleExpr) -> JsonTarget {
 ///
 /// The expanded reading, the JSON-literal readings and the geometry reading
 /// are disjoined: a `JsonProperty` holds no IRI-keyed member nodes, only a
-/// `JsonProperty` is read as a literal, a Property's value object declaring
-/// `@json` keys no member by an IRI, and only a family whose members are its
-/// geometry's reads the geometry, which no other reading reads, so at most one
-/// of them reaches a member.
+/// `JsonProperty` is read as its literal, only a family reading its value's
+/// members other than a `JsonProperty` is read through a value object
+/// declaring `@json`, which keys no member by an IRI, and only a family whose
+/// members are its geometry's reads the geometry, so at most one of them
+/// reaches a member.
 pub(crate) fn member_term(test: &Test, members: &MemberPath, row: InstanceRow) -> Condition {
     let object = row.value(ValueColumn::Field(ValueField::Object));
     let expanded = reading_term(test, MemberShape::ValueNodes.member_source(object.clone(), members), MemberShape::ValueNodes); // clone: every reading walks the one value
@@ -194,9 +195,11 @@ pub(crate) fn member_term(test: &Test, members: &MemberPath, row: InstanceRow) -
     );
     Condition::any()
         .add(
-            Condition::all()
-                .add(reads_members_from(MemberSource::Value, row.attribute_family()))
-                .add(Condition::any().add(expanded).add(declared)),
+            Condition::all().add(reads_members_from(MemberSource::Value, row.attribute_family())).add(
+                Condition::any()
+                    .add(expanded)
+                    .add(Condition::all().add(is_json_property(row.attribute_family()).not()).add(declared)),
+            ),
         )
         .add(Condition::all().add(is_json_property(row.attribute_family())).add(literal))
         .add(

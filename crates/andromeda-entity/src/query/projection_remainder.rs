@@ -18,11 +18,8 @@
 //! one statement of the rule, [`ProjectedMembers::admits`].
 
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::projection::{
-    compiled::Projection,
-    projected_members::{ProjectedMembers, ScopePresence},
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, scope::presence::ScopePresence};
+use andromeda_ngsi_ld_query::projection::{compiled::Projection, projected_members::ProjectedMembers};
 use chrono::{DateTime, Utc};
 use derive_more::IsVariant;
 

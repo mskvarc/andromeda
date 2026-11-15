@@ -11,7 +11,7 @@
 use crate::q::target_value::{ResolvedTarget, TargetValue};
 use andromeda_ngsi_ld_geometry::{
     form::GeometryForm,
-    geometry_member::{COORDINATE_DECIMALS, GeometryMember},
+    geometry_member::{COORDINATE_DECIMALS, COORDINATE_SIGNIFICANT_DIGITS, CoordinateNotation, GeometryMember},
     position::Position,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -62,23 +62,26 @@ fn nested(items: impl Iterator<Item = Option<TargetValue<'static>>>) -> Option<T
     items.collect::<Option<Vec<_>>>().map(TargetValue::Array)
 }
 
-/// The array of a position's coordinates, each at the decimal places a
-/// coordinate is compared at ([`COORDINATE_DECIMALS`]); none when one is no
-/// finite number, which no position admitted as CRS84 holds.
+/// The array of a position's coordinates; none when one is no finite number,
+/// which no position admitted as CRS84 holds.
 fn position(point: &Position) -> Option<TargetValue<'static>> {
-    let decimals = usize::from(COORDINATE_DECIMALS);
-    let coordinate = |value: f64| {
-        format!("{value:.decimals$}")
-            .parse::<JsonNumber>()
-            .ok()
-            .map(|number| TargetValue::Number(Cow::Owned(number)))
-    };
     nested(
         [Some(point.longitude()), Some(point.latitude()), point.altitude()]
             .into_iter()
             .flatten()
-            .map(coordinate),
+            .map(|value| coordinate(value).map(|number| TargetValue::Number(Cow::Owned(number)))),
     )
+}
+
+/// The number a coordinate reads as: the one the store writes it back as
+/// ([`CoordinateNotation`]), its shortest spelling rounded half to even.
+fn coordinate(value: f64) -> Option<JsonNumber> {
+    let shortest = JsonNumber::try_from(value).ok()?;
+    match CoordinateNotation::of(value) {
+        CoordinateNotation::FixedPoint => shortest.rounded_to_decimals(COORDINATE_DECIMALS),
+        CoordinateNotation::Exponent => shortest.rounded_to_significant_digits(COORDINATE_SIGNIFICANT_DIGITS),
+    }
+    .ok()
 }
 
 #[cfg(test)]
@@ -126,16 +129,49 @@ mod tests {
         );
     }
 
-    /// The store writes a geometry back with fifteen decimals, so a
-    /// coordinate whose double holds more compares at fifteen:
-    /// `0.12345678901234568` reads as `0.123456789012346`.
+    fn located(longitude: f64, latitude: f64) -> GeometryForm {
+        GeometryForm::Point(Position::try_new(longitude, latitude, None).expect("a CRS84 position"))
+    }
+
+    /// The coordinates the geometry `form` holds, read as a `q` reads them.
+    fn coordinates(form: &GeometryForm) -> Option<TargetValue<'_>> {
+        geometry_member(form, &path(&["coordinates"])).map(|target| target.value)
+    }
+
+    fn spelled(text: &str) -> TargetValue<'static> {
+        TargetValue::Number(Cow::Owned(text.parse::<JsonNumber>().expect("a number")))
+    }
+
+    /// The store writes a coordinate back as its shortest spelling rounded
+    /// half to even to fifteen fractional digits, so `52.6`, whose double is
+    /// `52.60000000000000142...`, reads as `52.6`, and `0.12345678901234568`
+    /// as `0.123456789012346`.
     #[test]
-    fn a_coordinate_reads_at_fifteen_decimals_whatever_its_double_holds() {
-        let form = GeometryForm::Point(Position::try_new(0.123_456_789_012_345_68, 52.5, None).expect("a CRS84 position"));
-        let rounded = TargetValue::Number(Cow::Owned("0.123456789012346".parse::<JsonNumber>().expect("a number")));
+    fn a_coordinate_reads_as_its_shortest_spelling_at_fifteen_decimals() {
+        for (longitude, latitude, expected) in [
+            (-74.006, 40.7128, ["-74.006", "40.7128"]),
+            (8.8, 52.6, ["8.8", "52.6"]),
+            (8.8, 53.075_171, ["8.8", "53.075171"]),
+            (0.123_456_789_012_345_68, 52.5, ["0.123456789012346", "52.5"]),
+        ] {
+            let form = located(longitude, latitude);
+            assert_eq!(
+                coordinates(&form),
+                Some(TargetValue::Array(expected.map(spelled).to_vec())),
+                "{longitude} {latitude}"
+            );
+        }
+    }
+
+    /// A coordinate of magnitude `1e-8` or less is written in exponent
+    /// notation, its mantissa at fifteen fractional digits, so it keeps
+    /// sixteen significant digits.
+    #[test]
+    fn a_tiny_coordinate_reads_at_sixteen_significant_digits() {
+        let form = located(1.234_567_890_123_456_7e-9, 0.0);
         assert_eq!(
-            geometry_member(&form, &path(&["coordinates"])).map(|target| target.value),
-            Some(TargetValue::Array(vec![rounded, number(52.5)]))
+            coordinates(&form),
+            Some(TargetValue::Array(vec![spelled("1.234567890123457e-9"), spelled("0")]))
         );
     }
 
