@@ -204,7 +204,9 @@ pub async fn compact_attr_path(mut path: AttrPath, members: TrailingMembers<'_>,
         member_path.written.clone_from(&member_path.addressed); // clone: the written and addressed spellings are separate owned values
     }
     path.attr = compactor.compact_term(&path.attr).await;
-    path.sub_attrs = compact_all(&path.sub_attrs, compactor).await;
+    if members.sub_attributes_are_terms() {
+        path.sub_attrs = compact_all(&path.sub_attrs, compactor).await;
+    }
     path
 }
 
@@ -357,12 +359,13 @@ mod tests {
         pretty_assertions::assert_eq!(serialize(&compacted), "isParkedIn{Building,Store:category}==\"x\"");
     }
 
-    /// A `csf` round-trips with its trailing members exactly as written, even
-    /// a member that reads like a term the compactor would abbreviate: those
-    /// members are the raw JSON keys of a Context Source Property (clause 4.9).
+    /// A `csf` round-trips with its sub-properties and trailing members
+    /// exactly as written, even a name that reads like a term the compactor
+    /// would abbreviate: those are the raw JSON keys of a Context Source
+    /// Property (clause 4.9).
     #[tokio::test]
-    async fn a_csf_round_trips_with_its_trailing_members_as_written() {
-        let written = "coverage.since[\"https://example.com/area\".region]==\"north\"";
+    async fn a_csf_round_trips_with_its_sub_properties_and_trailing_members_as_written() {
+        let written = "coverage.\"https://example.com/since\"[\"https://example.com/area\".region]==\"north\"";
         let parsed = parser::parse(written).expect("parses");
         let expanded = expand_csf_expr(parsed.clone(), &EXPANDER).await.expect("expands");
 
