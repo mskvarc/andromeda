@@ -17,6 +17,7 @@ pub mod comparator;
 mod decision_table_tests;
 pub mod family_reading;
 pub mod filter_reading;
+pub mod geometry_path;
 pub mod hop;
 pub mod interval;
 pub mod lowering;

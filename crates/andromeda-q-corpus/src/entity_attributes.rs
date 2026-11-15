@@ -148,7 +148,9 @@ const E13_ATTRIBUTES: &[CorpusAttribute] = &[attribute!(
         ),
     ])])
 )];
-/// `h` to `http://example.com/a`, `hp` the same text, `location` a Point.
+/// `h` to `http://example.com/a`, `hp` the same text, `location` a Point
+/// with a `bbox`, the foreign member `title` "Gate" and the foreign member
+/// `meta` holding `source` "survey".
 const E14_ATTRIBUTES: &[CorpusAttribute] = &[
     attribute!("h", Relationship(&[Identifier("http://example.com/a")])),
     attribute!("hp", Property(&[Text("http://example.com/a")])),
@@ -156,7 +158,9 @@ const E14_ATTRIBUTES: &[CorpusAttribute] = &[
         "location",
         GeoProperty {
             longitude: 13.4,
-            latitude: 52.5
+            latitude: 52.5,
+            bbox: Some([13.3, 52.4, 13.5, 52.6]),
+            foreign: &[("title", &[Text("Gate")]), ("meta", &[Members(&[("source", &[Text("survey")])])])],
         }
     ),
 ];
@@ -194,7 +198,9 @@ const E19_ATTRIBUTES: &[CorpusAttribute] = &[
         "place",
         GeoProperty {
             longitude: 8.8,
-            latitude: 52.6
+            latitude: 52.6,
+            bbox: None,
+            foreign: &[],
         }
     ),
 ];

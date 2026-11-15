@@ -240,7 +240,7 @@ WHERE
                   "member"."member" AS "member"
                 FROM
                   jsonb_path_query(
-                    ST_AsGeoJSON("qh"."value_geometry", 15)::jsonb,
+                    "qh"."value_geometry_members",
                     'strict $."a"',
                     '{}',
                     TRUE

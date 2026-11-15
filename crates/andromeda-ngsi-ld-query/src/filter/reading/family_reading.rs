@@ -115,8 +115,10 @@ pub enum MemberSource {
     /// name, a JSON literal's by the names the client wrote.
     Value,
     /// The members of the `GeoJSON` geometry object the value is (IETF RFC
-    /// 7946 section 3.1), `type` and `coordinates`, by the names the client
-    /// wrote: a `GeoProperty`'s value is the geometry, read as positions.
+    /// 7946 sections 3.1, 5 and 6.1), as
+    /// [`GeometryPath`](crate::filter::reading::geometry_path::GeometryPath)
+    /// tells them apart: `type`, `coordinates` and `bbox` by the names the
+    /// client wrote, and a foreign member by expanded name.
     Geometry,
 }
 

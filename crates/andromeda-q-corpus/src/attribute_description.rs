@@ -55,6 +55,13 @@ pub enum CorpusContent {
         longitude: f64,
         /// The latitude of the Point, the second coordinate.
         latitude: f64,
+        /// The `bbox` written beside the Point (IETF RFC 7946 section 5), its
+        /// west, south, east and north bounds, if one is.
+        bbox: Option<[f64; 4]>,
+        /// The foreign members of the Point (RFC 7946 section 6.1), each keyed
+        /// by its short term with the values it holds, as the members of a
+        /// structured value are.
+        foreign: &'static [(&'static str, &'static [CorpusValue])],
     },
 }
 

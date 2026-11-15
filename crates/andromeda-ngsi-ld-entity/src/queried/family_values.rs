@@ -105,12 +105,12 @@ pub fn language_strings<'a, 'l, M: QueriedMode>(
         .map(|text| ValueItem::Literal(LiteralValue::Text(Cow::Borrowed(text))))
 }
 
-/// A `GeoProperty`'s value: a geometry carries no literal, and its `type` and
-/// `coordinates` are the members a trailing path reads, while the clause
-/// 4.7.2 string form is a String like any other.
+/// A `GeoProperty`'s value: a geometry carries no literal, and a trailing path
+/// reads the members of the `GeoJSON` object it is, while the clause 4.7.2
+/// string form is a String like any other.
 fn geometry_item<M: QueriedMode>(geometry: &GeoValue) -> ValueItem<'_, &ValueNode<M>> {
     match geometry {
-        GeoValue::Geometry(geometry) => ValueItem::Geometry(geometry.form()),
+        GeoValue::Geometry(_) => ValueItem::Geometry,
         GeoValue::Encoded(encoded) => ValueItem::Literal(LiteralValue::Text(Cow::Borrowed(encoded.as_str()))),
     }
 }

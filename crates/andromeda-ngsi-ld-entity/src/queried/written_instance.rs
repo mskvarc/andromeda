@@ -14,6 +14,7 @@ use crate::{
         written_value::{ValueSlot, WrittenValue},
     },
     expanded_value::ValueNode,
+    geometry_value::GeometryValue,
     queried::family_values::{FamilyValues, language_strings},
     value_mode::Fragment,
 };
@@ -28,6 +29,7 @@ use std::borrow::Cow;
 
 impl<'a> QueriedInstance<'a> for &'a InstanceDocument {
     type Node = &'a ValueNode<Fragment>;
+    type Geometry = &'a GeometryValue;
 
     /// The family the instance declares, else the one its value member implies
     /// (clause 4.5.2: a typeless `value` is a Property).
@@ -43,6 +45,23 @@ impl<'a> QueriedInstance<'a> for &'a InstanceDocument {
         match self.value() {
             ValueSlot::Set(value) => FamilyValues::of_written(value, self.value_type().and_then(Slot::as_set)),
             ValueSlot::Absent | ValueSlot::Remove(_) => FamilyValues::none(),
+        }
+    }
+
+    fn geometry(self) -> Option<&'a GeometryValue> {
+        match self.value() {
+            ValueSlot::Set(WrittenValue::Geometry(geometry)) => geometry.as_geometry(),
+            ValueSlot::Set(
+                WrittenValue::Value(_)
+                | WrittenValue::Object(_)
+                | WrittenValue::LanguageMap(_)
+                | WrittenValue::Vocab(_)
+                | WrittenValue::Json(_)
+                | WrittenValue::ValueList(_)
+                | WrittenValue::ObjectList(_),
+            )
+            | ValueSlot::Absent
+            | ValueSlot::Remove(_) => None,
         }
     }
 

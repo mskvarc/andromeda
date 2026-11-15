@@ -2,7 +2,6 @@
 //! apart (clause 4.9).
 
 use crate::queried_entity::raw_json::RawJson;
-use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::time::value::TimeValue;
 use andromeda_ngsi_ld_number::{JsonNumber, declared_number::NonFinite};
 use std::borrow::Cow;
@@ -34,9 +33,9 @@ pub enum ValueItem<'a, N> {
     /// by expanded IRI, or a Property value naming a node by `@id`.
     Node(N),
     /// A `GeoProperty` geometry held as a geometry: no target value itself,
-    /// and a `GeoJSON` object whose `type` and `coordinates` a trailing path
-    /// reads (clause 4.9).
-    Geometry(&'a GeometryForm),
+    /// and a `GeoJSON` object whose members a trailing path reads (clause
+    /// 4.9) through the instance's geometry.
+    Geometry,
     /// A value carrying neither a literal nor members a path can address: a
     /// nested list.
     Opaque,

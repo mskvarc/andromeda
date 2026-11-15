@@ -32,6 +32,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::A
 use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
 use andromeda_ngsi_ld_query_evaluation::queried_entity::{
     attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode, ValuePresence},
+    queried_geometry::NoGeometry,
     raw_json::RawJson,
     value_item::ValueItem,
 };
@@ -159,6 +160,7 @@ impl<'a> QueriedEntity<'a> for ContextSourceProperties<'a> {
 
 impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
     type Node = NoStructuredValue;
+    type Geometry = NoGeometry;
 
     /// Clause 5.2.9 Context Source Properties are Properties.
     fn family(self) -> AttributeType {
@@ -167,6 +169,12 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
 
     fn values(self) -> impl Iterator<Item = ValueItem<'a, NoStructuredValue>> {
         self.item().into_iter()
+    }
+
+    /// Clause 5.2.9 Context Source Properties are Properties, never a
+    /// `GeoProperty`.
+    fn geometry(self) -> Option<NoGeometry> {
+        None
     }
 
     /// A node holding no `value` holds no value (clause 4.5.2.3 treats it as

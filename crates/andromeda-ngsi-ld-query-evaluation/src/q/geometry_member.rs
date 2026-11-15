@@ -1,15 +1,23 @@
 //! The members of a `GeoProperty`'s geometry a trailing path reads (clause
-//! 4.9): the `type` and the `coordinates` of the `GeoJSON` geometry object it
-//! is (IETF RFC 7946 section 3.1).
+//! 4.9), as [`GeometryPath`] tells them apart: the `type`, the `coordinates`
+//! and the `bbox` of the `GeoJSON` geometry object it is (IETF RFC 7946
+//! sections 3.1 and 5), and its foreign members (section 6.1).
 //!
-//! The geometry is held as positions, so each member is built from them: the
-//! type's token as a String, the coordinates as nested arrays of numbers, a
-//! position an array of its longitude, its latitude and, where it has one, its
-//! altitude. A String and an array have no named member, so a path of two
-//! members or more reaches nothing.
+//! The geometry is held as positions, so each described member is built from
+//! them: the type's token as a String, the coordinates as nested arrays of
+//! numbers, a position an array of its longitude, its latitude and, where it
+//! has one, its altitude, and the `bbox` as the array of its numbers. A
+//! foreign member is read as the member of a structured value is.
 
-use crate::q::target_value::{ResolvedTarget, TargetValue};
+use crate::{
+    q::{
+        compound_member::resolve_member_values,
+        target_value::{ResolvedTarget, TargetValue},
+    },
+    queried_entity::queried_geometry::QueriedGeometry,
+};
 use andromeda_ngsi_ld_geometry::{
+    bounding_box::BoundingBox,
     coordinate_notation::{COORDINATE_DECIMALS, COORDINATE_SIGNIFICANT_DIGITS, CoordinateNotation},
     form::GeometryForm,
     geometry_member::GeometryMember,
@@ -17,24 +25,48 @@ use andromeda_ngsi_ld_geometry::{
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_number::JsonNumber;
-use andromeda_ngsi_ld_query::filter::reading::family_reading::{MultiValueReading, TargetOrigin};
+use andromeda_ngsi_ld_query::filter::{
+    reading::{
+        family_reading::{MultiValueReading, TargetOrigin},
+        geometry_path::GeometryPath,
+    },
+    trailing_path::MemberPath,
+};
 use std::borrow::Cow;
 
-/// The member of `form` the path `written` names, as the client wrote it.
-pub(crate) fn geometry_member<'a>(form: &'a GeometryForm, written: &[AttributeName]) -> Option<ResolvedTarget<'a>> {
-    let [name] = written else {
-        return None;
-    };
-    let value = match name.as_str().parse::<GeometryMember>().ok()? {
-        GeometryMember::Type => TargetValue::Text(Cow::Owned(form.geometry_type().to_string())),
-        GeometryMember::Coordinates => coordinates(form)?,
-        GeometryMember::Bbox | GeometryMember::Geometries => return None,
+/// The member of `geometry` the path `members` reaches.
+///
+/// A `geometries` member belongs to a `GeometryCollection`, which no
+/// `GeoProperty` holds (clause 4.7.1).
+pub(crate) fn geometry_member<'a, G: QueriedGeometry<'a>>(geometry: G, members: &MemberPath) -> Option<ResolvedTarget<'a>> {
+    let value = match GeometryPath::of(members) {
+        GeometryPath::Described(GeometryMember::Type) => TargetValue::Text(Cow::Owned(geometry.form().geometry_type().to_string())),
+        GeometryPath::Described(GeometryMember::Coordinates) => coordinates(geometry.form())?,
+        GeometryPath::Described(GeometryMember::Bbox) => bounding_box(geometry.bbox()?)?,
+        GeometryPath::Described(GeometryMember::Geometries) | GeometryPath::Nothing => return None,
+        GeometryPath::Foreign(path) => return foreign_member(geometry, path),
     };
     Some(ResolvedTarget {
         value,
         origin: TargetOrigin::AttributeValue,
         reading: MultiValueReading::WholeArray,
     })
+}
+
+/// The member a foreign path reaches: the member of `geometry` its first name
+/// keys, and within it the member the rest of the path reaches.
+fn foreign_member<'a, G: QueriedGeometry<'a>>(geometry: G, path: &[AttributeName]) -> Option<ResolvedTarget<'a>> {
+    let (first, rest) = path.split_first()?;
+    resolve_member_values(geometry.foreign_member(first)?, rest)
+}
+
+/// The numbers of `bbox` in RFC 7946 section 5 order, each the number the
+/// store keeps it as: its shortest decimal spelling.
+fn bounding_box(bbox: &BoundingBox) -> Option<TargetValue<'static>> {
+    nested(
+        bbox.ordinates()
+            .map(|ordinate| JsonNumber::try_from(ordinate).ok().map(|number| TargetValue::Number(Cow::Owned(number)))),
+    )
 }
 
 /// The `coordinates` of `form`, nested as RFC 7946 section 3.1 nests them.
@@ -87,60 +119,94 @@ fn coordinate(value: f64) -> Option<JsonNumber> {
 
 #[cfg(test)]
 mod tests {
-    use crate::q::{
-        geometry_member::geometry_member,
-        target_value::{ResolvedTarget, TargetValue},
+    use crate::{
+        q::{geometry_member::geometry_member, target_value::TargetValue},
+        queried_entity::{attribute_reading::QueriedInstance, expanded_fixture::FixtureInstance},
     };
-    use andromeda_ngsi_ld_geometry::{form::GeometryForm, position::Position};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_number::JsonNumber;
+    use andromeda_ngsi_ld_query::filter::trailing_path::MemberPath;
     use pretty_assertions::assert_eq;
+    use serde_json::{Value, json};
     use std::borrow::Cow;
 
-    fn path(names: &[&str]) -> Vec<AttributeName> {
+    /// The prefix of the `GeoJSON` vocabulary the core `@context` maps
+    /// `coordinates` and `bbox` to.
+    const GEOJSON: &str = "https://purl.org/geojson/vocab#";
+
+    fn names(names: &[&str]) -> Vec<AttributeName> {
         names.iter().map(|name| name.parse().expect("a member name")).collect()
     }
 
-    fn point() -> GeometryForm {
-        GeometryForm::Point(Position::try_new(13.4, 52.5, None).expect("a CRS84 position"))
+    /// An expanded `GeoProperty` instance holding the Point at `longitude`,
+    /// `latitude`, whose geometry node carries `extra` beside its positions.
+    fn located(longitude: f64, latitude: f64, extra: &Value) -> FixtureInstance {
+        let mut node = json!({
+            "@type": [format!("{GEOJSON}Point")],
+            format!("{GEOJSON}coordinates"): [{"@list": [{"@value": longitude}, {"@value": latitude}]}]
+        });
+        if let (Some(members), Some(extra)) = (node.as_object_mut(), extra.as_object()) {
+            members.extend(extra.iter().map(|(name, value)| (name.clone(), value.clone())));
+        }
+        FixtureInstance::from_expanded(&json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [node]
+        }))
     }
 
-    fn number(value: f64) -> TargetValue<'static> {
-        TargetValue::Number(Cow::Owned(JsonNumber::try_from(value).expect("a finite number")))
+    /// The Kiosk's `location`: a Point with a `bbox`, the foreign member
+    /// `title` and the foreign member `meta` holding `source`.
+    fn kiosk() -> FixtureInstance {
+        located(
+            13.4,
+            52.5,
+            &json!({
+                format!("{GEOJSON}bbox"): [{"@list": [{"@value": 13.3}, {"@value": 52.4}, {"@value": 13.5}, {"@value": 52.6}]}],
+                "https://example.com/title": [{"@value": "Gate"}],
+                "https://example.com/meta": [{"https://example.com/source": [{"@value": "survey"}]}]
+            }),
+        )
+    }
+
+    /// The target the path the client wrote as `written`, and expansion
+    /// addressed as `addressed`, reaches in the geometry `instance` holds.
+    fn member<'a>(instance: &'a FixtureInstance, written: &[&str], addressed: &[&str]) -> Option<TargetValue<'a>> {
+        let path = MemberPath {
+            addressed: names(addressed),
+            written: names(written),
+        };
+        geometry_member(instance.geometry()?, &path).map(|target| target.value)
+    }
+
+    /// A path written as `names`, which expansion leaves as written.
+    fn written<'a>(instance: &'a FixtureInstance, names: &[&str]) -> Option<TargetValue<'a>> {
+        member(instance, names, names)
+    }
+
+    fn spelled(text: &str) -> TargetValue<'static> {
+        TargetValue::Number(Cow::Owned(text.parse::<JsonNumber>().expect("a number")))
+    }
+
+    fn text(value: &str) -> TargetValue<'_> {
+        TargetValue::Text(Cow::Borrowed(value))
     }
 
     /// Clause 4.9 evaluates `location[type]` against the geometry object,
     /// whose `type` member is its type's token.
     #[test]
     fn the_type_member_is_the_token_of_the_geometry_type() {
-        let form = point();
-        assert_eq!(
-            geometry_member(&form, &path(&["type"])).map(|target| target.value),
-            Some(TargetValue::Text(Cow::Borrowed("Point")))
-        );
+        let instance = located(13.4, 52.5, &json!({}));
+        assert_eq!(written(&instance, &["type"]), Some(text("Point")));
     }
 
     /// RFC 7946 section 3.1.2: a Point's `coordinates` is one position.
     #[test]
     fn the_coordinates_of_a_point_are_its_one_position() {
-        let form = point();
+        let instance = located(13.4, 52.5, &json!({}));
         assert_eq!(
-            geometry_member(&form, &path(&["coordinates"])).map(|target: ResolvedTarget<'_>| target.value),
-            Some(TargetValue::Array(vec![number(13.4), number(52.5)]))
+            member(&instance, &["coordinates"], &[&format!("{GEOJSON}coordinates")]),
+            Some(TargetValue::Array(vec![spelled("13.4"), spelled("52.5")]))
         );
-    }
-
-    fn located(longitude: f64, latitude: f64) -> GeometryForm {
-        GeometryForm::Point(Position::try_new(longitude, latitude, None).expect("a CRS84 position"))
-    }
-
-    /// The coordinates the geometry `form` holds, read as a `q` reads them.
-    fn coordinates(form: &GeometryForm) -> Option<TargetValue<'_>> {
-        geometry_member(form, &path(&["coordinates"])).map(|target| target.value)
-    }
-
-    fn spelled(text: &str) -> TargetValue<'static> {
-        TargetValue::Number(Cow::Owned(text.parse::<JsonNumber>().expect("a number")))
     }
 
     /// The store writes a coordinate back as its shortest spelling rounded
@@ -155,9 +221,9 @@ mod tests {
             (8.8, 53.075_171, ["8.8", "53.075171"]),
             (0.123_456_789_012_345_68, 52.5, ["0.123456789012346", "52.5"]),
         ] {
-            let form = located(longitude, latitude);
+            let instance = located(longitude, latitude, &json!({}));
             assert_eq!(
-                coordinates(&form),
+                written(&instance, &["coordinates"]),
                 Some(TargetValue::Array(expected.map(spelled).to_vec())),
                 "{longitude} {latitude}"
             );
@@ -169,20 +235,55 @@ mod tests {
     /// sixteen significant digits.
     #[test]
     fn a_tiny_coordinate_reads_at_sixteen_significant_digits() {
-        let form = located(1.234_567_890_123_456_7e-9, 0.0);
+        let instance = located(1.234_567_890_123_456_7e-9, 0.0, &json!({}));
         assert_eq!(
-            coordinates(&form),
+            written(&instance, &["coordinates"]),
             Some(TargetValue::Array(vec![spelled("1.234567890123457e-9"), spelled("0")]))
         );
     }
 
-    /// A member the geometry does not hold, and a member of a member, reach
-    /// nothing: clause 4.9 makes such an element non-existent.
+    /// RFC 7946 section 5: the `bbox` is the array of the south-west corner's
+    /// axes followed by the north-east corner's, as written.
     #[test]
-    fn an_unheld_member_or_a_member_of_a_member_reaches_nothing() {
-        let form = point();
-        for names in [&["bbox"][..], &["geometries"], &["city"], &["type", "length"], &["coordinates", "first"]] {
-            assert!(geometry_member(&form, &path(names)).is_none(), "{names:?}");
+    fn the_bbox_member_is_the_array_of_its_numbers() {
+        assert_eq!(
+            member(&kiosk(), &["bbox"], &[&format!("{GEOJSON}bbox")]),
+            Some(TargetValue::Array(["13.3", "52.4", "13.5", "52.6"].map(spelled).to_vec()))
+        );
+        assert_eq!(written(&located(13.4, 52.5, &json!({})), &["bbox"]), None);
+    }
+
+    /// RFC 7946 section 6.1: a foreign member is read by its expanded name,
+    /// as a member of a structured value is, and so are the members within it;
+    /// one holding a node is an Object, which no operand equals.
+    #[test]
+    fn a_foreign_member_and_the_members_within_it_are_read_by_expanded_name() {
+        let instance = kiosk();
+        assert_eq!(member(&instance, &["title"], &["https://example.com/title"]), Some(text("Gate")));
+        assert_eq!(
+            member(&instance, &["meta", "source"], &["https://example.com/meta", "https://example.com/source"]),
+            Some(text("survey"))
+        );
+        assert_eq!(member(&instance, &["meta"], &["https://example.com/meta"]), Some(TargetValue::Structure));
+    }
+
+    /// A member the geometry does not hold, a member of a described member,
+    /// and a described member named by its expanded name reach nothing:
+    /// clause 4.9 makes such an element non-existent.
+    #[test]
+    fn an_unheld_member_or_a_member_of_a_described_member_reaches_nothing() {
+        let instance = kiosk();
+        for names in [
+            &["geometries"][..],
+            &["city"],
+            &["type", "length"],
+            &["coordinates", "first"],
+            &["bbox", "first"],
+        ] {
+            assert!(written(&instance, names).is_none(), "{names:?}");
         }
+        assert!(member(&instance, &["missing"], &["https://example.com/missing"]).is_none());
+        assert!(member(&instance, &["meta", "missing"], &["https://example.com/meta", "https://example.com/missing"]).is_none());
+        assert!(member(&instance, &["box"], &[&format!("{GEOJSON}bbox")]).is_none());
     }
 }

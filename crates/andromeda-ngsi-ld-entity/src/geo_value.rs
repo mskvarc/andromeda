@@ -66,6 +66,16 @@ impl GeoValue {
             GeoValue::Encoded(encoded) => encoded.form(),
         }
     }
+
+    /// The geometry when it is the `GeoJSON` vocabulary node, none for the
+    /// clause 4.7.2 string form, whose value is the String it was written as.
+    #[must_use]
+    pub const fn as_geometry(&self) -> Option<&GeometryValue> {
+        match self {
+            GeoValue::Geometry(value) => Some(value),
+            GeoValue::Encoded(_) => None,
+        }
+    }
 }
 
 #[cfg(test)]

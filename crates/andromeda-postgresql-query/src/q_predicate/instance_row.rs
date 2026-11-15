@@ -140,6 +140,19 @@ impl InstanceRow {
         self.field(CurrentAttributes::AttributeKind, AttributeHistory::AttributeKind, SubAttribute::AttributeKind)
     }
 
+    /// The `GeoJSON` members the instance's geometry carries beside its
+    /// positions, its `bbox` and its foreign members by expanded name, as one
+    /// `jsonb` object; NULL when it carries none or the instance holds no
+    /// geometry.
+    #[must_use]
+    pub fn geometry_members(self) -> SimpleExpr {
+        self.field(
+            CurrentAttributes::ValueGeometryMembers,
+            AttributeHistory::ValueGeometryMembers,
+            SubAttribute::ValueGeometryMembers,
+        )
+    }
+
     /// The `entity_type_names` key of the instance's `valueType`.
     #[must_use]
     pub fn value_type_key(self) -> SimpleExpr {

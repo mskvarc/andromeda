@@ -4,6 +4,7 @@ use crate::{
     attribute_instances::AttributeInstances,
     expanded_value::ValueNode,
     family_value::FamilyValue,
+    geometry_value::GeometryValue,
     instance::Instance,
     queried::family_values::{FamilyValues, language_strings},
     value_mode::Stored,
@@ -56,6 +57,7 @@ impl<'a> HeldInstance<'a> {
 
 impl<'a> QueriedInstance<'a> for HeldInstance<'a> {
     type Node = &'a ValueNode<Stored>;
+    type Geometry = &'a GeometryValue;
 
     fn family(self) -> AttributeType {
         self.instance.family()
@@ -63,6 +65,20 @@ impl<'a> QueriedInstance<'a> for HeldInstance<'a> {
 
     fn values(self) -> impl Iterator<Item = ValueItem<'a, &'a ValueNode<Stored>>> {
         FamilyValues::of_state(self.instance.value())
+    }
+
+    fn geometry(self) -> Option<&'a GeometryValue> {
+        match self.instance.value() {
+            FamilyValue::GeoProperty { geometry, .. } => geometry.as_geometry(),
+            FamilyValue::Property { .. }
+            | FamilyValue::Proof(_)
+            | FamilyValue::Relationship { .. }
+            | FamilyValue::LanguageProperty { .. }
+            | FamilyValue::VocabProperty { .. }
+            | FamilyValue::JsonProperty { .. }
+            | FamilyValue::ListProperty { .. }
+            | FamilyValue::ListRelationship { .. } => None,
+        }
     }
 
     /// A stored instance always holds a value: a deletion removes it from the

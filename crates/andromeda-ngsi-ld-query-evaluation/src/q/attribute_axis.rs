@@ -90,7 +90,7 @@ pub fn relationship_objects<'a, E: QueriedEntity<'a>>(entity: E, relationship: &
         .filter_map(|item| match item {
             ValueItem::Reference(object) => Some(object),
             ValueItem::Node(node) => node.id(),
-            ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Geometry(_) | ValueItem::Opaque => None,
+            ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Geometry | ValueItem::Opaque => None,
         })
 }
 

@@ -8,11 +8,14 @@
 //! (clause 4.9 EXAMPLE 11), whose members keep the keys the writer chose, so
 //! the path walks the names as the client wrote them, as it walks a Property
 //! holding one JSON literal (`@type` `@json`), whose literal is the `@value`
-//! of the value object it is stored as. A `GeoProperty` stores
-//! its geometry, so the path walks the names as the client wrote them through
-//! the `GeoJSON` object the geometry is ([`MemberSource::Geometry`]). A member
-//! of an expanded value is read with the datatype its own `@type` declares; a
-//! member of a JSON literal or of a geometry declares none.
+//! of the value object it is stored as. A `GeoProperty` stores its geometry,
+//! whose members a path reaches as [`GeometryPath`] tells them apart: `type`
+//! and `coordinates` by the names the client wrote through the `GeoJSON`
+//! object `PostGIS` writes the positions out as, the `bbox` from the members
+//! stored beside the positions, and a foreign member by expanded name through
+//! those stored members, as the member of a structured value. A member of an
+//! expanded value is read with the datatype its own `@type` declares; a member
+//! of a JSON literal or of a geometry's positions or `bbox` declares none.
 //!
 //! A member expression accesses a property of an object, and an array has no
 //! named property, so every step before the last descends only through a
@@ -32,24 +35,25 @@ use crate::q_predicate::{
     value_column::ValueColumn,
     verdict_condition::{ComplementTarget, array_rule_condition, verdict_condition},
 };
-use andromeda_ngsi_ld_geometry::coordinate_notation::COORDINATE_DECIMALS;
+use andromeda_ngsi_ld_geometry::{coordinate_notation::COORDINATE_DECIMALS, geometry_member::GeometryMember};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_ngsi_ld_query::filter::{
     reading::{
         array_target::ArrayTarget,
         family_reading::{MemberSource, family_reading},
+        geometry_path::GeometryPath,
         scalar_test::ScalarTest,
         term_reading::Test,
         value_test::{ComplementScope, ValueTest},
     },
     trailing_path::MemberPath,
 };
-use andromeda_ngsi_ld_vocabulary::keyword;
+use andromeda_ngsi_ld_vocabulary::{expanded::properties::BBOX, keyword};
 use andromeda_postgresql_seaquery::{
     cast::{cast, typed_null},
     json_type::{JsonType, jsonb_type_is},
-    jsonb::{escape_jsonpath_key, jsonb_array_length, jsonb_path_query, jsonb_path_query_silent},
-    literal::{int_literal, text_literal, true_literal},
+    jsonb::{escape_jsonpath_key, jsonb_array_length, jsonb_key_exists, jsonb_path_query, jsonb_path_query_array, jsonb_path_query_silent},
+    literal::{false_literal, int_literal, text_literal, true_literal},
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
     postgis::st_as_geojson,
@@ -158,7 +162,8 @@ fn literal_target(value: SimpleExpr) -> JsonTarget {
 /// value's members other than a `JsonProperty` is read as expanded nodes or
 /// through a value object declaring `@json`, which keys no member by a name a
 /// path can write, and only a family whose members are its geometry's reads
-/// the geometry. A path written in the keys the client chose (`jsonKeys`)
+/// the geometry, as [`geometry_term`] does. A path written in the keys the
+/// client chose (`jsonKeys`)
 /// reaches a `JsonProperty`'s members by those keys, and an expanded member is
 /// always an array of value nodes, which no member of a JSON literal need be.
 pub(crate) fn member_term(test: &Test, members: &MemberPath, row: InstanceRow) -> Condition {
@@ -170,11 +175,7 @@ pub(crate) fn member_term(test: &Test, members: &MemberPath, row: InstanceRow) -
         MemberShape::JsonLiteral,
     );
     let literal = reading_term(test, MemberShape::JsonLiteral.member_source(object, members), MemberShape::JsonLiteral);
-    let geometry = reading_term(
-        test,
-        MemberShape::JsonLiteral.member_source(geometry_object(row), members),
-        MemberShape::JsonLiteral,
-    );
+    let geometry = geometry_term(test, members, row);
     Condition::any()
         .add(
             Condition::all()
@@ -188,6 +189,48 @@ pub(crate) fn member_term(test: &Test, members: &MemberPath, row: InstanceRow) -
                 .add(reads_members_from(MemberSource::Geometry, row.attribute_family()))
                 .add(geometry),
         )
+}
+
+/// A Query Term against the member of the `GeoJSON` geometry object of the
+/// geometry `row` holds that `members` reaches ([`GeometryPath`]).
+///
+/// `type` and `coordinates` are read from the object `PostGIS` writes the
+/// positions out as, the `bbox` from the list stored beside them, and a
+/// foreign member from the members stored beside them, which hold it as an
+/// expanded structured value holds a member. A `geometries` member belongs to
+/// a `GeometryCollection`, which no `GeoProperty` holds (clause 4.7.1).
+fn geometry_term(test: &Test, members: &MemberPath, row: InstanceRow) -> SimpleExpr {
+    match GeometryPath::of(members) {
+        GeometryPath::Described(GeometryMember::Type | GeometryMember::Coordinates) => reading_term(
+            test,
+            MemberShape::JsonLiteral.member_source(geometry_object(row), members),
+            MemberShape::JsonLiteral,
+        ),
+        GeometryPath::Described(GeometryMember::Bbox) => reading_term(test, bbox_source(row), MemberShape::JsonLiteral),
+        GeometryPath::Foreign(_) => reading_term(
+            test,
+            MemberShape::ValueNodes.member_source(row.geometry_members(), members),
+            MemberShape::ValueNodes,
+        ),
+        GeometryPath::Described(GeometryMember::Geometries) | GeometryPath::Nothing => false_literal(),
+    }
+}
+
+/// The source of the one row the `bbox` of the geometry `row` holds is read
+/// in: the numbers of the list it is stored as, gathered into the JSON array
+/// the client wrote, and no row for a geometry stored with no `bbox`.
+fn bbox_source(row: InstanceRow) -> SelectStatement {
+    let stored = row.geometry_members();
+    let numbers = format!(
+        "$.\"{}\"[0].\"{}\"[*].\"{}\"",
+        escape_jsonpath_key(BBOX.as_str()),
+        keyword::LIST,
+        keyword::VALUE
+    );
+    Query::select()
+        .expr_as(jsonb_path_query_array(stored.clone(), &numbers), Alias::new(MEMBER)) // clone: the guard reads the same members
+        .and_where(jsonb_key_exists(stored, text_literal(BBOX.as_str())))
+        .to_owned()
 }
 
 /// The JSON literal a stored value object declaring `@json` holds, its

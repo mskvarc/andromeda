@@ -11,6 +11,7 @@ use crate::{
     q::target_value::TargetValue,
     queried_entity::{
         attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode, ValuePresence},
+        fixture_geometry::{FixtureGeometry, geometry_of},
         fixture_literal::FixtureLiteral,
         linked_entities::LinkedEntities,
         raw_json::RawJson,
@@ -18,7 +19,6 @@ use crate::{
     },
 };
 use andromeda_json_literal::JsonLiteral;
-use andromeda_ngsi_ld_geometry::{form::GeometryForm, position::Position};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
@@ -78,8 +78,8 @@ pub(crate) enum FixtureItem {
     Reference(String),
     /// A node with IRI-keyed members.
     Node(FixtureNode),
-    /// A `GeoProperty` geometry, held as positions.
-    Geometry(GeometryForm),
+    /// A `GeoProperty` geometry.
+    Geometry(FixtureGeometry),
     /// A nested list.
     Opaque,
 }
@@ -184,7 +184,7 @@ impl FixtureInstance {
 }
 
 /// An attribute name read off a fixture key.
-fn attribute_name(key: &str) -> AttributeName {
+pub(crate) fn attribute_name(key: &str) -> AttributeName {
     key.parse().expect("an attribute name")
 }
 
@@ -214,39 +214,8 @@ fn family_of(object: &Map<String, Value>) -> AttributeType {
         .unwrap_or(AttributeType::Property)
 }
 
-/// Decode one expanded `GeoJSON` Point node into its geometry, any other
-/// geometry node into a value no path addresses, and the clause 4.7.2 string
-/// form as the literal it is.
-fn geometry_of(node: &Value) -> FixtureItem {
-    if node.get("@value").is_some() {
-        return item_of(node);
-    }
-    let point = node
-        .get("@type")
-        .and_then(Value::as_array)
-        .is_some_and(|types| types.iter().any(|declared| declared == GEOJSON_POINT));
-    let coordinates: Option<Vec<f64>> = node
-        .get(GEOJSON_COORDINATES)
-        .and_then(|member| member.get(0))
-        .and_then(|list| list.get("@list"))
-        .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(|item| item.get("@value").and_then(Value::as_f64)).collect());
-    match (point, coordinates.as_deref()) {
-        (true, Some(&[longitude, latitude])) => {
-            FixtureItem::Geometry(GeometryForm::Point(Position::try_new(longitude, latitude, None).expect("a CRS84 position")))
-        }
-        (true | false, Some(_) | None) => FixtureItem::Opaque,
-    }
-}
-
-/// The expanded type of a `GeoJSON` Point.
-const GEOJSON_POINT: &str = "https://purl.org/geojson/vocab#Point";
-
-/// The expanded name of a `GeoJSON` geometry's `coordinates`.
-const GEOJSON_COORDINATES: &str = "https://purl.org/geojson/vocab#coordinates";
-
 /// Decode one expanded value node.
-fn item_of(node: &Value) -> FixtureItem {
+pub(crate) fn item_of(node: &Value) -> FixtureItem {
     let Some(object) = node.as_object() else {
         return FixtureItem::Opaque;
     };
@@ -293,13 +262,13 @@ fn item_of(node: &Value) -> FixtureItem {
 
 impl FixtureItem {
     /// The item as the evaluator reads it.
-    fn view(&self) -> ValueItem<'_, &FixtureNode> {
+    pub(crate) fn view(&self) -> ValueItem<'_, &FixtureNode> {
         match self {
             FixtureItem::Literal(literal) => ValueItem::Literal(literal.view()),
             FixtureItem::Json(json) => ValueItem::Json(RawJson::json_literal(json.piece())),
             FixtureItem::Reference(iri) => ValueItem::Reference(iri),
             FixtureItem::Node(node) => ValueItem::Node(node),
-            FixtureItem::Geometry(form) => ValueItem::Geometry(form),
+            FixtureItem::Geometry(_) => ValueItem::Geometry,
             FixtureItem::Opaque => ValueItem::Opaque,
         }
     }
@@ -322,6 +291,7 @@ impl<'a> QueriedEntity<'a> for &'a FixtureEntity {
 
 impl<'a> QueriedInstance<'a> for &'a FixtureInstance {
     type Node = &'a FixtureNode;
+    type Geometry = &'a FixtureGeometry;
 
     fn family(self) -> AttributeType {
         self.family
@@ -329,6 +299,13 @@ impl<'a> QueriedInstance<'a> for &'a FixtureInstance {
 
     fn values(self) -> impl Iterator<Item = ValueItem<'a, &'a FixtureNode>> {
         self.values.iter().map(FixtureItem::view)
+    }
+
+    fn geometry(self) -> Option<&'a FixtureGeometry> {
+        self.values.iter().find_map(|item| match item {
+            FixtureItem::Geometry(geometry) => Some(geometry),
+            FixtureItem::Literal(_) | FixtureItem::Json(_) | FixtureItem::Reference(_) | FixtureItem::Node(_) | FixtureItem::Opaque => None,
+        })
     }
 
     fn value_presence(self) -> ValuePresence {

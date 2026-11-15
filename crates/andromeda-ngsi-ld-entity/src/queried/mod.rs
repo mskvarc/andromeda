@@ -8,10 +8,12 @@
 //! [`EntityDocument`](crate::document::EntityDocument), the instances a
 //! Temporal Evolution write records. Every read borrows from the model; nothing
 //! is rebuilt as JSON to be evaluated. [`linked_states`] holds the states a
-//! `q` hop crosses into.
+//! `q` hop crosses into, and [`geometry_reading`] reads a `GeoProperty`'s
+//! geometry as the `GeoJSON` object it is.
 
 pub mod document_reading;
 pub mod family_values;
+pub mod geometry_reading;
 pub mod held_instance;
 pub mod linked_states;
 pub mod queried_mode;
@@ -21,5 +23,7 @@ pub mod written_instance;
 
 #[cfg(test)]
 mod document_reading_tests;
+#[cfg(test)]
+mod geometry_reading_tests;
 #[cfg(test)]
 mod state_reading_tests;
