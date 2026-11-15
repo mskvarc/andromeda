@@ -13,5 +13,21 @@ WHERE
     OR "entities"."expires_at" > NOW()
   )
   AND (
-    "entity_search"."attribute_name_keys" @> (ARRAY[28])
+    (
+      "entity_search"."attribute_name_keys" @> (ARRAY[28])
+    )
+    AND EXISTS (
+      SELECT
+        1
+      FROM
+        "current_attributes" AS "ca"
+      WHERE
+        "ca"."attribute_name_key" = $1
+        AND (
+          "ca"."expires_at" IS NULL
+          OR "ca"."expires_at" > NOW()
+        )
+        AND "ca"."entity_key" = "entities"."entity_key"
+    )
   )
+1: Int 28

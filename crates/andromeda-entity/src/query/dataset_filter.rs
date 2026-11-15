@@ -2,9 +2,10 @@
 
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{attribute::instance::AttributeValue, entity::Entity};
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::dataset::{DatasetFilter, DatasetSelector};
 
-/// Retain only the attribute instances whose `datasetId` the caller named.
+/// Retain only the attribute instances whose `datasetId` the caller named, as
+/// [`DatasetFilter::selects`] decides.
 ///
 /// An attribute left with no instance is removed entirely: clause 4.5.5 makes
 /// `datasetId` an instance selector, and an attribute whose every instance was
@@ -12,7 +13,8 @@ use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 /// Attribute of the entity, so `location`, `observationSpace` and
 /// `operationSpace` are narrowed like any other.
 pub(super) fn filter_entity_by_dataset_id(entity: &mut Entity, dataset_ids: &[DatasetSelector]) {
-    let selected = |dataset_id: Option<&Identifier>| dataset_ids.iter().any(|selector| selector.selects(dataset_id));
+    let filter = DatasetFilter::from_selectors(dataset_ids);
+    let selected = |dataset_id: Option<&Identifier>| filter.selects(dataset_id);
     entity.retain_attribute_members(|_name, member| match member {
         AttributeValue::Single(attr) => selected(attr.as_ref().dataset_id()),
         AttributeValue::Multiple(list) => {

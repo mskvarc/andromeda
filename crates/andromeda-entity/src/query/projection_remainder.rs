@@ -13,14 +13,13 @@
 //! has leaves nothing to answer with either.
 //!
 //! A query answers the same question as a selection instead: an Entity the
-//! projection would reduce to nothing is not selected at all
-//! (`andromeda_ngsi_ld_query::projection::projected_members`), so the count and
-//! the page are taken over the entities that keep a member.
+//! projection would reduce to nothing is not selected at all, so the count
+//! and the page are taken over the entities that keep a member. Both read the
+//! one statement of the rule, [`ProjectedMembers::admits`].
 
-use crate::query::state_projection::keeps_a_standing_attribute;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_query::projection::{compiled::Projection, projected_members::ProjectedMembers};
 use chrono::{DateTime, Utc};
 use derive_more::IsVariant;
 
@@ -33,151 +32,22 @@ pub enum ProjectionRemainder {
     Nothing,
 }
 
-/// What `projection` left of `entity`.
-///
-/// `entity` must already have been narrowed by
-/// [`project_entity`]: this reads the members that survived rather than
-/// reapplying the projection to find out.
-///
-/// [`project_entity`]: crate::query::attribute_projection::project_entity
-#[must_use]
-pub fn projection_remainder(entity: &Entity, projection: &Projection) -> ProjectionRemainder {
-    if projection.is_empty() {
-        return ProjectionRemainder::Members;
-    }
-    // `scope` is already gone if the projection excluded it; `id` and `type`
-    // are members of the rendered representation rather than of the typed
-    // entity, so the keyword rule is what decides whether they will be written.
-    let survives = entity.has_attribute_members() || entity.scope.is_some() || projection.keeps(&ProjectionTerm::Id) || projection.keeps(&ProjectionTerm::Type);
-    if survives {
-        ProjectionRemainder::Members
-    } else {
-        ProjectionRemainder::Nothing
-    }
-}
-
 /// What `projection` left of `state`, at `now`.
 ///
-/// `state` must already have been narrowed by the projection: this reads the
-/// members that survived. An attribute whose every instance expired at `now`
-/// is not one the compacted entity will carry (clause 4.22).
+/// `state` may have been narrowed by the projection already, which removes
+/// only members the projection does not keep. An attribute whose every
+/// instance expired at `now` is not one the compacted entity will carry
+/// (clause 4.22), so only the standing ones count.
 #[must_use]
 pub fn state_remainder(state: &EntityState, projection: &Projection, now: DateTime<Utc>) -> ProjectionRemainder {
-    if projection.is_empty() {
-        return ProjectionRemainder::Members;
-    }
-    let survives =
-        keeps_a_standing_attribute(state, now) || state.scope().is_some() || projection.keeps(&ProjectionTerm::Id) || projection.keeps(&ProjectionTerm::Type);
-    if survives {
+    let standing = state
+        .attributes()
+        .names()
+        .filter(|name| state.attribute_stands(name.as_str(), now))
+        .map(AttributeName::as_str);
+    if ProjectedMembers::of(projection).admits(standing, state.scope().is_some()) {
         ProjectionRemainder::Members
     } else {
         ProjectionRemainder::Nothing
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::query::projection_remainder::{ProjectionRemainder, projection_remainder};
-    use andromeda_ngsi_ld_model::entity::Entity;
-    use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::ProjectionTerm};
-    use iri_rs::IriBuf;
-    use pretty_assertions::assert_eq;
-    use serde_json::json;
-
-    fn iri(value: &str) -> IriBuf {
-        IriBuf::new(value.to_string()).expect("valid IRI")
-    }
-
-    fn attribute(name: &str) -> ProjectionTerm {
-        ProjectionTerm::Attribute {
-            iri: iri(&format!("https://example.com/{name}")),
-            linked: Vec::new(),
-        }
-    }
-
-    fn entity(payload: serde_json::Value) -> Entity {
-        serde_json::from_value(payload).expect("entity")
-    }
-
-    fn stripped() -> Entity {
-        entity(json!({"id": "urn:ngsi-ld:Building:1", "type": "Building"}))
-    }
-
-    /// Clause 5.7.1.4: a `pick` that matched no member of the entity leaves
-    /// nothing, because the clause 4.21 keyword rule drops `id` and `type`
-    /// along with it.
-    #[test]
-    fn a_pick_naming_only_an_unmatched_attribute_leaves_nothing() {
-        let projection = Projection {
-            pick: vec![attribute("unknown")],
-            omit: Vec::new(),
-        };
-
-        assert_eq!(projection_remainder(&stripped(), &projection), ProjectionRemainder::Nothing);
-    }
-
-    /// A `pick` that names `id` leaves the entity identifiable, so there is
-    /// something to render even with no attribute left.
-    #[test]
-    fn a_pick_naming_id_leaves_the_identifier() {
-        let projection = Projection {
-            pick: vec![ProjectionTerm::Id],
-            omit: Vec::new(),
-        };
-
-        assert_eq!(projection_remainder(&stripped(), &projection), ProjectionRemainder::Members);
-    }
-
-    /// Clause 5.7.1.5: an `omit` naming every member the entity has, `id` and
-    /// `type` included, leaves nothing.
-    #[test]
-    fn an_omit_naming_every_member_leaves_nothing() {
-        let projection = Projection {
-            pick: Vec::new(),
-            omit: vec![ProjectionTerm::Id, ProjectionTerm::Type, attribute("name")],
-        };
-
-        assert_eq!(projection_remainder(&stripped(), &projection), ProjectionRemainder::Nothing);
-    }
-
-    /// The same `omit` leaves the entity standing while one attribute member
-    /// survives it.
-    #[test]
-    fn an_omit_that_spares_an_attribute_leaves_the_entity() {
-        let surviving = entity(json!({
-            "id": "urn:ngsi-ld:Building:1",
-            "type": "Building",
-            "name": {"type": "Property", "value": "Eiffel Tower"}
-        }));
-        let projection = Projection {
-            pick: Vec::new(),
-            omit: vec![ProjectionTerm::Id, ProjectionTerm::Type],
-        };
-
-        assert_eq!(projection_remainder(&surviving, &projection), ProjectionRemainder::Members);
-    }
-
-    /// Clause 5.2.4 keeps `location` in its own Entity member; it is an
-    /// Attribute all the same, so an entity left with only that one is not
-    /// left with nothing.
-    #[test]
-    fn a_surviving_geo_property_leaves_the_entity() {
-        let located = entity(json!({
-            "id": "urn:ngsi-ld:Building:1",
-            "type": "Building",
-            "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}}
-        }));
-        let projection = Projection {
-            pick: vec![attribute("location")],
-            omit: Vec::new(),
-        };
-
-        assert_eq!(projection_remainder(&located, &projection), ProjectionRemainder::Members);
-    }
-
-    /// A request that named neither `pick` nor `omit` projects nothing away.
-    #[test]
-    fn an_empty_projection_always_leaves_the_entity() {
-        assert_eq!(projection_remainder(&stripped(), &Projection::default()), ProjectionRemainder::Members);
     }
 }

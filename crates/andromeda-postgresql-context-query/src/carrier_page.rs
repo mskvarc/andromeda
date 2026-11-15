@@ -20,7 +20,7 @@
 //! walk is never the planner's choice for it.
 
 use crate::{
-    carried_names::attrs_condition,
+    carried_names::attrs_carriers,
     entity::{QFilter, build_entity_conditions},
     entity_page::{ProjectedPage, StepColumn},
     entity_relations::{Demand, EntityRelations, RowSource},
@@ -69,7 +69,7 @@ pub(crate) fn carriers(query: &CompiledEntityQuery, names: &QueryNames, schema: 
         return None;
     }
     let rows = EntityRowRefs::unaliased(schema.cloned());
-    let carried = attrs_condition(selection, names, &rows)?;
+    let carried = attrs_carriers(selection, names, &rows)?;
     let mut carriers = Query::select();
     carriers
         .expr(rows.search_column(EntitySearch::EntityKey))

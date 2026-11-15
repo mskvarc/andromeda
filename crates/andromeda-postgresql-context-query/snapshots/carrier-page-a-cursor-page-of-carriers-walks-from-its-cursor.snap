@@ -43,6 +43,19 @@ FROM
             "entity_search" AS "probed"
           WHERE
             ("probed"."attribute_name_keys" @> (ARRAY[28]))
+            AND EXISTS (
+              SELECT
+                1
+              FROM
+                "current_attributes" AS "ca"
+              WHERE
+                "ca"."attribute_name_key" = $3
+                AND (
+                  "ca"."expires_at" IS NULL
+                  OR "ca"."expires_at" > NOW()
+                )
+                AND "ca"."entity_key" = "walked"."entity_key"
+            )
             AND "probed"."entity_key" = "walked"."entity_key"
         )
       ORDER BY
@@ -74,7 +87,7 @@ FROM
               COUNT(*)
             FROM
               "short_walk"
-          ) >= $3
+          ) >= $4
         ORDER BY
           "sort_0" ASC
         LIMIT
@@ -99,7 +112,22 @@ FROM
               OR "entities"."expires_at" > NOW()
             )
             AND (
-              "entity_search"."attribute_name_keys" @> (ARRAY[28])
+              (
+                "entity_search"."attribute_name_keys" @> (ARRAY[28])
+              )
+              AND EXISTS (
+                SELECT
+                  1
+                FROM
+                  "current_attributes" AS "ca"
+                WHERE
+                  "ca"."attribute_name_key" = $5
+                  AND (
+                    "ca"."expires_at" IS NULL
+                    OR "ca"."expires_at" > NOW()
+                  )
+                  AND "ca"."entity_key" = "entities"."entity_key"
+              )
             )
             AND "entities"."entity_key" IN (
               SELECT
@@ -112,14 +140,14 @@ FROM
                 COUNT(*)
               FROM
                 "short_walk"
-            ) < $4
+            ) < $6
             AND (
               SELECT
                 COUNT(*)
               FROM
                 "candidates"
-            ) <= $5
-            AND "entities"."id" > $6
+            ) <= $7
+            AND "entities"."id" > $8
           ORDER BY
             "sort_0" ASC
           LIMIT
@@ -145,21 +173,36 @@ FROM
               OR "entities"."expires_at" > NOW()
             )
             AND (
-              "entity_search"."attribute_name_keys" @> (ARRAY[28])
+              (
+                "entity_search"."attribute_name_keys" @> (ARRAY[28])
+              )
+              AND EXISTS (
+                SELECT
+                  1
+                FROM
+                  "current_attributes" AS "ca"
+                WHERE
+                  "ca"."attribute_name_key" = $9
+                  AND (
+                    "ca"."expires_at" IS NULL
+                    OR "ca"."expires_at" > NOW()
+                  )
+                  AND "ca"."entity_key" = "entities"."entity_key"
+              )
             )
             AND (
               SELECT
                 COUNT(*)
               FROM
                 "short_walk"
-            ) < $7
+            ) < $10
             AND (
               SELECT
                 COUNT(*)
               FROM
                 "candidates"
-            ) > $8
-            AND "entities"."id" > $9
+            ) > $11
+            AND "entities"."id" > $12
           ORDER BY
             "sort_0" ASC
           LIMIT
@@ -189,10 +232,13 @@ ORDER BY
   "page"."sort_0" ASC
 1: String 'urn:ngsi-ld:Trip:042'
 2: Int 1
-3: BigUnsigned 20
+3: Int 28
 4: BigUnsigned 20
-5: BigUnsigned 50000
-6: String 'urn:ngsi-ld:Trip:042'
-7: BigUnsigned 20
-8: BigUnsigned 50000
-9: String 'urn:ngsi-ld:Trip:042'
+5: Int 28
+6: BigUnsigned 20
+7: BigUnsigned 50000
+8: String 'urn:ngsi-ld:Trip:042'
+9: Int 28
+10: BigUnsigned 20
+11: BigUnsigned 50000
+12: String 'urn:ngsi-ld:Trip:042'
