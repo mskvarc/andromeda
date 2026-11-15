@@ -1,0 +1,10 @@
+---
+source: crates/andromeda-postgresql-query/src/ordering/result_ordering.rs
+---
+SELECT
+  "id"
+ORDER BY
+  "r" ASC NULLS LAST,
+  "n" ASC,
+  "i" ASC,
+  "t" ASC

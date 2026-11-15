@@ -9,14 +9,16 @@
 //! the column, and a walk projects the column's value as the one key of its
 //! datatype, every other key `NULL`.
 
-use crate::{
-    attribute_value_datatype::{NUMBER_TYPE, datatype_rank},
-    occupied_columns::HeldColumn,
-    result_ordering::RankedValue,
-};
+use crate::occupied_columns::HeldColumn;
 use andromeda_ngsi_ld_query::ordering::sort_direction::SortDirection;
 use andromeda_ngsi_ld_vocabulary::expanded::classes::DATE_TIME;
-use andromeda_postgresql_query::q_predicate::projection_probe::projection_column;
+use andromeda_postgresql_query::{
+    ordering::{
+        attribute_value_datatype::{NUMBER_TYPE, datatype_rank},
+        result_ordering::RankedValue,
+    },
+    q_predicate::projection_probe::projection_column,
+};
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::{
     cast::typed_null,

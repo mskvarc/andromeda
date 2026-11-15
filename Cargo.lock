@@ -1780,7 +1780,6 @@ dependencies = [
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-postgresql-branch",
- "andromeda-postgresql-encoding",
  "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",

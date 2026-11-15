@@ -7,9 +7,6 @@
 //! opens no connection, holds no pool, and returns `sea_query` statement trees
 //! for the store to run through the SQL adapter.
 
-mod attribute_value_datatype;
-mod attribute_value_holder;
-pub mod attribute_value_order;
 mod carried_names;
 pub mod carrier_page;
 pub mod csr;
@@ -23,9 +20,7 @@ pub mod id_pattern_page;
 pub mod keyed_count;
 pub mod keyed_page;
 mod occupied_columns;
-pub mod order_geography;
 mod page_shape;
-pub mod result_ordering;
 pub mod selector_predicate;
 pub mod value_walk_page;
 mod walked_column;

@@ -36,7 +36,6 @@ use crate::{
     entity_page::{ProjectedPage, projected_page},
     gated_page::PageSource,
     occupied_columns::{OccupiedColumns, held_alone, occupied_columns},
-    result_ordering::{RankedValue, identifier_tiebreak, ranked_keys},
     walked_column::{WalkedCarriers, WalkedColumn},
 };
 use andromeda_ngsi_ld_query::{
@@ -52,6 +51,7 @@ use andromeda_postgresql_query::{
     entity_row_refs::EntityRowRefs,
     error::RenderError,
     one_time_gate::{count_of, materialized, wrapped},
+    ordering::result_ordering::{RankedValue, identifier_tiebreak, ranked_keys},
     q_predicate::projection_probe::{Ca, of_attribute, projection_column, standing},
     query_names::QueryNames,
     sort_key::SortKey,

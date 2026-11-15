@@ -1,0 +1,6 @@
+---
+source: crates/andromeda-postgresql-query/src/ordering/attribute_value_order.rs
+---
+SELECT
+  array_position($1::text[], "order_value_0"."value_datatype")
+1: Array ARRAY ['number','string','object','array','boolean','https://uri.etsi.org/ngsi-ld/Time','https://uri.etsi.org/ngsi-ld/Date','https://uri.etsi.org/ngsi-ld/DateTime','null']
