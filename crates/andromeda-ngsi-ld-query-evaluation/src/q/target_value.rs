@@ -4,8 +4,8 @@
 //! What each attribute family's target is, is the language crate's
 //! `family_reading`.
 
-use crate::queried_entity::value_item::LiteralValue;
-use andromeda_json_literal::piece::{JsonKind, JsonPiece};
+use crate::queried_entity::{raw_json::RawJson, value_item::LiteralValue};
+use andromeda_json_literal::piece::JsonKind;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::value::TimeValue};
 use andromeda_ngsi_ld_number::{JsonNumber, declared_number::NonFinite};
 use andromeda_ngsi_ld_query::filter::{
@@ -69,10 +69,11 @@ pub enum TargetValue<'a> {
     Text(Cow<'a, str>),
     /// A boolean.
     Boolean(bool),
-    /// Raw JSON held outside the JSON-LD graph, never an array: a JSON array is
-    /// an [`TargetValue::Array`] of its elements, which [`TargetValue::json`]
-    /// guarantees.
-    Json(JsonPiece<'a>),
+    /// Raw JSON, never an array and never a value object declaring a time
+    /// value: [`TargetValue::json`] makes a JSON array the
+    /// [`TargetValue::Array`] of its elements and such a value object the
+    /// [`TargetValue::Time`] it declares.
+    Json(RawJson<'a>),
     /// Several values, which clause 4.9 compares by membership.
     Array(Vec<TargetValue<'a>>),
     /// A value declared as a clause 4.6.3 time value, or an instant the
@@ -88,13 +89,17 @@ pub enum TargetValue<'a> {
 }
 
 impl<'a> TargetValue<'a> {
-    /// The target value raw JSON holds, a JSON array becoming the array of its
-    /// elements.
+    /// The target value raw JSON holds: a value object declaring a time value
+    /// is that time value, and a JSON array the array of its elements, each
+    /// read the same way.
     #[must_use]
-    pub fn json(piece: JsonPiece<'a>) -> TargetValue<'a> {
-        match piece.elements() {
+    pub fn json(json: RawJson<'a>) -> TargetValue<'a> {
+        if let Some(time) = json.declared_time() {
+            return TargetValue::Time(time);
+        }
+        match json.elements() {
             Some(elements) => TargetValue::Array(elements.into_iter().map(TargetValue::json).collect()),
-            None => TargetValue::Json(piece),
+            None => TargetValue::Json(json),
         }
     }
 
@@ -147,8 +152,8 @@ impl<'a> TargetValue<'a> {
     pub fn as_number(&self) -> Option<Cow<'_, JsonNumber>> {
         match self {
             TargetValue::Number(number) => Some(Cow::Borrowed(number.as_ref())),
-            TargetValue::Json(json) => match json.kind() {
-                JsonKind::Number => json.as_number().map(Cow::Owned),
+            TargetValue::Json(json) => match json.piece().kind() {
+                JsonKind::Number => json.piece().as_number().map(Cow::Owned),
                 JsonKind::Null | JsonKind::String | JsonKind::Boolean | JsonKind::Array | JsonKind::Object => None,
             },
             TargetValue::Text(_)
@@ -178,8 +183,8 @@ impl<'a> TargetValue<'a> {
     pub fn as_boolean(&self) -> Option<bool> {
         match self {
             TargetValue::Boolean(boolean) => Some(*boolean),
-            TargetValue::Json(json) => match json.kind() {
-                JsonKind::Boolean => json.as_bool(),
+            TargetValue::Json(json) => match json.piece().kind() {
+                JsonKind::Boolean => json.piece().as_bool(),
                 JsonKind::Null | JsonKind::String | JsonKind::Number | JsonKind::Array | JsonKind::Object => None,
             },
             TargetValue::Text(_)
@@ -224,7 +229,7 @@ impl<'a> TargetValue<'a> {
             TargetValue::Number(_) => ValueShape::One(TargetKind::Number),
             TargetValue::Text(_) => ValueShape::One(text),
             TargetValue::Boolean(_) => ValueShape::One(TargetKind::Boolean),
-            TargetValue::Json(json) => ValueShape::One(match json.kind() {
+            TargetValue::Json(json) => ValueShape::One(match json.piece().kind() {
                 JsonKind::Null => TargetKind::Null,
                 JsonKind::String => text,
                 JsonKind::Number => TargetKind::Number,
@@ -248,7 +253,7 @@ impl<'a> TargetValue<'a> {
     pub fn as_text(&self) -> Option<Cow<'_, str>> {
         match self {
             TargetValue::Text(text) => Some(Cow::Borrowed(text.as_ref())),
-            TargetValue::Json(json) => json.as_str(),
+            TargetValue::Json(json) => json.piece().as_str(),
             TargetValue::Number(_)
             | TargetValue::Boolean(_)
             | TargetValue::Array(_)
@@ -278,9 +283,12 @@ pub fn json_member<'a>(seed: &ResolvedTarget<'a>, keys: &[AttributeName]) -> Opt
 
 #[cfg(test)]
 mod tests {
-    use crate::q::target_value::{ResolvedTarget, TargetValue, ValueShape, json_member};
+    use crate::{
+        q::target_value::{ResolvedTarget, TargetValue, ValueShape, json_member},
+        queried_entity::raw_json::RawJson,
+    };
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::value::TimeValueForm};
     use andromeda_ngsi_ld_number::declared_number::NonFinite;
     use andromeda_ngsi_ld_query::filter::reading::{
         array_target::ArrayTarget,
@@ -295,6 +303,10 @@ mod tests {
 
     fn literal(text: &str) -> JsonLiteral {
         JsonLiteral::admit(text).expect("a literal")
+    }
+
+    fn raw(json: &JsonLiteral) -> RawJson<'_> {
+        RawJson::json_literal(json.piece())
     }
 
     fn seed(value: TargetValue<'_>) -> ResolvedTarget<'_> {
@@ -315,15 +327,15 @@ mod tests {
         pretty_assertions::assert_eq!(text.shape(TargetOrigin::AttributeValue), ValueShape::One(TargetKind::String));
         pretty_assertions::assert_eq!(text.shape(TargetOrigin::RelationshipObject), ValueShape::One(TargetKind::RelationshipObject));
         pretty_assertions::assert_eq!(
-            TargetValue::Json(null.piece()).shape(TargetOrigin::AttributeValue),
+            TargetValue::Json(raw(&null)).shape(TargetOrigin::AttributeValue),
             ValueShape::One(TargetKind::Null)
         );
         pretty_assertions::assert_eq!(
-            TargetValue::Json(object.piece()).shape(TargetOrigin::AttributeValue),
+            TargetValue::Json(raw(&object)).shape(TargetOrigin::AttributeValue),
             ValueShape::One(TargetKind::Object)
         );
         pretty_assertions::assert_eq!(
-            TargetValue::Json(number.piece()).shape(TargetOrigin::AttributeValue),
+            TargetValue::Json(raw(&number)).shape(TargetOrigin::AttributeValue),
             ValueShape::One(TargetKind::Number)
         );
         pretty_assertions::assert_eq!(
@@ -364,12 +376,36 @@ mod tests {
         let document = literal(r#"[1, [2, "x"]]"#);
         let (one, two, x) = (literal("1"), literal("2"), literal(r#""x""#));
         pretty_assertions::assert_eq!(
-            TargetValue::json(document.piece()),
+            TargetValue::json(raw(&document)),
             TargetValue::Array(vec![
-                TargetValue::Json(one.piece()),
-                TargetValue::Array(vec![TargetValue::Json(two.piece()), TargetValue::Json(x.piece())]),
+                TargetValue::Json(raw(&one)),
+                TargetValue::Array(vec![TargetValue::Json(raw(&two)), TargetValue::Json(raw(&x))]),
             ])
         );
+    }
+
+    /// A value object declaring a time value in its form is that time value
+    /// wherever it sits in JSON-LD kept as written (clause 3.1, annex C.6),
+    /// as an array's element and as a member a trailing path reaches alike,
+    /// and the object it is in a JSON literal.
+    #[test]
+    fn a_value_object_is_a_time_value_only_in_json_ld_kept_as_written() {
+        let document = literal(r#"{"list": [{"@type": "DateTime", "@value": "2024-01-01T00:00:00Z"}, "x"], "m": {"@type": "Date", "@value": "2024-01-01"}}"#);
+        let (instant, day) = (
+            TimeValueForm::DateTime.parse("2024-01-01T00:00:00Z").expect("a DateTime"),
+            TimeValueForm::Date.parse("2024-01-01").expect("a Date"),
+        );
+        let written = seed(TargetValue::json(RawJson::written_json_ld(document.piece())));
+        let list = json_member(&written, &keys(&["list"])).expect("a member").value;
+        let TargetValue::Array(elements) = &list else {
+            panic!("an array: {list:?}");
+        };
+        pretty_assertions::assert_eq!(elements.first(), Some(&TargetValue::Time(instant)));
+        pretty_assertions::assert_eq!(elements.get(1).and_then(TargetValue::as_text).as_deref(), Some("x"));
+        pretty_assertions::assert_eq!(json_member(&written, &keys(&["m"])).expect("a member").value, TargetValue::Time(day));
+        let literal_member = json_member(&seed(TargetValue::json(raw(&document))), &keys(&["m"])).expect("a member").value;
+        pretty_assertions::assert_eq!(literal_member.as_time(), None);
+        pretty_assertions::assert_eq!(literal_member.shape(TargetOrigin::AttributeValue), ValueShape::One(TargetKind::Object));
     }
 
     /// Clause 4.9 makes a target of another data type unequal to the operand,
@@ -377,13 +413,13 @@ mod tests {
     #[test]
     fn a_target_reads_only_in_the_domain_of_its_own_json_type() {
         let (twelve, object, text, yes) = (literal("12"), literal(r#"{"a": 1}"#), literal(r#""12""#), literal("true"));
-        pretty_assertions::assert_eq!(TargetValue::Json(twelve.piece()).as_number().map(Cow::into_owned), "12".parse().ok());
-        pretty_assertions::assert_eq!(TargetValue::Json(twelve.piece()).as_text(), None);
-        pretty_assertions::assert_eq!(TargetValue::Json(text.piece()).as_number(), None);
-        pretty_assertions::assert_eq!(TargetValue::Json(text.piece()).as_text().as_deref(), Some("12"));
-        pretty_assertions::assert_eq!(TargetValue::Json(yes.piece()).as_boolean(), Some(true));
-        pretty_assertions::assert_eq!(TargetValue::Json(yes.piece()).as_text(), None);
-        pretty_assertions::assert_eq!(TargetValue::Json(object.piece()).as_text(), None);
+        pretty_assertions::assert_eq!(TargetValue::Json(raw(&twelve)).as_number().map(Cow::into_owned), "12".parse().ok());
+        pretty_assertions::assert_eq!(TargetValue::Json(raw(&twelve)).as_text(), None);
+        pretty_assertions::assert_eq!(TargetValue::Json(raw(&text)).as_number(), None);
+        pretty_assertions::assert_eq!(TargetValue::Json(raw(&text)).as_text().as_deref(), Some("12"));
+        pretty_assertions::assert_eq!(TargetValue::Json(raw(&yes)).as_boolean(), Some(true));
+        pretty_assertions::assert_eq!(TargetValue::Json(raw(&yes)).as_text(), None);
+        pretty_assertions::assert_eq!(TargetValue::Json(raw(&object)).as_text(), None);
         pretty_assertions::assert_eq!(TargetValue::Text(Cow::Borrowed("0.5")).as_number(), None);
         pretty_assertions::assert_eq!(TargetValue::Text(Cow::Borrowed("true")).as_boolean(), None);
         pretty_assertions::assert_eq!(TargetValue::Number(Cow::Owned("12".parse().expect("a number"))).as_text(), None);
@@ -395,11 +431,11 @@ mod tests {
     #[test]
     fn a_json_member_is_found_by_its_verbatim_key_in_an_object_only() {
         let (document, three) = (literal(r#"{"a": {"b": 3}}"#), literal("3"));
-        let found = json_member(&seed(TargetValue::json(document.piece())), &keys(&["a", "b"])).expect("a member");
-        pretty_assertions::assert_eq!(found.value, TargetValue::Json(three.piece()));
+        let found = json_member(&seed(TargetValue::json(raw(&document))), &keys(&["a", "b"])).expect("a member");
+        pretty_assertions::assert_eq!(found.value, TargetValue::Json(raw(&three)));
         let (flat, listed) = (literal(r#"{"a": 1}"#), literal(r#"[{"a": 1}]"#));
-        assert!(json_member(&seed(TargetValue::json(flat.piece())), &keys(&["a", "b"])).is_none());
+        assert!(json_member(&seed(TargetValue::json(raw(&flat))), &keys(&["a", "b"])).is_none());
         assert!(json_member(&seed(TargetValue::Text(Cow::Borrowed("a"))), &keys(&["a"])).is_none());
-        assert!(json_member(&seed(TargetValue::json(listed.piece())), &keys(&["a"])).is_none());
+        assert!(json_member(&seed(TargetValue::json(raw(&listed))), &keys(&["a"])).is_none());
     }
 }

@@ -1,5 +1,5 @@
 //! A declared time value of a Context Source Property reads alike in a discovery query and a subscription to
-//! registrations, and is a time value only in the clause 4.6.3 form of its datatype.
+//! registrations, and is a time value wherever it sits and only in the clause 4.6.3 form of its datatype.
 
 use andromeda_test_suite::{
     broker,
@@ -16,18 +16,24 @@ use ngsi_ld::{
 /// Pins: over registrations r1 (`since` declared the `DateTime` 2024-01-01T00:00:00Z, `day` the `Date` 2024-01-01,
 /// `opening` a Property node holding the `Time` 08:00:00Z, `comma` the `DateTime` 2024-01-01T00:00:00,5Z), r2 (`since`
 /// declared the `DateTime` 2024-01-01T00:00:00+00:00, `day` the `Date` 2024-1-1, `opening` the `Time` 08:00:00+01:00,
-/// `calendar` the `Date` 2024-02-30) and r3 (`list` an array holding the declared `DateTime` 2024-01-01T00:00:00Z,
-/// `held` an object whose member `m` holds it), Query Context Source Registrations and a Context Source Registration
-/// Subscription with each csf select alike: since>2023-12-31T00:00:00Z r1, since!=2024-01-01T00:00:00Z r2,
+/// `calendar` the `Date` 2024-02-30), r3 (`list` an array holding the declared `DateTime` 2024-01-01T00:00:00Z, `held`
+/// an object whose member `m` holds it, `deep` an object whose member `a` holds an object whose member `b` holds the
+/// `Date` 2024-01-01 declared by its IRI, `mixed` an array holding that `DateTime` beside the String "x") and r4
+/// (`list` an array holding the declared `DateTime` 2024-01-01T00:00:00+00:00, `held` an object whose member `m`
+/// holds the declared `Date` 2024-1-1, `deep` an object whose member `a` holds an object whose member `b` holds the
+/// declared `Time` 08:00:00+01:00), Query Context Source Registrations and a Context Source Registration Subscription
+/// with each csf select alike: since>2023-12-31T00:00:00Z r1, since!=2024-01-01T00:00:00Z r2,
 /// since=="2024-01-01T00:00:00+00:00" none, since==2024-01-01T00:00:00Z,"x" r1, day>2023-12-31 r1, day!=2024-01-01
 /// r2, calendar>2024-01-01 none, calendar!=2024-02-28 r2, opening>07:00:00Z r1, opening!=08:00:00Z r2,
-/// comma==2024-01-01T00:00:00.5Z r1, list==2024-01-01T00:00:00Z none, list!=2024-01-01T00:00:00Z r3,
-/// held[m]>2023-12-31T00:00:00Z none and held[m]!=2024-01-01T00:00:00Z r3; a value object declaring a time value is
-/// that value when its `@value` spells one in the clause 4.6.3 form of its datatype, a decimal comma included, and
-/// otherwise (an offset, an unpadded date, a day the calendar does not have), as an element of an array value or as a
-/// member of an object value, the raw JSON it is, which no time operand is included in and which is unequal to every
-/// one
-/// Clause: 4.6.3, 4.9, 5.2.9, 5.10.2.4, 5.11.2.4, C.6
+/// comma==2024-01-01T00:00:00.5Z r1, list==2024-01-01T00:00:00Z r3, list!=2024-01-01T00:00:00Z r4,
+/// list>2023-12-31T00:00:00Z none, held[m]>2023-12-31T00:00:00Z r3, held[m]!=2024-01-01T00:00:00Z r4,
+/// deep[a.b]==2024-01-01 r3, deep[a.b]<2024-01-02 r3, deep[a.b]!=2024-01-01 r4, mixed==2024-01-01T00:00:00Z r3,
+/// mixed=="x" r3 and mixed!=2024-01-01T00:00:00Z none; a value object declaring a time value is that value wherever
+/// it sits (the property's value, an element of an array value, a member of an object value at any depth) when its
+/// `@value` spells one in the clause 4.6.3 form of its datatype, a decimal comma included, and otherwise (an offset,
+/// an unpadded date, a day the calendar does not have) the raw JSON it is, which no time operand is included in and
+/// which is unequal to every one; an array holding a time value is still an array, over which no order holds
+/// Clause: 3.1, 4.6.3, 4.9, 5.2.9, 5.10.2.4, 5.11.2.4, C.6
 #[gtest]
 #[tokio::test]
 async fn n_csr_qry_9095_a_declared_time_value_is_read_in_its_form_alike_in_a_query_and_a_subscription() -> Result<()> {
@@ -39,6 +45,7 @@ async fn n_csr_qry_9095_a_declared_time_value_is_read_in_its_form_alike_in_a_que
         namespace.registration_id("r1")?,
         namespace.registration_id("r2")?,
         namespace.registration_id("r3")?,
+        namespace.registration_id("r4")?,
     ];
     let mut registrations = Vec::with_capacity(ids.len());
     for id in &ids {
@@ -61,9 +68,14 @@ async fn n_csr_qry_9095_a_declared_time_value_is_read_in_its_form_alike_in_a_que
     let calendar: RawJson = r#"{"@type": "Date", "@value": "2024-02-30"}"#.parse()?;
     let list: RawJson = r#"[{"@type": "DateTime", "@value": "2024-01-01T00:00:00Z"}]"#.parse()?;
     let held: RawJson = r#"{"m": {"@type": "DateTime", "@value": "2024-01-01T00:00:00Z"}}"#.parse()?;
-    let [r1, r2, r3] = &ids;
-    let [first, second, third] = registrations.as_slice() else {
-        return fail!("three registrations");
+    let deep: RawJson = r#"{"a": {"b": {"@type": "https://uri.etsi.org/ngsi-ld/Date", "@value": "2024-01-01"}}}"#.parse()?;
+    let mixed: RawJson = r#"[{"@type": "DateTime", "@value": "2024-01-01T00:00:00Z"}, "x"]"#.parse()?;
+    let offset_list: RawJson = r#"[{"@type": "DateTime", "@value": "2024-01-01T00:00:00+00:00"}]"#.parse()?;
+    let short_held: RawJson = r#"{"m": {"@type": "Date", "@value": "2024-1-1"}}"#.parse()?;
+    let offset_deep: RawJson = r#"{"a": {"b": {"@type": "Time", "@value": "08:00:00+01:00"}}}"#.parse()?;
+    let [r1, r2, r3, r4] = &ids;
+    let [first, second, third, fourth] = registrations.as_slice() else {
+        return fail!("four registrations");
     };
     let corpus = [
         CsfRegistration {
@@ -81,7 +93,11 @@ async fn n_csr_qry_9095_a_declared_time_value_is_read_in_its_form_alike_in_a_que
         },
         CsfRegistration {
             registration: third,
-            properties: &[("list", &list), ("held", &held)],
+            properties: &[("list", &list), ("held", &held), ("deep", &deep), ("mixed", &mixed)],
+        },
+        CsfRegistration {
+            registration: fourth,
+            properties: &[("list", &offset_list), ("held", &short_held), ("deep", &offset_deep)],
         },
     ];
     let cases = [
@@ -131,19 +147,47 @@ async fn n_csr_qry_9095_a_declared_time_value_is_read_in_its_form_alike_in_a_que
         },
         CsfCase {
             csf: "list==2024-01-01T00:00:00Z",
-            selects: &[],
+            selects: &[r3],
         },
         CsfCase {
             csf: "list!=2024-01-01T00:00:00Z",
-            selects: &[r3],
+            selects: &[r4],
         },
         CsfCase {
-            csf: "held[m]>2023-12-31T00:00:00Z",
+            csf: "list>2023-12-31T00:00:00Z",
             selects: &[],
         },
         CsfCase {
-            csf: "held[m]!=2024-01-01T00:00:00Z",
+            csf: "held[m]>2023-12-31T00:00:00Z",
             selects: &[r3],
+        },
+        CsfCase {
+            csf: "held[m]!=2024-01-01T00:00:00Z",
+            selects: &[r4],
+        },
+        CsfCase {
+            csf: "deep[a.b]==2024-01-01",
+            selects: &[r3],
+        },
+        CsfCase {
+            csf: "deep[a.b]<2024-01-02",
+            selects: &[r3],
+        },
+        CsfCase {
+            csf: "deep[a.b]!=2024-01-01",
+            selects: &[r4],
+        },
+        CsfCase {
+            csf: "mixed==2024-01-01T00:00:00Z",
+            selects: &[r3],
+        },
+        CsfCase {
+            csf: "mixed==\"x\"",
+            selects: &[r3],
+        },
+        CsfCase {
+            csf: "mixed!=2024-01-01T00:00:00Z",
+            selects: &[],
         },
     ];
     expect_registration_query_and_subscription_alike(&broker, &namespace, &device_type, &corpus, &cases).await

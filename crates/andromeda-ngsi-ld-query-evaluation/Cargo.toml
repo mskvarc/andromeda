@@ -19,11 +19,11 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-value-order.workspace = true
+andromeda-ngsi-ld-vocabulary.workspace = true
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 andromeda-ngsi-ld-query = { workspace = true, features = ["test-support"] }
-andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-q-corpus.workspace = true
 iri-rs = { version = "4.1.1", features = ["serde", "static"] }
 langtag = { version = "1.1.0", features = ["serde"] }

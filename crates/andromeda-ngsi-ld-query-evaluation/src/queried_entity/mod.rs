@@ -17,6 +17,7 @@
 pub mod attribute_reading;
 pub mod linked_entities;
 pub mod located_entity;
+pub mod raw_json;
 pub mod resource_members;
 pub mod scoped_entity;
 pub mod value_item;

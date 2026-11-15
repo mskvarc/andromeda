@@ -1,7 +1,7 @@
 //! One value an attribute instance carries, as the `q` evaluator tells values
 //! apart (clause 4.9).
 
-use andromeda_json_literal::piece::JsonPiece;
+use crate::queried_entity::raw_json::RawJson;
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::time::value::TimeValue;
 use andromeda_ngsi_ld_number::{JsonNumber, declared_number::NonFinite};
@@ -22,10 +22,11 @@ pub enum ValueItem<'a, N> {
     /// value. A language tag is not part of what clause 4.9 compares, and a
     /// datatype only where it declares a time value, a number or a Boolean.
     Literal(LiteralValue<'a>),
-    /// A JSON literal (`@type: @json`): a `JsonProperty` value (clause
-    /// 4.5.24), or a Property value held as raw JSON outside the JSON-LD graph,
-    /// whose keys are addressed verbatim.
-    Json(JsonPiece<'a>),
+    /// Raw JSON, whose keys are addressed verbatim: a JSON literal (`@type:
+    /// @json`), such as a `JsonProperty` value (clause 4.5.24), or a Context
+    /// Source Property kept as its registrant wrote it, whose value objects are
+    /// typed values.
+    Json(RawJson<'a>),
     /// A reference by IRI: a Relationship object, a `VocabProperty` term or a
     /// `ListRelationship` item, as the IRI text clause 4.9 equality compares.
     Reference(&'a str),
