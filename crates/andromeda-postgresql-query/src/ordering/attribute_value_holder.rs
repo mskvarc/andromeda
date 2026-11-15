@@ -138,6 +138,7 @@ impl Holder {
             ])
             .into(),
             date_time: self.field(CurrentAttributes::ValueDateTime, SubAttribute::ValueDateTime),
+            kind: Some(self.field(CurrentAttributes::ValueKind, SubAttribute::ValueKind)),
             text: Func::coalesce(strings).into(),
             datatype: self.declared_datatype(),
             json_null: stored_json_null(object.clone()),
@@ -213,6 +214,7 @@ impl Holder {
             datatype: typed_null(PostgresType::Text),
             object: typed_null(PostgresType::Jsonb),
             json_null: false_literal(),
+            kind: None,
         }
     }
 
@@ -259,6 +261,7 @@ impl Holder {
             text: string_reading(member.clone(), declared.clone()),
             datatype: declared,
             json_null: jsonb_type_is(member.clone(), JsonType::Null),
+            kind: None,
             object: json_compound(member),
         }
     }
