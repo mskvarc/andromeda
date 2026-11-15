@@ -95,7 +95,16 @@ impl CorpusEntities {
             CorpusEntity::E10 => builder.property("f", xsd_typed("double", "NaN")?).property("g", xsd_typed("double", "INF")?),
             CorpusEntity::E11 => builder.property("m", Property::builder(5).observed_at("2024-06-01T00:00:00Z".parse()?).unit_code(UnitCode::Cel)),
             CorpusEntity::E12 => builder.property("k", Property::builder(1).property("src", "a")),
-            CorpusEntity::E13 => builder.property("addr", object([("city", Value::from("X")), ("zip", number("1")?)])),
+            CorpusEntity::E13 => builder.property(
+                "addr",
+                object([
+                    ("city", Value::from("X")),
+                    ("zip", number("1")?),
+                    ("tags", Value::Array(Vec::new())),
+                    ("geo", object([("lat", number("1")?)])),
+                    ("mix", Value::Array(vec![number("1")?, object([("a", number("2")?)])])),
+                ]),
+            ),
             CorpusEntity::E14 => builder
                 .relationship("h", Relationship::builder("http://example.com/a".parse::<EntityId>()?))
                 .property("hp", "http://example.com/a")

@@ -129,8 +129,18 @@ const E12_ATTRIBUTES: &[CorpusAttribute] = &[CorpusAttribute {
         ..instance(Property(&[Integer(1)]))
     }],
 }];
-/// `addr` the object `{city: "X", zip: 1}`.
-const E13_ATTRIBUTES: &[CorpusAttribute] = &[attribute!("addr", Property(&[Members(&[("city", Text("X")), ("zip", Integer(1))])]))];
+/// `addr` the object `{city: "X", zip: 1, tags: [], geo: {lat: 1}, mix: [1,
+/// {a: 2}]}`.
+const E13_ATTRIBUTES: &[CorpusAttribute] = &[attribute!(
+    "addr",
+    Property(&[Members(&[
+        ("city", &[Text("X")]),
+        ("zip", &[Integer(1)]),
+        ("tags", &[]),
+        ("geo", &[Members(&[("lat", &[Integer(1)])])]),
+        ("mix", &[Integer(1), Members(&[("a", &[Integer(2)])])]),
+    ])])
+)];
 /// `h` to `http://example.com/a`, `hp` the same text, `location` a Point.
 const E14_ATTRIBUTES: &[CorpusAttribute] = &[
     attribute!("h", Relationship(&[Identifier("http://example.com/a")])),

@@ -14,8 +14,9 @@ use ngsi_ld::{
 };
 
 /// The written forms of the property `p`, one registration each: scalars, arrays, nodes of several families, nodes
-/// carrying instance members and sub-properties, and values that are objects of their own.
-const FORMS: [&str; 20] = [
+/// carrying instance members and sub-properties, and values that are objects of their own, whose member holds a
+/// scalar, the empty array, an object or a scalar beside an object.
+const FORMS: [&str; 23] = [
     r#""x""#,
     "1",
     "true",
@@ -26,6 +27,9 @@ const FORMS: [&str; 20] = [
     r#"{"type": "Property"}"#,
     r#"{"type": "Property", "value": ["a"]}"#,
     r#"{"m": 1}"#,
+    r#"{"m": []}"#,
+    r#"{"m": {"k": 1}}"#,
+    r#"{"m": [1, {"k": 2}]}"#,
     r#"{"type": "Property", "value": {"m": 1}}"#,
     r#"{"type": "Relationship", "object": "urn:x:1"}"#,
     r#"{"type": "Property", "value": 1, "unitCode": "C62", "observedAt": "2024-01-01T00:00:00Z"}"#,
@@ -39,8 +43,9 @@ const FORMS: [&str; 20] = [
 ];
 
 /// The terms asked of every form: existence, equality and its complement over each kind, an order, a pattern and its
-/// complement, compound members, a family's own members, instance members and a sub-property.
-const TERMS: [&str; 26] = [
+/// complement, compound members with an equality, its complement and an order, a family's own members, instance
+/// members and a sub-property.
+const TERMS: [&str; 28] = [
     "p",
     "p==\"x\"",
     "p!=\"x\"",
@@ -55,6 +60,8 @@ const TERMS: [&str; 26] = [
     "p!~=\"^x\"",
     "p[m]",
     "p[m]==1",
+    "p[m]!=\"x\"",
+    "p[m]>0",
     "p[type]==\"Point\"",
     "p.m==1",
     "p.value==\"x\"",
@@ -69,11 +76,12 @@ const TERMS: [&str; 26] = [
     "p.lang==\"en\"",
 ];
 
-/// Pins: over twenty registrations, each carrying one written form of the property `p` (a String, a number, a Boolean,
-/// a bare array, the empty array, a nested array, a concise node, a typed node holding no value, a node holding an
-/// array, a bare object, a node holding an object, a Relationship node, a node with `unitCode` and `observedAt`, nodes
-/// whose `observedAt` carries an offset, a decimal comma or a bare date, a node with a sub-property `name`, a concise
-/// node with `lang`, a JSON-LD value object and a `GeoJSON` geometry), each of twenty-six terms selects in Query
+/// Pins: over twenty-three registrations, each carrying one written form of the property `p` (a String, a number, a
+/// Boolean, a bare array, the empty array, a nested array, a concise node, a typed node holding no value, a node
+/// holding an array, bare objects whose member holds a number, the empty array, an object or a number beside an
+/// object, a node holding an object, a Relationship node, a node with `unitCode` and `observedAt`, nodes whose
+/// `observedAt` carries an offset, a decimal comma or a bare date, a node with a sub-property `name`, a concise node
+/// with `lang`, a JSON-LD value object and a `GeoJSON` geometry), each of twenty-eight terms selects in Query
 /// Context Source Registrations exactly the registrations its Context Source Registration Subscription is notified
 /// of; the two executions of a `csf` read every written form alike, whatever they select
 /// Clause: 4.5.1, 4.5.2.2, 4.5.2.3, 4.6.3, 4.9, 5.2.9, 5.10.2.4, 5.11.2.4

@@ -91,6 +91,10 @@ pub trait QueriedValueNode<'a>: Copy {
     fn id(self) -> Option<&'a str>;
 
     /// The values of the member keyed by the expanded name `member`, in the
-    /// order they are held; none when the node has no such member.
-    fn member_values(self, member: &AttributeName) -> impl Iterator<Item = ValueItem<'a, Self>>;
+    /// order they are held, or `None` when the node has no such member.
+    ///
+    /// A member holding the empty array holds no value and is still a member:
+    /// clause 4.9 evaluates a trailing path as a member expression, and the
+    /// empty array it yields is a defined value.
+    fn member_values(self, member: &AttributeName) -> Option<impl Iterator<Item = ValueItem<'a, Self>>>;
 }

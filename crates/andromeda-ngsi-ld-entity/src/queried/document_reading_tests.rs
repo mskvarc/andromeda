@@ -23,7 +23,8 @@ const NULL: &str = "urn:ngsi-ld:null";
 
 /// A Temporal Evolution fragment: two instances of one `datasetId`, a
 /// typeless instance, deletions of a Property, a `ListProperty`, a
-/// `ListRelationship` and a `LanguageProperty`, a geometry and a scope.
+/// `ListRelationship` and a `LanguageProperty`, a structured value deleting
+/// one member and holding the empty array in another, a geometry and a scope.
 fn evolution() -> Value {
     json!([{
         "@id": "urn:ngsi-ld:Sensor:1",
@@ -65,6 +66,13 @@ fn evolution() -> Value {
             "@type": ["https://uri.etsi.org/ngsi-ld/LanguageProperty"],
             "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [{"@value": NULL}],
             "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:a"}]
+        }],
+        "https://example.com/address": [{
+            "@type": [PROPERTY],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                "https://example.com/street": [{"@value": NULL}],
+                "https://example.com/tags": []
+            }]
         }],
         "https://uri.etsi.org/ngsi-ld/location": [{
             "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
@@ -135,6 +143,28 @@ fn a_deleted_instance_of_any_family_holds_no_value() {
         ("\"https://example.com/title\"[en]!~=\"Tow.*\"", false),
         ("\"https://example.com/title\"", true),
         ("\"https://example.com/label\"[de]!=\"Tower\"", true),
+    ] {
+        let expr = parse(q).expect("the Query Term parses");
+        pretty_assertions::assert_eq!(
+            filter_holds(&FilterReading::of(&expr, LanguageMatching::TagEquality), &written, NoLinkedEntities),
+            expected,
+            "{q}"
+        );
+    }
+}
+
+/// A member a fragment deletes (clause 5.5.12) is no member, while a member
+/// holding the empty array is one, a defined value that includes no operand
+/// (clause 4.9).
+#[test]
+fn a_deleted_member_is_absent_and_an_empty_member_is_present() {
+    let written = document();
+    for (q, expected) in [
+        ("\"https://example.com/address\"[\"https://example.com/street\"]", false),
+        ("\"https://example.com/address\"[\"https://example.com/street\"]!=\"x\"", false),
+        ("\"https://example.com/address\"[\"https://example.com/tags\"]", true),
+        ("\"https://example.com/address\"[\"https://example.com/tags\"]!=\"x\"", true),
+        ("\"https://example.com/address\"[\"https://example.com/tags\"]==\"x\"", false),
     ] {
         let expr = parse(q).expect("the Query Term parses");
         pretty_assertions::assert_eq!(

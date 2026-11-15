@@ -15,10 +15,10 @@
 
 use crate::{
     q::{
-        compound_member::{geometry_member_target, resolve_compound_member, walk_member_hops},
-        family_target::{family_target, first_family_value},
+        compound_member::resolve_compound_member,
+        family_target::family_target,
         language_target::language_target,
-        target_value::{ResolvedTarget, TargetValue, json_member},
+        target_value::{ResolvedTarget, TargetValue},
     },
     queried_entity::{
         attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
@@ -29,13 +29,12 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_query::filter::{
     reading::{
-        family_reading::{MemberSource, MultiValueReading, TargetOrigin, ValueKeys, family_reading, hop_families},
+        family_reading::{MultiValueReading, TargetOrigin, ValueKeys, family_reading, hop_families},
         hop::Hop,
         term_reading::TermReading,
         terminal::Terminal,
     },
     target_language::LanguageSelector,
-    trailing_path::MemberPath,
 };
 
 /// Whether some target a term's path addresses is accepted by `accepts`,
@@ -113,8 +112,8 @@ fn hop_reaches<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(entity: E, hop: 
 /// about a comparable value: a Property whose value is structured and a
 /// `GeoProperty` held as a geometry carry no literal, yet each defines its
 /// target element. Behind a trailing `[…]` path the element exists when the
-/// member expression "result[s] in a defined value", here any value the member
-/// holds.
+/// member expression "result[s] in a defined value": the member is held,
+/// whatever it holds, the empty array included.
 #[must_use]
 pub fn addresses_element<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(entity: E, term: &TermReading, linked: L) -> bool {
     element_beyond(entity, term.hops(), term, linked)
@@ -220,25 +219,13 @@ fn terminal_exists<'a, I: QueriedInstance<'a>>(instance: I, terminal: &Terminal)
         Terminal::OwnValue => true,
         Terminal::InstanceMember(member) => instance.metadata(*member).next().is_some(),
         Terminal::Language { language, matching } => keyed_by_language(instance) && instance.language_values(language.selector(), *matching).next().is_some(),
-        Terminal::Members(members) => holds_member(instance, members),
+        Terminal::Members(members) => resolve_compound_member(instance, members).is_some(),
         Terminal::ByFamily { language, matching, members } => {
             if keyed_by_language(instance) {
                 instance.language_values(LanguageSelector::Tag(language), *matching).next().is_some()
             } else {
-                holds_member(instance, members)
+                resolve_compound_member(instance, members).is_some()
             }
-        }
-    }
-}
-
-/// Whether an instance's compound value holds a value at `members`, as a
-/// structured value's member or as a raw JSON object's key.
-fn holds_member<'a, I: QueriedInstance<'a>>(instance: I, members: &MemberPath) -> bool {
-    match family_reading(instance.family()).members {
-        MemberSource::Geometry => geometry_member_target(instance, &members.written).is_some(),
-        MemberSource::Value => {
-            walk_member_hops(first_family_value(instance), &members.addressed).is_some()
-                || family_target(instance).and_then(|target| json_member(&target, &members.written)).is_some()
         }
     }
 }

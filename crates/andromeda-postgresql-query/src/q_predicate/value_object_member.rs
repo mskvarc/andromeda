@@ -17,12 +17,14 @@
 //! A member expression accesses a property of an object, and an array has no
 //! named property, so every step before the last descends only through a
 //! member holding exactly one value. The member the last step reaches is the
-//! target element, and its value the target value: one literal of an expanded
-//! member is a scalar target, two or more are an array, as is a JSON array of
-//! a literal. Clause 4.9 compares an array by membership under the equality
-//! operators ("Is included in the target value, if the latter is an array",
-//! and under `unequal` "Is not included"), and the ordering, range and pattern
-//! operators match no array.
+//! target element, and its value the target value, read as a Property's
+//! values are: an expanded member holding one value is a scalar target and
+//! one holding none or several an array, as is a JSON array of a literal, and
+//! a value that is no literal (a nested structured value) is an Object, which
+//! no operand equals. Clause 4.9 compares an array by membership under the
+//! equality operators ("Is included in the target value, if the latter is an
+//! array", and under `unequal` "Is not included"), so the empty array includes
+//! no operand, and the ordering, range and pattern operators match no array.
 
 use crate::q_predicate::{
     instance_row::InstanceRow,
@@ -46,7 +48,7 @@ use andromeda_ngsi_ld_vocabulary::keyword;
 use andromeda_postgresql_seaquery::{
     cast::{cast, typed_null},
     json_type::{JsonType, jsonb_type_is},
-    jsonb::{escape_jsonpath_key, jsonb_array_length, jsonb_path_query, jsonb_path_query_array, jsonb_path_query_silent},
+    jsonb::{escape_jsonpath_key, jsonb_array_length, jsonb_path_query, jsonb_path_query_silent},
     literal::{int_literal, text_literal, true_literal},
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
@@ -63,19 +65,15 @@ const MEMBER: &str = "member";
 /// name of its one column.
 const ELEMENT: &str = "element";
 
-/// The jsonpath keeping the values of an expanded member that are literals,
-/// which are what a Query Term compares: a nested node or a reference carries
-/// no `@value`.
-const LITERAL_VALUES: &str = "lax $[*] ? (exists(@.\"@value\"))";
-
 /// The jsonpath reaching each value of an array target.
 const EVERY_ELEMENT: &str = "strict $[*]";
 
 /// How the member a path reaches holds its value.
 #[derive(Debug, Clone, Copy)]
 enum MemberShape {
-    /// The literal value nodes of an expanded structured value's member, each
-    /// with its value under `@value` and its datatype under `@type`.
+    /// The value nodes of an expanded structured value's member, one per value
+    /// the client wrote: a literal with its value under `@value` and its
+    /// datatype under `@type`, or a nested node, which carries no `@value`.
     ValueNodes,
     /// The member of a JSON literal, which is its value and declares no
     /// datatype.
@@ -91,21 +89,12 @@ impl MemberShape {
         }
     }
 
-    /// Whether the member, read under this shape, holds an array target.
+    /// Whether the member, read under this shape, holds an array target: an
+    /// expanded member holding no value holds the empty array.
     fn holds_array(self, member: SimpleExpr) -> SimpleExpr {
         match self {
-            MemberShape::ValueNodes => SeaExpr::expr(jsonb_array_length(member)).gte(int_literal(2)),
+            MemberShape::ValueNodes => SeaExpr::expr(jsonb_array_length(member)).ne(int_literal(1)),
             MemberShape::JsonLiteral => jsonb_type_is(member, JsonType::Array),
-        }
-    }
-
-    /// Whether the member, read under this shape, holds a target value: an
-    /// expanded member holding only nodes carries no literal to compare, while
-    /// every member of a JSON literal is a value.
-    fn holds_target(self, member: SimpleExpr) -> SimpleExpr {
-        match self {
-            MemberShape::ValueNodes => SeaExpr::expr(jsonb_array_length(member)).gte(int_literal(1)),
-            MemberShape::JsonLiteral => true_literal(),
         }
     }
 
@@ -129,24 +118,14 @@ impl MemberShape {
     /// The source of the one row the member is read in, absent when the path
     /// reaches no member.
     fn member_source(self, object: SimpleExpr, members: &MemberPath) -> SelectStatement {
-        let mut source = Query::select();
-        match self {
-            MemberShape::ValueNodes => {
-                let reached = SeaExpr::col((Alias::new(MEMBER), Alias::new(MEMBER)));
-                source
-                    .expr_as(jsonb_path_query_array(reached, LITERAL_VALUES), Alias::new(MEMBER))
-                    .from_function(
-                        jsonb_path_query_silent(object, &expanded_member_jsonpath(&members.addressed)),
-                        Alias::new(MEMBER),
-                    );
-            }
-            MemberShape::JsonLiteral => {
-                source
-                    .expr_as(SeaExpr::col((Alias::new(MEMBER), Alias::new(MEMBER))), Alias::new(MEMBER))
-                    .from_function(jsonb_path_query_silent(object, &literal_member_jsonpath(&members.written)), Alias::new(MEMBER));
-            }
-        }
-        source
+        let jsonpath = match self {
+            MemberShape::ValueNodes => expanded_member_jsonpath(&members.addressed),
+            MemberShape::JsonLiteral => literal_member_jsonpath(&members.written),
+        };
+        Query::select()
+            .expr_as(reached_member(), Alias::new(MEMBER))
+            .from_function(jsonb_path_query_silent(object, &jsonpath), Alias::new(MEMBER))
+            .to_owned()
     }
 }
 
@@ -173,12 +152,15 @@ fn literal_target(value: SimpleExpr) -> JsonTarget {
 /// `row`.
 ///
 /// The expanded reading, the JSON-literal readings and the geometry reading
-/// are disjoined: a `JsonProperty` holds no IRI-keyed member nodes, only a
-/// `JsonProperty` is read as its literal, only a family reading its value's
-/// members other than a `JsonProperty` is read through a value object
-/// declaring `@json`, which keys no member by an IRI, and only a family whose
-/// members are its geometry's reads the geometry, so at most one of them
-/// reaches a member.
+/// are disjoined, so at most one of them reaches a member: a `JsonProperty`'s
+/// value is its JSON literal, never expanded member nodes, so only a
+/// `JsonProperty` is read as its literal and only a family reading its
+/// value's members other than a `JsonProperty` is read as expanded nodes or
+/// through a value object declaring `@json`, which keys no member by a name a
+/// path can write, and only a family whose members are its geometry's reads
+/// the geometry. A path written in the keys the client chose (`jsonKeys`)
+/// reaches a `JsonProperty`'s members by those keys, and an expanded member is
+/// always an array of value nodes, which no member of a JSON literal need be.
 pub(crate) fn member_term(test: &Test, members: &MemberPath, row: InstanceRow) -> Condition {
     let object = row.value(ValueColumn::Field(ValueField::Object));
     let expanded = reading_term(test, MemberShape::ValueNodes.member_source(object.clone(), members), MemberShape::ValueNodes); // clone: every reading walks the one value
@@ -195,11 +177,10 @@ pub(crate) fn member_term(test: &Test, members: &MemberPath, row: InstanceRow) -
     );
     Condition::any()
         .add(
-            Condition::all().add(reads_members_from(MemberSource::Value, row.attribute_family())).add(
-                Condition::any()
-                    .add(expanded)
-                    .add(Condition::all().add(is_json_property(row.attribute_family()).not()).add(declared)),
-            ),
+            Condition::all()
+                .add(reads_members_from(MemberSource::Value, row.attribute_family()))
+                .add(is_json_property(row.attribute_family()).not())
+                .add(Condition::any().add(expanded).add(declared)),
         )
         .add(Condition::all().add(is_json_property(row.attribute_family())).add(literal))
         .add(
@@ -260,8 +241,8 @@ fn reading_term(test: &Test, source: SelectStatement, shape: MemberShape) -> Sim
 ///
 /// A scalar target is tested directly, and an array target by the rule the
 /// reading gives it, each of its values tested alike. A complement of `!=`
-/// ranges over a member holding a target value, and one of `!~=` over a
-/// member holding one String.
+/// ranges over every member reached, each holding a target value, and one of
+/// `!~=` over a member holding one String.
 fn value_term(value: &ValueTest, shape: MemberShape) -> Condition {
     let target = shape.scalar(reached_member());
     let scalar = Condition::all()
@@ -274,11 +255,9 @@ fn value_term(value: &ValueTest, shape: MemberShape) -> Condition {
         Some(array) => Condition::any().add(scalar).add(array),
         None => scalar,
     };
-    verdict_condition(value, positive, |scope| {
-        ComplementTarget::Where(match scope {
-            ComplementScope::AnyKind => shape.holds_target(reached_member()),
-            ComplementScope::StringTarget => shape.holds_scalar(reached_member()).and(json_string(&target)),
-        })
+    verdict_condition(value, positive, |scope| match scope {
+        ComplementScope::AnyKind => ComplementTarget::Probed,
+        ComplementScope::StringTarget => ComplementTarget::Where(shape.holds_scalar(reached_member()).and(json_string(&target))),
     })
 }
 
@@ -416,12 +395,13 @@ mod tests {
         assert_statement_snapshot!("value-object-member-a-temporal-q-on-a-compound-value-reads-value-object", statement);
     }
 
-    /// Only the literals of an expanded member are compared; one is a scalar
-    /// target and two or more an array.
+    /// Every value of an expanded member is read, as a Property's are: one is
+    /// a scalar target, none or several an array, and a nested node, which
+    /// carries no `@value`, an Object no operand equals.
     #[test]
-    fn an_expanded_member_keeps_its_literals_and_counts_them() {
+    fn an_expanded_member_reads_every_value_and_counts_them() {
         let statement = member_sql("address[city]==4", InstanceRow::Current);
-        assert_statement_snapshot!("value-object-member-an-expanded-member-keeps-its-literals-and-counts-them", statement);
+        assert_statement_snapshot!("value-object-member-an-expanded-member-reads-every-value-and-counts-them", statement);
     }
 
     /// Clause 4.9 `equal`: the operand "Is included in the target value, if

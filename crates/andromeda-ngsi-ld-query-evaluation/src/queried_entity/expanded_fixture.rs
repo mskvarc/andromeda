@@ -367,12 +367,11 @@ impl<'a> QueriedValueNode<'a> for &'a FixtureNode {
         self.id.as_deref()
     }
 
-    fn member_values(self, member: &AttributeName) -> impl Iterator<Item = ValueItem<'a, &'a FixtureNode>> {
+    fn member_values(self, member: &AttributeName) -> Option<impl Iterator<Item = ValueItem<'a, &'a FixtureNode>>> {
         self.members
             .iter()
             .find(|(name, _)| name == member)
-            .into_iter()
-            .flat_map(|(_, values)| values.iter().map(FixtureItem::view))
+            .map(|(_, values)| values.iter().map(FixtureItem::view))
     }
 }
 

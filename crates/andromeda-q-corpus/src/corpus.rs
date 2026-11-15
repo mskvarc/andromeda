@@ -60,7 +60,10 @@ const fn hop(id: &'static str, q: &'static str, selects: &'static [CorpusEntity]
 /// inequality only. With no target language, any one value of a `languageMap`
 /// is the target value, and `!=` holds only when no value matches. A member
 /// that resolves to nothing makes the target element non-existent, so `!=`
-/// fails too. A pattern searches anywhere in the string. Not-a-number is
+/// fails too. A member's values are read as a Property's are: a member holding
+/// the empty array exists and includes no operand, and a structured value, as
+/// a member or beside a literal in an array, is an Object unequal to every
+/// operand. A pattern searches anywhere in the string. Not-a-number is
 /// unordered and unequal to every number, and an infinity orders past every
 /// finite one. A Relationship object compares with an operand in its RFC 3986
 /// normalised spelling, a String with the spelling written.
@@ -181,6 +184,12 @@ pub const CORPUS: &[CorpusCase] = &[
         json_keys: &["jw"],
         ..local("C-92", "jw", &[E19])
     },
+    local("C-93", "addr[tags]", &[E13]),
+    local("C-94", "addr[tags]!=\"x\"", &[E13]),
+    local("C-95", "addr[tags]==\"x\"", &[]),
+    local("C-96", "addr[geo]!=\"x\"", &[E13]),
+    local("C-97", "addr[mix]==1", &[E13]),
+    local("C-98", "addr[mix]>0", &[]),
 ];
 
 #[cfg(test)]

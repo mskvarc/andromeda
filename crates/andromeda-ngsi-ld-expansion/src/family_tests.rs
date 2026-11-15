@@ -386,6 +386,28 @@ async fn a_structured_value_is_a_node_of_expanded_members() {
     pretty_assertions::assert_eq!(tags.len(), 2);
 }
 
+/// JSON-LD 1.1 expansion keeps a member holding the empty array as a member
+/// with no value, which clause 4.9 reads as the empty array, a defined value.
+#[tokio::test]
+async fn a_structured_member_holding_the_empty_array_is_kept_with_no_value() {
+    let document = patch(
+        &engine(),
+        json!({"address": {"type": "Property", "value": {"tags": [], "city": "X"}}}),
+        Normalization::Entity,
+    )
+    .await
+    .expect("the fixture expands")
+    .agreed();
+
+    let [ExpandedValue::Node(address)] = values(instance(&document, &term("address"))) else {
+        panic!("one node");
+    };
+    let Some(FragmentMember::Values(tags)) = address.members().get(term("tags").as_str()) else {
+        panic!("the empty member is kept");
+    };
+    pretty_assertions::assert_eq!(tags.as_slice(), []);
+}
+
 /// Clause 4.5.22.3: the compact model reads a concise `objectList` into the
 /// Relationship objects Table 5.2.37-1 normalizes it to, which expand to the
 /// wrapped items the core context types `@id`, on both paths.
