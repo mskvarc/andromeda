@@ -1,0 +1,28 @@
+---
+source: crates/andromeda-postgresql-query/src/ordering/order_geography.rs
+---
+SELECT
+  (
+    SELECT
+      MIN(
+        ST_DistanceSphere(
+          COALESCE(
+            "geo_order"."value_geometry_valid",
+            "geo_order"."value_geometry"
+          ),
+          ST_MakeValid(ST_GeomFromEWKB($1))
+        )
+      )
+    FROM
+      "current_attributes" AS "geo_order"
+    WHERE
+      "geo_order"."entity_key" = "e"."entity_key"
+      AND "geo_order"."attribute_name_key" = $2
+      AND "geo_order"."value_geometry" IS NOT NULL
+      AND (
+        "geo_order"."expires_at" IS NULL
+        OR "geo_order"."expires_at" > NOW()
+      )
+  )
+1: Bytes '\x01020304'
+2: Int 42

@@ -6,7 +6,6 @@ use crate::{
     entity_total::{EntityTotal, TotalSource, entity_total},
     gated_page::PageSource,
     page_shape::PageShape,
-    result_ordering,
     selector_predicate::condition as selector_condition,
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -24,6 +23,7 @@ use andromeda_postgresql_query::{
     entity_row_refs::EntityRowRefs,
     error::RenderError,
     geo_predicate as geo_sql,
+    ordering::result_ordering,
     page_window::bound_to_window,
     q_predicate::{instance_scan::InstanceScan, projection as q_filter},
     query_names::QueryNames,

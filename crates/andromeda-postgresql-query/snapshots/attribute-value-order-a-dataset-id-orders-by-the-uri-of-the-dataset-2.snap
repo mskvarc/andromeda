@@ -1,0 +1,93 @@
+---
+source: crates/andromeda-postgresql-query/src/ordering/attribute_value_order.rs
+---
+SELECT
+  NULL::numeric AS "value_number",
+  NULL::boolean AS "value_boolean",
+  NULL::timestamptz AS "value_date_time",
+  ("ordered"."element")."dataset_id" AS "value_text",
+  NULL::text AS "value_declared_datatype",
+  NULL::jsonb AS "value_object",
+  (
+    CASE
+      WHEN ((NULL::numeric) IS NOT NULL) THEN 'number'
+      WHEN ((NULL::boolean) IS NOT NULL) THEN 'boolean'
+      WHEN ((NULL::timestamptz) IS NOT NULL) THEN 'https://uri.etsi.org/ngsi-ld/DateTime'
+      WHEN (
+        (NULL::text) = ('https://uri.etsi.org/ngsi-ld/DateTime')
+      ) THEN 'https://uri.etsi.org/ngsi-ld/DateTime'
+      WHEN (
+        (NULL::text) = ('https://uri.etsi.org/ngsi-ld/Date')
+      ) THEN 'https://uri.etsi.org/ngsi-ld/Date'
+      WHEN (
+        (NULL::text) = ('https://uri.etsi.org/ngsi-ld/Time')
+      ) THEN 'https://uri.etsi.org/ngsi-ld/Time'
+      WHEN ((("ordered"."element")."dataset_id") IS NOT NULL) THEN 'string'
+      WHEN (FALSE) THEN 'null'
+      WHEN (
+        jsonb_typeof(NULL::jsonb) = ('array')
+        OR ((NULL::jsonb) ? ('@list'))
+      ) THEN 'array'
+      WHEN ((NULL::jsonb) IS NOT NULL) THEN 'object'
+    END
+  ) AS "value_datatype"
+FROM
+  (
+    SELECT
+      "ca".*,
+      (
+        SELECT
+          "l0"
+        FROM
+          UNNEST("ca"."sub_attributes") AS "l0"
+        WHERE
+          "l0"."parent" = $1
+          AND (
+            "l0"."attribute_name_key" = $2
+            AND (
+              "l0"."expires_at" IS NULL
+              OR "l0"."expires_at" > NOW()
+            )
+          )
+          AND TRUE
+        LIMIT
+          1
+      ) AS "element"
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."entity_key" = "entities"."entity_key"
+      AND "ca"."attribute_name_key" = $3
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND "ca"."sub_attributes" IS NOT NULL
+      AND (
+        EXISTS (
+          SELECT
+            1
+          FROM
+            UNNEST("ca"."sub_attributes") AS "l0"
+          WHERE
+            "l0"."parent" = $4
+            AND (
+              "l0"."attribute_name_key" = $5
+              AND (
+                "l0"."expires_at" IS NULL
+                OR "l0"."expires_at" > NOW()
+              )
+            )
+            AND TRUE
+        )
+      )
+    ORDER BY
+      "ca"."ordinal" ASC
+    LIMIT
+      1
+  ) AS "ordered"
+1: BigInt 0
+2: Int 20
+3: Int 12
+4: BigInt 0
+5: Int 20

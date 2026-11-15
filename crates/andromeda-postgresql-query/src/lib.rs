@@ -37,6 +37,7 @@ pub mod location_instances;
 pub mod ltree;
 pub mod one_time_gate;
 pub mod operator;
+pub mod ordering;
 pub mod page_window;
 pub mod projected_attribute_names;
 pub mod projected_type_names;

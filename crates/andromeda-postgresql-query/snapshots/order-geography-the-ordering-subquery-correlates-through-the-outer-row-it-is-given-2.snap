@@ -1,0 +1,17 @@
+---
+source: crates/andromeda-postgresql-query/src/ordering/order_geography.rs
+---
+SELECT
+  (
+    CASE
+      WHEN (
+        "s"."location_expires_at" IS NULL
+        OR "s"."location_expires_at" > NOW()
+      ) THEN ST_DistanceSphere(
+        "s"."location",
+        ST_MakeValid(ST_GeomFromEWKB($1))
+      )
+      ELSE NULL
+    END
+  )
+1: Bytes '\x01020304'
