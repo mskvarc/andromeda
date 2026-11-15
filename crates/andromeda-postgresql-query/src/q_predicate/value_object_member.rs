@@ -6,9 +6,11 @@
 //! whose members are IRI-keyed arrays of value nodes, so the path walks the
 //! expanded member names; a `JsonProperty` stores its JSON literal itself
 //! (clause 4.9 EXAMPLE 11), whose members keep the keys the writer chose, so
-//! the path walks the names as the client wrote them. A member of an expanded
-//! value is read with the datatype its own `@type` declares; a member of a
-//! JSON literal declares none.
+//! the path walks the names as the client wrote them. A `GeoProperty` stores
+//! its geometry, so the path walks the names as the client wrote them through
+//! the `GeoJSON` object the geometry is ([`MemberSource::Geometry`]). A member
+//! of an expanded value is read with the datatype its own `@type` declares; a
+//! member of a JSON literal or of a geometry declares none.
 //!
 //! A member expression accesses a property of an object, and an array has no
 //! named property, so every step before the last descends only through a
@@ -26,10 +28,11 @@ use crate::q_predicate::{
     value_column::ValueColumn,
     verdict_condition::{ComplementTarget, array_rule_condition, verdict_condition},
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_ngsi_ld_query::filter::{
     reading::{
         array_target::ArrayTarget,
+        family_reading::{MemberSource, family_reading},
         scalar_test::ScalarTest,
         term_reading::Test,
         value_test::{ComplementScope, ValueTest},
@@ -38,14 +41,15 @@ use andromeda_ngsi_ld_query::filter::{
 };
 use andromeda_ngsi_ld_vocabulary::keyword;
 use andromeda_postgresql_seaquery::{
-    cast::typed_null,
+    cast::{cast, typed_null},
     json_type::{JsonType, jsonb_type_is},
     jsonb::{escape_jsonpath_key, jsonb_array_length, jsonb_path_query, jsonb_path_query_array, jsonb_path_query_silent},
     literal::{int_literal, text_literal, true_literal},
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
+    postgis::st_as_geojson,
 };
-use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, value_placement::ValueField};
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, attribute_kind_code::stored_attribute_kind, value_placement::ValueField};
 use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
 
 /// The alias the member a path reaches is read under, which is also the name
@@ -162,19 +166,51 @@ fn literal_target(value: SimpleExpr) -> JsonTarget {
     }
 }
 
-/// A Query Term against the member `members` addresses in the `value_object`
-/// of `row`.
+/// A Query Term against the member `members` addresses in the value of
+/// `row`.
 ///
-/// The expanded reading and the JSON-literal reading are disjoined: a
-/// `JsonProperty` holds no IRI-keyed member nodes, and only a `JsonProperty`
-/// is read as a literal, so at most one of them reaches a member.
+/// The expanded reading, the JSON-literal reading and the geometry reading are
+/// disjoined: a `JsonProperty` holds no IRI-keyed member nodes, only a
+/// `JsonProperty` is read as a literal, and only a family whose members are its
+/// geometry's reads the geometry, which no other reading reads, so at most one
+/// of them reaches a member.
 pub(crate) fn member_term(test: &Test, members: &MemberPath, row: InstanceRow) -> Condition {
     let object = row.value(ValueColumn::Field(ValueField::Object));
     let expanded = reading_term(test, MemberShape::ValueNodes.member_source(object.clone(), members), MemberShape::ValueNodes); // clone: both readings walk the one value
     let literal = reading_term(test, MemberShape::JsonLiteral.member_source(object, members), MemberShape::JsonLiteral);
+    let geometry = reading_term(
+        test,
+        MemberShape::JsonLiteral.member_source(geometry_object(row), members),
+        MemberShape::JsonLiteral,
+    );
     Condition::any()
-        .add(expanded)
+        .add(
+            Condition::all()
+                .add(reads_members_from(MemberSource::Value, row.attribute_family()))
+                .add(expanded),
+        )
         .add(Condition::all().add(is_json_property(row.attribute_family())).add(literal))
+        .add(
+            Condition::all()
+                .add(reads_members_from(MemberSource::Geometry, row.attribute_family()))
+                .add(geometry),
+        )
+}
+
+/// The `GeoJSON` geometry object of the geometry `row` holds, as `jsonb`; NULL
+/// for an instance holding none.
+fn geometry_object(row: InstanceRow) -> SimpleExpr {
+    cast(st_as_geojson(row.value(ValueColumn::Field(ValueField::Geometry))), PostgresType::Jsonb)
+}
+
+/// Whether an instance of the attribute family `family` has its members read
+/// from `source`, as [`family_reading`] says of each family.
+fn reads_members_from(source: MemberSource, family: SimpleExpr) -> SimpleExpr {
+    let codes = AttributeType::ALL
+        .into_iter()
+        .filter(|candidate| family_reading(*candidate).members == source)
+        .map(|candidate| int_literal(i64::from(stored_attribute_kind(candidate).code())));
+    SeaExpr::expr(family).is_in(codes)
 }
 
 /// The member a path reaches, as read in the `source` of a member term.

@@ -17,6 +17,7 @@ use crate::{
     },
 };
 use andromeda_json_literal::JsonLiteral;
+use andromeda_ngsi_ld_geometry::{form::GeometryForm, position::Position};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
@@ -74,6 +75,8 @@ pub(crate) enum FixtureItem {
     Reference(String),
     /// A node with IRI-keyed members.
     Node(FixtureNode),
+    /// A `GeoProperty` geometry, held as positions.
+    Geometry(GeometryForm),
     /// A nested list.
     Opaque,
 }
@@ -138,9 +141,9 @@ impl FixtureInstance {
                     .and_then(|list| list.get("@list"))
                     .and_then(Value::as_array)
                     .map_or_else(Vec::new, |items| items.iter().map(item_of).collect()),
+                AttributeType::GeoProperty => nodes.iter().map(geometry_of).collect(),
                 AttributeType::Property
                 | AttributeType::Relationship
-                | AttributeType::GeoProperty
                 | AttributeType::VocabProperty
                 | AttributeType::LanguageProperty
                 | AttributeType::JsonProperty => nodes.iter().map(item_of).collect(),
@@ -202,6 +205,37 @@ fn family_of(object: &Map<String, Value>) -> AttributeType {
         .unwrap_or(AttributeType::Property)
 }
 
+/// Decode one expanded `GeoJSON` Point node into its geometry, any other
+/// geometry node into a value no path addresses, and the clause 4.7.2 string
+/// form as the literal it is.
+fn geometry_of(node: &Value) -> FixtureItem {
+    if node.get("@value").is_some() {
+        return item_of(node);
+    }
+    let point = node
+        .get("@type")
+        .and_then(Value::as_array)
+        .is_some_and(|types| types.iter().any(|declared| declared == GEOJSON_POINT));
+    let coordinates: Option<Vec<f64>> = node
+        .get(GEOJSON_COORDINATES)
+        .and_then(|member| member.get(0))
+        .and_then(|list| list.get("@list"))
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(|item| item.get("@value").and_then(Value::as_f64)).collect());
+    match (point, coordinates.as_deref()) {
+        (true, Some(&[longitude, latitude])) => {
+            FixtureItem::Geometry(GeometryForm::Point(Position::try_new(longitude, latitude, None).expect("a CRS84 position")))
+        }
+        (true | false, Some(_) | None) => FixtureItem::Opaque,
+    }
+}
+
+/// The expanded type of a `GeoJSON` Point.
+const GEOJSON_POINT: &str = "https://purl.org/geojson/vocab#Point";
+
+/// The expanded name of a `GeoJSON` geometry's `coordinates`.
+const GEOJSON_COORDINATES: &str = "https://purl.org/geojson/vocab#coordinates";
+
 /// Decode one expanded value node.
 fn item_of(node: &Value) -> FixtureItem {
     let Some(object) = node.as_object() else {
@@ -256,6 +290,7 @@ impl FixtureItem {
             FixtureItem::Json(json) => ValueItem::Json(json.piece()),
             FixtureItem::Reference(iri) => ValueItem::Reference(iri),
             FixtureItem::Node(node) => ValueItem::Node(node),
+            FixtureItem::Geometry(form) => ValueItem::Geometry(form),
             FixtureItem::Opaque => ValueItem::Opaque,
         }
     }

@@ -108,6 +108,18 @@ pub enum ValueKeys {
     Languages,
 }
 
+/// Where a trailing path reads the members of a family's value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberSource {
+    /// The value's own members: an expanded structured value's by expanded
+    /// name, a JSON literal's by the names the client wrote.
+    Value,
+    /// The members of the `GeoJSON` geometry object the value is (IETF RFC
+    /// 7946 section 3.1), `type` and `coordinates`, by the names the client
+    /// wrote: a `GeoProperty`'s value is the geometry, read as positions.
+    Geometry,
+}
+
 /// How clause 4.9 reads one attribute family's values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FamilyReading {
@@ -121,19 +133,30 @@ pub struct FamilyReading {
     pub reading: MultiValueReading,
     /// What the keys of the family's value name.
     pub keys: ValueKeys,
+    /// Where a trailing path reads the members of the value.
+    pub members: MemberSource,
 }
 
 /// How clause 4.9 reads the values of `family`, covering all eight attribute
 /// families of clause 5.2.4 so a `q` over any of them resolves.
 #[must_use]
 pub const fn family_reading(family: AttributeType) -> FamilyReading {
-    let (layout, terminal, origin, reading, keys) = match family {
-        AttributeType::Property | AttributeType::GeoProperty | AttributeType::JsonProperty => (
+    let (layout, terminal, origin, reading, keys, members) = match family {
+        AttributeType::Property | AttributeType::JsonProperty => (
             ValueLayout::Nodes,
             TerminalKeyword::Literal,
             TargetOrigin::AttributeValue,
             MultiValueReading::WholeArray,
             ValueKeys::Members,
+            MemberSource::Value,
+        ),
+        AttributeType::GeoProperty => (
+            ValueLayout::Nodes,
+            TerminalKeyword::Literal,
+            TargetOrigin::AttributeValue,
+            MultiValueReading::WholeArray,
+            ValueKeys::Members,
+            MemberSource::Geometry,
         ),
         AttributeType::Relationship => (
             ValueLayout::Nodes,
@@ -141,6 +164,7 @@ pub const fn family_reading(family: AttributeType) -> FamilyReading {
             TargetOrigin::RelationshipObject,
             MultiValueReading::WholeArray,
             ValueKeys::Members,
+            MemberSource::Value,
         ),
         AttributeType::VocabProperty => (
             ValueLayout::Nodes,
@@ -148,6 +172,7 @@ pub const fn family_reading(family: AttributeType) -> FamilyReading {
             TargetOrigin::AttributeValue,
             MultiValueReading::WholeArray,
             ValueKeys::Members,
+            MemberSource::Value,
         ),
         AttributeType::LanguageProperty => (
             ValueLayout::Nodes,
@@ -155,6 +180,7 @@ pub const fn family_reading(family: AttributeType) -> FamilyReading {
             TargetOrigin::AttributeValue,
             MultiValueReading::AnyOneValue,
             ValueKeys::Languages,
+            MemberSource::Value,
         ),
         AttributeType::ListProperty => (
             ValueLayout::OrderedList,
@@ -162,6 +188,7 @@ pub const fn family_reading(family: AttributeType) -> FamilyReading {
             TargetOrigin::AttributeValue,
             MultiValueReading::WholeArray,
             ValueKeys::Members,
+            MemberSource::Value,
         ),
         AttributeType::ListRelationship => (
             ValueLayout::OrderedList,
@@ -169,6 +196,7 @@ pub const fn family_reading(family: AttributeType) -> FamilyReading {
             TargetOrigin::RelationshipObject,
             MultiValueReading::WholeArray,
             ValueKeys::Members,
+            MemberSource::Value,
         ),
     };
     FamilyReading {
@@ -177,12 +205,13 @@ pub const fn family_reading(family: AttributeType) -> FamilyReading {
         origin,
         reading,
         keys,
+        members,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::reading::family_reading::{MultiValueReading, TargetOrigin, ValueKeys, ValueLayout, family_reading};
+    use crate::filter::reading::family_reading::{MemberSource, MultiValueReading, TargetOrigin, ValueKeys, ValueLayout, family_reading};
     use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
     use pretty_assertions::assert_eq;
 
@@ -222,6 +251,16 @@ mod tests {
         assert_eq!(
             families_where(|family| family_reading(family).layout == ValueLayout::OrderedList),
             [AttributeType::ListProperty, AttributeType::ListRelationship]
+        );
+    }
+
+    /// Clause 4.9 reads a trailing path against the seed target value, and a
+    /// `GeoProperty`'s is the `GeoJSON` geometry it holds as positions.
+    #[test]
+    fn only_a_geo_property_reads_its_members_from_its_geometry() {
+        assert_eq!(
+            families_where(|family| family_reading(family).members == MemberSource::Geometry),
+            [AttributeType::GeoProperty]
         );
     }
 }

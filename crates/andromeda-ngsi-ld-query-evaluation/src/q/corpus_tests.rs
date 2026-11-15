@@ -2,10 +2,7 @@
 //! Entities, each in a test of its own.
 //!
 //! The corpus names the Entities clause 4.9 has each filter select, and every
-//! case asserts that selection. The cases this execution still reads otherwise
-//! are listed in [`OPEN_DIVERGENCES`], each with what it breaks: a listed case
-//! must still differ from the clause, so the list only shrinks, and a case
-//! that comes to read the clause fails until its entry is removed.
+//! case asserts that selection.
 
 use crate::{
     q::filter_run::filter_holds,
@@ -13,12 +10,8 @@ use crate::{
 };
 use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, reading::filter_reading::FilterReading};
 use andromeda_q_corpus::{case_filter::expanded_filter, corpus::CORPUS, corpus_entity::CorpusEntity};
-use pretty_assertions::{assert_eq, assert_ne};
+use pretty_assertions::assert_eq;
 use strum::IntoEnumIterator;
-
-/// The corpus cases the in-memory execution still reads otherwise than
-/// clause 4.9, each with what it does instead.
-pub(super) const OPEN_DIVERGENCES: [(&str, &str); 1] = [("C-62", "a trailing path into a GeoProperty value selects nothing")];
 
 /// The corpus Entities the filter of the case named `id` selects, or the
 /// refusal of its filter.
@@ -34,22 +27,13 @@ async fn selected(id: &str) -> Result<Vec<CorpusEntity>, String> {
         .collect())
 }
 
-/// Hold the case named `id` to the selection the corpus names, or, while it
-/// is an open divergence, to differing from it.
+/// Hold the case named `id` to the selection the corpus names.
 async fn assert_case(id: &str) {
     let case = CORPUS.iter().find(|case| case.id == id).expect("the case is in the corpus");
     let mut expected = case.selects.to_vec();
     expected.sort();
     let selection = selected(id).await;
-    match OPEN_DIVERGENCES.iter().find(|(open, _)| *open == id) {
-        Some((_, divergence)) => assert_ne!(
-            selection,
-            Ok(expected),
-            "{id} {} now reads clause 4.9 ({divergence}): remove it from the open divergences",
-            case.q
-        ),
-        None => assert_eq!(selection, Ok(expected), "{id} {}", case.q),
-    }
+    assert_eq!(selection, Ok(expected), "{id} {}", case.q);
 }
 
 /// Generates one test per corpus case, each named for what the case pins.

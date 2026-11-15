@@ -24,7 +24,7 @@ pub(crate) fn terminal_value<'a, N: QueriedValueNode<'a>>(keyword: TerminalKeywo
         (TerminalKeyword::Identifier, ValueItem::Reference(iri)) => Some(TargetValue::Text(Cow::Borrowed(iri))),
         (TerminalKeyword::Identifier, ValueItem::Node(node)) => node.id().map(|iri| TargetValue::Text(Cow::Borrowed(iri))),
         (TerminalKeyword::Literal, ValueItem::Reference(_) | ValueItem::Node(_))
-        | (TerminalKeyword::Literal | TerminalKeyword::Identifier, ValueItem::Opaque) => None,
+        | (TerminalKeyword::Literal | TerminalKeyword::Identifier, ValueItem::Geometry(_) | ValueItem::Opaque) => None,
     }
 }
 

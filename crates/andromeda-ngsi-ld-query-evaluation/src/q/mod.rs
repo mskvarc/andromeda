@@ -7,6 +7,7 @@ pub mod attribute_axis;
 pub mod compound_member;
 pub mod family_target;
 pub mod filter_run;
+pub mod geometry_member;
 pub mod hop_steps;
 pub mod language_target;
 pub mod target_value;

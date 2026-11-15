@@ -3,6 +3,7 @@
 use crate::{
     q::{
         family_target::{family_target, first_family_value, held_values_target, terminal_value},
+        geometry_member::geometry_member,
         target_value::{ResolvedTarget, json_member},
     },
     queried_entity::{
@@ -12,7 +13,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::{
-    reading::family_reading::{MultiValueReading, TargetOrigin, TerminalKeyword},
+    reading::family_reading::{MemberSource, MultiValueReading, TargetOrigin, TerminalKeyword, family_reading},
     trailing_path::MemberPath,
 };
 
@@ -37,11 +38,28 @@ use andromeda_ngsi_ld_query::filter::{
 /// ([`MemberPath::written`]), because raw JSON is never touched by JSON-LD
 /// expansion: its keys are exactly what the client wrote, not what the request
 /// `@context` expands them to.
+///
+/// A `GeoProperty`'s value is its geometry, whose members are read from the
+/// `GeoJSON` object it is, by the names the client wrote ([`MemberSource`]).
 pub(crate) fn resolve_compound_member<'a, I: QueriedInstance<'a>>(instance: I, members: &MemberPath) -> Option<ResolvedTarget<'a>> {
-    if let Some(target) = resolve_member_hops(first_family_value(instance), &members.addressed) {
-        return Some(target);
+    match family_reading(instance.family()).members {
+        MemberSource::Geometry => geometry_member_target(instance, &members.written),
+        MemberSource::Value => {
+            if let Some(target) = resolve_member_hops(first_family_value(instance), &members.addressed) {
+                return Some(target);
+            }
+            json_member(&family_target(instance)?, &members.written)
+        }
     }
-    json_member(&family_target(instance)?, &members.written)
+}
+
+/// The member of the geometry `instance` holds that `written` names, read
+/// from the `GeoJSON` object the geometry is.
+pub(crate) fn geometry_member_target<'a, I: QueriedInstance<'a>>(instance: I, written: &[AttributeName]) -> Option<ResolvedTarget<'a>> {
+    match first_family_value(instance)? {
+        ValueItem::Geometry(form) => geometry_member(form, written),
+        ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Node(_) | ValueItem::Opaque => None,
+    }
 }
 
 /// Walk the members of a structured value down to the target the last member
@@ -71,14 +89,14 @@ pub(crate) fn walk_member_hops<'a, N: QueriedValueNode<'a>>(
     let (last, steps) = value_path.split_last()?;
     let node = steps.iter().try_fold(start?, |current, member| match current {
         ValueItem::Node(node) => sole_value(node.member_values(member)),
-        ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Opaque => None,
+        ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Geometry(_) | ValueItem::Opaque => None,
     })?;
     match node {
         ValueItem::Node(node) => {
             let mut values = node.member_values(last).peekable();
             values.peek().is_some().then_some(values)
         }
-        ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Opaque => None,
+        ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Geometry(_) | ValueItem::Opaque => None,
     }
 }
 

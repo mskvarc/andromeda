@@ -218,6 +218,7 @@ mod tests {
             | JsonLdError::Compaction(_)
             | JsonLdError::TypeNotExpanded
             | JsonLdError::TermNotExpanded
+            | JsonLdError::TermIsKeyword
             | JsonLdError::ExpandedTermNotIri(_)
             | JsonLdError::ContextUrlNotIri(_)
             | JsonLdError::ContextGraph(_)

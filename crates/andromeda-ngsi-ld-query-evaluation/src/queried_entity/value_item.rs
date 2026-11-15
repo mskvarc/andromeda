@@ -2,6 +2,7 @@
 //! apart (clause 4.9).
 
 use andromeda_json_literal::piece::JsonPiece;
+use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::time::value::TimeValue;
 use andromeda_ngsi_ld_number::{JsonNumber, declared_number::NonFinite};
 use std::borrow::Cow;
@@ -31,8 +32,12 @@ pub enum ValueItem<'a, N> {
     /// A node object: a structured Property value, whose members are addressed
     /// by expanded IRI, or a Property value naming a node by `@id`.
     Node(N),
+    /// A `GeoProperty` geometry held as a geometry: no target value itself,
+    /// and a `GeoJSON` object whose `type` and `coordinates` a trailing path
+    /// reads (clause 4.9).
+    Geometry(&'a GeometryForm),
     /// A value carrying neither a literal nor members a path can address: a
-    /// nested list, or a `GeoProperty` geometry held as a geometry.
+    /// nested list.
     Opaque,
 }
 

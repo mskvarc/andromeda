@@ -4,7 +4,7 @@
 //! predicates of clause 4.10 are built as custom expressions here rather than
 //! inline at each call site.
 
-use crate::{cast::cast, pg_type::PostgresType};
+use crate::{cast::cast, literal::int_literal, pg_type::PostgresType};
 use sea_query::{BinOper, Expr, ExprTrait, Func, Iden, SimpleExpr};
 
 /// The `PostGIS` functions clause 4.10's spatial predicates are built from.
@@ -62,6 +62,9 @@ enum PostgisFunction {
     /// `ST_AsText(geom)`.
     #[iden = "ST_AsText"]
     AsText,
+    /// `ST_AsGeoJSON(geom, maxdecimaldigits)`.
+    #[iden = "ST_AsGeoJSON"]
+    AsGeoJson,
     /// `ST_GeomFromText(wkt, srid)`.
     #[iden = "ST_GeomFromText"]
     GeomFromText,
@@ -294,6 +297,21 @@ pub fn validated_geom_from_ewkb(ewkb: SimpleExpr) -> SimpleExpr {
 pub fn st_as_ewkb(geometry: SimpleExpr) -> SimpleExpr {
     Func::cust(PostgisFunction::AsEwkb).args([geometry]).into()
 }
+
+/// `PostGIS`: `ST_AsGeoJSON(geometry, 15)`, the `GeoJSON` geometry object of
+/// a geometry (IETF RFC 7946 section 3.1) as text.
+///
+/// Fifteen decimal digits, the most `PostGIS` writes, keep every coordinate a
+/// double holds to the precision it is compared at.
+#[must_use]
+pub fn st_as_geojson(geometry: SimpleExpr) -> SimpleExpr {
+    Func::cust(PostgisFunction::AsGeoJson)
+        .args([geometry, int_literal(GEOJSON_DECIMAL_DIGITS)])
+        .into()
+}
+
+/// The decimal digits [`st_as_geojson`] writes a coordinate with.
+const GEOJSON_DECIMAL_DIGITS: i64 = 15;
 
 /// `PostGIS`: `ST_AsText(geometry)` - the well-known text of a geometry.
 #[must_use]
