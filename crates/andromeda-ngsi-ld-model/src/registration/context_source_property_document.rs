@@ -4,9 +4,10 @@
 //! Clause 4.9 makes the filter target "a Context Source Property member of the
 //! `CSourceRegistration`, see Table 5.2.9-1", so the document holds every Table
 //! 5.2.9-1 member a registration declares, with the value a retrieval carries
-//! for it (`expiresAt` declared as the `DateTime` Table 5.2.9-1 types it, so a
-//! time operand compares with it) and keyed by the IRI the core `@context`
-//! expands its name to, then the
+//! for it (`expiresAt`, and the `startAt` and `endAt` of `managementInterval`
+//! and `observationInterval`, declared as the `DateTime` Tables 5.2.9-1 and
+//! 5.2.11-1 type them as, so a time operand compares with each) and keyed by
+//! the IRI the core `@context` expands its name to, then the
 //! Context Source Properties the registrant added, under their expanded names.
 //! `id` and `type` expand to JSON-LD keywords, which no filter names, and the
 //! Table 5.2.9-2 health members and the system timestamps are not Context
@@ -77,8 +78,9 @@ const TABLE_MEMBERS: [(&str, Iri<&str>); 19] = [
 /// stored registration or from the values a write is about to store.
 ///
 /// Each member serializes under its Table 5.2.9-1 name as the registration
-/// does, `expiresAt` declared as a `DateTime`, so the document a write stores
-/// and the one a read builds hold the same values.
+/// does, `expiresAt` and the instants of each time interval declared as a
+/// `DateTime`, so the document a write stores and the one a read builds hold
+/// the same values.
 #[derive(Debug, Serialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextSourcePropertyMembers<'a> {
@@ -110,13 +112,15 @@ pub struct ContextSourcePropertyMembers<'a> {
     pub management: Option<&'a RegistrationManagementInfo>,
     /// `managementInterval`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub management_interval: Option<&'a TimeInterval>,
+    #[builder(setter(transform = |interval: Option<&'a TimeInterval>| interval.map(DeclaredTimeInterval::of)))]
+    pub management_interval: Option<DeclaredTimeInterval>,
     /// `mode`, which Table 5.2.9-1 assumes `inclusive` when a registration
     /// does not declare it, so it is always present.
     pub mode: ForwardingMode,
     /// `observationInterval`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub observation_interval: Option<&'a TimeInterval>,
+    #[builder(setter(transform = |interval: Option<&'a TimeInterval>| interval.map(DeclaredTimeInterval::of)))]
+    pub observation_interval: Option<DeclaredTimeInterval>,
     /// `observationSpace`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observation_space: Option<&'a Geometry>,
@@ -189,6 +193,39 @@ impl DeclaredDateTime {
     #[must_use]
     pub const fn instant(self) -> DateTime<Utc> {
         self.value
+    }
+}
+
+/// A time interval whose `startAt` and `endAt` are each declared as the
+/// clause 4.6.3 `DateTime` Table 5.2.11-1 types it as, so a time operand
+/// compares with either.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeclaredTimeInterval {
+    /// `startAt`.
+    start_at: DeclaredDateTime,
+    /// `endAt`, absent from an open interval.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end_at: Option<DeclaredDateTime>,
+}
+
+impl DeclaredTimeInterval {
+    /// `interval` with each of its instants declared as a `DateTime`.
+    #[must_use]
+    pub fn of(interval: &TimeInterval) -> DeclaredTimeInterval {
+        DeclaredTimeInterval {
+            start_at: DeclaredDateTime::new(interval.start_at),
+            end_at: interval.end_at.map(DeclaredDateTime::new),
+        }
+    }
+
+    /// The interval declared.
+    #[must_use]
+    pub fn interval(self) -> TimeInterval {
+        TimeInterval {
+            start_at: self.start_at.instant(),
+            end_at: self.end_at.map(DeclaredDateTime::instant),
+        }
     }
 }
 
@@ -321,12 +358,19 @@ mod tests {
         let keys: BTreeSet<&str> = document.as_object().expect("an object").keys().map(String::as_str).collect();
         let expected: BTreeSet<&str> = TABLE_MEMBERS.iter().map(|(_, iri)| iri.as_str()).chain(["https://example.org/tier"]).collect();
         pretty_assertions::assert_eq!(keys, expected);
-        for (name, iri) in TABLE_MEMBERS.iter().filter(|(name, _)| *name != "expiresAt") {
+        let declared = ["expiresAt", "managementInterval", "observationInterval"];
+        for (name, iri) in TABLE_MEMBERS.iter().filter(|(name, _)| !declared.contains(name)) {
             pretty_assertions::assert_eq!(literal(&document[iri.as_str()]), literal(&written[name]), "{name}");
         }
+        let date_time = |instant: &str| json!({"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": instant});
+        pretty_assertions::assert_eq!(document["https://uri.etsi.org/ngsi-ld/expiresAt"], date_time("2030-12-31T23:59:59Z"));
         pretty_assertions::assert_eq!(
-            document["https://uri.etsi.org/ngsi-ld/expiresAt"],
-            json!({"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2030-12-31T23:59:59Z"})
+            document["https://uri.etsi.org/ngsi-ld/observationInterval"],
+            json!({"startAt": date_time("2024-01-01T00:00:00Z")})
+        );
+        pretty_assertions::assert_eq!(
+            document["https://uri.etsi.org/ngsi-ld/managementInterval"],
+            json!({"startAt": date_time("2024-01-01T00:00:00Z"), "endAt": date_time("2025-01-01T00:00:00Z")})
         );
         pretty_assertions::assert_eq!(document["https://uri.etsi.org/ngsi-ld/mode"], json!("exclusive"));
         pretty_assertions::assert_eq!(document["http://purl.org/dc/terms/description"], json!("vehicle telemetry source"));
@@ -430,6 +474,25 @@ mod tests {
         assert!(holds("\"https://uri.etsi.org/ngsi-ld/expiresAt\"==2030-12-31T23:59:59Z", &registration));
         assert!(!holds("\"https://uri.etsi.org/ngsi-ld/expiresAt\"<2030-01-01T00:00:00Z", &registration));
         assert!(!holds("\"https://uri.etsi.org/ngsi-ld/expiresAt\"==\"2030-12-31T23:59:59Z\"", &registration));
+    }
+
+    /// Table 5.2.11-1 types the `startAt` and `endAt` of a time interval as
+    /// `DateTime`, which clause 4.9 compares in temporal order with a
+    /// `dateTime` operand and never with a String; an open interval has no
+    /// `endAt` to compare.
+    #[test]
+    fn a_filter_compares_the_instants_of_a_time_interval_as_date_times() {
+        let registration = fully_populated();
+        let management = "\"https://uri.etsi.org/ngsi-ld/managementInterval\"";
+        let observation = "\"https://uri.etsi.org/ngsi-ld/observationInterval\"";
+        assert!(holds(&format!("{management}[startAt]<2024-06-01T00:00:00Z"), &registration));
+        assert!(holds(&format!("{management}[endAt]>2024-06-01T00:00:00Z"), &registration));
+        assert!(holds(&format!("{management}[endAt]==2025-01-01T00:00:00Z"), &registration));
+        assert!(!holds(&format!("{management}[startAt]!=2024-01-01T00:00:00Z"), &registration));
+        assert!(!holds(&format!("{management}[startAt]==\"2024-01-01T00:00:00Z\""), &registration));
+        assert!(holds(&format!("{observation}[startAt]==2024-01-01T00:00:00Z"), &registration));
+        assert!(!holds(&format!("{observation}[endAt]"), &registration));
+        assert!(!holds(&format!("{observation}[endAt]>2000-01-01T00:00:00Z"), &registration));
     }
 
     /// Clause 4.9 compares an array by membership, so `operations` holds the

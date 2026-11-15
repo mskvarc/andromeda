@@ -8,6 +8,7 @@ pub(crate) mod history;
 pub(crate) mod ledgers;
 pub(crate) mod observed;
 pub(crate) mod queues;
+pub(crate) mod registrations;
 pub(crate) mod rehearsal;
 pub(crate) mod server_settings;
 pub(crate) mod snapshot_records;

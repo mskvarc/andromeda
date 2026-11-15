@@ -25,7 +25,7 @@ use andromeda_ngsi_ld_lexicon::{
     tenant::TenantName,
 };
 use andromeda_ngsi_ld_model::registration::{
-    context_source_property_document::{ContextSourcePropertyMembers, DeclaredDateTime},
+    context_source_property_document::{ContextSourcePropertyMembers, DeclaredDateTime, DeclaredTimeInterval},
     operation::CsrOperation,
 };
 use andromeda_ngsi_ld_query::portable_pattern::RenderingRevision;
@@ -143,8 +143,8 @@ pub(super) fn registration_columns<'a>(
 ) -> Result<Vec<(Csr, SimpleExpr)>, RegistrationError> {
     let members = &fields.members;
     let scopes = stored_scopes(members.scope);
-    let (observation_start, observation_end) = interval_columns(members.observation_interval);
-    let (management_start, management_end) = interval_columns(members.management_interval);
+    let (observation_start, observation_end) = interval_columns(members.observation_interval.map(DeclaredTimeInterval::interval).as_ref());
+    let (management_start, management_end) = interval_columns(members.management_interval.map(DeclaredTimeInterval::interval).as_ref());
     let management = ManagementColumns::of(members.management);
     let (info_keys, info_values) = context_source_info_columns(members.context_source_info);
     let geometry = |columns: GeometryColumns, geometry: Option<&Geometry>| {

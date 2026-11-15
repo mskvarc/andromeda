@@ -2,6 +2,7 @@
 
 use andromeda_configuration::schema::db_name_prefix::DbNamePrefixError;
 use andromeda_context_space::snapshot_key::SnapshotKeyError;
+use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_lexicon::{identifier::IdentifierParseError, tenant::InvalidTenantName};
 use andromeda_postgresql_attribute_instance::stored_members::StoredInstanceError;
 use andromeda_postgresql_context_store::error::ContextStoreError;
@@ -54,6 +55,13 @@ pub(crate) enum UpgradeTestError {
     /// A database name prefix the test builds is not one.
     #[error("a database name prefix could not be read")]
     Prefix(#[from] DbNamePrefixError),
+    /// A document the test builds or reads is not the JSON it expects.
+    #[error("a document could not be read or written")]
+    Json(#[from] serde_json::Error),
+    /// The broker cannot write the Context Source Property document of a
+    /// registration the test builds.
+    #[error("a context source property document could not be written")]
+    PropertyDocument(#[from] JsonLiteralError),
     /// A row the test needs is missing.
     #[error("the row for {what} is missing")]
     Missing {
