@@ -139,6 +139,13 @@ const E13_ATTRIBUTES: &[CorpusAttribute] = &[attribute!(
         ("tags", &[]),
         ("geo", &[Members(&[("lat", &[Integer(1)])])]),
         ("mix", &[Integer(1), Members(&[("a", &[Integer(2)])])]),
+        (
+            "since",
+            &[Declared {
+                datatype: CorpusDatatype::DateTime,
+                lexical: "0000-02-29T12:00:00Z"
+            }]
+        ),
     ])])
 )];
 /// `h` to `http://example.com/a`, `hp` the same text, `location` a Point.

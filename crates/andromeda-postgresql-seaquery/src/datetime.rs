@@ -3,9 +3,11 @@
 //! None has a native sea-query constructor: `to_char` formats a resolved
 //! instant back to fixed-width text, `pg_input_is_valid` (PostgreSQL 16+)
 //! asks a type's input function whether a candidate text is a real value
-//! without raising, and `translate` writes a decimal comma as the point that
-//! input function reads. Each is spelled here as [`Func::cust`] so the function
-//! name is written once and no value is interpolated into the call.
+//! without raising, `translate` writes a decimal comma as the point that
+//! input function reads, and `regexp_replace` writes the ISO 8601 year `0000`
+//! as the year that input function names it by. Each is spelled here as
+//! [`Func::cust`] so the function name is written once and no value is
+//! interpolated into the call.
 
 use crate::{literal::text_literal, pg_type::PostgresType};
 use sea_query::{Func, Iden, SimpleExpr};
@@ -24,6 +26,18 @@ struct PgInputIsValid;
 #[derive(Iden, Clone, Copy)]
 #[iden = "translate"]
 struct Translate;
+
+/// The `regexp_replace(text, pattern, replacement)` substitution function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "regexp_replace"]
+struct RegexpReplace;
+
+/// A text opening with the ISO 8601 year `0000`, the rest captured.
+const YEAR_ZERO: &str = "^0000(.*)$";
+
+/// The year `0000` as PostgreSQL's input functions name it: the year 1 before
+/// the era, marked by a trailing `BC`.
+const YEAR_ONE_BEFORE_THE_ERA: &str = "0001\\1 BC";
 
 /// `to_char(value, 'format')` - render `value` as text under a `format` template.
 ///
@@ -55,10 +69,25 @@ pub fn with_decimal_point(text: SimpleExpr) -> SimpleExpr {
     Func::cust(Translate).args([text, text_literal(","), text_literal(".")]).into()
 }
 
+/// `regexp_replace(text, '^0000(.*)$', '0001\1 BC')` - a date or time text
+/// with the ISO 8601 year `0000` written as the `timestamptz` and `date` input
+/// functions read it, any other text as it is.
+///
+/// ISO 8601, which clause 4.6.3 defines its `DateTime` by, counts the year
+/// before year 1 as `0000`, the proleptic Gregorian year 1 BC; PostgreSQL's
+/// input functions refuse that year and read it as `0001` followed by `BC`,
+/// the same day and the same leap year.
+#[must_use]
+pub fn with_iso_year_zero(text: SimpleExpr) -> SimpleExpr {
+    Func::cust(RegexpReplace)
+        .args([text, text_literal(YEAR_ZERO), text_literal(YEAR_ONE_BEFORE_THE_ERA)])
+        .into()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
-        datetime::{pg_input_is_valid, to_char, with_decimal_point},
+        datetime::{pg_input_is_valid, to_char, with_decimal_point, with_iso_year_zero},
         pg_type::PostgresType,
     };
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
@@ -78,6 +107,13 @@ mod tests {
     fn a_decimal_comma_is_translated_to_the_point() {
         let sql = render(with_decimal_point(Expr::col(Alias::new("written"))));
         assert!(sql.contains(r#"translate("written", ',', '.')"#), "{sql}");
+    }
+
+    #[test]
+    fn the_iso_year_zero_is_written_as_the_year_one_before_the_era() {
+        let sql = render(with_iso_year_zero(Expr::col(Alias::new("written"))));
+        assert!(sql.contains("regexp_replace(\"written\", '^0000(.*)$', "), "{sql}");
+        assert!(sql.contains(r"E'0001\\1 BC'"), "{sql}");
     }
 
     #[test]

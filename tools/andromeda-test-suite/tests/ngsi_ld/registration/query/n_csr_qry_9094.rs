@@ -15,9 +15,10 @@ use ngsi_ld::{
 
 /// The written forms of the property `p`, one registration each: scalars, arrays, nodes of several families, nodes
 /// carrying instance members and sub-properties, values that are objects of their own, whose member holds a scalar,
-/// the empty array, an object or a scalar beside an object, and value objects declaring a time value, in its form or
-/// in another, as the value, as an element of an array and as a member of an object.
-const FORMS: [&str; 33] = [
+/// the empty array, an object or a scalar beside an object, value objects declaring a time value, in its form or in
+/// another, as the value, as an element of an array and as a member of an object, and time values of the ISO 8601
+/// year `0000`.
+const FORMS: [&str; 36] = [
     r#""x""#,
     "1",
     "true",
@@ -51,13 +52,16 @@ const FORMS: [&str; 33] = [
     r#"{"@type": "Time", "@value": "08:00:00+01:00"}"#,
     r#"[{"@type": "DateTime", "@value": "2024-01-01T00:00:00Z"}]"#,
     r#"{"m": {"@type": "DateTime", "@value": "2024-01-01T00:00:00Z"}}"#,
+    r#"{"type": "Property", "value": 1, "observedAt": "0000-01-01T00:00:00Z"}"#,
+    r#"{"@type": "DateTime", "@value": "0000-02-29T12:00:00Z"}"#,
+    r#"{"@type": "Date", "@value": "0000-02-29"}"#,
 ];
 
 /// The terms asked of every form: existence, equality and its complement over each kind, an order, a pattern and its
-/// complement, an order over each time value form, a time value equality, its complement and a list mixing a time
+/// complement, an order over each time value form and before the year 1, a time value equality, its complement and a list mixing a time
 /// value with a String, compound members with an equality, its complement and orders, a family's own members,
 /// instance members and a sub-property.
-const TERMS: [&str; 35] = [
+const TERMS: [&str; 38] = [
     "p",
     "p==\"x\"",
     "p!=\"x\"",
@@ -76,6 +80,8 @@ const TERMS: [&str; 35] = [
     "p==2024-01-01T00:00:00Z,\"a\"",
     "p>2023-12-31",
     "p>07:00:00Z",
+    "p<0001-01-01T00:00:00Z",
+    "p<0001-01-01",
     "p[m]",
     "p[m]==1",
     "p[m]!=\"x\"",
@@ -89,13 +95,14 @@ const TERMS: [&str; 35] = [
     "p.unitCode==\"C62\"",
     "p.unitCode",
     "p.observedAt>2023-12-31T00:00:00Z",
+    "p.observedAt<0001-01-01T00:00:00Z",
     "p.observedAt==\"2024-01-01\"",
     "p.name==\"n\"",
     "p.name",
     "p.lang==\"en\"",
 ];
 
-/// Pins: over thirty-three registrations, each carrying one written form of the property `p` (a String, a number, a
+/// Pins: over thirty-six registrations, each carrying one written form of the property `p` (a String, a number, a
 /// Boolean, a bare array, the empty array, a nested array, a concise node, a typed node holding no value, a node
 /// holding an array, bare objects whose member holds a number, the empty array, an object or a number beside an
 /// object, a node holding an object, a Relationship node, a node with `unitCode` and `observedAt`, nodes whose
@@ -103,7 +110,8 @@ const TERMS: [&str; 35] = [
 /// with `lang`, a JSON-LD value object, a `GeoJSON` geometry, value objects declaring the `DateTime`
 /// 2024-01-01T00:00:00Z, 2024-01-01T00:00:00+00:00 and 2024-01-01T00:00:00,5Z, the `Date` 2024-01-01, a node holding
 /// the `Date` 2024-1-1, the `Date` 2024-02-30, the `Time` 08:00:00,5Z and 08:00:00+01:00, an array holding a declared
-/// `DateTime` and an object whose member holds one), each of thirty-five terms selects in Query
+/// `DateTime`, an object whose member holds one, a node whose `observedAt` is 0000-01-01T00:00:00Z and value objects
+/// declaring the `DateTime` 0000-02-29T12:00:00Z and the `Date` 0000-02-29), each of thirty-eight terms selects in Query
 /// Context Source Registrations exactly the registrations its Context Source Registration Subscription is notified
 /// of; the two executions of a `csf` read every written form alike, whatever they select
 /// Clause: 4.5.1, 4.5.2.2, 4.5.2.3, 4.6.3, 4.9, 5.2.9, 5.10.2.4, 5.11.2.4, C.6

@@ -21,6 +21,7 @@ use andromeda_q_corpus::{
 use cefact_units::UnitCode;
 use googletest::prelude::*;
 use ngsi_ld::model::{
+    CoreDatatype,
     DatasetId,
     Entity,
     EntityId,
@@ -34,6 +35,7 @@ use ngsi_ld::model::{
     Property,
     RawJson,
     Relationship,
+    TypedValue,
     Value,
     VocabProperty,
     VocabTerm,
@@ -103,6 +105,7 @@ impl CorpusEntities {
                     ("tags", Value::Array(Vec::new())),
                     ("geo", object([("lat", number("1")?)])),
                     ("mix", Value::Array(vec![number("1")?, object([("a", number("2")?)])])),
+                    ("since", Value::Typed(TypedValue::try_new(CoreDatatype::DateTime, "0000-02-29T12:00:00Z")?)),
                 ]),
             ),
             CorpusEntity::E14 => builder

@@ -190,6 +190,8 @@ pub const CORPUS: &[CorpusCase] = &[
     local("C-96", "addr[geo]!=\"x\"", &[E13]),
     local("C-97", "addr[mix]==1", &[E13]),
     local("C-98", "addr[mix]>0", &[]),
+    local("C-99", "addr[since]<0001-01-01T00:00:00Z", &[E13]),
+    local("C-100", "addr[since]==0000-02-29T12:00:00Z", &[E13]),
 ];
 
 #[cfg(test)]

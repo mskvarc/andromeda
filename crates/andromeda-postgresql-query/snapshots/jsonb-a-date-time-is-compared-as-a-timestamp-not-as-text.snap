@@ -7,4 +7,5 @@ SELECT
       WHEN (
         "datatype" = ('https://uri.etsi.org/ngsi-ld/DateTime')
         AND pg_input_is_valid(
-          "stored" #>> ('{}'), 'timestamptz')) THEN ("stored" #>> ('{}'))::timestamptz END)
+          regexp_replace(
+            "stored" #>> ('{}'), '^0000(.*)$', E'0001\\1 BC'), 'timestamptz')) THEN (regexp_replace("stored" #>> ('{}'), '^0000(.*)$', E'0001\\1 BC'))::timestamptz END)

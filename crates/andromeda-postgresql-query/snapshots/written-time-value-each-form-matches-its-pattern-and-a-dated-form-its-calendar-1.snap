@@ -7,4 +7,11 @@ SELECT
       '^[0-9]{4}-[0-9]{2}-[0-9]{2}T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.,][0-9]{1,6})?Z$'
     )
   )
-  AND pg_input_is_valid(translate("written", ',', '.'), 'timestamptz')
+  AND pg_input_is_valid(
+    regexp_replace(
+      translate("written", ',', '.'),
+      '^0000(.*)$',
+      E'0001\\1 BC'
+    ),
+    'timestamptz'
+  )
