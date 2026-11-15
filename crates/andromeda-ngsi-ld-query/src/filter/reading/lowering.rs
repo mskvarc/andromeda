@@ -44,13 +44,14 @@ use crate::filter::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 
 impl FilterReading {
-    /// The reading of a parsed, expanded filter, its target languages
-    /// selecting languageMap keys by `matching`.
+    /// The reading of a parsed, expanded filter as written, term for term, its
+    /// target languages selecting languageMap keys by `matching`: what the
+    /// normal form is taken of.
     #[must_use]
-    pub fn of(expr: &Expr, matching: LanguageMatching) -> FilterReading {
+    pub fn lowered(expr: &Expr, matching: LanguageMatching) -> FilterReading {
         match expr {
-            Expr::And(terms) => FilterReading::All(terms.iter().map(|term| FilterReading::of(term, matching)).collect()),
-            Expr::Or(terms) => FilterReading::Any(terms.iter().map(|term| FilterReading::of(term, matching)).collect()),
+            Expr::And(terms) => FilterReading::All(terms.iter().map(|term| FilterReading::lowered(term, matching)).collect()),
+            Expr::Or(terms) => FilterReading::Any(terms.iter().map(|term| FilterReading::lowered(term, matching)).collect()),
             Expr::Pred(predicate) => FilterReading::Term(Box::new(TermReading::of(predicate, matching))),
         }
     }

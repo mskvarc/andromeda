@@ -10,7 +10,7 @@ use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 /// Equality and order are over the value, so `1`, `1.0` and `1e0` are one
 /// operand. A bare `URI` and a `quotedStr` holding the same text are one
 /// operand too: both compare as the text they are.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Operand {
     /// An exact number.
     Number(JsonNumber),

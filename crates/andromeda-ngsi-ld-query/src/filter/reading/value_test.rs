@@ -7,10 +7,17 @@
 //! of each kind and an array of each kind make of the term follows from the
 //! two, so no table of answers is stored beside them to disagree with them.
 
-use crate::filter::reading::{array_rule::ArrayRule, array_target::ArrayTarget, scalar_test::ScalarTest, target_kind::TargetKind, verdict::Verdict};
+use crate::filter::reading::{
+    array_rule::ArrayRule,
+    array_target::ArrayTarget,
+    operand::Operand,
+    scalar_test::ScalarTest,
+    target_kind::TargetKind,
+    verdict::Verdict,
+};
 
 /// Whether a term asserts its test or its complement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Polarity {
     /// The test holds on the target.
     Asserted,
@@ -19,7 +26,7 @@ pub enum Polarity {
 }
 
 /// The targets a negated operator matches when the test fails on them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ComplementScope {
     /// Every kind. A target the operand does not compare with "shall be
     /// considered unequal" (clause 4.9, Unequal): `!=` with a value, a list or
@@ -32,7 +39,7 @@ pub enum ComplementScope {
 }
 
 /// A comparison and what a target makes of it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ValueTest {
     /// The comparison, stated positively.
     test: ScalarTest,
@@ -58,6 +65,24 @@ impl ValueTest {
     #[must_use]
     pub const fn polarity(&self) -> Polarity {
         self.polarity
+    }
+
+    /// Puts the operands of a value list in canonical order, each once.
+    pub(super) fn order_operands(&mut self) {
+        self.test.order_operands();
+    }
+
+    /// The operands of an asserted equality, `==` with a value or a value
+    /// list, `None` for any other test.
+    pub(super) const fn asserted_equality_mut(&mut self) -> Option<&mut Vec<Operand>> {
+        match (&mut self.test, self.polarity) {
+            (ScalarTest::EqualsAny(operands), Polarity::Asserted) => Some(operands),
+            (ScalarTest::EqualsAny(_), Polarity::Complement(_))
+            | (
+                ScalarTest::Ordered { .. } | ScalarTest::Within(_) | ScalarTest::Matches(_) | ScalarTest::Unsatisfiable,
+                Polarity::Asserted | Polarity::Complement(_),
+            ) => None,
+        }
     }
 
     /// What the term makes of one target of `kind`.

@@ -14,7 +14,7 @@ use andromeda_ngsi_ld_value_order::number_order::{HeldNumber, number_order};
 use std::cmp::Ordering;
 
 /// What a Query Term asks of one target value, before any negation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ScalarTest {
     /// Equal to one of the operands: one for `==` and `!=` with a value,
     /// several for a value list, each comparing with its own kinds.
@@ -48,6 +48,16 @@ impl ScalarTest {
             ScalarTest::Within(interval) => interval.min().compares_with(kind, Comparison::Order),
             ScalarTest::Matches(_) => matches!(kind, TargetKind::String),
             ScalarTest::Unsatisfiable => false,
+        }
+    }
+
+    /// Puts the operands of a value list in canonical order, each once: the
+    /// list holds when one operand is equal, so neither their order nor a
+    /// repetition is part of what it asks.
+    pub(super) fn order_operands(&mut self) {
+        if let ScalarTest::EqualsAny(operands) = self {
+            operands.sort();
+            operands.dedup();
         }
     }
 

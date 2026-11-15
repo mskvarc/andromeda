@@ -23,7 +23,7 @@ use pretty_assertions::assert_eq;
 
 /// The one term `q` lowers to under `matching`.
 fn term_under(q: &str, matching: LanguageMatching) -> TermReading {
-    match FilterReading::of(&parse(q).expect("a clause 4.9 filter"), matching) {
+    match FilterReading::lowered(&parse(q).expect("a clause 4.9 filter"), matching) {
         FilterReading::Term(term) => *term,
         other @ (FilterReading::All(_) | FilterReading::Any(_)) => panic!("{q} lowers to {other:?}"),
     }
@@ -240,7 +240,7 @@ fn a_negated_operator_lowers_to_the_complement_of_its_positive_test() {
 #[test]
 fn a_filter_lowers_its_conjunctions_and_disjunctions_as_written() {
     let expr: Expr = "a==1;(b==2|c)".parse().expect("a filter");
-    let FilterReading::All(children) = FilterReading::of(&expr, LanguageMatching::TagEquality) else {
+    let FilterReading::All(children) = FilterReading::lowered(&expr, LanguageMatching::TagEquality) else {
         panic!("a conjunction");
     };
     assert!(matches!(children.as_slice(), [FilterReading::Term(_), FilterReading::Any(alternatives)] if alternatives.len() == 2));

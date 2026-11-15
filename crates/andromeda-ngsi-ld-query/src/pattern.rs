@@ -18,6 +18,7 @@ use crate::{
     subject_start::SubjectStart,
 };
 use derive_more::Display;
+use derive_where::derive_where;
 use regex::{Regex, RegexBuilder};
 use regex_syntax::{ast::parse::Parser, hir::translate::TranslatorBuilder};
 use serde::{Deserialize, Serialize};
@@ -25,18 +26,22 @@ use std::str::FromStr;
 
 /// A regular expression from a query parameter or a `q` predicate, compiled at parse time.
 ///
-/// Equality is over the source text, not the compiled automaton: two patterns are the same predicate exactly when the client wrote the same thing. The wire form is the pattern as written, so a resource that stores one (an `EntitySelector.idPattern`, clause 5.2.33, or a Snapshot entity selector, clause 5.2.23) gives back exactly what the client sent.
+/// Equality and order are over the source text, not the compiled automaton: two patterns are the same predicate exactly when the client wrote the same thing. The wire form is the pattern as written, so a resource that stores one (an `EntitySelector.idPattern`, clause 5.2.33, or a Snapshot entity selector, clause 5.2.23) gives back exactly what the client sent.
 #[derive(Debug, Clone, Display, Serialize, Deserialize)]
+#[derive_where(PartialEq, Eq, PartialOrd, Ord)]
 #[serde(try_from = "String", into = "String")]
 #[display("{source}")]
 pub struct Pattern {
     /// The pattern as the client wrote it.
     source: Box<str>,
     /// The client's text with its bracket expressions restated, compiled for the in-memory engine.
+    #[derive_where(skip)]
     compiled: Regex,
     /// The restatement the store evaluates.
+    #[derive_where(skip)]
     portable: PortablePattern,
     /// What every match fixes about the text its subject begins with.
+    #[derive_where(skip)]
     subject_start: SubjectStart,
 }
 
@@ -113,16 +118,6 @@ impl From<Pattern> for String {
         pattern.source.into()
     }
 }
-
-// `regex::Regex` carries no equality of its own, so no derive covers every
-// field; equality is over the source text alone.
-impl PartialEq for Pattern {
-    fn eq(&self, other: &Pattern) -> bool {
-        self.source == other.source
-    }
-}
-
-impl Eq for Pattern {}
 
 #[cfg(test)]
 mod tests {

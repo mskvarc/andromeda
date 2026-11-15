@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 
 /// An ordering operator's relation of the target to the operand.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum OrderRelation {
     /// `>`.
     Greater,

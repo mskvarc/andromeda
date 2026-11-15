@@ -587,6 +587,10 @@ mod tests {
         );
     }
 
+    /// The serialisation writes each member in its addressed spelling, the one
+    /// another broker reads, so the filter it reparses to writes the same text
+    /// and addresses the same members. The written spelling travels in
+    /// `serialize_written_members` alone.
     #[tokio::test]
     async fn an_expanded_compound_path_round_trips_through_the_serialisation() {
         let expanded = expand_q_expression(Some("address[city]==\"Berlin\""), &JsonKeyAttributes::default(), &CORE_MEMBER_EXPANDER)
@@ -594,7 +598,11 @@ mod tests {
             .expect("expands")
             .expect("present");
         let reparsed = parser::parse(&serialize(&expanded)).expect("reparses");
-        assert_eq!(reparsed, expanded);
+        assert_eq!(serialize(&reparsed), serialize(&expanded));
+        assert_eq!(
+            path_of(&reparsed).members().expect("a member path").addressed,
+            path_of(&expanded).members().expect("a member path").addressed
+        );
     }
 
     /// Clause 4.9 EXAMPLE 11: with

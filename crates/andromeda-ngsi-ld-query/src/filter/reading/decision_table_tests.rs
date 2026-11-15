@@ -33,7 +33,7 @@ use strum::IntoEnumIterator;
 
 /// The value test of the one term `q` lowers to.
 fn value_test(q: &str) -> ValueTest {
-    let filter = FilterReading::of(&parse(q).expect("a clause 4.9 filter"), LanguageMatching::TagEquality);
+    let filter = FilterReading::lowered(&parse(q).expect("a clause 4.9 filter"), LanguageMatching::TagEquality);
     let FilterReading::Term(term) = filter else {
         panic!("{q} lowers to {filter:?}");
     };
@@ -302,7 +302,7 @@ fn a_pattern_and_its_negation_hold_on_strings_alone() {
 /// element."
 #[test]
 fn an_attribute_alone_tests_existence() {
-    let filter = FilterReading::of(&parse("x").expect("a filter"), LanguageMatching::TagEquality);
+    let filter = FilterReading::lowered(&parse("x").expect("a filter"), LanguageMatching::TagEquality);
     let FilterReading::Term(term) = filter else {
         panic!("one term");
     };

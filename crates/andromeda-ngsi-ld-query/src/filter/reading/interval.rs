@@ -4,7 +4,7 @@ use crate::filter::reading::operand::Operand;
 use std::mem;
 
 /// The two bounds of a clause 4.9 `Range`, inclusive and of one kind.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Interval {
     /// The lower bound.
     min: Operand,

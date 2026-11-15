@@ -4,7 +4,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 
 /// One clause 4.9 `LinkedEntityRelation` step: the Relationship crossed into
 /// the Entities it names, and the types such an Entity must carry one of.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Hop {
     /// The Relationship the hop crosses, expanded.
     pub(super) relationship: AttributeName,
