@@ -1,5 +1,5 @@
 //! The world the linked temporal retrieval tests share: Parkings and Vehicles on two brokers, the registration of the
-//! peer, and the between query that judges a hop target by the value in effect when the window opens (clause 4.11).
+//! peer, and the between query that judges a hop target by the instances inside the window (clause 5.7.4.4 steps S2 and S3).
 
 use crate::{
     body_json::{json_count, json_equals},

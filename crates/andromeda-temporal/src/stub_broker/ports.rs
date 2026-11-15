@@ -15,7 +15,6 @@ use crate::{
             TemporalHistoryOutcome,
             TemporalHistoryReader,
         },
-        in_effect_reads::InEffectReads,
         mutation_barrier::TemporalMutationBarrier,
         mutator::{TemporalDeleteScope, TemporalMutator},
         read_scope::{ScopeReach, TemporalReadScope, UnrecordedHistory},
@@ -113,14 +112,13 @@ impl TemporalHistoryReader for StubBroker {
         Ok(self.leaf_truths_of(entity_ids))
     }
 
-    async fn in_effect_instances(
+    async fn in_effect_scope(
         &self,
         _scope: &TemporalReadScope<'_>,
         _compiled: &CompiledTemporalQuery,
         entity_ids: &[Identifier],
-        reads: InEffectReads<'_>,
     ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError> {
-        Ok(self.in_effect_of(entity_ids, reads))
+        Ok(self.in_effect_of(entity_ids))
     }
 
     async fn window_relationship_instances(

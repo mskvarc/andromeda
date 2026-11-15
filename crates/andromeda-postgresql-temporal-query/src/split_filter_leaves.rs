@@ -67,10 +67,10 @@ fn leaf_expression(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, lea
     let of = HistoryOf::Entity(SeaExpr::col((E, Entities::Id)));
     match leaf {
         FilterLeaf::Term(term) => {
-            let window = windowed_instances(branch, compiled, &of, WindowReach::Inside);
+            let window = windowed_instances(branch, compiled, &of);
             Ok(q_filter::compile_term(term, &InstanceScan::History(&window), names).into())
         }
-        FilterLeaf::Geo(_) => Ok(temporal_geo_existential(branch, compiled, names, &of, WindowReach::Inside)?.map_or_else(false_literal, Into::into)),
+        FilterLeaf::Geo(_) => Ok(temporal_geo_existential(branch, compiled, names, &of)?.map_or_else(false_literal, Into::into)),
         FilterLeaf::ScopeRequirement(pattern) => Ok(pattern_condition(pattern, &scope_history_target(branch, compiled, &of, WindowReach::Inside))),
     }
 }
@@ -155,9 +155,9 @@ mod tests {
         assert_statement_snapshot!("split-filter-leaves-one-column-per-leaf-in-leaf-order", statement);
     }
 
-    /// Clause 5.7.4.4 with clause 4.11: the instance in effect when the window
-    /// opens is the latest across every part, so a local leaf reads the
-    /// instances inside the window only, for `q`, the geo-query and the Scope.
+    /// Clause 5.7.4.4 with clause 4.18: a local leaf reads the instances inside
+    /// the window for `q` and the geo-query, and the Scope events inside it
+    /// alone, the Scope in effect being the latest across every part.
     #[test]
     fn a_split_leaf_reads_inside_the_window_only() {
         let geo = GeoQuery {

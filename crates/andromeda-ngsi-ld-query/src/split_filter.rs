@@ -16,18 +16,15 @@
 //!
 //! For the instances inside the window that is whether the leaf held in any
 //! part, so each part is read on its own, wherever it is held, and the truths
-//! are joined afterwards. The clause 4.11 instance each stream held when the
-//! window opens is the latest across every part, which no part decides alone,
-//! so those instances are merged into one entity first and its truths joined
-//! with the others.
+//! are joined afterwards. The Scope in force when the window opens (clause
+//! 4.18) is the latest across every part, which no part decides alone, so the
+//! Scope events of every part are merged into one entity first and its truths
+//! joined with the others.
 
 use crate::{
     entity_filters::EntityFilters,
     entity_selection::EntitySelection,
-    filter::{
-        reading::{filter_reading::FilterReading, term_reading::TermReading},
-        referenced_attributes::referenced_attributes,
-    },
+    filter::reading::{filter_reading::FilterReading, term_reading::TermReading},
     geo::query::GeoQuery,
     scope::pattern::ScopePattern,
 };
@@ -151,21 +148,6 @@ impl<'q> SplitFilter<'q> {
             .into_iter()
             .flat_map(|scope| scope.alternatives().flatten().map(FilterLeaf::ScopeRequirement));
         terms.chain(geo).chain(scope)
-    }
-
-    /// The attributes the leaves read the instances of: the first attribute
-    /// every Query Term reads, then the `GeoProperty` of the geo-query, without
-    /// repetition. The Scope is no attribute; [`Self::reads_scope`] says
-    /// whether a leaf reads it.
-    #[must_use]
-    pub fn read_attributes(&self) -> Vec<&'q AttributeName> {
-        let mut attributes = self.filters.q.map_or_default(|q| referenced_attributes(q.expr()));
-        if let Some(geo) = self.filters.geo
-            && !attributes.contains(&&geo.geoproperty)
-        {
-            attributes.push(&geo.geoproperty);
-        }
-        attributes
     }
 
     /// The Relationships the Query Terms' hops cross, by depth: the first
@@ -372,16 +354,11 @@ mod tests {
     }
 
     #[test]
-    fn the_read_attributes_are_the_terms_then_the_geoproperty() {
-        let selection = selection(
-            Some("\"https://example.com/speed\">1|\"https://example.com/speed\"<2;\"https://uri.etsi.org/ngsi-ld/location\""),
-            Some(within_berlin()),
-            Some("/A"),
-        );
-        let filter = SplitFilter::of(&selection);
-        let read: Vec<&str> = filter.read_attributes().into_iter().map(AttributeName::as_str).collect();
-        pretty_assertions::assert_eq!(read, ["https://example.com/speed", LOCATION]);
-        assert!(filter.reads_scope());
+    fn only_a_scope_query_reads_the_scope() {
+        let with_scope = selection(Some("\"https://example.com/speed\">1"), Some(within_berlin()), Some("/A"));
+        assert!(SplitFilter::of(&with_scope).reads_scope());
+        let without = selection(Some("\"https://example.com/speed\">1"), Some(within_berlin()), None);
+        assert!(!SplitFilter::of(&without).reads_scope());
     }
 
     #[test]
@@ -425,7 +402,7 @@ mod tests {
     }
 
     /// The attributes the other terms of a depth read stay named beside a
-    /// structural member, so what is in effect of them can still be asked for.
+    /// structural member.
     #[test]
     fn a_depth_where_a_term_ends_in_a_structural_member_is_read_whole() {
         let selection = selection(

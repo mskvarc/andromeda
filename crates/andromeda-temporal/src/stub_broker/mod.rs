@@ -9,13 +9,7 @@
 use crate::{
     instance_limits::TemporalInstanceLimits,
     merged_parts::LocalPart,
-    port::{
-        history_reader::TemporalHistoryReader,
-        in_effect_reads::{InEffectReads, ScopeRead},
-        mutation_barrier::TemporalMutationBarrier,
-        mutator::TemporalMutator,
-        service_ports::TemporalServicePorts,
-    },
+    port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator, service_ports::TemporalServicePorts},
     remote_linked::RemoteTemporalLinkedSource,
     service::TemporalService,
     service_limits::TemporalServiceLimits,
@@ -99,7 +93,7 @@ pub(crate) struct StubBroker {
     pages: HashMap<Identifier, Vec<TemporalHistoryRow>>,
     /// What the store reads of a split query's filter leaves over each entity.
     leaf_truths: HashMap<Identifier, LeafTruths>,
-    /// What each entity holds in effect when a split query's window opens.
+    /// The Scope each entity holds in effect when a split query's window opens.
     in_effect: HashMap<Identifier, Vec<TemporalHistoryRow>>,
     /// Each entity's hop Relationship instances inside a split query's window.
     window_relationships: HashMap<Identifier, Vec<TemporalHistoryRow>>,
@@ -138,8 +132,8 @@ impl StubBroker {
         self
     }
 
-    /// The same broker holding `rows` of `entity_id` in effect when a split
-    /// query's window opens.
+    /// The same broker holding the Scope event `rows` of `entity_id` in effect
+    /// when a split query's window opens.
     pub(crate) fn holding_in_effect(mut self, entity_id: Identifier, rows: Vec<TemporalHistoryRow>) -> StubBroker {
         self.in_effect.insert(entity_id, rows);
         self
@@ -165,19 +159,11 @@ impl StubBroker {
         StubBroker::of_entities(&self.leaf_truths, entity_ids)
     }
 
-    /// The in-effect rows the broker holds of `entity_ids`, of what `reads`
-    /// covers.
-    pub(crate) fn in_effect_of(&self, entity_ids: &[Identifier], reads: InEffectReads<'_>) -> HashMap<Identifier, Vec<TemporalHistoryRow>> {
-        let covered = |row: &TemporalHistoryRow| {
-            if row.attribute_name.as_str() == expanded_properties::SCOPE.as_str() {
-                reads.scope == ScopeRead::Read
-            } else {
-                reads.attributes.contains(&&row.attribute_name)
-            }
-        };
+    /// The in-effect Scope rows the broker holds of `entity_ids`.
+    pub(crate) fn in_effect_of(&self, entity_ids: &[Identifier]) -> HashMap<Identifier, Vec<TemporalHistoryRow>> {
         let mut held = StubBroker::of_entities(&self.in_effect, entity_ids);
         for rows in held.values_mut() {
-            rows.retain(covered);
+            rows.retain(|row| row.attribute_name.as_str() == expanded_properties::SCOPE.as_str());
         }
         held.retain(|_, rows| !rows.is_empty());
         held

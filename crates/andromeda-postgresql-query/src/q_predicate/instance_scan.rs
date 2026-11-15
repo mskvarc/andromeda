@@ -96,7 +96,6 @@ mod tests {
         entity_row_refs::EntityRowRefs,
         history_source::{HistoryBranch, HistoryOf},
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, instance_test::InstanceTest},
-        window_reach::WindowReach,
     };
     use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
@@ -110,7 +109,6 @@ mod tests {
             .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
             .timeproperty(TimeProp::Modified)
             .interval(TimeInterval::Unbounded)
-            .reach(WindowReach::InsideAndInEffect)
             .build()
     }
 

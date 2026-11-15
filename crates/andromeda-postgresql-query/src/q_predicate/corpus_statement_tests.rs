@@ -11,7 +11,6 @@ use crate::{
     history_source::{HistoryBranch, HistoryOf},
     q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, projection::compile},
     query_names::QueryNames,
-    window_reach::WindowReach,
 };
 use andromeda_architecture_checks::assert_named_snapshot;
 use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp};
@@ -51,8 +50,7 @@ async fn corpus_names() -> QueryNames {
     }
 }
 
-/// A window with a closed start, so the history reads both the instances
-/// inside it and the instance in effect when it opens.
+/// A window with a closed start.
 fn window() -> HistoryWindow {
     let instant = |raw: &str| raw.parse::<NgsiLdDateTime>().expect("a valid instant").get();
     HistoryWindow::builder()
@@ -63,7 +61,6 @@ fn window() -> HistoryWindow {
             from: instant("2024-01-01T00:00:00Z"),
             to: instant("2025-01-01T00:00:00Z"),
         })
-        .reach(WindowReach::InsideAndInEffect)
         .build()
 }
 

@@ -4,15 +4,18 @@
 //!
 //! Clause 5.7.4.4 applies the filters "after the Entity information from
 //! different Context Sources and local information, if there is any, has been
-//! aggregated". Every leaf of them is existential over the instances valid
-//! within the window (clause 4.11), which are of two kinds. Over the instances
-//! inside the window a leaf holds over the gathered entity when it holds over
-//! any part, so each part is judged on its own and the truths are joined: the
-//! local part by the store, an answered part as the Temporal Evolution it is.
-//! The instance each stream held when the window opens is the latest across
-//! every part, which no part decides alone and which a newer deletion in one
-//! part ends, so the in-effect instances of every part are merged first and
-//! the merged entity is judged once. A leaf holds when either kind holds it.
+//! aggregated". Every leaf of the value and geo filters is existential over the
+//! instances inside the window (steps S2 and S3), so it holds over the
+//! gathered entity when it holds over any part: each part is judged on its own
+//! and the truths are joined, the local part by the store, an answered part as
+//! the Temporal Evolution it is.
+//!
+//! A scope requirement also reads the Scope in force when the window opens
+//! (clause 4.18, Annex C clause C.5.16). That is the latest Scope event across
+//! every part, which no part decides alone and which a newer removal in one
+//! part ends, so the in-force Scope events of every part are merged first and
+//! the merged entity is judged once. A requirement holds when either reading
+//! holds it.
 //!
 //! A Query Term crossing a Relationship hop reaches entities any part may name
 //! and any broker may hold, so every part, this broker's Relationship
@@ -23,7 +26,7 @@ use crate::{
     answered_evolution::AnsweredEvolution,
     error::TemporalError,
     hop_targets::{HopReading, HopTargets},
-    in_effect_entity::InEffectEntity,
+    in_effect_scope::InEffectScope,
     local_in_effect::{LocalInEffect, part_document},
     port::read_scope::ScopeReach,
     query_reading::QueryReading,
@@ -56,15 +59,16 @@ pub struct SplitSettlement {
 pub struct AnsweredParts<'a> {
     /// The parts answered for the window.
     pub in_window: Vec<&'a TemporalDocument>,
-    /// The parts answered for the instances in effect when the window opens.
+    /// The parts answered for the Scope in force when the window opens.
     pub in_effect: Vec<&'a TemporalDocument>,
 }
 
 impl TemporalService {
     /// Decide the value, geo and scope filters of `params` over every entity
     /// the Context Sources `answered` with, each judged on its part held here,
-    /// read over the window, beside `local`, what this broker holds in effect
-    /// when the window opens, together with every part a source answered.
+    /// read over the window, beside `local`, the Scope this broker holds in
+    /// force when the window opens, together with every part a source
+    /// answered.
     ///
     /// The request's terms and `q` target languages are read as `reading`
     /// says.
@@ -106,20 +110,14 @@ impl TemporalService {
         } else {
             let rows = self.reader.window_relationship_instances(&scope, &compiled, &entity_ids).await?;
             rows.into_iter()
-                .map(|(entity_id, rows)| part_document(&entity_id, &[], rows))
+                .map(|(entity_id, rows)| part_document(&entity_id, rows))
                 .collect::<Result<Vec<_>, _>>()?
         };
         let windowed: Vec<&TemporalDocument> = answered.in_window.iter().copied().chain(&local_links).collect();
         let hop_reading = if hops.is_empty() {
             HopReading::default()
         } else {
-            let reached: Vec<&TemporalDocument> = windowed
-                .iter()
-                .copied()
-                .chain(answered.in_effect.iter().copied())
-                .chain(local.parts())
-                .collect();
-            self.read_hop_targets(target, params, reading, (&hops, &filter.hop_reads()), &reached).await?
+            self.read_hop_targets(target, params, reading, (&hops, &filter.hop_reads()), &windowed).await?
         };
         let linked = HopTargets::of(&hop_reading, compiled.window);
         for part in windowed {
@@ -131,9 +129,9 @@ impl TemporalService {
                 .or_insert_with(|| LeafTruths::none(filter.leaf_count()))
                 .or(&leaf_truths(&filter, &AnsweredEvolution::of(part, compiled.window), &linked));
         }
-        for (entity_id, mut held) in parts {
+        for (entity_id, mut held) in parts.into_iter().filter(|_| filter.reads_scope()) {
             held.extend(local.part_of(entity_id));
-            let Some(in_effect) = InEffectEntity::merged(&held, compiled.window) else {
+            let Some(in_effect) = InEffectScope::merged(&held, compiled.window) else {
                 continue;
             };
             truths

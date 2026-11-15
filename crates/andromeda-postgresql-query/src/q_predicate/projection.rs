@@ -117,7 +117,7 @@ fn compiled_term(term: &ResolvedTerm<'_>, scan: &InstanceScan<'_>) -> CompiledTe
 ///
 /// The instances `scan` reads decide which entities the Relationship named.
 /// Over current state a hop lands on the linked Entity as it stands. Over a
-/// temporal window it lands on the linked entity's instances valid within the
+/// temporal window it lands on the linked entity's instances inside the
 /// same window: the `temporal_linked_retrieval` extension renders every Linked
 /// Entity over the window of the roots, so a filter asking about a linked
 /// entity reads the history the answer shows of it.

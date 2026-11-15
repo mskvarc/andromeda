@@ -184,15 +184,17 @@ pub struct TemporalWindow {
 }
 
 impl TemporalWindow {
-    /// The instant at which an instance placed before the window may still be
-    /// in effect, if any.
+    /// The instant at which a Scope event placed before the window may still
+    /// be in force, if any.
     ///
-    /// Clause 4.11 selects the values "valid within the specified timeframe",
-    /// which Annex C clause C.5.5 reads as including the value a stream held
-    /// when the window opens. Every instance before a `before` bound lies in
-    /// the window already, and an unbounded window holds every instance. On
-    /// `deletedAt` the instance in effect at the start is a deletion, which
-    /// records no value (clause 4.5.7), so no window on it has one.
+    /// Clause 4.18 makes the Scope valid from the time it has been set, so the
+    /// Scope in force when the window opens is part of what a `scopeQ` reads
+    /// (Annex C clause C.5.16). Every event before a `before` bound lies in the
+    /// window already, and an unbounded window holds every event. On
+    /// `deletedAt` the event in force at the start is a removal, which leaves
+    /// no Scope (clause 4.5.7), so no window on it has one. The value and geo
+    /// filters never read an instance placed before the window (clause 5.7.4.4
+    /// steps S2 and S3).
     #[must_use]
     pub const fn in_effect_start(&self) -> Option<DateTime<Utc>> {
         match (self.timeproperty, self.interval.opening()) {

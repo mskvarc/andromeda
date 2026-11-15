@@ -2,13 +2,12 @@
 //! split temporal query judges in memory, beside the parts the Context Sources
 //! answered (clauses 4.11 and 5.7.4.4).
 //!
-//! The instance in effect when a window opens is the latest of its stream
-//! before the start across every part of a split entity, so no part decides it
-//! alone: each part answers the instance it held, and the parts are merged
-//! before the filters judge the survivor. A deletion is answered as well,
-//! because a newer deletion in one part ends what an older instance of another
-//! part held. The Scope in force at the start is the latest Scope event before
-//! it (clause 4.18), read the same way.
+//! The Scope in force when a window opens is the latest Scope event before the
+//! start (clause 4.18) across every part of a split entity, so no part decides
+//! it alone: each part answers the event it held, and the parts are merged
+//! before the scope filter judges the survivor. A removal is answered as well,
+//! because a newer removal in one part ends what an older event of another
+//! part held.
 //!
 //! A Query Term crossing a Relationship hop reaches entities any part may
 //! hold, so the local instances inside the window of the Relationships its
@@ -21,7 +20,6 @@ use crate::{
     history::{join_attribute_names, project_base_columns},
     scope_history::{order_scope_events, project_scope_event},
     stream_page::project_whole_streams,
-    value_filters::windowed_instances,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, window::TimeInterval};
@@ -44,35 +42,9 @@ use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Alias, Asterisk, Expr as SeaExpr, ExprTrait, Iden, JoinType, Order, Query, SelectStatement, SimpleExpr};
 
 /// Build the statement reading, for every entity of `entity_ids` this broker
-/// holds a Temporal Evolution of, the instance each stream of the attributes
-/// keyed `attributes` held when the window opens, deletions included, as
-/// history rows beside the entity's identifier, ordered by it; `None` when the
-/// window has no instance in effect before it.
-#[must_use]
-pub fn build_in_effect_attribute_instances(
-    branch: &HistoryBranch,
-    compiled: &CompiledTemporalQuery,
-    entity_ids: &[Identifier],
-    attributes: &[AttributeNameKey],
-) -> Option<SelectStatement> {
-    let of = HistoryOf::Entity(SeaExpr::col((E, Entities::Id)));
-    let rows = windowed_instances(branch, compiled, &of, WindowReach::InsideAndInEffect).in_effect_rows(attributes)?;
-    let mut select = Query::select();
-    project_base_columns(&mut select);
-    project_whole_streams(&mut select);
-    select
-        .expr_as(SeaExpr::col((E, Entities::Id)), Alias::new(READ_ENTITY_ID))
-        .from(entity_rows(branch, E))
-        .join_lateral(JoinType::Join, rows, Ah, SimpleExpr::from(true));
-    join_attribute_names(&mut select);
-    select.and_where(of_entities(entity_ids)).order_by((E, Entities::Id), Order::Asc);
-    Some(select.take())
-}
-
-/// Build the statement reading, for every entity of `entity_ids` this broker
 /// holds a Temporal Evolution of, the rows of the Scope event in force when
 /// the window opens, as scope history rows beside the entity's identifier,
-/// ordered by it; `None` when the window has no instance in effect before it.
+/// ordered by it; `None` when the window has no Scope in effect before it.
 ///
 /// The event in force is the one before the start that no later event
 /// superseded at or before it (clause 4.18): an event at the start itself lies
@@ -151,7 +123,7 @@ fn of_entities(entity_ids: &[Identifier]) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::split_part_rows::{build_in_effect_attribute_instances, build_in_effect_scope, build_window_relationship_instances};
+    use crate::split_part_rows::{build_in_effect_scope, build_window_relationship_instances};
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, temporal_format::TemporalFormat, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
@@ -189,16 +161,6 @@ mod tests {
         vec!["urn:ngsi-ld:Vehicle:1".parse().expect("a valid identifier")]
     }
 
-    /// Clause 4.5.7 places a deletion carrying no instant on the axis at the
-    /// instant it was deleted, and a split query merges that deletion with
-    /// the other parts, so the read keeps it.
-    #[test]
-    fn the_in_effect_read_places_a_deletion_without_axis_instant() {
-        let statement = build_in_effect_attribute_instances(&HistoryBranch::live_recorded(), &compiled(noon()), &ids(), &[AttributeNameKey::from(7)])
-            .expect("a window with a start");
-        assert_statement_snapshot!("split-part-rows-the-in-effect-read-places-a-deletion-without-axis-instant", statement);
-    }
-
     /// Clause 4.18: the Scope in force at the start is the latest event before
     /// it that nothing superseded at or before it.
     #[test]
@@ -215,12 +177,9 @@ mod tests {
         assert_statement_snapshot!("split-part-rows-the-window-relationships-are-read-inside-the-window", statement);
     }
 
-    /// Neither read has an instance in effect to find for a window with no
-    /// start.
+    /// A window with no start has no Scope in effect to find.
     #[test]
-    fn a_window_with_no_start_reads_nothing_in_effect() {
-        let before = TimeInterval::Before("2020-08-01T12:00:00Z".parse::<NgsiLdDateTime>().expect("a valid instant").get());
-        assert!(build_in_effect_attribute_instances(&HistoryBranch::live(), &compiled(before), &ids(), &[AttributeNameKey::from(7)]).is_none());
+    fn a_window_with_no_start_reads_no_scope_in_effect() {
         assert!(build_in_effect_scope(&HistoryBranch::live(), &compiled(TimeInterval::Unbounded), &ids()).is_none());
     }
 }

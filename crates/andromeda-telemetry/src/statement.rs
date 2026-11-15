@@ -62,10 +62,6 @@ pub enum ObservedStatement {
     /// The truth of every filter leaf of a temporal query over the entities a
     /// Context Source contributed to (clause 5.7.4.4).
     TemporalSourceFilterEvaluation,
-    /// The instances a temporal query's filters read in effect when its window
-    /// opens, over the entities a Context Source contributed to (clauses 4.11
-    /// and 5.7.4.4).
-    TemporalSourceWindowStartInstances,
     /// The Scope event in force when a temporal query's window opens, over the
     /// entities a Context Source contributed to (clauses 4.18 and 5.7.4.4).
     TemporalSourceWindowStartScope,
@@ -176,7 +172,6 @@ mod tests {
                 "temporal-aggregation",
                 "temporal-aggregation-shape-check",
                 "temporal-source-filter-evaluation",
-                "temporal-source-window-start-instances",
                 "temporal-source-window-start-scope",
                 "temporal-source-window-relationships",
             ]

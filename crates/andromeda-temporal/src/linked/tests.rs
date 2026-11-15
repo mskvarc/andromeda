@@ -6,7 +6,7 @@ use crate::{
     error::TemporalError,
     linked::TemporalLinkedJoin,
     query_reading::QueryReading,
-    remote_linked::{HeldPart, RemoteTemporalLinkedSource, TemporalLinkedWindow},
+    remote_linked::{RemoteTemporalLinkedSource, TemporalLinkedWindow},
     service::TemporalService,
     stub_broker::{StubBroker, admitted, live_target, service, service_over, uri},
 };
@@ -165,19 +165,6 @@ impl RemoteTemporalLinkedSource for RecordingSource {
             }),
             RemoteOutcome::Fails => Err(TemporalError::from(PersistenceFailure::Unavailable)),
         }
-    }
-
-    async fn fetch_held_parts(
-        &self,
-        _id: &Identifier,
-        _params: &TemporalQueryParameters,
-        _only: Option<&Identifier>,
-        _context: &ContextSpec,
-    ) -> Result<RemoteResolution<HeldPart>, TemporalError> {
-        Ok(RemoteResolution {
-            entities: Vec::new(),
-            failures: Vec::new(),
-        })
     }
 }
 

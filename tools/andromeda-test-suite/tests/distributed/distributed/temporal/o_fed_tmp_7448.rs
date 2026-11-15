@@ -1,4 +1,4 @@
-//! An aggregated split query keeps the entity the peer instance in effect admits.
+//! An aggregated split query filters over the window instances alone.
 
 use andromeda_test_suite::{
     aggregation_matcher::{has_aggregate, period},
@@ -21,13 +21,13 @@ use ngsi_ld::{
     registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo},
 };
 
-/// Pins: under `splitEntities` an `aggregatedValues` query on broker A with `aggrMethods` max and q=speed>50
-/// answers a Vehicle whose speed broker A observed 30 at 12:10 and broker B 60 at 11:00, aggregated over the
-/// window's instances alone: max 30
+/// Pins: under `splitEntities` an `aggregatedValues` query on broker A with `aggrMethods` max answers q=speed>20 for
+/// a Vehicle whose speed broker A observed 30 at 12:10 and broker B 60 at 11:00, aggregated over the window's
+/// instances alone: max 30, and answers q=speed>50 for no Vehicle, the 60 lying before the window
 /// Clause: 5.7.4.4, 4.11, 4.5.19
 #[gtest]
 #[tokio::test]
-async fn o_fed_tmp_7448_an_aggregated_split_query_keeps_the_entity_the_peer_instance_in_effect_admits() -> Result<()> {
+async fn o_fed_tmp_7448_an_aggregated_split_query_filters_over_the_window_instances_alone() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let vehicle_id = namespace.urn("Vehicle", 1)?;
@@ -57,7 +57,7 @@ async fn o_fed_tmp_7448_an_aggregated_split_query_keeps_the_entity_the_peer_inst
     // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
     // cooldown that opens there holds back a later test's registration naming the same endpoint.
     let _registration_cleanup = Cleanup::of(&broker).registration(&registration_id);
-    let page = broker
+    let page_2 = broker
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .temporal()
         .query_aggregated(
@@ -66,6 +66,18 @@ async fn o_fed_tmp_7448_an_aggregated_split_query_keeps_the_entity_the_peer_inst
         .entity_type(&vehicle_type)
         .split_entities(EntitySplitting::Split)
         .q(q::attr("speed").gt(50))
+        .send()
+        .await?;
+    expect_that!(page_2.items(), len(eq(0)));
+    let page = broker
+        .with_accept(Accept::new(NgsiLdMediaType::Json))
+        .temporal()
+        .query_aggregated(
+            temporal_query::between("2020-08-01T12:00:00Z".parse()?, "2020-08-01T13:00:00Z".parse()?).aggregation_methods([AggregationMethod::Max]),
+        )
+        .entity_type(&vehicle_type)
+        .split_entities(EntitySplitting::Split)
+        .q(q::attr("speed").gt(20))
         .send()
         .await?;
     expect_that!(page.items(), len(eq(1)));

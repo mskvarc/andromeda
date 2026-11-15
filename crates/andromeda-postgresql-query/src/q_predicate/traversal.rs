@@ -13,11 +13,11 @@
 //! predicate correlates against, and the linked entity's `entity_search` row is
 //! joined only when the hop carries a type guard, the one thing a hop reads
 //! from it. Over a temporal window the instances are the history instances
-//! valid within it, and the join lands on the linked entity's Temporal
+//! inside it, and the join lands on the linked entity's Temporal
 //! Evolution in the temporal catalogue, whose types a guard reads: the
 //! `temporal_linked_retrieval` extension renders every Linked Entity over the
 //! window of the roots, so a hop asks about the instances of the linked entity
-//! valid within that window too.
+//! inside that window too.
 //!
 //! An index path reads the same hop inward instead, from the linked entities
 //! the rest of the predicate keeps to the instances naming them
@@ -31,12 +31,7 @@
 use crate::{
     entity_row_refs::EntityRowRefs,
     history_source::HistoryOf,
-    q_predicate::{
-        history_aliases::HistoryAliases,
-        history_window::{HistoryWindow, WindowProbes},
-        instance_scan::InstanceScan,
-        resolved_filter::HopGuard,
-    },
+    q_predicate::{history_aliases::HistoryAliases, history_window::HistoryWindow, instance_scan::InstanceScan, resolved_filter::HopGuard},
 };
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, Entities, EntitySearch},
@@ -101,9 +96,9 @@ impl LinkedHop {
     /// The probe is an `EXISTS` over the Relationship's instances `outer`
     /// reads, joined to the entity each one names. Over current state those are
     /// the `current_attributes` rows of the outer entity; over a temporal
-    /// window they are the history instances valid within it, so a temporal `q`
+    /// window they are the history instances inside it, so a temporal `q`
     /// follows the targets the Relationship named inside the window (clause
-    /// 5.7.4.4), and the window's two probes each become one `EXISTS`. The join
+    /// 5.7.4.4), and the window's probe becomes one `EXISTS`. The join
     /// lands on the Entity's `id`, the unique external key of `entities`, and
     /// keeps the linked Entity's side the outer read serves.
     ///
@@ -116,10 +111,10 @@ impl LinkedHop {
                 let guarded = GuardedRow::Search(outer.schema());
                 Condition::all().add(SeaExpr::exists(self.completed(probe, guard, guarded, inner)))
             }
-            InstanceScan::History(window) => self
-                .windowed_objects(relationship_id, window)
-                .map(|probe| self.completed(probe, guard, GuardedRow::Catalogue, inner.clone())) // clone: each of the window's probes tests the linked entity
-                .into_exists(),
+            InstanceScan::History(window) => {
+                let probe = self.windowed_objects(relationship_id, window);
+                Condition::all().add(SeaExpr::exists(self.completed(probe, guard, GuardedRow::Catalogue, inner)))
+            }
         }
     }
 
@@ -262,25 +257,24 @@ impl LinkedHop {
         HistoryOf::Entity(SeaExpr::col((Alias::new(self.linked_entity.as_str()), Entities::Id)))
     }
 
-    /// The Relationship's instances valid within the window joined to the
+    /// The Relationship's instances inside the window joined to the
     /// Temporal Evolutions they name in the window's branch, correlated
     /// against the window's temporal entity.
     ///
     /// History keeps a Relationship's objects as current state does, a single
     /// one in `value_uri` and several in `value_object`, so each instance
     /// expands the same way.
-    fn windowed_objects(&self, relationship_id: AttributeNameKey, window: &HistoryWindow) -> WindowProbes {
+    fn windowed_objects(&self, relationship_id: AttributeNameKey, window: &HistoryWindow) -> SelectStatement {
         let aliases = HistoryAliases::at_depth(self.depth);
-        window.probes_of(relationship_id, &aliases).map(|mut probe| {
-            self.join_linked_entities(
-                &mut probe,
-                aliases.instance_column(AttributeHistory::ValueObject),
-                aliases.instance_column(AttributeHistory::ValueUri),
-                window.evolutions(Alias::new(self.linked_entity.as_str())),
-            );
-            probe.and_where(SeaExpr::expr(aliases.instance_column(AttributeHistory::AttributeKind)).is_in(relationship_kinds()));
-            probe
-        })
+        let mut probe = window.probe_of(relationship_id, &aliases);
+        self.join_linked_entities(
+            &mut probe,
+            aliases.instance_column(AttributeHistory::ValueObject),
+            aliases.instance_column(AttributeHistory::ValueUri),
+            window.evolutions(Alias::new(self.linked_entity.as_str())),
+        );
+        probe.and_where(SeaExpr::expr(aliases.instance_column(AttributeHistory::AttributeKind)).is_in(relationship_kinds()));
+        probe
     }
 
     /// Join to `probe` one row per object its instance holds and the entity
@@ -362,7 +356,6 @@ mod tests {
     use crate::{
         history_source::{HistoryBranch, HistoryOf},
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, resolved_filter::HopGuard, traversal::LinkedHop},
-        window_reach::WindowReach,
     };
     use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
@@ -371,23 +364,21 @@ mod tests {
     use sea_query::{Alias, Condition, Expr, ExprTrait, Query};
 
     /// Clause 5.7.4.4 with clause 4.11: a hop in a temporal `q` follows every
-    /// target the Relationship named while valid within the window, the one in
-    /// effect when the window opens included, so each of the window's probes
+    /// target the Relationship named inside the window, so the window's probe
     /// joins the entity its instance names and correlates on the outer entity.
     #[test]
-    fn a_windowed_hop_probes_both_the_window_and_the_instance_in_effect() {
+    fn a_windowed_hop_probes_the_window() {
         let start = "2019-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("a valid instant").get();
         let window = HistoryWindow::builder()
             .branch(HistoryBranch::live())
             .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
             .timeproperty(TimeProp::Observed)
             .interval(TimeInterval::After(start))
-            .reach(WindowReach::InsideAndInEffect)
             .build();
         let inner = Condition::all().add(Expr::col((Alias::new("le1"), Alias::new("entity_key"))).eq(5));
         let probe = LinkedHop::at_depth(1).probe(AttributeNameKey::from(4), &HopGuard::AnyEntity, &InstanceScan::History(&window), inner);
         let statement = Query::select().expr(Expr::val(1)).cond_where(probe).to_owned();
-        assert_statement_snapshot!("traversal-a-windowed-hop-probes-both-the-window-and-the-instance-in-effect", statement);
+        assert_statement_snapshot!("traversal-a-windowed-hop-probes-the-window", statement);
     }
 
     /// Clause 4.9: a hop's type guard names the types the linked entity
@@ -401,7 +392,6 @@ mod tests {
             .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
             .timeproperty(TimeProp::Observed)
             .interval(TimeInterval::After(start))
-            .reach(WindowReach::Inside)
             .build();
         let probe = LinkedHop::at_depth(1).probe(
             AttributeNameKey::from(4),
@@ -415,8 +405,7 @@ mod tests {
 
     /// Clause 4.9: a temporal hop follows every object a history instance
     /// holds, the several objects of a Relationship or a `ListRelationship` in
-    /// `value_object` and a single one in `value_uri`, in each of the window's
-    /// probes, and expands only an instance of those two kinds (2 and 8).
+    /// `value_object` and a single one in `value_uri`, and expands only an instance of those two kinds (2 and 8).
     #[test]
     fn a_windowed_hop_follows_every_object_of_a_history_instance() {
         let start = "2019-01-01T00:00:00Z".parse::<NgsiLdDateTime>().expect("a valid instant").get();
@@ -425,7 +414,6 @@ mod tests {
             .of(HistoryOf::Entity(Expr::col((Alias::new("e"), Alias::new("id")))))
             .timeproperty(TimeProp::Observed)
             .interval(TimeInterval::After(start))
-            .reach(WindowReach::InsideAndInEffect)
             .build();
         let probe = LinkedHop::at_depth(1).probe(
             AttributeNameKey::from(4),

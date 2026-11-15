@@ -11,9 +11,9 @@
 //! A leaf reads the instances lying in the query's window, as the local leaf
 //! does: an instance carrying no instant on the window's Temporal Property is
 //! represented by no read on it (clause 4.5.7), so it satisfies no leaf even
-//! when a source answers with it, and the Scope event or instance in effect
-//! when the window opens is the latest across every part, which the merged
-//! in-effect entity decides rather than any one part. A Scope a source states
+//! when a source answers with it, and the Scope event in force when the
+//! window opens is the latest across every part, which the merged in-force
+//! Scope decides rather than any one part. A Scope a source states
 //! with no instant on the window's axis counts: this broker dates such a Scope
 //! at the write that states it (clause 4.18 makes it valid from the time it
 //! has been set), and the instant a source set it at is not in its answer.

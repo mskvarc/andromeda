@@ -1,4 +1,4 @@
-//! A peer instance newer than the local instance in effect supersedes it.
+//! A peer location observed before the window matches in no broker.
 
 use andromeda_test_suite::{
     broker,
@@ -22,12 +22,12 @@ use ngsi_ld::{
 };
 
 /// Pins: under `splitEntities` a between 12:00-13:00 near `geoQ` on broker A does not answer a Vehicle whose
-/// location broker A observed at 11:00 inside the fence when broker B, registered for it, observed it at 11:50
-/// outside: the instance in effect at 12:00 is the latest across both brokers
+/// location broker A observed at 11:00 outside the fence when broker B, registered for it, observed it at 11:50
+/// inside, both before the window: the geo-query reads the instances inside the window alone
 /// Clause: 5.7.4.4, 4.11, 4.10
 #[gtest]
 #[tokio::test]
-async fn o_fed_tmp_7440_a_peer_instance_newer_than_the_local_instance_in_effect_supersedes_it() -> Result<()> {
+async fn o_fed_tmp_7440_a_newer_peer_location_before_the_window_matches_in_no_broker() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let vehicle_id = namespace.urn("Vehicle", 1)?;
@@ -39,7 +39,7 @@ async fn o_fed_tmp_7440_a_peer_instance_newer_than_the_local_instance_in_effect_
         .entity_type(vehicle_type.clone())
         .geo_property(
             "location",
-            GeoProperty::builder(Shape::Point(Position::try_new(8.0, 44.0)?)).observed_at("2020-08-01T11:00:00Z".parse()?),
+            GeoProperty::builder(Shape::Point(Position::try_new(20.0, 20.0)?)).observed_at("2020-08-01T11:00:00Z".parse()?),
         )
         .property("speed", Property::builder(60).observed_at("2020-08-01T12:10:00Z".parse()?))
         .build()?;
@@ -49,7 +49,7 @@ async fn o_fed_tmp_7440_a_peer_instance_newer_than_the_local_instance_in_effect_
         .entity_type(vehicle_type.clone())
         .geo_property(
             "location",
-            GeoProperty::builder(Shape::Point(Position::try_new(20.0, 20.0)?)).observed_at("2020-08-01T11:50:00Z".parse()?),
+            GeoProperty::builder(Shape::Point(Position::try_new(8.0, 44.0)?)).observed_at("2020-08-01T11:50:00Z".parse()?),
         )
         .build()?;
     broker_b.temporal().create_or_update(&vehicle_evolution_2).send().await?.created()?;

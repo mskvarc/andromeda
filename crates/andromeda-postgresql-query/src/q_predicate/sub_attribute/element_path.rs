@@ -159,7 +159,6 @@ mod tests {
             sub_attribute::element_path::ElementPath,
         },
         query_names::QueryNames,
-        window_reach::WindowReach,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
@@ -200,7 +199,6 @@ mod tests {
             .of(HistoryOf::Entity(SeaExpr::col((Alias::new("e"), Alias::new("id")))))
             .timeproperty(TimeProp::Observed)
             .interval(TimeInterval::Unbounded)
-            .reach(WindowReach::InsideAndInEffect)
             .build();
         let names = QueryNames {
             attributes: names(),

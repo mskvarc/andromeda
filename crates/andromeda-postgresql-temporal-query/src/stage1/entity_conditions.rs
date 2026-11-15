@@ -299,10 +299,9 @@ mod tests {
     }
 
     /// Clause 5.5.9: the count totals the same entities the page selects, so
-    /// it carries both of the `q` probes, the instance in effect when the
-    /// window opens included (clause 4.11, Annex C clause C.5.5).
+    /// it carries the same `q` probe.
     #[test]
-    fn the_count_carries_the_same_two_probes() {
+    fn the_count_carries_the_same_q_probe() {
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2019-01-01T00:00:00Z"));
         compiled.entities.q = Some(CompiledFilter::new(
@@ -310,7 +309,7 @@ mod tests {
             LanguageMatching::TagEquality,
         ));
         let count = built_count(&compiled, &speed_and_address());
-        assert_statement_snapshot!("entity-conditions-the-count-carries-the-same-two-probes", count);
+        assert_statement_snapshot!("entity-conditions-the-count-carries-the-same-q-probe", count);
     }
 
     /// The window a `q` term reads is on the requested Temporal Property.

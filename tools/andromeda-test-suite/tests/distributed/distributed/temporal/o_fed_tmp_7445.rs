@@ -1,4 +1,4 @@
-//! Each dataset keeps the instance in effect of its own stream across brokers.
+//! Each dataset is read inside the window alone across brokers.
 
 use andromeda_test_suite::{
     broker,
@@ -24,13 +24,13 @@ use ngsi_ld::{
 };
 
 /// Pins: under `splitEntities` a between 12:00-13:00 near `geoQ` on broker A answers Vehicle 2, whose dataset d2
-/// broker B observed inside the fence at 11:40 beside dataset d1 broker A observed outside at 11:00, and not
-/// Vehicle 1, whose dataset d1 broker A observed inside at 11:00 and broker B outside at 11:30: each `datasetId` is
-/// a stream of its own
+/// broker B observed inside the fence at 12:30 beside dataset d1 broker A observed outside at 11:00, and not
+/// Vehicle 1, whose dataset d1 broker A observed inside at 11:00, before the window, and broker B dataset d2 outside
+/// at 11:40: no `datasetId` is read before the window
 /// Clause: 5.7.4.4, 4.11, 4.5.5
 #[gtest]
 #[tokio::test]
-async fn o_fed_tmp_7445_each_dataset_keeps_the_instance_in_effect_of_its_own_stream_across_brokers() -> Result<()> {
+async fn o_fed_tmp_7445_each_dataset_is_read_inside_the_window_alone_across_brokers() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let vehicle_id = namespace.urn("Vehicle", 1)?;
@@ -86,7 +86,7 @@ async fn o_fed_tmp_7445_each_dataset_keeps_the_instance_in_effect_of_its_own_str
             "location",
             GeoProperty::builder(Shape::Point(Position::try_new(8.0, 44.0)?))
                 .dataset_id(namespace.dataset_id("dataset", "d2")?)
-                .observed_at("2020-08-01T11:40:00Z".parse()?),
+                .observed_at("2020-08-01T12:30:00Z".parse()?),
         )
         .build()?;
     broker_b.temporal().create_or_update(&vehicle_2_evolution_2).send().await?.created()?;

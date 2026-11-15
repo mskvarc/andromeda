@@ -26,224 +26,61 @@ WITH
         200 OFFSET 0
     ) AS "e"
   WHERE
-    (
-      EXISTS (
-        SELECT
-          1
-        FROM
-          (
-            SELECT
-              "rs"."entity_key" AS "entity_key",
-              "rs"."attribute_name_key" AS "attribute_name_key",
-              "rs"."dataset_key" AS "dataset_key",
-              "rh"."recorded_at",
-              "rh"."write_id",
-              "rh"."write_ordinal",
-              "rh"."attribute_kind",
-              "rh"."value_kind",
-              "rh"."observed_at",
-              "rh"."created_at",
-              "rh"."modified_at",
-              "rh"."deleted_at",
-              "rh"."value_date_time",
-              "rh"."expires_at",
-              "rh"."generated_instance_id",
-              "rh"."value_type_key",
-              "rh"."value_datatype_key",
-              "rh"."unit_code_id",
-              "rh"."value_boolean",
-              "rh"."verbatim_instance_id",
-              "rh"."value_number",
-              "rh"."value_string",
-              "rh"."value_language",
-              "rh"."value_geometry",
-              "rh"."value_geometry_valid",
-              "rh"."value_geometry_reach",
-              "rh"."value_geometry_members",
-              "rh"."value_object",
-              "rh"."value_uri",
-              "rh"."object_type_keys",
-              "rh"."sub_attributes"
-            FROM
-              "attribute_history" AS "rh"
-              JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
-            WHERE
-              "rs"."entity_key" = "e"."entity_key"
-          ) AS "qh"
-        WHERE
-          "qh"."attribute_name_key" = $1
-          AND ST_Disjoint(
-            COALESCE(
-              "qh"."value_geometry_valid",
-              "qh"."value_geometry"
-            ),
-            ST_MakeValid(ST_GeomFromEWKB($2))
-          )
-          AND "qh"."value_kind" <> (0)
-          AND "qh"."observed_at" IS NOT NULL
-          AND "qh"."observed_at" >= $3
-      )
-      OR EXISTS (
-        SELECT
-          1
-        FROM
-          (
-            SELECT
-              "rs"."entity_key" AS "entity_key",
-              "rs"."attribute_name_key" AS "attribute_name_key",
-              "rs"."dataset_key" AS "dataset_key",
-              "rs"."stream_key" AS "stream_key"
-            FROM
-              "temporal_attribute_streams" AS "rs"
-            WHERE
-              "rs"."entity_key" = "e"."entity_key"
-          ) AS "qs"
-          JOIN LATERAL (
-            SELECT
-              *
-            FROM
-              (
-                (
-                  SELECT
-                    *
-                  FROM
-                    (
-                      (
-                        SELECT
-                          "qi".*,
-                          "qi"."observed_at" AS "placed"
-                        FROM
-                          (
-                            SELECT
-                              "qs"."entity_key" AS "entity_key",
-                              "qs"."attribute_name_key" AS "attribute_name_key",
-                              "qs"."dataset_key" AS "dataset_key",
-                              "rh"."recorded_at",
-                              "rh"."write_id",
-                              "rh"."write_ordinal",
-                              "rh"."attribute_kind" AS "attribute_kind",
-                              "rh"."value_kind" AS "value_kind",
-                              "rh"."observed_at" AS "observed_at",
-                              "rh"."created_at" AS "created_at",
-                              "rh"."modified_at" AS "modified_at",
-                              "rh"."deleted_at" AS "deleted_at",
-                              "rh"."value_date_time" AS "value_date_time",
-                              "rh"."expires_at" AS "expires_at",
-                              "rh"."generated_instance_id" AS "generated_instance_id",
-                              "rh"."value_type_key" AS "value_type_key",
-                              "rh"."value_datatype_key" AS "value_datatype_key",
-                              "rh"."unit_code_id" AS "unit_code_id",
-                              "rh"."value_boolean" AS "value_boolean",
-                              "rh"."verbatim_instance_id" AS "verbatim_instance_id",
-                              "rh"."value_number" AS "value_number",
-                              "rh"."value_string" AS "value_string",
-                              "rh"."value_language" AS "value_language",
-                              "rh"."value_geometry" AS "value_geometry",
-                              "rh"."value_geometry_valid" AS "value_geometry_valid",
-                              "rh"."value_geometry_reach" AS "value_geometry_reach",
-                              "rh"."value_geometry_members" AS "value_geometry_members",
-                              "rh"."value_object" AS "value_object",
-                              "rh"."value_uri" AS "value_uri",
-                              "rh"."object_type_keys" AS "object_type_keys",
-                              "rh"."sub_attributes" AS "sub_attributes"
-                            FROM
-                              "attribute_history" AS "rh"
-                            WHERE
-                              "rh"."stream_key" = "qs"."stream_key"
-                          ) AS "qi"
-                        WHERE
-                          "qi"."observed_at" <= $4
-                        ORDER BY
-                          "qi"."observed_at" DESC
-                      )
-                      FETCH FIRST
-                        1 ROW
-                      WITH
-                      TIES
-                    ) AS "qe"
-                  UNION ALL
-                  (
-                    SELECT
-                      *
-                    FROM
-                      (
-                        (
-                          SELECT
-                            "qi".*,
-                            "qi"."deleted_at" AS "placed"
-                          FROM
-                            (
-                              SELECT
-                                "qs"."entity_key" AS "entity_key",
-                                "qs"."attribute_name_key" AS "attribute_name_key",
-                                "qs"."dataset_key" AS "dataset_key",
-                                "rh"."recorded_at",
-                                "rh"."write_id",
-                                "rh"."write_ordinal",
-                                "rh"."attribute_kind" AS "attribute_kind",
-                                "rh"."value_kind" AS "value_kind",
-                                "rh"."observed_at" AS "observed_at",
-                                "rh"."created_at" AS "created_at",
-                                "rh"."modified_at" AS "modified_at",
-                                "rh"."deleted_at" AS "deleted_at",
-                                "rh"."value_date_time" AS "value_date_time",
-                                "rh"."expires_at" AS "expires_at",
-                                "rh"."generated_instance_id" AS "generated_instance_id",
-                                "rh"."value_type_key" AS "value_type_key",
-                                "rh"."value_datatype_key" AS "value_datatype_key",
-                                "rh"."unit_code_id" AS "unit_code_id",
-                                "rh"."value_boolean" AS "value_boolean",
-                                "rh"."verbatim_instance_id" AS "verbatim_instance_id",
-                                "rh"."value_number" AS "value_number",
-                                "rh"."value_string" AS "value_string",
-                                "rh"."value_language" AS "value_language",
-                                "rh"."value_geometry" AS "value_geometry",
-                                "rh"."value_geometry_valid" AS "value_geometry_valid",
-                                "rh"."value_geometry_reach" AS "value_geometry_reach",
-                                "rh"."value_geometry_members" AS "value_geometry_members",
-                                "rh"."value_object" AS "value_object",
-                                "rh"."value_uri" AS "value_uri",
-                                "rh"."object_type_keys" AS "object_type_keys",
-                                "rh"."sub_attributes" AS "sub_attributes"
-                              FROM
-                                "attribute_history" AS "rh"
-                              WHERE
-                                "rh"."stream_key" = "qs"."stream_key"
-                            ) AS "qi"
-                          WHERE
-                            "qi"."deleted_at" <= $5
-                            AND "qi"."observed_at" IS NULL
-                          ORDER BY
-                            "qi"."deleted_at" DESC
-                        )
-                        FETCH FIRST
-                          1 ROW
-                        WITH
-                        TIES
-                      ) AS "qe"
-                  )
-                  ORDER BY
-                    "placed" DESC
-                )
-                FETCH FIRST
-                  1 ROW
-                WITH
-                TIES
-              ) AS "qe"
-          ) AS "qh" ON TRUE
-        WHERE
-          "qs"."attribute_name_key" = $6
-          AND "qh"."placed" < $7
-          AND "qh"."attribute_name_key" = $8
-          AND ST_Disjoint(
-            COALESCE(
-              "qh"."value_geometry_valid",
-              "qh"."value_geometry"
-            ),
-            ST_MakeValid(ST_GeomFromEWKB($9))
-          )
-          AND "qh"."value_kind" <> (0)
-      )
+    EXISTS (
+      SELECT
+        1
+      FROM
+        (
+          SELECT
+            "rs"."entity_key" AS "entity_key",
+            "rs"."attribute_name_key" AS "attribute_name_key",
+            "rs"."dataset_key" AS "dataset_key",
+            "rh"."recorded_at",
+            "rh"."write_id",
+            "rh"."write_ordinal",
+            "rh"."attribute_kind",
+            "rh"."value_kind",
+            "rh"."observed_at",
+            "rh"."created_at",
+            "rh"."modified_at",
+            "rh"."deleted_at",
+            "rh"."value_date_time",
+            "rh"."expires_at",
+            "rh"."generated_instance_id",
+            "rh"."value_type_key",
+            "rh"."value_datatype_key",
+            "rh"."unit_code_id",
+            "rh"."value_boolean",
+            "rh"."verbatim_instance_id",
+            "rh"."value_number",
+            "rh"."value_string",
+            "rh"."value_language",
+            "rh"."value_geometry",
+            "rh"."value_geometry_valid",
+            "rh"."value_geometry_reach",
+            "rh"."value_geometry_members",
+            "rh"."value_object",
+            "rh"."value_uri",
+            "rh"."object_type_keys",
+            "rh"."sub_attributes"
+          FROM
+            "attribute_history" AS "rh"
+            JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+          WHERE
+            "rs"."entity_key" = "e"."entity_key"
+        ) AS "qh"
+      WHERE
+        "qh"."attribute_name_key" = $1
+        AND ST_Disjoint(
+          COALESCE(
+            "qh"."value_geometry_valid",
+            "qh"."value_geometry"
+          ),
+          ST_MakeValid(ST_GeomFromEWKB($2))
+        )
+        AND "qh"."value_kind" <> (0)
+        AND "qh"."observed_at" IS NOT NULL
+        AND "qh"."observed_at" >= $3
     )
     AND EXISTS (
       SELECT
@@ -288,7 +125,7 @@ WITH
             JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
         ) AS "ah"
       WHERE
-        "ah"."observed_at" >= $10
+        "ah"."observed_at" >= $4
         AND "ah"."entity_id" = "e"."id"
     )
   ORDER BY
@@ -302,7 +139,7 @@ WITH
   FROM
     "entities"
   WHERE
-    "entities"."evolution_active_until" >= $11
+    "entities"."evolution_active_until" >= $5
   LIMIT
     10001
 )
@@ -320,7 +157,7 @@ FROM
           COUNT(*)
         FROM
           "short_walk"
-      ) >= $12
+      ) >= $6
     ORDER BY
       "entity_id" ASC
     LIMIT
@@ -354,224 +191,61 @@ UNION ALL
             "id" ASC OFFSET 0
         ) AS "e"
       WHERE
-        (
-          EXISTS (
-            SELECT
-              1
-            FROM
-              (
-                SELECT
-                  "rs"."entity_key" AS "entity_key",
-                  "rs"."attribute_name_key" AS "attribute_name_key",
-                  "rs"."dataset_key" AS "dataset_key",
-                  "rh"."recorded_at",
-                  "rh"."write_id",
-                  "rh"."write_ordinal",
-                  "rh"."attribute_kind",
-                  "rh"."value_kind",
-                  "rh"."observed_at",
-                  "rh"."created_at",
-                  "rh"."modified_at",
-                  "rh"."deleted_at",
-                  "rh"."value_date_time",
-                  "rh"."expires_at",
-                  "rh"."generated_instance_id",
-                  "rh"."value_type_key",
-                  "rh"."value_datatype_key",
-                  "rh"."unit_code_id",
-                  "rh"."value_boolean",
-                  "rh"."verbatim_instance_id",
-                  "rh"."value_number",
-                  "rh"."value_string",
-                  "rh"."value_language",
-                  "rh"."value_geometry",
-                  "rh"."value_geometry_valid",
-                  "rh"."value_geometry_reach",
-                  "rh"."value_geometry_members",
-                  "rh"."value_object",
-                  "rh"."value_uri",
-                  "rh"."object_type_keys",
-                  "rh"."sub_attributes"
-                FROM
-                  "attribute_history" AS "rh"
-                  JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
-                WHERE
-                  "rs"."entity_key" = "e"."entity_key"
-              ) AS "qh"
-            WHERE
-              "qh"."attribute_name_key" = $13
-              AND ST_Disjoint(
-                COALESCE(
-                  "qh"."value_geometry_valid",
-                  "qh"."value_geometry"
-                ),
-                ST_MakeValid(ST_GeomFromEWKB($14))
-              )
-              AND "qh"."value_kind" <> (0)
-              AND "qh"."observed_at" IS NOT NULL
-              AND "qh"."observed_at" >= $15
-          )
-          OR EXISTS (
-            SELECT
-              1
-            FROM
-              (
-                SELECT
-                  "rs"."entity_key" AS "entity_key",
-                  "rs"."attribute_name_key" AS "attribute_name_key",
-                  "rs"."dataset_key" AS "dataset_key",
-                  "rs"."stream_key" AS "stream_key"
-                FROM
-                  "temporal_attribute_streams" AS "rs"
-                WHERE
-                  "rs"."entity_key" = "e"."entity_key"
-              ) AS "qs"
-              JOIN LATERAL (
-                SELECT
-                  *
-                FROM
-                  (
-                    (
-                      SELECT
-                        *
-                      FROM
-                        (
-                          (
-                            SELECT
-                              "qi".*,
-                              "qi"."observed_at" AS "placed"
-                            FROM
-                              (
-                                SELECT
-                                  "qs"."entity_key" AS "entity_key",
-                                  "qs"."attribute_name_key" AS "attribute_name_key",
-                                  "qs"."dataset_key" AS "dataset_key",
-                                  "rh"."recorded_at",
-                                  "rh"."write_id",
-                                  "rh"."write_ordinal",
-                                  "rh"."attribute_kind" AS "attribute_kind",
-                                  "rh"."value_kind" AS "value_kind",
-                                  "rh"."observed_at" AS "observed_at",
-                                  "rh"."created_at" AS "created_at",
-                                  "rh"."modified_at" AS "modified_at",
-                                  "rh"."deleted_at" AS "deleted_at",
-                                  "rh"."value_date_time" AS "value_date_time",
-                                  "rh"."expires_at" AS "expires_at",
-                                  "rh"."generated_instance_id" AS "generated_instance_id",
-                                  "rh"."value_type_key" AS "value_type_key",
-                                  "rh"."value_datatype_key" AS "value_datatype_key",
-                                  "rh"."unit_code_id" AS "unit_code_id",
-                                  "rh"."value_boolean" AS "value_boolean",
-                                  "rh"."verbatim_instance_id" AS "verbatim_instance_id",
-                                  "rh"."value_number" AS "value_number",
-                                  "rh"."value_string" AS "value_string",
-                                  "rh"."value_language" AS "value_language",
-                                  "rh"."value_geometry" AS "value_geometry",
-                                  "rh"."value_geometry_valid" AS "value_geometry_valid",
-                                  "rh"."value_geometry_reach" AS "value_geometry_reach",
-                                  "rh"."value_geometry_members" AS "value_geometry_members",
-                                  "rh"."value_object" AS "value_object",
-                                  "rh"."value_uri" AS "value_uri",
-                                  "rh"."object_type_keys" AS "object_type_keys",
-                                  "rh"."sub_attributes" AS "sub_attributes"
-                                FROM
-                                  "attribute_history" AS "rh"
-                                WHERE
-                                  "rh"."stream_key" = "qs"."stream_key"
-                              ) AS "qi"
-                            WHERE
-                              "qi"."observed_at" <= $16
-                            ORDER BY
-                              "qi"."observed_at" DESC
-                          )
-                          FETCH FIRST
-                            1 ROW
-                          WITH
-                          TIES
-                        ) AS "qe"
-                      UNION ALL
-                      (
-                        SELECT
-                          *
-                        FROM
-                          (
-                            (
-                              SELECT
-                                "qi".*,
-                                "qi"."deleted_at" AS "placed"
-                              FROM
-                                (
-                                  SELECT
-                                    "qs"."entity_key" AS "entity_key",
-                                    "qs"."attribute_name_key" AS "attribute_name_key",
-                                    "qs"."dataset_key" AS "dataset_key",
-                                    "rh"."recorded_at",
-                                    "rh"."write_id",
-                                    "rh"."write_ordinal",
-                                    "rh"."attribute_kind" AS "attribute_kind",
-                                    "rh"."value_kind" AS "value_kind",
-                                    "rh"."observed_at" AS "observed_at",
-                                    "rh"."created_at" AS "created_at",
-                                    "rh"."modified_at" AS "modified_at",
-                                    "rh"."deleted_at" AS "deleted_at",
-                                    "rh"."value_date_time" AS "value_date_time",
-                                    "rh"."expires_at" AS "expires_at",
-                                    "rh"."generated_instance_id" AS "generated_instance_id",
-                                    "rh"."value_type_key" AS "value_type_key",
-                                    "rh"."value_datatype_key" AS "value_datatype_key",
-                                    "rh"."unit_code_id" AS "unit_code_id",
-                                    "rh"."value_boolean" AS "value_boolean",
-                                    "rh"."verbatim_instance_id" AS "verbatim_instance_id",
-                                    "rh"."value_number" AS "value_number",
-                                    "rh"."value_string" AS "value_string",
-                                    "rh"."value_language" AS "value_language",
-                                    "rh"."value_geometry" AS "value_geometry",
-                                    "rh"."value_geometry_valid" AS "value_geometry_valid",
-                                    "rh"."value_geometry_reach" AS "value_geometry_reach",
-                                    "rh"."value_geometry_members" AS "value_geometry_members",
-                                    "rh"."value_object" AS "value_object",
-                                    "rh"."value_uri" AS "value_uri",
-                                    "rh"."object_type_keys" AS "object_type_keys",
-                                    "rh"."sub_attributes" AS "sub_attributes"
-                                  FROM
-                                    "attribute_history" AS "rh"
-                                  WHERE
-                                    "rh"."stream_key" = "qs"."stream_key"
-                                ) AS "qi"
-                              WHERE
-                                "qi"."deleted_at" <= $17
-                                AND "qi"."observed_at" IS NULL
-                              ORDER BY
-                                "qi"."deleted_at" DESC
-                            )
-                            FETCH FIRST
-                              1 ROW
-                            WITH
-                            TIES
-                          ) AS "qe"
-                      )
-                      ORDER BY
-                        "placed" DESC
-                    )
-                    FETCH FIRST
-                      1 ROW
-                    WITH
-                    TIES
-                  ) AS "qe"
-              ) AS "qh" ON TRUE
-            WHERE
-              "qs"."attribute_name_key" = $18
-              AND "qh"."placed" < $19
-              AND "qh"."attribute_name_key" = $20
-              AND ST_Disjoint(
-                COALESCE(
-                  "qh"."value_geometry_valid",
-                  "qh"."value_geometry"
-                ),
-                ST_MakeValid(ST_GeomFromEWKB($21))
-              )
-              AND "qh"."value_kind" <> (0)
-          )
+        EXISTS (
+          SELECT
+            1
+          FROM
+            (
+              SELECT
+                "rs"."entity_key" AS "entity_key",
+                "rs"."attribute_name_key" AS "attribute_name_key",
+                "rs"."dataset_key" AS "dataset_key",
+                "rh"."recorded_at",
+                "rh"."write_id",
+                "rh"."write_ordinal",
+                "rh"."attribute_kind",
+                "rh"."value_kind",
+                "rh"."observed_at",
+                "rh"."created_at",
+                "rh"."modified_at",
+                "rh"."deleted_at",
+                "rh"."value_date_time",
+                "rh"."expires_at",
+                "rh"."generated_instance_id",
+                "rh"."value_type_key",
+                "rh"."value_datatype_key",
+                "rh"."unit_code_id",
+                "rh"."value_boolean",
+                "rh"."verbatim_instance_id",
+                "rh"."value_number",
+                "rh"."value_string",
+                "rh"."value_language",
+                "rh"."value_geometry",
+                "rh"."value_geometry_valid",
+                "rh"."value_geometry_reach",
+                "rh"."value_geometry_members",
+                "rh"."value_object",
+                "rh"."value_uri",
+                "rh"."object_type_keys",
+                "rh"."sub_attributes"
+              FROM
+                "attribute_history" AS "rh"
+                JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+              WHERE
+                "rs"."entity_key" = "e"."entity_key"
+            ) AS "qh"
+          WHERE
+            "qh"."attribute_name_key" = $7
+            AND ST_Disjoint(
+              COALESCE(
+                "qh"."value_geometry_valid",
+                "qh"."value_geometry"
+              ),
+              ST_MakeValid(ST_GeomFromEWKB($8))
+            )
+            AND "qh"."value_kind" <> (0)
+            AND "qh"."observed_at" IS NOT NULL
+            AND "qh"."observed_at" >= $9
         )
         AND (
           CASE
@@ -581,7 +255,7 @@ UNION ALL
                   COUNT(*)
                 FROM
                   "short_walk"
-              ) >= $22
+              ) >= $10
             ) THEN FALSE
             WHEN (
               (
@@ -589,14 +263,14 @@ UNION ALL
                   COUNT(*)
                 FROM
                   "short_walk"
-              ) >= $23
+              ) >= $11
             ) THEN FALSE
             ELSE (
               SELECT
                 COUNT(*)
               FROM
                 "candidates"
-            ) <= $24
+            ) <= $12
           END
         )
         AND EXISTS (
@@ -642,7 +316,7 @@ UNION ALL
                 JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
             ) AS "ah"
           WHERE
-            "ah"."observed_at" >= $25
+            "ah"."observed_at" >= $13
             AND "ah"."entity_id" = "e"."id"
         )
       ORDER BY
@@ -671,224 +345,61 @@ UNION ALL
             AND "is_evolution_member"
         ) AS "e"
       WHERE
-        (
-          EXISTS (
-            SELECT
-              1
-            FROM
-              (
-                SELECT
-                  "rs"."entity_key" AS "entity_key",
-                  "rs"."attribute_name_key" AS "attribute_name_key",
-                  "rs"."dataset_key" AS "dataset_key",
-                  "rh"."recorded_at",
-                  "rh"."write_id",
-                  "rh"."write_ordinal",
-                  "rh"."attribute_kind",
-                  "rh"."value_kind",
-                  "rh"."observed_at",
-                  "rh"."created_at",
-                  "rh"."modified_at",
-                  "rh"."deleted_at",
-                  "rh"."value_date_time",
-                  "rh"."expires_at",
-                  "rh"."generated_instance_id",
-                  "rh"."value_type_key",
-                  "rh"."value_datatype_key",
-                  "rh"."unit_code_id",
-                  "rh"."value_boolean",
-                  "rh"."verbatim_instance_id",
-                  "rh"."value_number",
-                  "rh"."value_string",
-                  "rh"."value_language",
-                  "rh"."value_geometry",
-                  "rh"."value_geometry_valid",
-                  "rh"."value_geometry_reach",
-                  "rh"."value_geometry_members",
-                  "rh"."value_object",
-                  "rh"."value_uri",
-                  "rh"."object_type_keys",
-                  "rh"."sub_attributes"
-                FROM
-                  "attribute_history" AS "rh"
-                  JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
-                WHERE
-                  "rs"."entity_key" = "e"."entity_key"
-              ) AS "qh"
-            WHERE
-              "qh"."attribute_name_key" = $26
-              AND ST_Disjoint(
-                COALESCE(
-                  "qh"."value_geometry_valid",
-                  "qh"."value_geometry"
-                ),
-                ST_MakeValid(ST_GeomFromEWKB($27))
-              )
-              AND "qh"."value_kind" <> (0)
-              AND "qh"."observed_at" IS NOT NULL
-              AND "qh"."observed_at" >= $28
-          )
-          OR EXISTS (
-            SELECT
-              1
-            FROM
-              (
-                SELECT
-                  "rs"."entity_key" AS "entity_key",
-                  "rs"."attribute_name_key" AS "attribute_name_key",
-                  "rs"."dataset_key" AS "dataset_key",
-                  "rs"."stream_key" AS "stream_key"
-                FROM
-                  "temporal_attribute_streams" AS "rs"
-                WHERE
-                  "rs"."entity_key" = "e"."entity_key"
-              ) AS "qs"
-              JOIN LATERAL (
-                SELECT
-                  *
-                FROM
-                  (
-                    (
-                      SELECT
-                        *
-                      FROM
-                        (
-                          (
-                            SELECT
-                              "qi".*,
-                              "qi"."observed_at" AS "placed"
-                            FROM
-                              (
-                                SELECT
-                                  "qs"."entity_key" AS "entity_key",
-                                  "qs"."attribute_name_key" AS "attribute_name_key",
-                                  "qs"."dataset_key" AS "dataset_key",
-                                  "rh"."recorded_at",
-                                  "rh"."write_id",
-                                  "rh"."write_ordinal",
-                                  "rh"."attribute_kind" AS "attribute_kind",
-                                  "rh"."value_kind" AS "value_kind",
-                                  "rh"."observed_at" AS "observed_at",
-                                  "rh"."created_at" AS "created_at",
-                                  "rh"."modified_at" AS "modified_at",
-                                  "rh"."deleted_at" AS "deleted_at",
-                                  "rh"."value_date_time" AS "value_date_time",
-                                  "rh"."expires_at" AS "expires_at",
-                                  "rh"."generated_instance_id" AS "generated_instance_id",
-                                  "rh"."value_type_key" AS "value_type_key",
-                                  "rh"."value_datatype_key" AS "value_datatype_key",
-                                  "rh"."unit_code_id" AS "unit_code_id",
-                                  "rh"."value_boolean" AS "value_boolean",
-                                  "rh"."verbatim_instance_id" AS "verbatim_instance_id",
-                                  "rh"."value_number" AS "value_number",
-                                  "rh"."value_string" AS "value_string",
-                                  "rh"."value_language" AS "value_language",
-                                  "rh"."value_geometry" AS "value_geometry",
-                                  "rh"."value_geometry_valid" AS "value_geometry_valid",
-                                  "rh"."value_geometry_reach" AS "value_geometry_reach",
-                                  "rh"."value_geometry_members" AS "value_geometry_members",
-                                  "rh"."value_object" AS "value_object",
-                                  "rh"."value_uri" AS "value_uri",
-                                  "rh"."object_type_keys" AS "object_type_keys",
-                                  "rh"."sub_attributes" AS "sub_attributes"
-                                FROM
-                                  "attribute_history" AS "rh"
-                                WHERE
-                                  "rh"."stream_key" = "qs"."stream_key"
-                              ) AS "qi"
-                            WHERE
-                              "qi"."observed_at" <= $29
-                            ORDER BY
-                              "qi"."observed_at" DESC
-                          )
-                          FETCH FIRST
-                            1 ROW
-                          WITH
-                          TIES
-                        ) AS "qe"
-                      UNION ALL
-                      (
-                        SELECT
-                          *
-                        FROM
-                          (
-                            (
-                              SELECT
-                                "qi".*,
-                                "qi"."deleted_at" AS "placed"
-                              FROM
-                                (
-                                  SELECT
-                                    "qs"."entity_key" AS "entity_key",
-                                    "qs"."attribute_name_key" AS "attribute_name_key",
-                                    "qs"."dataset_key" AS "dataset_key",
-                                    "rh"."recorded_at",
-                                    "rh"."write_id",
-                                    "rh"."write_ordinal",
-                                    "rh"."attribute_kind" AS "attribute_kind",
-                                    "rh"."value_kind" AS "value_kind",
-                                    "rh"."observed_at" AS "observed_at",
-                                    "rh"."created_at" AS "created_at",
-                                    "rh"."modified_at" AS "modified_at",
-                                    "rh"."deleted_at" AS "deleted_at",
-                                    "rh"."value_date_time" AS "value_date_time",
-                                    "rh"."expires_at" AS "expires_at",
-                                    "rh"."generated_instance_id" AS "generated_instance_id",
-                                    "rh"."value_type_key" AS "value_type_key",
-                                    "rh"."value_datatype_key" AS "value_datatype_key",
-                                    "rh"."unit_code_id" AS "unit_code_id",
-                                    "rh"."value_boolean" AS "value_boolean",
-                                    "rh"."verbatim_instance_id" AS "verbatim_instance_id",
-                                    "rh"."value_number" AS "value_number",
-                                    "rh"."value_string" AS "value_string",
-                                    "rh"."value_language" AS "value_language",
-                                    "rh"."value_geometry" AS "value_geometry",
-                                    "rh"."value_geometry_valid" AS "value_geometry_valid",
-                                    "rh"."value_geometry_reach" AS "value_geometry_reach",
-                                    "rh"."value_geometry_members" AS "value_geometry_members",
-                                    "rh"."value_object" AS "value_object",
-                                    "rh"."value_uri" AS "value_uri",
-                                    "rh"."object_type_keys" AS "object_type_keys",
-                                    "rh"."sub_attributes" AS "sub_attributes"
-                                  FROM
-                                    "attribute_history" AS "rh"
-                                  WHERE
-                                    "rh"."stream_key" = "qs"."stream_key"
-                                ) AS "qi"
-                              WHERE
-                                "qi"."deleted_at" <= $30
-                                AND "qi"."observed_at" IS NULL
-                              ORDER BY
-                                "qi"."deleted_at" DESC
-                            )
-                            FETCH FIRST
-                              1 ROW
-                            WITH
-                            TIES
-                          ) AS "qe"
-                      )
-                      ORDER BY
-                        "placed" DESC
-                    )
-                    FETCH FIRST
-                      1 ROW
-                    WITH
-                    TIES
-                  ) AS "qe"
-              ) AS "qh" ON TRUE
-            WHERE
-              "qs"."attribute_name_key" = $31
-              AND "qh"."placed" < $32
-              AND "qh"."attribute_name_key" = $33
-              AND ST_Disjoint(
-                COALESCE(
-                  "qh"."value_geometry_valid",
-                  "qh"."value_geometry"
-                ),
-                ST_MakeValid(ST_GeomFromEWKB($34))
-              )
-              AND "qh"."value_kind" <> (0)
-          )
+        EXISTS (
+          SELECT
+            1
+          FROM
+            (
+              SELECT
+                "rs"."entity_key" AS "entity_key",
+                "rs"."attribute_name_key" AS "attribute_name_key",
+                "rs"."dataset_key" AS "dataset_key",
+                "rh"."recorded_at",
+                "rh"."write_id",
+                "rh"."write_ordinal",
+                "rh"."attribute_kind",
+                "rh"."value_kind",
+                "rh"."observed_at",
+                "rh"."created_at",
+                "rh"."modified_at",
+                "rh"."deleted_at",
+                "rh"."value_date_time",
+                "rh"."expires_at",
+                "rh"."generated_instance_id",
+                "rh"."value_type_key",
+                "rh"."value_datatype_key",
+                "rh"."unit_code_id",
+                "rh"."value_boolean",
+                "rh"."verbatim_instance_id",
+                "rh"."value_number",
+                "rh"."value_string",
+                "rh"."value_language",
+                "rh"."value_geometry",
+                "rh"."value_geometry_valid",
+                "rh"."value_geometry_reach",
+                "rh"."value_geometry_members",
+                "rh"."value_object",
+                "rh"."value_uri",
+                "rh"."object_type_keys",
+                "rh"."sub_attributes"
+              FROM
+                "attribute_history" AS "rh"
+                JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+              WHERE
+                "rs"."entity_key" = "e"."entity_key"
+            ) AS "qh"
+          WHERE
+            "qh"."attribute_name_key" = $14
+            AND ST_Disjoint(
+              COALESCE(
+                "qh"."value_geometry_valid",
+                "qh"."value_geometry"
+              ),
+              ST_MakeValid(ST_GeomFromEWKB($15))
+            )
+            AND "qh"."value_kind" <> (0)
+            AND "qh"."observed_at" IS NOT NULL
+            AND "qh"."observed_at" >= $16
         )
         AND (
           CASE
@@ -898,7 +409,7 @@ UNION ALL
                   COUNT(*)
                 FROM
                   "short_walk"
-              ) >= $35
+              ) >= $17
             ) THEN FALSE
             WHEN (
               (
@@ -906,14 +417,14 @@ UNION ALL
                   COUNT(*)
                 FROM
                   "short_walk"
-              ) >= $36
+              ) >= $18
             ) THEN TRUE
             ELSE (
               SELECT
                 COUNT(*)
               FROM
                 "candidates"
-            ) > $37
+            ) > $19
           END
         )
         AND EXISTS (
@@ -959,7 +470,7 @@ UNION ALL
                 JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
             ) AS "ah"
           WHERE
-            "ah"."observed_at" >= $38
+            "ah"."observed_at" >= $20
             AND "ah"."entity_id" = "e"."id"
         )
       ORDER BY
@@ -973,36 +484,18 @@ UNION ALL
 3: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
 4: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
 5: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
-6: Int 2
-7: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
-8: Int 2
-9: Bytes '\x0101000020E610000000000000000012400000000000404A40'
-10: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
-11: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
-12: BigUnsigned 20
-13: Int 2
-14: Bytes '\x0101000020E610000000000000000012400000000000404A40'
-15: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
+6: BigUnsigned 20
+7: Int 2
+8: Bytes '\x0101000020E610000000000000000012400000000000404A40'
+9: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
+10: BigUnsigned 20
+11: BigUnsigned 3
+12: BigUnsigned 10000
+13: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
+14: Int 2
+15: Bytes '\x0101000020E610000000000000000012400000000000404A40'
 16: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
-17: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
-18: Int 2
-19: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
-20: Int 2
-21: Bytes '\x0101000020E610000000000000000012400000000000404A40'
-22: BigUnsigned 20
-23: BigUnsigned 3
-24: BigUnsigned 10000
-25: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
-26: Int 2
-27: Bytes '\x0101000020E610000000000000000012400000000000404A40'
-28: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
-29: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
-30: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
-31: Int 2
-32: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
-33: Int 2
-34: Bytes '\x0101000020E610000000000000000012400000000000404A40'
-35: BigUnsigned 20
-36: BigUnsigned 3
-37: BigUnsigned 10000
-38: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'
+17: BigUnsigned 20
+18: BigUnsigned 3
+19: BigUnsigned 10000
+20: ChronoDateTimeUtc '2026-10-18 03:00:00.000000 +00:00'

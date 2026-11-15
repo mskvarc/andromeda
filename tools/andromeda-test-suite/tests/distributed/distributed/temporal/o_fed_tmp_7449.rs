@@ -1,4 +1,4 @@
-//! A source failing the in effect probe adds a warning.
+//! A source failing the probe for the Scope in force adds a warning.
 
 use andromeda_test_suite::{
     broker,
@@ -8,26 +8,26 @@ use andromeda_test_suite::{
     identity_matcher::has_id,
     namespace::Namespace,
     nth::nth,
-    outcome::Upserted,
+    problem::answered,
     source_answer,
     source_request::SourceRequest,
 };
 use googletest::prelude::*;
 use http::{Method, StatusCode};
 use ngsi_ld::{
-    http::headers::Accept,
-    model::{ErrorType, Property, evolution::TemporalEntity},
-    query::{EntitySplitting, q, temporal_query},
+    http::{UncheckedDocument, headers::Accept, operation::CreateOrUpdateTemporalEvolution},
+    model::{ErrorType, Lossless, Property, RawJson, evolution::TemporalEntity},
+    query::{EntitySplitting, scope_query::ScopeQuery, temporal_query},
     registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo},
 };
 
-/// Pins: under `splitEntities` a between 12:00-13:00 query answers 200 with an NGSILD-Warning when the source
-/// answers the window query and fails the probe for the instance in effect when the window opens with 500, the
-/// Vehicle still judged on what the other parts hold
-/// Clause: 5.7.4.4, 6.3.17, 4.11
+/// Pins: under `splitEntities` a between 12:00-13:00 `scopeQ=/Madrid` query answers 200 with an NGSILD-Warning when
+/// the source answers the window query and fails the probe for the Scope in force when the window opens with 500,
+/// the Vehicle still judged on what the other parts hold
+/// Clause: 5.7.4.4, 6.3.17, 4.18
 #[gtest]
 #[tokio::test]
-async fn o_fed_tmp_7449_a_source_failing_the_in_effect_probe_adds_a_warning() -> Result<()> {
+async fn o_fed_tmp_7449_a_source_failing_the_probe_for_the_scope_in_force_adds_a_warning() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let source = ContextSource::start().await?;
@@ -39,7 +39,14 @@ async fn o_fed_tmp_7449_a_source_failing_the_in_effect_probe_adds_a_warning() ->
         .entity_type(vehicle_type.clone())
         .property("speed", Property::builder(60).observed_at("2020-08-01T12:10:00Z".parse()?))
         .build()?;
-    broker.temporal().create_or_update(&vehicle_evolution).send().await?.created()?;
+    // The model refuses it (a temporal scope), so `scope` is written as text.
+    let scope: RawJson = r#"[{"type": "Property", "value": "/Madrid", "observedAt": "2020-08-01T11:00:00Z"}]"#.parse()?;
+    let document = UncheckedDocument::try_from(vehicle_evolution.render(Lossless::Normalized))?.set_member("scope", &scope);
+    let request = broker
+        .unchecked(&CreateOrUpdateTemporalEvolution::builder().entity(&vehicle_evolution).build())?
+        .document(&document);
+    let answer = broker.send_unchecked(request).await;
+    expect_that!(&answer, answered(StatusCode::CREATED));
     let registration = CSourceRegistration::builder(source.endpoint("a")?)
         .id(registration_id.clone())
         .information([RegistrationInfo::builder()
@@ -73,7 +80,7 @@ async fn o_fed_tmp_7449_a_source_failing_the_in_effect_probe_adds_a_warning() ->
         .query(temporal_query::between("2020-08-01T12:00:00Z".parse()?, "2020-08-01T13:00:00Z".parse()?))
         .entity_type(&vehicle_type)
         .split_entities(EntitySplitting::Split)
-        .q(q::attr("speed").gt(50))
+        .scope_q("/Madrid".parse::<ScopeQuery>()?)
         .send()
         .await?;
     expect_that!(page.warnings(), present());

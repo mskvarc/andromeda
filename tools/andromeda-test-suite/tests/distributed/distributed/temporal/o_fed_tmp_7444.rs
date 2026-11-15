@@ -1,4 +1,4 @@
-//! A local instance newer than the peer instance in effect supersedes it.
+//! A newer local location before the window matches in no broker.
 
 use andromeda_test_suite::{
     broker,
@@ -22,11 +22,12 @@ use ngsi_ld::{
 };
 
 /// Pins: under `splitEntities` a between 12:00-13:00 near `geoQ` on broker A does not answer a Vehicle whose
-/// location broker B observed at 11:00 inside the fence when broker A observed it at 11:50 outside
+/// location broker B observed at 11:00 outside the fence when broker A observed it at 11:50 inside, both before the
+/// window: the geo-query reads the instances inside the window alone
 /// Clause: 5.7.4.4, 4.11, 4.10
 #[gtest]
 #[tokio::test]
-async fn o_fed_tmp_7444_a_local_instance_newer_than_the_peer_instance_in_effect_supersedes_it() -> Result<()> {
+async fn o_fed_tmp_7444_a_newer_local_location_before_the_window_matches_in_no_broker() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let vehicle_id = namespace.urn("Vehicle", 1)?;
@@ -38,7 +39,7 @@ async fn o_fed_tmp_7444_a_local_instance_newer_than_the_peer_instance_in_effect_
         .entity_type(vehicle_type.clone())
         .geo_property(
             "location",
-            GeoProperty::builder(Shape::Point(Position::try_new(20.0, 20.0)?)).observed_at("2020-08-01T11:50:00Z".parse()?),
+            GeoProperty::builder(Shape::Point(Position::try_new(8.0, 44.0)?)).observed_at("2020-08-01T11:50:00Z".parse()?),
         )
         .property("speed", Property::builder(60).observed_at("2020-08-01T12:10:00Z".parse()?))
         .build()?;
@@ -48,7 +49,7 @@ async fn o_fed_tmp_7444_a_local_instance_newer_than_the_peer_instance_in_effect_
         .entity_type(vehicle_type.clone())
         .geo_property(
             "location",
-            GeoProperty::builder(Shape::Point(Position::try_new(8.0, 44.0)?)).observed_at("2020-08-01T11:00:00Z".parse()?),
+            GeoProperty::builder(Shape::Point(Position::try_new(20.0, 20.0)?)).observed_at("2020-08-01T11:00:00Z".parse()?),
         )
         .build()?;
     broker_b.temporal().create_or_update(&vehicle_evolution_2).send().await?.created()?;
