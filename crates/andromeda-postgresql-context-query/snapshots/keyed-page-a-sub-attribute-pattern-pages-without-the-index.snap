@@ -52,7 +52,10 @@ FROM
                     )
                   )
                   AND (
-                    ("l0"."value_string" ~ $4)
+                    (
+                      ("l0"."value_string" ~ $4)
+                      AND nullif("l0"."value_kind" = (2), FALSE)
+                    )
                     OR EXISTS (
                       SELECT
                         1

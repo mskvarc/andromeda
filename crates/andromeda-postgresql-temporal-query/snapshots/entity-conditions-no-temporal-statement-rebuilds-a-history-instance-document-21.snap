@@ -286,7 +286,10 @@ WITH
                   "l0"."parent" = $2
                   AND "l0"."attribute_name_key" = $3
                   AND (
-                    ("l0"."value_string" ~ $4)
+                    (
+                      ("l0"."value_string" ~ $4)
+                      AND nullif("l0"."value_kind" = (2), FALSE)
+                    )
                     OR EXISTS (
                       SELECT
                         1
@@ -813,7 +816,10 @@ WITH
                   "l0"."parent" = $14
                   AND "l0"."attribute_name_key" = $15
                   AND (
-                    ("l0"."value_string" ~ $16)
+                    (
+                      ("l0"."value_string" ~ $16)
+                      AND nullif("l0"."value_kind" = (2), FALSE)
+                    )
                     OR EXISTS (
                       SELECT
                         1
@@ -1341,7 +1347,10 @@ UNION ALL
                       "l0"."parent" = $22
                       AND "l0"."attribute_name_key" = $23
                       AND (
-                        ("l0"."value_string" ~ $24)
+                        (
+                          ("l0"."value_string" ~ $24)
+                          AND nullif("l0"."value_kind" = (2), FALSE)
+                        )
                         OR EXISTS (
                           SELECT
                             1
@@ -1868,7 +1877,10 @@ UNION ALL
                       "l0"."parent" = $34
                       AND "l0"."attribute_name_key" = $35
                       AND (
-                        ("l0"."value_string" ~ $36)
+                        (
+                          ("l0"."value_string" ~ $36)
+                          AND nullif("l0"."value_kind" = (2), FALSE)
+                        )
                         OR EXISTS (
                           SELECT
                             1
@@ -2372,7 +2384,10 @@ UNION ALL
                       "l0"."parent" = $43
                       AND "l0"."attribute_name_key" = $44
                       AND (
-                        ("l0"."value_string" ~ $45)
+                        (
+                          ("l0"."value_string" ~ $45)
+                          AND nullif("l0"."value_kind" = (2), FALSE)
+                        )
                         OR EXISTS (
                           SELECT
                             1
@@ -2899,7 +2914,10 @@ UNION ALL
                       "l0"."parent" = $55
                       AND "l0"."attribute_name_key" = $56
                       AND (
-                        ("l0"."value_string" ~ $57)
+                        (
+                          ("l0"."value_string" ~ $57)
+                          AND nullif("l0"."value_kind" = (2), FALSE)
+                        )
                         OR EXISTS (
                           SELECT
                             1

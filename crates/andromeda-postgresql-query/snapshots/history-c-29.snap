@@ -172,7 +172,10 @@ WHERE
     WHERE
       "qh"."attribute_name_key" = $1
       AND (
-        ("qh"."value_string" ~ $2)
+        (
+          ("qh"."value_string" ~ $2)
+          AND nullif("qh"."value_kind" = (2), FALSE)
+        )
         OR EXISTS (
           SELECT
             1
@@ -682,7 +685,10 @@ WHERE
       AND "qh"."placed" < $11
       AND "qh"."attribute_name_key" = $12
       AND (
-        ("qh"."value_string" ~ $13)
+        (
+          ("qh"."value_string" ~ $13)
+          AND nullif("qh"."value_kind" = (2), FALSE)
+        )
         OR EXISTS (
           SELECT
             1

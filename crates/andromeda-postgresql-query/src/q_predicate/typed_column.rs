@@ -105,6 +105,15 @@ pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, row: InstanceRow) -> S
     }
 }
 
+/// `compared`, a test of a String one of `row`'s String columns holds, read
+/// for the String kind alone where that field also holds kinds of another data
+/// type: a `Date` and a `Time` share it, and clause 4.9 makes no target of
+/// another data type match a String operator.
+#[must_use]
+pub(crate) fn as_string(compared: SimpleExpr, row: InstanceRow) -> SimpleExpr {
+    on_kind(ValueKind::String, row, |_string_field| compared)
+}
+
 /// `compared` over the field `kind` is placed in, read for `kind` alone where
 /// that field also holds kinds of another data type.
 ///

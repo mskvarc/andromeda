@@ -18,9 +18,15 @@ WHERE
         OR "ca"."expires_at" > NOW()
       )
       AND (
-        ("ca"."value_string" !~ $2)
+        (
+          ("ca"."value_string" !~ $2)
+          AND nullif("ca"."value_kind" = (2), FALSE)
+        )
         OR (
-          (("ca"."value_long_text") COLLATE "default") !~ $3
+          (
+            (("ca"."value_long_text") COLLATE "default") !~ $3
+          )
+          AND nullif("ca"."value_kind" = (2), FALSE)
         )
         OR (
           EXISTS (

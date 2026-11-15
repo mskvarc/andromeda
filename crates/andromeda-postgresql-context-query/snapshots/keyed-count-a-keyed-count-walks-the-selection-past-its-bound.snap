@@ -17,7 +17,10 @@ WITH
           "ca"."expires_at" IS NULL
           OR "ca"."expires_at" > NOW()
         )
-        AND ((("ca"."value_string") COLLATE "default") ~ $2)
+        AND (
+          ((("ca"."value_string") COLLATE "default") ~ $2)
+          AND nullif("ca"."value_kind" = (2), FALSE)
+        )
       UNION ALL
       (
         SELECT
@@ -31,7 +34,10 @@ WITH
             OR "ca"."expires_at" > NOW()
           )
           AND (
-            (("ca"."value_long_text") COLLATE "default") ~ $4
+            (
+              (("ca"."value_long_text") COLLATE "default") ~ $4
+            )
+            AND nullif("ca"."value_kind" = (2), FALSE)
           )
       )
       UNION ALL
@@ -121,9 +127,15 @@ SELECT
                 OR "ca"."expires_at" > NOW()
               )
               AND (
-                ((("ca"."value_string") COLLATE "default") ~ $9)
+                (
+                  ((("ca"."value_string") COLLATE "default") ~ $9)
+                  AND nullif("ca"."value_kind" = (2), FALSE)
+                )
                 OR (
-                  (("ca"."value_long_text") COLLATE "default") ~ $10
+                  (
+                    (("ca"."value_long_text") COLLATE "default") ~ $10
+                  )
+                  AND nullif("ca"."value_kind" = (2), FALSE)
                 )
                 OR EXISTS (
                   SELECT
