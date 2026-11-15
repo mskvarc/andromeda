@@ -375,6 +375,13 @@ mod tests {
         }
     }
 
+    /// Clause 4.9 admits a range only after `==` and `!=`; an ordering
+    /// operator takes a single value.
+    #[test]
+    fn a_range_after_an_ordering_operator_does_not_parse() {
+        assert!(parse("temperature>10..20").is_err());
+    }
+
     #[test]
     fn parse_value_list() {
         let expr = parse("color==\"red\",\"blue\",\"green\"").unwrap();

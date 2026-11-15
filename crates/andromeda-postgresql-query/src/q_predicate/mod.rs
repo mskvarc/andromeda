@@ -96,6 +96,14 @@
 //! drives from a `BitmapOr` over every arm's value index. Hops and sub-attribute
 //! probes read other rows, so they stay beside the shared probe.
 //!
+//! # Documents
+//!
+//! A `csf` filter reads a registration's Context Source Properties, a JSONB
+//! document rather than attribute rows, so it compiles to tests of JSON
+//! extractions from that document (see [`document`]): the same reading, the
+//! same comparisons and the same complement, with no probe and no name
+//! dictionary.
+//!
 //! # Multi-instance semantics
 //!
 //! `EXISTS` matches when *any* row for the attribute satisfies the predicate.
@@ -106,6 +114,7 @@ pub mod attribute_names;
 #[cfg(test)]
 mod corpus_statement_tests;
 pub mod declared_member;
+pub mod document;
 pub mod equality_term;
 pub mod extended_filter_pattern;
 pub mod history_aliases;

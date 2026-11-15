@@ -24,6 +24,7 @@ use andromeda_ngsi_ld_query::{
         compilation::{FilterOptIns, admit_q_filter, compile_q_filter},
         expansion::expand_csf_expr,
         path::expanded_attribute_name,
+        reading::filter_reading::FilterReading,
         referenced_attributes::referenced_attributes,
     },
     geo::compile as geo_compile,
@@ -164,8 +165,8 @@ impl RegistrationService {
                 attrs.push(iri);
             }
         }
-        let csf_expr = match params.csf.clone() {
-            Some(expression) => Some(expand_csf_expr(expression, &expander).await?),
+        let csf = match params.csf.clone() {
+            Some(expression) => Some(FilterReading::of_context_source_filter(&expand_csf_expr(expression, &expander).await?)),
             None => None,
         };
         let temporal = if let (Some(timerel), Some(time_at)) = (&params.timerel, &params.time_at) {
@@ -184,7 +185,7 @@ impl RegistrationService {
             .entity_type(expanded_type)
             .id_pattern(params.id_pattern.clone())
             .attrs(attrs)
-            .csf_expr(csf_expr)
+            .csf(csf)
             .geo(geo)
             .scope_q(params.scope_q.clone())
             .encountered_sources(encountered_sources.to_vec())

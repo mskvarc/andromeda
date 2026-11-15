@@ -19,7 +19,7 @@ use crate::{
         value_column::ValueColumn,
     },
 };
-use andromeda_ngsi_ld_query::{filter::reading::value_test::Polarity, pattern::Pattern};
+use andromeda_ngsi_ld_query::pattern::Pattern;
 use andromeda_postgresql_seaquery::literal::false_literal;
 use andromeda_postgresql_stored_values::value_placement::ValueField;
 use sea_query::{Condition, ExprTrait, SimpleExpr};
@@ -59,10 +59,7 @@ pub fn pattern_targets(row: InstanceRow) -> impl Iterator<Item = PatternTarget> 
 #[must_use]
 pub fn pattern_on(target: PatternTarget, pattern: &Pattern, row: InstanceRow) -> SimpleExpr {
     match target {
-        PatternTarget::Column(column) => as_string(
-            pattern_predicate(row.value(column), Polarity::Asserted, pattern, column_indexes(row, column)),
-            row,
-        ),
+        PatternTarget::Column(column) => as_string(pattern_predicate(row.value(column), pattern, column_indexes(row, column)), row),
         PatternTarget::LanguageMap => some_string_matching(&LanguageMap::of_instance(row), LanguageSelection::AnyLanguage, pattern),
     }
 }
