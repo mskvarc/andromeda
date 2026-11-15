@@ -20,6 +20,7 @@ use andromeda_context_commit::{change_event::ChangeEvent, store_instant::StoreIn
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
+use andromeda_ngsi_ld_query_evaluation::q::term_memo::{TermInterner, TermMemo};
 use andromeda_retry::{growth::Growth, retry_delay::RetryDelay, retry_policy::RetryPolicy, schedule::BackoffSchedule};
 use andromeda_spatial_index::{
     key::SpatialKey,
@@ -28,7 +29,7 @@ use andromeda_spatial_index::{
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use iri_rs::IriBuf;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::{collections::HashMap, num::NonZeroU32, sync::Arc, time::Duration};
 use tracing::{debug, error, warn};
 
@@ -62,6 +63,10 @@ pub struct SubscriptionCache {
     /// cached entry, if any, may be stale, and
     /// [`SubscriptionCache::reconcile_dirty`] reads them again.
     refreshes: RefreshOrder,
+    /// The numbers of the distinct terms of the cached subscriptions' `q`.
+    terms: TermInterner,
+    /// Memos idle between matching passes, each for the numbers of `terms`.
+    memos: Mutex<Vec<TermMemo>>,
 }
 
 impl SubscriptionCache {
@@ -81,7 +86,20 @@ impl SubscriptionCache {
             tenant,
             language_matching,
             refreshes: RefreshOrder::default(),
+            terms: TermInterner::new(),
+            memos: Mutex::new(Vec::new()),
         }
+    }
+
+    /// An idle memo for the cached subscriptions' terms, or a new one, for one
+    /// matching pass. [`SubscriptionCache::return_memo`] gives it back.
+    pub fn take_memo(&self) -> TermMemo {
+        self.memos.lock().pop().unwrap_or_else(|| TermMemo::new(&self.terms))
+    }
+
+    /// Keeps `memo` for the next matching pass.
+    pub fn return_memo(&self, memo: TermMemo) {
+        self.memos.lock().push(memo);
     }
 
     /// Reload the entire cache from the subscription repository.
@@ -101,6 +119,7 @@ impl SubscriptionCache {
         let compiled: Vec<CompiledSubscription> = subscriptions
             .iter()
             .map(|stored| compile_subscription(stored, self.language_matching))
+            .map(|compiled| self.numbered(compiled))
             .collect();
         let mut indices = self.indices.write();
         let index = indices.entry(target.clone()).or_default();
@@ -210,11 +229,18 @@ impl SubscriptionCache {
     /// Index one compiled subscription, replacing any earlier entry with the
     /// same identifier in both the candidate and the spatial index.
     pub fn insert(&self, target: &ContextTarget, compiled: CompiledSubscription) {
+        let compiled = self.numbered(compiled);
         if target.snapshot().is_none() {
             self.spatial.remove(&compiled.id);
             self.spatial_insert(target, &compiled);
         }
         self.indices.write().entry(target.clone()).or_default().insert(Arc::new(compiled));
+    }
+
+    /// `compiled` with the terms of its `q` numbered by this cache.
+    fn numbered(&self, mut compiled: CompiledSubscription) -> CompiledSubscription {
+        compiled.number_terms(&self.terms);
+        compiled
     }
 
     /// Drop the subscription with this identifier from both indexes.

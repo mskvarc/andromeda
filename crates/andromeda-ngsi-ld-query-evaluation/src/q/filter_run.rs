@@ -9,7 +9,7 @@
 
 use crate::{
     q::{
-        attribute_axis::{addresses_element, resolve_targets},
+        attribute_axis::{addresses_element, any_target},
         verdict_run::target_passes,
     },
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities, resource_members::ResourceMembers},
@@ -41,7 +41,7 @@ pub fn term_holds<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(term: &TermRe
         // element", whatever attribute family it belongs to and whatever value
         // it holds.
         Test::Exists => addresses_element(entity, term, linked),
-        Test::Value(test) => resolve_targets(entity, term, linked).iter().any(|target| target_passes(test, target)),
+        Test::Value(test) => any_target(entity, term, linked, &mut |target| target_passes(test, &target)),
     }
 }
 

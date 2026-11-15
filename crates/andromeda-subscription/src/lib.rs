@@ -100,6 +100,8 @@ pub mod subscription_context;
 pub mod subscription_invariant;
 /// One page of a subscription collection, ready for a response.
 pub mod subscription_listing;
+/// A Subscription's `q`, compiled and prepared.
+pub mod subscription_query;
 /// The typed reasons a subscription request is rejected as `BadRequestData`.
 pub mod subscription_validation_reason;
 /// The selections Subscriptions held before an update replaced them.

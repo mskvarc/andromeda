@@ -4,11 +4,13 @@
 //! a compiled subscription. Used by the notification worker (event-driven
 //! delivery) and the subscription cache (notification-event generation).
 
-use crate::{compiled::CompiledSubscription, entity_filter_set::EntityFilterSet};
+use crate::{compiled::CompiledSubscription, entity_filter_set::EntityFilterSet, subscription_query::SubscriptionQuery};
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_ngsi_ld_model::{entity_selector::selectors_select, notification::ChangeOrigin};
+use andromeda_ngsi_ld_query::entity_filters::EntityFilters;
 use andromeda_ngsi_ld_query_evaluation::{
     entity_filters::entity_filters_admit,
+    q::term_memo::TermMemo,
     queried_entity::{attribute_reading::QueriedEntity, linked_entities::LinkedEntities, located_entity::LocatedEntity, scoped_entity::ScopedEntity},
 };
 use chrono::Utc;
@@ -90,13 +92,36 @@ where
     E: QueriedEntity<'a> + LocatedEntity<'a> + ScopedEntity<'a>,
     L: LinkedEntities<'a>,
 {
+    admitted_by(sub, entity, linked, |query| query.prepared().holds(entity, linked))
+}
+
+/// Whether a compiled subscription's entity filters admit an entity as
+/// [`matches_entity_filters`] says, a term of its `q` numbered by the interner
+/// of `memo` decided once in the pass `memo` is in.
+///
+/// The pass covers one entity and one source of linked entities, the state of
+/// one matching pass over many subscriptions.
+pub fn matches_entity_filters_memoised<'a, E, L>(sub: &CompiledSubscription, entity: E, linked: L, memo: &mut TermMemo) -> bool
+where
+    E: QueriedEntity<'a> + LocatedEntity<'a> + ScopedEntity<'a>,
+    L: LinkedEntities<'a>,
+{
+    admitted_by(sub, entity, linked, |query| query.prepared().holds_memoised(entity, linked, memo))
+}
+
+/// Whether the filters of `sub` admit `entity`, its `q` decided by `q_holds`.
+fn admitted_by<'a, E, L>(sub: &CompiledSubscription, entity: E, linked: L, q_holds: impl FnOnce(&SubscriptionQuery) -> bool) -> bool
+where
+    E: QueriedEntity<'a> + LocatedEntity<'a> + ScopedEntity<'a>,
+    L: LinkedEntities<'a>,
+{
     match sub.entity_filters() {
         EntityFilterSet::AdmitsNothing => {
             debug!("Subscription {} skipped: its stored geoQ does not compile and admits no entity", sub.id);
             false
         }
         EntityFilterSet::Evaluate(filters) => {
-            let admitted = entity_filters_admit(filters, entity, linked);
+            let admitted = sub.compiled_q.as_ref().is_none_or(q_holds) && entity_filters_admit(EntityFilters { q: None, ..filters }, entity, linked);
             if !admitted {
                 debug!("Subscription {} skipped: q, geoQ or scopeQ did not admit entity", sub.id);
             }

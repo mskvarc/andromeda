@@ -1,6 +1,6 @@
-//! A temporal geo query selects entities without trimming instances.
+//! A temporal geo query represents its `GeoProperty` by the instances that meet it.
 
-use andromeda_test_suite::{broker, evolution_matcher::has_evolution, namespace::Namespace, nth::nth, outcome::Upserted};
+use andromeda_test_suite::{attribute_matcher::any_attribute, broker, evolution_matcher::has_evolution, namespace::Namespace, nth::nth, outcome::Upserted};
 use googletest::prelude::*;
 use ngsi_ld::{
     http::headers::Accept,
@@ -13,12 +13,13 @@ use ngsi_ld::{
     query::{geoquery, temporal_query},
 };
 
-/// Pins: Query Temporal Evolution of Entities selecting a Vehicle by a near geoquery answers both of its in-window
-/// location instances, near and far
+/// Pins: Query Temporal Evolution of Entities selecting a Vehicle by a near geoquery represents its location by the
+/// in-window instance near the reference point alone, since the representation holds only the instances which meet
+/// the geoquery (clause 5.7.4.4); the instance 900 km away is left out
 /// Clause: 4.10, 5.7.4.4
 #[gtest]
 #[tokio::test]
-async fn n_tmp_qry_9014_a_temporal_geo_query_selects_entities_without_trimming_instances() -> Result<()> {
+async fn n_tmp_qry_9014_a_temporal_geo_query_represents_only_the_instances_meeting_it() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let vehicle_near_id = namespace.urn("Vehicle", "near")?;
@@ -45,6 +46,15 @@ async fn n_tmp_qry_9014_a_temporal_geo_query_selects_entities_without_trimming_i
         .send()
         .await?;
     expect_that!(page.items(), len(eq(1)));
-    expect_that!(page.items(), nth(0, has_evolution("location", len(eq(2)))));
+    expect_that!(
+        page.items(),
+        nth(
+            0,
+            has_evolution(
+                "location",
+                all!(len(eq(1)), nth(0, any_attribute().geometry(Shape::Point(Position::try_new(-8.5, 41.2)?))))
+            )
+        )
+    );
     Ok(())
 }

@@ -1,6 +1,6 @@
 //! The temporal evolutions of the Vehicles are queried by a geoquery, a Vehicle near a point and a Vehicle within a
-//! polygon (clause 5.7.4). Only the Vehicle with a location is answered, with every instance of its attributes and of
-//! its location.
+//! polygon (clause 5.7.4). Only the Vehicle with a location is answered, with every instance of its other attributes
+//! and the instances of its location which meet the geoquery (clause 5.7.4.4).
 //!
 //! The answers are compared exactly with the test's expectation.
 
@@ -60,8 +60,27 @@ async fn create_vehicles(broker: &BrokerClient, namespace: &Namespace) -> Result
     Ok(vocabulary)
 }
 
-/// The expected answer of the geoquery cases: the one Vehicle with a location, with every instance it holds.
-fn located_vehicle(namespace: &Namespace) -> Value {
+/// The `location` instance at 2.35, 42.22 observed at 12:03.
+fn location_at_twelve_three() -> Value {
+    json!({
+        "type": "GeoProperty",
+        "value": {"type": "Point", "coordinates": [2.35, 42.22]},
+        "observedAt": "2020-10-01T12:03:00Z",
+    })
+}
+
+/// The `location` instance at -8.5, 41.2 observed at 12:05.
+fn location_at_twelve_five() -> Value {
+    json!({
+        "type": "GeoProperty",
+        "value": {"type": "Point", "coordinates": [-8.5, 41.2]},
+        "observedAt": "2020-10-01T12:05:00Z",
+    })
+}
+
+/// The expected answer of the geoquery cases: the one Vehicle with a location, with every instance of its other
+/// attributes and the `location` instances given.
+fn located_vehicle(namespace: &Namespace, location: &[Value]) -> Value {
     json!({
         "id": namespace.urn_text("Vehicle", "021-09-B"),
         "type": "Vehicle",
@@ -75,23 +94,14 @@ fn located_vehicle(namespace: &Namespace) -> Value {
             {"type": "Property", "value": 78, "observedAt": "2020-10-01T13:05:00Z"},
             {"type": "Property", "value": 62, "observedAt": "2020-10-01T14:07:00Z"},
         ],
-        "location": [
-            {
-                "type": "GeoProperty",
-                "value": {"type": "Point", "coordinates": [2.35, 42.22]},
-                "observedAt": "2020-10-01T12:03:00Z",
-            },
-            {
-                "type": "GeoProperty",
-                "value": {"type": "Point", "coordinates": [-8.5, 41.2]},
-                "observedAt": "2020-10-01T12:05:00Z",
-            },
-        ],
+        "location": location,
     })
 }
 
 /// Pins: Check that one can query the temporal evolution of entities matching the given NGSI-LD geo-query
 /// Clause: 5.7.4
+/// Expected: location answers only the instance at -8.5, 41.2, not the one at 2.35, 42.22 as well, since the
+/// representation holds only the instances which meet the geoquery (clause 5.7.4.4)
 #[gtest]
 #[tokio::test]
 async fn e021_09_01_near_point() -> Result<()> {
@@ -111,7 +121,10 @@ async fn e021_09_01_near_point() -> Result<()> {
         .await;
     verify_that!(&received, answered(StatusCode::OK))?;
     let body = json_body(&received?)?;
-    expect_that!(&body, matches_document(json!([located_vehicle(&namespace)])).hiding("instanceId"));
+    expect_that!(
+        &body,
+        matches_document(json!([located_vehicle(&namespace, &[location_at_twelve_five()])])).hiding("instanceId")
+    );
 
     delete_temporal_entities(&broker, &[&namespace.urn("Vehicle", "021-09-A")?, &namespace.urn("Vehicle", "021-09-B")?]).await;
     Ok(())
@@ -148,7 +161,10 @@ async fn e021_09_02_within_polygon() -> Result<()> {
         .await;
     verify_that!(&received, answered(StatusCode::OK))?;
     let body = json_body(&received?)?;
-    expect_that!(&body, matches_document(json!([located_vehicle(&namespace)])).hiding("instanceId"));
+    expect_that!(
+        &body,
+        matches_document(json!([located_vehicle(&namespace, &[location_at_twelve_three(), location_at_twelve_five()])])).hiding("instanceId")
+    );
 
     delete_temporal_entities(&broker, &[&namespace.urn("Vehicle", "021-09-A")?, &namespace.urn("Vehicle", "021-09-B")?]).await;
     Ok(())

@@ -38,25 +38,39 @@ use andromeda_ngsi_ld_query::filter::{
     trailing_path::MemberPath,
 };
 
-/// Resolve every value a term's path addresses, descending each linked-entity
-/// hop into the entity it names in `linked`.
+/// Whether some target a term's path addresses is accepted by `accepts`,
+/// descending each linked-entity hop into the entity it names in `linked`.
+///
+/// Targets are visited in the order the axis reaches them (the objects of a
+/// hop, the instances of the attribute, the instances of each sub-attribute,
+/// then the terminal) and the walk stops at the first one `accepts` takes, so
+/// no collection of targets is built.
 ///
 /// Clause 4.9 EXAMPLE 13: a hop "makes a sub-query on matching target objects",
 /// the entities the Relationship's objects name. The entity under evaluation
 /// names them and `linked` holds them; an object `linked` does not hold
 /// reaches nothing.
-#[must_use]
-pub fn resolve_targets<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(entity: E, term: &TermReading, linked: L) -> Vec<ResolvedTarget<'a>> {
-    targets_beyond(entity, term.hops(), term, linked)
+pub fn any_target<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(
+    entity: E,
+    term: &TermReading,
+    linked: L,
+    accepts: &mut impl FnMut(ResolvedTarget<'a>) -> bool,
+) -> bool {
+    target_beyond(entity, term.hops(), term, linked, accepts)
 }
 
-/// The targets of `term` in `entity` once the `hops` left are crossed.
-fn targets_beyond<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(entity: E, hops: &[Hop], term: &TermReading, linked: L) -> Vec<ResolvedTarget<'a>> {
+/// Whether `accepts` takes a target of `term` in `entity` once the `hops` left
+/// are crossed.
+fn target_beyond<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(
+    entity: E,
+    hops: &[Hop],
+    term: &TermReading,
+    linked: L,
+    accepts: &mut impl FnMut(ResolvedTarget<'a>) -> bool,
+) -> bool {
     match hops.split_first() {
-        None => local_targets(entity, term),
-        Some((hop, further)) => hop_reaches(entity, hop, linked)
-            .flat_map(|reached| targets_beyond(reached, further, term, linked))
-            .collect(),
+        None => local_target(entity, term, accepts),
+        Some((hop, further)) => hop_reaches(entity, hop, linked).any(|reached| target_beyond(reached, further, term, linked, accepts)),
     }
 }
 
@@ -110,8 +124,7 @@ fn element_beyond<'a, E: QueriedEntity<'a>, L: LinkedEntities<'a>>(entity: E, ho
     match hops.split_first() {
         None => entity
             .attribute_instances(term.attribute())
-            .flat_map(|instance| instances_along(instance, term.sub_attributes()))
-            .any(|instance| terminal_exists(instance, term.terminal())),
+            .any(|instance| any_instance_along(instance, term.sub_attributes(), &mut |reached| terminal_exists(reached, term.terminal()))),
         Some((hop, further)) => hop_reaches(entity, hop, linked).any(|reached| element_beyond(reached, further, term, linked)),
     }
 }
@@ -124,34 +137,38 @@ fn admitted_by_guard<'a, E: QueriedEntity<'a>>(linked: E, guard_types: &[EntityT
     guard_types.is_empty() || linked.types().any(|declared| guard_types.contains(declared))
 }
 
-/// Every instance the sub-attribute chain `sub_attributes` reaches from one
-/// attribute instance, one per instance of each sub-attribute on the way.
+/// Whether `reaches` takes some instance the sub-attribute chain
+/// `sub_attributes` reaches from one attribute instance, one per instance of
+/// each sub-attribute on the way, in the order the chain reaches them.
 ///
 /// Clause 4.9: "If a Property has multiple instances (identified by its
 /// respective datasetId), and no datasetId is explicitly addressed, the target
 /// value shall be any Value of such instances". The `q` grammar addresses no
 /// datasetId, so a sub-attribute's instances fan out exactly as an attribute's
 /// do.
-fn instances_along<'a, I: QueriedInstance<'a>>(instance: I, sub_attributes: &[AttributeName]) -> Vec<I> {
-    sub_attributes.iter().fold(vec![instance], |instances, name| {
-        instances.into_iter().flat_map(|reached| reached.sub_attribute_instances(name)).collect()
-    })
+fn any_instance_along<'a, I: QueriedInstance<'a>>(instance: I, sub_attributes: &[AttributeName], reaches: &mut impl FnMut(I) -> bool) -> bool {
+    match sub_attributes.split_first() {
+        None => reaches(instance),
+        Some((name, further)) => instance
+            .sub_attribute_instances(name)
+            .any(|reached| any_instance_along(reached, further, reaches)),
+    }
 }
 
-/// Resolve every target value a local term's path addresses in an entity:
+/// Whether `accepts` takes a target of a local term's path in an entity:
 /// every instance of the attribute, each sub-attribute instance on the way,
 /// then the terminal.
 ///
-/// All instances are resolved, not just the first. Clause 4.9 (p. 86) defines
+/// All instances are visited, not just the first. Clause 4.9 (p. 86) defines
 /// the comparison target for a multi-instance attribute as "any Value of such
 /// instances", so a predicate holds when it holds for at least one of them,
 /// whichever instance a `datasetId`-partitioned attribute writes first.
-fn local_targets<'a, E: QueriedEntity<'a>>(entity: E, term: &TermReading) -> Vec<ResolvedTarget<'a>> {
-    entity
-        .attribute_instances(term.attribute())
-        .flat_map(|instance| instances_along(instance, term.sub_attributes()))
-        .filter_map(|instance| terminal_target(instance, term.terminal()))
-        .collect()
+fn local_target<'a, E: QueriedEntity<'a>>(entity: E, term: &TermReading, accepts: &mut impl FnMut(ResolvedTarget<'a>) -> bool) -> bool {
+    entity.attribute_instances(term.attribute()).any(|instance| {
+        any_instance_along(instance, term.sub_attributes(), &mut |reached| {
+            terminal_target(reached, term.terminal()).is_some_and(&mut *accepts)
+        })
+    })
 }
 
 /// Whether an instance's family keys its value by language, so a target
@@ -221,7 +238,7 @@ fn holds_member<'a, I: QueriedInstance<'a>>(instance: I, members: &MemberPath) -
 #[cfg(test)]
 mod tests {
     use crate::{
-        q::attribute_axis::{addresses_element, resolve_targets},
+        q::attribute_axis::{addresses_element, any_target},
         queried_entity::{
             expanded_fixture::{FixtureEntity, target_json},
             linked_entities::NoLinkedEntities,
@@ -258,10 +275,12 @@ mod tests {
     /// origins.
     fn targets_under(entity: &Value, path: &AttrPath, matching: LanguageMatching) -> Vec<(Value, TargetOrigin)> {
         let entity = FixtureEntity::from_expanded(entity);
-        resolve_targets(&entity, &term_along(path, matching), NoLinkedEntities)
-            .into_iter()
-            .map(|target| (target_json(&target.value), target.origin))
-            .collect()
+        let mut targets = Vec::new();
+        any_target(&entity, &term_along(path, matching), NoLinkedEntities, &mut |target| {
+            targets.push((target_json(&target.value), target.origin));
+            false
+        });
+        targets
     }
 
     /// A path whose trailing group is the one member `member`, as the client

@@ -13,12 +13,12 @@
 //! not notified. The durable path that queues a notification in the write's
 //! transaction and the live path that sends it at once both decide it here.
 
-use crate::{cache::SubscriptionCache, compiled::CompiledSubscription, matching::matches_entity_filters, spatial_narrowing::SpatialReach};
+use crate::{cache::SubscriptionCache, compiled::CompiledSubscription, matching::matches_entity_filters_memoised, spatial_narrowing::SpatialReach};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, queried::linked_states::LinkedStates};
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_model::entity_change::{EntityChange, EntityLifecycle};
-use andromeda_ngsi_ld_query_evaluation::queried_entity::linked_entities::NoLinkedEntities;
+use andromeda_ngsi_ld_query_evaluation::{q::term_memo::TermMemo, queried_entity::linked_entities::NoLinkedEntities};
 use chrono::Utc;
 use std::sync::Arc;
 
@@ -113,25 +113,28 @@ pub fn narrow_by_change_filters(
     let now = Utc::now();
     let mut matching: Vec<Arc<CompiledSubscription>> = Vec::with_capacity(candidates.len());
     let mut remaining = candidates;
+    let mut memo = cache.take_memo();
     for (state, readers) in readings.into_iter().map(|(state, readers)| (state.standing_at(now), readers)) {
+        memo.begin_pass();
         let mut reach = SpatialReach::new(cache, target, &state, entity_types);
         let (admitted_here, rest): (Vec<Arc<CompiledSubscription>>, Vec<Arc<CompiledSubscription>>) = remaining
             .into_iter()
-            .partition(|subscription| readers.include(subscription, change) && reach.admits(subscription) && admitted(subscription, &state, hops));
+            .partition(|subscription| readers.include(subscription, change) && reach.admits(subscription) && admitted(subscription, &state, hops, &mut memo));
         matching.extend(admitted_here);
         remaining = rest;
     }
+    cache.return_memo(memo);
     matching
 }
 
 /// Whether one candidate's entity filters admit `state`.
-fn admitted(subscription: &CompiledSubscription, state: &EntityState, hops: HopResolution<'_>) -> bool {
+fn admitted(subscription: &CompiledSubscription, state: &EntityState, hops: HopResolution<'_>, memo: &mut TermMemo) -> bool {
     if !subscription.filters_hop() {
-        return matches_entity_filters(subscription, state, NoLinkedEntities);
+        return matches_entity_filters_memoised(subscription, state, NoLinkedEntities, memo);
     }
     match hops {
         HopResolution::Deferred => true,
-        HopResolution::Resolved(linked) => matches_entity_filters(subscription, state, linked),
+        HopResolution::Resolved(linked) => matches_entity_filters_memoised(subscription, state, linked, memo),
     }
 }
 
@@ -143,6 +146,7 @@ mod tests {
         compiled::CompiledSubscription,
         geo_filter::SubscriptionGeoFilter,
         notifying_since::NotifyingSince,
+        subscription_query::SubscriptionQuery,
     };
     use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};
     use andromeda_context_space::context_target::ContextTarget;
@@ -208,7 +212,10 @@ mod tests {
                 active: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
                 selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
             },
-            compiled_q: Some(CompiledFilter::new(parse(q).expect("the filter parses"), LanguageMatching::TagEquality)),
+            compiled_q: Some(SubscriptionQuery::new(CompiledFilter::new(
+                parse(q).expect("the filter parses"),
+                LanguageMatching::TagEquality,
+            ))),
             compiled_geo_q: SubscriptionGeoFilter::Unrestricted,
             compiled_scope_q: None,
             dataset_id: None,

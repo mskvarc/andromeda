@@ -1,30 +1,20 @@
 //! In-memory evaluation of a clause 4.10 spatial relation.
 //!
-//! One evaluator, used by every in-memory matcher in the broker (the entity spatial index, the subscription spatial index and subscription matching), so the seven match arms exist once.
+//! One evaluator, used by every in-memory matcher in the broker (the entity
+//! spatial index, the subscription spatial index and subscription matching),
+//! so each test of [`RelationReading`] is evaluated once.
 //!
-//! Every predicate is evaluated over the horizontal projection of both
-//! geometries, which the caller supplies as [`PlanarGeometry`] values so that a
-//! geometry evaluated against many others is projected once rather than once
-//! per pair. ETSI GS CIM 009 v1.9.1 clause 4.10 defines `georel` by reference
-//! to OGC 06-103r4, whose clause 6.1.2.5 states that spatial operations work in
-//! the "map geometry" of the data and reflect neither z nor m, and whose clause
-//! 6.1.15.1 defines the relational operators by projection onto the
-//! two-dimensional horizontal spatial reference plane. `near` inherits the same
-//! reading through `Buffer`, defined in clause 6.1.2.4. Altitude therefore never
-//! enters a verdict, however many ordinates the geometries carry.
-//!
-//! `near` alone measures on the earth rather than on the plane: the minimum
-//! distance between the two geometries on the WGS 84 spheroid, as
+//! The topological tests are evaluated over the horizontal projection of both
+//! geometries, which the caller supplies as [`PlanarGeometry`] values so that
+//! a geometry evaluated against many others is projected once rather than once
+//! per pair. The distance test measures on the WGS 84 spheroid, as
 //! [`crate::proximity`] sets out.
-//!
-//! The SQL renderings are a separate reading of the same clause, because
-//! `PostGIS` evaluates the predicates rather than this crate. The pairs they
-//! render to are named in the doc comments below so the two stay comparable.
 
 use crate::{
     geo_rel::GeoRel,
     planar::PlanarGeometry,
     proximity::{Boundary, Proximity},
+    relation_reading::{Operand, RelationReading, SpatialTest, TopologicalTest},
 };
 use geo::algorithm::{Contains, Intersects};
 
@@ -32,46 +22,38 @@ use geo::algorithm::{Contains, Intersects};
 ///
 /// `subject` is the projection of the geometry read off the entity or
 /// registration; `reference` is the projection of the one the query supplied.
-/// The asymmetry matters: `within` asks whether the subject is inside the
-/// reference, `contains` the opposite.
 #[must_use]
 pub fn matches(georel: &GeoRel, subject: &PlanarGeometry, reference: &PlanarGeometry) -> bool {
-    matches_planar(georel, subject.as_geo(), reference.as_geo())
+    let (subject, reference) = (subject.as_geo(), reference.as_geo());
+    match RelationReading::of(georel).test {
+        SpatialTest::Topological(test) => topological(test, subject, reference),
+        // A geometry with no coordinates is nowhere, so it is near nothing.
+        SpatialTest::Distance { max_distance, min_distance } => Proximity::between(subject, reference).is_some_and(|proximity| {
+            max_distance.is_none_or(|max| proximity.comes_within(max, Boundary::Inclusive))
+                && min_distance.is_none_or(|min| !proximity.comes_within(min, Boundary::Exclusive))
+        }),
+    }
 }
 
-/// [`matches()`] over the `geo` geometries the projections hold.
-fn matches_planar(georel: &GeoRel, subject: &geo::Geometry<f64>, reference: &geo::Geometry<f64>) -> bool {
-    match georel {
-        // `ST_Within(subject, reference)`
-        GeoRel::Within => reference.contains(subject),
-        // `ST_Contains(subject, reference)`
-        GeoRel::Contains => subject.contains(reference),
-        // `ST_Intersects(subject, reference)`
-        GeoRel::Intersects => subject.intersects(reference),
-        // `ST_Disjoint(subject, reference)`
-        GeoRel::Disjoint => !subject.intersects(reference),
-        // `ST_Equals(subject, reference)`; mutual containment is `geo`'s
-        // equivalent, as it has no topological equality predicate.
-        GeoRel::Equals => subject.contains(reference) && reference.contains(subject),
-        // `ST_Overlaps(subject, reference)`: intersecting, of the same
-        // dimension, and neither one containing the other. Plain `intersects`
-        // would match an entity lying wholly inside the query polygon, which
-        // the PostGIS rendering of the same clause does not.
-        GeoRel::Overlaps => {
+/// Whether `subject` and `reference` pass a topological test, decided over
+/// the `geo` geometries their projections hold.
+fn topological(test: TopologicalTest, subject: &geo::Geometry<f64>, reference: &geo::Geometry<f64>) -> bool {
+    match test {
+        TopologicalTest::Contains { container: Operand::Reference } => reference.contains(subject),
+        TopologicalTest::Contains { container: Operand::Subject } => subject.contains(reference),
+        TopologicalTest::Intersects => subject.intersects(reference),
+        TopologicalTest::Disjoint => !subject.intersects(reference),
+        // Mutual containment is `geo`'s equivalent of topological equality,
+        // which it has no predicate for.
+        TopologicalTest::Equals => subject.contains(reference) && reference.contains(subject),
+        // Plain `intersects` would match a geometry lying wholly inside the
+        // other, which OGC 06-103r4 `Overlaps` excludes.
+        TopologicalTest::Overlaps => {
             topological_dimension(subject) == topological_dimension(reference)
                 && subject.intersects(reference)
                 && !subject.contains(reference)
                 && !reference.contains(subject)
         }
-        // `ST_DWithin(subject, reference, max)` and
-        // `ST_Distance(subject, reference) >= min` over `geography`: the minimum
-        // distance between the two geometries on the WGS 84 spheroid (OGC
-        // 06-103r4 clause 6.1.2.4 `Distance`), zero when they touch. A geometry
-        // with no coordinates is nowhere, so it is near nothing.
-        GeoRel::Near { max_distance, min_distance } => Proximity::between(subject, reference).is_some_and(|proximity| {
-            max_distance.is_none_or(|max| proximity.comes_within(max, Boundary::Inclusive))
-                && min_distance.is_none_or(|min| !proximity.comes_within(min, Boundary::Exclusive))
-        }),
     }
 }
 

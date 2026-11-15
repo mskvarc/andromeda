@@ -8,9 +8,9 @@
 //!
 //! Nothing here decides what a relation *means*. A candidate that survives the
 //! bounding-box prefilter is either put through
-//! [`andromeda_ngsi_ld_geometry::relation::matches`], the one reading of clause
-//! 4.10 the in-memory matchers share, or handed to the store, which applies its
-//! own; the tree is only ever an optimisation.
+//! [`andromeda_ngsi_ld_geometry::relation::matches`], the in-memory evaluation
+//! of the one clause 4.10 reading every matcher shares, or handed to the store,
+//! which renders the same reading; the tree is only ever an optimisation.
 //!
 //! The boxes are great-circle bounds and `near` envelopes that cover every
 //! point within the distance on the WGS 84 spheroid, wrapping across the
