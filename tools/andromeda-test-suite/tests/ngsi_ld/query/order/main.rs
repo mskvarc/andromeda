@@ -42,6 +42,7 @@ mod n_qry_ord_9021;
 mod n_qry_ord_9022;
 mod n_qry_ord_9026;
 mod n_qry_ord_9030;
+mod n_qry_ord_9389;
 mod n_qry_ord_9396;
 mod n_qry_ord_9397;
 mod n_qry_ord_9398;

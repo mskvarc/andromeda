@@ -66,6 +66,24 @@ pub fn number_reading(stored: SimpleExpr, datatype: SimpleExpr) -> SimpleExpr {
         .into()
 }
 
+/// `stored` read as the `numeric` it orders as: a JSON number, or a JSON string
+/// declared as an XSD number, `NaN` included; `NULL` otherwise.
+///
+/// An ordering ranks every number of clause 4.23.2 as a Number, and
+/// PostgreSQL orders `NaN` above every other `numeric`, so the order reads it
+/// as the comparisons do not.
+#[must_use]
+pub fn number_order_reading(stored: SimpleExpr, datatype: SimpleExpr) -> SimpleExpr {
+    let text = jsonb_whole_text(stored.clone()); // clone: the tests and the cast read one value
+    let declared = jsonb_type_is(stored.clone(), JsonType::String)
+        .and(declares_number(datatype))
+        .and(pg_input_is_valid(text.clone(), PostgresType::Numeric));
+    CaseStatement::new()
+        .case(jsonb_type_is(stored, JsonType::Number), cast_compound(text.clone(), PostgresType::Numeric))
+        .case(declared, cast_compound(text, PostgresType::Numeric))
+        .into()
+}
+
 /// `stored` read as a `boolean`: a JSON boolean, or a JSON string declared as
 /// `xsd:boolean`; `NULL` otherwise.
 #[must_use]
