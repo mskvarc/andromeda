@@ -78,7 +78,9 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         // so a term naming no IRI under it (a keyword alias included) is input
         // that "does not meet the requirements of the operation", as the same
         // term is on a write.
-        QueryError::TermExpansion(TermExpansionFailure::NotExpanded | TermExpansionFailure::NotAnIri | TermExpansionFailure::ContextUnprocessable) => {
+        QueryError::TermExpansion(
+            TermExpansionFailure::NotExpanded | TermExpansionFailure::Keyword | TermExpansionFailure::NotAnIri | TermExpansionFailure::ContextUnprocessable,
+        ) => {
             ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string())
         }
         QueryError::TermExpansion(TermExpansionFailure::ContextUnavailable) => ClassifiedReport::public(NgsiLdErrorType::LdContextNotAvailable, error.to_string()),
@@ -102,6 +104,7 @@ mod tests {
     fn a_term_naming_no_iri_under_the_request_context_is_bad_request_data() {
         for failure in [
             TermExpansionFailure::NotExpanded,
+            TermExpansionFailure::Keyword,
             TermExpansionFailure::NotAnIri,
             TermExpansionFailure::ContextUnprocessable,
         ] {

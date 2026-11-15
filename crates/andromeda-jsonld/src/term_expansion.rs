@@ -69,6 +69,7 @@ fn expansion_failed(term: &str, error: &JsonLdError) -> QueryError {
 const fn expansion_failure(error: &JsonLdError) -> TermExpansionFailure {
     match error {
         JsonLdError::TypeNotExpanded | JsonLdError::TermNotExpanded => TermExpansionFailure::NotExpanded,
+        JsonLdError::TermIsKeyword => TermExpansionFailure::Keyword,
         JsonLdError::ExpandedTermNotIri(_) => TermExpansionFailure::NotAnIri,
         JsonLdError::ContextFetchDisabled { .. } | JsonLdError::ContextLoad { .. } | JsonLdError::ContextHttp { .. } | JsonLdError::ContextTooLarge { .. } => {
             TermExpansionFailure::ContextUnavailable

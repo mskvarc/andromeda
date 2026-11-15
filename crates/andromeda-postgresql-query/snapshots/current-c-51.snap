@@ -33,26 +33,29 @@ WHERE
             LOWER(("ls"."value" ->> ('@language')) COLLATE "C") = LOWER(($2::text) COLLATE "C")
         )
         OR (
-          EXISTS (
-            SELECT
-              1
-            FROM
-              (
-                SELECT
-                  jsonb_path_query_array(
-                    "member"."member",
-                    'lax $[*] ? (exists(@."@value"))'
-                  ) AS "member"
-                FROM
-                  jsonb_path_query(
-                    "ca"."value_object",
-                    'strict $."https://example.com/missing"',
-                    '{}',
-                    TRUE
-                  ) AS "member"
-              ) AS "member"
-            WHERE
-              TRUE
+          (
+            "ca"."attribute_kind" IN (1, 2, 4, 5, 6, 7, 8)
+            AND EXISTS (
+              SELECT
+                1
+              FROM
+                (
+                  SELECT
+                    jsonb_path_query_array(
+                      "member"."member",
+                      'lax $[*] ? (exists(@."@value"))'
+                    ) AS "member"
+                  FROM
+                    jsonb_path_query(
+                      "ca"."value_object",
+                      'strict $."https://example.com/missing"',
+                      '{}',
+                      TRUE
+                    ) AS "member"
+                ) AS "member"
+              WHERE
+                TRUE
+            )
           )
           OR (
             "ca"."attribute_kind" = (6)
@@ -66,6 +69,27 @@ WHERE
                   FROM
                     jsonb_path_query(
                       "ca"."value_object",
+                      'strict $."missing"',
+                      '{}',
+                      TRUE
+                    ) AS "member"
+                ) AS "member"
+              WHERE
+                TRUE
+            )
+          )
+          OR (
+            "ca"."attribute_kind" IN (3)
+            AND EXISTS (
+              SELECT
+                1
+              FROM
+                (
+                  SELECT
+                    "member"."member" AS "member"
+                  FROM
+                    jsonb_path_query(
+                      ST_AsGeoJSON("ca"."value_geometry", 15)::jsonb,
                       'strict $."missing"',
                       '{}',
                       TRUE

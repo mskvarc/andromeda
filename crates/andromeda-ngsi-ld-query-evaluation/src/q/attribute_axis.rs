@@ -15,7 +15,7 @@
 
 use crate::{
     q::{
-        compound_member::{resolve_compound_member, walk_member_hops},
+        compound_member::{geometry_member_target, resolve_compound_member, walk_member_hops},
         family_target::{family_target, first_family_value},
         language_target::language_target,
         target_value::{ResolvedTarget, TargetValue, json_member},
@@ -29,7 +29,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_query::filter::{
     reading::{
-        family_reading::{MultiValueReading, TargetOrigin, ValueKeys, family_reading},
+        family_reading::{MemberSource, MultiValueReading, TargetOrigin, ValueKeys, family_reading},
         hop::Hop,
         term_reading::TermReading,
         terminal::Terminal,
@@ -75,7 +75,7 @@ pub fn relationship_objects<'a, E: QueriedEntity<'a>>(entity: E, relationship: &
         .filter_map(|item| match item {
             ValueItem::Reference(object) => Some(object),
             ValueItem::Node(node) => node.id(),
-            ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Opaque => None,
+            ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Geometry(_) | ValueItem::Opaque => None,
         })
 }
 
@@ -209,8 +209,13 @@ fn terminal_exists<'a, I: QueriedInstance<'a>>(instance: I, terminal: &Terminal)
 /// Whether an instance's compound value holds a value at `members`, as a
 /// structured value's member or as a raw JSON object's key.
 fn holds_member<'a, I: QueriedInstance<'a>>(instance: I, members: &MemberPath) -> bool {
-    walk_member_hops(first_family_value(instance), &members.addressed).is_some()
-        || family_target(instance).and_then(|target| json_member(&target, &members.written)).is_some()
+    match family_reading(instance.family()).members {
+        MemberSource::Geometry => geometry_member_target(instance, &members.written).is_some(),
+        MemberSource::Value => {
+            walk_member_hops(first_family_value(instance), &members.addressed).is_some()
+                || family_target(instance).and_then(|target| json_member(&target, &members.written)).is_some()
+        }
+    }
 }
 
 #[cfg(test)]

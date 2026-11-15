@@ -46,6 +46,10 @@ pub enum TermExpansionFailure {
     /// The term expands to nothing against the active `@context`.
     #[error("the term expands to nothing against the active @context")]
     NotExpanded,
+    /// The term expands to a JSON-LD keyword against the active `@context`,
+    /// as the core context's `type` and `id` do.
+    #[error("the term expands to a JSON-LD keyword against the active @context")]
+    Keyword,
     /// The term expanded to text that is not an absolute IRI.
     #[error("the term expands to something that is not an absolute IRI")]
     NotAnIri,

@@ -54,30 +54,33 @@ WHERE
                     LOWER(("ls"."value" ->> ('@language')) COLLATE "C") = LOWER(($4::text) COLLATE "C")
                 )
                 OR (
-                  EXISTS (
-                    SELECT
-                      1
-                    FROM
-                      (
-                        SELECT
-                          jsonb_path_query_array(
-                            "member"."member",
-                            'lax $[*] ? (exists(@."@value"))'
-                          ) AS "member"
-                        FROM
-                          jsonb_path_query(
-                            sub_attribute_value_object(
-                              "l0"."value_kind",
-                              "l0"."value_object",
-                              "l0"."value_proof"
-                            ),
-                            'strict $."en"',
-                            '{}',
-                            TRUE
-                          ) AS "member"
-                      ) AS "member"
-                    WHERE
-                      TRUE
+                  (
+                    "l0"."attribute_kind" IN (1, 2, 4, 5, 6, 7, 8)
+                    AND EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        (
+                          SELECT
+                            jsonb_path_query_array(
+                              "member"."member",
+                              'lax $[*] ? (exists(@."@value"))'
+                            ) AS "member"
+                          FROM
+                            jsonb_path_query(
+                              sub_attribute_value_object(
+                                "l0"."value_kind",
+                                "l0"."value_object",
+                                "l0"."value_proof"
+                              ),
+                              'strict $."en"',
+                              '{}',
+                              TRUE
+                            ) AS "member"
+                        ) AS "member"
+                      WHERE
+                        TRUE
+                    )
                   )
                   OR (
                     "l0"."attribute_kind" = (6)
@@ -95,6 +98,27 @@ WHERE
                                 "l0"."value_object",
                                 "l0"."value_proof"
                               ),
+                              'strict $."en"',
+                              '{}',
+                              TRUE
+                            ) AS "member"
+                        ) AS "member"
+                      WHERE
+                        TRUE
+                    )
+                  )
+                  OR (
+                    "l0"."attribute_kind" IN (3)
+                    AND EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        (
+                          SELECT
+                            "member"."member" AS "member"
+                          FROM
+                            jsonb_path_query(
+                              ST_AsGeoJSON("l0"."value_geometry", 15)::jsonb,
                               'strict $."en"',
                               '{}',
                               TRUE

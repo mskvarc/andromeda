@@ -246,7 +246,9 @@ impl JsonLdEngine {
     ///
     /// # Errors
     ///
-    /// Returns [`JsonLdError::TermNotExpanded`] when the term does not expand,
+    /// Returns [`JsonLdError::TermIsKeyword`] when the term expands to a
+    /// JSON-LD keyword, [`JsonLdError::TermNotExpanded`] when it does not
+    /// expand,
     /// [`JsonLdError::ExpandedTermNotIri`] when it expands to something other
     /// than an absolute IRI, and whatever expansion returns when a context does
     /// not resolve.
@@ -261,12 +263,14 @@ impl JsonLdEngine {
         }
 
         // A key that expands to anything but an IRI is dropped by expansion
-        // (Expansion Algorithm step 13.3), so it names no attribute.
+        // (Expansion Algorithm step 13.3), so it names no attribute; a keyword
+        // is told apart, since a trailing path reads a member of its name.
         let expanded = expand_property_key(no_vocabulary_mut(), expansion.active(), term, Action::Keep).map_err(|_rejected| JsonLdError::TermNotExpanded)?;
-        let Some(Term::Id(Id::Valid(ValidId::Iri(iri)))) = expanded.as_deref() else {
-            return Err(JsonLdError::TermNotExpanded);
+        let iri = match expanded.as_deref() {
+            Some(Term::Id(Id::Valid(ValidId::Iri(iri)))) => iri.clone(), // clone: the processor's memoized term stays shared
+            Some(Term::Keyword(_)) => return Err(JsonLdError::TermIsKeyword),
+            Some(Term::Null | Term::Id(Id::Valid(ValidId::Blank(_)) | Id::Invalid(_))) | None => return Err(JsonLdError::TermNotExpanded),
         };
-        let iri = iri.clone(); // clone: the processor's memoized term stays shared
 
         self.term_cache().insert(key.to_owned_key(), iri.clone()).await; // clone: the cache keeps a copy, the caller gets one
         Ok(iri)
@@ -346,7 +350,7 @@ mod tests {
         let keyword = engine.expand_term("id", &context).await;
         let blank = engine.expand_type("_:b0", &context).await;
 
-        assert!(matches!(keyword, Err(JsonLdError::TermNotExpanded)), "{keyword:?}");
+        assert!(matches!(keyword, Err(JsonLdError::TermIsKeyword)), "{keyword:?}");
         assert!(matches!(blank, Err(JsonLdError::ExpandedTermNotIri(_))), "{blank:?}");
     }
 

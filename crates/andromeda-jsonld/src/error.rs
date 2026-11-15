@@ -167,6 +167,11 @@ pub enum JsonLdError {
     #[error("the term does not expand to an IRI against the active context")]
     TermNotExpanded,
 
+    /// An attribute term expands to a JSON-LD keyword against the active
+    /// context, as the core context's `type` and `id` do.
+    #[error("the term expands to a JSON-LD keyword against the active context")]
+    TermIsKeyword,
+
     /// A term expanded to text that is not an absolute IRI.
     #[error("the expanded term is not an absolute IRI")]
     ExpandedTermNotIri(#[source] InvalidIri<String>),

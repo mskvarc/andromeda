@@ -23,7 +23,7 @@ use crate::{
         trailing_members::TrailingMembers,
         trailing_path::TrailingPath,
     },
-    term_expander::TermExpander,
+    term_expander::{TermExpander, TermExpansionFailure},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use std::{collections::HashSet, future::Future, hash::BuildHasher, pin::Pin};
@@ -239,9 +239,32 @@ pub async fn expand_attr_path(mut path: AttrPath, members: TrailingMembers<'_>, 
     if let Some(TrailingPath::Members(member_path)) = &mut path.trailing
         && members.are_terms_under(&path.attr)
     {
-        member_path.addressed = expand_attribute_names(&member_path.addressed, expander).await?;
+        member_path.addressed = expand_member_names(&member_path.addressed, expander).await?;
     }
     Ok(path)
+}
+
+/// Expand the members of a trailing path, in order.
+///
+/// Clause 4.9 evaluates a trailing path as an ECMA 262 `MemberExpression`
+/// against the seed target value, so a member the `@context` maps to a JSON-LD
+/// keyword, as the core context maps `type` and `id`, is no IRI-keyed member of
+/// an expanded value and is read as the member of its own name.
+///
+/// # Errors
+///
+/// Returns the errors of [`expand_attribute_names`] for a member that expands
+/// to no keyword.
+async fn expand_member_names(members: &[AttributeName], expander: &impl TermExpander) -> Result<Vec<AttributeName>, QueryError> {
+    let mut names = Vec::with_capacity(members.len());
+    for member in members {
+        names.push(match expander.expand_term(member.as_str()).await {
+            Ok(iri) => expanded_attribute_name(&iri)?,
+            Err(QueryError::TermExpansion(TermExpansionFailure::Keyword)) => member.clone(),
+            Err(other) => return Err(other),
+        });
+    }
+    Ok(names)
 }
 
 /// Expand every term of an attribute-name list, in order.
@@ -299,22 +322,75 @@ async fn expand_compare_values<S: BuildHasher + Sync>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{
+        error::QueryError,
         filter::{
-            predicate::OrderingOp,
+            expansion::{apply_expand_values, expand_attribute_names, expand_csf_expr, expand_json_keys, expand_q_expr, expand_q_expression},
+            expression::Expr,
+            json_key_attributes::JsonKeyAttributes,
+            parser,
+            path::{AttrPath, QueryPath},
+            predicate::{OrderingOp, Predicate},
             scalar::{CompareValue, Scalar},
             serialize::serialize,
         },
         namespace_expander::{EXAMPLE_NAMESPACE_TYPED, NamespaceExpander},
+        term_expander::{TermExpander, TermExpansionFailure},
     };
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_vocabulary::expanded::properties::{DATASET_ID, OBJECT_TYPE, VALUE_TYPE};
+    use iri_rs::IriBuf;
     use pretty_assertions::assert_eq;
+    use std::{collections::HashSet, future::Future};
 
     /// Prefixes every term but the three core members a path can end on, so a
     /// test can see exactly which positions were rewritten.
     const CORE_MEMBER_EXPANDER: NamespaceExpander =
         EXAMPLE_NAMESPACE_TYPED.with_core_members(&[("valueType", VALUE_TYPE), ("objectType", OBJECT_TYPE), ("datasetId", DATASET_ID)]);
+
+    /// Expands `type` to the `@type` keyword, as the core context does, and
+    /// every other term as [`CORE_MEMBER_EXPANDER`] does.
+    struct KeywordTypeExpander;
+
+    impl TermExpander for KeywordTypeExpander {
+        fn expand_term(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            let keyword = term == "type";
+            let delegated = CORE_MEMBER_EXPANDER.expand_term(term);
+            async move {
+                if keyword {
+                    Err(QueryError::TermExpansion(TermExpansionFailure::Keyword))
+                } else {
+                    delegated.await
+                }
+            }
+        }
+
+        fn expand_type(&self, term: &str) -> impl Future<Output = Result<IriBuf, QueryError>> + Send {
+            CORE_MEMBER_EXPANDER.expand_type(term)
+        }
+    }
+
+    /// Clause 4.9 reads a trailing path as an ECMA 262 `MemberExpression`, so
+    /// a member the `@context` maps to a JSON-LD keyword is the member of its
+    /// own name, while an attribute so mapped still names no attribute.
+    #[tokio::test]
+    async fn a_member_mapped_to_a_keyword_is_read_as_written() {
+        let expanded = expand_q_expression(Some("location[type]==\"Point\""), &JsonKeyAttributes::default(), &KeywordTypeExpander)
+            .await
+            .expect("expands")
+            .expect("present");
+        let path = path_of(&expanded);
+        assert_eq!(path.attr.as_str(), "https://example.com/location");
+        assert_eq!(
+            path.members()
+                .map(|members| members.addressed.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
+            Some(vec!["type"])
+        );
+        assert!(matches!(
+            expand_q_expression(Some("type==\"Point\""), &JsonKeyAttributes::default(), &KeywordTypeExpander).await,
+            Err(QueryError::TermExpansion(TermExpansionFailure::Keyword))
+        ));
+    }
 
     fn opted_in(names: &[&str]) -> HashSet<AttributeName> {
         names.iter().map(|name| name.parse().expect("valid attribute name")).collect()

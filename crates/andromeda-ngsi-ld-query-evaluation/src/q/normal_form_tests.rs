@@ -7,7 +7,7 @@
 //! another: the shapes the normal form rewrites.
 
 use crate::{
-    q::{corpus_tests::OPEN_DIVERGENCES, filter_run::filter_holds},
+    q::filter_run::filter_holds,
     queried_entity::{
         corpus_fixture::corpus_entities,
         expanded_fixture::{FixtureEntity, FixtureLinked},
@@ -329,20 +329,14 @@ proptest! {
     }
 }
 
-/// PR-3 for every corpus filter over the corpus Entities. A filter the
-/// language still refuses is an open divergence.
+/// PR-3 for every corpus filter over the corpus Entities.
 #[tokio::test]
 async fn the_normal_form_of_every_corpus_filter_holds_for_the_entities_it_holds_for() {
     for case in CORPUS {
-        match expanded_filter(case).await {
-            Ok(expr) => pretty_assertions::assert_eq!(disagreement(&expr, &CORPUS_ENTITIES), None, "{}", case.q),
-            Err(refusal) => assert!(
-                OPEN_DIVERGENCES.iter().any(|(open, _)| *open == case.id),
-                "{} {} is refused: {refusal}",
-                case.id,
-                case.q
-            ),
-        }
+        let expr = expanded_filter(case)
+            .await
+            .unwrap_or_else(|refusal| panic!("{} {} is refused: {refusal}", case.id, case.q));
+        pretty_assertions::assert_eq!(disagreement(&expr, &CORPUS_ENTITIES), None, "{}", case.q);
     }
 }
 
