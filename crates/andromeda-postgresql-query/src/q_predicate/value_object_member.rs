@@ -30,7 +30,7 @@ use crate::q_predicate::{
     value_column::ValueColumn,
     verdict_condition::{ComplementTarget, array_rule_condition, verdict_condition},
 };
-use andromeda_ngsi_ld_geometry::geometry_member::COORDINATE_DECIMALS;
+use andromeda_ngsi_ld_geometry::coordinate_notation::COORDINATE_DECIMALS;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
 use andromeda_ngsi_ld_query::filter::{
     reading::{

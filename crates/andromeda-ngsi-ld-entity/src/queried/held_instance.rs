@@ -10,7 +10,10 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReference};
 use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
-use andromeda_ngsi_ld_query_evaluation::queried_entity::{attribute_reading::QueriedInstance, value_item::ValueItem};
+use andromeda_ngsi_ld_query_evaluation::queried_entity::{
+    attribute_reading::{QueriedInstance, ValuePresence},
+    value_item::ValueItem,
+};
 use std::borrow::Cow;
 
 /// One attribute instance of a state, with the `datasetId` it is held under.
@@ -60,6 +63,12 @@ impl<'a> QueriedInstance<'a> for HeldInstance<'a> {
 
     fn values(self) -> impl Iterator<Item = ValueItem<'a, &'a ValueNode<Stored>>> {
         FamilyValues::of_state(self.instance.value())
+    }
+
+    /// A stored instance always holds a value: a deletion removes it from the
+    /// state.
+    fn value_presence(self) -> ValuePresence {
+        ValuePresence::Held
     }
 
     fn language_values(self, wanted: LanguageSelector<'_>, matching: LanguageMatching) -> impl Iterator<Item = ValueItem<'a, &'a ValueNode<Stored>>> {

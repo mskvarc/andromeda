@@ -10,7 +10,7 @@
 //! the canonical decoder refuse it.
 
 use crate::{attributes::Attributes, entity_types::EntityTypes, scopes::Scopes};
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time::date_time::NgsiLdDateTime};
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, scope::presence::ScopePresence, time::date_time::NgsiLdDateTime};
 
 /// One entity.
 #[derive(Clone, Debug, PartialEq)]
@@ -74,6 +74,15 @@ impl EntityState {
     #[must_use]
     pub const fn scope(&self) -> Option<&Scopes> {
         self.scope.as_ref()
+    }
+
+    /// Whether the entity holds a Scope (clause 4.18).
+    #[must_use]
+    pub const fn scope_presence(&self) -> ScopePresence {
+        match self.scope {
+            Some(_) => ScopePresence::Held,
+            None => ScopePresence::Absent,
+        }
     }
 
     /// The entity-level expiry, when set.

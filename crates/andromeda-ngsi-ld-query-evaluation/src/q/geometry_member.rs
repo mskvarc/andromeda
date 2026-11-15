@@ -10,8 +10,9 @@
 
 use crate::q::target_value::{ResolvedTarget, TargetValue};
 use andromeda_ngsi_ld_geometry::{
+    coordinate_notation::{COORDINATE_DECIMALS, COORDINATE_SIGNIFICANT_DIGITS, CoordinateNotation},
     form::GeometryForm,
-    geometry_member::{COORDINATE_DECIMALS, COORDINATE_SIGNIFICANT_DIGITS, CoordinateNotation, GeometryMember},
+    geometry_member::GeometryMember,
     position::Position,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;

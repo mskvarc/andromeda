@@ -54,6 +54,8 @@ pub enum CorpusEntity {
     /// `n1` the one-element array 10, which reads back as 10, and `e0` the
     /// empty array.
     E18,
-    /// `t` "12:00:00Z" declared a Time.
+    /// `t` "12:00:00Z" declared a Time, `jw` a `JsonProperty` whose JSON is
+    /// `{"@type": "@json", "@value": {"a": 2}}`, and `place` a Point at 8.8,
+    /// 52.6.
     E19,
 }

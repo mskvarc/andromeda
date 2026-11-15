@@ -29,6 +29,16 @@ pub trait QueriedEntity<'a>: Copy {
     fn types(self) -> impl Iterator<Item = &'a EntityTypeName>;
 }
 
+/// Whether an attribute instance holds a value of its family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValuePresence {
+    /// The family's value member holds a value, the empty array included.
+    Held,
+    /// The instance holds none: a deletion (an NGSI-LD Null, clause 4.5.7)
+    /// or an instance written with no value member.
+    Absent,
+}
+
 /// One attribute instance as the `q` evaluator reads it: a default instance, a
 /// `datasetId` instance, or the first instance of a sub-attribute.
 pub trait QueriedInstance<'a>: Copy {
@@ -46,6 +56,13 @@ pub trait QueriedInstance<'a>: Copy {
     /// map, the `json` of a `JsonProperty`, and the items of the list a
     /// `ListProperty` or a `ListRelationship` holds.
     fn values(self) -> impl Iterator<Item = ValueItem<'a, Self::Node>>;
+
+    /// Whether the instance holds a value of its family at all.
+    /// [`Self::values`] yields nothing both for a value that is the empty
+    /// array and for an instance holding none, which clause 4.9 reads apart:
+    /// the empty array is a target value that includes no operand, and an
+    /// instance holding no value has no target value.
+    fn value_presence(self) -> ValuePresence;
 
     /// The strings a `LanguageProperty` instance holds under every language
     /// tag `wanted` admits under `matching`, in order: the target value clause

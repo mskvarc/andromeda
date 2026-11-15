@@ -116,7 +116,10 @@ impl CorpusEntities {
             CorpusEntity::E18 => builder
                 .property("n1", Value::Array(vec![number("10")?]))
                 .property("e0", Value::Array(Vec::new())),
-            CorpusEntity::E19 => builder.property("t", Property::builder("12:00:00Z").value_type("Time".parse::<VocabTerm>()?)),
+            CorpusEntity::E19 => builder
+                .property("t", Property::builder("12:00:00Z").value_type("Time".parse::<VocabTerm>()?))
+                .json_property("jw", JsonProperty::builder(r#"{"@type":"@json","@value":{"a":2}}"#.parse::<RawJson>()?))
+                .geo_property("place", Shape::Point(Position::try_new(8.8, 52.6)?)),
         };
         Ok(builder.build()?)
     }

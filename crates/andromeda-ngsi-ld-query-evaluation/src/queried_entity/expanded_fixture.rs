@@ -10,7 +10,7 @@
 use crate::{
     q::target_value::TargetValue,
     queried_entity::{
-        attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
+        attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode, ValuePresence},
         fixture_literal::FixtureLiteral,
         linked_entities::LinkedEntities,
         value_item::ValueItem,
@@ -58,6 +58,8 @@ pub(crate) struct FixtureInstance {
     family: AttributeType,
     /// The values of the family's value member.
     values: Vec<FixtureItem>,
+    /// Whether the instance carries the family's value member.
+    presence: ValuePresence,
     /// The instance members held as data, each with every node it holds.
     metadata: Vec<(InstanceMetadata, String)>,
     /// The sub-attributes with their instances.
@@ -148,6 +150,11 @@ impl FixtureInstance {
                 | AttributeType::LanguageProperty
                 | AttributeType::JsonProperty => nodes.iter().map(item_of).collect(),
             });
+        let presence = if object.contains_key(value_key.as_str()) {
+            ValuePresence::Held
+        } else {
+            ValuePresence::Absent
+        };
         let metadata = InstanceMetadata::iter()
             .flat_map(|member| {
                 object
@@ -168,6 +175,7 @@ impl FixtureInstance {
         FixtureInstance {
             family,
             values,
+            presence,
             metadata,
             sub_attributes,
         }
@@ -320,6 +328,10 @@ impl<'a> QueriedInstance<'a> for &'a FixtureInstance {
 
     fn values(self) -> impl Iterator<Item = ValueItem<'a, &'a FixtureNode>> {
         self.values.iter().map(FixtureItem::view)
+    }
+
+    fn value_presence(self) -> ValuePresence {
+        self.presence
     }
 
     fn language_values(self, wanted: LanguageSelector<'_>, matching: LanguageMatching) -> impl Iterator<Item = ValueItem<'a, &'a FixtureNode>> {

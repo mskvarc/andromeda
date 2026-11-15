@@ -28,7 +28,7 @@ use andromeda_ngsi_ld_vocabulary::{
     keyword,
 };
 use andromeda_postgresql_seaquery::{
-    cast::{cast, typed_null},
+    cast::typed_null,
     column_reference::ColumnReference,
     datetime::pg_input_is_valid,
     json_type::{JsonType, jsonb_type_is, jsonb_whole_text},
@@ -36,7 +36,7 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
-use sea_query::{Alias, CaseStatement, Expr as SeaExpr, ExprTrait, Func, Query, QueryStatementBuilder, SimpleExpr};
+use sea_query::{Alias, CaseStatement, Expr as SeaExpr, ExprTrait, Query, QueryStatementBuilder, SimpleExpr};
 
 /// The family every property of a document is: clause 5.2.9 makes Context
 /// Source Properties Properties, never a `LanguageProperty`.
@@ -74,11 +74,13 @@ impl<'a> PropertyPath<'a> {
     /// The clause 4.9 `{}` axis descends a Relationship into the entity it
     /// names, and Context Source Properties carry no Relationship, so a term
     /// with a hop has no target; nor does a target language, which only a
-    /// `LanguageProperty` holds. A term without a target satisfies no
+    /// `LanguageProperty` holds. Nor does a `.` naming a member the Property
+    /// family carries for itself (`value`, `type`, `unitCode`, ...), which is
+    /// no sub-property (clause 4.6.2). A term without a target satisfies no
     /// document, though it is valid `q` syntax.
     #[must_use]
     pub fn of(term: &'a TermReading) -> Option<PropertyPath<'a>> {
-        if !term.hops().is_empty() {
+        if !term.hops().is_empty() || term.sub_attributes().iter().any(|sub| DOCUMENT_FAMILY.carries_member(sub.as_str())) {
             return None;
         }
         let ending = match term.terminal() {
@@ -198,16 +200,13 @@ fn is_node() -> SimpleExpr {
         .or(SeaExpr::expr(aliased_node().json_get_text(text_literal(keyword::TYPE_ALIAS))).is_in(families))
 }
 
-/// The value the aliased JSON holds: the `value` member of a node, the empty
-/// array for a node holding none, which includes no operand as the in-memory
-/// evaluator reads a Property holding no value, or the JSON itself when it is
-/// no node.
+/// The value the aliased JSON holds: the `value` member of a node, NULL for a
+/// node holding none, or the JSON itself when it is no node.
 fn held_value() -> SimpleExpr {
-    let value = SimpleExpr::from(Func::coalesce([
-        aliased_node().json_get(text_literal(compact_properties::VALUE)),
-        cast(text_literal("[]"), PostgresType::Jsonb),
-    ]));
-    CaseStatement::new().case(is_node(), value).finally(aliased_node()).into()
+    CaseStatement::new()
+        .case(is_node(), aliased_node().json_get(text_literal(compact_properties::VALUE)))
+        .finally(aliased_node())
+        .into()
 }
 
 /// The member `name` of the node `node` is, NULL when `node` is no node,

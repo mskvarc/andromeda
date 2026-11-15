@@ -162,14 +162,25 @@ const E17_ATTRIBUTES: &[CorpusAttribute] = &[
 ];
 /// `n1` the one-element array 10 and `e0` the empty array.
 const E18_ATTRIBUTES: &[CorpusAttribute] = &[attribute!("n1", Property(&[Integer(10)])), attribute!("e0", Property(&[]))];
-/// `t` a Time.
-const E19_ATTRIBUTES: &[CorpusAttribute] = &[attribute!(
-    "t",
-    Property(&[Declared {
-        datatype: CorpusDatatype::Time,
-        lexical: "12:00:00Z"
-    }])
-)];
+/// `t` a Time, `jw` the JSON `{"@type":"@json","@value":{"a":2}}` and
+/// `place` a Point at 8.8, 52.6.
+const E19_ATTRIBUTES: &[CorpusAttribute] = &[
+    attribute!(
+        "t",
+        Property(&[Declared {
+            datatype: CorpusDatatype::Time,
+            lexical: "12:00:00Z"
+        }])
+    ),
+    attribute!("jw", JsonProperty("{\"@type\":\"@json\",\"@value\":{\"a\":2}}")),
+    attribute!(
+        "place",
+        GeoProperty {
+            longitude: 8.8,
+            latitude: 52.6
+        }
+    ),
+];
 
 impl CorpusEntity {
     /// The Attributes of the Entity in the order the corpus lists them.
@@ -233,7 +244,7 @@ mod tests {
             written_terms(),
             [
                 "n", "s", "b", "other", "r", "rl", "l", "d", "tm", "f", "g", "m", "k", "src", "addr", "h", "hp", "location", "vp", "lp", "jp", "jn", "link",
-                "link2", "llink", "hm", "n1", "e0", "t"
+                "link2", "llink", "hm", "n1", "e0", "t", "jw", "place"
             ]
         );
     }

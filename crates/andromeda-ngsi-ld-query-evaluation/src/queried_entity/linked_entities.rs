@@ -7,7 +7,7 @@
 //! source of those entities beside the entity itself.
 
 use crate::queried_entity::{
-    attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
+    attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode, ValuePresence},
     value_item::ValueItem,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
@@ -67,6 +67,10 @@ impl<'a> QueriedInstance<'a> for NoLinkedEntity {
 
     fn values(self) -> impl Iterator<Item = ValueItem<'a, NoLinkedEntity>> {
         empty()
+    }
+
+    fn value_presence(self) -> ValuePresence {
+        match self {}
     }
 
     fn language_values(self, _wanted: LanguageSelector<'_>, _matching: LanguageMatching) -> impl Iterator<Item = ValueItem<'a, NoLinkedEntity>> {

@@ -4,6 +4,7 @@ use crate::attribute_null_encoding::NullEncoding;
 use andromeda_ngsi_ld_vocabulary::{
     compact::properties as compact_properties,
     expanded::{classes as expanded_classes, properties as expanded_properties},
+    keyword,
 };
 use iri_rs::Iri;
 use serde::{Deserialize, Serialize};
@@ -312,6 +313,14 @@ impl AttributeType {
     #[must_use]
     pub fn defines_member(self, member: &str) -> bool {
         self.reserved_fields().contains(&member)
+    }
+
+    /// Whether `member` names a member an instance of the family carries for
+    /// itself rather than a sub-attribute: `type`, or one the family defines
+    /// ([`AttributeType::defines_member`]).
+    #[must_use]
+    pub fn carries_member(self, member: &str) -> bool {
+        member == keyword::TYPE_ALIAS || self.defines_member(member)
     }
 
     /// Returns the short (compacted) name for this attribute type as a static string.

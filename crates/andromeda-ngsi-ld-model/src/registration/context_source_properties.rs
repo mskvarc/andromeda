@@ -8,9 +8,10 @@
 //! Entity's. A JSON object holding a `value` member, or naming an NGSI-LD
 //! attribute family by `type`, is the Property's node (clause 4.5.2.3: an
 //! object carrying `type` is the normalized representation, and a Property is
-//! inferred from `value`): its value is its `value` member, and one holding
-//! none holds no value, which includes no operand as the empty array does; its
-//! other members are its sub-properties and instance members.
+//! inferred from `value`): its value is its `value` member, one holding none
+//! holding no value, and its other members but those the Property family
+//! carries for itself are its sub-properties, its instance members read under
+//! their expanded names.
 //! Any other JSON (a scalar, an array, an object such as `management` or a
 //! `GeoJSON` geometry) is the value itself, which has no sub-property: an array
 //! is one array value clause 4.9 compares by membership, and a key of an object
@@ -28,7 +29,7 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
 use andromeda_ngsi_ld_query_evaluation::queried_entity::{
-    attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
+    attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode, ValuePresence},
     value_item::{LiteralValue, ValueItem},
 };
 use andromeda_ngsi_ld_vocabulary::{
@@ -63,27 +64,47 @@ impl<'a> ContextSourceProperties<'a> {
 
 /// A Context Source Property as written: its node, or a bare JSON value.
 #[derive(Clone, Copy, Debug)]
-pub struct PropertyValue<'a>(JsonPiece<'a>);
+pub struct PropertyValue<'a>(WrittenProperty<'a>);
+
+/// How a Context Source Property is written, decided once from its members.
+#[derive(Clone, Copy, Debug)]
+enum WrittenProperty<'a> {
+    /// An object holding `value`, or naming an NGSI-LD attribute family by
+    /// `type`: the property's node and the `value` it holds, if any.
+    Node {
+        /// The node.
+        node: JsonPiece<'a>,
+        /// Its `value` member.
+        value: Option<JsonPiece<'a>>,
+    },
+    /// The property's value alone.
+    Value(JsonPiece<'a>),
+}
 
 impl<'a> PropertyValue<'a> {
-    /// Whether the property is written as its node: an object holding `value`,
-    /// or naming an NGSI-LD attribute family by `type`.
-    fn is_node(self) -> bool {
-        self.0.member(compact_properties::VALUE).is_some()
-            || self
-                .0
-                .member(keyword::TYPE_ALIAS)
-                .and_then(JsonPiece::as_str)
-                .is_some_and(|family| AttributeType::from_str(&family).is_ok())
+    /// The property `written` is, its members read once.
+    fn of(written: JsonPiece<'a>) -> PropertyValue<'a> {
+        let Some(members) = written.members() else {
+            return PropertyValue(WrittenProperty::Value(written));
+        };
+        let member = |name: &str| members.iter().rev().find_map(|(key, value)| (key == name).then_some(*value));
+        let value = member(compact_properties::VALUE);
+        let names_a_family = member(keyword::TYPE_ALIAS)
+            .and_then(JsonPiece::as_str)
+            .is_some_and(|family| AttributeType::from_str(&family).is_ok());
+        if value.is_some() || names_a_family {
+            PropertyValue(WrittenProperty::Node { node: written, value })
+        } else {
+            PropertyValue(WrittenProperty::Value(written))
+        }
     }
 
     /// The value the property holds: the `value` member of its node, none for
     /// a node holding none, or the JSON itself when it is no node.
-    fn held(self) -> Option<JsonPiece<'a>> {
-        if self.is_node() {
-            self.0.member(compact_properties::VALUE)
-        } else {
-            Some(self.0)
+    const fn held(self) -> Option<JsonPiece<'a>> {
+        match self.0 {
+            WrittenProperty::Node { value, .. } => value,
+            WrittenProperty::Value(value) => Some(value),
         }
     }
 
@@ -97,7 +118,10 @@ impl<'a> PropertyValue<'a> {
     /// The member `name` of the property's node, a sub-property or an
     /// instance member; none when the property is written as its value alone.
     fn member(self, name: &str) -> Option<PropertyValue<'a>> {
-        self.is_node().then(|| self.0.member(name)).flatten().map(PropertyValue)
+        match self.0 {
+            WrittenProperty::Node { node, .. } => node.member(name).map(PropertyValue::of),
+            WrittenProperty::Value(_) => None,
+        }
     }
 }
 
@@ -136,7 +160,7 @@ impl<'a> QueriedEntity<'a> for ContextSourceProperties<'a> {
     type Instance = PropertyValue<'a>;
 
     fn attribute_instances(self, attribute: &AttributeName) -> impl Iterator<Item = PropertyValue<'a>> {
-        self.member(attribute).map(PropertyValue).into_iter()
+        self.member(attribute).map(PropertyValue::of).into_iter()
     }
 
     /// A registration names no entity type of its own.
@@ -157,14 +181,29 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
         self.item().into_iter()
     }
 
+    /// A node holding no `value` holds no value (clause 4.5.2.3 treats it as
+    /// the normalized representation, which carries its value there).
+    fn value_presence(self) -> ValuePresence {
+        match self.held() {
+            Some(_) => ValuePresence::Held,
+            None => ValuePresence::Absent,
+        }
+    }
+
     /// Clause 5.2.9 Context Source Properties are Properties, never a
     /// `LanguageProperty`, so no target language selects a string of theirs.
     fn language_values(self, _wanted: LanguageSelector<'_>, _matching: LanguageMatching) -> impl Iterator<Item = ValueItem<'a, NoStructuredValue>> {
         empty()
     }
 
+    /// A member the Property family carries for itself (`value`, `type`,
+    /// `unitCode`, ...) is no sub-property, so a `.` naming one reaches
+    /// nothing.
     fn sub_attribute_instances(self, name: &AttributeName) -> impl Iterator<Item = PropertyValue<'a>> {
-        self.member(name.as_str()).into_iter()
+        (!AttributeType::Property.carries_member(name.as_str()))
+            .then(|| self.member(name.as_str()))
+            .flatten()
+            .into_iter()
     }
 
     fn metadata(self, member: InstanceMetadata) -> impl Iterator<Item = Cow<'a, str>> {
@@ -236,9 +275,8 @@ mod tests {
     /// Clause 4.5.2.3 infers a Property from `value`, so a concise node is read
     /// by its value, and treats an object carrying `type` as the normalized
     /// representation, so a node naming its family and holding no `value`
-    /// holds no value, which includes no operand as the empty array does; an
-    /// object naming no family by `type`, such as a `GeoJSON` geometry, is the
-    /// value itself.
+    /// holds no target value; an object naming no family by `type`, such as a
+    /// `GeoJSON` geometry, is the value itself.
     #[test]
     fn an_object_holding_value_or_naming_a_family_is_the_node_of_the_property() {
         let properties = json!({
@@ -250,9 +288,23 @@ mod tests {
         assert!(holds("\"https://example.com/concise\".\"https://example.com/since\"==2020", &properties));
         assert!(holds("\"https://example.com/typed\"", &properties));
         assert!(!holds("\"https://example.com/typed\"==\"Property\"", &properties));
-        assert!(holds("\"https://example.com/typed\"!=\"x\"", &properties));
+        assert!(!holds("\"https://example.com/typed\"!=\"x\"", &properties));
         assert!(!holds("\"https://example.com/typed\"[type]==\"Property\"", &properties));
         assert!(holds("\"https://example.com/area\"[type]==\"Point\"", &properties));
+    }
+
+    /// A node carries `value`, `type` and its instance members for itself, so
+    /// a `.` naming one of them by its compact name reaches nothing (clause
+    /// 4.6.2 bars those terms as attribute names).
+    #[test]
+    fn a_member_the_node_carries_for_itself_is_no_sub_property() {
+        let properties = json!({"https://example.com/tier": {"type": "Property", "value": "gold", "unitCode": "C62"}});
+        assert!(holds("\"https://example.com/tier\"==\"gold\"", &properties));
+        for path in ["value", "type", "unitCode"] {
+            assert!(!holds(&format!("\"https://example.com/tier\".{path}"), &properties), "{path}");
+        }
+        assert!(!holds("\"https://example.com/tier\".value==\"gold\"", &properties));
+        assert!(!holds("\"https://example.com/tier\".type==\"Property\"", &properties));
     }
 
     /// A Property written as its value alone has no sub-attribute (clause

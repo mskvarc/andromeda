@@ -19,7 +19,10 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, reference::NgsiLdReference};
 use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
-use andromeda_ngsi_ld_query_evaluation::queried_entity::{attribute_reading::QueriedInstance, value_item::ValueItem};
+use andromeda_ngsi_ld_query_evaluation::queried_entity::{
+    attribute_reading::{QueriedInstance, ValuePresence},
+    value_item::ValueItem,
+};
 use cefact_units::UnitCode;
 use std::borrow::Cow;
 
@@ -40,6 +43,14 @@ impl<'a> QueriedInstance<'a> for &'a InstanceDocument {
         match self.value() {
             ValueSlot::Set(value) => FamilyValues::of_written(value, self.value_type().and_then(Slot::as_set)),
             ValueSlot::Absent | ValueSlot::Remove(_) => FamilyValues::none(),
+        }
+    }
+
+    /// A deletion and an instance written with no value member hold none.
+    fn value_presence(self) -> ValuePresence {
+        match self.value() {
+            ValueSlot::Set(_) => ValuePresence::Held,
+            ValueSlot::Absent | ValueSlot::Remove(_) => ValuePresence::Absent,
         }
     }
 

@@ -8,7 +8,7 @@ use crate::{
 use andromeda_context_commit::entity_version::EntityVersion;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::attribute_instance_key::AttributeInstanceKey};
-use andromeda_ngsi_ld_lexicon::{identifier::Identifier, scope::presence::ScopePresence};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -49,11 +49,7 @@ pub(crate) fn outline_of(state: &EntityState, version: EntityVersion) -> Deletio
     DeletionOutline {
         types: state.types().as_slice().to_vec(),
         instances,
-        scope: if state.scope().is_some() {
-            ScopePresence::Held
-        } else {
-            ScopePresence::Absent
-        },
+        scope: state.scope_presence(),
         version,
     }
 }

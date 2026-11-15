@@ -37,6 +37,7 @@
 
 pub mod bounding_box;
 pub mod compact_geojson;
+pub mod coordinate_notation;
 pub mod coordinate_path;
 pub mod coordinate_tape;
 pub mod coordinates_member;
