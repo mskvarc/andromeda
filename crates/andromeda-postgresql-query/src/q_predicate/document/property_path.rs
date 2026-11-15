@@ -11,7 +11,11 @@
 //! sub-properties (clause 4.5.2.3), and any other JSON, an array included, is
 //! the value itself, which has no sub-property.
 
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, time::value::TimeValueForm};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    time::{lexical_pattern::DATE_TIME_PATTERN, value::TimeValueForm},
+};
 use andromeda_ngsi_ld_query::filter::{
     instance_metadata::InstanceMetadata,
     reading::{
@@ -31,8 +35,9 @@ use andromeda_ngsi_ld_vocabulary::{
 use andromeda_postgresql_seaquery::{
     cast::typed_null,
     column_reference::ColumnReference,
-    datetime::pg_input_is_valid,
+    datetime::{pg_input_is_valid, with_decimal_point},
     json_type::{JsonType, jsonb_type_is, jsonb_whole_text},
+    jsonb::to_jsonb,
     literal::text_literal,
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
@@ -139,15 +144,21 @@ impl<'a> PropertyPath<'a> {
     /// is compared with `operand` through.
     ///
     /// An instance member holding an instant (clause 4.8, clause 4.22) is the
-    /// `DateTime` its text spells, and a String when it spells none, as the
-    /// in-memory evaluator reads it. Any other target is read by
+    /// `DateTime` its text spells in the clause 4.6.3 form, and a String when
+    /// it spells none, as the in-memory evaluator reads it: the text matches
+    /// that form before the `timestamptz` input function, which also takes an
+    /// offset, a bare date or `now`, checks the calendar, and its decimal comma
+    /// is read as the point. Any other target is read by
     /// [`declared_value_reading`].
     pub fn declared_reading(self, value: impl Fn() -> SimpleExpr, operand: &Operand) -> (SimpleExpr, SimpleExpr) {
         match self.ending {
             Ending::InstanceMember(member) if member.holds_instant() => {
-                let spells_an_instant = pg_input_is_valid(jsonb_whole_text(value()), PostgresType::Timestamptz);
+                let instant = || with_decimal_point(jsonb_whole_text(value()));
+                let spells_an_instant = jsonb_whole_text(value())
+                    .posix_matches(text_literal(DATE_TIME_PATTERN))
+                    .and(pg_input_is_valid(instant(), PostgresType::Timestamptz));
                 let datatype = CaseStatement::new().case(spells_an_instant, text_literal(TimeValueForm::DateTime.iri().as_str()));
-                (value(), datatype.into())
+                (to_jsonb(instant()), datatype.into())
             }
             Ending::InstanceMember(_) => (value(), typed_null(PostgresType::Text)),
             Ending::Node | Ending::Members(_) => declared_value_reading(value, operand),

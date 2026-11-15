@@ -1,10 +1,11 @@
 //! The PostgreSQL functions a stored temporal text is validated and rendered through.
 //!
-//! Neither has a native sea-query constructor: `to_char` formats a resolved
-//! instant back to fixed-width text, and `pg_input_is_valid` (PostgreSQL 16+)
+//! None has a native sea-query constructor: `to_char` formats a resolved
+//! instant back to fixed-width text, `pg_input_is_valid` (PostgreSQL 16+)
 //! asks a type's input function whether a candidate text is a real value
-//! without raising. Each is spelled here as [`Func::cust`] so the function name
-//! is written once and no value is interpolated into the call.
+//! without raising, and `translate` writes a decimal comma as the point that
+//! input function reads. Each is spelled here as [`Func::cust`] so the function
+//! name is written once and no value is interpolated into the call.
 
 use crate::{literal::text_literal, pg_type::PostgresType};
 use sea_query::{Func, Iden, SimpleExpr};
@@ -18,6 +19,11 @@ struct ToChar;
 #[derive(Iden, Clone, Copy)]
 #[iden = "pg_input_is_valid"]
 struct PgInputIsValid;
+
+/// The `translate(text, from, to)` character substitution function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "translate"]
+struct Translate;
 
 /// `to_char(value, 'format')` - render `value` as text under a `format` template.
 ///
@@ -39,10 +45,20 @@ pub fn pg_input_is_valid(value: SimpleExpr, ty: PostgresType) -> SimpleExpr {
     Func::cust(PgInputIsValid).args([value, text_literal(&type_name)]).into()
 }
 
+/// `translate(text, ',', '.')` - a time text with its decimal comma written as
+/// the decimal point.
+///
+/// Clause 4.6.3 admits either before the fractional seconds, and the
+/// `timestamptz` input function reads only the point.
+#[must_use]
+pub fn with_decimal_point(text: SimpleExpr) -> SimpleExpr {
+    Func::cust(Translate).args([text, text_literal(","), text_literal(".")]).into()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
-        datetime::{pg_input_is_valid, to_char},
+        datetime::{pg_input_is_valid, to_char, with_decimal_point},
         pg_type::PostgresType,
     };
     use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
@@ -56,6 +72,12 @@ mod tests {
         let sql = render(to_char(Expr::col(Alias::new("observed_at")), "FM9999"));
         assert!(sql.contains("to_char("), "{sql}");
         assert!(sql.contains("'FM9999'"), "the format is inlined, not bound: {sql}");
+    }
+
+    #[test]
+    fn a_decimal_comma_is_translated_to_the_point() {
+        let sql = render(with_decimal_point(Expr::col(Alias::new("written"))));
+        assert!(sql.contains(r#"translate("written", ',', '.')"#), "{sql}");
     }
 
     #[test]

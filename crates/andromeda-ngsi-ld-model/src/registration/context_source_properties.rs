@@ -217,14 +217,14 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
 mod tests {
     use crate::registration::context_source_properties::ContextSourceProperties;
     use andromeda_json_literal::JsonLiteral;
-    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading};
+    use andromeda_ngsi_ld_query::filter::{parser::parse, reading::filter_reading::FilterReading};
     use andromeda_ngsi_ld_query_evaluation::{q::filter_run::filter_holds, queried_entity::linked_entities::NoLinkedEntities};
     use serde_json::{Value, json};
 
-    /// Whether the filter holds over the properties, read through the entity
-    /// traits.
+    /// Whether the `csf` holds over the properties, read as a compiled `csf`
+    /// reads them through the entity traits.
     fn holds(q: &str, properties: &Value) -> bool {
-        let reading = FilterReading::of(&parse(q).expect("the filter parses"), LanguageMatching::TagEquality);
+        let reading = FilterReading::of_context_source_filter(&parse(q).expect("the filter parses"));
         let properties = JsonLiteral::admit(&properties.to_string()).expect("a JSON literal");
         ContextSourceProperties::of(properties.piece()).is_some_and(|properties| filter_holds(&reading, properties, NoLinkedEntities))
     }
@@ -358,10 +358,11 @@ mod tests {
     }
 
     /// An instance member is read off the node under the term clause 4.5.2.2
-    /// writes it by, and the path names it by its expanded IRI, as a `csf`
-    /// expands its term. One holding an instant (clause 4.8) is the `DateTime`
-    /// its text spells, whether the node holds it bare or as a concise node,
-    /// and a member that is no string is no instance member.
+    /// writes it by, which a `csf` names it by. One holding an instant (clause
+    /// 4.8) is the `DateTime` its text spells in the clause 4.6.3 form, a
+    /// decimal comma included and an offset not, whether the node holds it
+    /// bare or as a concise node, and a member that is no string is no
+    /// instance member.
     #[test]
     fn an_instance_member_is_read_as_the_text_it_holds() {
         let properties = json!({
@@ -371,23 +372,23 @@ mod tests {
                 "unitCode": {"@value": "CEL"},
                 "datasetId": {"value": "urn:x:d"}
             },
-            "https://example.com/tier": {"type": "Property", "value": "gold", "unitCode": "C62"}
+            "https://example.com/tier": {"type": "Property", "value": "gold", "unitCode": "C62"},
+            "https://example.com/offset": {"value": 1, "observedAt": "2031-01-01T00:00:00+00:00"},
+            "https://example.com/comma": {"value": 1, "observedAt": "2031-01-01T00:00:00,5Z"}
         });
-        let observed = "\"https://example.com/seen\".\"https://uri.etsi.org/ngsi-ld/observedAt\"";
+        let observed = "\"https://example.com/seen\".observedAt";
         assert!(holds(&format!("{observed}>2030-01-01T00:00:00Z"), &properties));
         assert!(!holds(&format!("{observed}==\"2031-01-01T00:00:00Z\""), &properties));
-        let unit = "\"https://example.com/seen\".\"https://uri.etsi.org/ngsi-ld/unitCode\"";
+        let unit = "\"https://example.com/seen\".unitCode";
         assert!(!holds(unit, &properties));
         assert!(!holds(&format!("{unit}==\"CEL\""), &properties));
-        assert!(holds(
-            "\"https://example.com/seen\".\"https://uri.etsi.org/ngsi-ld/datasetId\"==\"urn:x:d\"",
-            &properties
-        ));
-        assert!(holds(
-            "\"https://example.com/tier\".\"https://uri.etsi.org/ngsi-ld/unitCode\"==\"C62\"",
-            &properties
-        ));
-        assert!(!holds("\"https://example.com/tier\".\"https://uri.etsi.org/ngsi-ld/datasetId\"", &properties));
+        assert!(holds("\"https://example.com/seen\".datasetId==\"urn:x:d\"", &properties));
+        assert!(holds("\"https://example.com/tier\".unitCode==\"C62\"", &properties));
+        assert!(!holds("\"https://example.com/tier\".datasetId", &properties));
+        assert!(!holds("\"https://example.com/tier\".unitCode[x]", &properties));
+        assert!(!holds("\"https://example.com/offset\".observedAt>2030-01-01T00:00:00Z", &properties));
+        assert!(holds("\"https://example.com/offset\".observedAt==\"2031-01-01T00:00:00+00:00\"", &properties));
+        assert!(holds("\"https://example.com/comma\".observedAt>2030-01-01T00:00:00Z", &properties));
     }
 
     /// A compound path reads the raw JSON value by the key the registrant

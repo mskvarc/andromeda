@@ -16,7 +16,6 @@ use crate::{
     error::QueryError,
     filter::{
         expression::Expr,
-        instance_metadata::InstanceMetadata,
         json_key_attributes::JsonKeyAttributes,
         operand_coercion::OperandCoercion,
         path::{AttrPath, QueryPath, expanded_attribute_name},
@@ -83,9 +82,7 @@ async fn expand_q_pred(pred: Predicate, members: TrailingMembers<'_>, expander: 
 /// Context Source Properties are held under their expanded names (clause
 /// 5.5.7). Its sub-properties and compound-value members never do, because a
 /// property's value is the raw JSON its registrant wrote, keyed as written
-/// (see [`TrailingMembers::Verbatim`]). The one exception is a last name that
-/// is the core `@context` term of an instance member (`tier.unitCode`), which
-/// names that member as it does in an Entity filter.
+/// (see [`TrailingMembers::Verbatim`]).
 ///
 /// # Errors
 ///
@@ -235,12 +232,6 @@ pub async fn expand_attr_path(mut path: AttrPath, members: TrailingMembers<'_>, 
     path.attr = expanded_attribute_name(&expander.expand_term(path.attr.as_str()).await?)?;
     if members.sub_attributes_are_terms() {
         path.sub_attrs = expand_attribute_names(&path.sub_attrs, expander).await?;
-    } else if let Some(last) = path.sub_attrs.last_mut()
-        && let Some(member) = InstanceMetadata::termed(last)
-    {
-        // The core `@context` is protected, so its term names the one
-        // instance member under every request context.
-        *last = member.iri().as_str().parse().map_err(QueryError::AttributeNameInvalid)?;
     }
     // A value that is raw JSON (an attribute the request declared in `jsonKeys`,
     // clause 4.9 EXAMPLE 11, or any Context Source Property) is
@@ -336,7 +327,6 @@ mod tests {
         filter::{
             expansion::{apply_expand_values, expand_attribute_names, expand_csf_expr, expand_json_keys, expand_q_expr, expand_q_expression},
             expression::Expr,
-            instance_metadata::InstanceMetadata,
             json_key_attributes::JsonKeyAttributes,
             parser,
             path::{AttrPath, QueryPath},
@@ -799,34 +789,19 @@ mod tests {
         assert_eq!(reparsed, expanded, "the stored text keeps the members as written");
     }
 
-    /// A `csf` path's last name that is the core `@context` term of an
-    /// instance member names that member, as it does in an Entity filter; the
-    /// term above it, and any other name, stays as written.
+    /// A `csf` keeps an instance member's core `@context` term as written, so
+    /// the stored and forwarded filter is the one the client wrote; its
+    /// reading names the member.
     #[tokio::test]
-    async fn a_csf_names_an_instance_member_by_its_core_term() {
-        for (csf, sub_attrs, member) in [
-            (
-                "tier.unitCode==\"C62\"",
-                vec!["https://uri.etsi.org/ngsi-ld/unitCode"],
-                Some(InstanceMetadata::UnitCode),
-            ),
-            (
-                "tier.observedAt>2024-01-01T00:00:00Z",
-                vec!["https://uri.etsi.org/ngsi-ld/observedAt"],
-                Some(InstanceMetadata::ObservedAt),
-            ),
-            ("tier.unitCode.since==1", vec!["unitCode", "since"], None),
-            ("tier.name==1", vec!["name"], None),
-        ] {
-            let expanded = expand_csf_expr(parser::parse(csf).expect("parses"), &CORE_MEMBER_EXPANDER)
-                .await
-                .expect("expands");
-            let path = path_of(&expanded);
-            assert_eq!(path.sub_attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>(), sub_attrs, "{csf}");
-            assert_eq!(path.ending_member().map(|(ending, _)| ending), member, "{csf}");
-            let reparsed = parser::parse(&serialize(&expanded)).expect("reparses");
-            assert_eq!(reparsed, expanded, "{csf}");
-        }
+    async fn a_csf_keeps_an_instance_member_term_as_written() {
+        let expanded = expand_csf_expr(parser::parse("tier.unitCode==\"C62\"").expect("parses"), &CORE_MEMBER_EXPANDER)
+            .await
+            .expect("expands");
+        let path = path_of(&expanded);
+        assert_eq!(path.sub_attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["unitCode"]);
+        let stored = serialize(&expanded);
+        assert!(stored.ends_with(".unitCode==\"C62\""), "{stored}");
+        assert_eq!(parser::parse(&stored).expect("reparses"), expanded);
     }
 
     #[tokio::test]

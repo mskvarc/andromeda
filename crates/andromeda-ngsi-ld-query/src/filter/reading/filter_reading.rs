@@ -43,10 +43,12 @@ impl FilterReading {
     ///
     /// Clause 5.2.9 makes those Properties, never a `LanguageProperty`, so no
     /// target language selects a string of theirs and the reading takes tag
-    /// equality whatever the language-targeting level.
+    /// equality whatever the language-targeting level. An instance member is
+    /// named by its core `@context` term, as
+    /// [`FilterReading::lowered_context_source_filter`] reads it.
     #[must_use]
     pub fn of_context_source_filter(expr: &Expr) -> FilterReading {
-        FilterReading::of(expr, LanguageMatching::TagEquality)
+        FilterReading::lowered_context_source_filter(expr).normal_form()
     }
 
     /// The reading in normal form, which holds for exactly the Entities this
@@ -151,10 +153,11 @@ fn joined_equalities(members: Vec<FilterReading>) -> Vec<FilterReading> {
 mod tests {
     use crate::filter::{
         expression::Expr,
+        instance_metadata::InstanceMetadata,
         language_matching::LanguageMatching,
         parser::parse,
         path::QueryPath,
-        reading::filter_reading::FilterReading,
+        reading::{filter_reading::FilterReading, terminal::Terminal},
         trailing_path::{MemberPath, TrailingPath},
     };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -168,6 +171,49 @@ mod tests {
     /// `q` lowered term for term, before normal form.
     fn lowered(q: &str) -> FilterReading {
         FilterReading::lowered(&parse(q).expect("a clause 4.9 filter"), LanguageMatching::TagEquality)
+    }
+
+    /// The sub-attributes and the terminal of the one term a `csf` reads.
+    fn context_source_term(csf: &str) -> (Vec<String>, Terminal) {
+        let FilterReading::Term(term) = FilterReading::of_context_source_filter(&parse(csf).expect("a clause 4.9 filter")) else {
+            panic!("one term");
+        };
+        (
+            term.sub_attributes().iter().map(|name| name.as_str().to_owned()).collect(),
+            term.terminal().clone(),
+        )
+    }
+
+    /// A `csf` names an instance member by the core `@context` term clause
+    /// 4.5.2.2 writes it by, or by its IRI, when its path ends there; before a
+    /// trailing group, above another name and in an Entity filter the term is
+    /// a sub-attribute name.
+    #[test]
+    fn a_csf_names_an_instance_member_by_its_core_term_where_its_path_ends() {
+        assert_eq!(
+            context_source_term("tier.unitCode==\"C62\""),
+            (vec![], Terminal::InstanceMember(InstanceMetadata::UnitCode))
+        );
+        assert_eq!(
+            context_source_term("tier.since.observedAt>2024-01-01T00:00:00Z"),
+            (vec!["since".to_owned()], Terminal::InstanceMember(InstanceMetadata::ObservedAt))
+        );
+        assert_eq!(
+            context_source_term("tier.\"https://uri.etsi.org/ngsi-ld/unitCode\"==\"C62\""),
+            (vec![], Terminal::InstanceMember(InstanceMetadata::UnitCode))
+        );
+        let (sub_attributes, terminal) = context_source_term("tier.unitCode[x]==5");
+        assert_eq!(sub_attributes, vec!["unitCode".to_owned()]);
+        assert!(matches!(terminal, Terminal::Members(_)), "{terminal:?}");
+        assert_eq!(
+            context_source_term("tier.unitCode.since==1"),
+            (vec!["unitCode".to_owned(), "since".to_owned()], Terminal::OwnValue)
+        );
+        assert_eq!(context_source_term("tier.name==1"), (vec!["name".to_owned()], Terminal::OwnValue));
+        let FilterReading::Term(entity_term) = normal("tier.unitCode==\"C62\"") else {
+            panic!("one term");
+        };
+        assert_eq!(entity_term.terminal(), &Terminal::OwnValue, "an Entity filter is expanded before it is read");
     }
 
     /// A conjunction inside a conjunction is spliced into it.

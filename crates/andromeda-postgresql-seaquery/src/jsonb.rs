@@ -61,6 +61,11 @@ struct JsonbBuildObject;
 #[iden = "jsonb_object_agg"]
 struct JsonbObjectAgg;
 
+/// The `to_jsonb(value)` conversion function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "to_jsonb"]
+struct ToJsonb;
+
 /// The `jsonb_path_exists(target, jsonpath)` predicate function.
 #[derive(Iden, Clone, Copy)]
 #[iden = "jsonb_path_exists"]
@@ -151,6 +156,14 @@ pub fn jsonb_typeof(value: SimpleExpr) -> SimpleExpr {
 #[must_use]
 pub fn jsonb_build_array(element: SimpleExpr) -> SimpleExpr {
     Func::cust(JsonbBuildArray).args([element]).into()
+}
+
+/// JSONB: `to_jsonb(value)` - the JSON document of `value`: a text as a JSON
+/// string, a composite as an object keyed by field name and an array as an
+/// array of such objects.
+#[must_use]
+pub fn to_jsonb(value: SimpleExpr) -> SimpleExpr {
+    Func::cust(ToJsonb).args([value]).into()
 }
 
 /// JSONB: `jsonb_build_object(key, value, ...)` - a JSONB object, taking its

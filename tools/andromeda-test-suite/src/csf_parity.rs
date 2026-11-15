@@ -3,8 +3,9 @@
 //!
 //! Clause 4.9 gives a Query Term one meaning wherever a broker evaluates it, and a `csf` over registrations is
 //! evaluated in two places: in the store for a discovery query (clause 5.10.2.4), and over the registration a write
-//! produced for a Subscription to registrations (clause 5.11.2.4). A corpus states once which registrations each term
-//! selects and expects both answers to be exactly those.
+//! produced for a Subscription to registrations (clause 5.11.2.4). A corpus either states once which registrations
+//! each term selects and expects both answers to be exactly those, or states nothing and expects the two answers to be
+//! one.
 
 use crate::{
     broker::BrokerClient,
@@ -52,13 +53,18 @@ pub struct CsfCase<'c> {
     pub selects: &'c [&'c RegistrationId],
 }
 
+/// The two answers one term of a corpus received.
+#[derive(Debug)]
+struct Answers {
+    /// The registrations Query Context Source Registrations named.
+    queried: HashSet<RegistrationId>,
+    /// The registrations the term's Subscription was notified of.
+    notified: HashSet<RegistrationId>,
+}
+
 /// Subscribes to the registrations of `entity_type` once for each case, with its `csf`, registers `registrations`,
 /// and expects Query Context Source Registrations by `entity_type` with each `csf`, and the notifications each
 /// Subscription receives, to name exactly the registrations the case selects.
-///
-/// Every Subscription exists before the first registration, so each registration is matched against every term. A
-/// notification owed but never delivered shows as a missing registration in the comparison, after the delivery
-/// deadline.
 ///
 /// # Errors
 ///
@@ -70,14 +76,69 @@ pub async fn expect_registration_query_and_subscription_alike(
     registrations: &[CsfRegistration<'_>],
     cases: &[CsfCase<'_>],
 ) -> Result<()> {
+    let terms: Vec<&str> = cases.iter().map(|case| case.csf).collect();
+    let answers = answer_every_term(broker, namespace, entity_type, registrations, &terms, |index, _| {
+        cases.get(index).map_or(0, |case| case.selects.len())
+    })
+    .await?;
+    for (case, answer) in cases.iter().zip(&answers) {
+        let selected: HashSet<RegistrationId> = case.selects.iter().map(|id| (*id).clone()).collect();
+        expect_that!(answer.queried, eq(&selected), "Query Context Source Registrations with csf={}", case.csf);
+        expect_that!(
+            answer.notified,
+            eq(&selected),
+            "a Context Source Registration Subscription with csf={}",
+            case.csf
+        );
+    }
+    Ok(())
+}
+
+/// Subscribes to the registrations of `entity_type` once for each term, registers `registrations`, and expects the
+/// notifications each Subscription receives to name exactly the registrations Query Context Source Registrations by
+/// `entity_type` answers with the same `csf`, whatever those are.
+///
+/// # Errors
+///
+/// Fails when a value cannot be built, a term is not a query, a request is refused or the sink cannot be read.
+pub async fn expect_registration_query_and_subscription_agree(
+    broker: &BrokerClient,
+    namespace: &Namespace,
+    entity_type: &EntityTypeName,
+    registrations: &[CsfRegistration<'_>],
+    terms: &[&str],
+) -> Result<()> {
+    let answers = answer_every_term(broker, namespace, entity_type, registrations, terms, |_, queried| queried.len()).await?;
+    for (term, answer) in terms.iter().zip(&answers) {
+        expect_that!(
+            answer.notified,
+            eq(&answer.queried),
+            "a Context Source Registration Subscription and Query Context Source Registrations with csf={term}"
+        );
+    }
+    Ok(())
+}
+
+/// The two answers each of `terms` receives over `registrations`: every Subscription exists before the first
+/// registration, so each registration is matched against every term, and each endpoint is watched until it holds
+/// the notifications `owed` counts for it, given the term's index and its query answer, and for the quiet window
+/// beyond. A notification owed but never delivered shows as a missing registration after the delivery deadline.
+async fn answer_every_term(
+    broker: &BrokerClient,
+    namespace: &Namespace,
+    entity_type: &EntityTypeName,
+    registrations: &[CsfRegistration<'_>],
+    terms: &[&str],
+    owed: impl Fn(usize, &HashSet<RegistrationId>) -> usize,
+) -> Result<Vec<Answers>> {
     let sink = NotificationSink::start().await?;
-    let mut cleanups = Vec::with_capacity(cases.len() + registrations.len());
-    for (endpoint, case) in cases.iter().enumerate() {
+    let mut cleanups = Vec::with_capacity(terms.len() + registrations.len());
+    for (endpoint, term) in terms.iter().enumerate() {
         let subscription_id = namespace.subscription_id(format!("csf-{endpoint}"))?;
         let subscription = Subscription::registration_builder()
             .id(subscription_id.clone())
             .entities([entity_type.as_str()])
-            .csf(case.csf.parse::<Query>()?)
+            .csf(term.parse::<Query>()?)
             .notification(NotificationParams::builder(Endpoint::builder(sink.endpoint(endpoint)?).accept(NgsiLdMediaType::Json).build()?).build()?)
             .build()?;
         broker.registration_subscriptions().create(&subscription).send().await?;
@@ -101,41 +162,37 @@ pub async fn expect_registration_query_and_subscription_alike(
         // cooldown that opens there holds back a later test's registration naming the same endpoint.
         cleanups.push(Cleanup::of(&with_properties).registration(registered.registration.id().or_fail()?));
     }
-    for case in cases {
+    let mut queried = Vec::with_capacity(terms.len());
+    for term in terms {
         let page = broker
             .with_accept(Accept::new(NgsiLdMediaType::Json))
             .registrations()
             .query()
             .entity_type(entity_type.as_str())
-            .csf(case.csf.parse::<Query>()?)
+            .csf(term.parse::<Query>()?)
             .send()
             .await?;
-        let queried: HashSet<RegistrationId> = page.items().iter().map(|registration| registration.id().clone()).collect();
-        expect_that!(queried, eq(&selected(case)), "Query Context Source Registrations with csf={}", case.csf);
+        queried.push(
+            page.items()
+                .iter()
+                .map(|registration| registration.id().clone())
+                .collect::<HashSet<RegistrationId>>(),
+        );
     }
-    for (endpoint, case) in cases.iter().enumerate() {
-        match sink.wait_for_at_least(endpoint, case.selects.len()).await {
+    for (endpoint, answer) in queried.iter().enumerate() {
+        match sink.wait_for_at_least(endpoint, owed(endpoint, answer)).await {
             Ok(_) | Err(SinkError::TimedOut(_)) => {}
             Err(failure @ SinkError::Server(_)) => return Err(failure.into()),
         }
     }
     sleep(QUIET_WINDOW).await;
-    for (endpoint, case) in cases.iter().enumerate() {
+    let mut answers = Vec::with_capacity(terms.len());
+    for (endpoint, queried) in queried.into_iter().enumerate() {
         let mut notified = HashSet::new();
         for notification in sink.received(endpoint).await? {
             notified.extend(notification.registrations()?.data().iter().map(|registration| registration.id().clone()));
         }
-        expect_that!(
-            notified,
-            eq(&selected(case)),
-            "a Context Source Registration Subscription with csf={}",
-            case.csf
-        );
+        answers.push(Answers { queried, notified });
     }
-    Ok(())
-}
-
-/// The registrations `case` selects.
-fn selected(case: &CsfCase<'_>) -> HashSet<RegistrationId> {
-    case.selects.iter().map(|id| (*id).clone()).collect()
+    Ok(answers)
 }
