@@ -4,13 +4,18 @@
 //! A `csf` filter targets "the name of a Context Source Property member of the
 //! `CSourceRegistration`" (clause 4.9). Those members are not an expanded
 //! entity: each is held under its expanded name as the registration spells it,
-//! a normalized `{"type": "Property", "value": ...}` node, a bare JSON value,
-//! or an array of either, every element of which is one value of the property,
-//! and the value is raw JSON whose keys a compound path addresses verbatim and
-//! whose sub-properties are members under the names the registrant wrote. A
-//! value object whose `@type` declares a clause 4.6.3 time value, by the core
-//! context's term or by its IRI, is that time value (annex C.6), the one
-//! reading a time operand compares with.
+//! and each is one Property, since the instances of clause 4.5.5 are an
+//! Entity's. A JSON object holding a `value` member is the Property's node
+//! (clause 4.5.2.3: normalized when it carries `type`, and a Property inferred
+//! from `value` when it does not): its value is that member, and its other
+//! members are its sub-properties and instance members. Any other JSON (a
+//! scalar, an array, an object holding no `value` such as `management` or a
+//! `GeoJSON` geometry) is the value itself, an array one array value clause 4.9
+//! compares by membership. The value is raw JSON whose keys a compound path
+//! addresses verbatim. A value object whose `@type` declares a clause 4.6.3
+//! time value, by the core context's term or by its IRI, is that time value
+//! (annex C.6), the one reading a time operand compares with. The SQL
+//! rendering of a `csf` reads a stored document by these same rules.
 
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
 use andromeda_ngsi_ld_lexicon::{
@@ -24,7 +29,10 @@ use andromeda_ngsi_ld_query_evaluation::queried_entity::{
     attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode},
     value_item::{LiteralValue, ValueItem},
 };
-use andromeda_ngsi_ld_vocabulary::{compact::classes as compact_classes, keyword};
+use andromeda_ngsi_ld_vocabulary::{
+    compact::{classes as compact_classes, properties as compact_properties},
+    keyword,
+};
 use std::{
     borrow::Cow,
     iter::{empty, once},
@@ -54,40 +62,28 @@ impl<'a> ContextSourceProperties<'a> {
     }
 }
 
-/// One value of a Context Source Property: a normalized node or a bare JSON
-/// value.
+/// A Context Source Property as written: its node, or a bare JSON value.
 #[derive(Clone, Copy, Debug)]
 pub struct PropertyValue<'a>(JsonPiece<'a>);
 
-/// The keys a property node carries its value under, in the order they are
-/// read: the expanded JSON-LD keywords and the compact `value` of a normalized
-/// property.
-const VALUE_KEYS: [&str; 3] = ["@value", "@id", "value"];
-
 impl<'a> PropertyValue<'a> {
-    /// The value the node holds: under its value key, or the node itself when
-    /// it carries none, as a bare JSON value or a structured member such as
-    /// `management` does.
+    /// The value the property holds: the `value` member of its node, or the
+    /// JSON itself when it holds none.
     fn held(self) -> JsonPiece<'a> {
-        match self.0.kind() {
-            JsonKind::Object => VALUE_KEYS.into_iter().find_map(|key| self.0.member(key)).unwrap_or(self.0),
-            JsonKind::Null | JsonKind::Boolean | JsonKind::Number | JsonKind::String | JsonKind::Array => self.0,
-        }
+        self.0.member(compact_properties::VALUE).unwrap_or(self.0)
     }
 
-    /// The one value the node holds as the `q` evaluator reads it: a declared
-    /// time value, written as the node or as its normalized `value`, or the
-    /// raw JSON it holds.
+    /// The one value the property holds as the `q` evaluator reads it: a
+    /// declared time value or the raw JSON it holds.
     fn item(self) -> ValueItem<'a, NoStructuredValue> {
         let held = self.held();
-        declared_time(self.0)
-            .or_else(|| declared_time(held))
-            .map_or(ValueItem::Json(held), |time| ValueItem::Literal(LiteralValue::Time(time)))
+        declared_time(held).map_or(ValueItem::Json(held), |time| ValueItem::Literal(LiteralValue::Time(time)))
     }
 
-    /// The first value of the member `name` of the node.
+    /// The member `name` of the property's node: a sub-property or an instance
+    /// member.
     fn member(self, name: &str) -> Option<PropertyValue<'a>> {
-        member_values(self.0.member(name)?).into_iter().next()
+        self.0.member(name).map(PropertyValue)
     }
 }
 
@@ -103,14 +99,6 @@ fn declared_time(node: JsonPiece<'_>) -> Option<TimeValue> {
     .into_iter()
     .find_map(|(form, term)| (datatype == term || datatype == form.iri().as_str()).then_some(form))?;
     form.parse(&node.member(keyword::VALUE)?.as_str()?).ok()
-}
-
-/// Each value a member holds: every element of an array, or the member itself.
-fn member_values(member: JsonPiece<'_>) -> Vec<PropertyValue<'_>> {
-    match member.elements() {
-        Some(elements) => elements.into_iter().map(PropertyValue).collect(),
-        None => vec![PropertyValue(member)],
-    }
 }
 
 /// A registration property holds raw JSON and never an expanded structured
@@ -134,7 +122,7 @@ impl<'a> QueriedEntity<'a> for ContextSourceProperties<'a> {
     type Instance = PropertyValue<'a>;
 
     fn attribute_instances(self, attribute: &AttributeName) -> impl Iterator<Item = PropertyValue<'a>> {
-        self.member(attribute).map(member_values).into_iter().flatten()
+        self.member(attribute).map(PropertyValue).into_iter()
     }
 
     /// A registration names no entity type of its own.
@@ -202,12 +190,101 @@ mod tests {
         assert!(!holds("\"https://example.com/other\"", &properties));
     }
 
-    /// An array is matched by any of its elements, each read as one value.
+    /// Clause 4.9 compares an array value by membership: an equality holds when
+    /// the operand is included in it, an inequality when it is not, and an
+    /// order or a pattern holds for no array.
     #[test]
-    fn an_array_property_matches_any_element() {
-        let properties = json!({"https://example.com/sourceGroup": ["alpha", "beta"]});
+    fn a_bare_array_is_one_array_value() {
+        let properties = json!({"https://example.com/sourceGroup": ["alpha", "beta"], "https://example.com/rank": [1, 5]});
         assert!(holds("\"https://example.com/sourceGroup\"==\"beta\"", &properties));
         assert!(!holds("\"https://example.com/sourceGroup\"==\"gamma\"", &properties));
+        assert!(!holds("\"https://example.com/sourceGroup\"!=\"alpha\"", &properties));
+        assert!(holds("\"https://example.com/sourceGroup\"!=\"gamma\"", &properties));
+        assert!(!holds("\"https://example.com/sourceGroup\"~=\"^al\"", &properties));
+        assert!(holds("\"https://example.com/rank\"==5", &properties));
+        assert!(!holds("\"https://example.com/rank\">2", &properties));
+        assert!(!holds("\"https://example.com/rank\"==2..6", &properties));
+    }
+
+    /// Clause 4.9 reads "a single element" of an array value, so an element
+    /// that is an array is no element of its own value.
+    #[test]
+    fn an_array_nested_in_an_array_value_is_one_element() {
+        let properties = json!({"https://example.com/nested": [1, [2]]});
+        assert!(holds("\"https://example.com/nested\"==1", &properties));
+        assert!(!holds("\"https://example.com/nested\"==2", &properties));
+        assert!(holds("\"https://example.com/nested\"!=2", &properties));
+    }
+
+    /// Clause 4.5.2.3 infers a Property from `value`, so a concise node is read
+    /// by its value, and an object holding no `value` is the value itself
+    /// whatever `type` it carries.
+    #[test]
+    fn an_object_holding_value_is_the_node_of_the_property() {
+        let properties = json!({
+            "https://example.com/concise": {"value": "x", "https://example.com/since": 2020},
+            "https://example.com/typed": {"type": "Property"}
+        });
+        assert!(holds("\"https://example.com/concise\"==\"x\"", &properties));
+        assert!(holds("\"https://example.com/concise\".\"https://example.com/since\"==2020", &properties));
+        assert!(holds("\"https://example.com/typed\"", &properties));
+        assert!(!holds("\"https://example.com/typed\"==\"Property\"", &properties));
+        assert!(holds("\"https://example.com/typed\"!=\"x\"", &properties));
+        assert!(holds("\"https://example.com/typed\"[type]==\"Property\"", &properties));
+    }
+
+    /// A Context Source Property has no clause 4.5.5 instances, so an array of
+    /// nodes is one array value holding objects, and an empty array is a value
+    /// that includes no operand.
+    #[test]
+    fn an_array_of_nodes_is_one_value_and_an_empty_array_is_present() {
+        let properties = json!({
+            "https://example.com/nodes": [{"type": "Property", "value": "x"}],
+            "https://example.com/empty": []
+        });
+        assert!(holds("\"https://example.com/nodes\"", &properties));
+        assert!(!holds("\"https://example.com/nodes\"==\"x\"", &properties));
+        assert!(holds("\"https://example.com/nodes\"!=\"x\"", &properties));
+        assert!(holds("\"https://example.com/empty\"", &properties));
+        assert!(holds("\"https://example.com/empty\"!=\"x\"", &properties));
+        assert!(!holds("\"https://example.com/empty\"==\"x\"", &properties));
+    }
+
+    /// A JSON-LD value object holds no `value` member, so it is a structured
+    /// value, and an expanded array is one array value holding it.
+    #[test]
+    fn an_expanded_value_is_read_as_the_json_it_is() {
+        let properties = json!({
+            "https://example.com/object": {"@value": "wide"},
+            "https://example.com/expanded": [{"@value": "wide", "https://example.com/since": [{"@value": 2020}]}]
+        });
+        assert!(!holds("\"https://example.com/object\"==\"wide\"", &properties));
+        assert!(holds("\"https://example.com/object\"!=\"wide\"", &properties));
+        assert!(!holds("\"https://example.com/expanded\"==\"wide\"", &properties));
+        assert!(!holds("\"https://example.com/expanded\".\"https://example.com/since\"==2020", &properties));
+    }
+
+    /// An instance member holding an instant (clause 4.8) is the `DateTime`
+    /// its text spells, whether the node holds it bare or as a concise node,
+    /// and a member that is no string is no instance member.
+    #[test]
+    fn an_instance_member_is_read_as_the_text_it_holds() {
+        let properties = json!({"https://example.com/seen": {
+            "value": 1,
+            "https://uri.etsi.org/ngsi-ld/observedAt": "2031-01-01T00:00:00Z",
+            "https://uri.etsi.org/ngsi-ld/unitCode": {"@value": "CEL"},
+            "https://uri.etsi.org/ngsi-ld/datasetId": {"value": "urn:x:d"}
+        }});
+        let observed = "\"https://example.com/seen\".\"https://uri.etsi.org/ngsi-ld/observedAt\"";
+        assert!(holds(&format!("{observed}>2030-01-01T00:00:00Z"), &properties));
+        assert!(!holds(&format!("{observed}==\"2031-01-01T00:00:00Z\""), &properties));
+        let unit = "\"https://example.com/seen\".\"https://uri.etsi.org/ngsi-ld/unitCode\"";
+        assert!(!holds(unit, &properties));
+        assert!(!holds(&format!("{unit}==\"CEL\""), &properties));
+        assert!(holds(
+            "\"https://example.com/seen\".\"https://uri.etsi.org/ngsi-ld/datasetId\"==\"urn:x:d\"",
+            &properties
+        ));
     }
 
     /// A compound path reads the raw JSON value by the key the registrant
@@ -217,17 +294,6 @@ mod tests {
         let properties = json!({"https://example.com/coverage": {"type": "Property", "value": {"region": "north"}}});
         assert!(holds("\"https://example.com/coverage\"[region]==\"north\"", &properties));
         assert!(!holds("\"https://example.com/coverage\"[region]==\"south\"", &properties));
-    }
-
-    /// A sub-property is read through `.`, as clause 4.9 reads a
-    /// sub-attribute.
-    #[test]
-    fn a_sub_property_is_read_through_the_dot_axis() {
-        let properties = json!({"https://example.com/coverage": [{
-            "@value": "wide",
-            "https://example.com/since": [{"@value": 2020}]
-        }]});
-        assert!(holds("\"https://example.com/coverage\".\"https://example.com/since\"==2020", &properties));
     }
 
     /// A sub-property is a member of its property's node beside the node's

@@ -23,5 +23,5 @@ WHERE
       )
       AND "ca"."entity_key" = "entities"."entity_key"
   )
-1: Int 24
+1: Int 27
 2: BigDecimal 5

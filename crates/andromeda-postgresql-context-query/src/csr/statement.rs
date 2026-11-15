@@ -160,7 +160,7 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Condition {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::csr::statement::{CsrQuery, build_csr_query};
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::{
         context_source_pseudonym::ContextSourcePseudonym,
@@ -169,7 +169,7 @@ mod tests {
         time_prop::TimeProp,
     };
     use andromeda_ngsi_ld_query::{
-        csr::compiled::CompiledCsrTemporalFilter,
+        csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
         cursor::PageCursor,
         filter::{language_matching::LanguageMatching, parser, reading::filter_reading::FilterReading},
         geo::query::GeoQuery,

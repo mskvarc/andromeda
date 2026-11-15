@@ -1,8 +1,8 @@
 //! The canonical identity of a compiled query.
 //!
 //! A query is the same query however it was written: `q` terms in another
-//! order, `type=A|B` and `type=B|A`, `attrs` listed in another order. Every consumer that asks whether two requests ask the same thing (a
-//! cursor walk that holds a followed pointer to the query it began with, an
+//! order, `type=A|B` and `type=B|A`, `attrs` listed in another order. Every
+//! consumer that asks whether two requests ask the same thing (a cursor walk that holds a followed pointer to the query it began with, an
 //! Entity Map that holds a follow-up to the request that created it) reads
 //! that sameness off one record built here, from the normal form of each
 //! filter and the expanded selectors, so none of them re-decides what makes
@@ -13,7 +13,9 @@ use crate::{
     filter::{compiled_filter::CompiledFilter, reading::filter_reading::FilterReading},
     geo::query::GeoQuery,
     pattern::Pattern,
+    projection::projected_members::{ProjectedMembers, ScopeRetention},
     scope::query::ScopeQuery,
+    temporal::compiled::CompiledTemporalQuery,
     type_selection::grammar::TypeExpr,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -50,9 +52,12 @@ pub enum QueryIdentityError {
 
 /// What a compiled query selects, borrowed from its compiled form.
 ///
-/// Presentation, paging and the temporal window are not part of it: they decide
-/// how a result is shown or which part of it a request reads, never which
-/// entities it holds. The serialised form of this record, its derived
+/// Presentation and paging are not part of it: they decide how a result is
+/// shown or which part of it a request reads. Nor is the temporal window,
+/// which clause 5.7.4.4 step S1 does read to select Entities: clause 5.5.14
+/// excepts the temporal query from a follow-up under an Entity Map, and the
+/// cursor digest carries the window beside this record. The serialised form of
+/// this record, its derived
 /// `Serialize`, is the canonical one, so two queries have one identity exactly
 /// when [`QueryIdentity::record`] gives the same bytes.
 #[derive(Debug, Serialize)]
@@ -69,6 +74,50 @@ pub struct QueryIdentity<'a> {
     scope_q: Option<&'a ScopeQuery>,
     /// The context source filter in normal form.
     csf: Option<&'a FilterReading>,
+    /// What an Entity has to carry for the `pick` or `omit` to leave it a
+    /// member: an Entity they would empty is not selected, so they decide
+    /// which Entities a query holds.
+    members: MembersIdentity<'a>,
+}
+
+/// What an Entity has to carry for a projection to leave it a member, its
+/// Attribute names sorted and deduplicated.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum MembersIdentity<'a> {
+    /// Every Entity keeps a member.
+    Unconditional,
+    /// One of these Attributes, or a `scope` the `pick` keeps.
+    AnyOf {
+        /// The Attributes the `pick` keeps.
+        attributes: Vec<&'a IriBuf>,
+        /// Whether the `pick` keeps `scope`.
+        scope: ScopeRetention,
+    },
+    /// An Attribute besides these, or a `scope` the `omit` spares.
+    AnyBesides {
+        /// The Attributes the `omit` removes.
+        attributes: Vec<&'a IriBuf>,
+        /// Whether the `omit` spares `scope`.
+        scope: ScopeRetention,
+    },
+}
+
+impl<'a> MembersIdentity<'a> {
+    /// The identity of `members`.
+    fn of(members: &'a ProjectedMembers) -> MembersIdentity<'a> {
+        match members {
+            ProjectedMembers::Unconditional => MembersIdentity::Unconditional,
+            ProjectedMembers::AnyOf { attributes, scope } => MembersIdentity::AnyOf {
+                attributes: sorted_attrs(attributes),
+                scope: *scope,
+            },
+            ProjectedMembers::AnyBesides { attributes, scope } => MembersIdentity::AnyBesides {
+                attributes: sorted_attrs(attributes),
+                scope: *scope,
+            },
+        }
+    }
 }
 
 /// What the entity selectors of a query fix, by the scope of its identifiers.
@@ -172,6 +221,21 @@ impl<'a> QueryIdentity<'a> {
             geo: selection.geo.as_ref(),
             scope_q: selection.scope_q.as_ref(),
             csf,
+            members: MembersIdentity::of(&selection.projected_members),
+        }
+    }
+
+    /// The identity of the temporal query `query` compiles, whose context
+    /// source filter reads as `csf`, with the identifiers of `scope`.
+    ///
+    /// A temporal query narrows the Attributes it represents by its `attrs`
+    /// (clause 5.7.4.4), which it holds with its instance selection rather than
+    /// with the entities it selects, so the identity takes them from there.
+    #[must_use]
+    pub fn of_temporal(query: &'a CompiledTemporalQuery, csf: Option<&'a FilterReading>, scope: IdentifierScope) -> QueryIdentity<'a> {
+        QueryIdentity {
+            attrs: sorted_attrs(&query.instances.attr_filter),
+            ..QueryIdentity::of(&query.entities, csf, scope)
         }
     }
 
@@ -186,6 +250,7 @@ impl<'a> QueryIdentity<'a> {
             geo: None,
             scope_q: None,
             csf: None,
+            members: MembersIdentity::Unconditional,
         }
     }
 
@@ -206,10 +271,12 @@ mod tests {
         filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading},
         geo::query::GeoQuery,
         pattern::Pattern,
+        projection::projected_members::{ProjectedMembers, ScopeRetention},
         query_identity::{IdentifierScope, QueryIdentity},
         scope::query::ScopeQuery,
         type_selection::grammar::TypeExpr,
     };
+    use andromeda_architecture_checks::assert_named_snapshot;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::identifier::Identifier;
     use iri_rs::IriBuf;
@@ -265,14 +332,14 @@ mod tests {
         }
     }
 
-    /// QI-1: the terms of a conjunction are a set.
+    /// The terms of a conjunction are a set.
     #[test]
     fn q_terms_written_in_another_order_have_one_identity() {
         assert_eq!(kept(&filtered("a==1;b==2")), kept(&filtered("b==2;a==1")));
         assert_eq!(excepted(&filtered("a==1;b==2")), excepted(&filtered("b==2;a==1")));
     }
 
-    /// QI-2.
+    /// A term with another value changes the identity.
     #[test]
     fn q_terms_with_another_value_have_another_identity() {
         assert_ne!(kept(&filtered("a==1")), kept(&filtered("a==2")));
@@ -384,6 +451,25 @@ mod tests {
         assert_ne!(kept(&first), kept(&EntitySelection::builder().attrs(vec![iri("speed")]).build()));
     }
 
+    /// An Entity a `pick` would empty is not selected, so the Attributes it
+    /// keeps decide the Entities a query holds, in either scope.
+    #[test]
+    fn the_attributes_a_pick_keeps_are_part_of_the_identity() {
+        let picking = |attributes: Vec<IriBuf>| {
+            EntitySelection::builder()
+                .projected_members(ProjectedMembers::AnyOf {
+                    attributes,
+                    scope: ScopeRetention::Removed,
+                })
+                .build()
+        };
+        let speed_and_brand = picking(vec![iri("speed"), iri("brand")]);
+        assert_eq!(kept(&speed_and_brand), kept(&picking(vec![iri("brand"), iri("speed")])));
+        assert_ne!(kept(&speed_and_brand), kept(&picking(vec![iri("brand")])));
+        assert_ne!(excepted(&speed_and_brand), excepted(&picking(vec![iri("brand")])));
+        assert_ne!(kept(&speed_and_brand), kept(&EntitySelection::builder().build()));
+    }
+
     #[test]
     fn a_changed_geo_query_changes_the_identity() {
         let ring = "[[[0,0],[1,0],[1,1],[0,1],[0,0]]]";
@@ -432,6 +518,40 @@ mod tests {
             Some(TypeExpr::Type("https://other.example/Vehicle".parse().expect("a valid IRI"))),
         )]);
         assert_ne!(excepted(&first), excepted(&second));
+    }
+
+    /// Every issued cursor digest and every stored Entity Map fingerprint
+    /// hashes this record, so a change to the shape of any type it writes
+    /// invalidates both; the snapshots make such a change one reviewed diff.
+    #[test]
+    fn the_record_of_a_query_is_fixed() {
+        let selection = EntitySelection::builder()
+            .selectors(vec![
+                selector(&[2, 1], None, Some(TypeExpr::Or(vec![type_of("Car"), type_of("Bus")]))),
+                selector(&[], Some("^urn:ngsi-ld:Vehicle:.*"), Some(type_of("Truck"))),
+            ])
+            .attrs(vec![iri("speed"), iri("brand")])
+            .q(Some(CompiledFilter::new(
+                parse("speed>50;brand==\"x\",\"y\"|seen==2024-01-01T00:00:00Z").expect("a clause 4.9 filter"),
+                LanguageMatching::TagEquality,
+            )))
+            .geo(Some(within("[[[0,0],[1,0],[1,1],[0,1],[0,0]]]")))
+            .scope_q(Some(ScopeQuery::parse("/Madrid/#").expect("a scope query")))
+            .projected_members(ProjectedMembers::AnyOf {
+                attributes: vec![iri("speed")],
+                scope: ScopeRetention::Removed,
+            })
+            .build();
+        let csf = FilterReading::of_context_source_filter(&parse("tier==\"gold\"").expect("a clause 4.9 filter"));
+        let written = |scope: IdentifierScope| {
+            String::from_utf8(QueryIdentity::of(&selection, Some(&csf), scope).record().expect("a writable identity")).expect("a JSON record")
+        };
+        assert_named_snapshot!("query-identity-record-kept", written(IdentifierScope::Kept));
+        assert_named_snapshot!("query-identity-record-excepted", written(IdentifierScope::Excepted));
+        let retrieval = QueryIdentity::of_retrieval(Some(&type_of("Car")), &[iri("speed")])
+            .record()
+            .expect("a writable identity");
+        assert_named_snapshot!("query-identity-record-retrieval", String::from_utf8(retrieval).expect("a JSON record"));
     }
 
     #[test]

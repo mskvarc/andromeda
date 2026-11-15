@@ -1,4 +1,4 @@
-//! A local value observed before the window matches, whatever a source deleted.
+//! A local value observed before the window selects nothing, whatever a source deleted.
 
 use andromeda_test_suite::{
     broker,
@@ -28,7 +28,7 @@ use ngsi_ld::{
 /// Clause: 5.7.4.4, 4.11, 4.9
 #[gtest]
 #[tokio::test]
-async fn o_fed_tmp_7434_a_local_value_observed_before_the_window_matches_whatever_a_source_deleted() -> Result<()> {
+async fn o_fed_tmp_7434_a_local_value_observed_before_the_window_selects_nothing_whatever_a_source_deleted() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let source = ContextSource::start().await?;

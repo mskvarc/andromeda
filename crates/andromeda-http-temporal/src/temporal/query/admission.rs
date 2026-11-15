@@ -1,9 +1,10 @@
 //! Admitting a decoded temporal query before it runs.
 //!
 //! Admission is everything that can be decided about a query before it reaches
-//! the store: resolving the Entity Map it runs under, confining a non-federating
-//! branch to the local scope, validating it, expanding the filters the registrations are selected by, and holding it
-//! to the clause 5.7.4.4 ordering rule.
+//! the store: confining a non-federating branch to the local scope, expanding
+//! the filters the registrations are selected by, deciding the element page,
+//! resolving the Entity Map it runs under, validating it, and holding it to the
+//! clause 5.7.4.4 ordering rule.
 
 use crate::{
     state::TemporalRouteServices,
@@ -13,7 +14,11 @@ use crate::{
         ProblemResponse,
         ResultInstanceExt,
         TemporalQueryParameters,
-        query::request_entity_map::{open_window, resolve_query_map},
+        query::{
+            page::{PageSource, QueriedPage},
+            request_entity_map::resolve_query_map,
+            written_query::WrittenQuery,
+        },
     },
 };
 use andromeda_context_space::context_target::ContextTarget;
@@ -34,15 +39,14 @@ use andromeda_http_headers::via::Via;
 use andromeda_jsonld::user_context_admission::AdmittedContext;
 use andromeda_ngsi_ld_query::{
     ordering::parameters::OrderingParameters,
-    projection::attrs_selection::AttrsAdmission,
     query_identity::{IdentifierScope, QueryIdentity},
-    temporal::compiled::CompiledTemporalQuery,
 };
 use andromeda_ngsi_ld_request::{
     error::ParameterError,
+    pagination::page_pointers::PagePointers,
     query::temporal::{admitted::AdmittedTemporalRequest, operation::TemporalQueryOperation},
 };
-use andromeda_temporal::{query_reading::QueryReading, service::TemporalService};
+use andromeda_temporal::query_reading::QueryReading;
 use axum::http::Uri;
 
 /// One temporal query, decoded and admitted: what the protocol headers
@@ -63,9 +67,8 @@ pub(super) struct AdmittedQuery {
     /// languageMap keys, locally and at every source it reaches, and the
     /// warning a fallback to tag equality carries.
     pub(super) language: NegotiatedLanguageTargeting,
-    /// The canonical identity of the query as the client wrote it, which a walk
-    /// over the request's URI is paged under (clause 5.5.9.1).
-    pub(super) walk_identity: Vec<u8>,
+    /// The element page the query answers with (clause 6.3.10).
+    pub(super) page: QueriedPage,
 }
 
 impl AdmittedQuery {
@@ -79,26 +82,33 @@ impl AdmittedQuery {
 }
 
 /// Hold the query to every rule that can be decided before it runs, admitting
-/// its `q` under the broker's complexity limits and target-language level, and
-/// resolve the Entity Map it runs under.
+/// its `q` under the broker's complexity limits and target-language level,
+/// decide its element page and resolve the Entity Map it runs under.
 ///
 /// A branch that cannot federate is confined to the local scope first: clause
 /// 5.5.15 makes a Snapshot "implicitly limited to a local scope ... overriding
 /// setting a local scope to false".
 ///
+/// The page is decided before the Entity Map is resolved and before any
+/// context source is contacted, so a pagination parameter the collection
+/// cannot honour is refused first. A walk over the request's URI is paged
+/// under the identity of the query as the client wrote it, so its page is
+/// decided once that query compiles.
+///
 /// # Errors
 ///
-/// The classified failure of resolving the Entity Map, of the clause 5.7.4.4
+/// The classified failure of expanding the registration filters, of the
+/// pagination policy, of resolving the Entity Map, of the clause 5.7.4.4
 /// validation, of the clause 5.5.6 `q` complexity limits and the broker's
-/// `q_target_languages` level, of expanding the registration filters, of the
-/// clause 5.7.4.4 ordering rule, and of the levels of the sources the query
-/// reaches.
+/// `q_target_languages` level, of the clause 5.7.4.4 ordering rule, and of the
+/// levels of the sources the query reaches.
 pub(super) async fn admit_request(
     state: &TemporalRouteServices,
     target: &ContextTarget,
     context: &AdmittedContext,
     protocol: NgsiLdProtocolHeaders,
     mut params: TemporalQueryParameters,
+    page: PageSource,
     instance: &Uri,
 ) -> Result<(AdmittedTemporalRequest, AdmittedQuery), ProblemResponse> {
     params.lang = params.lang.take().or(protocol.language_filter);
@@ -107,17 +117,22 @@ pub(super) async fn admit_request(
     }
     let service = &state.temporal;
     let registration_filters = registration_filters(state, context, &params, instance).await?;
-    // The query as the client wrote it: an Entity Map narrows its identifiers
-    // below, and split entities defer its filters, after this identity is taken.
-    let written = written_query(service, context, &params, instance).await?;
-    let walk_identity = QueryIdentity::of(&written.entities, registration_filters.csf(), IdentifierScope::Kept)
-        .record()
-        .with_instance(instance)?;
+    // clone: the query as written is read beside the request's own parameters, which an Entity Map narrows
+    let written = WrittenQuery::new(service, context, params.clone(), instance);
+    let page = match page {
+        PageSource::Decided(page) => page,
+        PageSource::OverRequestUri(pagination) => {
+            let identity = QueryIdentity::of_temporal(written.compiled().await?, registration_filters.csf(), IdentifierScope::Kept)
+                .record()
+                .with_instance(instance)?;
+            QueriedPage::requested(pagination.identified(&identity), &params, PagePointers::OverRequestUri).with_instance(instance)?
+        }
+    };
     let map_use = resolve_query_map(
         &state.entity_maps,
         target,
         &mut params,
-        &written.entities,
+        &written,
         registration_filters.csf(),
         protocol.entity_map.as_ref(),
         instance,
@@ -145,44 +160,9 @@ pub(super) async fn admit_request(
         map_use,
         registration_filters,
         language,
-        walk_identity,
+        page,
     };
     Ok((params, admitted))
-}
-
-/// The compilation of `params` as the client wrote them, under the broker's own
-/// language targeting.
-///
-/// A follow-up under an Entity Map may omit the temporal window, which the
-/// identity does not carry, so an omitted one is stood for the open window the
-/// compilation needs.
-///
-/// # Errors
-///
-/// The classified failure of admitting and compiling the query.
-async fn written_query(
-    service: &TemporalService,
-    context: &ContextSpec,
-    params: &TemporalQueryParameters,
-    instance: &Uri,
-) -> Result<CompiledTemporalQuery, ProblemResponse> {
-    // clone: the identity is taken of the query as written, while the request's own parameters are narrowed to the map afterwards
-    let mut written = params.clone();
-    open_window(&mut written).with_instance(instance)?;
-    let admitted = written
-        .admit(TemporalQueryOperation::Query, service.linked_retrieval(), service.filter_admission())
-        .with_instance(instance)?;
-    service
-        .compile_temporal_query(
-            &admitted,
-            QueryReading {
-                context,
-                language_targeting: service.language_targeting(),
-            },
-            AttrsAdmission::ReifiedScopeAdmitted,
-        )
-        .await
-        .with_instance(instance)
 }
 
 /// The query's context source filter and geoquery expanded under the

@@ -83,8 +83,8 @@ impl<'r> GatheringRequest<'r> {
 
 /// Gather the Scope every part holds in force when the window opens, of every
 /// entity a source answered the window or a probe with; `None` unless the
-/// query is split, distributed, carries a scope filter, and its window has an
-/// instance in effect before it.
+/// query is split, distributed, carries a scope filter, and its window opens
+/// where a Scope set before it may still be in force.
 ///
 /// # Errors
 ///

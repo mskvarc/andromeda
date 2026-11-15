@@ -4,12 +4,13 @@
 //! members the projection defines, and an Entity it would reduce to no member at
 //! all is not selected (`ProjectedMembers`). What the temporal representation of
 //! an Entity carries is decided by the steps of clause 5.7.4.4 that precede the
-//! projection: the window and the `attrs` of step S1 and the `datasetId` of step
-//! S8. So the Attribute half of the criterion asks whether any instance stage 2
-//! would represent belongs to an Attribute the projection keeps, reusing the
-//! very filter stage 2 reads its rows with; and the `scope` half, when the
-//! projection keeps `scope`, whether any scope event stage 2 would represent
-//! overlaps the window.
+//! projection: the window and the `attrs` of step S1, the instances of an
+//! Attribute that `q` or the geo-query names reduced to those meeting them, and
+//! the `datasetId` of step S8. So the Attribute half of the criterion asks
+//! whether any instance stage 2 would represent belongs to an Attribute the
+//! projection keeps, reusing the very filter stage 2 reads its rows with; and
+//! the `scope` half, when the projection keeps `scope`, whether any scope event
+//! stage 2 would represent overlaps the window.
 
 use crate::{alias::Ah, history::represented_instances, scope_history::scope_is_selected};
 use andromeda_ngsi_ld_query::{

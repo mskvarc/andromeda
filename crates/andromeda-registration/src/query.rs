@@ -310,14 +310,14 @@ mod tests {
         Ok(compiled.attrs.iter().map(|iri| iri.as_str().to_owned()).collect())
     }
 
-    /// CP-1, clause 5.10.2.4: the attributes the `q` names join the ones a
+    /// Clause 5.10.2.4: the attributes the `q` names join the ones a
     /// registration is matched on, expanded as every pipeline expands them.
     #[tokio::test]
     async fn a_discovery_q_names_its_expanded_attributes() {
         pretty_assertions::assert_eq!(q_attributes("speed>5").await.expect("admitted"), vec![SPEED.as_str()]);
     }
 
-    /// CP-2 and CP-9: clause 5.10.2.3 takes no `expandValues` or `jsonKeys`,
+    /// Clause 5.10.2.3 takes no `expandValues` or `jsonKeys`,
     /// and an operand or a member never names an attribute, so a discovery
     /// query collects the attribute alone.
     #[tokio::test]
@@ -326,7 +326,7 @@ mod tests {
         pretty_assertions::assert_eq!(q_attributes("jp[value]==\"x\"").await.expect("admitted"), vec![JP.as_str()]);
     }
 
-    /// CP-3, clause 5.5.6: a discovery `q` past the broker's comparison limit
+    /// Clause 5.5.6: a discovery `q` past the broker's comparison limit
     /// is too complex to resolve, as in every other request pipeline.
     #[tokio::test]
     async fn a_discovery_q_past_the_comparison_limit_is_too_complex() {
@@ -338,7 +338,7 @@ mod tests {
         );
     }
 
-    /// CP-4, clause 4.9: a full language tag is outside the specification's
+    /// Clause 4.9: a full language tag is outside the specification's
     /// grammar, so discovery refuses it at that level as every request
     /// pipeline does.
     #[tokio::test]

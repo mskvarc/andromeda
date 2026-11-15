@@ -145,15 +145,20 @@ const E14_ATTRIBUTES: &[CorpusAttribute] = &[
 ];
 /// `vp` the term `Male`.
 const E15_ATTRIBUTES: &[CorpusAttribute] = &[attribute!("vp", VocabProperty("Male"))];
-/// `lp` the list 1, 2 and `jp` the JSON `{"value":"x"}`.
+/// `lp` the list 1, 2, `jp` the JSON `{"value":"x"}` and `jn` the JSON
+/// `{"a":[1,[2]]}`.
 const E16_ATTRIBUTES: &[CorpusAttribute] = &[
     attribute!("lp", ListProperty(&[Integer(1), Integer(2)])),
     attribute!("jp", JsonProperty("{\"value\":\"x\"}")),
+    attribute!("jn", JsonProperty("{\"a\":[1,[2]]}")),
 ];
-/// `link` to E1 and `link2` to E6.
+/// `link` to E1, `link2` to E6, `llink` a `ListRelationship` to E1 and `hm`
+/// a Relationship to `http://example.com/a` and `urn:x:9`.
 const E17_ATTRIBUTES: &[CorpusAttribute] = &[
     attribute!("link", Relationship(&[Entity(CorpusEntity::E1)])),
     attribute!("link2", Relationship(&[Entity(CorpusEntity::E6)])),
+    attribute!("llink", ListRelationship(&[Entity(CorpusEntity::E1)])),
+    attribute!("hm", Relationship(&[Identifier("http://example.com/a"), Identifier("urn:x:9")])),
 ];
 /// `n1` the one-element array 10.
 const E18_ATTRIBUTES: &[CorpusAttribute] = &[attribute!("n1", Property(&[Integer(10)]))];
@@ -227,8 +232,8 @@ mod tests {
         assert_eq!(
             written_terms(),
             [
-                "n", "s", "b", "other", "r", "rl", "l", "d", "tm", "f", "g", "m", "k", "src", "addr", "h", "hp", "location", "vp", "lp", "jp", "link", "link2",
-                "n1", "t"
+                "n", "s", "b", "other", "r", "rl", "l", "d", "tm", "f", "g", "m", "k", "src", "addr", "h", "hp", "location", "vp", "lp", "jp", "jn", "link",
+                "link2", "llink", "hm", "n1", "t"
             ]
         );
     }

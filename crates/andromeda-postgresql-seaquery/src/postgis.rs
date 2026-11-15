@@ -298,20 +298,13 @@ pub fn st_as_ewkb(geometry: SimpleExpr) -> SimpleExpr {
     Func::cust(PostgisFunction::AsEwkb).args([geometry]).into()
 }
 
-/// `PostGIS`: `ST_AsGeoJSON(geometry, 15)`, the `GeoJSON` geometry object of
-/// a geometry (IETF RFC 7946 section 3.1) as text.
-///
-/// Fifteen decimal digits, the most `PostGIS` writes, keep every coordinate a
-/// double holds to the precision it is compared at.
+/// `PostGIS`: `ST_AsGeoJSON(geometry, decimals)`, the `GeoJSON` geometry
+/// object of a geometry (IETF RFC 7946 section 3.1) as text, each coordinate
+/// rounded to `decimals` places. `PostGIS` writes at most fifteen.
 #[must_use]
-pub fn st_as_geojson(geometry: SimpleExpr) -> SimpleExpr {
-    Func::cust(PostgisFunction::AsGeoJson)
-        .args([geometry, int_literal(GEOJSON_DECIMAL_DIGITS)])
-        .into()
+pub fn st_as_geojson(geometry: SimpleExpr, decimals: u8) -> SimpleExpr {
+    Func::cust(PostgisFunction::AsGeoJson).args([geometry, int_literal(i64::from(decimals))]).into()
 }
-
-/// The decimal digits [`st_as_geojson`] writes a coordinate with.
-const GEOJSON_DECIMAL_DIGITS: i64 = 15;
 
 /// `PostGIS`: `ST_AsText(geometry)` - the well-known text of a geometry.
 #[must_use]
@@ -343,8 +336,30 @@ pub fn st_zmflag(geometry: SimpleExpr) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use crate::postgis::{
+        bounding_box_contains,
+        bounding_boxes_overlap,
+        exact_contains,
+        exact_dwithin,
+        exact_equals,
+        exact_intersects,
+        exact_overlaps,
+        exact_within,
+        judged_geometry,
+        repaired_when_invalid,
+        st_as_text,
+        st_collect,
+        st_collect_rows,
+        st_disjoint,
+        st_envelope,
+        st_geom_from_text_wgs84,
+        st_make_envelope,
+        st_point_wgs84,
+        st_zmflag,
+        unindexed_bounding_boxes_overlap,
+        validated_geom_from_ewkb,
+    };
+    use sea_query::{Expr, PostgresQueryBuilder, Query, SimpleExpr};
 
     fn render(expr: SimpleExpr) -> String {
         Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)

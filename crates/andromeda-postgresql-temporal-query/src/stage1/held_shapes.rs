@@ -4,7 +4,8 @@
 //! Clause 5.7.4.4 refuses an aggregated representation when a requested
 //! Attribute of the selected Entities is not eligible for a requested method,
 //! and the representation aggregates only the instances inside the temporal
-//! window on its axis and of the datasets `datasetId` names (step S8). The
+//! window on its axis, of an Attribute that `q` or the geo-query names those
+//! meeting them, and of the datasets `datasetId` names (step S8). The
 //! statement looks for each combination among exactly those instances, through
 //! the predicate the aggregation statement reads them with, and stops at the
 //! first instance carrying it.
@@ -233,12 +234,22 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         dataset::DatasetSelector,
-        temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
+        filter::{compiled_filter::CompiledFilter, language_matching::LanguageMatching, parser},
+        temporal::{
+            compiled::CompiledTemporalQuery,
+            contributed_entities::{ContributedEntities, ContributedRendering},
+            window::TimeInterval,
+        },
     };
     use andromeda_postgresql_query::{history_source::HistoryBranch, query_names::QueryNames};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
-    use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, attribute_name_key::AttributeNameKey, recorded_shape::RecordedShape};
-    use sea_query::{Alias, IntoIden, SelectStatement};
+    use andromeda_postgresql_stored_values::{
+        attribute_kind::AttributeKind,
+        attribute_name_key::AttributeNameKey,
+        recorded_shape::RecordedShape,
+        resolved_names::ResolvedNames,
+    };
+    use sea_query::{Alias, IntoIden, PostgresQueryBuilder, SelectStatement};
 
     /// A `String` recorded as a `Property` under the attribute keyed 7.
     fn string_load() -> ShapeCombination {
@@ -379,6 +390,29 @@ mod tests {
             &[string_load()],
         );
         assert_statement_snapshot!("held-shapes-a-queued-branch-adds-every-queued-entity-to-the-candidates", statement);
+    }
+
+    /// Clause 5.7.4.4 aggregates the instances that meet `q`, so a query whose
+    /// `q` names the attribute looks among those, an Entity a Context Source
+    /// contributed among all of its own, named by the identifier the keyed
+    /// read is narrowed to.
+    #[test]
+    fn a_query_with_a_q_looks_among_the_instances_meeting_it() {
+        let load = "https://example.com/load";
+        let names = QueryNames {
+            attributes: ResolvedNames::from_pairs([(load.parse().expect("valid attribute name"), AttributeNameKey::from(7))]),
+            ..QueryNames::default()
+        };
+        let mut compiled = after_2024(TimeProp::Observed);
+        compiled.entities.q = Some(CompiledFilter::new(
+            parser::parse(&format!("\"{load}\"==\"heavy\"")).expect("q parses"),
+            LanguageMatching::TagEquality,
+        ));
+        compiled.contributed = ContributedEntities::new([truck()], ContributedRendering::Merged);
+        let statement = rendered(&HistoryBranch::live_recorded(), ShapeHolders::Selected, &names, &compiled, &[string_load()]);
+        let text = statement.to_string(PostgresQueryBuilder);
+        assert!(!text.contains("\"ah\".\"entity_id\""), "{text}");
+        assert_statement_snapshot!("held-shapes-a-query-with-a-q-looks-among-the-instances-meeting-it", statement);
     }
 
     #[test]

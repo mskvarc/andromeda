@@ -62,22 +62,6 @@ pub(crate) struct LocalRead<'page> {
     pub(crate) merged: Option<&'page PageWindow>,
 }
 
-impl PageSource {
-    /// The element page of `params`, the query admitted, under the identity of
-    /// the query as the client wrote it.
-    ///
-    /// # Errors
-    ///
-    /// Returns whatever the pagination policy refuses (clauses 5.5.9 and
-    /// 6.3.10).
-    pub(crate) fn decided(self, identity: &[u8], params: &TemporalQueryParameters) -> Result<QueriedPage, ParameterError> {
-        match self {
-            PageSource::Decided(page) => Ok(page),
-            PageSource::OverRequestUri(pagination) => QueriedPage::requested(pagination.identified(identity), params, PagePointers::OverRequestUri),
-        }
-    }
-}
-
 impl QueriedPage {
     /// The element page `window` selects, counted as `count` says, pointing at
     /// its neighbours as `pointing` says.
@@ -88,9 +72,9 @@ impl QueriedPage {
     /// The element page `params` asks for under `pagination`, on a binding
     /// whose pointers `pointers` describes.
     ///
-    /// Decided before anything runs, so a pagination parameter the collection
-    /// cannot honour is refused before a single context source is contacted.
-    /// It pages the element dimension only, never the temporal window.
+    /// Decided before any context source is contacted, so a pagination
+    /// parameter the collection cannot honour is refused before one is. It
+    /// pages the element dimension only, never the temporal window.
     ///
     /// # Errors
     ///

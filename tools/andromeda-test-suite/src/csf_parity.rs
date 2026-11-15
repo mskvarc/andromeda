@@ -27,6 +27,10 @@ use std::{collections::HashSet, time::Duration};
 use tokio::time::sleep;
 
 /// How long every endpoint is watched for a notification beyond the ones owed.
+///
+/// One Subscription's notifications are not delivered in commit order, so no
+/// barrier registration created last can close its window: a registration the
+/// term does not select is held to have notified nobody once the window passes.
 const QUIET_WINDOW: Duration = Duration::from_secs(3);
 
 /// One registration of a corpus: the registration the model writes, and the Context Source Properties it carries
@@ -67,7 +71,7 @@ pub async fn expect_registration_query_and_subscription_alike(
     cases: &[CsfCase<'_>],
 ) -> Result<()> {
     let sink = NotificationSink::start().await?;
-    let mut subscription_ids = Vec::with_capacity(cases.len());
+    let mut cleanups = Vec::with_capacity(cases.len() + registrations.len());
     for (endpoint, case) in cases.iter().enumerate() {
         let subscription_id = namespace.subscription_id(format!("csf-{endpoint}"))?;
         let subscription = Subscription::registration_builder()
@@ -77,10 +81,11 @@ pub async fn expect_registration_query_and_subscription_alike(
             .notification(NotificationParams::builder(Endpoint::builder(sink.endpoint(endpoint)?).accept(NgsiLdMediaType::Json).build()?).build()?)
             .build()?;
         broker.registration_subscriptions().create(&subscription).send().await?;
-        subscription_ids.push(subscription_id);
+        // Subscriptions are deleted when the test ends, however it ends, so none outlives it to notify another test's
+        // sink.
+        cleanups.push(Cleanup::of(broker).registration_subscription(&subscription_id));
     }
     let with_properties = broker.with_context(core_context_list()?)?.with_context_delivery(ContextDelivery::LdJsonBody);
-    let mut cleanups = Vec::with_capacity(registrations.len());
     for registered in registrations {
         let mut document = UncheckedDocument::try_from(registered.registration.render())?;
         for (name, value) in registered.properties {
@@ -126,9 +131,6 @@ pub async fn expect_registration_query_and_subscription_alike(
             "a Context Source Registration Subscription with csf={}",
             case.csf
         );
-    }
-    for subscription_id in &subscription_ids {
-        broker.registration_subscriptions().delete(subscription_id).send().await?;
     }
     Ok(())
 }

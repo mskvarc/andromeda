@@ -484,7 +484,7 @@ WHERE
                             ) = ('number')
                           ) THEN (
                             COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::numeric WHEN (jsonb_typeof(COALESCE("dm"."value" -> ('@value'), "dm"."value")) = ('string') AND COALESCE("dmt"."name", "dm"."value" ->> ('@type')) IN ('http://www.w3.org/2001/XMLSchema#decimal', 'http://www.w3.org/2001/XMLSchema#integer', 'http://www.w3.org/2001/XMLSchema#long', 'http://www.w3.org/2001/XMLSchema#int', 'http://www.w3.org/2001/XMLSchema#short', 'http://www.w3.org/2001/XMLSchema#byte', 'http://www.w3.org/2001/XMLSchema#nonNegativeInteger', 'http://www.w3.org/2001/XMLSchema#positiveInteger', 'http://www.w3.org/2001/XMLSchema#nonPositiveInteger', 'http://www.w3.org/2001/XMLSchema#negativeInteger', 'http://www.w3.org/2001/XMLSchema#unsignedLong', 'http://www.w3.org/2001/XMLSchema#unsignedInt', 'http://www.w3.org/2001/XMLSchema#unsignedShort', 'http://www.w3.org/2001/XMLSchema#unsignedByte', 'http://www.w3.org/2001/XMLSchema#float', 'http://www.w3.org/2001/XMLSchema#double') AND (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}')) <> ('NaN') AND pg_input_is_valid(COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'), 'numeric')) THEN (COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::numeric END) = $10))), FALSE)) AND "qh"."value_kind" <> (0) AND "qh"."observed_at" IS NOT NULL AND "qh"."observed_at" >= $11 AND "qh"."observed_at" < $12))
-1: Int 22
+1: Int 23
 2: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'
 3: ChronoDateTimeUtc '2025-01-01 00:00:00.000000 +00:00'
 4: Int 1

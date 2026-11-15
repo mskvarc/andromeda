@@ -1,4 +1,4 @@
-//! A cursor followed with another limit beside a q written in another order is admitted.
+//! A cursor followed with another limit or an added count is admitted.
 
 use andromeda_test_suite::{
     broker,
@@ -10,13 +10,16 @@ use andromeda_test_suite::{
 };
 use googletest::prelude::*;
 use http::{HeaderValue, StatusCode, header::ACCEPT};
-use ngsi_ld::http::{
-    ResponseHead,
-    headers::{Link, RelationType},
+use ngsi_ld::{
+    http::{
+        ResponseHead,
+        headers::{Link, RelationType},
+    },
+    query::q,
 };
 
-/// Pins: Query Entities following a next pointer with another `limit` answers the following page of that size, also
-/// when `q` is written in another order and `count` is added
+/// Pins: Query Entities following a next pointer with another `limit` answers the following page of that size, and
+/// one with `count` added answers the following page
 /// Clause: 4.9, 5.5.9.1, 6.3.10
 #[gtest]
 #[tokio::test]
@@ -24,7 +27,8 @@ async fn a_qry_pag_9098_a_cursor_followed_with_another_limit_is_admitted() -> Re
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let buildings = PagedBuildings::create(&broker, &namespace).await?;
-    let first = buildings.first_page(&broker, "2", &[("q", r#"height>5;name!="none""#)]).await?;
+    let filter = q::attr("height").gt(5).and(q::attr("name").ne("none")).build()?.to_string();
+    let first = buildings.first_page(&broker, "2", &[("q", filter.as_str())]).await?;
     expect_that!(first.status(), eq(StatusCode::OK));
     let link = ResponseHead::new(first.headers().clone()).typed::<Link>().valid().cloned().or_fail()?;
     let narrower = request_replacing(&broker, &link, &RelationType::Next, "limit", "1")?.append_header(ACCEPT, HeaderValue::from_static("application/ld+json"));

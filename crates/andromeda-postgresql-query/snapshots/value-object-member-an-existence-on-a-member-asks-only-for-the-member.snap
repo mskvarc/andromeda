@@ -5,26 +5,50 @@ SELECT
 WHERE
   (
     "ca"."attribute_kind" IN (1, 2, 4, 5, 6, 7, 8)
-    AND EXISTS (
-      SELECT
-        1
-      FROM
-        (
-          SELECT
-            jsonb_path_query_array(
-              "member"."member",
-              'lax $[*] ? (exists(@."@value"))'
-            ) AS "member"
-          FROM
-            jsonb_path_query(
-              "ca"."value_object",
-              'strict $."city"',
-              '{}',
-              TRUE
-            ) AS "member"
-        ) AS "member"
-      WHERE
-        TRUE
+    AND (
+      EXISTS (
+        SELECT
+          1
+        FROM
+          (
+            SELECT
+              jsonb_path_query_array(
+                "member"."member",
+                'lax $[*] ? (exists(@."@value"))'
+              ) AS "member"
+            FROM
+              jsonb_path_query(
+                "ca"."value_object",
+                'strict $."city"',
+                '{}',
+                TRUE
+              ) AS "member"
+          ) AS "member"
+        WHERE
+          TRUE
+      )
+      OR EXISTS (
+        SELECT
+          1
+        FROM
+          (
+            SELECT
+              "member"."member" AS "member"
+            FROM
+              jsonb_path_query(
+                (
+                  CASE
+                    WHEN (("ca"."value_object" ->> ('@type')) = ('@json')) THEN "ca"."value_object" -> ('@value')
+                  END
+                ),
+                'strict $."city"',
+                '{}',
+                TRUE
+              ) AS "member"
+          ) AS "member"
+        WHERE
+          TRUE
+      )
     )
   )
   OR (

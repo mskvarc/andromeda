@@ -164,11 +164,16 @@ fn matching_scope_events(lquery: &str, of: &HistoryOf, axis: ScopeHistory, valid
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
+    use crate::{
+        history_source::{HistoryBranch, HistoryOf},
+        scope_predicate::{ScopeTarget, condition},
+        window_reach::WindowReach,
+    };
+    use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp};
+    use andromeda_ngsi_ld_query::{scope::query::ScopeQuery, temporal::window::TimeInterval};
     use andromeda_postgresql_schema::current::{Entities, EntitySearch};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
-    use sea_query::Alias;
+    use sea_query::{Alias, Condition, Expr as SeaExpr, Query, SelectStatement};
 
     fn scope(raw: &str) -> ScopeQuery {
         ScopeQuery::parse(raw).expect("valid scope query")

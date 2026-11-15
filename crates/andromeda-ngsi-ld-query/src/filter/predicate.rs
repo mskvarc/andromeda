@@ -148,7 +148,10 @@ impl SetMembership {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::filter::{
+        predicate::{OrderingOp, SetMembership},
+        reading::order_relation::OrderRelation,
+    };
     use pretty_assertions::assert_eq;
 
     #[test]

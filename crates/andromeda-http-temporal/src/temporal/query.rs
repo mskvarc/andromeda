@@ -71,6 +71,8 @@ mod response;
 mod split_contribution;
 /// Closing the hub-computed aggregates of one response to the same whole-range period.
 mod whole_range_join;
+/// The query as the client wrote it, compiled once when a cursor or an Entity Map reads it.
+mod written_query;
 
 /// Run "Query Temporal Evolution of Entities" (clause 5.7.4) over a decoded
 /// request, whichever binding decoded it.
@@ -97,8 +99,8 @@ pub(crate) async fn run(request: TemporalQueryRequest) -> Result<Response, Probl
         posted,
     } = request;
     let service = &state.temporal;
-    let (params, admitted) = admit_request(&state, &target, &context, protocol, params, &uri).await?;
-    let page = page.decided(&admitted.walk_identity, &params).with_instance(&uri)?;
+    let (params, admitted) = Box::pin(admit_request(&state, &target, &context, protocol, params, page, &uri)).await?;
+    let page = &admitted.page;
     let scope = QueryScope::of(&target, &params);
 
     let split = state.forwarding.split_entities(params.split_entities);

@@ -10,7 +10,6 @@ use crate::q::target_value::{ResolvedTarget, TargetValue, ValueShape};
 use andromeda_ngsi_ld_lexicon::time::value::TimeValue;
 use andromeda_ngsi_ld_query::filter::reading::{
     array_rule::ArrayRule,
-    array_target::ArrayTarget,
     family_reading::TargetOrigin,
     operand::{Comparison, Operand},
     scalar_test::ScalarTest,
@@ -27,18 +26,20 @@ pub(crate) fn target_passes(test: &ValueTest, target: &ResolvedTarget<'_>) -> bo
         ValueShape::One(kind) => verdict_holds(test.verdict(kind), &target.value, kind),
         ValueShape::Several(elements) => {
             let array = target.array_target();
-            array_holds(test.array_rule(array), elements, |element| element_passes(test, element, target.origin, array))
+            array_holds(test.array_rule(array), elements, |element| element_passes(test, element, target.origin))
         }
     }
 }
 
-/// Whether one element of an array target passes the asserted test, an
-/// element holding several values itself passing as the asserted test makes
-/// of such an array.
-fn element_passes(test: &ValueTest, element: &TargetValue<'_>, origin: TargetOrigin, array: ArrayTarget) -> bool {
+/// Whether one element of an array target passes the asserted test.
+///
+/// Clause 4.9 compares an array target by "a single element" of it, so an
+/// element that is itself an array is a value of another data type than any
+/// operand and fails the asserted test, as the SQL renderings read it.
+fn element_passes(test: &ValueTest, element: &TargetValue<'_>, origin: TargetOrigin) -> bool {
     match element.shape(origin) {
         ValueShape::One(kind) => verdict_holds(test.asserted_verdict(kind), element, kind),
-        ValueShape::Several(nested) => array_holds(test.asserted_array_rule(array), nested, |inner| element_passes(test, inner, origin, array)),
+        ValueShape::Several(_) => false,
     }
 }
 

@@ -9,6 +9,7 @@ use ngsi_ld::{
         headers::{Link, RelationType},
     },
     model::ErrorType,
+    query::q,
 };
 
 /// Pins: Query Entities following a next pointer with one term of its `q` conjunction given another value answers 400
@@ -20,10 +21,15 @@ async fn a_qry_pag_9097_a_cursor_followed_with_a_q_of_another_value_is_refused()
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let buildings = PagedBuildings::create(&broker, &namespace).await?;
-    let first = buildings.first_page(&broker, "2", &[("q", r#"height>5;name!="none""#)]).await?;
+    let filter = q::attr("height").gt(5).and(q::attr("name").ne("none")).build()?.to_string();
+    let first = buildings.first_page(&broker, "2", &[("q", filter.as_str())]).await?;
     expect_that!(first.status(), eq(StatusCode::OK));
     let link = ResponseHead::new(first.headers().clone()).typed::<Link>().valid().cloned().or_fail()?;
-    for changed in [r#"height>25;name!="none""#, r#"name!="none";height>25"#] {
+    let changed = [
+        q::attr("height").gt(25).and(q::attr("name").ne("none")).build()?.to_string(),
+        q::attr("name").ne("none").and(q::attr("height").gt(25)).build()?.to_string(),
+    ];
+    for changed in &changed {
         let replayed =
             request_replacing(&broker, &link, &RelationType::Next, "q", changed)?.append_header(ACCEPT, HeaderValue::from_static("application/ld+json"));
         let answer = broker.send_unchecked(replayed).await;

@@ -206,16 +206,21 @@ impl TemporalWindow {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use andromeda_ngsi_ld_lexicon::time::date_time::NgsiLdDateTime;
+    use crate::{
+        error::QueryError,
+        temporal::window::{TemporalWindow, TimeInterval},
+    };
+    use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp, time_rel::TimeRel};
+    use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
 
     fn instant(raw: &str) -> DateTime<Utc> {
         raw.parse::<NgsiLdDateTime>().expect("valid instant").get()
     }
 
-    /// Clause 4.11 with Annex C clause C.5.5: only a window with a start, on
-    /// an axis other than `deletedAt`, has an instance in effect before it.
+    /// Clause 4.18 with Annex C clause C.5.16: only a window with a start, on
+    /// an axis other than `deletedAt`, opens where a Scope event placed before
+    /// it may still be in force.
     #[test]
     fn only_a_window_with_a_start_off_deleted_at_has_an_in_effect_start() {
         let start = instant("2024-01-01T00:00:00Z");

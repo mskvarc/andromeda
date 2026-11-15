@@ -310,8 +310,14 @@ fn write_quoted(buf: &mut String, s: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::filter::{parser::parse, predicate::OrderingOp};
+    use crate::filter::{
+        expression::Expr,
+        parser::parse,
+        path::{AttrPath, QueryPath},
+        predicate::{OrderingOp, Predicate},
+        scalar::{CompareValue, Scalar},
+        serialize::{serialize, serialize_written_members},
+    };
 
     #[test]
     fn roundtrip_simple_compare() {

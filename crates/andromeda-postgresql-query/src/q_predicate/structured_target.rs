@@ -66,7 +66,7 @@ use andromeda_ngsi_ld_lexicon::{
     },
 };
 use andromeda_ngsi_ld_number::declared_number::DeclaredNumber;
-use andromeda_ngsi_ld_query::filter::reading::{operand::Operand, target_kind::TargetKind};
+use andromeda_ngsi_ld_query::filter::reading::{family_reading::hop_families, operand::Operand, target_kind::TargetKind};
 use andromeda_ngsi_ld_vocabulary::keyword;
 use andromeda_postgresql_schema::name_dictionary::EntityTypeNames;
 use andromeda_postgresql_seaquery::{
@@ -76,7 +76,7 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
-use andromeda_postgresql_stored_values::attribute_kind::AttributeKind;
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, attribute_kind_code::stored_attribute_kind};
 use sea_query::{CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Query, QueryStatementBuilder, SimpleExpr};
 
 /// Whether the structured value in `column` carries `operand` as its clause 4.9
@@ -202,16 +202,18 @@ fn value_type_names(value_type: &SimpleExpr, form: TimeValueForm) -> SimpleExpr 
     value_type.clone().eq(SimpleExpr::SubQuery(None, Box::new(key.into_sub_query_statement())))
 }
 
-/// Whether the `objectList` of a `ListRelationship` instance holds `object`,
-/// a URI in the spelling the write path stores a Relationship's object in.
+/// Whether the objects of an instance whose target is a Relationship's object
+/// (a Relationship holding several objects, a `ListRelationship`'s
+/// `objectList`) hold `object`, a URI in the spelling the write path stores a
+/// Relationship's object in.
 ///
-/// The list holds each object as a bare JSON string, so containment decides
+/// The column holds each object as a bare JSON string, so containment decides
 /// it, and no declaration reads the members of a list of objects.
 fn listed_object(column: &SimpleExpr, family: &SimpleExpr, object: &str) -> SimpleExpr {
     // clone: sea-query owns every operand, and one column is read by several tests
     family
         .clone()
-        .eq(int_literal(i64::from(AttributeKind::ListRelationship.code())))
+        .is_in(hop_families().map(|family| int_literal(i64::from(stored_attribute_kind(family).code()))))
         .and(contains(column, bare_element(cast(SeaExpr::val(object), PostgresType::Text))))
 }
 

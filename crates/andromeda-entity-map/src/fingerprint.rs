@@ -6,8 +6,9 @@
 //! specification of Entity identifiers or parameters related to pagination,
 //! or, in the case of temporal requests, the temporal query". The digest is
 //! therefore taken over the identity of the compiled query with its
-//! identifiers excepted: the expanded type selector, `attrs`, `q`, the
-//! geo-query, `scopeQ` and `csf`, each in its normal form. The identifiers and
+//! identifiers excepted: the expanded type selector, `attrs`, the Attributes a
+//! projection keeps, `q` and `csf` in their normal form, and the geo-query and
+//! `scopeQ` as parsed. The identifiers and
 //! `idPattern` (both a specification of Entity identifiers, so a source
 //! holding a map may be asked for one mapped id where its map was created for a
 //! pattern), `limit`/`offset`/`count`, the temporal window, `lastN` and every
@@ -27,6 +28,7 @@ use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelection,
     filter::reading::filter_reading::FilterReading,
     query_identity::{IdentifierScope, QueryIdentity},
+    temporal::compiled::CompiledTemporalQuery,
     type_selection::grammar::TypeExpr,
 };
 use iri_rs::IriBuf;
@@ -53,8 +55,8 @@ pub enum FingerprintedRequest<'a> {
     },
     /// Query Temporal Evolution of Entities, through either binding, or its map creation.
     QueryTemporal {
-        /// The compiled selection of the query.
-        selection: &'a EntitySelection,
+        /// The compiled query, whose `attrs` its instance selection holds.
+        query: &'a CompiledTemporalQuery,
         /// The reading of the expanded context source filter, when the query
         /// carries one.
         csf: Option<&'a FilterReading>,
@@ -75,7 +77,9 @@ pub enum FingerprintedRequest<'a> {
 pub fn fingerprint_of(request: FingerprintedRequest<'_>) -> Result<RequestFingerprint, EntityMapError> {
     let (kind, identity) = match request {
         FingerprintedRequest::QueryEntities { selection, csf } => (MapRequestKind::QueryEntities, QueryIdentity::of(selection, csf, IdentifierScope::Excepted)),
-        FingerprintedRequest::QueryTemporal { selection, csf } => (MapRequestKind::QueryTemporal, QueryIdentity::of(selection, csf, IdentifierScope::Excepted)),
+        FingerprintedRequest::QueryTemporal { query, csf } => {
+            (MapRequestKind::QueryTemporal, QueryIdentity::of_temporal(query, csf, IdentifierScope::Excepted))
+        }
         FingerprintedRequest::RetrieveEntity { entity_type, attrs } => (MapRequestKind::RetrieveEntity, QueryIdentity::of_retrieval(entity_type, attrs)),
         FingerprintedRequest::RetrieveTemporal { attrs } => (MapRequestKind::RetrieveTemporal, QueryIdentity::of_retrieval(None, attrs)),
     };
@@ -92,7 +96,7 @@ mod tests {
         fingerprint::{FingerprintedRequest, fingerprint_of},
     };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, temporal_format::TemporalFormat, time_prop::TimeProp};
     use andromeda_ngsi_ld_model::{
         entity_map_fingerprint::{MapRequestKind, RequestComparison, RequestFingerprint},
         query::body::Query,
@@ -105,14 +109,22 @@ mod tests {
         projection::attrs_selection::{AttrsAdmission, expand_attrs_admitted},
         scope::query::ScopeQuery,
         selector_compilation::compile_entity_selectors,
+        temporal::{
+            compiled::CompiledTemporalQuery,
+            instance_selection::InstanceSelection,
+            representation::Representation,
+            window::{TemporalWindow, TimeInterval},
+        },
         type_selection::expansion::expand_type_expression,
         written_entity_selector::WrittenEntitySelector,
     };
+    use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_ngsi_ld_request::{
         entity::GetEntityParams,
         query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
     };
     use iri_rs::iri;
+    use std::mem;
 
     /// An expander mapping every compact name to `https://other.example/`.
     const OTHER_NAMESPACE: NamespaceExpander = NamespaceExpander::uniform(iri!("https://other.example/"));
@@ -134,6 +146,28 @@ mod tests {
             )
             .q(q.map(|expr| CompiledFilter::new(expr.clone(), LanguageMatching::TagEquality)))
             .scope_q(scope_q.cloned())
+            .build()
+    }
+
+    /// The temporal query `selection` compiles to, its `attrs` held by its
+    /// instance selection, as the temporal compilation holds them.
+    fn temporal(mut selection: EntitySelection) -> CompiledTemporalQuery {
+        let attrs = mem::take(&mut selection.attrs);
+        CompiledTemporalQuery::builder()
+            .entities(selection)
+            .window(
+                TemporalWindow::builder()
+                    .timeproperty(TimeProp::Observed)
+                    .interval(TimeInterval::After("2020-01-01T00:00:00Z".parse().expect("an instant")))
+                    .build(),
+            )
+            .instances(InstanceSelection::builder().attr_filter(attrs).build())
+            .representation(
+                Representation::builder()
+                    .format(TemporalFormat::Normalized)
+                    .sys_attrs(SysAttrsInclusion::Strip)
+                    .build(),
+            )
             .build()
     }
 
@@ -168,7 +202,7 @@ mod tests {
         )
         .await;
         fingerprint_of(FingerprintedRequest::QueryTemporal {
-            selection: &selection,
+            query: &temporal(selection),
             csf: None,
         })
     }
@@ -212,7 +246,7 @@ mod tests {
         let params = TemporalQueryParameters::try_from(query).expect("a valid test fixture");
         let selection = compiled(&params.selectors(), None, None, None, &EXAMPLE_NAMESPACE).await;
         fingerprint_of(FingerprintedRequest::QueryTemporal {
-            selection: &selection,
+            query: &temporal(selection),
             csf: None,
         })
     }
@@ -332,6 +366,20 @@ mod tests {
         pretty_assertions::assert_eq!(created.compare(&follow_up), RequestComparison::Same);
         pretty_assertions::assert_eq!(
             created.compare(&temporal_query("type=Vehicle&q=speed%3E1&timerel=before&timeAt=2030-01-01T00:00:00Z").await?),
+            RequestComparison::Changed
+        );
+        Ok(())
+    }
+
+    /// A temporal query holds its `attrs` with the instances it represents
+    /// (clause 5.7.4.4), and clause 5.5.14 holds a follow-up to them.
+    #[tokio::test]
+    async fn a_changed_attribute_list_is_a_changed_temporal_request() -> Result<(), EntityMapError> {
+        let created = temporal_query("type=Vehicle&attrs=speed&timerel=after&timeAt=2020-01-01T00:00:00Z").await?;
+        let reordered = temporal_query("type=Vehicle&attrs=speed&timerel=after&timeAt=2020-01-01T00:00:00Z").await?;
+        pretty_assertions::assert_eq!(created.compare(&reordered), RequestComparison::Same);
+        pretty_assertions::assert_eq!(
+            created.compare(&temporal_query("type=Vehicle&attrs=brand&timerel=after&timeAt=2020-01-01T00:00:00Z").await?),
             RequestComparison::Changed
         );
         Ok(())

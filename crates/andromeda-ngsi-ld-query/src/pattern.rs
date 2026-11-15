@@ -121,7 +121,7 @@ impl From<Pattern> for String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{error::QueryError, pattern::Pattern};
     use pretty_assertions::{assert_eq, assert_ne};
 
     #[test]

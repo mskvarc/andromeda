@@ -153,7 +153,7 @@ async fn create_from_temporal_query(
         .await
         .with_entity_map_instance(rendering.uri)?;
     let fingerprint = fingerprint_of(FingerprintedRequest::QueryTemporal {
-        selection: &written.entities,
+        query: &written,
         csf: registration_filters.csf(),
     })
     .with_entity_map_instance(rendering.uri)?;

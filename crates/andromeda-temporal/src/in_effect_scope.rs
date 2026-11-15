@@ -220,10 +220,12 @@ mod tests {
         assert!(!holds(&madrid(), &[&at_start, &later]));
     }
 
-    /// Clause 5.7.4.4 steps S2 and S3: an attribute instance placed before the
-    /// start is read by neither `q` nor the geo-query, however recent it is.
+    /// The Scope in force is what a scope query reads of the parts, and no
+    /// Attribute: clause 5.7.4.4 steps S2 and S3 read the instances inside the
+    /// window, which the window leaves read, so the in-force Scope offers `q`
+    /// and the geo-query no instance, whatever the parts hold before the start.
     #[tokio::test]
-    async fn an_attribute_instance_before_the_start_is_read_by_no_filter() {
+    async fn the_scope_in_force_offers_a_value_or_geo_filter_no_instance() {
         let part = answered(&json!({
             "id": "urn:ngsi-ld:Vehicle:1",
             "type": "Vehicle",

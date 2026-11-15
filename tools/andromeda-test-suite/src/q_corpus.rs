@@ -103,10 +103,16 @@ impl CorpusEntities {
             CorpusEntity::E15 => builder.vocab_property("vp", VocabProperty::builder("Male".parse::<VocabTerm>()?)),
             CorpusEntity::E16 => builder
                 .list_property("lp", ListProperty::builder(vec![number("1")?, number("2")?]))
-                .json_property("jp", JsonProperty::builder(r#"{"value":"x"}"#.parse::<RawJson>()?)),
+                .json_property("jp", JsonProperty::builder(r#"{"value":"x"}"#.parse::<RawJson>()?))
+                .json_property("jn", JsonProperty::builder(r#"{"a":[1,[2]]}"#.parse::<RawJson>()?)),
             CorpusEntity::E17 => builder
                 .relationship("link", Relationship::builder(self.id(CorpusEntity::E1)?.clone()))
-                .relationship("link2", Relationship::builder(self.id(CorpusEntity::E6)?.clone())),
+                .relationship("link2", Relationship::builder(self.id(CorpusEntity::E6)?.clone()))
+                .list_relationship("llink", ListRelationship::builder(vec![self.id(CorpusEntity::E1)?.clone()]))
+                .relationship(
+                    "hm",
+                    Relationship::builder(vec!["http://example.com/a".parse::<EntityId>()?, "urn:x:9".parse()?]),
+                ),
             CorpusEntity::E18 => builder.property("n1", Value::Array(vec![number("10")?])),
             CorpusEntity::E19 => builder.property("t", Property::builder("12:00:00Z").value_type("Time".parse::<VocabTerm>()?)),
         };

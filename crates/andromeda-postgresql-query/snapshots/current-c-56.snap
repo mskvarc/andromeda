@@ -88,7 +88,7 @@ WHERE
                           )
                         )
                       ) THEN (
-                        COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::text END) = $6)) OR ("ca"."attribute_kind" = (8) AND ("ca"."value_object" @> jsonb_build_array($7::text)))))) AND "ca"."entity_key" = "entities"."entity_key")
+                        COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::text END) = $6)) OR ("ca"."attribute_kind" IN (2, 8) AND ("ca"."value_object" @> jsonb_build_array($7::text)))))) AND "ca"."entity_key" = "entities"."entity_key")
 1: Int 16
 2: String 'HTTP://Example.com/a'
 3: String 'http://example.com/a'

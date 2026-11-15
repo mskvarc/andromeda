@@ -378,7 +378,10 @@ impl OperandPosition {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        error::QueryError,
+        filter::lexer::{Token, tokenize},
+    };
     use pretty_assertions::assert_eq;
 
     fn lex(input: &str) -> Vec<Token> {

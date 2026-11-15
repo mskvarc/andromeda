@@ -8,8 +8,10 @@
 //! history of the paths the entity is in, not an attribute, so it is read as
 //! the paths it dates.
 //!
-//! A leaf reads the instances lying in the query's window, as the local leaf
-//! does: an instance carrying no instant on the window's Temporal Property is
+//! A leaf reads the instances lying in the query's window that carry a value,
+//! as the local leaf does: a deletion (an NGSI-LD Null value, clause 4.5.7) is
+//! no value of the attribute, and an instance carrying no instant on the
+//! window's Temporal Property is
 //! represented by no read on it (clause 4.5.7), so it satisfies no leaf even
 //! when a source answers with it, and the Scope event in force when the
 //! window opens is the latest across every part, which the merged in-force
@@ -19,7 +21,7 @@
 //! has been set), and the instant a source set it at is not in its answer.
 
 use crate::reified_scope::reified_paths;
-use andromeda_ngsi_ld_entity::document::{EntityDocument, instance_document::InstanceDocument};
+use andromeda_ngsi_ld_entity::document::{EntityDocument, instance_document::InstanceDocument, written_value::ValueSlot};
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath};
 use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
@@ -58,6 +60,15 @@ fn counts_in(instance: &InstanceDocument, window: TemporalWindow) -> bool {
     instance.lies_within(window) || instance.instant_on(window.timeproperty).is_none()
 }
 
+/// Whether an answered instance carries a value of its attribute rather than
+/// recording its deletion.
+const fn carries_a_value(instance: &InstanceDocument) -> bool {
+    match instance.value() {
+        ValueSlot::Set(_) | ValueSlot::Absent => true,
+        ValueSlot::Remove(_) => false,
+    }
+}
+
 impl<'a> QueriedEntity<'a> for &'a AnsweredEvolution<'a> {
     type Instance = &'a InstanceDocument;
 
@@ -67,7 +78,7 @@ impl<'a> QueriedEntity<'a> for &'a AnsweredEvolution<'a> {
         let window = self.window;
         self.document
             .attribute_instances(attribute)
-            .filter(move |instance| !named_scope && instance.lies_within(window))
+            .filter(move |instance| !named_scope && instance.lies_within(window) && carries_a_value(instance))
     }
 
     fn types(self) -> impl Iterator<Item = &'a EntityTypeName> {
@@ -116,6 +127,11 @@ mod tests {
     /// A window on `observedAt` over `interval`.
     fn observed(interval: TimeInterval) -> TemporalWindow {
         TemporalWindow::builder().timeproperty(TimeProp::Observed).interval(interval).build()
+    }
+
+    /// An unbounded window on `timeproperty`.
+    fn observed_on(timeproperty: TimeProp) -> TemporalWindow {
+        TemporalWindow::builder().timeproperty(timeproperty).interval(TimeInterval::Unbounded).build()
     }
 
     /// The truths of the leaves of `selection` over `answer`, read over
@@ -219,6 +235,24 @@ mod tests {
         }))
         .await;
         assert!(!SplitFilter::of(&above).holds(&truths_of(&above, &undated_only)));
+    }
+
+    /// Clause 4.5.7 represents a deletion by an NGSI-LD Null value, which is
+    /// no value of the attribute, so a source's deletion inside the window
+    /// satisfies no leaf, as a local deletion does not.
+    #[tokio::test]
+    async fn a_remote_deletion_satisfies_no_leaf() {
+        let deleted = observed_on(TimeProp::Deleted);
+        let answer = answered(&json!({
+            "id": "urn:ngsi-ld:Vehicle:1",
+            "type": "Vehicle",
+            "speed": [{"type": "Property", "value": "urn:ngsi-ld:null", "deletedAt": "2020-08-01T12:00:00Z"}]
+        }))
+        .await;
+        let exists = selection(Some("\"https://example.com/speed\""), None);
+        assert!(!SplitFilter::of(&exists).holds(&truths_over(&exists, &answer, deleted)));
+        let unequal = selection(Some("\"https://example.com/speed\"!=50"), None);
+        assert!(!SplitFilter::of(&unequal).holds(&truths_over(&unequal, &answer, deleted)));
     }
 
     /// Clause 4.18: a Scope a source states with no instant is valid from a

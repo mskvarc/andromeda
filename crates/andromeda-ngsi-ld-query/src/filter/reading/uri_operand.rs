@@ -2,6 +2,8 @@
 //! makes equivalent.
 
 use crate::filter::reading::target_kind::TargetKind;
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use derive_where::derive_where;
 
 /// A `quotedStr` or a bare `URI` after `==` or `!=` whose RFC 3986 section 6
 /// normalisation is another spelling.
@@ -12,18 +14,25 @@ use crate::filter::reading::target_kind::TargetKind;
 /// scheme-based normal form (RFC 3986 sections 6.2.2 and 6.2.3). A String
 /// target holds the text its writer wrote, which clause 4.9 compares as the
 /// text it is.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[derive_where(PartialEq, Eq, PartialOrd, Ord)]
 pub struct UriOperand {
     /// The URI as the client wrote it.
     written: String,
-    /// Its normal form, which differs from `written`.
-    normalised: String,
+    /// Its normal form, which differs from `written`, boxed since an
+    /// identifier is far larger than the other operands. It is a function of
+    /// `written`, so equality and order read `written` alone.
+    #[derive_where(skip)]
+    normalised: Box<Identifier>,
 }
 
 impl UriOperand {
     /// The operand written as `written`, which normalises to `normalised`.
-    pub(crate) const fn new(written: String, normalised: String) -> UriOperand {
-        UriOperand { written, normalised }
+    pub(crate) fn new(written: String, normalised: Identifier) -> UriOperand {
+        UriOperand {
+            written,
+            normalised: Box::new(normalised),
+        }
     }
 
     /// The URI as the client wrote it, the spelling a stored or forwarded
@@ -38,7 +47,7 @@ impl UriOperand {
     #[must_use]
     pub fn against(&self, kind: TargetKind) -> &str {
         match kind {
-            TargetKind::RelationshipObject => &self.normalised,
+            TargetKind::RelationshipObject => self.normalised.as_str(),
             TargetKind::Number
             | TargetKind::NotANumber
             | TargetKind::PositiveInfinity

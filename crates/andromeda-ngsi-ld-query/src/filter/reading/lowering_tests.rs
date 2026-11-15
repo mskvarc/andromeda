@@ -53,7 +53,6 @@ const OBSERVED_AT: &str = "\"https://uri.etsi.org/ngsi-ld/observedAt\"";
 
 const UNIT_CODE: &str = "\"https://uri.etsi.org/ngsi-ld/unitCode\"";
 
-/// LW-1.
 #[test]
 fn a_bare_attribute_reads_its_own_value_through_no_hop_and_no_sub_attribute() {
     let term = term("a==1");
@@ -63,14 +62,13 @@ fn a_bare_attribute_reads_its_own_value_through_no_hop_and_no_sub_attribute() {
     assert_eq!(term.terminal(), &Terminal::OwnValue);
 }
 
-/// LW-2. The Equal and Unequal semantics write `color[*]`, which reads every
+/// The Equal and Unequal semantics write `color[*]`, which reads every
 /// value of the attribute, its own value.
 #[test]
 fn the_every_language_marker_reads_the_own_value() {
     assert_eq!(term("a[*]==1").terminal(), &Terminal::OwnValue);
 }
 
-/// LW-3.
 #[test]
 fn a_dotted_name_walks_one_sub_attribute() {
     let term = term("a.b==1");
@@ -78,7 +76,7 @@ fn a_dotted_name_walks_one_sub_attribute() {
     assert_eq!(term.terminal(), &Terminal::OwnValue);
 }
 
-/// LW-4. `observedAt` is a non-reified Property of the instance before it.
+/// `observedAt` is a non-reified Property of the instance before it.
 #[test]
 fn a_last_segment_naming_an_instance_member_ends_on_that_member() {
     let term = term(&format!("a.{OBSERVED_AT}>2024-01-01T00:00:00Z"));
@@ -86,7 +84,6 @@ fn a_last_segment_naming_an_instance_member_ends_on_that_member() {
     assert_eq!(term.terminal(), &Terminal::InstanceMember(InstanceMetadata::ObservedAt));
 }
 
-/// LW-5.
 #[test]
 fn an_instance_member_below_a_sub_attribute_ends_on_the_sub_attribute_instance() {
     let term = term(&format!("a.b.{UNIT_CODE}==\"CEL\""));
@@ -125,7 +122,6 @@ fn an_instance_member_before_the_last_segment_is_a_sub_attribute_name() {
     assert_eq!(term.terminal(), &Terminal::OwnValue);
 }
 
-/// LW-6.
 #[test]
 fn a_one_member_group_spelled_like_a_tag_is_read_by_family() {
     assert_eq!(
@@ -138,7 +134,7 @@ fn a_one_member_group_spelled_like_a_tag_is_read_by_family() {
     );
 }
 
-/// LW-7. Annex C.5.13.2 writes `marque[en-GB]`, which no `AttrName` spells.
+/// Annex C.5.13.2 writes `marque[en-GB]`, which no `AttrName` spells.
 #[test]
 fn a_target_language_only_a_tag_spells_is_a_language_terminal() {
     assert_eq!(
@@ -150,7 +146,7 @@ fn a_target_language_only_a_tag_spells_is_a_language_terminal() {
     );
 }
 
-/// LW-8. `city_name` is no RFC 5646 tag, so the group reads a member only.
+/// `city_name` is no RFC 5646 tag, so the group reads a member only.
 #[test]
 fn a_one_member_group_that_is_no_tag_reads_the_compound_member() {
     assert_eq!(term("a[city_name]==\"x\"").terminal(), &Terminal::Members(members(&["city_name"])));
@@ -163,13 +159,11 @@ fn a_four_letter_member_is_also_a_language_tag() {
     assert!(matches!(term("a[city]==\"x\"").terminal(), Terminal::ByFamily { .. }));
 }
 
-/// LW-9.
 #[test]
 fn a_dotted_group_reads_a_member_path() {
     assert_eq!(term("a[b.c]==1").terminal(), &Terminal::Members(members(&["b", "c"])));
 }
 
-/// LW-10.
 #[test]
 fn a_hop_with_no_guard_admits_every_linked_entity() {
     let term = term("r{a}==1");
@@ -181,7 +175,6 @@ fn a_hop_with_no_guard_admits_every_linked_entity() {
     assert_eq!(term.attribute(), &name("a"));
 }
 
-/// LW-11.
 #[test]
 fn a_chain_of_two_hops_keeps_each_guard_outermost_first() {
     let term = term("r{T1,T2:s{a}}==1");
@@ -198,7 +191,7 @@ fn a_chain_of_two_hops_keeps_each_guard_outermost_first() {
     assert_eq!(term.attribute(), &name("a"));
 }
 
-/// LW-13. Clause 4.9 EXAMPLE 14 writes a guard of one type, which the ABNF's
+/// Clause 4.9 EXAMPLE 14 writes a guard of one type, which the ABNF's
 /// two or more types does not admit.
 #[test]
 fn a_hop_guarded_by_one_type_keeps_its_guard() {
@@ -213,7 +206,7 @@ fn a_hop_guarded_by_one_type_keeps_its_guard() {
     assert_eq!(term.attribute(), &name("a"));
 }
 
-/// LW-12. Clause 4.9 makes each name after the first "a (sub)Property or
+/// Clause 4.9 makes each name after the first "a (sub)Property or
 /// (sub)Relationship", and a Property's value member is neither: a compound
 /// value is entered through the trailing group. The segment is a sub-attribute
 /// name, which no Attribute carries.
@@ -224,7 +217,7 @@ fn a_segment_naming_a_family_value_member_is_a_sub_attribute_name() {
     assert_eq!(term.terminal(), &Terminal::OwnValue);
 }
 
-/// LW-15. The `language-ranges` level reads every target language by RFC 4647
+/// The `language-ranges` level reads every target language by RFC 4647
 /// extended filtering, and the reading carries it.
 #[test]
 fn a_target_language_carries_the_matching_it_was_lowered_under() {
@@ -295,7 +288,7 @@ fn equality_operands(q: &str) -> Vec<Operand> {
     operands
 }
 
-/// LW-14. The write path stores a Relationship's object in its RFC 3986
+/// The write path stores a Relationship's object in its RFC 3986
 /// section 6.2.2 and 6.2.3 normal form, and clause 4.9 asks that URI
 /// comparison minimise false negatives, so a URI that normalises to another
 /// spelling is both spellings, alone or in a value list, while the filter
@@ -308,7 +301,7 @@ fn a_uri_operand_of_an_equality_is_its_written_and_its_normalised_spelling() {
         ("http://example.com/a/./b/../c", "http://example.com/a/c"),
         ("http://example.com", "http://example.com/"),
     ] {
-        let both = Operand::Uri(UriOperand::new(written.to_owned(), normalised.to_owned()));
+        let both = Operand::Uri(UriOperand::new(written.to_owned(), normalised.parse().expect("a normal form is an identifier")));
         assert_eq!(equality_operands(&format!("r==\"{written}\"")), slice::from_ref(&both), "{written}");
         assert_eq!(equality_operands(&format!("r!=\"{written}\"")), slice::from_ref(&both), "{written}");
         assert_eq!(

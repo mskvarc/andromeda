@@ -9,7 +9,7 @@ use crate::{
     jsonb::lift_comparison,
     operator::{PatternIndexes, compare, pattern as pattern_predicate},
     q_predicate::{
-        document::property_path::{PropertyPath, declared_reading},
+        document::property_path::PropertyPath,
         verdict_condition::{ComplementTarget, verdict_condition},
     },
 };
@@ -72,7 +72,7 @@ fn term_condition(term: &TermReading, document: &ColumnReference) -> Condition {
 /// a target of another data type "not matching" under `notPatternOp` too.
 fn value_condition(value: &ValueTest, path: PropertyPath<'_>, document: &ColumnReference) -> Condition {
     let target = || path.value(document);
-    let verdict = verdict_condition(value, asserted_condition(value.test(), target), |scope| match scope {
+    let verdict = verdict_condition(value, asserted_condition(value.test(), path, target), |scope| match scope {
         ComplementScope::AnyKind => ComplementTarget::Probed,
         ComplementScope::StringTarget => ComplementTarget::Where(is_string(target())),
     });
@@ -88,11 +88,12 @@ fn value_condition(value: &ValueTest, path: PropertyPath<'_>, document: &ColumnR
 /// property that is not an array as the one element it is. A pattern compares
 /// against a String's text, unwrapped with `#>> '{}'` rather than cast, which
 /// would keep the quotes of its JSON spelling.
-fn asserted_condition(test: &ScalarTest, target: impl Fn() -> SimpleExpr) -> Condition {
+fn asserted_condition(test: &ScalarTest, path: PropertyPath<'_>, target: impl Fn() -> SimpleExpr) -> Condition {
     let asserted = match test {
-        ScalarTest::EqualsAny(operands) => includes_any(target(), operands),
-        ScalarTest::Ordered { relation, operand } => compared(&target, Comparator::Ordered(*relation), operand),
-        ScalarTest::Within(interval) => compared(&target, Comparator::Ordered(OrderRelation::GreaterOrEqual), interval.min()).and(compared(
+        ScalarTest::EqualsAny(operands) => includes_any(path, target(), operands),
+        ScalarTest::Ordered { relation, operand } => compared(path, &target, Comparator::Ordered(*relation), operand),
+        ScalarTest::Within(interval) => compared(path, &target, Comparator::Ordered(OrderRelation::GreaterOrEqual), interval.min()).and(compared(
+            path,
             &target,
             Comparator::Ordered(OrderRelation::LessOrEqual),
             interval.max(),
@@ -105,11 +106,11 @@ fn asserted_condition(test: &ScalarTest, target: impl Fn() -> SimpleExpr) -> Con
 
 /// Whether some element of the JSONB `value` equals one of `operands`, in one
 /// element scan.
-fn includes_any(value: SimpleExpr, operands: &[Operand]) -> SimpleExpr {
+fn includes_any(path: PropertyPath<'_>, value: SimpleExpr, operands: &[Operand]) -> SimpleExpr {
     let element = || SimpleExpr::from(SeaExpr::col((Alias::new(ELEMENT), Alias::new(ELEMENT))));
     let equal_to_one = operands
         .iter()
-        .fold(Condition::any(), |any, operand| any.add(compared(&element, Comparator::Equal, operand)));
+        .fold(Condition::any(), |any, operand| any.add(compared(path, &element, Comparator::Equal, operand)));
     let mut scan = Query::select();
     scan.expr(int_literal(1))
         .from_function(jsonb_path_query(value, EVERY_ELEMENT), Alias::new(ELEMENT))
@@ -117,10 +118,10 @@ fn includes_any(value: SimpleExpr, operands: &[Operand]) -> SimpleExpr {
     SeaExpr::exists(scan)
 }
 
-/// Compare the JSONB value `value` reads with one operand, both lifted into
-/// the domain the operand's kind is ordered in.
-fn compared(value: &impl Fn() -> SimpleExpr, comparator: Comparator, operand: &Operand) -> SimpleExpr {
-    let (stored, datatype) = declared_reading(value, operand);
+/// Compare the JSONB value `value` reads at the end of `path` with one
+/// operand, both lifted into the domain the operand's kind is ordered in.
+fn compared(path: PropertyPath<'_>, value: &impl Fn() -> SimpleExpr, comparator: Comparator, operand: &Operand) -> SimpleExpr {
+    let (stored, datatype) = path.declared_reading(value, operand);
     let lifted = lift_comparison(operand, stored, datatype);
     compare(lifted.stored, comparator, lifted.operand)
 }
@@ -368,7 +369,7 @@ mod tests {
         for (index, case) in CONFORMANCE.iter().enumerate() {
             let expr = parse(case.filter).unwrap_or_else(|error| panic!("{}: {error}", case.filter));
             let projection = entity_statement(compile(
-                &FilterReading::lowered(&expr, LanguageMatching::TagEquality),
+                &FilterReading::of(&expr, LanguageMatching::TagEquality),
                 &InstanceScan::Current(&EntityRowRefs::unaliased(None)),
                 &names(),
             ));

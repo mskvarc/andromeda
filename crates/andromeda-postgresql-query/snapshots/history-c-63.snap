@@ -242,7 +242,7 @@ WHERE
                           )
                         )
                       ) THEN (
-                        COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::text END) = $6)) OR ("qh"."attribute_kind" = (8) AND ("qh"."value_object" @> jsonb_build_array($7::text)))))) AND "qh"."value_kind" <> (0) AND "qh"."observed_at" IS NOT NULL AND "qh"."observed_at" >= $8 AND "qh"."observed_at" < $9)
+                        COALESCE("dm"."value" -> ('@value'), "dm"."value") #>> ('{}'))::text END) = $6)) OR ("qh"."attribute_kind" IN (2, 8) AND ("qh"."value_object" @> jsonb_build_array($7::text)))))) AND "qh"."value_kind" <> (0) AND "qh"."observed_at" IS NOT NULL AND "qh"."observed_at" >= $8 AND "qh"."observed_at" < $9)
 1: Int 17
 2: String 'HTTP://Example.com/a'
 3: String 'http://example.com/a'

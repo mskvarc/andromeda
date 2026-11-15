@@ -86,8 +86,8 @@ const fn column_indexes(row: InstanceRow, column: ValueColumn) -> PatternIndexes
             InstanceRow::Current,
             ValueColumn::Field(ValueField::Number | ValueField::Boolean | ValueField::Geometry | ValueField::Object | ValueField::DateTime | ValueField::Uri)
             | ValueColumn::LongUri,
-        ) => PatternIndexes::None,
-        (InstanceRow::History | InstanceRow::Element(_), _unindexed) => PatternIndexes::None,
+        )
+        | (InstanceRow::History | InstanceRow::Element(_), ValueColumn::Field(_) | ValueColumn::LongText | ValueColumn::LongUri) => PatternIndexes::None,
     }
 }
 

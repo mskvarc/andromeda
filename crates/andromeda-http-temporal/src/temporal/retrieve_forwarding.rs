@@ -101,18 +101,18 @@ pub(crate) async fn resolve_retrieve_map(
     referenced: Option<&NgsiLdEntityMap>,
     instance: &RequestUri,
 ) -> Result<EntityMapUse, ProblemResponse> {
+    let referenced = referenced.map(NgsiLdEntityMap::as_inner);
+    let flag = EntityMapFlag::from_parameter(params.entity_map);
+    if !flag.involves_a_map(referenced) {
+        return Ok(EntityMapUse::None);
+    }
     let attrs = service
         .expand_attribute_names(params.attrs.as_deref().unwrap_or_default(), context, AttrsAdmission::ReifiedScopeAdmitted)
         .await
         .with_instance(instance)?;
     let fingerprint = fingerprint_of(FingerprintedRequest::RetrieveTemporal { attrs: &attrs }).with_instance(instance)?;
     entity_maps
-        .resolve_use(
-            referenced.map(NgsiLdEntityMap::as_inner),
-            EntityMapFlag::from_parameter(params.entity_map),
-            &fingerprint,
-            params.entity_map_lifetime.as_ref(),
-        )
+        .resolve_use(referenced, flag, &fingerprint, params.entity_map_lifetime.as_ref())
         .await
         .with_instance(instance)
 }
