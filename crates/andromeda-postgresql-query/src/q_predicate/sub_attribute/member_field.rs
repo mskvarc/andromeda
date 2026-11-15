@@ -10,13 +10,26 @@
 //! hangs off rather than unnesting a further level.
 
 use crate::{
-    operator::{PatternIndexes, compare, does_not_hold, pattern as pattern_test},
-    q_predicate::{instance_row::InstanceRow, string_ordering::ordered_string},
+    operator::{PatternIndexes, compare, pattern as pattern_test},
+    q_predicate::{
+        instance_row::InstanceRow,
+        string_ordering::ordered_string,
+        typed_column::bound_operand,
+        verdict_condition::{ComplementTarget, verdict_condition},
+    },
 };
 use andromeda_ngsi_ld_query::{
     filter::{
         instance_metadata::InstanceMetadata,
-        reading::{comparator::Comparator, operand::Operand, order_relation::OrderRelation, scalar_test::ScalarTest, term_reading::Test, value_test::Polarity},
+        reading::{
+            comparator::Comparator,
+            operand::Operand,
+            order_relation::OrderRelation,
+            scalar_test::ScalarTest,
+            target_kind::TargetKind,
+            term_reading::Test,
+            value_test::{ComplementScope, Polarity},
+        },
     },
     pattern::Pattern,
 };
@@ -95,28 +108,36 @@ impl StoredMember {
         }
     }
 
+    /// The target kind the member is: an instant a `DateTime`, a `unitCode`,
+    /// a `datasetId` and a `valueType` a String, an `objectType` a String,
+    /// which one type is and each of several is; `None` for a member no stored
+    /// instance holds.
+    const fn target_kind(&self) -> Option<TargetKind> {
+        match self {
+            StoredMember::Instant(_) => Some(TargetKind::DateTime),
+            StoredMember::UnitCode(_) | StoredMember::Text(_) | StoredMember::TypeKeys(_) => Some(TargetKind::String),
+            StoredMember::Unheld => None,
+        }
+    }
+
     /// Whether the member satisfies `test`.
     ///
     /// An operand of a kind the member is not compares with no member: clause
-    /// 4.9 makes it non-matching and, under `unequal`, unequal. A stored
-    /// instant keeps no written text, so a pattern matches none of them. A
-    /// pattern states its own complement, over a String member alone; every
-    /// other complement asks for the member and for no match in it.
+    /// 4.9 makes it non-matching and, under `unequal`, unequal. A complement
+    /// of `!=` ranges over a member the instance holds, and one of `!~=` over
+    /// a member that is one String.
     fn condition(&self, test: &Test) -> Condition {
         if matches!(self, StoredMember::Unheld) {
             return Condition::all().add(false_literal());
         }
         match test {
             Test::Exists => Condition::all().add(self.present()),
-            Test::Value(value) => match (value.test(), value.polarity()) {
-                (ScalarTest::Matches(pattern), polarity) => Condition::all().add(self.matched(pattern, polarity)),
-                (ScalarTest::EqualsAny(_) | ScalarTest::Within(_) | ScalarTest::Ordered { .. } | ScalarTest::Unsatisfiable, Polarity::Asserted) => {
-                    self.positive(value.test())
-                }
-                (ScalarTest::EqualsAny(_) | ScalarTest::Within(_) | ScalarTest::Ordered { .. } | ScalarTest::Unsatisfiable, Polarity::Complement) => {
-                    Condition::all().add(self.present()).add(does_not_hold(self.positive(value.test())))
-                }
-            },
+            Test::Value(value) => verdict_condition(value, self.positive(value.test()), |scope| {
+                ComplementTarget::Where(match scope {
+                    ComplementScope::AnyKind => self.present(),
+                    ComplementScope::StringTarget => self.one_string(),
+                })
+            }),
         }
     }
 
@@ -130,8 +151,20 @@ impl StoredMember {
         }
     }
 
-    /// Whether the member passes `test`, stated positively: equal to an
-    /// operand, ordered against it, within a range, or matching a pattern.
+    /// Whether the instance holds the member as one String: an `objectType`
+    /// listing several types is an array of them.
+    fn one_string(&self) -> SimpleExpr {
+        if self.target_kind() != Some(TargetKind::String) {
+            return false_literal();
+        }
+        match self {
+            StoredMember::TypeKeys(keys) => single_type_name(keys).is_not_null(),
+            StoredMember::Instant(_) | StoredMember::UnitCode(_) | StoredMember::Text(_) | StoredMember::Unheld => self.present(),
+        }
+    }
+
+    /// Whether the member passes `test`, asserted: equal to an operand,
+    /// ordered against it, within a range, or matching a pattern.
     ///
     /// Clause 4.9: an operand "Is included in the target value, if the latter
     /// is an array", so an `objectType` is equal to any type it lists.
@@ -159,7 +192,10 @@ impl StoredMember {
             (
                 StoredMember::Instant(_) | StoredMember::UnitCode(_) | StoredMember::Text(_) | StoredMember::TypeKeys(_) | StoredMember::Unheld,
                 ScalarTest::Matches(pattern),
-            ) => Condition::all().add(self.matched(pattern, Polarity::Asserted)),
+            ) => Condition::all().add(match self.target_kind() {
+                Some(kind) if test.compares_with(kind) => self.matched(pattern),
+                Some(_) | None => false_literal(),
+            }),
             (
                 StoredMember::Instant(_) | StoredMember::UnitCode(_) | StoredMember::Text(_) | StoredMember::TypeKeys(_) | StoredMember::Unheld,
                 ScalarTest::Unsatisfiable,
@@ -168,49 +204,39 @@ impl StoredMember {
     }
 
     /// One comparison of the member with an operand, constant `FALSE` when the
-    /// operand is of another datatype.
+    /// operand does not compare with the member's kind.
     ///
     /// An `objectType` listing several types is an array, which no ordering
     /// holds for, so only a single type compares.
     fn compared(&self, comparator: Comparator, operand: &Operand) -> SimpleExpr {
-        match (self, operand) {
-            (StoredMember::Instant(field), Operand::DateTime(instant)) => compare(field.clone(), comparator, SeaExpr::val(*instant)),
-            (StoredMember::UnitCode(field), Operand::Text(text)) => listed_code_where(field, |code| comparator.holds_for_strings(code, text)),
-            (StoredMember::Text(stored), Operand::Text(text)) => text_compared(stored.clone(), comparator, operand, text),
-            (StoredMember::TypeKeys(keys), Operand::Text(text)) => text_compared(single_type_name(keys), comparator, operand, text),
-            (StoredMember::Instant(_), Operand::Number(_) | Operand::Boolean(_) | Operand::Text(_) | Operand::Date(_) | Operand::Time(_))
-            | (
-                StoredMember::UnitCode(_) | StoredMember::Text(_) | StoredMember::TypeKeys(_),
-                Operand::Number(_) | Operand::Boolean(_) | Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_),
-            )
-            | (
-                StoredMember::Unheld,
-                Operand::Number(_) | Operand::Boolean(_) | Operand::Text(_) | Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_),
-            ) => false_literal(),
+        let compares = self.target_kind().is_some_and(|kind| operand.compares_with(kind, comparator.comparison()));
+        if !compares {
+            return false_literal();
+        }
+        match self {
+            StoredMember::Instant(field) => compare(field.clone(), comparator, bound_operand(operand)),
+            StoredMember::UnitCode(field) => listed_code_where(field, |code| operand.text().is_some_and(|text| comparator.holds_for_strings(code, text))),
+            StoredMember::Text(stored) => text_compared(stored.clone(), comparator, operand),
+            StoredMember::TypeKeys(keys) => text_compared(single_type_name(keys), comparator, operand),
+            StoredMember::Unheld => false_literal(),
         }
     }
 
-    /// A pattern term of `polarity` on the member.
-    ///
-    /// Clause 4.9 tests a pattern against a String only, so an instant and an
-    /// `objectType` listing several types match no pattern either way.
-    fn matched(&self, pattern: &Pattern, polarity: Polarity) -> SimpleExpr {
+    /// Whether the member, a String, is in the language of `pattern`.
+    fn matched(&self, pattern: &Pattern) -> SimpleExpr {
         match self {
-            StoredMember::UnitCode(field) => listed_code_where(field, |code| match polarity {
-                Polarity::Asserted => pattern.is_match(code),
-                Polarity::Complement => !pattern.is_match(code),
-            }),
-            StoredMember::Text(text) => pattern_test(text.clone(), polarity, pattern, PatternIndexes::None),
-            StoredMember::TypeKeys(keys) => pattern_test(single_type_name(keys), polarity, pattern, PatternIndexes::None),
+            StoredMember::UnitCode(field) => listed_code_where(field, |code| pattern.is_match(code)),
+            StoredMember::Text(text) => pattern_test(text.clone(), Polarity::Asserted, pattern, PatternIndexes::None),
+            StoredMember::TypeKeys(keys) => pattern_test(single_type_name(keys), Polarity::Asserted, pattern, PatternIndexes::None),
             StoredMember::Instant(_) | StoredMember::Unheld => false_literal(),
         }
     }
 }
 
-/// `stored` compared with `text`, the text `operand` is, a String ordering
-/// collating as a stored String value's does.
-fn text_compared(stored: SimpleExpr, comparator: Comparator, operand: &Operand, text: &str) -> SimpleExpr {
-    compare(ordered_string(stored, operand, comparator), comparator, SeaExpr::val(text))
+/// `stored` compared with the text `operand` is, a String ordering collating
+/// as a stored String value's does.
+fn text_compared(stored: SimpleExpr, comparator: Comparator, operand: &Operand) -> SimpleExpr {
+    compare(ordered_string(stored, operand, comparator), comparator, bound_operand(operand))
 }
 
 /// The expanded IRI the `entity_type_names` key `key` names, NULL for a NULL

@@ -12,17 +12,18 @@
 use crate::{
     entity_row_refs::EntityRowRefs,
     q_predicate::{
-        equality_term::{complemented, equals_any_value, range_value},
+        equality_term::{equals_any_value, within_range},
         instance_row::InstanceRow,
         instance_scan::InstanceScan,
         instance_test::{CompiledTerm, Disjunction, InstanceTest},
         language_map::{LanguageMap, LanguageSelection},
         language_term::language_term,
         ordering_term::ordering_value,
-        pattern_term::pattern_value,
+        pattern_term::{pattern_value, string_target},
         sub_attribute::{element_path::ElementPath, member_field::member_condition},
         traversal::LinkedHop,
         value_object_member::member_term,
+        verdict_condition::{ComplementTarget, verdict_condition},
     },
     query_names::QueryNames,
 };
@@ -33,6 +34,7 @@ use andromeda_ngsi_ld_query::filter::{
         scalar_test::ScalarTest,
         term_reading::{TermReading, Test},
         terminal::Terminal,
+        value_test::ComplementScope,
     },
     target_language::LanguageSelector,
 };
@@ -184,22 +186,29 @@ fn compile_local(term: &TermReading, scan: &InstanceScan<'_>, names: &QueryNames
 
 /// A test against the instance's own value.
 ///
-/// Every test but a pattern is complemented by the total negation of its
-/// positive condition, which clause 4.9 makes hold for a target of another
-/// data type; a pattern states its own complement, over a String target alone.
+/// A complement of `!=` ranges over every instance the probe reads, whatever
+/// its value, and one of `!~=` over an instance holding a String target.
 fn own_value(test: &Test, row: InstanceRow) -> Condition {
     match test {
         // An instance *is* the attribute: an attribute deleted by clause
         // 5.6.16 leaves no row and no element behind, so presence needs no
         // further guard.
         Test::Exists => Condition::all(),
-        Test::Value(value) => match value.test() {
-            ScalarTest::EqualsAny(operands) => equals_any_value(operands, value.polarity(), row),
-            ScalarTest::Within(interval) => range_value(interval, value.polarity(), row),
-            ScalarTest::Ordered { relation, operand } => complemented(value.polarity(), ordering_value(*relation, operand, row)),
-            ScalarTest::Matches(pattern) => pattern_value(value, pattern, row),
-            ScalarTest::Unsatisfiable => complemented(value.polarity(), unsatisfiable()),
-        },
+        Test::Value(value) => verdict_condition(value, own_value_passes(value.test(), row), |scope| match scope {
+            ComplementScope::AnyKind => ComplementTarget::Probed,
+            ComplementScope::StringTarget => ComplementTarget::Where(string_target(row)),
+        }),
+    }
+}
+
+/// Whether the instance's own value passes `test`, asserted.
+fn own_value_passes(test: &ScalarTest, row: InstanceRow) -> Condition {
+    match test {
+        ScalarTest::EqualsAny(operands) => equals_any_value(operands, row),
+        ScalarTest::Within(interval) => within_range(interval, row),
+        ScalarTest::Ordered { relation, operand } => ordering_value(*relation, operand, row),
+        ScalarTest::Matches(pattern) => pattern_value(pattern, row),
+        ScalarTest::Unsatisfiable => unsatisfiable(),
     }
 }
 
@@ -481,12 +490,16 @@ mod tests {
     }
 
     /// Clause 4.9's `unequal` over a value list: "The target value is neither
-    /// identical nor equivalent to any of the list values", so every member's
-    /// comparison is negated and the negations are conjoined.
+    /// identical nor equivalent to any of the list values", nor included in
+    /// it when the target is an array, so the disjunction of the members'
+    /// equalities, the structured value column's among them, is negated
+    /// totally. The entity must still contain the target element, so the
+    /// negation sits inside the one probe: negating the `EXISTS` instead would
+    /// match an entity that simply lacks the attribute.
     #[test]
-    fn a_negated_value_list_negates_every_member_totally() {
+    fn a_negated_value_list_negates_the_whole_membership_inside_the_probe() {
         let statement = render("\"https://example.com/color\"!=\"red\",\"blue\"");
-        assert_statement_snapshot!("projection-a-negated-value-list-negates-every-member-totally", statement);
+        assert_statement_snapshot!("projection-a-negated-value-list-negates-the-whole-membership-inside-the-probe", statement);
     }
 
     /// Clause 4.9 states the same datatype rule for a range operand's negated
@@ -580,19 +593,6 @@ mod tests {
     fn value_list_becomes_a_disjunction_inside_one_probe() {
         let statement = render("\"https://example.com/color\"==\"red\",\"blue\"");
         assert_statement_snapshot!("projection-value-list-becomes-a-disjunction-inside-one-probe", statement);
-    }
-
-    #[test]
-    fn a_negated_value_list_is_a_conjunction_of_negations_not_a_negated_existence() {
-        // Clause 4.9: the entity must still contain the target element, and the
-        // target value must differ from every member of the list. Negating the
-        // `EXISTS` instead would match an entity that simply lacks the
-        // attribute; each member is negated inside the one probe.
-        let statement = render("\"https://example.com/color\"!=\"red\",\"blue\"");
-        assert_statement_snapshot!(
-            "projection-a-negated-value-list-is-a-conjunction-of-negations-not-a-negated-existence",
-            statement
-        );
     }
 
     #[test]
@@ -693,14 +693,6 @@ mod tests {
     fn a_value_list_reaches_the_structured_value_column_once_per_member() {
         let statement = render("\"https://example.com/color\"==\"red\",\"blue\"");
         assert_statement_snapshot!("projection-a-value-list-reaches-the-structured-value-column-once-per-member", statement);
-    }
-
-    /// The `unequal` complement of the value list: none of the members may be
-    /// included in the structured target value.
-    #[test]
-    fn a_negated_value_list_denies_the_structured_value_column_for_every_member() {
-        let statement = render("\"https://example.com/color\"!=\"red\",\"blue\"");
-        assert_statement_snapshot!("projection-a-negated-value-list-denies-the-structured-value-column-for-every-member", statement);
     }
 
     /// Clause 4.9 requires a matching Entity to contain the target element,

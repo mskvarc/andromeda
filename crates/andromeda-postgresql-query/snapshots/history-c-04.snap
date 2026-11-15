@@ -171,10 +171,7 @@ WHERE
       ) AS "qh"
     WHERE
       "qh"."attribute_name_key" = $1
-      AND (
-        "qh"."value_number" <= $2
-        AND "qh"."value_number" <> ('NaN'::numeric)
-      )
+      AND "qh"."value_number" <= $2
       AND "qh"."value_kind" <> (0)
       AND "qh"."observed_at" IS NOT NULL
       AND "qh"."observed_at" >= $3
@@ -668,10 +665,7 @@ WHERE
       "qs"."attribute_name_key" = $9
       AND "qh"."placed" < $10
       AND "qh"."attribute_name_key" = $11
-      AND (
-        "qh"."value_number" <= $12
-        AND "qh"."value_number" <> ('NaN'::numeric)
-      )
+      AND "qh"."value_number" <= $12
       AND "qh"."value_kind" <> (0)
   )
 1: Int 1

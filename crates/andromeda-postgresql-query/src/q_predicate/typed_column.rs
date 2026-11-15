@@ -1,9 +1,12 @@
-//! Which typed field of a stored instance holds a value of each clause
-//! 4.9 operand kind, and how a Query Term is compared against it.
+//! Which typed fields of a stored instance a clause 4.9 comparison reads, and
+//! how it compares one operand against each.
 //!
-//! The mapping mirrors what the write path stores:
+//! A comparison reads every field holding a stored kind whose target kind the
+//! operand compares with ([`compared_kinds`]), so the data type rule is the
+//! reading's, and where each kind is held is the placement the write path
+//! stores by ([`value_placement`]):
 //!
-//! * numbers land in `value_number` (`numeric`) and bind directly as an exact
+//! * numbers in `value_number` (`numeric`), bound directly as an exact
 //!   decimal, so every supported operand uses the typed numeric index; a JSON
 //!   string declared as an XSD number lands there too, under its own value
 //!   kind, `INF`, `-INF` and `NaN` included,
@@ -12,10 +15,10 @@
 //! * date-times in `value_date_time`,
 //! * strings in `value_string` for Properties and single-term
 //!   `VocabProperties` (or, past the B-tree bound, in `value_long_text`, which
-//!   [`ValueColumn::holding`] decides from the byte length alone) and,
-//!   under the equality operators only, in `value_uri` for Relationship objects
-//!   (or, past the B-tree bound, in `value_long_uri`, decided the same way),
-//!   which is what [`relationship_object_is_comparable`] decides,
+//!   [`ValueColumn::holding`] decides from the byte length alone) and the
+//!   object of a Relationship in `value_uri` (or, past the B-tree bound, in
+//!   `value_long_uri`, decided the same way), which clause 4.9 compares under
+//!   equality alone,
 //! * values declared as a `Date` or a `Time` in `value_string` too, told apart
 //!   from a String by `value_kind`. A date has one spelling, and a time is
 //!   held in its fixed-width storage encoding, so byte-wise order over either
@@ -23,86 +26,62 @@
 //!   against the column, which its index serves. Both are always short, so
 //!   they never read `value_long_text`.
 //!
-//! A String, a `Date` and a `Time` share `value_string`, so each comparison
-//! against it also names the value kind it reads: clause 4.9 matches a target
-//! only with an operand of its own data type, and a quoted operand is a
-//! String. The field each kind is held in, and whether a comparison names the
-//! kind beside it, are read off [`value_placement`], which the write path
-//! places every value by.
+//! A field that holds kinds of several data types (`value_string`) is read
+//! beside the value kind of the one compared, since clause 4.9 matches a
+//! target only with an operand of its own data type.
 //!
 //! Every value whose family is not a single scalar lives in `value_object`
 //! instead; [`crate::q_predicate::structured_target`] compares those.
 
 use crate::{
     operator::compare,
-    q_predicate::{instance_row::InstanceRow, string_ordering::ordered_string, value_column::ValueColumn},
+    q_predicate::{
+        instance_row::InstanceRow,
+        stored_kind::{compared_kinds, stored_target_kinds},
+        string_ordering::ordered_string,
+        value_column::ValueColumn,
+    },
 };
 use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
+use andromeda_ngsi_ld_number::declared_number::NonFinite;
 use andromeda_ngsi_ld_query::filter::reading::{comparator::Comparator, operand::Operand};
-use andromeda_postgresql_seaquery::{literal::false_literal, numeric_special::is_not_nan};
+use andromeda_postgresql_seaquery::{
+    literal::false_literal,
+    numeric_special::{NumericSpecial, is_not_special, is_special},
+};
 use andromeda_postgresql_stored_values::{
     value_kind::ValueKind,
     value_placement::{ToldApart, ValueField, ValuePlacement, value_placement},
 };
 use sea_query::{Expr as SeaExpr, ExprTrait, SimpleExpr};
 
-/// Compare one operand against the typed column that holds values of its kind.
+/// Compare one operand by `comparator` against every typed field holding a
+/// value of a kind it compares with.
 ///
-/// Every arm names exactly one typed column and compares it to a bound value, so
-/// each comparison is the shape the partial index over that column is predicated
+/// Every arm names one typed field and compares it to a bound value, so each
+/// comparison is the shape the partial index over that field is predicated
 /// on: `value_number > $1` implies `value_number IS NOT NULL`, which is what
 /// makes `(attribute_name_key, value_number) WHERE value_number IS NOT NULL`
 /// applicable. The row's check constraint ties the kind to the populated
-/// column, so a column being non-NULL is the kind test for every column but
+/// field, so a field being non-NULL is the kind test for every field but
 /// `value_string`, which three kinds share and which is therefore read beside
 /// its `value_kind`.
 ///
-/// A row whose value lives in another column therefore yields NULL, not FALSE,
-/// which is the reading clause 4.9 wants under every comparison compiled here.
-/// Equality and the orderings state it the same way: "If there is no equality
-/// between the target value data type and the Query Term value data type, then
-/// it shall be considered as not matching", and an unknown that the enclosing
-/// `EXISTS` drops is exactly that.
-///
-/// Unequal reads a datatype difference the other way, and no comparison here
-/// is unequal: clause 4.9 makes such a target *unequal*, so
-/// `crate::q_predicate::projection` compiles `!=` as the total negation of the
-/// whole equality condition rather than as a per-column `!=` that a NULL would
-/// swallow.
+/// A row whose value lives in another field therefore yields NULL, not FALSE,
+/// which is the reading clause 4.9 wants of a comparison. Equality and the
+/// orderings state it the same way: "If there is no equality between the
+/// target value data type and the Query Term value data type, then it shall
+/// be considered as not matching", and an unknown that the enclosing `EXISTS`
+/// drops is exactly that. Unequal reads a datatype difference the other way,
+/// and no comparison here is unequal: `!=` is the complement of the whole
+/// equality, which the verdict condition states once.
 #[must_use]
 pub fn typed_column_condition(operand: &Operand, comparator: Comparator, row: InstanceRow) -> SimpleExpr {
-    let on_field = |field: ValueField| row.value(ValueColumn::Field(field));
-    match operand {
-        Operand::Number(number) => on_kind(ValueKind::Number, row, |field| {
-            // SeaQuery owns every value in its AST, so this is the one necessary
-            // clone between the borrowed query domain value and the NUMERIC bind.
-            let compared = compare(on_field(field), comparator, SeaExpr::val(number.decimal().clone()));
-            number_condition(compared, comparator, on_field(field))
-        }),
-        Operand::Boolean(value) => on_kind(ValueKind::Boolean, row, |field| compare(on_field(field), comparator, SeaExpr::val(*value))),
-        Operand::Text(value) => {
-            let string_test = string_condition(operand, value.as_str(), comparator, row);
-            match relationship_object_is_comparable(comparator) {
-                RelationshipObjects::Comparable => {
-                    // Equality is byte identity, so a stored object equal to the
-                    // operand sits in the one column the operand would be placed
-                    // in, and only that column is read.
-                    let uri_test = on_kind(ValueKind::Uri, row, |field| {
-                        compare(row.value(ValueColumn::holding(field, value.as_str())), comparator, SeaExpr::val(value.as_str()))
-                    });
-                    string_test.or(uri_test)
-                }
-                RelationshipObjects::NonMatching => string_test,
-            }
-        }
-        Operand::DateTime(value) => on_kind(ValueKind::DateTime, row, |field| compare(on_field(field), comparator, SeaExpr::val(*value))),
-        Operand::Date(value) => on_kind(ValueKind::Date, row, |field| {
-            compare(on_field(field), comparator, SeaExpr::val(NgsiLdDate::from(*value).to_string()))
-        }),
-        Operand::Time(value) => on_kind(ValueKind::Time, row, |field| {
-            compare(on_field(field), comparator, SeaExpr::val(NgsiLdTime::normalise(*value).to_string()))
-        }),
-    }
+    field_arms(operand, comparator)
+        .iter()
+        .map(|arm| arm.condition(operand, comparator, row))
+        .reduce(ExprTrait::or)
+        .unwrap_or_else(false_literal)
 }
 
 /// `compared`, a test of a String one of `row`'s String columns holds, read
@@ -111,95 +90,176 @@ pub fn typed_column_condition(operand: &Operand, comparator: Comparator, row: In
 /// another data type match a String operator.
 #[must_use]
 pub(crate) fn as_string(compared: SimpleExpr, row: InstanceRow) -> SimpleExpr {
-    on_kind(ValueKind::String, row, |_string_field| compared)
-}
-
-/// `compared` over the field `kind` is placed in, read for `kind` alone where
-/// that field also holds kinds of another data type.
-///
-/// Every kind a scalar operand compares with is held in a typed field; a seal
-/// and a tombstone are in none, so nothing of theirs equals or orders against
-/// an operand.
-fn on_kind(kind: ValueKind, row: InstanceRow, compared: impl FnOnce(ValueField) -> SimpleExpr) -> SimpleExpr {
-    match value_placement(kind) {
+    match value_placement(ValueKind::String) {
         ValuePlacement::Field {
-            field,
-            told_apart: ToldApart::Unneeded,
-        } => compared(field),
-        ValuePlacement::Field {
-            field,
             told_apart: ToldApart::ByValueKind,
-        } => compared(field).and(row.value_kind_is(kind)),
+            ..
+        } => compared.and(row.value_kind_is(ValueKind::String)),
+        ValuePlacement::Field {
+            told_apart: ToldApart::Unneeded,
+            ..
+        } => compared,
         ValuePlacement::Proof | ValuePlacement::Valueless => false_literal(),
     }
 }
 
-/// A comparison of the number column, by `comparator`, that leaves `NaN` out
-/// of every ordering.
-///
-/// A declared `xsd:float` or `xsd:double` holds `INF`, `-INF` and `NaN` as the
-/// `numeric` values PostgreSQL orders `-Infinity` below every finite value,
-/// `Infinity` above, and `NaN` above both, equal to itself. The infinities
-/// already order as XSD orders them. `NaN` is unordered, so it must fail every
-/// ordering; it never equals an operand, which is always finite, so equality
-/// needs no guard, and `!=`, the total negation of `==`, holds for it.
-fn number_condition(compared: SimpleExpr, comparator: Comparator, column: SimpleExpr) -> SimpleExpr {
-    match comparator {
-        Comparator::Equal => compared,
-        Comparator::Ordered(_) => compared.and(is_not_nan(column)),
+/// Whether the instance's own value is a String in its String field: told
+/// apart by its value kind where the field also holds kinds of another data
+/// type.
+#[must_use]
+pub(crate) fn holds_string(row: InstanceRow) -> SimpleExpr {
+    match value_placement(ValueKind::String) {
+        ValuePlacement::Field {
+            told_apart: ToldApart::ByValueKind,
+            ..
+        } => row.value_kind_is(ValueKind::String),
+        ValuePlacement::Field {
+            field,
+            told_apart: ToldApart::Unneeded,
+        } => row
+            .columns(field)
+            .map(|column| row.value(column).is_not_null())
+            .reduce(ExprTrait::or)
+            .unwrap_or_else(false_literal),
+        ValuePlacement::Proof | ValuePlacement::Valueless => false_literal(),
     }
 }
 
-/// Compare a String operand against the two string columns (clause 4.9).
+/// One typed field a comparison reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FieldArm {
+    /// The field.
+    field: ValueField,
+    /// The kind the field is read for, where it also holds kinds of another
+    /// data type; `None` where every kind it holds compares alike.
+    told_apart: Option<ValueKind>,
+    /// The stored kinds the field is read for.
+    kinds: Vec<ValueKind>,
+}
+
+/// The fields a comparison of `operand` by `comparator` reads, in the order
+/// the kinds they are read for are numbered, each once.
 ///
-/// Equality is byte identity under `COLLATE "C"`: a stored value equal to the
-/// operand has the operand's length, so it sits in the one column the operand
-/// itself would be placed in, and only that column is read. A short `==`
-/// therefore compiles exactly as it would with no overflow column at all. An
-/// ordering reads both columns, because a stored value of any length may order
-/// on either side of the operand; a row whose value is in the other column
-/// yields NULL for that arm, which the disjunction absorbs. An ordering
-/// compares under the collation [`ordered_string`] picks.
-fn string_condition(operand: &Operand, value: &str, comparator: Comparator, row: InstanceRow) -> SimpleExpr {
-    on_kind(ValueKind::String, row, |field| match comparator {
-        Comparator::Equal => compare(row.value(ValueColumn::holding(field, value)), comparator, SeaExpr::val(value)),
-        Comparator::Ordered(_) => {
-            let ordered = |column: ValueColumn| compare(ordered_string(row.value(column), operand, comparator), comparator, SeaExpr::val(value));
-            row.columns(field).map(ordered).reduce(ExprTrait::or).unwrap_or_else(false_literal)
+/// A seal and a tombstone are in no typed field, and no operand compares with
+/// either.
+fn field_arms(operand: &Operand, comparator: Comparator) -> Vec<FieldArm> {
+    compared_kinds(operand, comparator.comparison()).fold(Vec::new(), |mut arms, kind| {
+        let (field, told_apart) = match value_placement(kind) {
+            ValuePlacement::Field {
+                field,
+                told_apart: ToldApart::Unneeded,
+            } => (field, None),
+            ValuePlacement::Field {
+                field,
+                told_apart: ToldApart::ByValueKind,
+            } => (field, Some(kind)),
+            ValuePlacement::Proof | ValuePlacement::Valueless => return arms,
+        };
+        match arms.iter_mut().find(|arm| arm.field == field && arm.told_apart == told_apart) {
+            Some(arm) => arm.kinds.push(kind),
+            None => arms.push(FieldArm {
+                field,
+                told_apart,
+                kinds: vec![kind],
+            }),
         }
+        arms
     })
 }
 
-/// Whether a Relationship's object is a comparison target of one comparison.
-///
-/// `value_uri` and `value_long_uri` hold Relationship
-/// objects and nothing else, so probing them is exactly the decision of whether
-/// the predicate may match a Relationship.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RelationshipObjects {
-    /// The comparison admits a Relationship's object as a target.
-    Comparable,
-    /// Clause 4.9 requires a Relationship operand to non-match the comparison.
-    NonMatching,
+impl FieldArm {
+    /// The comparison of `operand` by `comparator` on this field of `row`.
+    ///
+    /// The numbers beyond the decimals the field holds are answered as the
+    /// reading orders them, where the comparison on the column answers them
+    /// otherwise ([`beyond_decimals`]).
+    fn condition(&self, operand: &Operand, comparator: Comparator, row: InstanceRow) -> SimpleExpr {
+        let compared = field_comparison(operand, comparator, self.field, row);
+        let compared = self
+            .kinds
+            .iter()
+            .flat_map(|kind| stored_target_kinds(*kind))
+            .filter_map(|target| target.non_finite())
+            .fold(compared, |compared, value| {
+                beyond_decimals(compared, value, comparator, operand, row.value(ValueColumn::Field(self.field)))
+            });
+        match self.told_apart {
+            Some(kind) => compared.and(row.value_kind_is(kind)),
+            None => compared,
+        }
+    }
 }
 
-/// Clause 4.9: a Relationship (and a `ListRelationship`) operand shall non-match
-/// every operator other than equality and inequality.
+/// `operand` compared by `comparator` with the value `field` of `row` holds.
 ///
-/// A URI names a resource; it carries no order a `<` or `>` could mean, and the
-/// pattern operators are defined over String targets. Probing `value_uri` under
-/// an ordering operator would make `owner>"a"` select entities the standard
-/// requires it to reject.
+/// Equality of text is byte identity under `COLLATE "C"`: a stored value equal
+/// to the operand has the operand's length, so it sits in the one column the
+/// operand itself would be placed in, and only that column is read. A short
+/// `==` therefore compiles exactly as it would with no overflow column at all.
+/// An ordering of text reads both columns, because a stored value of any
+/// length may order on either side of the operand; a row whose value is in the
+/// other column yields NULL for that arm, which the disjunction absorbs. It
+/// compares under the collation [`ordered_string`] picks.
+fn field_comparison(operand: &Operand, comparator: Comparator, field: ValueField, row: InstanceRow) -> SimpleExpr {
+    match (operand, comparator) {
+        (Operand::Text(text), Comparator::Equal) => compare(row.value(ValueColumn::holding(field, text)), comparator, bound_operand(operand)),
+        (Operand::Text(_), Comparator::Ordered(_)) => row
+            .columns(field)
+            .map(|column| compare(ordered_string(row.value(column), operand, comparator), comparator, bound_operand(operand)))
+            .reduce(ExprTrait::or)
+            .unwrap_or_else(false_literal),
+        (Operand::Number(_) | Operand::Boolean(_) | Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_), Comparator::Equal | Comparator::Ordered(_)) => {
+            compare(row.value(ValueColumn::Field(field)), comparator, bound_operand(operand))
+        }
+    }
+}
+
+/// The value `operand` is bound as against the field holding its kind.
 ///
-/// The objects of a `ListRelationship`, or of a Relationship holding several,
-/// are not here at all: they are held in `value_object` as a JSON array, and
-/// the containment test in
-/// [`crate::q_predicate::structured_target`] is what compares a URI Query Term
-/// against them.
-const fn relationship_object_is_comparable(comparator: Comparator) -> RelationshipObjects {
-    match comparator {
-        Comparator::Equal => RelationshipObjects::Comparable,
-        Comparator::Ordered(_) => RelationshipObjects::NonMatching,
+/// sea-query owns every value in its AST, so a number is the one necessary
+/// clone between the borrowed query domain value and the `NUMERIC` bind. A
+/// `Date` binds as its one spelling and a `Time` in the fixed-width encoding
+/// the string column holds it in.
+#[must_use]
+pub fn bound_operand(operand: &Operand) -> SimpleExpr {
+    match operand {
+        Operand::Number(number) => SeaExpr::val(number.decimal().clone()),
+        Operand::Text(text) => SeaExpr::val(text.as_str()),
+        Operand::Boolean(value) => SeaExpr::val(*value),
+        Operand::DateTime(instant) => SeaExpr::val(*instant),
+        Operand::Date(date) => SeaExpr::val(NgsiLdDate::from(*date).to_string()),
+        Operand::Time(time) => SeaExpr::val(NgsiLdTime::normalise(*time).to_string()),
+    }
+}
+
+/// `compared`, a comparison of the number `column` with `operand` by
+/// `comparator`, answering `value` as the reading orders it.
+///
+/// A declared `xsd:float` or `xsd:double` holds `INF`, `-INF` and `NaN` as the
+/// `numeric` values PostgreSQL orders against every finite operand one way
+/// each ([`NumericSpecial::order_against_finite`]). Where that order makes
+/// the comparison hold and the reading's does not, the value is left out, and
+/// where the reading's makes it hold and that order does not, it is admitted:
+/// `NaN`, which the reading leaves unordered, is left out of `>` and `>=`,
+/// and the infinities need neither, since both orders place them alike.
+fn beyond_decimals(compared: SimpleExpr, value: NonFinite, comparator: Comparator, operand: &Operand, column: SimpleExpr) -> SimpleExpr {
+    let special = numeric_special(value);
+    match (
+        comparator.holds(special.order_against_finite()),
+        comparator.holds_beyond_decimals(value, operand),
+    ) {
+        (true, false) => compared.and(is_not_special(column, special)),
+        (false, true) => compared.or(is_special(column, special)),
+        (true, true) | (false, false) => compared,
+    }
+}
+
+/// The `numeric` value a number beyond the decimals is held as.
+const fn numeric_special(value: NonFinite) -> NumericSpecial {
+    match value {
+        NonFinite::NotANumber => NumericSpecial::NotANumber,
+        NonFinite::PositiveInfinity => NumericSpecial::Infinity,
+        NonFinite::NegativeInfinity => NumericSpecial::NegativeInfinity,
     }
 }
 
@@ -263,8 +323,9 @@ mod tests {
     }
 
     /// `NaN` is unordered, so every ordering on the number column leaves it
-    /// out; it never equals a finite operand, so equality reads the column
-    /// alone, and reads it for both number kinds.
+    /// out: `>` and `>=` by naming it, since PostgreSQL orders it above every
+    /// number, and `<` and `<=` by that order alone. It never equals a finite
+    /// operand, so equality reads the column alone, for both number kinds.
     #[test]
     fn a_number_ordering_leaves_not_a_number_out_and_equality_does_not_guard() {
         for (index, comparator) in ORDERINGS.into_iter().chain([Comparator::Equal]).enumerate() {

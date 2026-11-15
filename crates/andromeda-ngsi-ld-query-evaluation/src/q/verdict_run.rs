@@ -36,8 +36,8 @@ pub(crate) fn target_passes(test: &ValueTest, target: &ResolvedTarget<'_>) -> bo
 /// of such an array.
 fn element_passes(test: &ValueTest, element: &TargetValue<'_>, origin: TargetOrigin, array: ArrayTarget) -> bool {
     match element.shape(origin) {
-        ValueShape::One(kind) => verdict_holds(test.element_verdict(kind), element),
-        ValueShape::Several(nested) => array_holds(test.element_array_rule(array), nested, |inner| element_passes(test, inner, origin, array)),
+        ValueShape::One(kind) => verdict_holds(test.asserted_verdict(kind), element),
+        ValueShape::Several(nested) => array_holds(test.asserted_array_rule(array), nested, |inner| element_passes(test, inner, origin, array)),
     }
 }
 

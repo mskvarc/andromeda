@@ -34,7 +34,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
 };
 use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, value_placement::ValueField};
-use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Func, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, CaseStatement, Expr as SeaExpr, ExprTrait, Func, Query, SelectStatement, SimpleExpr};
 
 /// The alias one unnested `languageMap` entry is read under.
 const ENTRY: &str = "ls";
@@ -91,20 +91,6 @@ impl LanguageMap {
     #[must_use]
     pub fn some_string(&self, selection: LanguageSelection<'_>, test: impl FnOnce(SimpleExpr) -> SimpleExpr) -> SimpleExpr {
         SeaExpr::exists(self.entries(selection, Some(test(entry_text(keyword::VALUE)))))
-    }
-
-    /// Whether the map holds a string in any language and none under
-    /// `selection` passes `test`: the complement clause 4.9 gives `!=` and
-    /// `!~=`, whose matching entity contains the target element, the
-    /// `LanguageProperty`, and where "No matching value is found as the value
-    /// of the specified language key", which a language the map does not hold
-    /// satisfies.
-    #[must_use]
-    pub fn no_string(&self, selection: LanguageSelection<'_>, test: impl FnOnce(SimpleExpr) -> SimpleExpr) -> SimpleExpr {
-        Condition::all()
-            .add(self.holds(LanguageSelection::AnyLanguage))
-            .add(Condition::all().add(self.some_string(selection, test)).not())
-            .into()
     }
 
     /// The entries under `selection`, narrowed by `test` when there is one.
@@ -243,15 +229,5 @@ mod tests {
     fn no_target_language_reads_every_string() {
         let statement = render(column_map().some_string(LanguageSelection::AnyLanguage, equals_door));
         assert_statement_snapshot!("language-map-no-target-language-reads-every-string", statement);
-    }
-
-    /// Clause 4.9 `unequal` and `notPatternOp` require the `LanguageProperty`,
-    /// not the target language: the presence probe tests no tag, the denial
-    /// pins it.
-    #[test]
-    fn no_string_requires_the_map_and_denies_a_match_under_the_language() {
-        let tag = language("fr");
-        let statement = render(column_map().no_string(LanguageSelection::TargetLanguage(tag.selector(), LanguageMatching::TagEquality), equals_door));
-        assert_statement_snapshot!("language-map-no-string-requires-the-map-and-denies-a-match-under-the-language", statement);
     }
 }

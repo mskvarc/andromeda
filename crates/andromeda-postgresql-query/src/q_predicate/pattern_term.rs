@@ -1,25 +1,28 @@
-//! The pattern Query Terms (`~=`/`!~=`, clause 4.9 `patternOp` and
-//! `notPatternOp`) compiled against one stored instance.
+//! The pattern Query Term (`~=`, clause 4.9 `patternOp`) asserted against
+//! one stored instance, and the String targets its complement (`!~=`,
+//! `notPatternOp`) ranges over.
 //!
-//! Both polarities compile *inside* the probe of the instance, so both require
-//! the attribute to be present. Clause 4.9 is explicit that the entity "shall
-//! contain the target element" for `notPatternOp`, so the existence test is
-//! not wrapped in `NOT (...)`, which would match entities that simply lacked
-//! the attribute.
+//! Both compile *inside* the probe of the instance, so both require the
+//! attribute to be present. Clause 4.9 is explicit that the entity "shall
+//! contain the target element" for `notPatternOp`, so the complement is the
+//! failure of the pattern over a String target the instance holds, not a
+//! `NOT (...)` around the probe, which would match entities that simply
+//! lacked the attribute.
 
 use crate::{
     operator::{PatternIndexes, pattern as pattern_predicate},
     q_predicate::{
         instance_row::InstanceRow,
         language_map::{LanguageMap, LanguageSelection},
-        language_term::language_value_term,
-        typed_column::as_string,
+        language_term::some_string_matching,
+        typed_column::{as_string, holds_string},
         value_column::ValueColumn,
     },
 };
-use andromeda_ngsi_ld_query::{filter::reading::value_test::ValueTest, pattern::Pattern};
+use andromeda_ngsi_ld_query::{filter::reading::value_test::Polarity, pattern::Pattern};
+use andromeda_postgresql_seaquery::literal::false_literal;
 use andromeda_postgresql_stored_values::value_placement::ValueField;
-use sea_query::{Condition, SimpleExpr};
+use sea_query::{Condition, ExprTrait, SimpleExpr};
 
 /// Where an instance's own value holds a String a pattern is tested against.
 ///
@@ -46,23 +49,33 @@ pub fn pattern_targets(row: InstanceRow) -> impl Iterator<Item = PatternTarget> 
     row.columns(ValueField::String).map(PatternTarget::Column).chain([PatternTarget::LanguageMap])
 }
 
-/// `value`, a test of `pattern` under its polarity, tested against one target
-/// of `row`.
+/// `pattern` tested against one target of `row`.
 ///
 /// A String field holds one string, which the pattern tests directly, and
 /// only when the value is a String: a `Date` and a `Time` share the field, and
 /// clause 4.9 makes a target "considered as not matching" under both pattern
 /// operators "If the target value data type is different than String". Some
-/// string of a `languageMap` has to match `~=`, and none may match `!~=`.
+/// string of a `languageMap` has to match.
 #[must_use]
-pub fn pattern_on(target: PatternTarget, value: &ValueTest, pattern: &Pattern, row: InstanceRow) -> SimpleExpr {
+pub fn pattern_on(target: PatternTarget, pattern: &Pattern, row: InstanceRow) -> SimpleExpr {
     match target {
         PatternTarget::Column(column) => as_string(
-            pattern_predicate(row.value(column), value.polarity(), pattern, column_indexes(row, column)),
+            pattern_predicate(row.value(column), Polarity::Asserted, pattern, column_indexes(row, column)),
             row,
         ),
-        PatternTarget::LanguageMap => language_value_term(value, &LanguageMap::of_instance(row), LanguageSelection::AnyLanguage),
+        PatternTarget::LanguageMap => some_string_matching(&LanguageMap::of_instance(row), LanguageSelection::AnyLanguage, pattern),
     }
+}
+
+/// Whether the instance's own value is a String target: a String in its
+/// String field, or a `languageMap`, each string of which is one. The
+/// complement of a pattern ranges over these alone.
+#[must_use]
+pub(crate) fn string_target(row: InstanceRow) -> SimpleExpr {
+    [holds_string(row), LanguageMap::of_instance(row).holds(LanguageSelection::AnyLanguage)]
+        .into_iter()
+        .reduce(ExprTrait::or)
+        .unwrap_or_else(false_literal)
 }
 
 /// The indexes over one String field of `row`: a `current_attributes` row
@@ -91,8 +104,8 @@ const fn column_indexes(row: InstanceRow, column: ValueColumn) -> PatternIndexes
 /// page through the trigram indexes as well, one target at a time (see
 /// [`keyed_pattern`](crate::q_predicate::keyed_pattern)).
 #[must_use]
-pub(crate) fn pattern_value(value: &ValueTest, pattern: &Pattern, row: InstanceRow) -> Condition {
-    pattern_targets(row).fold(Condition::any(), |any, target| any.add(pattern_on(target, value, pattern, row)))
+pub(crate) fn pattern_value(pattern: &Pattern, row: InstanceRow) -> Condition {
+    pattern_targets(row).fold(Condition::any(), |any, target| any.add(pattern_on(target, pattern, row)))
 }
 
 #[cfg(test)]
@@ -100,7 +113,7 @@ mod tests {
     use crate::q_predicate::{
         instance_row::InstanceRow,
         lowered_filter::term_of,
-        pattern_term::{PatternTarget, pattern_targets, pattern_value},
+        pattern_term::{PatternTarget, pattern_targets, pattern_value, string_target},
         value_column::ValueColumn,
     };
     use andromeda_ngsi_ld_query::filter::reading::{scalar_test::ScalarTest, term_reading::Test};
@@ -117,7 +130,7 @@ mod tests {
         let ScalarTest::Matches(pattern) = value.test() else {
             panic!("a pattern term");
         };
-        Query::select().cond_where(pattern_value(value, pattern, row)).to_owned()
+        Query::select().cond_where(pattern_value(pattern, row)).to_owned()
     }
 
     #[test]
@@ -142,11 +155,17 @@ mod tests {
         assert_statement_snapshot!("pattern-term-a-pattern-on-a-current-row-disjoins-every-target", statement);
     }
 
-    /// Clause 4.9 `notPatternOp`: no string of a `languageMap` may match.
+    /// Clause 4.9 `notPatternOp` makes a target of another data type than
+    /// String not matching, so its complement ranges over a String the
+    /// instance holds or its `languageMap`.
     #[test]
-    fn a_not_pattern_denies_every_string_of_the_language_map() {
-        let statement = render("\"https://example.com/name\"!~=\"^D\"", InstanceRow::Current);
-        assert_statement_snapshot!("pattern-term-a-not-pattern-denies-every-string-of-the-language-map", statement);
+    fn a_not_pattern_ranges_over_a_string_or_a_language_map() {
+        for (index, row) in [InstanceRow::Current, InstanceRow::History].into_iter().enumerate() {
+            assert_statement_snapshot!(
+                format!("pattern-term-a-not-pattern-ranges-over-a-string-or-a-language-map-{}", index + 1),
+                Query::select().expr(string_target(row)).to_owned()
+            );
+        }
     }
 
     /// A Relationship's object is never a pattern target (clause 4.9).

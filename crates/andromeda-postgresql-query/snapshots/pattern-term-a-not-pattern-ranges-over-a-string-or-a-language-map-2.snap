@@ -1,0 +1,17 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/pattern_term.rs
+---
+SELECT
+  nullif("qh"."value_kind" = (2), FALSE)
+  OR EXISTS (
+    SELECT
+      1
+    FROM
+      jsonb_array_elements(
+        (
+          CASE
+            WHEN ("qh"."attribute_kind" = (5)) THEN "qh"."value_object"
+          END
+        )
+      ) AS "ls"
+  )

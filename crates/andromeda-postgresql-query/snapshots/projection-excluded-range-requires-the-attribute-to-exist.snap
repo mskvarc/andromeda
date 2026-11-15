@@ -21,10 +21,7 @@ WHERE
         NOT COALESCE(
           "ca"."value_number" >= $2
           AND "ca"."value_number" <> ('NaN'::numeric)
-          AND (
-            "ca"."value_number" <= $3
-            AND "ca"."value_number" <> ('NaN'::numeric)
-          ),
+          AND "ca"."value_number" <= $3,
           FALSE
         )
       )

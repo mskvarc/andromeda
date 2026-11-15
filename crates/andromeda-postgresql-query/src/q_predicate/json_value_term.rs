@@ -15,12 +15,20 @@ use crate::{
     q_predicate::string_ordering::ordered_string,
 };
 use andromeda_ngsi_ld_query::{
-    filter::reading::{comparator::Comparator, interval::Interval, operand::Operand, order_relation::OrderRelation, value_test::Polarity},
+    filter::reading::{
+        comparator::Comparator,
+        interval::Interval,
+        operand::Operand,
+        order_relation::OrderRelation,
+        scalar_test::ScalarTest,
+        value_test::Polarity,
+    },
     pattern::Pattern,
 };
 use andromeda_postgresql_seaquery::{
     cast::cast_compound,
     json_type::{JsonType, jsonb_type_is, jsonb_whole_text},
+    literal::false_literal,
     operator::{negate_total, present_and},
     pg_type::PostgresType,
 };
@@ -104,16 +112,33 @@ pub(crate) fn json_ordering(target: &JsonTarget, relation: OrderRelation, operan
     ))
 }
 
-/// Decide a pattern Query Term (`~=`/`!~=`) against one target.
+/// Decide a pattern Query Term (`~=`) against one target.
 ///
-/// Both polarities require the element to be present (clause 4.9), which is
-/// what [`present_and`] states once for every backend, and the target to be a
-/// String: "If the target value data type is different than String then it
-/// shall be considered as not matching". A JSON string declared as a time
-/// value, a number or a Boolean is that, not a String.
-pub(crate) fn json_pattern(target: &JsonTarget, pattern: &Pattern, polarity: Polarity) -> Condition {
+/// The target must be present (clause 4.9), which is what [`present_and`]
+/// states once for every backend, and a String ([`json_string`]).
+pub(crate) fn json_pattern(target: &JsonTarget, pattern: &Pattern) -> Condition {
     let text = cast_compound(jsonb_whole_text(target.value.clone()), PostgresType::Text); // clone: the target may be read by further terms
-    let value = pattern_predicate(text, polarity, pattern, PatternIndexes::None);
+    let value = pattern_predicate(text, Polarity::Asserted, pattern, PatternIndexes::None);
+    Condition::all().add(present_and(json_string(target), value))
+}
+
+/// Whether the target is a String present: "If the target value data type is
+/// different than String then it shall be considered as not matching", and a
+/// JSON string declared as a time value, a number or a Boolean is that, not a
+/// String.
+pub(crate) fn json_string(target: &JsonTarget) -> SimpleExpr {
+    // clone: the target may be read by further terms
     let string = jsonb_type_is(target.value.clone(), JsonType::String).and(negate_total(declares_other_data_type(target.datatype.clone())));
-    Condition::all().add(present_and(target.presence.clone().and(string), value))
+    target.presence.clone().and(string)
+}
+
+/// Whether the target passes `test`, asserted.
+pub(crate) fn json_passes(target: &JsonTarget, test: &ScalarTest) -> Condition {
+    match test {
+        ScalarTest::EqualsAny(operands) => json_equals_any(target, operands),
+        ScalarTest::Within(interval) => json_within(target, interval),
+        ScalarTest::Ordered { relation, operand } => json_ordering(target, *relation, operand),
+        ScalarTest::Matches(pattern) => json_pattern(target, pattern),
+        ScalarTest::Unsatisfiable => Condition::all().add(false_literal()),
+    }
 }

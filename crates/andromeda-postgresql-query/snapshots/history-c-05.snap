@@ -174,10 +174,7 @@ WHERE
       AND (
         "qh"."value_number" >= $2
         AND "qh"."value_number" <> ('NaN'::numeric)
-        AND (
-          "qh"."value_number" <= $3
-          AND "qh"."value_number" <> ('NaN'::numeric)
-        )
+        AND "qh"."value_number" <= $3
       )
       AND "qh"."value_kind" <> (0)
       AND "qh"."observed_at" IS NOT NULL
@@ -675,10 +672,7 @@ WHERE
       AND (
         "qh"."value_number" >= $13
         AND "qh"."value_number" <> ('NaN'::numeric)
-        AND (
-          "qh"."value_number" <= $14
-          AND "qh"."value_number" <> ('NaN'::numeric)
-        )
+        AND "qh"."value_number" <= $14
       )
       AND "qh"."value_kind" <> (0)
   )

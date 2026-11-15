@@ -53,24 +53,27 @@ WHERE
                       ) AS "ls"
                   )
                   AND (
-                    NOT EXISTS (
-                      SELECT
-                        1
-                      FROM
-                        jsonb_array_elements(
-                          (
-                            CASE
-                              WHEN ("l0"."attribute_kind" = (5)) THEN sub_attribute_value_object(
-                                "l0"."value_kind",
-                                "l0"."value_object",
-                                "l0"."value_proof"
-                              )
-                            END
-                          )
-                        ) AS "ls"
-                      WHERE
-                        LOWER(("ls"."value" ->> ('@language')) COLLATE "C") = LOWER(($4::text) COLLATE "C")
-                        AND (("ls"."value" ->> ('@value')) COLLATE "C") = $5
+                    NOT COALESCE(
+                      EXISTS (
+                        SELECT
+                          1
+                        FROM
+                          jsonb_array_elements(
+                            (
+                              CASE
+                                WHEN ("l0"."attribute_kind" = (5)) THEN sub_attribute_value_object(
+                                  "l0"."value_kind",
+                                  "l0"."value_object",
+                                  "l0"."value_proof"
+                                )
+                              END
+                            )
+                          ) AS "ls"
+                        WHERE
+                          LOWER(("ls"."value" ->> ('@language')) COLLATE "C") = LOWER(($4::text) COLLATE "C")
+                          AND (("ls"."value" ->> ('@value')) COLLATE "C") = $5
+                      ),
+                      FALSE
                     )
                   )
                 )

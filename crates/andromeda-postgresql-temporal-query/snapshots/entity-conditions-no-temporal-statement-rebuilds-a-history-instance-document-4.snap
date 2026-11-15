@@ -277,10 +277,7 @@ WITH
           AND (
             "qh"."value_number" >= $2
             AND "qh"."value_number" <> ('NaN'::numeric)
-            AND (
-              "qh"."value_number" <= $3
-              AND "qh"."value_number" <> ('NaN'::numeric)
-            )
+            AND "qh"."value_number" <= $3
           )
           AND "qh"."value_kind" <> (0)
           AND "qh"."observed_at" IS NOT NULL
@@ -777,10 +774,7 @@ WITH
           AND (
             "qh"."value_number" >= $12
             AND "qh"."value_number" <> ('NaN'::numeric)
-            AND (
-              "qh"."value_number" <= $13
-              AND "qh"."value_number" <> ('NaN'::numeric)
-            )
+            AND "qh"."value_number" <= $13
           )
           AND "qh"."value_kind" <> (0)
       )
@@ -1278,10 +1272,7 @@ UNION ALL
               AND (
                 "qh"."value_number" >= $18
                 AND "qh"."value_number" <> ('NaN'::numeric)
-                AND (
-                  "qh"."value_number" <= $19
-                  AND "qh"."value_number" <> ('NaN'::numeric)
-                )
+                AND "qh"."value_number" <= $19
               )
               AND "qh"."value_kind" <> (0)
               AND "qh"."observed_at" IS NOT NULL
@@ -1778,10 +1769,7 @@ UNION ALL
               AND (
                 "qh"."value_number" >= $28
                 AND "qh"."value_number" <> ('NaN'::numeric)
-                AND (
-                  "qh"."value_number" <= $29
-                  AND "qh"."value_number" <> ('NaN'::numeric)
-                )
+                AND "qh"."value_number" <= $29
               )
               AND "qh"."value_kind" <> (0)
           )
@@ -2255,10 +2243,7 @@ UNION ALL
               AND (
                 "qh"."value_number" >= $35
                 AND "qh"."value_number" <> ('NaN'::numeric)
-                AND (
-                  "qh"."value_number" <= $36
-                  AND "qh"."value_number" <> ('NaN'::numeric)
-                )
+                AND "qh"."value_number" <= $36
               )
               AND "qh"."value_kind" <> (0)
               AND "qh"."observed_at" IS NOT NULL
@@ -2755,10 +2740,7 @@ UNION ALL
               AND (
                 "qh"."value_number" >= $45
                 AND "qh"."value_number" <> ('NaN'::numeric)
-                AND (
-                  "qh"."value_number" <= $46
-                  AND "qh"."value_number" <> ('NaN'::numeric)
-                )
+                AND "qh"."value_number" <= $46
               )
               AND "qh"."value_kind" <> (0)
           )

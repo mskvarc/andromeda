@@ -19,17 +19,8 @@ WHERE
       )
       AND (
         (
-          ("ca"."value_string" !~ $2)
-          AND nullif("ca"."value_kind" = (2), FALSE)
-        )
-        OR (
-          (
-            (("ca"."value_long_text") COLLATE "default") !~ $3
-          )
-          AND nullif("ca"."value_kind" = (2), FALSE)
-        )
-        OR (
-          EXISTS (
+          nullif("ca"."value_kind" = (2), FALSE)
+          OR EXISTS (
             SELECT
               1
             FROM
@@ -41,8 +32,20 @@ WHERE
                 )
               ) AS "ls"
           )
-          AND (
-            NOT EXISTS (
+        )
+        AND (
+          NOT COALESCE(
+            (
+              ("ca"."value_string" ~ $2)
+              AND nullif("ca"."value_kind" = (2), FALSE)
+            )
+            OR (
+              (
+                (("ca"."value_long_text") COLLATE "default") ~ $3
+              )
+              AND nullif("ca"."value_kind" = (2), FALSE)
+            )
+            OR EXISTS (
               SELECT
                 1
               FROM
@@ -55,7 +58,8 @@ WHERE
                 ) AS "ls"
               WHERE
                 ("ls"."value" ->> ('@value')) ~ $4
-            )
+            ),
+            FALSE
           )
         )
       )

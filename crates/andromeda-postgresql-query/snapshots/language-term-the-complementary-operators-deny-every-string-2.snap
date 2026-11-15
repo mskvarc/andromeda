@@ -9,18 +9,21 @@ SELECT
       jsonb_array_elements("map") AS "ls"
   )
   AND (
-    NOT EXISTS (
-      SELECT
-        1
-      FROM
-        jsonb_array_elements("map") AS "ls"
-      WHERE
-        (
-          ("ls"."value" ->> ('@value')) COLLATE "und-x-icu"
-        ) >= $1
-        AND (
-          ("ls"."value" ->> ('@value')) COLLATE "und-x-icu"
-        ) <= $2
+    NOT COALESCE(
+      EXISTS (
+        SELECT
+          1
+        FROM
+          jsonb_array_elements("map") AS "ls"
+        WHERE
+          (
+            ("ls"."value" ->> ('@value')) COLLATE "und-x-icu"
+          ) >= $1
+          AND (
+            ("ls"."value" ->> ('@value')) COLLATE "und-x-icu"
+          ) <= $2
+      ),
+      FALSE
     )
   )
 1: String 'a'
