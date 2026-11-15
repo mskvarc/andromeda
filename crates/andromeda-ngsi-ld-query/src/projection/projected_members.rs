@@ -128,6 +128,25 @@ impl ProjectedMembers {
         }
     }
 
+    /// Whether an Entity carrying the Attributes named `carried`, and a
+    /// `scope` when `has_scope`, keeps a member under the projection: the one
+    /// statement of the rule, which each execution reads with the names of the
+    /// Attributes that stand.
+    #[must_use]
+    pub fn admits<'n>(&self, carried: impl IntoIterator<Item = &'n str>, has_scope: bool) -> bool {
+        let scoped = |scope: ScopeRetention| match scope {
+            ScopeRetention::Kept => has_scope,
+            ScopeRetention::Removed => false,
+        };
+        match self {
+            ProjectedMembers::Unconditional => true,
+            ProjectedMembers::AnyOf { attributes, scope } => {
+                scoped(*scope) || carried.into_iter().any(|name| attributes.iter().any(|attribute| attribute.as_str() == name))
+            }
+            ProjectedMembers::AnyBesides { scope, .. } => scoped(*scope) || carried.into_iter().any(|name| !self.names().any(|set_apart| set_apart == name)),
+        }
+    }
+
     /// The expanded member names whose presence this requirement reads.
     ///
     /// For [`ProjectedMembers::AnyOf`] the Attributes that keep an Entity; for
@@ -171,6 +190,47 @@ mod tests {
             iri: iri(&format!("https://example.com/{name}")),
             linked: vec![attribute(inner)],
         }
+    }
+
+    const NAME: &str = "https://example.com/name";
+
+    /// Clause 5.7.1.4: a `pick` that matched no member of the entity leaves it
+    /// nothing, because the clause 4.21 keyword rule drops `id` and `type`
+    /// along with it; one that matched an Attribute, `location` among them,
+    /// leaves it that one.
+    #[test]
+    fn a_pick_admits_an_entity_carrying_a_picked_attribute() {
+        let members = ProjectedMembers::of(&Projection::builder().pick(vec![attribute("name"), attribute("location")]).build());
+        assert!(!members.admits([], false));
+        assert!(!members.admits(["https://example.com/speed"], false));
+        assert!(members.admits([NAME], false));
+        assert!(members.admits(["https://example.com/location"], false));
+        assert!(!members.admits([], true), "the pick does not keep scope");
+    }
+
+    /// Clause 5.7.1.5: an `omit` naming every member the entity has, `id` and
+    /// `type` included, leaves nothing, and one that spares an Attribute
+    /// leaves the entity standing; a member clause 5.2.4 sets beside the
+    /// Attributes keeps none.
+    #[test]
+    fn an_omit_admits_an_entity_carrying_an_attribute_it_spares() {
+        let members = ProjectedMembers::of(
+            &Projection::builder()
+                .omit(vec![ProjectionTerm::Id, ProjectionTerm::Type, attribute("name")])
+                .build(),
+        );
+        assert!(!members.admits([NAME], false));
+        assert!(!members.admits([properties::EXPIRES_AT.as_str()], false));
+        assert!(members.admits([NAME, "https://example.com/speed"], false));
+        assert!(members.admits([], true), "the omit spares scope");
+    }
+
+    /// A projection keeping `id` or `type`, and no projection, leave every
+    /// Entity a member, whatever it carries.
+    #[test]
+    fn an_unconditional_requirement_admits_every_entity() {
+        assert!(ProjectedMembers::Unconditional.admits([], false));
+        assert!(ProjectedMembers::of(&Projection::builder().pick(vec![ProjectionTerm::Id]).build()).admits([], false));
     }
 
     /// A request that named no projection leaves every Entity whole.

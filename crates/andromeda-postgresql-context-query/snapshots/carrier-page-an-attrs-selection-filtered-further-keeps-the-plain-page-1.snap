@@ -25,7 +25,22 @@ FROM
         OR "entities"."expires_at" > NOW()
       )
       AND (
-        "entity_search"."attribute_name_keys" @> (ARRAY[28])
+        (
+          "entity_search"."attribute_name_keys" @> (ARRAY[28])
+        )
+        AND EXISTS (
+          SELECT
+            1
+          FROM
+            "current_attributes" AS "ca"
+          WHERE
+            "ca"."attribute_name_key" = $1
+            AND (
+              "ca"."expires_at" IS NULL
+              OR "ca"."expires_at" > NOW()
+            )
+            AND "ca"."entity_key" = "entities"."entity_key"
+        )
       )
       AND EXISTS (
         SELECT
@@ -33,13 +48,13 @@ FROM
         FROM
           "current_attributes" AS "ca"
         WHERE
-          "ca"."attribute_name_key" = $1
+          "ca"."attribute_name_key" = $2
           AND (
             "ca"."expires_at" IS NULL
             OR "ca"."expires_at" > NOW()
           )
           AND (
-            "ca"."value_number" > $2
+            "ca"."value_number" > $3
             AND "ca"."value_number" <> ('NaN'::numeric)
           )
           AND "ca"."entity_key" = "entities"."entity_key"
@@ -69,5 +84,6 @@ FROM
   ) AS "stored" ON TRUE
 ORDER BY
   "page"."sort_0" ASC
-1: Int 12
-2: BigDecimal 1
+1: Int 28
+2: Int 12
+3: BigDecimal 1

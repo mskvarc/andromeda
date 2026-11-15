@@ -38,7 +38,22 @@ FROM
       )
       AND ((("selected"."id") COLLATE "default") ~ $1)
       AND (
-        "entity_search"."attribute_name_keys" @> (ARRAY[28])
+        (
+          "entity_search"."attribute_name_keys" @> (ARRAY[28])
+        )
+        AND EXISTS (
+          SELECT
+            1
+          FROM
+            "current_attributes" AS "ca"
+          WHERE
+            "ca"."attribute_name_key" = $2
+            AND (
+              "ca"."expires_at" IS NULL
+              OR "ca"."expires_at" > NOW()
+            )
+            AND "ca"."entity_key" = "selected"."entity_key"
+        )
       )
     ORDER BY
       "sort_0" ASC
@@ -66,3 +81,4 @@ FROM
 ORDER BY
   "page"."sort_0" ASC
 1: String '.*_1196287$'
+2: Int 28

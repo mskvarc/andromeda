@@ -24,7 +24,10 @@ FROM
         "entities"."expires_at" IS NULL
         OR "entities"."expires_at" > NOW()
       )
-      AND (FALSE)
+      AND (
+        (FALSE)
+        AND (FALSE)
+      )
     ORDER BY
       "sort_0" ASC
     LIMIT

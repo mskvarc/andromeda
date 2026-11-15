@@ -135,6 +135,19 @@ impl DatasetFilter {
             (false, _) => DatasetFilter::NamedOnly(named),
         }
     }
+
+    /// Whether the filter keeps the Attribute instance whose `datasetId` is
+    /// `dataset_id`, `None` being the default instance (clause 4.5.5): what
+    /// every execution that narrows instances by `datasetId` asks, in memory
+    /// and in SQL alike.
+    #[must_use]
+    pub fn selects(&self, dataset_id: Option<&Identifier>) -> bool {
+        match (self, dataset_id) {
+            (DatasetFilter::Unfiltered, None | Some(_)) | (DatasetFilter::DefaultOnly | DatasetFilter::DefaultOrNamed(_), None) => true,
+            (DatasetFilter::NamedOnly(_), None) | (DatasetFilter::DefaultOnly, Some(_)) => false,
+            (DatasetFilter::NamedOnly(named) | DatasetFilter::DefaultOrNamed(named), Some(dataset_id)) => named.contains(dataset_id),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -200,6 +213,31 @@ mod tests {
     #[test]
     fn an_empty_selector_list_filters_nothing() {
         assert_eq!(DatasetFilter::from_selectors(&[]), DatasetFilter::Unfiltered);
+    }
+
+    /// A filter keeps an instance exactly when one of the selectors it was
+    /// reduced from names it, and an empty list keeps every instance.
+    #[test]
+    fn a_filter_keeps_the_instances_its_selectors_name() {
+        let instances = [None, Some(dataset_uri("urn:ngsi-ld:Dataset:1")), Some(dataset_uri("urn:ngsi-ld:Dataset:2"))];
+        for raw in [
+            &["@none"][..],
+            &["urn:ngsi-ld:Dataset:1"][..],
+            &["@none", "urn:ngsi-ld:Dataset:1"][..],
+            &["urn:ngsi-ld:Dataset:1", "urn:ngsi-ld:Dataset:2"][..],
+            &["@none", "@none"][..],
+        ] {
+            let wanted = selectors(raw);
+            let filter = DatasetFilter::from_selectors(&wanted);
+            for instance in &instances {
+                assert_eq!(
+                    filter.selects(instance.as_ref()),
+                    wanted.iter().any(|selector| selector.selects(instance.as_ref())),
+                    "{raw:?} on {instance:?}"
+                );
+            }
+        }
+        assert!(instances.iter().all(|instance| DatasetFilter::from_selectors(&[]).selects(instance.as_ref())));
     }
 
     #[test]

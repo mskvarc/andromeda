@@ -456,11 +456,13 @@ mod tests {
         assert_statement_snapshot!("entity-a-counted-query-counts-inside-the-page-and-carries-the-total-out", built.select);
     }
 
-    /// Clause 5.5.9 `attrs` is answered by the search row's interned attribute
-    /// names, one containment test per term the GIN index serves; a name the
-    /// dictionary never recorded is carried by no entity and matches nothing.
+    /// Clause 5.5.9 `attrs` keeps an Entity holding a standing instance of one
+    /// of the Attributes (clause 4.22), which its current instances decide,
+    /// beside the search row's interned names, one containment test per term
+    /// the GIN index serves, that name its candidates; a name the dictionary
+    /// never recorded is carried by no entity and matches nothing.
     #[test]
-    fn attrs_terms_are_containment_tests_on_the_search_rows_attribute_keys() {
+    fn attrs_terms_test_the_search_row_and_a_standing_instance() {
         let mut q = empty_query();
         q.selection.attrs = vec![iri("https://example.com/speed"), iri("https://example.com/neverWritten")];
         let names = QueryNames {
@@ -469,7 +471,7 @@ mod tests {
             ..QueryNames::default()
         };
         let built = build(&q, &names);
-        assert_statement_snapshot!("entity-attrs-terms-are-containment-tests-on-the-search-rows-attribute-keys", built.select);
+        assert_statement_snapshot!("entity-attrs-terms-test-the-search-row-and-a-standing-instance", built.select);
     }
 
     /// The dictionary the projection tests resolve against: `speed` at key 11

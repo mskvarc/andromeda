@@ -260,3 +260,23 @@ fn a_filter_lowers_its_conjunctions_and_disjunctions_as_written() {
     };
     assert!(matches!(children.as_slice(), [FilterReading::Term(_), FilterReading::Any(alternatives)] if alternatives.len() == 2));
 }
+
+/// Clause 5.2.23 makes `attrs` "a synonym for a combination of the pick and q
+/// members", so the Entities it keeps are those `q` keeps with the existence
+/// of each name, joined by `|`: one reading, each name once.
+#[test]
+fn carrying_any_attribute_is_the_reading_of_their_existence_disjunction() {
+    let name = |value: &str| -> AttributeName { value.parse().expect("an attribute name") };
+    assert_eq!(
+        FilterReading::carrying_any([name("https://example.com/b"), name("https://example.com/a"), name("https://example.com/b")]),
+        FilterReading::of(
+            &parse("\"https://example.com/a\"|\"https://example.com/b\"").expect("a clause 4.9 filter"),
+            LanguageMatching::TagEquality
+        )
+    );
+    assert_eq!(
+        FilterReading::carrying_any([name("https://example.com/a")]),
+        FilterReading::of(&parse("\"https://example.com/a\"").expect("a clause 4.9 filter"), LanguageMatching::TagEquality)
+    );
+    assert_eq!(FilterReading::carrying_any([]), FilterReading::Any(Vec::new()));
+}

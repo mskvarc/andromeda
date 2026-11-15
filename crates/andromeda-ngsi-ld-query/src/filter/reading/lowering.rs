@@ -54,6 +54,30 @@ impl FilterReading {
             Expr::Pred(predicate) => FilterReading::Term(Box::new(TermReading::of(predicate, matching))),
         }
     }
+
+    /// The reading of an Entity that carries at least one of `attributes`,
+    /// which `attrs` asks for, "a synonym for a combination of the pick and q
+    /// members" (clause 5.2.23): a disjunction of their existence terms, in
+    /// normal form, so each name is one term and a single name is that term
+    /// alone. With no name it is a disjunction no Entity satisfies.
+    #[must_use]
+    pub fn carrying_any(attributes: impl IntoIterator<Item = AttributeName>) -> FilterReading {
+        FilterReading::Any(
+            attributes
+                .into_iter()
+                .map(|attribute| {
+                    FilterReading::Term(Box::new(TermReading {
+                        hops: Vec::new(),
+                        attribute,
+                        sub_attributes: Vec::new(),
+                        terminal: Terminal::OwnValue,
+                        test: Test::Exists,
+                    }))
+                })
+                .collect(),
+        )
+        .normal_form()
+    }
 }
 
 impl TermReading {

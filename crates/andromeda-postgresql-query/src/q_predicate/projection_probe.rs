@@ -11,7 +11,7 @@ use crate::{
     q_predicate::instance_test::{InstanceTest, non_empty},
 };
 use andromeda_postgresql_schema::current::CurrentAttributes;
-use andromeda_postgresql_seaquery::literal::int_literal;
+use andromeda_postgresql_seaquery::{literal::int_literal, pg_array::is_none_of};
 use andromeda_postgresql_stored_form::expiry::unexpired;
 use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Iden, Query, SelectStatement, SimpleExpr};
@@ -88,6 +88,14 @@ pub(crate) fn exists_any_on_projection(tests: Vec<InstanceTest>, rows: &EntityRo
         any.add(test.arm(of_attribute))
     });
     Condition::all().add(SeaExpr::exists(projection_probe(Condition::all().add(standing()).add(any), rows)))
+}
+
+/// The correlated probe that holds when the Entity holds a current instance of
+/// an attribute other than those with the keys `set_apart`.
+#[must_use]
+pub fn exists_besides_on_projection(set_apart: &[AttributeNameKey], rows: &EntityRowRefs) -> Condition {
+    let besides = is_none_of(projection_column(CurrentAttributes::AttributeNameKey), set_apart.iter().map(|key| key.get()));
+    Condition::all().add(SeaExpr::exists(projection_probe(Condition::all().add(standing()).add(besides), rows)))
 }
 
 /// An instance of the attribute with this dictionary key.

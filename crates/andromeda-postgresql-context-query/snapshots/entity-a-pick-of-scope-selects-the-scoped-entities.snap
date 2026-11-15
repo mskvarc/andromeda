@@ -27,7 +27,10 @@ FROM
         OR "entities"."expires_at" > NOW()
       )
       AND (
-        (FALSE)
+        (
+          (FALSE)
+          AND (FALSE)
+        )
         OR "entity_search"."scope_paths" IS NOT NULL
       )
     ORDER BY

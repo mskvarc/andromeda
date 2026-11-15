@@ -27,8 +27,23 @@ FROM
         OR "entities"."expires_at" > NOW()
       )
       AND (
-        NOT (
-          "entity_search"."attribute_name_keys" <@ (ARRAY[11, 12]::integer[])
+        (
+          NOT (
+            "entity_search"."attribute_name_keys" <@ (ARRAY[11, 12]::integer[])
+          )
+        )
+        AND EXISTS (
+          SELECT
+            1
+          FROM
+            "current_attributes" AS "ca"
+          WHERE
+            (
+              "ca"."expires_at" IS NULL
+              OR "ca"."expires_at" > NOW()
+            )
+            AND "ca"."attribute_name_key" <> ALL ($1)
+            AND "ca"."entity_key" = "entities"."entity_key"
         )
       )
     ORDER BY
@@ -56,3 +71,4 @@ FROM
   ) AS "stored" ON TRUE
 ORDER BY
   "page"."sort_0" ASC
+1: Array ARRAY [11,12]
