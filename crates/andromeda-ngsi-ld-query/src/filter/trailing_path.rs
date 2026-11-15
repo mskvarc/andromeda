@@ -27,7 +27,12 @@ pub enum TrailingPath {
 
 /// The members of a compound-value path, in the two spellings the evaluator
 /// reads them by.
-#[derive(Debug, Clone)]
+///
+/// Two paths are equal when both spellings are: a structured value is read by
+/// the addressed members and a raw JSON object by the written ones, so paths
+/// addressing the same members under two written spellings select different
+/// keys of a `JsonProperty`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MemberPath {
     /// The members as the path addresses them.
     ///
@@ -46,20 +51,6 @@ pub struct MemberPath {
     pub written: Vec<AttributeName>,
 }
 
-// Hand-written because the field to compare is chosen, not both of them:
-// `written` is a retry spelling carried alongside `addressed`, not part of
-// what a path addresses, so two paths reaching the same location are equal
-// whichever spelling they carry. The sanctioned derive for a skipped field is
-// `educe`, and a proc-macro dependency in this crate is not worth one skipped
-// field.
-impl PartialEq for MemberPath {
-    fn eq(&self, other: &MemberPath) -> bool {
-        self.addressed == other.addressed
-    }
-}
-
-impl Eq for MemberPath {}
-
 impl MemberPath {
     /// A member path as freshly parsed, its two spellings the same.
     #[must_use]
@@ -67,5 +58,29 @@ impl MemberPath {
         // clone: the two spellings are separate values, since expansion rewrites only the addressed one.
         let written = members.clone();
         MemberPath { addressed: members, written }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::filter::trailing_path::MemberPath;
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+
+    fn name(text: &str) -> AttributeName {
+        text.parse().expect("an attribute name")
+    }
+
+    /// A raw JSON object is read by the written spelling, so two paths
+    /// addressing one member under two written spellings select two keys of
+    /// a `JsonProperty`.
+    #[test]
+    fn two_written_spellings_of_one_addressed_member_are_two_paths() {
+        let written_compact = MemberPath {
+            addressed: vec![name("https://example.com/city")],
+            written: vec![name("city")],
+        };
+        let written_expanded = MemberPath::new(vec![name("https://example.com/city")]);
+        assert_ne!(written_compact, written_expanded);
+        assert_eq!(written_expanded, MemberPath::new(vec![name("https://example.com/city")]));
     }
 }

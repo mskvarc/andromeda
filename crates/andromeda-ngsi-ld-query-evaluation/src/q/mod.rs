@@ -23,3 +23,7 @@ mod persisted_filter_tests;
 /// Every corpus filter selects the Entities clause 4.9 names, in memory.
 #[cfg(test)]
 mod corpus_tests;
+
+/// The normal form of a filter selects what the filter as lowered selects.
+#[cfg(test)]
+mod normal_form_tests;

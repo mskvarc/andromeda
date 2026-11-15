@@ -13,7 +13,7 @@
 /// The comparison a target language selects languageMap keys by.
 ///
 /// The default is the specification's own reading.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LanguageMatching {
     /// Case-insensitive tag equality (clause 4.9, RFC 5646 section 2.1.1).
     #[default]

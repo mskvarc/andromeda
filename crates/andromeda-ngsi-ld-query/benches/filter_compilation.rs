@@ -1,16 +1,24 @@
-//! How long a `q` filter of a hundred terms takes to parse and to expand.
+//! How long a `q` filter of a hundred terms takes to compile.
 //!
 //! Every query and every Subscription compiles its filter once, so these fix
 //! the cost of the steps a compiled filter goes through before it is
-//! evaluated: the parse of the written text, and the expansion of every
-//! attribute name through the request's `@context`.
+//! evaluated: the parse of the written text, the expansion of every attribute
+//! name through the request's `@context`, the lowering to a reading, its
+//! normal form, and the compiled filter that holds them.
 
 use andromeda_ngsi_ld_query::{
     error::QueryError,
-    filter::{expansion::expand_q_expr, json_key_attributes::JsonKeyAttributes, parser::parse},
+    filter::{
+        compiled_filter::CompiledFilter,
+        expansion::expand_q_expr,
+        json_key_attributes::JsonKeyAttributes,
+        language_matching::LanguageMatching,
+        parser::parse,
+        reading::filter_reading::FilterReading,
+    },
     namespace_expander::EXAMPLE_NAMESPACE,
 };
-use criterion::Criterion;
+use criterion::{BatchSize, Criterion};
 use std::{hint::black_box, io};
 use tokio::runtime::Builder;
 
@@ -54,6 +62,21 @@ fn main() -> Result<(), SetupError> {
     group.bench_function("parse", |bencher| bencher.iter(|| parse(black_box(&written))));
     group.bench_function("expand", |bencher| {
         bencher.iter(|| runtime.block_on(expand_q_expr(black_box(parsed.clone()), &json_keys, &EXAMPLE_NAMESPACE)));
+    });
+    let expanded = runtime.block_on(expand_q_expr(parsed, &json_keys, &EXAMPLE_NAMESPACE))?;
+    let lowered = FilterReading::lowered(&expanded, LanguageMatching::TagEquality);
+    group.bench_function("lower", |bencher| {
+        bencher.iter(|| FilterReading::lowered(black_box(&expanded), LanguageMatching::TagEquality));
+    });
+    group.bench_function("normal-form", |bencher| {
+        bencher.iter_batched(|| lowered.clone(), FilterReading::normal_form, BatchSize::SmallInput);
+    });
+    group.bench_function("compile", |bencher| {
+        bencher.iter_batched(
+            || expanded.clone(),
+            |expr| CompiledFilter::new(expr, LanguageMatching::TagEquality),
+            BatchSize::SmallInput,
+        );
     });
     group.finish();
     criterion.final_summary();

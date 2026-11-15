@@ -19,7 +19,7 @@ use crate::{
 use langtag::{LangTag, LangTagBuf};
 
 /// A target language as a `q` bracket carries it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TargetLanguage {
     /// An RFC 5646 language tag: `en-GB`, `zh-Hant-TW`, `x-private`.
     Tag(LangTagBuf),
