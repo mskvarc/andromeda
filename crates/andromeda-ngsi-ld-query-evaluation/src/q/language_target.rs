@@ -5,7 +5,7 @@ use crate::{
         family_target::terminal_value,
         target_value::{ResolvedTarget, TargetValue},
     },
-    queried_entity::attribute_reading::QueriedInstance,
+    queried_entity::attribute_reading::{QueriedInstance, ValuePresence},
 };
 use andromeda_ngsi_ld_query::filter::{
     language_matching::LanguageMatching,
@@ -26,19 +26,26 @@ use andromeda_ngsi_ld_query::filter::{
 /// contains the target element, the `LanguageProperty`, and clause 4.9 makes
 /// `!=` match it where "No matching value is found as the value of the
 /// specified language key", and `!~=` where no value is in L(R). No positive
-/// operator matches an empty array.
-pub(crate) fn language_target<'a, I: QueriedInstance<'a>>(instance: I, language: LanguageSelector<'_>, matching: LanguageMatching) -> ResolvedTarget<'a> {
-    let mut strings = instance
-        .language_values(language, matching)
-        .filter_map(|item| terminal_value(TerminalKeyword::Literal, item));
+/// operator matches an empty array. An instance holding no language map, a
+/// deletion among them, has no target value.
+pub(crate) fn language_target<'a, I: QueriedInstance<'a>>(
+    instance: I,
+    language: LanguageSelector<'_>,
+    matching: LanguageMatching,
+) -> Option<ResolvedTarget<'a>> {
+    let selected = match instance.value_presence() {
+        ValuePresence::Held => instance.language_values(language, matching),
+        ValuePresence::Absent => return None,
+    };
+    let mut strings = selected.filter_map(|item| terminal_value(TerminalKeyword::Literal, item));
     let value = match (strings.next(), strings.next()) {
         (Some(only), None) => only,
         (None, _) => TargetValue::Array(Vec::new()),
         (Some(first), Some(second)) => TargetValue::Array([first, second].into_iter().chain(strings).collect()),
     };
-    ResolvedTarget {
+    Some(ResolvedTarget {
         value,
         origin: TargetOrigin::AttributeValue,
         reading: MultiValueReading::AnyOneValue,
-    }
+    })
 }

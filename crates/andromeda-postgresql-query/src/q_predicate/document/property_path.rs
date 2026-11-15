@@ -5,10 +5,11 @@
 //! A document holds each property as its writer wrote it, and reads it as the
 //! in-memory evaluator reads a registration's Context Source Properties: a
 //! JSON object holding a `value` member, or naming an NGSI-LD attribute family
-//! by `type`, is the property's node, whose value is its `value` member and
-//! whose other members are its sub-properties and instance members (clause
-//! 4.5.2.3), and any other JSON, an array included, is the value itself, which
-//! has no sub-property.
+//! by `type`, is the property's node, whose value is its `value` member, whose
+//! instance members are read under the terms clause 4.5.2.2 writes them by,
+//! and whose other members, but `type` and those any family defines, are its
+//! sub-properties (clause 4.5.2.3), and any other JSON, an array included, is
+//! the value itself, which has no sub-property.
 
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, time::value::TimeValueForm};
 use andromeda_ngsi_ld_query::filter::{
@@ -59,9 +60,9 @@ pub struct PropertyPath<'a> {
 enum Ending<'a> {
     /// The node itself.
     Node,
-    /// A member the node carries under the member's expanded IRI, read as one
-    /// more sub-property: a document holds a property's members as its writer
-    /// keyed them.
+    /// A member the node carries under the term clause 4.5.2.2 writes it by,
+    /// read as one more sub-property: a document holds a property's members as
+    /// its writer keyed them.
     InstanceMember(InstanceMetadata),
     /// The members of a compound value, keys of the node's value.
     Members(&'a [AttributeName]),
@@ -74,13 +75,13 @@ impl<'a> PropertyPath<'a> {
     /// The clause 4.9 `{}` axis descends a Relationship into the entity it
     /// names, and Context Source Properties carry no Relationship, so a term
     /// with a hop has no target; nor does a target language, which only a
-    /// `LanguageProperty` holds. Nor does a `.` naming a member the Property
-    /// family carries for itself (`value`, `type`, `unitCode`, ...), which is
-    /// no sub-property (clause 4.6.2). A term without a target satisfies no
-    /// document, though it is valid `q` syntax.
+    /// `LanguageProperty` holds. Nor does a `.` naming a member a node carries
+    /// for itself under any family (`value`, `type`, `object`, `unitCode`,
+    /// ...), which clause 4.5.1 bars as an Attribute name. A term without a
+    /// target satisfies no document, though it is valid `q` syntax.
     #[must_use]
     pub fn of(term: &'a TermReading) -> Option<PropertyPath<'a>> {
-        if !term.hops().is_empty() || term.sub_attributes().iter().any(|sub| DOCUMENT_FAMILY.carries_member(sub.as_str())) {
+        if !term.hops().is_empty() || term.sub_attributes().iter().any(|sub| AttributeType::is_own_member(sub.as_str())) {
             return None;
         }
         let ending = match term.terminal() {
@@ -167,7 +168,7 @@ impl<'a> PropertyPath<'a> {
                 node_member(node, sub.as_str())
             });
         match self.ending {
-            Ending::InstanceMember(member) => node_member(node, member.iri().as_str()),
+            Ending::InstanceMember(member) => node_member(node, member.term()),
             Ending::Node | Ending::Members(_) => node,
         }
     }

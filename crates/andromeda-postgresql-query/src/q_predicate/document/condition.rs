@@ -194,12 +194,27 @@ mod tests {
         let shallow = render("a.b>1");
         let deeper = render("a.b.c.d.e>1");
         assert_statement_snapshot!("document-condition-a-sub-property-path-steps-the-property-nodes-and-unwraps-one-value", deeper);
-        let unwraps = |statement: &SelectStatement| statement.to_string(PostgresQueryBuilder).matches("COALESCE").count();
+        let unwraps = |statement: &SelectStatement| statement.to_string(PostgresQueryBuilder).matches("ELSE \"j\"").count();
+        assert!(unwraps(&shallow) > 0);
         assert_eq!(unwraps(&deeper), unwraps(&shallow));
     }
 
-    /// A path ending on an instance member's expanded IRI reads it as one more
-    /// member of the node, keyed as its writer keyed it.
+    /// A `.` naming a member a node carries for itself under any family has no
+    /// target, as a hop has none (clause 4.5.1 bars those terms as Attribute
+    /// names), while `name`, which the core `@context` does not define, is a
+    /// sub-property.
+    #[test]
+    fn a_member_a_node_carries_for_itself_has_no_target() {
+        let sql = |q: &str| render(q).to_string(PostgresQueryBuilder);
+        let no_target = sql("owner{name}==1");
+        for q in ["a.value==1", "a.type==1", "a.object==1", "a.valueList==1", "a.unitCode.b==1"] {
+            assert_eq!(sql(q), no_target, "{q}");
+        }
+        assert_ne!(sql("a.name==1"), no_target);
+    }
+
+    /// A path ending on an instance member reads it as one more member of the
+    /// node, under the term clause 4.5.2.2 writes it by.
     #[test]
     fn an_instance_member_is_read_as_a_member_of_the_node() {
         assert_statement_snapshot!(

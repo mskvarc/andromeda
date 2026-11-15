@@ -18,8 +18,12 @@ use serde_json::{Value, json};
 
 const PROPERTY: &str = "https://uri.etsi.org/ngsi-ld/Property";
 
+/// The NGSI-LD Null of clause 4.5.0, the deletion encoding of every family.
+const NULL: &str = "urn:ngsi-ld:null";
+
 /// A Temporal Evolution fragment: two instances of one `datasetId`, a
-/// typeless instance, a deleted instance, a geometry and a scope.
+/// typeless instance, deletions of a Property, a `ListProperty`, a
+/// `ListRelationship` and a `LanguageProperty`, a geometry and a scope.
 fn evolution() -> Value {
     json!([{
         "@id": "urn:ngsi-ld:Sensor:1",
@@ -46,7 +50,21 @@ fn evolution() -> Value {
         }],
         "https://example.com/humidity": [{
             "@type": [PROPERTY],
-            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "urn:ngsi-ld:null"}]
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": NULL}]
+        }],
+        "https://example.com/levels": [{
+            "@type": ["https://uri.etsi.org/ngsi-ld/ListProperty"],
+            "https://uri.etsi.org/ngsi-ld/hasValueList": [{"@list": [{"@value": NULL}]}],
+            "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:a"}]
+        }],
+        "https://example.com/route": [{
+            "@type": ["https://uri.etsi.org/ngsi-ld/ListRelationship"],
+            "https://uri.etsi.org/ngsi-ld/hasObjectList": [{"@list": [{"@value": NULL}]}]
+        }],
+        "https://example.com/title": [{
+            "@type": ["https://uri.etsi.org/ngsi-ld/LanguageProperty"],
+            "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [{"@value": NULL}],
+            "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:a"}]
         }],
         "https://uri.etsi.org/ngsi-ld/location": [{
             "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
@@ -96,24 +114,35 @@ fn the_document_reading_answers_every_written_instance() {
     }
 }
 
-/// A deletion holds no value to compare, though the written element is there
-/// (clause 4.9 existence).
+/// A deletion of any family holds no value to compare, so neither a
+/// comparison nor its complement holds over it, with or without a target
+/// language, though the written element is there (clause 4.9 existence).
 #[test]
-fn a_deleted_instance_holds_no_value() {
+fn a_deleted_instance_of_any_family_holds_no_value() {
     let written = document();
-    assert!(!filter_holds(
-        &FilterReading::of(
-            &parse("\"https://example.com/humidity\"==\"urn:ngsi-ld:null\"").expect("parses"),
-            LanguageMatching::TagEquality
-        ),
-        &written,
-        NoLinkedEntities,
-    ));
-    assert!(filter_holds(
-        &FilterReading::of(&parse("\"https://example.com/humidity\"").expect("parses"), LanguageMatching::TagEquality),
-        &written,
-        NoLinkedEntities,
-    ));
+    for (q, expected) in [
+        ("\"https://example.com/humidity\"==\"urn:ngsi-ld:null\"", false),
+        ("\"https://example.com/humidity\"!=\"x\"", false),
+        ("\"https://example.com/humidity\"", true),
+        ("\"https://example.com/levels\"==5", false),
+        ("\"https://example.com/levels\"!=5", false),
+        ("\"https://example.com/levels\"", true),
+        ("\"https://example.com/route\"==\"urn:x:1\"", false),
+        ("\"https://example.com/route\"!=\"urn:x:1\"", false),
+        ("\"https://example.com/route\"", true),
+        ("\"https://example.com/title\"!=\"Tower\"", false),
+        ("\"https://example.com/title\"[en]!=\"Tower\"", false),
+        ("\"https://example.com/title\"[en]!~=\"Tow.*\"", false),
+        ("\"https://example.com/title\"", true),
+        ("\"https://example.com/label\"[de]!=\"Tower\"", true),
+    ] {
+        let expr = parse(q).expect("the Query Term parses");
+        pretty_assertions::assert_eq!(
+            filter_holds(&FilterReading::of(&expr, LanguageMatching::TagEquality), &written, NoLinkedEntities),
+            expected,
+            "{q}"
+        );
+    }
 }
 
 /// Clauses 4.10 and 4.19 over the geometry and the scope the document writes.

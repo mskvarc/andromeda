@@ -177,6 +177,10 @@ pub const CORPUS: &[CorpusCase] = &[
     },
     local("C-90", "place[coordinates]==52.6", &[E19]),
     local("C-91", "place[coordinates]==8.8", &[E19]),
+    CorpusCase {
+        json_keys: &["jw"],
+        ..local("C-92", "jw", &[E19])
+    },
 ];
 
 #[cfg(test)]

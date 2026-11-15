@@ -112,4 +112,5 @@ corpus_cases! {
     n_qry_qlg_9189_a_json_property_holds_no_key_its_literal_does_not_write => "C-89",
     n_qry_qlg_9190_a_coordinate_compares_as_its_shortest_spelling => "C-90",
     n_qry_qlg_9191_a_longitude_compares_as_its_shortest_spelling => "C-91",
+    n_qry_qlg_9192_a_json_property_holding_a_literal_shaped_object_is_present => "C-92",
 }
