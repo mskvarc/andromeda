@@ -7,6 +7,7 @@ use crate::filter::{
 use andromeda_ngsi_ld_lexicon::time::{
     calendar_serde::{date, time_of_day},
     instant_serde::required,
+    value::TimeValueForm,
 };
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_value_order::string_order::StringRelation;
@@ -107,6 +108,18 @@ impl Operand {
         }
     }
 
+    /// The clause 4.6.3 time value form the operand is written in, `None` for
+    /// an operand that is no time value.
+    #[must_use]
+    pub const fn time_form(&self) -> Option<TimeValueForm> {
+        match self {
+            Operand::DateTime(_) => Some(TimeValueForm::DateTime),
+            Operand::Date(_) => Some(TimeValueForm::Date),
+            Operand::Time(_) => Some(TimeValueForm::Time),
+            Operand::Number(_) | Operand::Text(_) | Operand::Uri(_) | Operand::Boolean(_) => None,
+        }
+    }
+
     /// Whether the operand compares with a target of `kind` after operators of
     /// `comparison`, the "same kind" of every clause 4.9 operator.
     ///
@@ -130,6 +143,29 @@ impl Operand {
             TargetKind::Date => matches!(self, Operand::Date(_)),
             TargetKind::Time => matches!(self, Operand::Time(_)),
             TargetKind::Null | TargetKind::Object => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::filter::{
+        reading::operand::Operand,
+        scalar::{parse_date, parse_date_time, parse_time},
+    };
+    use andromeda_ngsi_ld_lexicon::time::value::TimeValueForm;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn a_time_operand_names_its_form_and_no_other_operand_names_one() {
+        assert_eq!(
+            Operand::DateTime(parse_date_time("2024-01-01T00:00:00Z").expect("a date-time")).time_form(),
+            Some(TimeValueForm::DateTime)
+        );
+        assert_eq!(Operand::Date(parse_date("2024-01-01").expect("a date")).time_form(), Some(TimeValueForm::Date));
+        assert_eq!(Operand::Time(parse_time("08:00:00Z").expect("a time")).time_form(), Some(TimeValueForm::Time));
+        for operand in [Operand::Number(1.into()), Operand::Text("2024-01-01".to_owned()), Operand::Boolean(true)] {
+            assert_eq!(operand.time_form(), None, "{operand:?}");
         }
     }
 }

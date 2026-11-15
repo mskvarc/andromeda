@@ -14,14 +14,20 @@ use crate::{
     namespace::Namespace,
     notification_sink::{NotificationSink, SinkError},
     problem::answered,
+    registration_ids,
 };
 use futures::future::join_all;
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
-    http::{ContextDelivery, UncheckedDocument, headers::Accept, operation::RegisterContextSource},
+    http::{
+        ContextDelivery,
+        UncheckedDocument,
+        headers::Accept,
+        operation::{QueryRegistrations, RegisterContextSource},
+    },
     model::{EntityTypeName, Input, NgsiLdMediaType, RawJson},
-    query::q::Query,
+    query::{q::Query, type_selection::TypeSelection},
     registration::{CSourceRegistration, RegistrationId},
     subscription::{Endpoint, NotificationParams, Subscription},
 };
@@ -34,6 +40,9 @@ use tokio::time::sleep;
 /// barrier registration created last can close its window: a registration the
 /// term does not select is held to have notified nobody once the window passes.
 const QUIET_WINDOW: Duration = Duration::from_secs(3);
+
+/// The largest `limit` a query may ask for, so one page holds every registration a corpus term selects.
+const MAX_LIMIT: u32 = 1000;
 
 /// One registration of a corpus: the registration the model writes, and the Context Source Properties it carries
 /// beside it, each written as its registrant's JSON under its name.
@@ -163,22 +172,16 @@ async fn answer_every_term(
         // cooldown that opens there holds back a later test's registration naming the same endpoint.
         cleanups.push(Cleanup::of(&with_properties).registration(registered.registration.id().or_fail()?));
     }
+    // Both answers are read by their registration ids alone: a Context Source Property is served as its registrant
+    // wrote it, which the typed registration model may refuse. One page holds every registration a term selects.
+    let selection: TypeSelection = entity_type.as_str().parse()?;
+    let listing = broker.with_accept(Accept::new(NgsiLdMediaType::Json));
     let mut queried = Vec::with_capacity(terms.len());
     for term in terms {
-        let page = broker
-            .with_accept(Accept::new(NgsiLdMediaType::Json))
-            .registrations()
-            .query()
-            .entity_type(entity_type.as_str())
-            .csf(term.parse::<Query>()?)
-            .send()
-            .await?;
-        queried.push(
-            page.items()
-                .iter()
-                .map(|registration| registration.id().clone())
-                .collect::<HashSet<RegistrationId>>(),
-        );
+        let csf = term.parse::<Query>()?;
+        let query = QueryRegistrations::builder().entity_type(&selection).csf(&csf).limit(MAX_LIMIT).build();
+        let answer = listing.send_unchecked(listing.unchecked(&query)?).await?;
+        queried.push(registration_ids::listed(answer.body())?);
     }
     // Every endpoint is watched at once, so a term whose notifications fall short costs one delivery deadline, not one
     // per term.
@@ -197,7 +200,7 @@ async fn answer_every_term(
     for (endpoint, queried) in queried.into_iter().enumerate() {
         let mut notified = HashSet::new();
         for notification in sink.received(endpoint).await? {
-            notified.extend(notification.registrations()?.data().iter().map(|registration| registration.id().clone()));
+            notified.extend(registration_ids::notified(&notification.body)?);
         }
         answers.push(Answers { queried, notified });
     }

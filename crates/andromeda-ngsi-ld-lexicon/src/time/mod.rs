@@ -11,8 +11,8 @@
 //! microsecond one lives here, so no two paths can apply different rules.
 //!
 //! * [`lexical`] reads the three forms character by character, and
-//!   [`lexical_pattern`] spells the `DateTime` form as a regular expression
-//!   for a store that cannot run it;
+//!   [`lexical_pattern`] spells each as a regular expression for a store that
+//!   cannot run it;
 //! * [`date_time`], [`date`] and [`time_of_day`] build the value types on it;
 //! * [`value`] names the three forms and holds a parsed value;
 //! * [`rendering`] spells a held value back;

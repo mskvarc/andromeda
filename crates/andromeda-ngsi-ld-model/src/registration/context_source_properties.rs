@@ -16,10 +16,14 @@
 //! Any other JSON (a scalar, an array, an object such as `management` or a
 //! `GeoJSON` geometry) is the value itself, which has no sub-property: an array
 //! is one array value clause 4.9 compares by membership, and a key of an object
-//! is a member of the value, which a compound path addresses verbatim. A value object whose `@type` declares a clause 4.6.3
-//! time value, by the core context's term or by its IRI, is that time value
-//! (annex C.6), the one reading a time operand compares with. The SQL
-//! rendering of a `csf` reads a stored document by these same rules.
+//! is a member of the value, which a compound path addresses verbatim.
+//! A property's value that is a value object whose `@type` declares a clause
+//! 4.6.3 time value, by the core context's term or by its IRI, and whose
+//! `@value` spells one in the clause 4.6.3 form of its datatype, a decimal
+//! comma included, is that time value (annex C.6), the one reading a time
+//! operand compares with. A value object in any other form, an element of an
+//! array value and a member of an object value are the raw JSON they are. The
+//! SQL rendering of a `csf` reads a stored document by these same rules.
 
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
 use andromeda_ngsi_ld_lexicon::{
@@ -33,15 +37,13 @@ use andromeda_ngsi_ld_query_evaluation::queried_entity::{
     attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode, ValuePresence},
     value_item::{LiteralValue, ValueItem},
 };
-use andromeda_ngsi_ld_vocabulary::{
-    compact::{classes as compact_classes, properties as compact_properties},
-    keyword,
-};
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use std::{
     borrow::Cow,
     iter::{Empty, empty},
     str::FromStr,
 };
+use strum::IntoEnumIterator;
 
 /// The members of a registration a `csf` filter reads: a JSON object keyed by
 /// expanded name.
@@ -133,13 +135,7 @@ impl<'a> PropertyValue<'a> {
 /// other JSON and for a literal its declared form does not admit.
 fn declared_time(node: JsonPiece<'_>) -> Option<TimeValue> {
     let datatype = node.member(keyword::TYPE)?.as_str()?;
-    let form = [
-        (TimeValueForm::DateTime, compact_classes::DATE_TIME),
-        (TimeValueForm::Date, compact_classes::DATE),
-        (TimeValueForm::Time, compact_classes::TIME),
-    ]
-    .into_iter()
-    .find_map(|(form, term)| (datatype == term || datatype == form.iri().as_str()).then_some(form))?;
+    let form = TimeValueForm::iter().find(|form| datatype == form.term() || datatype == form.iri().as_str())?;
     form.parse(&node.member(keyword::VALUE)?.as_str()?).ok()
 }
 
@@ -359,6 +355,56 @@ mod tests {
         assert!(holds("\"https://example.com/object\"!=\"wide\"", &properties));
         assert!(!holds("\"https://example.com/expanded\"==\"wide\"", &properties));
         assert!(!holds("\"https://example.com/expanded\".\"https://example.com/since\"==2020", &properties));
+    }
+
+    /// A property's value that is a value object declaring a clause 4.6.3
+    /// time value, by its term or its IRI, is that time value when its
+    /// `@value` spells one in the form of its datatype, a decimal comma
+    /// included (annex C.6). In another form (an offset, an unpadded date, a
+    /// day the calendar does not have), as an element of an array value or as
+    /// a member of an object value, it is the raw JSON it is: no time operand
+    /// is included in it, and it is unequal to every one.
+    #[test]
+    fn a_declared_time_value_is_read_in_its_form_as_a_property_value_alone() {
+        let properties = json!({
+            "https://example.com/since": {"@type": "DateTime", "@value": "2024-01-01T00:00:00Z"},
+            "https://example.com/iri": {"type": "Property", "value": {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2024-01-01T00:00:00Z"}},
+            "https://example.com/comma": {"@type": "DateTime", "@value": "2024-01-01T00:00:00,5Z"},
+            "https://example.com/offset": {"@type": "DateTime", "@value": "2024-01-01T00:00:00+00:00"},
+            "https://example.com/day": {"@type": "Date", "@value": "2024-01-01"},
+            "https://example.com/short": {"@type": "Date", "@value": "2024-1-1"},
+            "https://example.com/calendar": {"@type": "Date", "@value": "2024-02-30"},
+            "https://example.com/opening": {"@type": "Time", "@value": "08:00:00Z"},
+            "https://example.com/zoned": {"@type": "Time", "@value": "08:00:00+01:00"},
+            "https://example.com/list": [{"@type": "DateTime", "@value": "2024-01-01T00:00:00Z"}],
+            "https://example.com/held": {"m": {"@type": "DateTime", "@value": "2024-01-01T00:00:00Z"}}
+        });
+        for (q, expected) in [
+            ("since>2023-12-31T00:00:00Z", true),
+            ("since==2024-01-01T00:00:00Z", true),
+            ("since!=2024-01-01T00:00:00Z", false),
+            ("since==\"2024-01-01T00:00:00Z\"", false),
+            ("iri==2024-01-01T00:00:00Z", true),
+            ("comma==2024-01-01T00:00:00.5Z", true),
+            ("offset>2023-12-31T00:00:00Z", false),
+            ("offset!=2024-01-01T00:00:00Z", true),
+            ("offset==\"2024-01-01T00:00:00+00:00\"", false),
+            ("day==2024-01-01", true),
+            ("short>2023-12-31", false),
+            ("short!=2024-01-01", true),
+            ("calendar>2024-01-01", false),
+            ("opening>07:00:00Z", true),
+            ("zoned>07:00:00Z", false),
+            ("zoned!=07:00:00Z", true),
+            ("list==2024-01-01T00:00:00Z", false),
+            ("list!=2024-01-01T00:00:00Z", true),
+            ("held[m]>2023-12-31T00:00:00Z", false),
+            ("held[m]!=2024-01-01T00:00:00Z", true),
+        ] {
+            let (name, test) = q.split_at(q.find(['>', '=', '!', '[']).expect("an operator"));
+            let expanded = format!("\"https://example.com/{name}\"{test}");
+            pretty_assertions::assert_eq!(holds(&expanded, &properties), expected, "{q}");
+        }
     }
 
     /// An instance member is read off the node under the term clause 4.5.2.2

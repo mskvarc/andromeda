@@ -156,6 +156,7 @@ pub mod readiness_probe;
 pub mod received_status;
 pub mod rectangle_polygon;
 pub mod refused_body;
+pub mod registration_ids;
 pub mod registration_report;
 pub mod registration_update_request;
 pub mod registration_vocabulary;
