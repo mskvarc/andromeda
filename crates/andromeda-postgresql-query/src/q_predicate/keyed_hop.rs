@@ -10,47 +10,41 @@
 
 use crate::{
     entity_row_refs::EntityRowRefs,
-    q_predicate::{keyed_branches::union_of, projection::linked_condition, traversal::LinkedHop},
-    query_names::QueryNames,
+    q_predicate::{keyed_branches::union_of, projection::linked_condition, resolved_filter::ResolvedTerm, traversal::LinkedHop},
 };
-use andromeda_ngsi_ld_query::filter::reading::{
-    term_reading::{TermReading, Test},
-    value_test::Polarity,
-};
+use andromeda_ngsi_ld_query::filter::reading::{term_reading::Test, value_test::Polarity};
 use sea_query::SelectStatement;
 
 /// `SELECT "entity_key"` over the Entities whose standing Relationship
 /// instance names a linked entity `term` keeps, `None` unless `term` crosses
-/// one hop, of a recorded Relationship, and its test is one an index can
-/// enumerate.
+/// one hop and its test is one an index can enumerate.
 ///
 /// A complement (`!=`, `!~=`) holds for an entity none of whose values pass
 /// the test, which no index of values enumerates, and a further hop is itself
 /// a probe outward from every entity, so either would read every entity of
 /// the tenant before the first candidate.
-pub(crate) fn hop_candidates(term: &TermReading, rows: &EntityRowRefs, names: &QueryNames) -> Option<SelectStatement> {
+pub(crate) fn hop_candidates(term: &ResolvedTerm<'_>, rows: &EntityRowRefs) -> Option<SelectStatement> {
     let [hop] = term.hops() else {
         return None;
     };
-    match term.test() {
+    match term.term().test() {
         Test::Exists => {}
         Test::Value(value) => match value.polarity() {
             Polarity::Asserted => {}
             Polarity::Complement => return None,
         },
     }
-    let relationship_id = names.attributes.get(hop.relationship())?;
     let linked = LinkedHop::at_depth(1);
     let inner_rows = linked.inner_rows(rows.schema().cloned());
-    let inner_condition = linked_condition(term, &inner_rows, names, 1);
-    union_of(linked.linking_branches(relationship_id, hop.guard_types(), &names.types, rows, inner_condition))
+    let inner_condition = linked_condition(term, &inner_rows, 1);
+    union_of(linked.linking_branches(hop.relationship(), hop.guard(), rows, inner_condition))
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         entity_row_refs::EntityRowRefs,
-        q_predicate::{keyed_hop::hop_candidates, lowered_filter::term_of},
+        q_predicate::{keyed_hop::hop_candidates, lowered_filter::term_of, resolved_filter::ResolvedTerm},
         query_names::QueryNames,
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
@@ -73,7 +67,8 @@ mod tests {
     }
 
     fn candidates_in(q: &str, rows: &EntityRowRefs) -> Option<SelectStatement> {
-        hop_candidates(&term_of(q), rows, &names())
+        let term = term_of(q);
+        ResolvedTerm::of(&term, &names()).and_then(|resolved| hop_candidates(&resolved, rows))
     }
 
     fn candidates(q: &str) -> Option<SelectStatement> {

@@ -13,7 +13,7 @@
 use crate::q_predicate::attribute_names::referenced_attribute_names;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
-    filter::expression::Expr,
+    filter::reading::filter_reading::FilterReading,
     geo::query::GeoQuery,
     ordering::term::{CompiledOrderTerm, OrderTarget},
 };
@@ -29,13 +29,13 @@ use andromeda_ngsi_ld_query::{
 #[must_use]
 pub fn projected_attribute_names<'a>(
     members: impl IntoIterator<Item = &'a str>,
-    q_expr: Option<&Expr>,
+    q: Option<&FilterReading>,
     geo: Option<&GeoQuery>,
     order_terms: &[CompiledOrderTerm],
 ) -> Vec<AttributeName> {
     let mut names: Vec<AttributeName> = members.into_iter().filter_map(|member| member.parse().ok()).collect();
-    if let Some(q_expr) = q_expr {
-        referenced_attribute_names(q_expr, &mut names);
+    if let Some(q) = q {
+        referenced_attribute_names(q, &mut names);
     }
     if let Some(geo) = geo {
         // clone: the caller owns the resolved list, which outlives the query
@@ -67,7 +67,7 @@ mod tests {
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::{
-        filter::{parser, path::AttrPath},
+        filter::{language_matching::LanguageMatching, parser, path::AttrPath, reading::filter_reading::FilterReading},
         geo::query::GeoQuery,
         ordering::term::{CompiledOrderTerm, OrderDirection, OrderTarget},
     };
@@ -205,11 +205,14 @@ mod tests {
     /// The axes accumulate rather than displacing one another.
     #[test]
     fn a_filter_a_geo_query_and_an_ordering_each_contribute_their_own_names() {
-        let expr = parser::parse("\"https://example.com/speed\">1").expect("parse q");
+        let reading = FilterReading::lowered(
+            &parser::parse("\"https://example.com/speed\">1").expect("parse q"),
+            LanguageMatching::TagEquality,
+        );
         let geo = geo_query("https://example.com/observationPoint");
         let terms = [order_term(ordered_attribute("https://example.com/operationSpace"), OrderDirection::DistAsc)];
         assert_eq!(
-            collected(&projected_attribute_names([], Some(&expr), Some(&geo), &terms)),
+            collected(&projected_attribute_names([], Some(&reading), Some(&geo), &terms)),
             vec![
                 "https://example.com/speed",
                 "https://example.com/observationPoint",

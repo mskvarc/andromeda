@@ -15,14 +15,17 @@
 //! its elements are read against expiry, which clause 4.22 places on the
 //! storage of the Entity as it stands.
 
-use crate::q_predicate::instance_row::{ElementLevel, InstanceRow, ProbedRow};
+use crate::q_predicate::{
+    instance_row::{ElementLevel, InstanceRow, ProbedRow},
+    resolved_filter::ResolvedTerm,
+};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::filter::reading::term_reading::TermReading;
 use andromeda_postgresql_schema::current::SubAttribute;
 use andromeda_postgresql_seaquery::unnest::{exists_in_positional_tree, first_in_positional_tree};
 use andromeda_postgresql_stored_form::expiry::unexpired;
 use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames, sub_attribute_key::path_hash::PathHash};
 use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
+use std::borrow::Cow;
 
 /// The `parent` an element under the top-level instance itself carries.
 const INSTANCE_PARENT: i64 = 0;
@@ -30,23 +33,26 @@ const INSTANCE_PARENT: i64 = 0;
 /// The stored location of the instance a term's target element is, or is a
 /// member of.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ElementPath {
+pub struct ElementPath<'c> {
     /// The row the top-level instance is read from.
     pub row: ProbedRow,
     /// The dictionary key of the top-level attribute.
     pub attribute: AttributeNameKey,
     /// The dictionary key of each sub-attribute on the way down, outermost
     /// first; empty for the top-level instance itself.
-    pub chain: Vec<AttributeNameKey>,
+    pub chain: Cow<'c, [AttributeNameKey]>,
 }
 
-impl ElementPath {
-    /// The instance `term` addresses in the instances of `row`, its attribute
-    /// and its sub-attributes, or `None` when one of their names was never
-    /// recorded: no instance can then hold it.
+impl<'c> ElementPath<'c> {
+    /// The instance `term` addresses in the instances of `row`: its attribute
+    /// and its sub-attributes, by the keys their names were resolved to.
     #[must_use]
-    pub fn of_term(term: &TermReading, row: ProbedRow, attributes: &ResolvedNames<AttributeName>) -> Option<ElementPath> {
-        ElementPath::of_names(term.attribute(), term.sub_attributes(), row, attributes)
+    pub const fn of_resolved(term: &'c ResolvedTerm<'_>, row: ProbedRow) -> ElementPath<'c> {
+        ElementPath {
+            row,
+            attribute: term.attribute(),
+            chain: Cow::Borrowed(term.chain()),
+        }
     }
 
     /// The instance of `attribute` reached through `sub_attributes`, outermost
@@ -58,16 +64,20 @@ impl ElementPath {
         sub_attributes: &[AttributeName],
         row: ProbedRow,
         attributes: &ResolvedNames<AttributeName>,
-    ) -> Option<ElementPath> {
+    ) -> Option<ElementPath<'c>> {
         let attribute = attributes.get(attribute)?;
         let chain = sub_attributes.iter().map(|name| attributes.get(name)).collect::<Option<Vec<_>>>()?;
-        Some(ElementPath { row, attribute, chain })
+        Some(ElementPath {
+            row,
+            attribute,
+            chain: Cow::Owned(chain),
+        })
     }
 
     /// The instance whose value (or member) the term's target is: the row for
     /// an attribute or a member of it, else the last element of the chain.
     #[must_use]
-    pub const fn holder(&self) -> InstanceRow {
+    pub fn holder(&self) -> InstanceRow {
         match self.chain.len().checked_sub(1) {
             Some(last) => InstanceRow::Element(ElementLevel::at(last)),
             None => self.row.instance(),
@@ -173,11 +183,12 @@ mod tests {
         )
     }
 
-    fn element_path_in(q: &str, row: ProbedRow) -> Option<ElementPath> {
-        ElementPath::of_term(&term_of(q), row, &names())
+    fn element_path_in(q: &str, row: ProbedRow) -> Option<ElementPath<'static>> {
+        let term = term_of(q);
+        ElementPath::of_names(term.attribute(), term.sub_attributes(), row, &names())
     }
 
-    fn element_path(q: &str) -> Option<ElementPath> {
+    fn element_path(q: &str) -> Option<ElementPath<'static>> {
         element_path_in(q, ProbedRow::Current)
     }
 

@@ -28,7 +28,7 @@
 //! | a deeper value path (`attr[a.b]`) | the member of a compound value read out of `value_object` |
 //! | anything carrying a sub-attribute | the same tests on the element at the end of the path, rechecked through the tree inline (see [`sub_attribute`]) |
 //! | a path ending on an instance member (`observedAt`, `unitCode`, a timestamp, `datasetId`, `valueType`, `objectType`) | the typed field of the instance it hangs off, a type read as the IRI its dictionary key names; constant `FALSE` for `instanceId`, which no stored instance holds |
-//! | attribute IRI absent from `attribute_names` | constant `FALSE` |
+//! | a name absent from `attribute_names` | no Entity: its conjunction is constant `FALSE` and its disjunction its other arms ([`resolved_filter`]) |
 //!
 //! A temporal `q` reads `attribute_history` rows, which hold an instance the
 //! same way, its sub-attributes included, so every path compiles to the same
@@ -68,8 +68,9 @@
 //! and so on) so a nested probe
 //! cannot shadow its enclosing one. A hop's optional entity-type guard becomes
 //! a disjunction of membership tests against the linked entity's `types`
-//! column, and a Relationship name absent from `attribute_names` compiles to
-//! constant `FALSE` exactly as any other unknown name does.
+//! column, one for each guard type the dictionary recorded, and a Relationship
+//! name absent from `attribute_names`, or a guard whose every type is, folds
+//! the term exactly as any other unknown name does.
 //!
 //! # Temporal `q`
 //!
@@ -129,6 +130,7 @@ pub mod own_value_arms;
 pub mod pattern_term;
 pub mod projection;
 pub mod projection_probe;
+pub mod resolved_filter;
 pub mod stored_kind;
 pub mod string_ordering;
 pub mod structured_target;

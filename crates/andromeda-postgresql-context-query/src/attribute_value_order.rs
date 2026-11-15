@@ -202,7 +202,7 @@ impl AttributeValue {
 
 /// The instance of current state `path` orders by, `None` when one of its
 /// names was never recorded, and the member of it the path ends on.
-fn ordered_element(path: &AttrPath, attributes: &ResolvedNames<AttributeName>) -> (Option<ElementPath>, Option<InstanceMetadata>) {
+fn ordered_element(path: &AttrPath, attributes: &ResolvedNames<AttributeName>) -> (Option<ElementPath<'static>>, Option<InstanceMetadata>) {
     let (sub_attributes, member) = match path.ending_member() {
         Some((member, above)) => (above, Some(member)),
         None => (path.sub_attrs.as_slice(), None),

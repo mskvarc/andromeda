@@ -31,11 +31,11 @@ use crate::{
         keyed_hop::hop_candidates,
         keyed_ordering::ordering_candidates,
         keyed_pattern::pattern_candidates,
+        resolved_filter::{ResolvedFilter, ResolvedTerm},
         sub_attribute::keyed_equality::equality_candidates,
     },
     query_names::QueryNames,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::reading::{
     filter_reading::FilterReading,
     scalar_test::ScalarTest,
@@ -43,6 +43,7 @@ use andromeda_ngsi_ld_query::filter::reading::{
     terminal::Terminal,
     value_test::Polarity,
 };
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::SelectStatement;
 use std::slice::from_ref;
 
@@ -81,16 +82,22 @@ pub struct KeyedCandidates<'q> {
 /// answers, with its candidates read in the branch `rows` names.
 ///
 /// Only a conjunct can narrow the page to its candidates: an entity a
-/// disjunction keeps for another arm need not be one of them.
+/// disjunction keeps for another arm need not be one of them. A filter no
+/// Entity can match, its names resolved through `names`, offers none.
 #[must_use]
 pub fn keyed_candidates<'q>(reading: &'q FilterReading, rows: &EntityRowRefs, names: &QueryNames) -> Option<KeyedCandidates<'q>> {
-    let conjuncts = match reading {
-        FilterReading::All(children) => children.as_slice(),
-        FilterReading::Any(_) | FilterReading::Term(_) => from_ref(reading),
+    let resolved = ResolvedFilter::of(reading, names)?;
+    let conjuncts = match &resolved {
+        ResolvedFilter::All(children) => children.as_slice(),
+        ResolvedFilter::Any(_) | ResolvedFilter::Term(_) => from_ref(&resolved),
     };
     conjuncts.iter().find_map(|conjunct| match conjunct {
-        FilterReading::Term(term) => candidates_of(term, rows, names).map(|(select, read)| KeyedCandidates { term, select, read }),
-        FilterReading::All(_) | FilterReading::Any(_) => None,
+        ResolvedFilter::Term(term) => candidates_of(term, rows).map(|(select, read)| KeyedCandidates {
+            term: term.term(),
+            select,
+            read,
+        }),
+        ResolvedFilter::All(_) | ResolvedFilter::Any(_) => None,
     })
 }
 
@@ -100,26 +107,26 @@ pub fn keyed_candidates<'q>(reading: &'q FilterReading, rows: &EntityRowRefs, na
 /// A hop is read inward, whatever its inner term compares. A complement
 /// (`!=`, `!~=`) never narrows: an Entity holds when none of its values pass
 /// the test, which no index of passing values can enumerate.
-fn candidates_of(term: &TermReading, rows: &EntityRowRefs, names: &QueryNames) -> Option<(SelectStatement, CandidateRead)> {
+fn candidates_of(term: &ResolvedTerm<'_>, rows: &EntityRowRefs) -> Option<(SelectStatement, CandidateRead)> {
     let rechecked = |select| (select, CandidateRead::Rechecked);
     let ranged = |select| (select, CandidateRead::Ranged);
     let probed = |select| (select, CandidateRead::Probed);
     if !term.hops().is_empty() {
-        return hop_candidates(term, rows, names).map(|select| (select, CandidateRead::Linked));
+        return hop_candidates(term, rows).map(|select| (select, CandidateRead::Linked));
     }
-    let value = match term.test() {
-        Test::Exists => return existence_candidates(own_value_attribute(term)?, rows, names).map(probed),
+    let value = match term.term().test() {
+        Test::Exists => return Some(probed(existence_candidates(own_value_attribute(term)?, rows))),
         Test::Value(value) => value,
     };
     match (value.test(), value.polarity()) {
         (ScalarTest::EqualsAny(operands), Polarity::Asserted) => match operands.as_slice() {
-            [operand] => equality_candidates(term, operand, rows, names).map(rechecked),
+            [operand] => equality_candidates(term, operand, rows).map(rechecked),
             [] | [_, _, ..] => None,
         },
         (ScalarTest::Ordered { .. } | ScalarTest::Within(_), Polarity::Asserted) => {
-            ordering_candidates(own_value_attribute(term)?, value.test(), rows, names).map(ranged)
+            ordering_candidates(own_value_attribute(term)?, value.test(), rows).map(ranged)
         }
-        (ScalarTest::Matches(pattern), Polarity::Asserted) => pattern_candidates(own_value_attribute(term)?, pattern, rows, names).map(rechecked),
+        (ScalarTest::Matches(pattern), Polarity::Asserted) => pattern_candidates(own_value_attribute(term)?, pattern, rows).map(rechecked),
         (ScalarTest::Unsatisfiable, Polarity::Asserted)
         | (
             ScalarTest::EqualsAny(_) | ScalarTest::Ordered { .. } | ScalarTest::Within(_) | ScalarTest::Matches(_) | ScalarTest::Unsatisfiable,
@@ -131,8 +138,9 @@ fn candidates_of(term: &TermReading, rows: &EntityRowRefs, names: &QueryNames) -
 /// The attribute whose own value `term` tests, `None` when it tests a value
 /// past a hop, below a sub-attribute or inside the value: those are elements
 /// of an instance, which the indexes over a row's own value do not read.
-fn own_value_attribute(term: &TermReading) -> Option<&AttributeName> {
-    (term.hops().is_empty() && term.sub_attributes().is_empty() && matches!(term.terminal(), Terminal::OwnValue)).then(|| term.attribute())
+fn own_value_attribute(term: &ResolvedTerm<'_>) -> Option<AttributeNameKey> {
+    let reading: &TermReading = term.term();
+    (reading.hops().is_empty() && reading.sub_attributes().is_empty() && matches!(reading.terminal(), Terminal::OwnValue)).then(|| term.attribute())
 }
 
 #[cfg(test)]

@@ -7,19 +7,15 @@
 //! collected here so the read path resolves them in one lookup.
 
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-use andromeda_ngsi_ld_query::{
-    entity_selection::EntitySelection,
-    filter::{expression::Expr, path::QueryPath},
-    type_selection::grammar::TypeExpr,
-};
+use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, filter::reading::filter_reading::FilterReading, type_selection::grammar::TypeExpr};
 
 /// Collect the type names a query tests by dictionary key.
 ///
-/// The type selection carries expanded IRIs and a traversal guard carries
-/// name tokens; both are the text the dictionary stores, and both satisfy the
-/// clause 4.6.2 grammar an [`EntityTypeName`] validates, so a token that
-/// nevertheless fails to parse is left out and its predicate later compiles as
-/// an unresolved, and therefore unsatisfiable, type.
+/// The type selection carries expanded IRIs, the text the dictionary stores,
+/// which satisfy the clause 4.6.2 grammar an [`EntityTypeName`] validates, so
+/// one that nevertheless fails to parse is left out and its predicate later
+/// compiles as an unresolved, and therefore unsatisfiable, type. A traversal
+/// guard is read from the `q` reading, which holds its types as type names.
 #[must_use]
 pub fn projected_type_names(selection: &EntitySelection) -> Vec<EntityTypeName> {
     let mut names = Vec::new();
@@ -29,7 +25,7 @@ pub fn projected_type_names(selection: &EntitySelection) -> Vec<EntityTypeName> 
         }
     }
     if let Some(q) = &selection.q {
-        collect_guards(q.expr(), &mut names);
+        collect_guards(q.lowered(), &mut names);
     }
     names
 }
@@ -47,26 +43,12 @@ fn collect_selection(expr: &TypeExpr, out: &mut Vec<EntityTypeName>) {
     }
 }
 
-/// Every type guard a `q` filter's linked-entity traversals carry.
-fn collect_guards(expr: &Expr, out: &mut Vec<EntityTypeName>) {
-    match expr {
-        Expr::And(terms) | Expr::Or(terms) => {
-            for term in terms {
-                collect_guards(term, out);
-            }
-        }
-        Expr::Pred(pred) => collect_path_guards(pred.path(), out),
-    }
-}
-
-/// The guard types along one attribute axis.
-fn collect_path_guards(path: &QueryPath, out: &mut Vec<EntityTypeName>) {
-    match path {
-        QueryPath::Local(_) => {}
-        QueryPath::Linked { guard_types, inner, .. } => {
-            out.extend(guard_types.iter().filter_map(|guard| guard.as_str().parse::<EntityTypeName>().ok()));
-            collect_path_guards(inner, out);
-        }
+/// Every type guard the linked-entity traversals of a `q` filter's reading
+/// carry.
+fn collect_guards(reading: &FilterReading, out: &mut Vec<EntityTypeName>) {
+    for term in reading.terms() {
+        // clone: the caller owns the resolved list, which outlives the reading
+        out.extend(term.hops().iter().flat_map(|hop| hop.guard_types().iter().cloned()));
     }
 }
 

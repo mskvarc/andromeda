@@ -8,10 +8,10 @@
 //! columns of the grain constraint. The candidates are then exactly the
 //! Entities the term keeps.
 
-use crate::{entity_row_refs::EntityRowRefs, q_predicate::projection_probe::exists_on_projection, query_names::QueryNames};
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use crate::{entity_row_refs::EntityRowRefs, q_predicate::projection_probe::exists_on_projection};
 use andromeda_postgresql_schema::current::EntitySearch;
 use andromeda_postgresql_seaquery::operator::array_contains_key;
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Condition, Query, SelectStatement};
 
 /// `SELECT "entity_key"` over the search rows naming `attribute` whose Entity
@@ -21,8 +21,7 @@ use sea_query::{Condition, Query, SelectStatement};
 /// Only the existence of an attribute is offered: an element inside an
 /// instance, a trailing member or a sub-attribute, is not recorded in the
 /// search row, and a hop asks about the Entity the Relationship names.
-pub(crate) fn existence_candidates(attribute: &AttributeName, rows: &EntityRowRefs, names: &QueryNames) -> Option<SelectStatement> {
-    let attribute = names.attributes.get(attribute)?;
+pub(crate) fn existence_candidates(attribute: AttributeNameKey, rows: &EntityRowRefs) -> SelectStatement {
     let carriers = EntityRowRefs::unaliased(rows.schema().cloned()).keyed_by(EntitySearch::Table);
     let mut candidates = Query::select();
     candidates
@@ -30,7 +29,7 @@ pub(crate) fn existence_candidates(attribute: &AttributeName, rows: &EntityRowRe
         .from(carriers.table(EntitySearch::Table))
         .and_where(array_contains_key(carriers.search_column(EntitySearch::AttributeNameKeys), attribute.get()))
         .cond_where(exists_on_projection(attribute, Condition::all(), &carriers));
-    Some(candidates.take())
+    candidates.take()
 }
 
 #[cfg(test)]

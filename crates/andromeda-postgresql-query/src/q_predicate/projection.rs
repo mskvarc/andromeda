@@ -20,6 +20,7 @@ use crate::{
         language_term::language_term,
         ordering_term::ordering_value,
         pattern_term::{pattern_value, string_target},
+        resolved_filter::{ResolvedFilter, ResolvedTerm},
         sub_attribute::{element_path::ElementPath, member_field::member_condition},
         traversal::LinkedHop,
         value_object_member::member_term,
@@ -43,10 +44,10 @@ use sea_query::Condition;
 
 /// Compile the reading of a `q` filter into a sea-query [`Condition`].
 ///
-/// Compilation cannot fail: an attribute or entity type name the dictionary
-/// does not hold compiles to a constant `FALSE` rather than erroring, and every
-/// operand is bound as a parameter rather than converted, so every expression
-/// clause 4.9 admits has a condition.
+/// Compilation cannot fail: a filter whose names the dictionary does not
+/// hold folds as [`ResolvedFilter`] states, to a constant `FALSE` where no
+/// Entity can match, and every operand is bound as a parameter rather than
+/// converted, so every expression clause 4.9 admits has a condition.
 ///
 /// Every Query Term is its own existential over the instances `scan` reads,
 /// and the AND/OR tree combines those existentials. Over a temporal window
@@ -60,14 +61,14 @@ use sea_query::Condition;
 /// drive from the value indexes.
 #[must_use]
 pub fn compile(reading: &FilterReading, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
-    compile_with(reading, scan, names, None)
+    ResolvedFilter::of(reading, names).map_or_else(unsatisfiable, |resolved| compile_resolved(&resolved, scan, None))
 }
 
 /// Compile one term reading on its own, as [`compile`] compiles a filter of
 /// that one term.
 #[must_use]
 pub fn compile_term(term: &TermReading, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
-    compiled_term(term, scan, names).into_condition(scan)
+    ResolvedTerm::of(term, names).map_or_else(unsatisfiable, |resolved| compiled_term(&resolved, scan).into_condition(scan))
 }
 
 /// [`compile`], with `answered` (a term of the reading's top-level
@@ -77,35 +78,35 @@ pub fn compile_term(term: &TermReading, scan: &InstanceScan<'_>, names: &QueryNa
 /// left out, wherever the conjunction repeats it.
 #[must_use]
 pub fn compile_except(reading: &FilterReading, answered: &TermReading, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
-    compile_with(reading, scan, names, Some(answered))
+    ResolvedFilter::of(reading, names).map_or_else(unsatisfiable, |resolved| compile_resolved(&resolved, scan, Some(answered)))
 }
 
-/// Compile `reading`, leaving out the conjuncts equal to `answered`.
-fn compile_with(reading: &FilterReading, scan: &InstanceScan<'_>, names: &QueryNames, answered: Option<&TermReading>) -> Condition {
-    match reading {
-        FilterReading::All(children) => children
+/// Compile `filter`, leaving out the conjuncts equal to `answered`.
+fn compile_resolved(filter: &ResolvedFilter<'_>, scan: &InstanceScan<'_>, answered: Option<&TermReading>) -> Condition {
+    match filter {
+        ResolvedFilter::All(children) => children
             .iter()
-            .fold(Condition::all(), |cond, child| cond.add(compile_with(child, scan, names, answered))),
-        FilterReading::Any(children) => disjunction(children, Disjunction::default(), scan, names).into_condition(scan),
-        FilterReading::Term(term) if answered.is_some_and(|answered| answered == term.as_ref()) => Condition::all(),
-        FilterReading::Term(term) => compile_term(term, scan, names),
+            .fold(Condition::all(), |cond, child| cond.add(compile_resolved(child, scan, answered))),
+        ResolvedFilter::Any(children) => disjunction(children, Disjunction::default(), scan).into_condition(scan),
+        ResolvedFilter::Term(term) if answered.is_some_and(|answered| answered == term.term()) => Condition::all(),
+        ResolvedFilter::Term(term) => compiled_term(term, scan).into_condition(scan),
     }
 }
 
 /// Gather the children of a disjunction, and of every disjunction nested
 /// directly in it, into `gathered`.
-fn disjunction(children: &[FilterReading], gathered: Disjunction, scan: &InstanceScan<'_>, names: &QueryNames) -> Disjunction {
+fn disjunction(children: &[ResolvedFilter<'_>], gathered: Disjunction, scan: &InstanceScan<'_>) -> Disjunction {
     children.iter().fold(gathered, |gathered, child| match child {
-        FilterReading::Any(inner) => disjunction(inner, gathered, scan, names),
-        FilterReading::All(_) => gathered.with(CompiledTerm::Standalone(compile(child, scan, names))),
-        FilterReading::Term(term) => gathered.with(compiled_term(term, scan, names)),
+        ResolvedFilter::Any(inner) => disjunction(inner, gathered, scan),
+        ResolvedFilter::All(_) => gathered.with(CompiledTerm::Standalone(compile_resolved(child, scan, None))),
+        ResolvedFilter::Term(term) => gathered.with(compiled_term(term, scan)),
     })
 }
 
 /// Compile one term, descending the linked-entity hops it carries before
 /// compiling its test against the entity it lands on.
-fn compiled_term(term: &TermReading, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
-    compile_from_hop(term, scan, names, 0)
+fn compiled_term(term: &ResolvedTerm<'_>, scan: &InstanceScan<'_>) -> CompiledTerm {
+    compile_from_hop(term, scan, 0)
 }
 
 /// Compile a term against the entity reached by its hops from the one at
@@ -120,32 +121,27 @@ fn compiled_term(term: &TermReading, scan: &InstanceScan<'_>, names: &QueryNames
 /// same window: the `temporal_linked_retrieval` extension renders every Linked
 /// Entity over the window of the roots, so a filter asking about a linked
 /// entity reads the history the answer shows of it.
-fn compile_from_hop(term: &TermReading, scan: &InstanceScan<'_>, names: &QueryNames, depth: usize) -> CompiledTerm {
+fn compile_from_hop(term: &ResolvedTerm<'_>, scan: &InstanceScan<'_>, depth: usize) -> CompiledTerm {
     let Some(hop) = term.hops().get(depth) else {
-        return compile_local(term, scan, names);
-    };
-    let Some(relationship_id) = names.attributes.get(hop.relationship()) else {
-        // No `attribute_names` row means no instance of the Relationship was
-        // ever written, so no entity can be reached through it.
-        return unsatisfiable_term();
+        return compile_local(term, scan);
     };
     let linked = LinkedHop::at_depth(depth + 1);
     let inner_condition = match scan {
-        InstanceScan::Current(_) => linked_condition(term, &linked.inner_rows(scan.schema().cloned()), names, depth + 1),
+        InstanceScan::Current(_) => linked_condition(term, &linked.inner_rows(scan.schema().cloned()), depth + 1),
         InstanceScan::History(window) => {
             let linked_window = window.over(linked.linked_evolution());
             let linked_scan = InstanceScan::History(&linked_window);
-            compile_from_hop(term, &linked_scan, names, depth + 1).into_condition(&linked_scan)
+            compile_from_hop(term, &linked_scan, depth + 1).into_condition(&linked_scan)
         }
     };
-    CompiledTerm::Standalone(linked.probe(relationship_id, hop.guard_types(), &names.types, scan, inner_condition))
+    CompiledTerm::Standalone(linked.probe(hop.relationship(), hop.guard(), scan, inner_condition))
 }
 
 /// What `term` asks, from its hop at `depth` on, of the linked entity `rows`
 /// names, reached `depth` hops into a traversal.
-pub(crate) fn linked_condition(term: &TermReading, rows: &EntityRowRefs, names: &QueryNames, depth: usize) -> Condition {
+pub(crate) fn linked_condition(term: &ResolvedTerm<'_>, rows: &EntityRowRefs, depth: usize) -> Condition {
     let scan = InstanceScan::Current(rows);
-    compile_from_hop(term, &scan, names, depth).into_condition(&scan)
+    compile_from_hop(term, &scan, depth).into_condition(&scan)
 }
 
 /// Compile a term over the instances `scan` reads.
@@ -155,13 +151,11 @@ pub(crate) fn linked_condition(term: &TermReading, rows: &EntityRowRefs, names: 
 /// history row hold both alike. A row's test joins the probe of its attribute,
 /// which a disjunction shares; an element's test is a probe of its own (see
 /// [`InstanceScan::exists_in_tree`]).
-fn compile_local(term: &TermReading, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
-    let Some(element) = ElementPath::of_term(term, scan.row(), &names.attributes) else {
-        return unsatisfiable_term();
-    };
+fn compile_local(term: &ResolvedTerm<'_>, scan: &InstanceScan<'_>) -> CompiledTerm {
+    let element = ElementPath::of_resolved(term, scan.row());
     let holder = element.holder();
-    let test = term.test();
-    let value = match term.terminal() {
+    let test = term.term().test();
+    let value = match term.term().terminal() {
         Terminal::OwnValue => own_value(test, holder),
         Terminal::InstanceMember(member) => member_condition(*member, holder, test),
         // One trailing member has a second reading beside the compound
@@ -232,11 +226,6 @@ fn language_reading(test: &Test, language: LanguageSelector<'_>, matching: Langu
 /// A predicate that no row can satisfy.
 pub(crate) fn unsatisfiable() -> Condition {
     Condition::all().add(false_literal())
-}
-
-/// A Query Term that no row can satisfy.
-pub(crate) fn unsatisfiable_term() -> CompiledTerm {
-    CompiledTerm::Standalone(unsatisfiable())
 }
 
 #[cfg(test)]
@@ -853,6 +842,28 @@ mod tests {
         assert_statement_snapshot!("projection-unknown-attribute-existence-compiles-to-a-constant-false", statement);
     }
 
+    /// An unknown attribute names nothing a stored instance holds, so a
+    /// conjunction holding it is constant `FALSE` for the whole filter, and a
+    /// disjunction is its other arms.
+    #[test]
+    fn an_unknown_attribute_folds_its_conjunction_and_drops_from_its_disjunction() {
+        for (index, q) in [
+            format!("{}>50;\"https://example.com/never-written\"==1", quoted(SPEED)),
+            format!("{}>50|\"https://example.com/never-written\"==1", quoted(SPEED)),
+        ]
+        .iter()
+        .enumerate()
+        {
+            assert_statement_snapshot!(
+                format!(
+                    "projection-an-unknown-attribute-folds-its-conjunction-and-drops-from-its-disjunction-{}",
+                    index + 1
+                ),
+                render(q)
+            );
+        }
+    }
+
     #[test]
     fn and_or_nesting_preserves_grouping() {
         let statement = render(&format!(
@@ -1012,10 +1023,9 @@ mod tests {
     }
 
     /// A guard type the dictionary never recorded was never carried by any
-    /// entity, so that alternative is unsatisfiable while the resolved one
-    /// still selects.
+    /// entity, so the guard admits the resolved one alone.
     #[test]
-    fn an_unresolved_guard_type_renders_as_an_unsatisfiable_alternative() {
+    fn an_unresolved_guard_type_is_no_alternative_of_the_guard() {
         let statement = render(&format!(
             "{}{{{},{}:{}}}==\"x\"",
             quoted(IS_PARKED_IN),
@@ -1023,7 +1033,7 @@ mod tests {
             quoted("https://example.com/Warehouse"),
             quoted(CATEGORY)
         ));
-        assert_statement_snapshot!("projection-an-unresolved-guard-type-renders-as-an-unsatisfiable-alternative", statement);
+        assert_statement_snapshot!("projection-an-unresolved-guard-type-is-no-alternative-of-the-guard", statement);
     }
 
     #[test]
