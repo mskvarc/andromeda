@@ -74,10 +74,12 @@ use tokio_util::task::TaskTracker;
 const LIVE_LANE_DEPTH: NonZeroUsize = NonZeroUsize::MIN.saturating_add(31);
 
 /// Compose the query service one tenant's notifications resolve the Linked
-/// Entities of their `join` with, change-driven and periodic alike.
+/// Entities of their `join` with, change-driven and periodic alike, and a
+/// periodic notification reads its candidates through.
 ///
 /// A notification's join resolves Linked Entities exactly as a request's does,
-/// so the service is composed like the request-facing one.
+/// and a periodic read is a query like a request's, so the service is
+/// composed like the request-facing one.
 pub(super) fn compose_notification_query(
     storage: &TenantStorage,
     forwarding: &Arc<FederationService>,
@@ -95,11 +97,10 @@ pub(super) fn compose_notification_query(
             .remote_linked(Some(
                 Arc::new(LinkedForwarding::new(Arc::clone(forwarding), storage.live_target.clone())) as Arc<dyn RemoteLinkedEntitySource>
             ))
-            // A notification query only resolves Linked Entities by identifier and
-            // compiles no geo-query: a subscription's `geoQ` is matched in memory
-            // from its stored form, admitted once when it was written, so neither a
-            // lower limit nor the band switched off since refuses a stored
-            // subscription.
+            // A notification query compiles no geo-query: a subscription's `geoQ`
+            // is read from its stored form, admitted once when it was written, so
+            // neither a lower limit nor the band switched off since refuses a
+            // stored subscription.
             .geo_admission(GeoQueryAdmission::new(
                 geometry_census_limits(&config.request_limits),
                 NearDistanceBand::Admitted,
@@ -208,7 +209,6 @@ pub(super) fn register_interval_notification(
         target: storage.live_target.clone(),
         sub_repo: delivery.subscriptions,
         entity_reader: Arc::clone(&storage.entity_ports.reader),
-        entity_pages: Arc::clone(&storage.entity_ports.payload_pages),
         entity_query: delivery.notification_query,
         engine: storage.engine.clone(),
         transport: delivery.transport,

@@ -22,7 +22,9 @@ use sea_query::{Condition, Query, SelectStatement};
 /// instance, a trailing member or a sub-attribute, is not recorded in the
 /// search row, and a hop asks about the Entity the Relationship names.
 pub(crate) fn existence_candidates(attribute: AttributeNameKey, rows: &EntityRowRefs) -> SelectStatement {
-    let carriers = EntityRowRefs::unaliased(rows.schema().cloned()).keyed_by(EntitySearch::Table);
+    let carriers = EntityRowRefs::unaliased(rows.schema().cloned())
+        .keyed_by(EntitySearch::Table)
+        .standing_at(rows.standing());
     let mut candidates = Query::select();
     candidates
         .expr(carriers.entity_key_column())

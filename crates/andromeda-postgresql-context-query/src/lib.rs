@@ -15,6 +15,8 @@ pub mod entity_head;
 pub mod entity_page;
 pub mod entity_relations;
 pub mod entity_total;
+#[cfg(test)]
+mod fixed_instant_tests;
 mod gated_page;
 pub mod id_pattern_page;
 pub mod keyed_count;

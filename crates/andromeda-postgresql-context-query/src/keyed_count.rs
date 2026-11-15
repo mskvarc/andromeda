@@ -60,11 +60,11 @@ pub(crate) fn keyed_count(
     let narrowed = filters
         .remainder
         .add(rows.entity_key_column().in_subquery(column_of(Candidates, Entities::EntityKey)));
-    let indexed = count_over(relations.clone(), schema, narrowed);
+    let indexed = count_over(relations.clone(), schema, rows.standing(), narrowed);
     let mut count = Query::select();
     match bound {
         CandidateBound::AtMost(most) => {
-            let walked = count_over(relations.clone(), schema, filters.whole);
+            let walked = count_over(relations.clone(), schema, rows.standing(), filters.whole);
             count.expr(Expr::case(within(Candidates, most), indexed).finally(walked));
         }
         CandidateBound::Whole => {

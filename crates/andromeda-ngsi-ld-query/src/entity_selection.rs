@@ -7,6 +7,7 @@ use crate::{
     pattern::Pattern,
     projection::projected_members::ProjectedMembers,
     scope::query::ScopeQuery,
+    standing_instant::StandingInstant,
     type_selection::grammar::TypeExpr,
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -148,6 +149,9 @@ pub struct EntitySelection {
     /// is left out where the count and the page are taken rather than after
     /// them (clauses 5.5.9.1 and 6.3.13).
     pub projected_members: ProjectedMembers,
+    /// The instant an Entity or an attribute instance is judged standing at
+    /// (clause 4.22): the store's clock unless an evaluation fixed one.
+    pub standing: StandingInstant,
 }
 
 impl EntitySelection {

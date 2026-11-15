@@ -3,7 +3,7 @@
 //! Two shapes of the same tree: [`TypeExprRaw`] carries the compact names the
 //! client wrote, [`TypeExpr`] carries the IRIs they expand to.
 
-use crate::{error::QueryError, type_selection::parser};
+use crate::{error::QueryError, term_expander::TermExpansionFailure, type_selection::parser};
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use iri_rs::IriBuf;
 use serde::{Deserialize, Serialize};
@@ -75,6 +75,27 @@ impl TypeExprRaw {
             TypeExprRaw::Wildcard => Vec::new(),
             TypeExprRaw::Type(name) => vec![name.clone()],
             TypeExprRaw::And(children) | TypeExprRaw::Or(children) => children.iter().flat_map(TypeExprRaw::named_types).collect(),
+        }
+    }
+
+    /// The expression a stored resource holds, read as the IRIs its leaves
+    /// already are: the inverse of [`TypeExpr::into_raw`].
+    ///
+    /// A resource stores its type expressions expanded, so every leaf of one
+    /// read back is the absolute IRI the request's `@context` expanded it to.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::TermExpansion`] when a leaf is no absolute IRI,
+    /// which an expression expanded before it was stored never holds.
+    pub fn as_expanded(&self) -> Result<TypeExpr, QueryError> {
+        match self {
+            TypeExprRaw::Wildcard => Ok(TypeExpr::Wildcard),
+            TypeExprRaw::Type(name) => IriBuf::new(name.as_str().to_owned())
+                .map(TypeExpr::Type)
+                .map_err(|_| QueryError::TermExpansion(TermExpansionFailure::NotAnIri)),
+            TypeExprRaw::And(children) => children.iter().map(TypeExprRaw::as_expanded).collect::<Result<_, _>>().map(TypeExpr::And),
+            TypeExprRaw::Or(children) => children.iter().map(TypeExprRaw::as_expanded).collect::<Result<_, _>>().map(TypeExpr::Or),
         }
     }
 
@@ -289,6 +310,29 @@ mod tests {
             let reparsed: TypeExprRaw = parsed.to_string().parse().expect("re-parses");
             pretty_assertions::assert_eq!(parsed, reparsed, "{raw}");
         }
+    }
+
+    /// A stored expression reads back as the expanded expression it was
+    /// written from, every leaf the IRI it holds.
+    #[test]
+    fn a_stored_expression_reads_back_as_the_expanded_expression_it_was_written_from() {
+        let expanded = TypeExpr::Or(vec![
+            TypeExpr::And(vec![
+                TypeExpr::Type(IriBuf::new("https://example.com/Home".to_owned()).expect("valid IRI")),
+                TypeExpr::Type(IriBuf::new("https://example.com/Vehicle".to_owned()).expect("valid IRI")),
+            ]),
+            TypeExpr::Wildcard,
+        ]);
+        let stored = expanded.clone().into_raw().expect("every leaf is a type name");
+        pretty_assertions::assert_eq!(stored.as_expanded().expect("every leaf is an IRI"), expanded);
+    }
+
+    /// A leaf that is no absolute IRI was never expanded, so it is refused
+    /// rather than read as an IRI it does not name.
+    #[test]
+    fn a_compact_leaf_is_no_expanded_expression() {
+        let compact: TypeExprRaw = "Vehicle".parse().expect("valid type expression");
+        assert!(compact.as_expanded().is_err());
     }
 
     #[test]

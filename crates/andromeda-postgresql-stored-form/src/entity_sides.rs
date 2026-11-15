@@ -10,11 +10,12 @@
 //!
 //! A core read serves a current state only while it stands. Clause 4.22 makes
 //! an Entity invalid from its `expiresAt` on, before the expiry sweep deletes
-//! it, while a write still reaches it until then.
+//! it, while a write still reaches it until then. The instant a read judges
+//! that at is the caller's, as [`unexpired`] takes it.
 
 use crate::expiry::unexpired;
 use andromeda_postgresql_schema::current::Entities;
-use andromeda_postgresql_seaquery::{branch::qualified, clock::now};
+use andromeda_postgresql_seaquery::branch::qualified;
 use sea_query::{DynIden, Expr, ExprTrait, IntoIden, Query, SimpleExpr};
 
 /// Whether the identity row `entities` names holds a current state: its
@@ -26,27 +27,27 @@ pub fn holds_current_state(entities: impl IntoIden) -> SimpleExpr {
 }
 
 /// Whether the identity row `entities` names holds a current state that
-/// stands: it holds one, and the Entity's clause 4.22 `expiresAt`, when it has
-/// one, is still ahead of the transaction's instant.
+/// stands at `at`: it holds one, and the Entity's clause 4.22 `expiresAt`, when
+/// it has one, is still ahead of `at`.
 #[must_use]
-pub fn holds_standing_state(entities: impl IntoIden) -> SimpleExpr {
+pub fn holds_standing_state(entities: impl IntoIden, at: SimpleExpr) -> SimpleExpr {
     let entities: DynIden = entities.into_iden();
-    holds_current_state(entities.clone()).and(unexpired(Expr::col((entities, Entities::ExpiresAt))))
+    holds_current_state(entities.clone()).and(unexpired(Expr::col((entities, Entities::ExpiresAt)), at))
 }
 
-/// Whether the Entity keyed `key` in the branch `schema` has not expired: it is
-/// none of the Entities whose clause 4.22 `expiresAt` has passed.
+/// Whether the Entity keyed `key` in the branch `schema` has not expired by
+/// `at`: it is none of the Entities whose clause 4.22 `expiresAt` has passed.
 ///
 /// The expired Entities are the few the expiry sweep has yet to delete, read
 /// through the partial index on `expires_at`, so a statement that never joins
 /// `entities` tests each row it walks against that one small set instead of
 /// joining every row.
 #[must_use]
-pub fn not_expired(key: SimpleExpr, schema: Option<&DynIden>) -> SimpleExpr {
+pub fn not_expired(key: SimpleExpr, schema: Option<&DynIden>, at: SimpleExpr) -> SimpleExpr {
     let expired = Query::select()
         .column(Entities::EntityKey)
         .from(qualified(schema, Entities::Table))
-        .and_where(Expr::col(Entities::ExpiresAt).lte(now()))
+        .and_where(Expr::col(Entities::ExpiresAt).lte(at))
         .take();
     key.not_in_subquery(expired)
 }
@@ -63,7 +64,7 @@ pub fn holds_evolution(entities: impl IntoIden) -> SimpleExpr {
 mod tests {
     use crate::entity_sides::{holds_current_state, holds_evolution, holds_standing_state, not_expired};
     use andromeda_postgresql_schema::current::E;
-    use andromeda_postgresql_seaquery::assert_statement_snapshot;
+    use andromeda_postgresql_seaquery::{assert_statement_snapshot, clock::now};
     use sea_query::{Alias, DynIden, Expr, IntoIden, Query, SelectStatement, SimpleExpr};
 
     fn render(expr: SimpleExpr) -> SelectStatement {
@@ -84,7 +85,7 @@ mod tests {
     fn a_standing_state_is_a_current_one_whose_expiry_is_ahead_or_absent() {
         assert_statement_snapshot!(
             "entity-sides-a-standing-state-is-a-current-one-whose-expiry-is-ahead-or-absent",
-            render(holds_standing_state(E))
+            render(holds_standing_state(E, now()))
         );
     }
 
@@ -93,7 +94,7 @@ mod tests {
         let schema: DynIden = Alias::new("snapshot_1").into_iden();
         assert_statement_snapshot!(
             "entity-sides-an-unjoined-entity-is-tested-against-the-expired-set-of-its-branch",
-            render(not_expired(Expr::col(("selected", "entity_key")), Some(&schema)))
+            render(not_expired(Expr::col(("selected", "entity_key")), Some(&schema), now()))
         );
     }
 

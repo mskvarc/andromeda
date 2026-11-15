@@ -15,7 +15,13 @@
 //! traversal hop under others. A fragment that named a column unqualified would
 //! rebind itself to whichever relation a later join happened to make visible,
 //! so the outer row is always stated.
+//!
+//! The rows a statement reads are those of its branch, under its aliases,
+//! standing at its instant: every fragment that tests a clause 4.22 expiry
+//! reads the instant from here, so the statement judges every row it reaches
+//! at one instant.
 
+use andromeda_ngsi_ld_query::standing_instant::StandingInstant;
 use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::branch::qualified;
 use sea_query::{DynIden, Expr, IntoIden, SimpleExpr, TableRef};
@@ -40,11 +46,14 @@ pub struct EntityRowRefs {
     /// A statement that filters on no search axis need not join it; the
     /// fragments that read it are the ones a caller only renders when it did.
     search: DynIden,
+    /// The instant the statement judges an Entity or an attribute instance
+    /// standing at (clause 4.22).
+    standing: StandingInstant,
 }
 
 impl EntityRowRefs {
     /// The two relations used unaliased, under their own table names, in the
-    /// given branch schema.
+    /// given branch schema, standing when the store reads them.
     #[must_use]
     pub fn unaliased(schema: Option<DynIden>) -> EntityRowRefs {
         EntityRowRefs {
@@ -52,11 +61,12 @@ impl EntityRowRefs {
             identity: Entities::Table.into_iden(),
             keys: Entities::Table.into_iden(),
             search: EntitySearch::Table.into_iden(),
+            standing: StandingInstant::WhenRead,
         }
     }
 
     /// The two relations as the statement aliases them, in the given branch
-    /// schema.
+    /// schema, standing when the store reads them.
     pub fn aliased(schema: Option<DynIden>, identity: impl IntoIden, search: impl IntoIden) -> EntityRowRefs {
         let identity = identity.into_iden();
         EntityRowRefs {
@@ -64,7 +74,21 @@ impl EntityRowRefs {
             keys: identity.clone(),
             identity,
             search: search.into_iden(),
+            standing: StandingInstant::WhenRead,
         }
+    }
+
+    /// The same relations, judged standing at `standing`.
+    #[must_use]
+    pub fn standing_at(self, standing: StandingInstant) -> EntityRowRefs {
+        EntityRowRefs { standing, ..self }
+    }
+
+    /// The instant the statement judges an Entity or an attribute instance
+    /// standing at.
+    #[must_use]
+    pub const fn standing(&self) -> StandingInstant {
+        self.standing
     }
 
     /// The same relations, with `entity_key` and `id` read from `keys`: the

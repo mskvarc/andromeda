@@ -36,6 +36,7 @@ use crate::{
     entity_row_refs::EntityRowRefs,
     error::RenderError,
     geo_predicate::restriction,
+    standing_instant::instant_of,
     stored_geometry::{BoxIndexing, StoredGeometry},
 };
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
@@ -145,8 +146,11 @@ fn default_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, default_location: 
         }
     };
     // Clause 4.22: the hoisted default instance matches only while it stands.
-    arm.and_where(unexpired(SeaExpr::col((Alias::new(DEFAULT_ALIAS), EntitySearch::LocationExpiresAt))))
-        .cond_where(restriction(&geo.georel, &geo.geometry, &stored, indexing)?);
+    arm.and_where(unexpired(
+        SeaExpr::col((Alias::new(DEFAULT_ALIAS), EntitySearch::LocationExpiresAt)),
+        instant_of(rows.standing()),
+    ))
+    .cond_where(restriction(&geo.georel, &geo.geometry, &stored, indexing)?);
     Ok(Some(arm.take()))
 }
 
@@ -168,7 +172,10 @@ fn dataset_instance_arm(geo: &GeoQuery, rows: &EntityRowRefs, location_key: Attr
         .from_as(rows.table(CurrentAttributes::Table), instance.clone())
         .and_where(SeaExpr::col((instance.clone(), CurrentAttributes::AttributeNameKey)).eq(location_key.get()))
         .and_where(is_named_instance(SeaExpr::col((instance.clone(), CurrentAttributes::DatasetKey))))
-        .and_where(unexpired(SeaExpr::col((instance.clone(), CurrentAttributes::ExpiresAt))))
+        .and_where(unexpired(
+            SeaExpr::col((instance.clone(), CurrentAttributes::ExpiresAt)),
+            instant_of(rows.standing()),
+        ))
         // With the `datasetId` test, the predicate the partial
         // `idx_ca_dataset_value_geometry` is restricted by.
         .and_where(SeaExpr::col((instance, CurrentAttributes::ValueGeometry)).is_not_null());

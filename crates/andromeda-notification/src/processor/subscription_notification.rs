@@ -208,7 +208,7 @@ mod tests {
             live_target: ContextTarget::Live,
             sub_repo: Arc::<ClaimRecordingStore>::clone(store),
             entity_reader: Arc::<NoEntities>::clone(&entities),
-            entity_query: entity_query(&entities),
+            entity_query: entity_query(entities),
             engine: offline_engine(),
             transport: transport(),
             tenant: TenantRef::UnnamedDefault,

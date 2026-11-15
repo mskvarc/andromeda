@@ -9,14 +9,14 @@ use andromeda_entity::{
     configured_policy::{filter_complexity_limits, geometry_census_limits},
     entity_snapshot::EntitySnapshot,
     error::EntityError,
-    port::{payload_pages::EntityPayloadPages, query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
+    port::{query::EntityQueryStore, reader::EntityReader, retrieved_entity::RetrievedEntity},
     query::EntityQueryService,
     query_outcome::QueryOutcome,
     spatial_acceleration::SpatialAcceleration,
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::{
     notification::SysAttrsSnapshot,
     subscription::{Subscription, SubscriptionStatus},
@@ -189,23 +189,6 @@ impl EntityQueryStore for NoEntities {
     }
 }
 
-#[async_trait]
-impl EntityPayloadPages for NoEntities {
-    async fn get_entities_by_type(
-        &self,
-        _target: &ContextTarget,
-        _entity_type: &EntityTypeName,
-        _after: Option<&Identifier>,
-        _limit: u16,
-    ) -> Result<Vec<StoredEntry<EntityState>>, EntityError> {
-        Ok(Vec::new())
-    }
-
-    async fn get_all_entities(&self, _target: &ContextTarget, _after: Option<&Identifier>, _limit: u16) -> Result<Vec<StoredEntry<EntityState>>, EntityError> {
-        Ok(Vec::new())
-    }
-}
-
 /// A JSON-LD engine that never fetches a remote context.
 pub(crate) fn offline_engine() -> JsonLdEngine {
     JsonLdEngine::builder().allow_remote(false).build().expect("the offline engine builds")
@@ -217,13 +200,13 @@ pub(crate) fn transport() -> Arc<TransportDispatcher> {
     Arc::new(TransportDispatcher::new(HttpTransportConfig::default(), MqttPoolConfig::default()).expect("the dispatcher builds"))
 }
 
-/// The entity query service over `entities`, under the default request
-/// limits.
-pub(crate) fn entity_query(entities: &Arc<NoEntities>) -> Arc<EntityQueryService> {
+/// The entity query service answering queries from `query_store` and
+/// reading no entity, under the default request limits.
+pub(crate) fn entity_query(query_store: Arc<dyn EntityQueryStore>) -> Arc<EntityQueryService> {
     Arc::new(
         EntityQueryService::builder()
-            .reader(Arc::<NoEntities>::clone(entities))
-            .query_store(Arc::<NoEntities>::clone(entities))
+            .reader(Arc::new(NoEntities))
+            .query_store(query_store)
             .engine(offline_engine())
             .spatial(SpatialAcceleration::StoreVerified)
             .tenant(TenantRef::UnnamedDefault)

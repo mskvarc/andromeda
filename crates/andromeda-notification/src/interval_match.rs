@@ -1,10 +1,11 @@
 //! Matching entity states against a periodic subscription's filters (clause
 //! 5.8.6).
 //!
-//! A periodic notification reads entities a page at a time and decides in memory
-//! which ones the subscription's `q`, `geoQ` and `scopeQ` accept, through
-//! the same entity filters a change-driven notification applies, because a
-//! boolean selector cannot be pushed into a `WHERE`.
+//! The store reads a periodic notification's candidates through the query
+//! engine, which keeps only the entities the subscription's `q`, `geoQ` and
+//! `scopeQ` accept. The entity filters a change-driven notification applies
+//! decide them again here, at the instant the store judged them at, so an
+//! entity is notified only when both executions accept it.
 
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{error::EntityError, query::EntityQueryService};
@@ -194,6 +195,20 @@ mod tests {
             &LinkedStates::new(),
         );
         assert_eq!(before, vec![expiring_vehicle("2030-01-01T00:00:00Z")]);
+    }
+
+    /// Clause 4.22 decides at the tick's one instant: an instance expiring a
+    /// second after it still stands for the tick, however late the
+    /// evaluation ends.
+    #[test]
+    fn a_periodic_q_matches_through_an_instance_expiring_after_the_tick_instant() {
+        let matched = filtered(
+            speeding(),
+            vec![vehicle("2030-01-01T00:00:01Z")],
+            instant("2030-01-01T00:00:00Z"),
+            &LinkedStates::new(),
+        );
+        assert_eq!(matched, vec![vehicle("2030-01-01T00:00:01Z")]);
     }
 
     #[test]

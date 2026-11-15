@@ -47,6 +47,8 @@ An Entity query whose `q` holds a conjunct an index answers reads that conjunct'
 
 When several conjuncts qualify, the page takes one whose Attribute the census counts within that bound, the smallest count first. Every candidate holds an instance of that Attribute, so such a page never walks. When no count fits, the page takes the first of those conjuncts in the filter's normal form, so every spelling of one filter is read the same way and renders one statement. The census is read only when two conjuncts contend, in one statement after the name dictionaries.
 
+A page judges every Entity and Attribute instance it reads at one instant (clause 4.22). A request's page reads at the transaction's `NOW()`. A periodic notification pages its candidates through the same statements with the instant its tick took bound in place of `NOW()`, so every page of its walk, each continued after the last identifier of the one before, and the evaluation in memory that follows decide expiry at that instant on one clock.
+
 ## Spatial
 
 Geometries are PostGIS values in WGS 84, with GiST indexes on each entity's `location`, on the geometry values of attribute instances and on the geometries of registrations. The database checks that a stored geometry is in WGS 84 and is flat or three-dimensional.

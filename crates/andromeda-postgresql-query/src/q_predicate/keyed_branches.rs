@@ -28,7 +28,7 @@ pub(crate) fn branch(rows: &EntityRowRefs, attribute: AttributeNameKey, held: Op
         .expr(projection_column(CurrentAttributes::EntityKey))
         .from(rows.table(CurrentAttributes::Table).alias(Ca))
         .and_where(of_attribute(attribute))
-        .and_where(standing());
+        .and_where(standing(rows));
     if let Some(held) = held {
         branch.and_where(held);
     }

@@ -32,6 +32,7 @@ use crate::{
     entity_row_refs::EntityRowRefs,
     history_source::HistoryOf,
     q_predicate::{history_aliases::HistoryAliases, history_window::HistoryWindow, instance_scan::InstanceScan, resolved_filter::HopGuard},
+    standing_instant::instant_of,
 };
 use andromeda_ngsi_ld_query::filter::reading::family_reading::hop_families;
 use andromeda_postgresql_schema::{
@@ -39,7 +40,6 @@ use andromeda_postgresql_schema::{
     temporal::AttributeHistory,
 };
 use andromeda_postgresql_seaquery::{
-    branch::qualified,
     jsonb::{jsonb_array_elements_text, jsonb_build_array},
     literal::int_literal,
     operator::array_contains_key,
@@ -51,7 +51,7 @@ use andromeda_postgresql_stored_values::{
     attribute_name_key::AttributeNameKey,
     entity_type_name_key::EntityTypeNameKey,
 };
-use sea_query::{Alias, Condition, DynIden, Expr as SeaExpr, ExprTrait, Func, JoinType, Query, SelectStatement, SimpleExpr, TableRef};
+use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, Func, JoinType, Query, SelectStatement, SimpleExpr, TableRef};
 
 /// One hop of a traversal: the relations its probe introduces, and the probe
 /// itself.
@@ -89,11 +89,16 @@ impl LinkedHop {
     /// Where a predicate compiled *inside* this hop reads its entity: the
     /// linked identity and search rows, whose key its probes correlate on.
     ///
-    /// `schema` is the branch schema of the statement this hop is nested in, so
-    /// the linked entity is read in the same branch the traversal started from
-    /// rather than falling back to the live default schema.
-    pub(crate) fn inner_rows(&self, schema: Option<DynIden>) -> EntityRowRefs {
-        EntityRowRefs::aliased(schema, Alias::new(self.linked_entity.as_str()), Alias::new(self.linked_search.as_str()))
+    /// The linked entity is read in the branch of the statement this hop is
+    /// nested in, `outer`, rather than in the live default schema, and judged
+    /// standing at the instant `outer` stands at.
+    pub(crate) fn inner_rows(&self, outer: &EntityRowRefs) -> EntityRowRefs {
+        EntityRowRefs::aliased(
+            outer.schema().cloned(),
+            Alias::new(self.linked_entity.as_str()),
+            Alias::new(self.linked_search.as_str()),
+        )
+        .standing_at(outer.standing())
     }
 
     /// Wrap an already-compiled inner predicate in this hop's probe.
@@ -113,8 +118,7 @@ impl LinkedHop {
         match outer {
             InstanceScan::Current(rows) => {
                 let probe = self.current_objects(relationship_id, rows);
-                let guarded = GuardedRow::Search(outer.schema());
-                Condition::all().add(SeaExpr::exists(self.completed(probe, guard, guarded, inner)))
+                Condition::all().add(SeaExpr::exists(self.completed(probe, guard, GuardedRow::Search(rows), inner)))
             }
             InstanceScan::History(window) => {
                 let probe = self.windowed_objects(relationship_id, window);
@@ -176,8 +180,8 @@ impl LinkedHop {
                     .add(names_linked),
             )
             .and_where(SeaExpr::col((hop(), CurrentAttributes::AttributeKind)).is_in(relationship_kinds()))
-            .and_where(unexpired(SeaExpr::col((hop(), CurrentAttributes::ExpiresAt))));
-        self.completed(branch, guard, GuardedRow::Search(outer.schema()), inner)
+            .and_where(unexpired(SeaExpr::col((hop(), CurrentAttributes::ExpiresAt)), instant_of(outer.standing())));
+        self.completed(branch, guard, GuardedRow::Search(outer), inner)
     }
 
     /// One probe over the Relationship's instances, completed with the type
@@ -190,8 +194,8 @@ impl LinkedHop {
         // expired (clause 4.22); a hop over a window lands on the Evolutions
         // the history source reads, which hold one already.
         match guarded {
-            GuardedRow::Search(_) => {
-                probe.and_where(holds_standing_state(linked()));
+            GuardedRow::Search(outer) => {
+                probe.and_where(holds_standing_state(linked(), instant_of(outer.standing())));
             }
             GuardedRow::Catalogue => {}
         }
@@ -204,11 +208,11 @@ impl LinkedHop {
             HopGuard::AnyEntity => {}
             HopGuard::OneOf(types) => {
                 let entity_type_name_keys = match guarded {
-                    GuardedRow::Search(schema) => {
+                    GuardedRow::Search(outer) => {
                         let search = || Alias::new(self.linked_search.as_str());
                         probe.join_as(
                             JoinType::Join,
-                            qualified(schema, EntitySearch::Table),
+                            outer.table(EntitySearch::Table),
                             search(),
                             SeaExpr::col((search(), EntitySearch::EntityKey)).equals((linked(), Entities::EntityKey)),
                         );
@@ -252,7 +256,7 @@ impl LinkedHop {
             .and_where(SeaExpr::col((hop(), CurrentAttributes::AttributeNameKey)).eq(relationship_id.get()))
             .and_where(SeaExpr::col((hop(), CurrentAttributes::AttributeKind)).is_in(relationship_kinds()))
             // Clause 4.22: a past-due Relationship instance links nothing.
-            .and_where(unexpired(SeaExpr::col((hop(), CurrentAttributes::ExpiresAt))));
+            .and_where(unexpired(SeaExpr::col((hop(), CurrentAttributes::ExpiresAt)), instant_of(outer.standing())));
         probe
     }
 
@@ -316,9 +320,10 @@ impl LinkedHop {
 /// Where a hop's type guard reads the linked entity's types.
 #[derive(Debug, Clone, Copy)]
 enum GuardedRow<'s> {
-    /// The linked entity's `entity_search` row, in the branch schema given:
-    /// a hop over current state, which lands on an Entity holding one.
-    Search(Option<&'s DynIden>),
+    /// The linked entity's `entity_search` row, in the branch the outer rows
+    /// given are read in, the linked entity standing at their instant: a hop
+    /// over current state, which lands on an Entity holding one.
+    Search(&'s EntityRowRefs),
     /// The linked entity's Temporal Evolution the hop already lands on: a hop
     /// over a temporal window, which lands on an Entity holding one.
     Catalogue,

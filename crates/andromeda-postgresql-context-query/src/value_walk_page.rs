@@ -55,6 +55,7 @@ use andromeda_postgresql_query::{
     q_predicate::projection_probe::{Ca, of_attribute, projection_column, standing},
     query_names::QueryNames,
     sort_key::SortKey,
+    standing_instant::instant_of,
 };
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::{
@@ -186,7 +187,7 @@ pub(crate) fn value_walk_page(source: &PageSource<'_>, order: &ValueWalkOrder) -
 fn carriers(source: &PageSource<'_>, order: &ValueWalkOrder, column: WalkedColumn, condition: Condition, need: u64) -> SelectStatement {
     let rows = source.rows;
     let mut page = Query::select();
-    source.relations.clone().apply_from(&mut page, source.schema);
+    source.relations.clone().apply_from(&mut page, source.schema, rows.standing());
     page.join(
         JoinType::InnerJoin,
         rows.table(CurrentAttributes::Table).alias(Ca),
@@ -196,7 +197,7 @@ fn carriers(source: &PageSource<'_>, order: &ValueWalkOrder, column: WalkedColum
         condition
             .add(of_attribute(order.attribute))
             .add(projection_column(column.held().column()).is_not_null())
-            .add(standing())
+            .add(standing(rows))
             .add(Expr::exists(earlier_instance(rows, order.attribute)).not()),
     )
     .limit(need);
@@ -215,9 +216,9 @@ fn without_attribute(source: &PageSource<'_>, order: &ValueWalkOrder, condition:
         .from(rows.table(CurrentAttributes::Table).alias(Ca))
         .and_where(projection_column(CurrentAttributes::EntityKey).eq(rows.entity_key_column()))
         .and_where(of_attribute(order.attribute))
-        .and_where(standing());
+        .and_where(standing(rows));
     let mut page = Query::select();
-    source.relations.clone().apply_from(&mut page, source.schema);
+    source.relations.clone().apply_from(&mut page, source.schema, rows.standing());
     page.cond_where(condition.add(Expr::exists(carried.take()).not())).limit(need);
     let value = RankedValue {
         rank: typed_null(PostgresType::Integer),
@@ -242,7 +243,7 @@ fn earlier_instance(rows: &EntityRowRefs, attribute: AttributeNameKey) -> Select
         .from(rows.table(CurrentAttributes::Table).alias(Earlier))
         .and_where(column(CurrentAttributes::EntityKey).eq(projection_column(CurrentAttributes::EntityKey)))
         .and_where(column(CurrentAttributes::AttributeNameKey).eq(attribute.get()))
-        .and_where(unexpired(column(CurrentAttributes::ExpiresAt)))
+        .and_where(unexpired(column(CurrentAttributes::ExpiresAt), instant_of(rows.standing())))
         .and_where(column(CurrentAttributes::Ordinal).lt(projection_column(CurrentAttributes::Ordinal)))
         .take()
 }

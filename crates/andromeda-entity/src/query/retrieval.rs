@@ -168,22 +168,57 @@ impl EntityQueryService {
         let timer = entity::start(EntityOperation::Query);
         let result: Result<(Vec<StoredEntry<RetrievedEntity>>, Option<i64>), EntityError> = async {
             let compiled = self.compile_query_cached(query, context, language_targeting).await?;
-            // The spatial index narrows only the default `location` instances,
-            // so the store still evaluates the geo-query over what it narrowed.
-            let narrowed = self.spatial_prefilter(target, &compiled).await;
-            let QueryOutcome { mut rows, total_count } = self.query_store.query_compiled(target, &narrowed, window, count).await?;
-            for row in &mut rows {
-                if let StoredEntry::Read(row) = row {
-                    // The store decoded each state into its own allocation, so
-                    // this borrows it mutably without a copy.
-                    narrow_to_query(Arc::make_mut(&mut row.state), &compiled);
-                }
-            }
+            let QueryOutcome { rows, total_count } = self.read_compiled(target, &compiled, window, count).await?;
             Ok((rows, total_count))
         }
         .await;
         timer.finish_result(&result);
         result
+    }
+
+    /// Select the page `window` selects of the stored states an already
+    /// compiled query matches, uncounted, read as
+    /// [`EntityQueryService::query_states`] reads a request's.
+    ///
+    /// A matching entity whose stored rows no longer read back keeps its
+    /// place in the page as [`StoredEntry::Unreadable`], so a walk over
+    /// several pages still continues after it.
+    ///
+    /// # Errors
+    ///
+    /// Reports [`EntityError::Persistence`] when the store could not answer
+    /// the query.
+    pub async fn compiled_states(
+        &self,
+        target: &ContextTarget,
+        compiled: &Arc<CompiledEntityQuery>,
+        window: &PageWindow,
+    ) -> Result<Vec<StoredEntry<RetrievedEntity>>, EntityError> {
+        Ok(self.read_compiled(target, compiled, window, CountPolicy::Omit).await?.rows)
+    }
+
+    /// The page `window` selects of the stored states `compiled` matches,
+    /// each narrowed to the query's `attrs` and clause 4.21 projection, with
+    /// the clause 6.3.13 count when `count` asks for it.
+    async fn read_compiled(
+        &self,
+        target: &ContextTarget,
+        compiled: &Arc<CompiledEntityQuery>,
+        window: &PageWindow,
+        count: CountPolicy,
+    ) -> Result<QueryOutcome, EntityError> {
+        // The spatial index narrows only the default `location` instances,
+        // so the store still evaluates the geo-query over what it narrowed.
+        let narrowed = self.spatial_prefilter(target, compiled).await;
+        let mut outcome = self.query_store.query_compiled(target, &narrowed, window, count).await?;
+        for row in &mut outcome.rows {
+            if let StoredEntry::Read(row) = row {
+                // The store decoded each state into its own allocation, so
+                // this borrows it mutably without a copy.
+                narrow_to_query(Arc::make_mut(&mut row.state), compiled);
+            }
+        }
+        Ok(outcome)
     }
 
     /// Execute a compiled query returning only the identifiers of the matching

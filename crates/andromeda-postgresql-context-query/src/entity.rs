@@ -93,7 +93,7 @@ pub fn build_query(
 ) -> Result<EntityQuery, RenderError> {
     let schema = schema_iden(target);
     let relations = EntityRelations::for_query(query, &names.types, schema.as_ref());
-    let rows = relations.rows(schema.clone());
+    let rows = relations.rows(schema.clone(), query.selection.standing);
     let condition = build_entity_conditions(query, names, &rows, &relations.source, QFilter::Whole)?;
     let shape = PageShape::of(query, names, window, &relations, &rows, schema.as_ref());
     let counted_on_page = shape.counted_on_page(count, window);
@@ -140,12 +140,12 @@ pub fn build_query(
 pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, window: &PageWindow, names: &QueryNames) -> Result<EntityIdsQuery, RenderError> {
     let schema = schema_iden(target);
     let relations = EntityRelations::for_query(query, &names.types, schema.as_ref());
-    let rows = relations.rows(schema.clone());
+    let rows = relations.rows(schema.clone(), query.selection.standing);
     let condition = build_entity_conditions(query, names, &rows, &relations.source, QFilter::Whole)?;
 
     let mut select = Query::select();
     select.expr_as(rows.identity_column(Entities::Id), Entities::Id);
-    relations.apply_from(&mut select, schema.as_ref());
+    relations.apply_from(&mut select, schema.as_ref(), query.selection.standing);
     select.cond_where(condition);
 
     let (keys, read_order) = window_and_sort_keys(&mut select, &rows, query, window, &names.attributes)?;

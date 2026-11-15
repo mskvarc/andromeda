@@ -89,7 +89,7 @@ pub(crate) fn keyed_page(
     keyed: KeyedCandidates<'_>,
     columns: GatedColumns,
 ) -> Result<(ProjectedPage, ReadOrder), RenderError> {
-    let walked = walked_rows(source.schema);
+    let walked = walked_rows(source.rows);
     let short = ShortWalk {
         source: *source,
         walked: source.condition(QFilter::Omitted)?,

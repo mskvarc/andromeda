@@ -68,7 +68,7 @@ pub(crate) fn carriers(query: &CompiledEntityQuery, names: &QueryNames, schema: 
     if !(alone && recorded) {
         return None;
     }
-    let rows = EntityRowRefs::unaliased(schema.cloned());
+    let rows = EntityRowRefs::unaliased(schema.cloned()).standing_at(selection.standing);
     let carried = attrs_carriers(selection, names, &rows)?;
     let mut carriers = Query::select();
     carriers
@@ -90,7 +90,7 @@ pub(crate) fn carrier_page(source: &PageSource<'_>, carriers: SelectStatement, c
         source: RowSource::Entities,
         search: Demand::NotJoined,
     };
-    let probed = EntityRowRefs::aliased(source.schema.cloned(), Walked, Probed);
+    let probed = EntityRowRefs::aliased(source.schema.cloned(), Walked, Probed).standing_at(source.rows.standing());
     let mut probe = Query::select();
     probe.expr(Expr::val(1)).from_as(probed.table(EntitySearch::Table), Probed).cond_where(
         build_entity_conditions(source.query, source.names, &probed, &RowSource::Entities, QFilter::Whole)?

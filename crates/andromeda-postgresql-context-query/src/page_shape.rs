@@ -135,7 +135,7 @@ impl<'q> PageShape<'q> {
         let (page, read_order, total_planning, total_candidates) = match self {
             PageShape::Plain => {
                 let mut page = Query::select();
-                source.relations.clone().apply_from(&mut page, source.schema);
+                source.relations.clone().apply_from(&mut page, source.schema, source.rows.standing());
                 page.cond_where(condition.clone());
                 let (keys, read_order) = window_and_sort_keys(&mut page, source.rows, source.query, source.window, &source.names.attributes)?;
                 return Ok(CutPage {
