@@ -27,6 +27,10 @@ pub enum PostgresType {
     /// `time`, the time-of-day type a clause 4.6.3 `Time` value casts to.
     #[iden = "time"]
     Time,
+    /// `date`, the calendar-day type whose input function checks a clause
+    /// 4.6.3 `Date`'s day.
+    #[iden = "date"]
+    Date,
     /// `text`.
     #[iden = "text"]
     Text,
@@ -171,6 +175,7 @@ mod tests {
         assert_eq!(PostgresType::Boolean.to_string(), "boolean");
         assert_eq!(PostgresType::Timestamptz.to_string(), "timestamptz");
         assert_eq!(PostgresType::Time.to_string(), "time");
+        assert_eq!(PostgresType::Date.to_string(), "date");
         assert_eq!(PostgresType::Text.to_string(), "text");
         assert_eq!(PostgresType::Geography.to_string(), "geography");
         assert_eq!(PostgresType::Box2d.to_string(), "box2d");

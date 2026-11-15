@@ -23,10 +23,11 @@
 use crate::time::{
     date::{NgsiLdDate, NgsiLdDateError},
     date_time::{NgsiLdDateTime, NgsiLdDateTimeError},
+    lexical_pattern::{DATE_PATTERN, DATE_TIME_PATTERN, TIME_PATTERN},
     rendering::{date_text, instant_text, time_of_day_text},
     time_of_day::{NgsiLdTime, NgsiLdTimeError},
 };
-use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
+use andromeda_ngsi_ld_vocabulary::{compact::classes as compact_classes, expanded::classes as expanded_classes};
 use derive_more::Display;
 use iri_rs::Iri;
 use strum::{EnumIter, IntoEnumIterator};
@@ -103,6 +104,28 @@ impl TimeValueForm {
             TimeValueForm::DateTime => expanded_classes::DATE_TIME,
             TimeValueForm::Date => expanded_classes::DATE,
             TimeValueForm::Time => expanded_classes::TIME,
+        }
+    }
+
+    /// The core `@context` term of this form, which a compacted value object
+    /// names its datatype by.
+    #[must_use]
+    pub const fn term(self) -> &'static str {
+        match self {
+            TimeValueForm::DateTime => compact_classes::DATE_TIME,
+            TimeValueForm::Date => compact_classes::DATE,
+            TimeValueForm::Time => compact_classes::TIME,
+        }
+    }
+
+    /// The anchored regular expression the text of this form matches, the
+    /// calendar check aside.
+    #[must_use]
+    pub const fn lexical_pattern(self) -> &'static str {
+        match self {
+            TimeValueForm::DateTime => DATE_TIME_PATTERN,
+            TimeValueForm::Date => DATE_PATTERN,
+            TimeValueForm::Time => TIME_PATTERN,
         }
     }
 
@@ -184,6 +207,14 @@ mod tests {
             pretty_assertions::assert_eq!(TimeValueForm::named_by(form.iri().as_str()), Some(form));
         }
         pretty_assertions::assert_eq!(TimeValueForm::named_by(expanded_classes::PROPERTY.as_str()), None);
+    }
+
+    /// The core `@context` expands each form's term to the form's IRI.
+    #[test]
+    fn each_form_term_expands_to_its_iri() {
+        for form in [TimeValueForm::DateTime, TimeValueForm::Date, TimeValueForm::Time] {
+            pretty_assertions::assert_eq!(andromeda_ngsi_ld_vocabulary::compact_to_expanded(form.term()), Some(form.iri().as_str()));
+        }
     }
 
     /// The canonical spelling of each form: no fraction, three or six digits,

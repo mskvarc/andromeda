@@ -11,11 +11,8 @@
 //! sub-properties (clause 4.5.2.3), and any other JSON, an array included, is
 //! the value itself, which has no sub-property.
 
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    attribute_type::AttributeType,
-    time::{lexical_pattern::DATE_TIME_PATTERN, value::TimeValueForm},
-};
+use crate::q_predicate::document::written_time_value::spells;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, time::value::TimeValueForm};
 use andromeda_ngsi_ld_query::filter::{
     instance_metadata::InstanceMetadata,
     reading::{
@@ -25,17 +22,11 @@ use andromeda_ngsi_ld_query::filter::{
         terminal::Terminal,
     },
 };
-use andromeda_ngsi_ld_vocabulary::{
-    compact::{
-        classes::{DATE, DATE_TIME, TIME},
-        properties as compact_properties,
-    },
-    keyword,
-};
+use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use andromeda_postgresql_seaquery::{
     cast::typed_null,
     column_reference::ColumnReference,
-    datetime::{pg_input_is_valid, with_decimal_point},
+    datetime::with_decimal_point,
     json_type::{JsonType, jsonb_type_is, jsonb_whole_text},
     jsonb::to_jsonb,
     literal::text_literal,
@@ -145,23 +136,20 @@ impl<'a> PropertyPath<'a> {
     ///
     /// An instance member holding an instant (clause 4.8, clause 4.22) is the
     /// `DateTime` its text spells in the clause 4.6.3 form, and a String when
-    /// it spells none, as the in-memory evaluator reads it: the text matches
-    /// that form before the `timestamptz` input function, which also takes an
-    /// offset, a bare date or `now`, checks the calendar, and its decimal comma
-    /// is read as the point. Any other target is read by
+    /// it spells none, as the in-memory evaluator reads it ([`spells`]), its
+    /// decimal comma read as the point. A compound member is raw JSON, keyed as
+    /// its writer wrote it, so a value object there declares nothing, as the
+    /// in-memory evaluator reads it. A node's value is read by
     /// [`declared_value_reading`].
     pub fn declared_reading(self, value: impl Fn() -> SimpleExpr, operand: &Operand) -> (SimpleExpr, SimpleExpr) {
         match self.ending {
             Ending::InstanceMember(member) if member.holds_instant() => {
-                let instant = || with_decimal_point(jsonb_whole_text(value()));
-                let spells_an_instant = jsonb_whole_text(value())
-                    .posix_matches(text_literal(DATE_TIME_PATTERN))
-                    .and(pg_input_is_valid(instant(), PostgresType::Timestamptz));
-                let datatype = CaseStatement::new().case(spells_an_instant, text_literal(TimeValueForm::DateTime.iri().as_str()));
-                (to_jsonb(instant()), datatype.into())
+                let text = || jsonb_whole_text(value());
+                let datatype = CaseStatement::new().case(spells(TimeValueForm::DateTime, text), text_literal(TimeValueForm::DateTime.iri().as_str()));
+                (to_jsonb(with_decimal_point(text())), datatype.into())
             }
-            Ending::InstanceMember(_) => (value(), typed_null(PostgresType::Text)),
-            Ending::Node | Ending::Members(_) => declared_value_reading(value, operand),
+            Ending::InstanceMember(_) | Ending::Members(_) => (value(), typed_null(PostgresType::Text)),
+            Ending::Node => declared_value_reading(value, operand),
         }
     }
 
@@ -241,27 +229,25 @@ fn instance_member_text(node: SimpleExpr) -> SimpleExpr {
     )
 }
 
-/// The JSONB value and the declared datatype IRI a stored `value` is compared
+/// The JSONB value and the declared datatype IRI a node's `value` is compared
 /// with `operand` through.
 ///
-/// Only a value object declaring a time value form in its `@type` compares
-/// with a time operand (clause 4.9: no equality of data types, no match), so
-/// such an operand reads the object's `@value` beside its datatype. A document
-/// keeps the value its writer stored, so that `@type` is the core context's
-/// term for the form or the form's IRI. Every other operand reads the whole
-/// value and no datatype.
+/// Only a value object declaring the operand's time value form in its `@type`
+/// compares with a time operand (clause 4.9: no equality of data types, no
+/// match), and only when its `@value` spells a value of that form ([`spells`],
+/// annex C.6), so such an operand reads the `@value`, its decimal comma read
+/// as the point, beside the form's IRI. A document keeps the value its writer
+/// stored, so that `@type` is the core context's term for the form or the
+/// form's IRI. Every other operand reads the whole value and no datatype.
 fn declared_value_reading(value: impl Fn() -> SimpleExpr, operand: &Operand) -> (SimpleExpr, SimpleExpr) {
-    match operand {
-        Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_) => {
-            let datatype = || value().json_get_text(text_literal(keyword::TYPE));
-            let declared = [(TimeValueForm::DateTime, DATE_TIME), (TimeValueForm::Date, DATE), (TimeValueForm::Time, TIME)]
-                .into_iter()
-                .fold(CaseStatement::new(), |case, (form, term)| {
-                    let iri = form.iri();
-                    case.case(datatype().is_in([text_literal(term), text_literal(iri.as_str())]), text_literal(iri.as_str()))
-                });
-            (value().json_get(text_literal(keyword::VALUE)), declared.into())
-        }
-        Operand::Number(_) | Operand::Text(_) | Operand::Uri(_) | Operand::Boolean(_) => (value(), typed_null(PostgresType::Text)),
-    }
+    let Some(form) = operand.time_form() else {
+        return (value(), typed_null(PostgresType::Text));
+    };
+    let text = || jsonb_whole_text(value().json_get(text_literal(keyword::VALUE)));
+    let iri = form.iri();
+    let declares = value()
+        .json_get_text(text_literal(keyword::TYPE))
+        .is_in([text_literal(form.term()), text_literal(iri.as_str())]);
+    let datatype = CaseStatement::new().case(declares.and(spells(form, text)), text_literal(iri.as_str()));
+    (to_jsonb(with_decimal_point(text())), datatype.into())
 }
