@@ -4,6 +4,7 @@
 //! value is declared as.
 
 use crate::{
+    declared_operand::{boolean_reading, number_order_reading, string_reading},
     ordering::{
         attribute_value_datatype::{NULL_TYPE, OrderedValue},
         attribute_value_order::ELEMENT_COLUMN,
@@ -34,11 +35,12 @@ use andromeda_postgresql_seaquery::{
     jsonb::{jsonb_build_object, jsonb_path_query_first, jsonb_typeof},
     literal::{false_literal, int_literal, text_literal},
     operator::null_if,
+    pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
     structured_value::sub_attribute_value_object,
     unnest::composite_field,
 };
-use andromeda_postgresql_stored_values::value_kind::ValueKind;
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, value_kind::ValueKind};
 use sea_query::{Alias, CaseStatement, Expr as SeaExpr, ExprTrait, Func, SimpleExpr};
 
 /// The typed value the read instance holds for the path, read off the
@@ -95,7 +97,13 @@ impl Holder {
     }
 
     /// The holder's own value: the typed field that is set, a scalar a JSON
-    /// literal holds, a structured value, and a geometry as an Object.
+    /// literal holds, the first string of a `languageMap`, a structured value,
+    /// and a geometry as an Object.
+    ///
+    /// Clause 4.9 makes the target value of a `LanguageProperty` addressed
+    /// with no language "a value from any of the key-value pairs held within
+    /// the languageMap", a String, so a map ranks as a String and orders by the
+    /// first string it holds as stored.
     fn own_value(&self) -> OrderedValue {
         let object = self.structured_value();
         let strings = match self {
@@ -104,11 +112,13 @@ impl Holder {
                 self.field(CurrentAttributes::ValueLongText, SubAttribute::ValueString),
                 self.field(CurrentAttributes::ValueUri, SubAttribute::ValueUri),
                 self.field(CurrentAttributes::ValueLongUri, SubAttribute::ValueUri),
+                self.first_language_string(object.clone()),
                 json_text(object.clone()),
             ],
             Holder::Element(_) => vec![
                 self.field(CurrentAttributes::ValueString, SubAttribute::ValueString),
                 self.field(CurrentAttributes::ValueUri, SubAttribute::ValueUri),
+                self.first_language_string(object.clone()),
                 json_text(object.clone()),
             ],
         };
@@ -133,6 +143,18 @@ impl Holder {
             json_null: stored_json_null(object.clone()),
             object: Func::coalesce([json_compound(object), geometry.into()]).into(),
         }
+    }
+
+    /// The first string of the `languageMap` a `LanguageProperty` holder holds
+    /// in `object`, as stored; `NULL` for every other family.
+    fn first_language_string(&self, object: SimpleExpr) -> SimpleExpr {
+        let family = self.field(CurrentAttributes::AttributeKind, SubAttribute::AttributeKind);
+        CaseStatement::new()
+            .case(
+                SeaExpr::expr(family).eq(int_literal(i64::from(AttributeKind::LanguageProperty.code()))),
+                object.json_get(int_literal(0)).json_get_text(text_literal(keyword::VALUE)),
+            )
+            .into()
     }
 
     /// The datatype IRI the value kind of the holder's own value declares: a
@@ -205,7 +227,9 @@ impl Holder {
     /// cannot collide: a structured value has no `@language`, a `languageMap`
     /// no IRI-keyed members, and a literal is read only on a `JsonProperty`. A
     /// target language no member name spells (`name[en-GB]`) has the last
-    /// reading alone.
+    /// reading alone. A member its `@type` declares an XSD number or
+    /// `xsd:boolean` (annex C.6) is that number or Boolean, as a `q` term reads
+    /// it.
     fn member_of_value(&self, members: Option<&MemberPath>, language: Option<LanguageSelector<'_>>) -> OrderedValue {
         let object = self.structured_value();
         let json_property = is_json_property(self.field(CurrentAttributes::AttributeKind, SubAttribute::AttributeKind));
@@ -228,10 +252,11 @@ impl Holder {
         }
         let member: SimpleExpr = Func::coalesce(readings).into();
         OrderedValue {
-            number: json_number(member.clone()),
-            boolean: json_boolean(member.clone()),
+            // clone: each reading takes the member and its datatype afresh
+            number: number_order_reading(member.clone(), declared.clone()),
+            boolean: boolean_reading(member.clone(), declared.clone()),
             date_time: typed_null(PostgresType::Timestamptz),
-            text: json_text(member.clone()),
+            text: string_reading(member.clone(), declared.clone()),
             datatype: declared,
             json_null: jsonb_type_is(member.clone(), JsonType::Null),
             object: json_compound(member),
