@@ -176,6 +176,6 @@ pub fn declared_reading(value: impl Fn() -> SimpleExpr, operand: &Operand) -> (S
                 });
             (value().json_get(text_literal(keyword::VALUE)), declared.into())
         }
-        Operand::Number(_) | Operand::Text(_) | Operand::Boolean(_) => (value(), typed_null(PostgresType::Text)),
+        Operand::Number(_) | Operand::Text(_) | Operand::Uri(_) | Operand::Boolean(_) => (value(), typed_null(PostgresType::Text)),
     }
 }

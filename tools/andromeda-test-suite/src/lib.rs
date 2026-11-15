@@ -43,6 +43,7 @@ pub mod context_source;
 pub mod context_source_property;
 pub mod context_terms;
 pub mod core_context;
+pub mod csf_parity;
 pub mod cursor_walk;
 pub mod cut_stream;
 pub mod data_integrity_proof;

@@ -24,8 +24,8 @@ use sea_query::SimpleExpr;
 #[must_use]
 pub fn string_ordering_collation(operand: &Operand, comparator: Comparator) -> Option<PostgresCollation> {
     match (operand, comparator) {
-        (Operand::Text(_), Comparator::Ordered(_)) => Some(PostgresCollation::new(IcuCollation::ROOT)),
-        (Operand::Text(_), Comparator::Equal)
+        (Operand::Text(_) | Operand::Uri(_), Comparator::Ordered(_)) => Some(PostgresCollation::new(IcuCollation::ROOT)),
+        (Operand::Text(_) | Operand::Uri(_), Comparator::Equal)
         | (Operand::Number(_) | Operand::Boolean(_) | Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_), Comparator::Equal | Comparator::Ordered(_)) => {
             None
         }

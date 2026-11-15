@@ -28,5 +28,6 @@ pub mod scalar_test;
 pub mod target_kind;
 pub mod term_reading;
 pub mod terminal;
+pub mod uri_operand;
 pub mod value_test;
 pub mod verdict;

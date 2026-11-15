@@ -209,15 +209,16 @@ impl StoredMember {
     /// An `objectType` listing several types is an array, which no ordering
     /// holds for, so only a single type compares.
     fn compared(&self, comparator: Comparator, operand: &Operand) -> SimpleExpr {
-        let compares = self.target_kind().is_some_and(|kind| operand.compares_with(kind, comparator.comparison()));
-        if !compares {
+        let Some(kind) = self.target_kind().filter(|kind| operand.compares_with(*kind, comparator.comparison())) else {
             return false_literal();
-        }
+        };
         match self {
-            StoredMember::Instant(field) => compare(field.clone(), comparator, bound_operand(operand)),
-            StoredMember::UnitCode(field) => listed_code_where(field, |code| operand.text().is_some_and(|text| comparator.holds_for_strings(code, text))),
-            StoredMember::Text(stored) => text_compared(stored.clone(), comparator, operand),
-            StoredMember::TypeKeys(keys) => text_compared(single_type_name(keys), comparator, operand),
+            StoredMember::Instant(field) => compare(field.clone(), comparator, bound_operand(operand, kind)),
+            StoredMember::UnitCode(field) => listed_code_where(field, |code| {
+                operand.text_against(kind).is_some_and(|text| comparator.holds_for_strings(code, text))
+            }),
+            StoredMember::Text(stored) => text_compared(stored.clone(), comparator, operand, kind),
+            StoredMember::TypeKeys(keys) => text_compared(single_type_name(keys), comparator, operand, kind),
             StoredMember::Unheld => false_literal(),
         }
     }
@@ -233,10 +234,10 @@ impl StoredMember {
     }
 }
 
-/// `stored` compared with the text `operand` is, a String ordering collating
-/// as a stored String value's does.
-fn text_compared(stored: SimpleExpr, comparator: Comparator, operand: &Operand) -> SimpleExpr {
-    compare(ordered_string(stored, operand, comparator), comparator, bound_operand(operand))
+/// `stored`, a target of `kind`, compared with the text `operand` is, a String
+/// ordering collating as a stored String value's does.
+fn text_compared(stored: SimpleExpr, comparator: Comparator, operand: &Operand, kind: TargetKind) -> SimpleExpr {
+    compare(ordered_string(stored, operand, comparator), comparator, bound_operand(operand, kind))
 }
 
 /// The expanded IRI the `entity_type_names` key `key` names, NULL for a NULL
@@ -267,13 +268,7 @@ pub fn single_type_name(keys: &SimpleExpr) -> SimpleExpr {
 /// a boolean or a time spells no type.
 fn some_type_named(keys: &SimpleExpr, operands: &[Operand]) -> SimpleExpr {
     // clone: the bound array owns its elements
-    let spellings: Vec<String> = operands
-        .iter()
-        .filter_map(|operand| match operand {
-            Operand::Text(text) => Some(text.clone()),
-            Operand::Number(_) | Operand::Boolean(_) | Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_) => None,
-        })
-        .collect();
+    let spellings: Vec<String> = operands.iter().filter_map(|operand| operand.text().map(str::to_owned)).collect();
     if spellings.is_empty() {
         return false_literal();
     }

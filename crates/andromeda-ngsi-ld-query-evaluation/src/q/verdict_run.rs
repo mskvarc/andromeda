@@ -14,6 +14,7 @@ use andromeda_ngsi_ld_query::filter::reading::{
     family_reading::TargetOrigin,
     operand::{Comparison, Operand},
     scalar_test::ScalarTest,
+    target_kind::TargetKind,
     value_test::ValueTest,
     verdict::Verdict,
 };
@@ -23,7 +24,7 @@ use std::cmp::Ordering;
 /// Whether `target` satisfies `test`.
 pub(crate) fn target_passes(test: &ValueTest, target: &ResolvedTarget<'_>) -> bool {
     match target.value.shape(target.origin) {
-        ValueShape::One(kind) => verdict_holds(test.verdict(kind), &target.value),
+        ValueShape::One(kind) => verdict_holds(test.verdict(kind), &target.value, kind),
         ValueShape::Several(elements) => {
             let array = target.array_target();
             array_holds(test.array_rule(array), elements, |element| element_passes(test, element, target.origin, array))
@@ -36,18 +37,19 @@ pub(crate) fn target_passes(test: &ValueTest, target: &ResolvedTarget<'_>) -> bo
 /// of such an array.
 fn element_passes(test: &ValueTest, element: &TargetValue<'_>, origin: TargetOrigin, array: ArrayTarget) -> bool {
     match element.shape(origin) {
-        ValueShape::One(kind) => verdict_holds(test.asserted_verdict(kind), element),
+        ValueShape::One(kind) => verdict_holds(test.asserted_verdict(kind), element, kind),
         ValueShape::Several(nested) => array_holds(test.asserted_array_rule(array), nested, |inner| element_passes(test, inner, origin, array)),
     }
 }
 
-/// Whether `value` satisfies a term whose verdict on its kind is `verdict`.
-fn verdict_holds(verdict: Verdict<'_>, value: &TargetValue<'_>) -> bool {
+/// Whether `value`, of `kind`, satisfies a term whose verdict on its kind is
+/// `verdict`.
+fn verdict_holds(verdict: Verdict<'_>, value: &TargetValue<'_>, kind: TargetKind) -> bool {
     match verdict {
         Verdict::Never => false,
         Verdict::Always => true,
-        Verdict::Holds(test) => test_holds(test, value),
-        Verdict::HoldsNot(test) => !test_holds(test, value),
+        Verdict::Holds(test) => test_holds(test, value, kind),
+        Verdict::HoldsNot(test) => !test_holds(test, value, kind),
     }
 }
 
@@ -62,29 +64,33 @@ fn array_holds(rule: ArrayRule, elements: &[TargetValue<'_>], element_passes: im
     }
 }
 
-/// Whether `value`, of a kind `test` compares with, passes it.
-fn test_holds(test: &ScalarTest, value: &TargetValue<'_>) -> bool {
+/// Whether `value`, of `kind`, a kind `test` compares with, passes it.
+fn test_holds(test: &ScalarTest, value: &TargetValue<'_>, kind: TargetKind) -> bool {
     match test {
         ScalarTest::EqualsAny(operands) => operands
             .iter()
-            .any(|operand| order_against(value, operand, Comparison::Equality).is_some_and(Ordering::is_eq)),
-        ScalarTest::Ordered { relation, operand } => order_against(value, operand, Comparison::Order).is_some_and(|ordering| relation.holds(ordering)),
+            .any(|operand| order_against(value, kind, operand, Comparison::Equality).is_some_and(Ordering::is_eq)),
+        ScalarTest::Ordered { relation, operand } => order_against(value, kind, operand, Comparison::Order).is_some_and(|ordering| relation.holds(ordering)),
         ScalarTest::Within(interval) => {
-            order_against(value, interval.min(), Comparison::Order).is_some_and(Ordering::is_ge)
-                && order_against(value, interval.max(), Comparison::Order).is_some_and(Ordering::is_le)
+            order_against(value, kind, interval.min(), Comparison::Order).is_some_and(Ordering::is_ge)
+                && order_against(value, kind, interval.max(), Comparison::Order).is_some_and(Ordering::is_le)
         }
         ScalarTest::Matches(pattern) => value.as_text().is_some_and(|text| pattern.is_match(text.as_ref())),
         ScalarTest::Unsatisfiable => false,
     }
 }
 
-/// How `value` orders against `operand` after operators of `comparison`, or
-/// `None` when the two have no order between them: a value of another data
-/// type than the operand's, or a not-a-number.
-fn order_against(value: &TargetValue<'_>, operand: &Operand, comparison: Comparison) -> Option<Ordering> {
+/// How `value`, of `kind`, orders against `operand` after operators of
+/// `comparison`, or `None` when the two have no order between them: a value of
+/// another data type than the operand's, or a not-a-number. A text operand is
+/// read in the spelling a target of `kind` is compared with.
+fn order_against(value: &TargetValue<'_>, kind: TargetKind, operand: &Operand, comparison: Comparison) -> Option<Ordering> {
     match operand {
         Operand::Number(number) => value.number_ordering(number),
-        Operand::Text(text) => value.as_text().map(|held| string_order(held.as_ref(), text, comparison.string_relation())),
+        Operand::Text(_) | Operand::Uri(_) => {
+            let text = operand.text_against(kind)?;
+            value.as_text().map(|held| string_order(held.as_ref(), text, comparison.string_relation()))
+        }
         Operand::Boolean(boolean) => value.as_boolean().map(|held| held.cmp(boolean)),
         Operand::DateTime(instant) => match value.as_time()? {
             TimeValue::DateTime(held) => Some(held.get().cmp(instant)),

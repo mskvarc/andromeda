@@ -6,7 +6,7 @@ use crate::{
     temporal_operand::{declared_date, declared_date_time, declared_time},
 };
 use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
-use andromeda_ngsi_ld_query::filter::reading::operand::Operand;
+use andromeda_ngsi_ld_query::filter::reading::{operand::Operand, target_kind::TargetKind};
 use andromeda_postgresql_seaquery::{cast::cast, json_type::jsonb_whole_text, pg_type::PostgresType};
 use sea_query::{Expr as SeaExpr, SimpleExpr};
 
@@ -36,7 +36,8 @@ pub struct LiftedComparison {
 ///   and a boolean a JSON boolean or a JSON string declared as `xsd:boolean`,
 ///   each cast on both sides,
 /// * a text operand, quoted or a bare URI, reads only a JSON string its
-///   datatype gives no other data type, as text,
+///   datatype gives no other data type, as text, a URI in its written
+///   spelling, since a JSON value read here is a Property's,
 /// * a `DateTime`, `Date` or `Time` compares only with a value declared as one
 ///   of its form (clause 4.9: no equality of data types, no match), a
 ///   `DateTime` as `timestamptz` bound as the instant itself, a `Time` in the
@@ -68,6 +69,10 @@ pub fn lift_comparison(operand: &Operand, stored: SimpleExpr, datatype: SimpleEx
         Operand::Text(text) => LiftedComparison {
             stored: string_reading(stored, datatype),
             operand: SeaExpr::val(text.as_str()),
+        },
+        Operand::Uri(uri) => LiftedComparison {
+            stored: string_reading(stored, datatype),
+            operand: SeaExpr::val(uri.against(TargetKind::String)),
         },
         Operand::DateTime(instant) => LiftedComparison {
             stored: declared_date_time(jsonb_whole_text(stored), datatype),

@@ -9,9 +9,11 @@ use crate::filter::{
         filter_reading::FilterReading,
         hop::Hop,
         operand::Operand,
+        order_relation::OrderRelation,
         scalar_test::ScalarTest,
         term_reading::{TermReading, Test},
         terminal::Terminal,
+        uri_operand::UriOperand,
         value_test::Polarity,
     },
     target_language::TargetLanguage,
@@ -20,6 +22,7 @@ use crate::filter::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use langtag::LangTagBuf;
 use pretty_assertions::assert_eq;
+use std::slice;
 
 /// The one term `q` lowers to under `matching`.
 fn term_under(q: &str, matching: LanguageMatching) -> TermReading {
@@ -279,4 +282,67 @@ fn carrying_any_attribute_is_the_reading_of_their_existence_disjunction() {
         FilterReading::of(&parse("\"https://example.com/a\"").expect("a clause 4.9 filter"), LanguageMatching::TagEquality)
     );
     assert_eq!(FilterReading::carrying_any([]), FilterReading::Any(Vec::new()));
+}
+
+/// The operands of the one equality term `q` lowers to.
+fn equality_operands(q: &str) -> Vec<Operand> {
+    let Test::Value(value) = term(q).test().clone() else {
+        panic!("{q} lowers to no value test");
+    };
+    let ScalarTest::EqualsAny(operands) = value.test().clone() else {
+        panic!("{q} lowers to no equality");
+    };
+    operands
+}
+
+/// LW-14. The write path stores a Relationship's object in its RFC 3986
+/// section 6.2.2 and 6.2.3 normal form, and clause 4.9 asks that URI
+/// comparison minimise false negatives, so a URI that normalises to another
+/// spelling is both spellings, alone or in a value list, while the filter
+/// keeps what the client wrote.
+#[test]
+fn a_uri_operand_of_an_equality_is_its_written_and_its_normalised_spelling() {
+    for (written, normalised) in [
+        ("HTTP://Example.com/a", "http://example.com/a"),
+        ("http://example.com:80/a", "http://example.com/a"),
+        ("http://example.com/a/./b/../c", "http://example.com/a/c"),
+        ("http://example.com", "http://example.com/"),
+    ] {
+        let both = Operand::Uri(UriOperand::new(written.to_owned(), normalised.to_owned()));
+        assert_eq!(equality_operands(&format!("r==\"{written}\"")), slice::from_ref(&both), "{written}");
+        assert_eq!(equality_operands(&format!("r!=\"{written}\"")), slice::from_ref(&both), "{written}");
+        assert_eq!(
+            equality_operands(&format!("r==\"{written}\",\"urn:x:9\"")),
+            [both, Operand::Text("urn:x:9".to_owned())],
+            "{written}"
+        );
+    }
+}
+
+/// A text already in its normal form, or no URI at all, is the one text it
+/// is, and an ordering compares the text as written.
+#[test]
+fn a_text_operand_in_its_normal_form_or_no_uri_is_one_text() {
+    for unchanged in [
+        "urn:ngsi-ld:OffStreetParking:Downtown1",
+        "http://example.com/a",
+        "tag:example.com,2024:foo",
+        "Mercedes",
+    ] {
+        assert_eq!(
+            equality_operands(&format!("r==\"{unchanged}\"")),
+            [Operand::Text(unchanged.to_owned())],
+            "{unchanged}"
+        );
+    }
+    let Test::Value(ordered) = term("r>\"HTTP://Example.com/a\"").test().clone() else {
+        panic!("a value test");
+    };
+    assert_eq!(
+        ordered.test(),
+        &ScalarTest::Ordered {
+            relation: OrderRelation::Greater,
+            operand: Operand::Text("HTTP://Example.com/a".to_owned()),
+        }
+    );
 }

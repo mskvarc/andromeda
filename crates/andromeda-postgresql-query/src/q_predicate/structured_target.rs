@@ -66,7 +66,7 @@ use andromeda_ngsi_ld_lexicon::{
     },
 };
 use andromeda_ngsi_ld_number::declared_number::DeclaredNumber;
-use andromeda_ngsi_ld_query::filter::reading::operand::Operand;
+use andromeda_ngsi_ld_query::filter::reading::{operand::Operand, target_kind::TargetKind};
 use andromeda_ngsi_ld_vocabulary::keyword;
 use andromeda_postgresql_schema::name_dictionary::EntityTypeNames;
 use andromeda_postgresql_seaquery::{
@@ -101,7 +101,7 @@ pub fn carries_operand(column: &SimpleExpr, value_type: &SimpleExpr, family: &Si
     Condition::all()
         // clone: sea-query owns every operand, and one column is read by several tests
         .add(family.clone().ne(int_literal(i64::from(AttributeKind::JsonProperty.code()))))
-        .add(carried(column, &declaring, operand))
+        .add(carried(column, &declaring, family, operand))
 }
 
 /// The `valueType` key that declares the members of the instance of the
@@ -115,7 +115,7 @@ fn declaring_value_type(value_type: &SimpleExpr, family: &SimpleExpr) -> SimpleE
 
 /// [`carries_operand`] once the instance's family holds a structured target,
 /// `value_type` being the `valueType` key that declares its members.
-fn carried(column: &SimpleExpr, value_type: &SimpleExpr, operand: &Operand) -> Condition {
+fn carried(column: &SimpleExpr, value_type: &SimpleExpr, family: &SimpleExpr, operand: &Operand) -> Condition {
     match member_text(operand) {
         MemberText::Read { native, spellings } => {
             let probes = native
@@ -127,7 +127,13 @@ fn carried(column: &SimpleExpr, value_type: &SimpleExpr, operand: &Operand) -> C
                     .add(contains(column, bare_element(probe.clone())))
                     .add(contains(column, value_element(probe)))
             });
-            Condition::all().add(candidate).add(some_member_equals(column, value_type, operand))
+            let read = Condition::all().add(candidate).add(some_member_equals(column, value_type, operand));
+            match operand {
+                Operand::Uri(uri) => Condition::any()
+                    .add(read)
+                    .add(listed_object(column, family, uri.against(TargetKind::RelationshipObject))),
+                Operand::Number(_) | Operand::Text(_) | Operand::Boolean(_) | Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_) => read,
+            }
         }
         MemberText::Declared { form, text } => {
             let plain = Condition::any()
@@ -196,6 +202,19 @@ fn value_type_names(value_type: &SimpleExpr, form: TimeValueForm) -> SimpleExpr 
     value_type.clone().eq(SimpleExpr::SubQuery(None, Box::new(key.into_sub_query_statement())))
 }
 
+/// Whether the `objectList` of a `ListRelationship` instance holds `object`,
+/// a URI in the spelling the write path stores a Relationship's object in.
+///
+/// The list holds each object as a bare JSON string, so containment decides
+/// it, and no declaration reads the members of a list of objects.
+fn listed_object(column: &SimpleExpr, family: &SimpleExpr, object: &str) -> SimpleExpr {
+    // clone: sea-query owns every operand, and one column is read by several tests
+    family
+        .clone()
+        .eq(int_literal(i64::from(AttributeKind::ListRelationship.code())))
+        .and(contains(column, bare_element(cast(SeaExpr::val(object), PostgresType::Text))))
+}
+
 /// `column @> element`, the containment test every comparison here is built on.
 fn contains(column: &SimpleExpr, element: SimpleExpr) -> SimpleExpr {
     // clone: sea-query owns every operand, and one column is read by several tests
@@ -251,6 +270,10 @@ fn member_text(operand: &Operand) -> MemberText {
         Operand::Text(value) => MemberText::Read {
             native: None,
             spellings: vec![value.as_str().to_owned()],
+        },
+        Operand::Uri(uri) => MemberText::Read {
+            native: None,
+            spellings: vec![uri.written().to_owned()],
         },
         Operand::DateTime(instant) => MemberText::Declared {
             form: TimeValueForm::DateTime,

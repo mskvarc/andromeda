@@ -130,7 +130,7 @@ fn string_comparison(text: SimpleExpr, comparator: Comparator, operand: &Operand
     // The collation the stored String columns are declared under, so a string
     // read out of a map orders exactly as one read from `value_string` does.
     let collation = string_ordering_collation(operand, comparator).unwrap_or_else(PostgresCollation::byte_order);
-    compare(collate(text, &collation), comparator, bound_operand(operand))
+    compare(collate(text, &collation), comparator, bound_operand(operand, TargetKind::String))
 }
 
 /// Whether one string is in the language of a pattern.

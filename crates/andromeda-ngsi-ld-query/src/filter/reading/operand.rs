@@ -1,6 +1,9 @@
 //! One lowered Query Term operand, and the target kinds it compares with.
 
-use crate::filter::{reading::target_kind::TargetKind, scalar::Scalar};
+use crate::filter::{
+    reading::{target_kind::TargetKind, uri_operand::UriOperand},
+    scalar::Scalar,
+};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_value_order::string_order::StringRelation;
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
@@ -9,13 +12,17 @@ use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 ///
 /// Equality and order are over the value, so `1`, `1.0` and `1e0` are one
 /// operand. A bare `URI` and a `quotedStr` holding the same text are one
-/// operand too: both compare as the text they are.
+/// operand too: both compare as the text they are, but for a URI an equality
+/// compares in two spellings.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Operand {
     /// An exact number.
     Number(JsonNumber),
     /// A `quotedStr` or a bare `URI`.
     Text(String),
+    /// A `quotedStr` or a bare `URI` after `==` or `!=` that RFC 3986 section
+    /// 6 normalises to another spelling.
+    Uri(UriOperand),
     /// `true` or `false`.
     Boolean(bool),
     /// A clause 4.6.3 `DateTime`, normalised to UTC.
@@ -68,11 +75,20 @@ impl From<&Scalar> for Operand {
 }
 
 impl Operand {
-    /// The text the operand is, `None` for any other operand.
+    /// The text a String target is compared with, `None` for an operand that
+    /// is no text.
     #[must_use]
-    pub const fn text(&self) -> Option<&str> {
+    pub fn text(&self) -> Option<&str> {
+        self.text_against(TargetKind::String)
+    }
+
+    /// The text a target of `kind` is compared with, `None` for an operand
+    /// that is no text.
+    #[must_use]
+    pub fn text_against(&self, kind: TargetKind) -> Option<&str> {
         match self {
             Operand::Text(text) => Some(text.as_str()),
+            Operand::Uri(uri) => Some(uri.against(kind)),
             Operand::Number(_) | Operand::Boolean(_) | Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_) => None,
         }
     }
@@ -82,7 +98,7 @@ impl Operand {
     pub const fn number(&self) -> Option<&JsonNumber> {
         match self {
             Operand::Number(number) => Some(number),
-            Operand::Text(_) | Operand::Boolean(_) | Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_) => None,
+            Operand::Text(_) | Operand::Uri(_) | Operand::Boolean(_) | Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_) => None,
         }
     }
 
@@ -102,8 +118,8 @@ impl Operand {
             TargetKind::Number | TargetKind::NotANumber | TargetKind::PositiveInfinity | TargetKind::NegativeInfinity => {
                 matches!(self, Operand::Number(_))
             }
-            TargetKind::String => matches!(self, Operand::Text(_)),
-            TargetKind::RelationshipObject => matches!((self, comparison), (Operand::Text(_), Comparison::Equality)),
+            TargetKind::String => matches!(self, Operand::Text(_) | Operand::Uri(_)),
+            TargetKind::RelationshipObject => matches!((self, comparison), (Operand::Text(_) | Operand::Uri(_), Comparison::Equality)),
             TargetKind::Boolean => matches!(self, Operand::Boolean(_)),
             TargetKind::DateTime => matches!(self, Operand::DateTime(_)),
             TargetKind::Date => matches!(self, Operand::Date(_)),
