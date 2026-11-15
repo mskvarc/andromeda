@@ -249,9 +249,9 @@ pub(crate) fn build_entity_conditions(
     if let Some(compiled) = &query.selection.q {
         let scan = InstanceScan::Current(rows);
         match q {
-            QFilter::Whole => condition = condition.add(q_filter::compile(compiled.lowered(), &scan, names)),
+            QFilter::Whole => condition = condition.add(q_filter::compile(compiled.reading(), &scan, names)),
             QFilter::Except(answered) => {
-                condition = condition.add(q_filter::compile_except(compiled.lowered(), answered, &scan, names));
+                condition = condition.add(q_filter::compile_except(compiled.reading(), answered, &scan, names));
             }
             QFilter::Omitted => {}
         }

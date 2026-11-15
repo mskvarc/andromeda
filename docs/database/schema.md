@@ -41,6 +41,12 @@ The trigram indexes are the one place the database default is named. A pattern t
 
 [SQL lint rules](sql-lint-rules.md) describes the `c-collation` rule that holds every migration to this.
 
+## Reading a page of Entities
+
+An Entity query whose `q` holds a conjunct an index answers reads that conjunct's candidates through the index and cuts the page from them. The conjunct may be an equality on a sub-Property, a pattern, an ordering or a range over a `DateTime` or `Date`, the existence of an Attribute, or a Linked Entity hop. The page walks the selection in identifier order only when more candidates qualify than the bound its kind of index allows.
+
+When several conjuncts qualify, the page takes one whose Attribute the census counts within that bound, the smallest count first. Every candidate holds an instance of that Attribute, so such a page never walks. When no count fits, the page takes the first of those conjuncts in the filter's normal form, so every spelling of one filter is read the same way and renders one statement. The census is read only when two conjuncts contend, in one statement after the name dictionaries.
+
 ## Spatial
 
 Geometries are PostGIS values in WGS 84, with GiST indexes on each entity's `location`, on the geometry values of attribute instances and on the geometries of registrations. The database checks that a stored geometry is in WGS 84 and is flat or three-dimensional.

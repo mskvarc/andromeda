@@ -138,6 +138,8 @@ pub mod pattern_term;
 pub mod projection;
 pub mod projection_probe;
 pub mod resolved_filter;
+#[cfg(test)]
+mod spelling_tests;
 pub mod stored_kind;
 pub mod string_ordering;
 pub mod structured_target;

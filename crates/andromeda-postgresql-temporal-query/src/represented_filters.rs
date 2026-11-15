@@ -45,7 +45,7 @@ pub(crate) fn met_restrictions(
     compiled: &CompiledTemporalQuery,
     names: &QueryNames,
 ) -> Result<Option<Condition>, RenderError> {
-    let reading = compiled.entities.q.as_ref().map(CompiledFilter::lowered);
+    let reading = compiled.entities.q.as_ref().map(CompiledFilter::reading);
     let geo = compiled.entities.geo.as_ref();
     let geoproperty = geo.and_then(|geo| names.attributes.get(&geo.geoproperty));
     let reduced_keys = named_attributes(reading, geoproperty, names);

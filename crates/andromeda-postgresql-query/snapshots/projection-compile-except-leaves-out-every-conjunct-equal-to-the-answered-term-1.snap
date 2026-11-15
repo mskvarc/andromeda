@@ -1,6 +1,5 @@
 ---
 source: crates/andromeda-postgresql-query/src/q_predicate/projection.rs
-assertion_line: 1126
 ---
 SELECT
   "id"

@@ -128,6 +128,7 @@ pub(super) fn speed_and_address() -> QueryNames {
         ]),
         types: ResolvedNames::default(),
         holders: holders_of(3, &[(7, 12), (9, 50_000)]),
+        ..QueryNames::default()
     }
 }
 
@@ -166,6 +167,7 @@ pub(super) fn sensor_names() -> QueryNames {
             EntityTypeNameKey::from(1),
         )]),
         holders: holders_of(1, &[(1, 12), (2, 12)]),
+        ..QueryNames::default()
     }
 }
 

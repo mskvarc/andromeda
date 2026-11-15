@@ -23,6 +23,7 @@
 //! temporal evolution. Both port groups render the same fragments, which is why
 //! the fragments are here and not in either of them.
 
+pub mod attribute_carriers;
 pub mod attribute_instance_correlation;
 pub mod dataset_predicate;
 pub mod declared_operand;

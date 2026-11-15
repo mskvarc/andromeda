@@ -36,7 +36,7 @@ const STRUCTURAL_MEMBERS: [&str; 3] = ["id", "type", "scope"];
 /// One existential leaf of a query's value, geo and scope filters.
 #[derive(Debug, Clone, Copy)]
 pub enum FilterLeaf<'q> {
-    /// One Query Term of the `q` filter as lowered (clause 4.9), which a
+    /// One Query Term of the `q` filter in normal form (clause 4.9), which a
     /// store renders and the in-memory execution runs.
     Term(&'q TermReading),
     /// The geo-query (clause 4.10).
@@ -137,10 +137,10 @@ impl<'q> SplitFilter<'q> {
         self.filters.q.is_none() && self.filters.geo.is_none() && self.filters.scope.is_none()
     }
 
-    /// Every leaf: the Query Terms of `q` as lowered, in pre-order, then the
+    /// Every leaf: the Query Terms of `q` in normal form, in pre-order, then the
     /// geo-query, then every pattern of every scope alternative in order.
     pub fn leaves(&self) -> impl Iterator<Item = FilterLeaf<'q>> + use<'q> {
-        let terms = self.filters.q.into_iter().flat_map(|q| q.lowered().terms()).map(FilterLeaf::Term);
+        let terms = self.filters.q.into_iter().flat_map(|q| q.reading().terms()).map(FilterLeaf::Term);
         let geo = self.filters.geo.map(FilterLeaf::Geo);
         let scope = self
             .filters
@@ -226,7 +226,7 @@ impl<'q> SplitFilter<'q> {
     #[must_use]
     pub fn holds(&self, truths: &LeafTruths) -> bool {
         let mut cursor = 0;
-        let q = self.filters.q.is_none_or(|q| reading_holds(q.lowered(), truths, &mut cursor));
+        let q = self.filters.q.is_none_or(|q| reading_holds(q.reading(), truths, &mut cursor));
         let geo = self.filters.geo.is_none_or(|_| next_truth(truths, &mut cursor));
         let scope = self.filters.scope.is_none_or(|scope| {
             // Every requirement takes its place in the leaf order whether or
@@ -324,6 +324,8 @@ mod tests {
         assert!(filter.holds(&LeafTruths::none(0)), "no filter holds for every entity");
     }
 
+    /// The terms come in the normal form's order, which puts the group
+    /// `b<2;c` before the term `a>1`.
     #[test]
     fn the_leaves_follow_q_then_geo_then_every_scope_pattern() {
         let selection = selection(
@@ -342,9 +344,9 @@ mod tests {
         pretty_assertions::assert_eq!(
             leaves,
             [
-                "term https://example.com/a",
                 "term https://example.com/b",
                 "term https://example.com/c",
+                "term https://example.com/a",
                 "geo https://uri.etsi.org/ngsi-ld/location",
                 "scope /A",
                 "scope /B",
@@ -378,6 +380,8 @@ mod tests {
         pretty_assertions::assert_eq!(levels, [vec!["https://example.com/parkedIn"], vec!["https://example.com/operator"]]);
     }
 
+    /// The normal form reads the group holding the `free` hop before the term
+    /// holding the `operator` hop.
     #[test]
     fn the_hop_reads_are_the_next_relationships_and_the_attributes_the_terms_end_in() {
         let selection = selection(
@@ -395,7 +399,7 @@ mod tests {
         pretty_assertions::assert_eq!(
             reads,
             [
-                Some(vec!["https://example.com/operator", "https://example.com/free"]),
+                Some(vec!["https://example.com/free", "https://example.com/operator"]),
                 Some(vec!["https://example.com/name"])
             ]
         );
@@ -442,17 +446,18 @@ mod tests {
 
     #[test]
     fn a_disjunction_reads_every_term_in_place() {
-        // `a|b;c` holds through `c` alone only when `b` held as well: the
-        // cursor must still reach `c` after `a` decided the disjunction.
+        // `a|b;c` holds through `a` alone or through `b` and `c` together. The
+        // normal form reads the group `b;c` before `a`, so the cursor must
+        // still step past `c` after `b` decided the group, to reach `a`.
         let selection = selection(
             Some("\"https://example.com/a\"|\"https://example.com/b\";\"https://example.com/c\""),
             Some(within_berlin()),
             None,
         );
         let filter = SplitFilter::of(&selection);
-        assert!(filter.holds(&LeafTruths::from_vec(vec![true, false, false, true])));
-        assert!(!filter.holds(&LeafTruths::from_vec(vec![true, false, false, false])));
-        assert!(!filter.holds(&LeafTruths::from_vec(vec![false, true, false, true])));
-        assert!(filter.holds(&LeafTruths::from_vec(vec![false, true, true, true])));
+        assert!(filter.holds(&LeafTruths::from_vec(vec![false, false, true, true])));
+        assert!(!filter.holds(&LeafTruths::from_vec(vec![false, false, true, false])));
+        assert!(!filter.holds(&LeafTruths::from_vec(vec![true, false, false, true])));
+        assert!(filter.holds(&LeafTruths::from_vec(vec![true, true, false, true])));
     }
 }

@@ -239,11 +239,13 @@ async fn a_source_instance_before_the_window_selects_nothing() {
 }
 
 /// Clause 5.7.4.4: the leaves of a conjunction may each hold in another part,
-/// every one over the instances inside the window.
+/// every one over the instances inside the window. The broker's part holds
+/// `brand` and not `speed`; the leaves come in the normal form's order, `brand`
+/// before `speed`.
 #[tokio::test]
 async fn each_leaf_may_hold_in_another_part() {
     let q = "\"https://example.com/speed\">50;\"https://example.com/brand\"==\"Mercedes\"";
-    let broker = || StubBroker::new([]).judging(uri(VEHICLE), LeafTruths::from_vec(vec![false, true]));
+    let broker = || StubBroker::new([]).judging(uri(VEHICLE), LeafTruths::from_vec(vec![true, false]));
     let nothing = LocalInEffect::default();
     let fast = vehicle_part(json!({"speed": [{"type": "Property", "value": 60, "observedAt": "2020-08-01T12:10:00Z"}]})).await;
     pretty_assertions::assert_eq!(retained(broker(), q, &[&fast], &[], &nothing).await, vec![uri(VEHICLE)]);

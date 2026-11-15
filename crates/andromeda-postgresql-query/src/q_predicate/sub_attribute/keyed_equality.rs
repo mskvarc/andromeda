@@ -56,6 +56,7 @@ pub(crate) fn equality_candidates(term: &ResolvedTerm<'_>, operand: &Operand, ro
 mod tests {
     use crate::{
         entity_row_refs::EntityRowRefs,
+        one_time_gate::CandidateBound,
         q_predicate::{keyed_term::keyed_candidates, lowered_filter::reading_of},
         query_names::QueryNames,
     };
@@ -76,7 +77,7 @@ mod tests {
     }
 
     fn candidates(q: &str) -> Option<SelectStatement> {
-        keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names()).map(|keyed| keyed.select)
+        keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names(), |_| CandidateBound::Whole).map(|keyed| keyed.select)
     }
 
     /// The statement of a keyed equality on `temperature.source` with `operand`.
