@@ -168,6 +168,9 @@ impl FederationService {
             entities: from_ref(&entity),
             attributes: expanded_name.as_slice(),
         };
+        let matches = |csr: &ContextSourceRegistration| {
+            specification.covers(csr) && request.dataset.is_none_or(|dataset| csr.coverage.admits_dataset_ids(from_ref(dataset)))
+        };
 
         // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
         let mut looped_back = Vec::new();
@@ -177,7 +180,7 @@ impl FederationService {
             if csr.access.mode == Some(ForwardingMode::Auxiliary) {
                 continue;
             }
-            if !specification.covers(&csr) {
+            if !matches(&csr) {
                 continue;
             }
             if looped {

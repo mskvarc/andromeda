@@ -78,6 +78,7 @@ impl FederationService {
                 csf: None,
                 scope_q: self.registration_scope_query(&read.client_query),
                 geo: read.geo,
+                dataset: read.client_query.dataset_ids(),
                 serving: RegistrationServing::Operation(read.operation),
                 mode_filter: CsrModeFilter::All,
                 entity_map: read.entity_map,

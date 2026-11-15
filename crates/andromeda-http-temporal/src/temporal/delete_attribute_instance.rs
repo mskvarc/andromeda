@@ -73,6 +73,7 @@ pub(crate) async fn delete_attr_instance(
                 entity_id: &id,
                 entity_type_selector: None,
                 attribute_name: Some(&attr_id),
+                dataset: None,
                 method: Method::DELETE,
                 context: &context,
                 operation: ForwardingOperation::DeleteTemporalAttributeInstance,

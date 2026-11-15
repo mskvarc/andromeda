@@ -8,7 +8,7 @@
 //! it is looking at.
 
 use andromeda_ngsi_ld_lexicon::{identifier::Identifier, time_prop::TimeProp};
-use andromeda_ngsi_ld_query::{filter::expression::Expr, scope::query::ScopeQuery, written_entity_selector::WrittenEntitySelector};
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::expression::Expr, scope::query::ScopeQuery, written_entity_selector::WrittenEntitySelector};
 use andromeda_ngsi_ld_request::{
     entity::GetEntityParams,
     query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
@@ -112,6 +112,17 @@ impl ClientQuery<'_> {
             ClientQuery::EntityQuery(params) => params.q.as_ref(),
             ClientQuery::TemporalQuery(params) => params.q.as_ref(),
             ClientQuery::EntityRetrieve { .. } | ClientQuery::TemporalRetrieve { .. } => None,
+        }
+    }
+
+    /// The `datasetId`s the client selects Attribute instances by (clause
+    /// 4.5.5), which every one of the four operations takes.
+    #[must_use]
+    pub fn dataset_ids(&self) -> Option<&[DatasetSelector]> {
+        match self {
+            ClientQuery::EntityQuery(params) => params.dataset_id.as_deref(),
+            ClientQuery::EntityRetrieve { params, .. } => params.dataset_id.as_deref(),
+            ClientQuery::TemporalQuery(params) | ClientQuery::TemporalRetrieve { params, .. } => params.dataset_id.as_deref(),
         }
     }
 

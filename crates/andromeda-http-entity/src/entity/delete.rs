@@ -75,6 +75,7 @@ pub(crate) async fn delete(
                 entity_id: &id,
                 entity_type_selector: params.entity_type.as_ref(),
                 attribute_name: None,
+                dataset: None,
                 method: Method::DELETE,
                 context: &context,
                 operation: ForwardingOperation::DeleteEntity,

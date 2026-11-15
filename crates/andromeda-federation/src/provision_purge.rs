@@ -30,6 +30,7 @@ use andromeda_ngsi_ld_model::{
     registration::ContextSourceRegistration,
     registration_matching::{entity_specification::EntitySpecification, match_specification::RegistrationMatchSpecification},
 };
+use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use std::slice;
 use tracing::debug;
@@ -45,6 +46,11 @@ pub struct ForwardPurgeRequest<'a> {
     /// The selection's context source filter and geoquery, expanded under
     /// `context`, which a registration has to pass to be contacted.
     pub filters: &'a ExpandedRegistrationFilters,
+    /// The one `datasetId` whose instances the purge removes, under the
+    /// `purge_dataset_scope` extension: a registration declaring `datasetId`s
+    /// is contacted only when it lists it, as for Delete Attribute (clause
+    /// 5.12).
+    pub dataset: Option<&'a DatasetSelector>,
     /// The identifiers the query selected locally; a registration's failure is
     /// reported against the ones it covers.
     pub local_ids: &'a [Identifier],
@@ -159,6 +165,7 @@ impl FederationService {
                     csf: request.filters.csf(),
                     scope_q: client_query.scope_q(),
                     geo: request.filters.geo(),
+                    dataset: request.dataset.map(slice::from_ref),
                     // A matching proxied registration that does not advertise
                     // `purgeEntity` is a Conflict (clause 5.6.21.4), so the
                     // operation is checked per registration below.

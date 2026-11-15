@@ -49,6 +49,7 @@ async fn covers_the_write(service: &FederationService, selector: Option<&str>) -
         entity_id: &entity_id,
         entity_type_selector: selector.as_ref(),
         attribute_name: None,
+        dataset: None,
         method: reqwest::Method::DELETE,
         context: &context,
         operation: ForwardingOperation::DeleteEntity,

@@ -194,6 +194,7 @@ pub(crate) async fn delete_by_query(
                 ForwardPurgeRequest {
                     query: &query,
                     filters: &filters,
+                    dataset: purge_mode.dataset_scope().and_then(DatasetPurgeScope::selector),
                     local_ids: &entity_ids,
                     query_string: uri.query().unwrap_or(""),
                     entity_map: entity_map.in_use(),

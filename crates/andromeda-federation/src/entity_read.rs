@@ -88,6 +88,7 @@ impl FederationService {
                     csf: request.csf,
                     scope_q: request.split.registration_scope_query(request.client_query.scope_q()),
                     geo: request.geo,
+                    dataset: request.client_query.dataset_ids(),
                     serving: RegistrationServing::EntityQuery(read_intent(request.delivery)),
                     mode_filter: CsrModeFilter::All,
                     entity_map: request.entity_map,
@@ -213,6 +214,7 @@ impl FederationService {
                     csf: None,
                     scope_q: None,
                     geo: None,
+                    dataset: request.client_query.dataset_ids(),
                     // Clause 5.7.1.4: a retrieval is forwarded only to the
                     // registrations that "match and support the
                     // retrieveEntity operation" (Table 4.20-1); one

@@ -1,11 +1,13 @@
-//! The filters a request places on registrations beside clause 5.12 matching
-//! (clauses 4.9, 4.10, 4.19, 5.10.2.4 and 5.11.2.4), decided once for every
-//! reader: a forwarded read, a subscription to registrations and their tests.
+//! The filters a request places on registrations beside the clause 5.12
+//! matching of its entities and attributes (clauses 4.9, 4.10, 4.19, 5.10.2.4,
+//! 5.11.2.4 and the `datasetId` rule of 5.12), decided once for every reader:
+//! a forwarded read, a subscription to registrations and their tests.
 
 use crate::registration::{ContextSourceRegistration, coverage::RegistrationCoverage};
 use andromeda_json_literal::admission::JsonLiteralError;
 use andromeda_ngsi_ld_query::{
     csr::compiled::CompiledCsrTemporalFilter,
+    dataset::DatasetSelector,
     filter::reading::filter_reading::FilterReading,
     geo::query::GeoQuery,
     scope::query::ScopeQuery,
@@ -71,6 +73,9 @@ pub struct RegistrationFilters<'a> {
     /// The reading of the context source filter, expanded, matched against the
     /// Context Source Properties.
     pub csf: Option<&'a FilterReading>,
+    /// The `datasetId`s the request selects Attribute instances by, matched
+    /// against the registration's `datasetId` (clause 5.12).
+    pub dataset: Option<&'a [DatasetSelector]>,
     /// The temporal partition.
     pub temporal: TemporalPartition<'a>,
 }
@@ -89,7 +94,11 @@ impl RegistrationFilters<'_> {
             TemporalPartition::NotApplied => true,
             TemporalPartition::Applied(temporal_q) => coverage.admits_temporal(temporal_q),
         };
-        if !temporal || !self.scope.admits(coverage) || self.geo.is_some_and(|geo| !coverage.admits_geo_query(geo)) {
+        if !temporal
+            || !self.scope.admits(coverage)
+            || self.geo.is_some_and(|geo| !coverage.admits_geo_query(geo))
+            || self.dataset.is_some_and(|requested| !coverage.admits_dataset_ids(requested))
+        {
             return Ok(false);
         }
         let Some(csf) = self.csf else {
@@ -108,6 +117,7 @@ mod tests {
         selection::{RegistrationFilters, ScopeFilter, TemporalPartition},
     };
     use andromeda_ngsi_ld_query::{
+        dataset::DatasetSelector,
         filter::{language_matching::LanguageMatching, parser::parse, reading::filter_reading::FilterReading},
         scope::query::ScopeQuery,
     };
@@ -132,6 +142,7 @@ mod tests {
         scope: ScopeFilter::Unfiltered,
         geo: None,
         csf: None,
+        dataset: None,
         temporal: TemporalPartition::NotApplied,
     };
 
@@ -194,6 +205,33 @@ mod tests {
         );
         assert!(!filters.admits(&registration(&json!({"scope": ["/Berlin"]}))).expect("admission decides"));
         assert!(filters.admits(&registration(&json!({}))).expect("admission decides"));
+    }
+
+    /// Clause 5.12: a request naming a `datasetId` selects a registration
+    /// declaring one it shares, or declaring none.
+    #[test]
+    fn a_dataset_filter_admits_a_registration_sharing_a_dataset_or_declaring_none() {
+        let requested: Vec<DatasetSelector> = vec!["urn:ngsi-ld:Dataset:a".parse().expect("a valid datasetId")];
+        let filters = RegistrationFilters {
+            dataset: Some(&requested),
+            ..NONE
+        };
+        assert!(
+            filters
+                .admits(&registration(&json!({"datasetId": ["urn:ngsi-ld:Dataset:a", "@none"]})))
+                .expect("admission decides")
+        );
+        assert!(
+            !filters
+                .admits(&registration(&json!({"datasetId": ["urn:ngsi-ld:Dataset:b"]})))
+                .expect("admission decides")
+        );
+        assert!(filters.admits(&registration(&json!({}))).expect("admission decides"));
+        assert!(
+            NONE.admits(&registration(&json!({"datasetId": ["urn:ngsi-ld:Dataset:b"]})))
+                .expect("admission decides"),
+            "a request naming no datasetId selects every registration"
+        );
     }
 
     /// Clause 4.9: the context source filter reads the registration's own

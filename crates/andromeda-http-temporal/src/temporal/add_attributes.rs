@@ -70,6 +70,7 @@ pub(crate) async fn add_attrs(
         entity_id: &id,
         entity_type_selector: entity_type.as_ref(),
         attribute_name: None,
+        dataset: None,
         method: Method::POST,
         context: &context,
         operation: ForwardingOperation::AppendTemporalAttributes,
