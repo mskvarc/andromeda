@@ -68,11 +68,20 @@ impl AttrPath {
     /// Clause 4.9 makes the last name of the path the target element, and the
     /// members [`InstanceMetadata`] lists are non-reified Properties of the
     /// instance before them (`temperature.observedAt`). The top-level name is
-    /// always an attribute.
+    /// always an attribute. A trailing group other than `[*]` after such a
+    /// member is evaluated "against the seed target value", a String or a
+    /// `DateTime` with no member to reach, so "the target element shall be
+    /// considered as non-existent": the path ends on no member, and the name
+    /// stays a sub-attribute name no Attribute carries.
     #[must_use]
     pub fn ending_member(&self) -> Option<(InstanceMetadata, &[AttributeName])> {
-        let (last, above) = self.sub_attrs.split_last()?;
-        Some((InstanceMetadata::named(last)?, above))
+        match self.trailing {
+            None | Some(TrailingPath::AllLanguages) => {
+                let (last, above) = self.sub_attrs.split_last()?;
+                Some((InstanceMetadata::named(last)?, above))
+            }
+            Some(TrailingPath::Language(_) | TrailingPath::Members(_)) => None,
+        }
     }
 
     /// The compound-value members the trailing group addresses, `None` when
@@ -199,4 +208,44 @@ impl QueryPath {
 /// the clause 4.6.2 attribute-name grammar.
 pub fn expanded_attribute_name(iri: &IriBuf) -> Result<AttributeName, QueryError> {
     iri.as_str().parse().map_err(QueryError::AttributeNameInvalid)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::filter::{expression::Expr, instance_metadata::InstanceMetadata, parser::parse, path::AttrPath};
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+
+    /// The local path the one Query Term of `q` ends on.
+    fn terminal(q: &str) -> AttrPath {
+        match parse(q).expect("a clause 4.9 filter") {
+            Expr::Pred(predicate) => predicate.path().terminal().clone(),
+            other @ (Expr::And(_) | Expr::Or(_)) => panic!("{q} is no single term: {other:?}"),
+        }
+    }
+
+    /// A path ends on an instance member with no trailing group or `[*]`
+    /// after it, the sub-attributes above it kept.
+    #[test]
+    fn a_member_with_no_trailing_group_ends_the_path() {
+        for q in [
+            "speed.\"https://uri.etsi.org/ngsi-ld/observedAt\"",
+            "speed.\"https://uri.etsi.org/ngsi-ld/observedAt\"[*]",
+        ] {
+            pretty_assertions::assert_eq!(terminal(q).ending_member().map(|(member, _)| member), Some(InstanceMetadata::ObservedAt), "{q}");
+        }
+        let path = terminal("speed.accuracy.\"https://uri.etsi.org/ngsi-ld/unitCode\"");
+        let (member, above) = path.ending_member().expect("a member");
+        pretty_assertions::assert_eq!(member, InstanceMetadata::UnitCode);
+        pretty_assertions::assert_eq!(above.iter().map(AttributeName::as_str).collect::<Vec<_>>(), ["accuracy"]);
+    }
+
+    /// Clause 4.9 evaluates a trailing group against the target value, and a
+    /// member's String or `DateTime` has no member to reach.
+    #[test]
+    fn a_member_before_a_trailing_group_ends_no_path() {
+        for trailing in ["[x]", "[a.b]", "[en]", "[en-GB]"] {
+            let path = terminal(&format!("speed.\"https://uri.etsi.org/ngsi-ld/observedAt\"{trailing}"));
+            pretty_assertions::assert_eq!(path.ending_member(), None, "{trailing}");
+        }
+    }
 }
