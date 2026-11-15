@@ -11,6 +11,8 @@
 pub mod assemble;
 /// Flattening an Entity's attributes into rows.
 pub mod flatten;
+#[cfg(test)]
+mod kind_agreement_tests;
 /// Reading an Entity's rows back.
 pub mod read;
 #[cfg(test)]
