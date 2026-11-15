@@ -159,6 +159,9 @@ impl FederationService {
                     csf: None,
                     scope_q: None,
                     geo: None,
+                    // A Linked Entity's history is retrieved with no
+                    // `datasetId`, as the window it reproduces carries none.
+                    dataset: None,
                     serving: RegistrationServing::Operation(ForwardingOperation::RetrieveTemporalEntity),
                     mode_filter: CsrModeFilter::ExcludeAuxiliary,
                     entity_map: EntityMapInUse::None,

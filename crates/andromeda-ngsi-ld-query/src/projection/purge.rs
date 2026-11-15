@@ -32,6 +32,16 @@ impl DatasetPurgeScope {
     pub const fn is_unfiltered(&self) -> bool {
         matches!(self, DatasetPurgeScope::Unfiltered)
     }
+
+    /// The one `datasetId` the scope names, absent when it removes every
+    /// instance.
+    #[must_use]
+    pub const fn selector(&self) -> Option<&DatasetSelector> {
+        match self {
+            DatasetPurgeScope::Selector(selector) => Some(selector),
+            DatasetPurgeScope::Unfiltered | DatasetPurgeScope::All => None,
+        }
+    }
 }
 
 /// Purge mode for the DELETE entities-by-query operation (clause 5.6.21).
@@ -82,6 +92,18 @@ mod tests {
         assert!(DatasetPurgeScope::Unfiltered.is_unfiltered());
         assert!(!DatasetPurgeScope::All.is_unfiltered());
         assert!(!DatasetPurgeScope::Selector(DatasetSelector::Default).is_unfiltered());
+    }
+
+    /// Only a scope naming one `datasetId` has a selector; the two that remove
+    /// every instance have none.
+    #[test]
+    fn only_a_named_scope_has_a_selector() {
+        assert_eq!(
+            DatasetPurgeScope::Selector(DatasetSelector::Default).selector(),
+            Some(&DatasetSelector::Default)
+        );
+        assert_eq!(DatasetPurgeScope::All.selector(), None);
+        assert_eq!(DatasetPurgeScope::Unfiltered.selector(), None);
     }
 
     /// A `drop`/`keep` mode exposes its dataset scope; whole-entity deletion has

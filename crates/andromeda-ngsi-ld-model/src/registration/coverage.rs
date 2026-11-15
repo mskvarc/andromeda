@@ -98,6 +98,19 @@ impl RegistrationCoverage {
         };
         relevant.is_some_and(|interval| interval.meets(&temporal_q.interval))
     }
+
+    /// Whether the source may provide an Attribute instance of one of the
+    /// `requested` datasets (clause 5.12): a registration declaring
+    /// `datasetId`s matches a request naming some only when the two share one,
+    /// and matches whenever either side names none. `@none` is a value like
+    /// any other, the default instance (Table 5.2.9-1).
+    #[must_use]
+    pub fn admits_dataset_ids(&self, requested: &[DatasetSelector]) -> bool {
+        match self.dataset_id.as_deref() {
+            Some(declared) if !declared.is_empty() && !requested.is_empty() => requested.iter().any(|selector| declared.contains(selector)),
+            Some(_) | None => true,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -107,6 +120,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{scope::path::ScopePath, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
         csr::compiled::CompiledCsrTemporalFilter,
+        dataset::DatasetSelector,
         geo::{query::GeoQuery, registration_area::RegistrationGeometry},
         scope::query::ScopeQuery,
         temporal::window::TimeInterval as QueryWindow,
@@ -134,6 +148,42 @@ mod tests {
             .location(Some(point(13.4, 52.5)))
             .observation_space(Some(point(-3.7, 40.4)))
             .build()
+    }
+
+    fn datasets(raw: &[&str]) -> Vec<DatasetSelector> {
+        raw.iter().map(|selector| selector.parse().expect("a valid datasetId")).collect()
+    }
+
+    fn declaring(declared: Option<&[&str]>) -> RegistrationCoverage {
+        RegistrationCoverage::builder()
+            .information(Vec::new())
+            .dataset_id(declared.map(datasets))
+            .build()
+    }
+
+    /// Clause 5.12: a registration declaring `datasetId`s matches a request
+    /// naming some only when they share one, `@none` included; one declaring
+    /// none, or a request naming none, matches.
+    #[test]
+    fn the_dataset_match_table() {
+        let a = datasets(&["urn:ngsi-ld:Dataset:a"]);
+        let a_and_b = datasets(&["urn:ngsi-ld:Dataset:a", "urn:ngsi-ld:Dataset:b"]);
+        let default = datasets(&["@none"]);
+        for (declared, requested, admitted) in [
+            (Some(&["urn:ngsi-ld:Dataset:a"][..]), &a[..], true),
+            (Some(&["urn:ngsi-ld:Dataset:b"][..]), &a[..], false),
+            (Some(&["urn:ngsi-ld:Dataset:b"][..]), &a_and_b[..], true),
+            (Some(&["urn:ngsi-ld:Dataset:b", "@none"][..]), &default[..], true),
+            (Some(&["urn:ngsi-ld:Dataset:b"][..]), &default[..], false),
+            (Some(&["@none"][..]), &a[..], false),
+            (Some(&["urn:ngsi-ld:Dataset:b"][..]), &[][..], true),
+            (Some(&[][..]), &a[..], true),
+            (None, &a[..], true),
+            (None, &default[..], true),
+            (None, &[][..], true),
+        ] {
+            assert_eq!(declaring(declared).admits_dataset_ids(requested), admitted, "{declared:?} for {requested:?}");
+        }
     }
 
     #[test]

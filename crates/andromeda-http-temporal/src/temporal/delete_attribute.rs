@@ -76,6 +76,9 @@ pub(crate) async fn delete_attr(
                 entity_id: &id,
                 entity_type_selector: None,
                 attribute_name: Some(&attr_id),
+                // Clause 5.6.13.4: `deleteAll` removes every instance,
+                // whatever `datasetId` names.
+                dataset: params.dataset_id.as_ref().filter(|_| !delete_all),
                 method: Method::DELETE,
                 context: &context,
                 operation: ForwardingOperation::DeleteTemporalAttribute,

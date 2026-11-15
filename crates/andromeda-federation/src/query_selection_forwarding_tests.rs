@@ -1,7 +1,7 @@
 //! Purge Entities and EntityMap creation select their registrations as a read
-//! does: every entity selector whole by clause 5.12, then the context source
-//! filter, the Scope query and the geoquery (clauses 4.9, 4.19, 5.6.21.4,
-//! 5.10.2.4, 5.14.4.4 and 5.14.5.4).
+//! does: every entity selector whole and the `datasetId` by clause 5.12, then
+//! the context source filter, the Scope query and the geoquery (clauses 4.9,
+//! 4.19, 5.6.21.4, 5.10.2.4, 5.14.4.4 and 5.14.5.4).
 
 use crate::{
     FederationService,
@@ -119,6 +119,9 @@ async fn contacted(selecting: Selecting, query: &str, registrations: Vec<(Source
                     ForwardPurgeRequest {
                         query: &params,
                         filters: &filters,
+                        // The `purge_dataset_scope` extension removes the
+                        // instances of the first `datasetId` the purge names.
+                        dataset: params.dataset_id.as_deref().and_then(<[_]>::first),
                         local_ids: &[],
                         query_string: query,
                         entity_map: EntityMapInUse::None,
@@ -217,6 +220,15 @@ async fn single() -> Vec<(Source, ContextSourceRegistration)> {
     vec![registered("urn:ngsi-ld:csr:only", &json!({})).await]
 }
 
+/// Two sources registered for different datasets and one declaring none.
+async fn dataset_bound() -> Vec<(Source, ContextSourceRegistration)> {
+    vec![
+        registered("urn:ngsi-ld:csr:a", &json!({"datasetId": ["urn:ngsi-ld:Dataset:a"]})).await,
+        registered("urn:ngsi-ld:csr:b", &json!({"datasetId": ["urn:ngsi-ld:Dataset:b"]})).await,
+        registered("urn:ngsi-ld:csr:undeclared", &json!({})).await,
+    ]
+}
+
 const NEAR_MADRID: &str = "georel=near%3BmaxDistance%3D%3D100000&geometry=Point&coordinates=%5B-3.7%2C40.4%5D";
 
 /// Clause 4.9: only the source whose Context Source Properties satisfy the
@@ -267,6 +279,16 @@ async fn a_selection_contacts_only_the_sources_whose_location_may_hold_a_geoquer
     for selecting in [Selecting::Purge, Selecting::EntityMap, Selecting::TemporalEntityMap] {
         let Contacted { reached, .. } = contacted(selecting, &format!("type=Vehicle&{NEAR_MADRID}"), located().await).await;
         pretty_assertions::assert_eq!(reached, vec!["urn:ngsi-ld:csr:madrid", "urn:ngsi-ld:csr:anywhere"], "{selecting:?}");
+    }
+}
+
+/// Clause 5.12: a source registered for other datasets is not contacted; one
+/// sharing the request's `datasetId` or declaring none is.
+#[tokio::test]
+async fn a_selection_contacts_only_the_sources_sharing_its_dataset_id_or_declaring_none() {
+    for selecting in [Selecting::Purge, Selecting::EntityMap, Selecting::TemporalEntityMap] {
+        let Contacted { reached, .. } = contacted(selecting, "type=Vehicle&datasetId=urn%3Angsi-ld%3ADataset%3Aa", dataset_bound().await).await;
+        pretty_assertions::assert_eq!(reached, vec!["urn:ngsi-ld:csr:a", "urn:ngsi-ld:csr:undeclared"], "{selecting:?}");
     }
 }
 

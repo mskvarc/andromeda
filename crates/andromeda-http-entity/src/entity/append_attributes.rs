@@ -72,6 +72,7 @@ pub(crate) async fn append_attrs(
         entity_id: &id,
         entity_type_selector: params.entity_type.as_ref(),
         attribute_name: None,
+        dataset: None,
         method: Method::POST,
         context: &context,
         operation: ForwardingOperation::AppendEntityAttributes,

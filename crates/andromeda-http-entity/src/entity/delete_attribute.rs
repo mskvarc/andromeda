@@ -94,6 +94,7 @@ pub(crate) async fn delete_attr(
                 entity_id: &id,
                 entity_type_selector: params.entity_type.as_ref(),
                 attribute_name: Some(&attr_id),
+                dataset: dataset_id.filter(|_| !delete_all),
                 method: Method::DELETE,
                 context: &context,
                 operation: ForwardingOperation::DeleteEntityAttribute,

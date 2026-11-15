@@ -70,6 +70,7 @@ pub(crate) async fn partial_update_attr(
         entity_id: &id,
         entity_type_selector: params.entity_type.as_ref(),
         attribute_name: Some(&attr_id),
+        dataset: None,
         method: Method::PATCH,
         context: &context,
         operation: ForwardingOperation::PartialUpdateAttribute,

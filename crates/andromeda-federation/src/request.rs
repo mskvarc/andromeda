@@ -13,7 +13,12 @@ use andromeda_http_headers::via::Via;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
-use andromeda_ngsi_ld_query::{filter::reading::filter_reading::FilterReading, geo::query::GeoQuery, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_query::{
+    dataset::DatasetSelector,
+    filter::reading::filter_reading::FilterReading,
+    geo::query::GeoQuery,
+    type_selection::grammar::TypeExprRaw,
+};
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use http::HeaderMap;
 
@@ -172,6 +177,12 @@ pub struct ForwardProvisionRequest<'a> {
     pub entity_type_selector: Option<&'a TypeExprRaw>,
     /// Attribute name used to filter registration information entries.
     pub attribute_name: Option<&'a AttributeName>,
+    /// The one `datasetId` whose Attribute instance the operation targets,
+    /// named by its `datasetId` parameter (clauses 5.6.5 and 5.6.13): a
+    /// registration declaring `datasetId`s is matched only when it lists it
+    /// (clause 5.12). Absent for an operation that takes no such parameter,
+    /// or that deletes every instance.
+    pub dataset: Option<&'a DatasetSelector>,
     /// HTTP method for the forwarded request.
     pub method: reqwest::Method,
     /// The JSON-LD context the triggering request resolved to.

@@ -51,6 +51,9 @@ pub fn csource_subscription_selects_registration(sub: &CompiledCsrSubscription, 
         scope: sub.scope_q.as_ref().map_or(ScopeFilter::Unfiltered, ScopeFilter::DeclaredScope),
         geo,
         csf: sub.compiled_csf.as_ref(),
+        // Clause 5.12 compares the `datasetId` parameter of the request that
+        // triggered the matching, and a subscription is matched with none.
+        dataset: None,
         temporal: TemporalPartition::Applied(sub.temporal_q.as_ref()),
     };
     specification.covers(registration)

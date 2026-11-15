@@ -149,6 +149,7 @@ impl FederationService {
                     csf: filters.csf(),
                     scope_q: self.registration_scope_query(&client_query),
                     geo: filters.geo(),
+                    dataset: client_query.dataset_ids(),
                     serving: RegistrationServing::Operation(query.operation()),
                     // Clause 4.5.25: the map lists every registration that
                     // returned data, and an auxiliary source can return an

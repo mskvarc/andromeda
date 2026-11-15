@@ -27,6 +27,7 @@ use andromeda_ngsi_ld_model::{
     },
 };
 use andromeda_ngsi_ld_query::{
+    dataset::DatasetSelector,
     filter::reading::filter_reading::FilterReading,
     geo::query::GeoQuery,
     scope::query::ScopeQuery,
@@ -55,6 +56,10 @@ pub(crate) struct RegistrationSelection<'a> {
     /// cannot hold a matching Entity is not contacted (clauses 4.3.6.1 and
     /// 5.10.2.4).
     pub(crate) geo: Option<&'a GeoQuery>,
+    /// The `datasetId`s the operation selects Attribute instances by: a
+    /// registration declaring `datasetId`s is contacted only when it shares
+    /// one (clause 5.12).
+    pub(crate) dataset: Option<&'a [DatasetSelector]>,
     /// What the registration must be able to serve (clause 4.20).
     pub(crate) serving: RegistrationServing,
     /// The modes this forwarding phase admits (clause 4.3.6.2).
@@ -145,6 +150,7 @@ impl FederationService {
             scope: selection.scope_q.map_or(ScopeFilter::Unfiltered, ScopeFilter::PossibleScope),
             geo: selection.geo,
             csf: selection.csf,
+            dataset: selection.dataset,
             temporal: TemporalPartition::NotApplied,
         };
         Ok(registrations
@@ -199,6 +205,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::time::rendering::instant_text;
     use andromeda_ngsi_ld_model::{entity_map::EntityMap, registration::ContextSourceRegistration};
     use andromeda_ngsi_ld_query::{
+        dataset::DatasetSelector,
         filter::{
             expansion::expand_q_expr,
             json_key_attributes::JsonKeyAttributes,
@@ -314,6 +321,7 @@ mod tests {
                             csf: Some(&filter),
                             scope_q: None,
                             geo: None,
+                            dataset: None,
                             serving: RegistrationServing::Operation(ForwardingOperation::QueryEntity),
                             mode_filter: CsrModeFilter::All,
                             entity_map: EntityMapInUse::None,
@@ -355,6 +363,7 @@ mod tests {
                     csf: None,
                     scope_q: None,
                     geo: Some(&near_madrid),
+                    dataset: None,
                     serving: RegistrationServing::Operation(ForwardingOperation::QueryEntity),
                     mode_filter: CsrModeFilter::All,
                     entity_map: EntityMapInUse::None,
@@ -376,6 +385,7 @@ mod tests {
             csf: None,
             scope_q: None,
             geo: None,
+            dataset: None,
             serving: RegistrationServing::Operation(ForwardingOperation::QueryEntity),
             mode_filter: CsrModeFilter::All,
             entity_map: EntityMapInUse::None,
@@ -384,6 +394,48 @@ mod tests {
 
     fn identifiers(registrations: Vec<ContextSourceRegistration>) -> Vec<String> {
         registrations.into_iter().map(|registration| registration.id.to_string()).collect()
+    }
+
+    /// Clause 5.12: a request naming a `datasetId` is forwarded to a
+    /// registration declaring one it shares or declaring none, and never to one
+    /// declaring only others; one naming none reaches them all.
+    #[tokio::test]
+    async fn a_dataset_id_selects_the_registrations_sharing_it_or_declaring_none() {
+        let a = registration_with("urn:ngsi-ld:csr:a", json!({"datasetId": ["urn:ngsi-ld:Dataset:a"]}));
+        let b = registration_with("urn:ngsi-ld:csr:b", json!({"datasetId": ["urn:ngsi-ld:Dataset:b"]}));
+        let undeclared = registration_with("urn:ngsi-ld:csr:undeclared", json!({}));
+        let service = offline_service(vec![a, b, undeclared]);
+        let selected = |raw: &'static [&'static str]| {
+            let service = &service;
+            async move {
+                let requested: Vec<DatasetSelector> = raw.iter().map(|selector| selector.parse().expect("a valid datasetId")).collect();
+                identifiers(
+                    service
+                        .select_registrations(
+                            &ContextSpec::none(),
+                            RegistrationSelection {
+                                dataset: (!requested.is_empty()).then_some(requested.as_slice()),
+                                ..unfiltered()
+                            },
+                        )
+                        .await
+                        .expect("the selection runs"),
+                )
+            }
+        };
+        pretty_assertions::assert_eq!(
+            selected(&["urn:ngsi-ld:Dataset:a"]).await,
+            vec!["urn:ngsi-ld:csr:a", "urn:ngsi-ld:csr:undeclared"]
+        );
+        pretty_assertions::assert_eq!(
+            selected(&["urn:ngsi-ld:Dataset:a", "urn:ngsi-ld:Dataset:b"]).await,
+            vec!["urn:ngsi-ld:csr:a", "urn:ngsi-ld:csr:b", "urn:ngsi-ld:csr:undeclared"]
+        );
+        pretty_assertions::assert_eq!(selected(&["@none"]).await, vec!["urn:ngsi-ld:csr:undeclared"]);
+        pretty_assertions::assert_eq!(
+            selected(&[]).await,
+            vec!["urn:ngsi-ld:csr:a", "urn:ngsi-ld:csr:b", "urn:ngsi-ld:csr:undeclared"]
+        );
     }
 
     /// Table 5.2.9-1 and clause 5.12: a registration whose declared Scopes the
