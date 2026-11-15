@@ -223,6 +223,7 @@ mod tests {
         lexer::TokenKind,
         path::AttrPath,
         scalar::{CompareValue, Scalar},
+        serialize::serialize,
         value_path::MAX_SUB_ATTRIBUTE_DEPTH,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time::rendering::instant_text};
@@ -428,6 +429,30 @@ mod tests {
 
         let error = parse("observed>=2017-12-24T99:00:00Z").expect_err("must reject");
         assert!(matches!(error, QueryError::QInvalidDateTime { .. }), "got {error:?}");
+    }
+
+    /// Clause 4.6.3 lets a request write "a comma instead of a decimal point"
+    /// before the fraction of the seconds, and clause 4.9 takes its `dateTime`
+    /// and `time` operands "as mandated by clause 4.6.3": after an ordering
+    /// operator, in a range and in a value list alike, the comma reads as the
+    /// point and is written back as one.
+    #[test]
+    fn a_comma_before_the_fraction_reads_as_the_decimal_point() {
+        for (comma, point) in [
+            ("tm>2024-01-01T00:00:00,5Z", "tm>2024-01-01T00:00:00.5Z"),
+            ("t<=12:00:00,25Z", "t<=12:00:00.25Z"),
+            ("tm==2024-01-01T00:00:00,5Z", "tm==2024-01-01T00:00:00.5Z"),
+            (
+                "tm==2024-01-01T00:00:00,5Z,2024-01-02T00:00:00,123456Z",
+                "tm==2024-01-01T00:00:00.5Z,2024-01-02T00:00:00.123456Z",
+            ),
+            ("t!=11:00:00,5Z..13:00:00,5Z", "t!=11:00:00.5Z..13:00:00.5Z"),
+        ] {
+            let read = parse(comma).unwrap_or_else(|error| panic!("{comma}: {error}"));
+            let written_with_a_point = parse(point).expect("the decimal point form parses");
+            pretty_assertions::assert_eq!(serialize(&read), serialize(&written_with_a_point), "{comma}");
+            pretty_assertions::assert_eq!(read, written_with_a_point, "{comma}");
+        }
     }
 
     /// Clause 4.9's `quotedStr` is the IETF RFC 8259 `String` production

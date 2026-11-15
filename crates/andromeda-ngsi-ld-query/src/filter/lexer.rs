@@ -231,16 +231,33 @@ fn scan_digit_run(chars: &[char], start: usize) -> (Token, usize) {
 }
 
 /// Consume a clause 4.6.3 time value literal as one identifier, stopping before
-/// the `..` range separator so that `2017-12-24..2017-12-25` stays a range.
+/// the `..` range separator so that `2017-12-24..2017-12-25` stays a range,
+/// and before a `,` that separates a value list.
 fn scan_time_value(chars: &[char], start: usize, from: usize) -> (Token, usize) {
     let mut cursor = from;
-    while chars.get(cursor).copied().is_some_and(is_temporal_char) {
-        if is_at(chars, cursor, '.') && is_at(chars, cursor + 1, '.') {
-            break;
+    loop {
+        match chars.get(cursor).copied() {
+            Some('.') if is_at(chars, cursor + 1, '.') => break,
+            Some(',') if is_fraction_comma(chars, cursor) => cursor += 1,
+            Some(current) if is_temporal_char(current) => cursor += 1,
+            // A `char` is unbounded: every other character ends the literal.
+            Some(_) | None => break,
         }
-        cursor += 1;
     }
     (Token::Ident(chars[start..cursor].iter().collect()), cursor)
+}
+
+/// Whether the `,` at `index` stands for the decimal point of the seconds of
+/// the time value it continues, rather than separating a value list.
+///
+/// Clause 4.6.3 lets a request write "a comma instead of a decimal point" before
+/// the fraction of the seconds of a `DateTime` and of a `Time`, both of which end
+/// in `Z`, so such a comma is followed by digits and the `Z`. No `Value` of a
+/// clause 4.9 `ValueList` is digits followed by `Z`, so a comma before them
+/// never opens a list member, after any operator.
+fn is_fraction_comma(chars: &[char], index: usize) -> bool {
+    let fraction_end = consume_digits(chars, index + 1);
+    fraction_end > index + 1 && is_at(chars, fraction_end, 'Z')
 }
 
 /// Whether `current` may appear inside an unquoted clause 4.6.3 time value.
@@ -478,6 +495,48 @@ mod tests {
         assert_eq!(lex("12:00:00Z"), vec![ident("12:00:00Z")]);
         assert_eq!(lex("12:00:00.500000Z"), vec![ident("12:00:00.500000Z")]);
         assert_eq!(lex("\"12:00:00Z\""), vec![Token::QuotedStr("12:00:00Z".to_string())]);
+    }
+
+    /// Clause 4.6.3 admits a comma for the decimal point of the seconds in a
+    /// request, so a `DateTime` and a `Time` written so survive the tokeniser
+    /// whole, wherever an operand stands.
+    #[test]
+    fn a_comma_before_the_fraction_of_a_time_value_stays_in_the_literal() {
+        assert_eq!(lex("2024-01-01T00:00:00,5Z"), vec![ident("2024-01-01T00:00:00,5Z")]);
+        assert_eq!(lex("12:00:00,123456Z"), vec![ident("12:00:00,123456Z")]);
+        assert_eq!(lex("tm>2024-01-01T00:00:00,5Z"), vec![ident("tm"), Token::Gt, ident("2024-01-01T00:00:00,5Z")]);
+        assert_eq!(
+            lex("t==11:00:00,5Z..13:00:00,25Z"),
+            vec![ident("t"), Token::Eq, ident("11:00:00,5Z"), Token::Dots, ident("13:00:00,25Z")]
+        );
+    }
+
+    /// A comma that digits and a `Z` do not follow separates the members of a
+    /// value list, a time value among them.
+    #[test]
+    fn a_comma_after_a_time_value_still_separates_a_value_list() {
+        assert_eq!(
+            lex("t==2024-01-01T00:00:00,5Z,2024-01-02T00:00:00Z"),
+            vec![
+                ident("t"),
+                Token::Eq,
+                ident("2024-01-01T00:00:00,5Z"),
+                Token::Comma,
+                ident("2024-01-02T00:00:00Z")
+            ]
+        );
+        assert_eq!(
+            lex("d==2024-01-15,2024-01-16"),
+            vec![ident("d"), Token::Eq, ident("2024-01-15"), Token::Comma, ident("2024-01-16")]
+        );
+        assert_eq!(
+            lex("t==12:00:00Z,5e3"),
+            vec![ident("t"), Token::Eq, ident("12:00:00Z"), Token::Comma, number("5e3")]
+        );
+        assert_eq!(
+            lex("t==12:00:00Z,5"),
+            vec![ident("t"), Token::Eq, ident("12:00:00Z"), Token::Comma, number("5")]
+        );
     }
 
     /// A digit run that no clause 4.6.3 separator continues is still the

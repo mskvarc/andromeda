@@ -18,12 +18,11 @@ use strum::IntoEnumIterator;
 
 /// The corpus cases the in-memory execution still reads otherwise than
 /// clause 4.9, each with what it does instead.
-pub(super) const OPEN_DIVERGENCES: [(&str, &str); 5] = [
+pub(super) const OPEN_DIVERGENCES: [(&str, &str); 4] = [
     ("C-62", "a trailing path into a GeoProperty value selects nothing"),
     ("C-63", "a String target is compared with the normalised spelling of a URI operand"),
     ("C-64", "a value-list member is compared with its written spelling only"),
     ("C-68", "a hop guard of one type is read as a prefixed attribute name"),
-    ("C-73", "a comma before the fraction of a DateTime operand is refused"),
 ];
 
 /// The corpus Entities the filter of the case named `id` selects, or the
