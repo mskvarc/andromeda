@@ -77,11 +77,14 @@ const TERMS: [&str; 26] = [
 /// Context Source Registrations exactly the registrations its Context Source Registration Subscription is notified
 /// of; the two executions of a `csf` read every written form alike, whatever they select
 /// Clause: 4.5.1, 4.5.2.2, 4.5.2.3, 4.6.3, 4.9, 5.2.9, 5.10.2.4, 5.11.2.4
+/// Tenant: private (the grid owes about a hundred notifications, and a tenant's delivery slots are shared by every
+/// Subscription in it, so in the default tenant the slow and failing endpoints of other tests hold the slots the grid's
+/// notifications wait on; no namespace narrows that pool)
 #[gtest]
 #[tokio::test]
 async fn n_csr_qry_9094_every_term_reads_every_written_form_alike_in_a_query_and_a_subscription() -> Result<()> {
     let namespace = Namespace::fresh();
-    let broker = broker::front()?;
+    let broker = broker::private_tenant(&broker::front()?, &namespace).await?;
     let config = SuiteConfig::get()?;
     let device_type = namespace.entity_type("Device")?;
     let mut registrations = Vec::with_capacity(FORMS.len());

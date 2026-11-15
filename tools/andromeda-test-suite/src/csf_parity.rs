@@ -15,6 +15,7 @@ use crate::{
     notification_sink::{NotificationSink, SinkError},
     problem::answered,
 };
+use futures::future::join_all;
 use googletest::prelude::*;
 use http::StatusCode;
 use ngsi_ld::{
@@ -179,8 +180,14 @@ async fn answer_every_term(
                 .collect::<HashSet<RegistrationId>>(),
         );
     }
-    for (endpoint, answer) in queried.iter().enumerate() {
-        match sink.wait_for_at_least(endpoint, owed(endpoint, answer)).await {
+    // Every endpoint is watched at once, so a term whose notifications fall short costs one delivery deadline, not one
+    // per term.
+    let waits = queried
+        .iter()
+        .enumerate()
+        .map(|(endpoint, answer)| sink.wait_for_at_least(endpoint, owed(endpoint, answer)));
+    for outcome in join_all(waits).await {
+        match outcome {
             Ok(_) | Err(SinkError::TimedOut(_)) => {}
             Err(failure @ SinkError::Server(_)) => return Err(failure.into()),
         }
