@@ -90,7 +90,7 @@ fn value_condition(value: &ValueTest, path: PropertyPath<'_>, document: &ColumnR
 /// would keep the quotes of its JSON spelling.
 fn asserted_condition(test: &ScalarTest, path: PropertyPath<'_>, target: impl Fn() -> SimpleExpr) -> Condition {
     let asserted = match test {
-        ScalarTest::EqualsAny(operands) => includes_any(path, &target, operands),
+        ScalarTest::EqualsAny(operands) => includes_any(path, target(), operands),
         ScalarTest::Ordered { relation, operand } => compared(path, &target, Comparator::Ordered(*relation), operand),
         ScalarTest::Within(interval) => compared(path, &target, Comparator::Ordered(OrderRelation::GreaterOrEqual), interval.min()).and(compared(
             path,
@@ -104,31 +104,23 @@ fn asserted_condition(test: &ScalarTest, path: PropertyPath<'_>, target: impl Fn
     Condition::all().add(asserted)
 }
 
-/// Whether the JSONB value `value` reads equals, or as an array includes, one
-/// of `operands`.
+/// Whether the JSONB value `value` equals, or as an array includes, one of
+/// `operands`, in one element scan.
 ///
-/// A number, a String or a Boolean is looked for among the elements, in one
-/// element scan. A time operand compares only with a value object declaring
-/// its form, which is the node's value itself: an array declares no datatype,
-/// and the in-memory evaluator reads its elements as the raw JSON they are,
-/// so a time operand is compared with the value whole.
-fn includes_any(path: PropertyPath<'_>, value: &impl Fn() -> SimpleExpr, operands: &[Operand]) -> SimpleExpr {
-    let (time_operands, scanned): (Vec<&Operand>, Vec<&Operand>) = operands.iter().partition(|operand| operand.time_form().is_some());
+/// A value object declaring a time value is that time value as an element of
+/// an array as much as on its own, so a time operand is looked for among the
+/// elements beside every other operand, each element read through its
+/// declaration.
+fn includes_any(path: PropertyPath<'_>, value: SimpleExpr, operands: &[Operand]) -> SimpleExpr {
     let element = || SimpleExpr::from(SeaExpr::col((Alias::new(ELEMENT), Alias::new(ELEMENT))));
-    let equal_to_one = scanned
+    let equal_to_one = operands
         .iter()
         .fold(Condition::any(), |any, operand| any.add(compared(path, &element, Comparator::Equal, operand)));
     let mut scan = Query::select();
     scan.expr(int_literal(1))
-        .from_function(jsonb_path_query(value(), EVERY_ELEMENT), Alias::new(ELEMENT))
+        .from_function(jsonb_path_query(value, EVERY_ELEMENT), Alias::new(ELEMENT))
         .cond_where(equal_to_one);
-    let in_scan = (!scanned.is_empty()).then(|| SeaExpr::exists(scan));
-    time_operands
-        .iter()
-        .map(|operand| compared(path, value, Comparator::Equal, operand))
-        .chain(in_scan)
-        .reduce(SimpleExpr::or)
-        .unwrap_or_else(false_literal)
+    SeaExpr::exists(scan)
 }
 
 /// Compare the JSONB value `value` reads at the end of `path` with one
@@ -320,24 +312,28 @@ mod tests {
         }
     }
 
-    /// An array declares no datatype and its elements are raw JSON, so a time
-    /// operand compares with the node's value whole, beside the element scan
-    /// the other operands of its list are looked for in.
+    /// A value object declaring a time value is that time value as an element
+    /// of an array value (clause 3.1, annex C.6), so a time operand is looked
+    /// for in the element scan beside the other operands of its list, each
+    /// element read through its declaration.
     #[test]
-    fn a_time_operand_compares_with_the_value_whole_beside_the_element_scan() {
+    fn a_time_operand_is_looked_for_in_the_element_scan_beside_the_other_operands() {
         assert_statement_snapshot!(
-            "document-condition-a-time-operand-compares-with-the-value-whole-beside-the-element-scan",
+            "document-condition-a-time-operand-is-looked-for-in-the-element-scan-beside-the-other-operands",
             render("since==2024-01-01T00:00:00Z,\"x\"")
         );
     }
 
-    /// A compound member is raw JSON keyed as its writer wrote it, so a value
-    /// object there declares no time value: the comparison reads no `@type`.
+    /// A compound member is JSON-LD kept as its writer wrote it, so a value
+    /// object there declares a time value as a node's value does: the
+    /// comparison reads the member's `@type`.
     #[test]
-    fn a_compound_member_declares_no_time_value() {
-        let sql = render("held[m]>2023-12-31T00:00:00Z").to_string(PostgresQueryBuilder);
-        assert!(!sql.contains("'@type'"), "{sql}");
-        assert!(render("held>2023-12-31T00:00:00Z").to_string(PostgresQueryBuilder).contains("'@type'"));
+    fn a_compound_member_reads_its_declared_time_value() {
+        let member = render("held[m]>2023-12-31T00:00:00Z").to_string(PostgresQueryBuilder);
+        assert!(member.contains("'@type'"), "{member}");
+        assert!(member.contains("'m'"), "{member}");
+        let deeper = render("held[m.n]==2024-01-01").to_string(PostgresQueryBuilder);
+        assert!(deeper.contains("'@type'"), "{deeper}");
     }
 
     /// Clause 4.9 makes a target of another data type unequal to the operand,

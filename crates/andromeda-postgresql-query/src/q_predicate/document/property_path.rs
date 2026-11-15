@@ -137,10 +137,10 @@ impl<'a> PropertyPath<'a> {
     /// An instance member holding an instant (clause 4.8, clause 4.22) is the
     /// `DateTime` its text spells in the clause 4.6.3 form, and a String when
     /// it spells none, as the in-memory evaluator reads it ([`spells`]), its
-    /// decimal comma read as the point. A compound member is raw JSON, keyed as
-    /// its writer wrote it, so a value object there declares nothing, as the
-    /// in-memory evaluator reads it. A node's value is read by
-    /// [`declared_value_reading`].
+    /// decimal comma read as the point. A node's value, and a compound member
+    /// a trailing group steps to, are JSON-LD kept as their writer wrote it, so
+    /// each is read by [`declared_value_reading`], as the in-memory evaluator
+    /// reads a value object wherever it sits.
     pub fn declared_reading(self, value: impl Fn() -> SimpleExpr, operand: &Operand) -> (SimpleExpr, SimpleExpr) {
         match self.ending {
             Ending::InstanceMember(member) if member.holds_instant() => {
@@ -148,8 +148,8 @@ impl<'a> PropertyPath<'a> {
                 let datatype = CaseStatement::new().case(spells(TimeValueForm::DateTime, text), text_literal(TimeValueForm::DateTime.iri().as_str()));
                 (to_jsonb(with_decimal_point(text())), datatype.into())
             }
-            Ending::InstanceMember(_) | Ending::Members(_) => (value(), typed_null(PostgresType::Text)),
-            Ending::Node => declared_value_reading(value, operand),
+            Ending::InstanceMember(_) => (value(), typed_null(PostgresType::Text)),
+            Ending::Node | Ending::Members(_) => declared_value_reading(value, operand),
         }
     }
 
@@ -229,8 +229,9 @@ fn instance_member_text(node: SimpleExpr) -> SimpleExpr {
     )
 }
 
-/// The JSONB value and the declared datatype IRI a node's `value` is compared
-/// with `operand` through.
+/// The JSONB value and the declared datatype IRI a value is compared with
+/// `operand` through: a node's `value`, an element of it, or a compound member
+/// of it.
 ///
 /// Only a value object declaring the operand's time value form in its `@type`
 /// compares with a time operand (clause 4.9: no equality of data types, no

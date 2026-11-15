@@ -13,6 +13,7 @@ use crate::{
         attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode, ValuePresence},
         fixture_literal::FixtureLiteral,
         linked_entities::LinkedEntities,
+        raw_json::RawJson,
         value_item::ValueItem,
     },
 };
@@ -295,7 +296,7 @@ impl FixtureItem {
     fn view(&self) -> ValueItem<'_, &FixtureNode> {
         match self {
             FixtureItem::Literal(literal) => ValueItem::Literal(literal.view()),
-            FixtureItem::Json(json) => ValueItem::Json(json.piece()),
+            FixtureItem::Json(json) => ValueItem::Json(RawJson::json_literal(json.piece())),
             FixtureItem::Reference(iri) => ValueItem::Reference(iri),
             FixtureItem::Node(node) => ValueItem::Node(node),
             FixtureItem::Geometry(form) => ValueItem::Geometry(form),
@@ -382,7 +383,7 @@ pub(crate) fn target_json(value: &TargetValue<'_>) -> Value {
         TargetValue::Number(number) => Value::Number(number.to_serde_number()),
         TargetValue::Text(text) => Value::String(text.to_string()),
         TargetValue::Boolean(boolean) => Value::Bool(*boolean),
-        TargetValue::Json(json) => serde_json::from_str(json.text()).expect("the JSON a literal spells"),
+        TargetValue::Json(json) => serde_json::from_str(json.piece().text()).expect("the JSON a literal spells"),
         TargetValue::Array(elements) => Value::Array(elements.iter().map(target_json).collect()),
         TargetValue::Time(time) => Value::String(time.to_string()),
         TargetValue::NonFiniteNumber(value) => Value::String(value.to_string()),

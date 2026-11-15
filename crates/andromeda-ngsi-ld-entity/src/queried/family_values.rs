@@ -18,7 +18,10 @@ use crate::{
 use andromeda_json_literal::JsonLiteral;
 use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
 use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, target_language::LanguageSelector};
-use andromeda_ngsi_ld_query_evaluation::queried_entity::value_item::{LiteralValue, ValueItem};
+use andromeda_ngsi_ld_query_evaluation::queried_entity::{
+    raw_json::RawJson,
+    value_item::{LiteralValue, ValueItem},
+};
 use std::{borrow::Cow, slice::Iter};
 
 /// The values of one family member, in the order the instance holds them.
@@ -123,7 +126,7 @@ impl<'a, M: QueriedMode> Iterator for FamilyValues<'a, M> {
             FamilyValues::Entries(entries) => entries
                 .find_map(|entry| M::entry_text(entry.text()))
                 .map(|text| ValueItem::Literal(LiteralValue::Text(Cow::Borrowed(text)))),
-            FamilyValues::Json(literals) => literals.next().map(|literal| ValueItem::Json(literal.piece())),
+            FamilyValues::Json(literals) => literals.next().map(|literal| ValueItem::Json(RawJson::json_literal(literal.piece()))),
             FamilyValues::ListObjects(objects) => objects.next().map(|object| ValueItem::Reference(object.uri().as_str())),
             FamilyValues::Single(item) => item.take(),
         }

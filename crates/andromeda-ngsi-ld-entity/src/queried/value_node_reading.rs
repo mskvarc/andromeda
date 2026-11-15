@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_lexicon::{
     reference::NgsiLdReference,
 };
 use andromeda_ngsi_ld_number::declared_number::DeclaredNumber;
-use andromeda_ngsi_ld_query_evaluation::queried_entity::{attribute_reading::QueriedValueNode, value_item};
+use andromeda_ngsi_ld_query_evaluation::queried_entity::{attribute_reading::QueriedValueNode, raw_json::RawJson, value_item};
 use std::borrow::Cow;
 
 /// The item one expanded value is to the evaluator, `value_type` being the
@@ -21,14 +21,15 @@ use std::borrow::Cow;
 ///
 /// A literal is compared by its value; its datatype counts only where it, or
 /// the `valueType`, declares a time value, a number or a Boolean, and its
-/// language not at all. A JSON
-/// literal is raw JSON addressed by its verbatim keys; a node is a structured
-/// value. A nested list carries neither a literal nor addressable members.
+/// language not at all. A JSON literal is raw JSON addressed by its verbatim
+/// keys, outside the JSON-LD graph, so nothing inside it declares a datatype;
+/// a node is a structured value. A nested list carries neither a literal nor
+/// addressable members.
 #[must_use]
 pub fn item_of<'a, M: QueriedMode>(value: &'a ExpandedValue<M>, value_type: Option<&NgsiLdReference>) -> value_item::ValueItem<'a, &'a ValueNode<M>> {
     match value {
         ExpandedValue::Literal(literal) => value_item::ValueItem::Literal(declared_literal_value(literal, value_type)),
-        ExpandedValue::Json(json) => value_item::ValueItem::Json(json.piece()),
+        ExpandedValue::Json(json) => value_item::ValueItem::Json(RawJson::json_literal(json.piece())),
         ExpandedValue::Node(node) => value_item::ValueItem::Node(node),
         ExpandedValue::List(_) => value_item::ValueItem::Opaque,
     }

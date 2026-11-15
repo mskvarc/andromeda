@@ -17,25 +17,23 @@
 //! `GeoJSON` geometry) is the value itself, which has no sub-property: an array
 //! is one array value clause 4.9 compares by membership, and a key of an object
 //! is a member of the value, which a compound path addresses verbatim.
-//! A property's value that is a value object whose `@type` declares a clause
-//! 4.6.3 time value, by the core context's term or by its IRI, and whose
-//! `@value` spells one in the clause 4.6.3 form of its datatype, a decimal
-//! comma included, is that time value (annex C.6), the one reading a time
-//! operand compares with. A value object in any other form, an element of an
-//! array value and a member of an object value are the raw JSON they are. The
-//! SQL rendering of a `csf` reads a stored document by these same rules.
+//! The property is JSON-LD its registrant wrote, so a value object whose
+//! `@type` declares a clause 4.6.3 time value, by the core context's term or by
+//! its IRI, and whose `@value` spells one in the clause 4.6.3 form of its
+//! datatype, a decimal comma included, is that time value (clause 3.1, annex
+//! C.6) wherever it sits: the property's value, an element of an array value,
+//! or a member of an object value at any depth. It is the one reading a time
+//! operand compares with. A value object in any other form is the raw JSON it
+//! is. The SQL rendering of a `csf` reads a stored document by these same
+//! rules.
 
 use andromeda_json_literal::piece::{JsonKind, JsonPiece};
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    attribute_type::AttributeType,
-    entity_type_name::EntityTypeName,
-    time::value::{TimeValue, TimeValueForm},
-};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
 use andromeda_ngsi_ld_query_evaluation::queried_entity::{
     attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode, ValuePresence},
-    value_item::{LiteralValue, ValueItem},
+    raw_json::RawJson,
+    value_item::ValueItem,
 };
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, keyword};
 use std::{
@@ -43,7 +41,6 @@ use std::{
     iter::{Empty, empty},
     str::FromStr,
 };
-use strum::IntoEnumIterator;
 
 /// The members of a registration a `csf` filter reads: a JSON object keyed by
 /// expanded name.
@@ -114,11 +111,10 @@ impl<'a> PropertyValue<'a> {
         }
     }
 
-    /// The value the property holds as the `q` evaluator reads it: a declared
-    /// time value or the raw JSON it holds.
+    /// The value the property holds as the `q` evaluator reads it: JSON-LD
+    /// kept as its registrant wrote it.
     fn item(self) -> Option<ValueItem<'a, NoStructuredValue>> {
-        let held = self.held()?;
-        Some(declared_time(held).map_or(ValueItem::Json(held), |time| ValueItem::Literal(LiteralValue::Time(time))))
+        self.held().map(|held| ValueItem::Json(RawJson::written_json_ld(held)))
     }
 
     /// The member `name` of the property's node, a sub-property or an
@@ -129,14 +125,6 @@ impl<'a> PropertyValue<'a> {
             WrittenProperty::Value(_) => None,
         }
     }
-}
-
-/// The time value a value object declares by its `@type`, `None` for any
-/// other JSON and for a literal its declared form does not admit.
-fn declared_time(node: JsonPiece<'_>) -> Option<TimeValue> {
-    let datatype = node.member(keyword::TYPE)?.as_str()?;
-    let form = TimeValueForm::iter().find(|form| datatype == form.term() || datatype == form.iri().as_str())?;
-    form.parse(&node.member(keyword::VALUE)?.as_str()?).ok()
 }
 
 /// A registration property holds raw JSON and never an expanded structured
@@ -357,15 +345,17 @@ mod tests {
         assert!(!holds("\"https://example.com/expanded\".\"https://example.com/since\"==2020", &properties));
     }
 
-    /// A property's value that is a value object declaring a clause 4.6.3
-    /// time value, by its term or its IRI, is that time value when its
-    /// `@value` spells one in the form of its datatype, a decimal comma
-    /// included (annex C.6). In another form (an offset, an unpadded date, a
-    /// day the calendar does not have), as an element of an array value or as
-    /// a member of an object value, it is the raw JSON it is: no time operand
-    /// is included in it, and it is unequal to every one.
+    /// A value object declaring a clause 4.6.3 time value, by its term or its
+    /// IRI, is that time value when its `@value` spells one in the form of its
+    /// datatype, a decimal comma included (clause 3.1, annex C.6), wherever it
+    /// sits: as the property's value, as an element of an array value, which
+    /// clause 4.9 compares by membership and orders as no value, and as a
+    /// member of an object value at any depth. In another form (an offset, an
+    /// unpadded date, a day the calendar does not have) it is the raw JSON it
+    /// is wherever it sits: no time operand is included in it, and it is
+    /// unequal to every one.
     #[test]
-    fn a_declared_time_value_is_read_in_its_form_as_a_property_value_alone() {
+    fn a_declared_time_value_is_read_in_its_form_wherever_it_sits() {
         let properties = json!({
             "https://example.com/since": {"@type": "DateTime", "@value": "2024-01-01T00:00:00Z"},
             "https://example.com/iri": {"type": "Property", "value": {"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2024-01-01T00:00:00Z"}},
@@ -377,7 +367,11 @@ mod tests {
             "https://example.com/opening": {"@type": "Time", "@value": "08:00:00Z"},
             "https://example.com/zoned": {"@type": "Time", "@value": "08:00:00+01:00"},
             "https://example.com/list": [{"@type": "DateTime", "@value": "2024-01-01T00:00:00Z"}],
-            "https://example.com/held": {"m": {"@type": "DateTime", "@value": "2024-01-01T00:00:00Z"}}
+            "https://example.com/held": {"m": {"@type": "DateTime", "@value": "2024-01-01T00:00:00Z"}},
+            "https://example.com/deep": {"type": "Property", "value": {"a": {"b": {"@type": "https://uri.etsi.org/ngsi-ld/Date", "@value": "2024-01-01"}}}},
+            "https://example.com/mixed": [{"@type": "DateTime", "@value": "2024-01-01T00:00:00Z"}, "x"],
+            "https://example.com/offsets": [{"@type": "DateTime", "@value": "2024-01-01T00:00:00+00:00"}],
+            "https://example.com/zones": {"m": {"@type": "Time", "@value": "08:00:00+01:00"}}
         });
         for (q, expected) in [
             ("since>2023-12-31T00:00:00Z", true),
@@ -396,10 +390,27 @@ mod tests {
             ("opening>07:00:00Z", true),
             ("zoned>07:00:00Z", false),
             ("zoned!=07:00:00Z", true),
-            ("list==2024-01-01T00:00:00Z", false),
-            ("list!=2024-01-01T00:00:00Z", true),
-            ("held[m]>2023-12-31T00:00:00Z", false),
-            ("held[m]!=2024-01-01T00:00:00Z", true),
+            ("list==2024-01-01T00:00:00Z", true),
+            ("list!=2024-01-01T00:00:00Z", false),
+            ("list==2024-01-02T00:00:00Z", false),
+            ("list!=2024-01-02T00:00:00Z", true),
+            ("list>2023-12-31T00:00:00Z", false),
+            ("list==\"2024-01-01T00:00:00Z\"", false),
+            ("held[m]>2023-12-31T00:00:00Z", true),
+            ("held[m]==2024-01-01T00:00:00Z", true),
+            ("held[m]!=2024-01-01T00:00:00Z", false),
+            ("held[m]==\"2024-01-01T00:00:00Z\"", false),
+            ("deep[a.b]==2024-01-01", true),
+            ("deep[a.b]<2024-01-02", true),
+            ("deep[a.b]!=2024-01-01", false),
+            ("mixed==2024-01-01T00:00:00Z", true),
+            ("mixed==\"x\"", true),
+            ("mixed==2024-01-01T00:00:00Z,\"y\"", true),
+            ("mixed!=2024-01-01T00:00:00Z", false),
+            ("offsets==2024-01-01T00:00:00Z", false),
+            ("offsets!=2024-01-01T00:00:00Z", true),
+            ("zones[m]>07:00:00Z", false),
+            ("zones[m]!=07:00:00Z", true),
         ] {
             let (name, test) = q.split_at(q.find(['>', '=', '!', '[']).expect("an operator"));
             let expanded = format!("\"https://example.com/{name}\"{test}");

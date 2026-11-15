@@ -97,6 +97,16 @@ impl TimeValueForm {
         TimeValueForm::iter().find(|form| form.iri().as_str() == datatype)
     }
 
+    /// The form a value object's `@type` declares, by the core `@context` term
+    /// or by the IRI, or `None` when it declares none of the three.
+    ///
+    /// JSON-LD kept as its writer wrote it, such as a registration's Context
+    /// Source Properties, names the datatype in either spelling.
+    #[must_use]
+    pub fn declared_by(datatype: &str) -> Option<TimeValueForm> {
+        TimeValueForm::iter().find(|form| datatype == form.term() || datatype == form.iri().as_str())
+    }
+
     /// The datatype IRI of this form in the NGSI-LD core vocabulary.
     #[must_use]
     pub const fn iri(self) -> Iri<&'static str> {
@@ -207,6 +217,17 @@ mod tests {
             pretty_assertions::assert_eq!(TimeValueForm::named_by(form.iri().as_str()), Some(form));
         }
         pretty_assertions::assert_eq!(TimeValueForm::named_by(expanded_classes::PROPERTY.as_str()), None);
+    }
+
+    #[test]
+    fn each_form_is_declared_by_its_term_and_by_its_iri() {
+        for form in [TimeValueForm::DateTime, TimeValueForm::Date, TimeValueForm::Time] {
+            pretty_assertions::assert_eq!(TimeValueForm::declared_by(form.term()), Some(form));
+            pretty_assertions::assert_eq!(TimeValueForm::declared_by(form.iri().as_str()), Some(form));
+        }
+        for datatype in ["Property", "dateTime", "http://www.w3.org/2001/XMLSchema#dateTime", ""] {
+            pretty_assertions::assert_eq!(TimeValueForm::declared_by(datatype), None, "{datatype}");
+        }
     }
 
     /// The core `@context` expands each form's term to the form's IRI.
