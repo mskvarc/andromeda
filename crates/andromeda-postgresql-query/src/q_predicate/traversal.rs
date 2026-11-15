@@ -37,7 +37,7 @@ use crate::{
         instance_scan::InstanceScan,
     },
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, Entities, EntitySearch},
     temporal::AttributeHistory,
@@ -112,7 +112,7 @@ impl LinkedHop {
     pub(crate) fn probe(
         &self,
         relationship_id: AttributeNameKey,
-        guard_types: &[AttributeName],
+        guard_types: &[EntityTypeName],
         types: &ResolvedNames<EntityTypeName>,
         outer: &InstanceScan<'_>,
         inner: Condition,
@@ -144,7 +144,7 @@ impl LinkedHop {
     pub(crate) fn linking_branches(
         &self,
         relationship_id: AttributeNameKey,
-        guard_types: &[AttributeName],
+        guard_types: &[EntityTypeName],
         types: &ResolvedNames<EntityTypeName>,
         outer: &EntityRowRefs,
         inner: Condition,
@@ -165,7 +165,7 @@ impl LinkedHop {
     fn linking_branch(
         &self,
         relationship_id: AttributeNameKey,
-        guard_types: &[AttributeName],
+        guard_types: &[EntityTypeName],
         types: &ResolvedNames<EntityTypeName>,
         outer: &EntityRowRefs,
         inner: Condition,
@@ -195,7 +195,7 @@ impl LinkedHop {
     fn completed(
         &self,
         mut probe: SelectStatement,
-        guard_types: &[AttributeName],
+        guard_types: &[EntityTypeName],
         types: &ResolvedNames<EntityTypeName>,
         guarded: GuardedRow<'_>,
         inner: Condition,
@@ -360,10 +360,10 @@ fn relationship_kinds() -> [SimpleExpr; 2] {
 /// markers unsubstituted and silently aliased onto other binds. Each arm is
 /// still a containment test the `entity_type_name_keys` GIN index answers, so the cost of
 /// the disjunction is an extra index probe per type rather than a scan.
-fn type_guard(guard_types: &[AttributeName], types: &ResolvedNames<EntityTypeName>, entity_type_name_keys: &SimpleExpr) -> SimpleExpr {
+fn type_guard(guard_types: &[EntityTypeName], types: &ResolvedNames<EntityTypeName>, entity_type_name_keys: &SimpleExpr) -> SimpleExpr {
     guard_types
         .iter()
-        .fold(Condition::any(), |guard, guard_type| match types.get_str(guard_type.as_str()) {
+        .fold(Condition::any(), |guard, guard_type| match types.get(guard_type) {
             // clone: every arm names the same column
             Some(id) => guard.add(array_contains_key(entity_type_name_keys.clone(), id.get())),
             None => guard.add(false_literal()),
@@ -378,7 +378,7 @@ mod tests {
         q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, traversal::LinkedHop},
         window_reach::WindowReach,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
+    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
@@ -424,7 +424,7 @@ mod tests {
             .reach(WindowReach::Inside)
             .build();
         let parking: EntityTypeName = "https://example.com/Parking".parse().expect("a valid type name");
-        let guard: Vec<AttributeName> = vec!["https://example.com/Parking".parse().expect("a valid name")];
+        let guard: Vec<EntityTypeName> = vec!["https://example.com/Parking".parse().expect("a valid name")];
         let probe = LinkedHop::at_depth(1).probe(
             AttributeNameKey::from(4),
             &guard,

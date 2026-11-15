@@ -1,6 +1,6 @@
 //! One lowered Query Term operand, and the target kinds it compares with.
 
-use crate::filter::reading::target_kind::TargetKind;
+use crate::filter::{reading::target_kind::TargetKind, scalar::Scalar};
 use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_value_order::string_order::StringRelation;
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
@@ -47,6 +47,22 @@ impl Comparison {
         match self {
             Comparison::Equality => StringRelation::CodePoint,
             Comparison::Order => StringRelation::Collated,
+        }
+    }
+}
+
+/// The operand a parsed scalar is: a bare `URI` compares as the text it is,
+/// exactly as a `quotedStr` holding it. Written by hand because the two text
+/// productions become one operand, which no derive spells.
+impl From<&Scalar> for Operand {
+    fn from(scalar: &Scalar) -> Operand {
+        match scalar {
+            Scalar::Number(number) => Operand::Number(number.clone()),
+            Scalar::Bool(value) => Operand::Boolean(*value),
+            Scalar::Str(text) | Scalar::Uri(text) => Operand::Text(text.clone()),
+            Scalar::DateTime(instant) => Operand::DateTime(*instant),
+            Scalar::Date(date) => Operand::Date(*date),
+            Scalar::Time(time) => Operand::Time(*time),
         }
     }
 }

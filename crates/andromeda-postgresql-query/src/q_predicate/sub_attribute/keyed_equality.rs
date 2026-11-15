@@ -11,54 +11,36 @@
 use crate::{
     entity_row_refs::EntityRowRefs,
     q_predicate::{
-        equality_term::equality_value,
+        equality_term::equals_any_value,
         instance_row::ProbedRow,
-        local_target::{LocalTarget, local_target},
         projection_probe::{Ca, of_attribute, projection_column, standing},
         sub_attribute::element_path::ElementPath,
     },
     query_names::QueryNames,
     sub_attribute_operand_keys::operand_keys,
 };
-use andromeda_ngsi_ld_query::filter::{
-    path::QueryPath,
-    predicate::{Predicate, SetMembership},
-    scalar::CompareValue,
-};
+use andromeda_ngsi_ld_query::filter::reading::{operand::Operand, term_reading::TermReading, terminal::Terminal, value_test::Polarity};
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::{operator::hash_key_array, pg_operator::PgBinaryOperator};
 use andromeda_postgresql_stored_values::sub_attribute_key::key::SubAttributeKey;
 use sea_query::{Query, SelectStatement};
+use std::slice;
 
-/// `SELECT "ca"."entity_key"` over the rows whose sub-attribute tree holds the
-/// operand of `pred` at its name path, `None` unless the key index answers
-/// `pred`: `==` with one operand on a sub-attribute's own value, every name of
-/// its path recorded.
-pub(crate) fn equality_candidates(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> Option<SelectStatement> {
-    let Predicate::Equality {
-        path: QueryPath::Local(path),
-        membership: SetMembership::Within,
-        rhs: rhs @ CompareValue::Scalar(scalar),
-    } = pred
-    else {
-        return None;
-    };
-    if path.sub_attrs.is_empty() {
+/// `SELECT "ca"."entity_key"` over the rows whose sub-attribute tree holds
+/// `operand` at the name path of `term`, the candidates of `term` asserting
+/// `==` with that one operand; `None` unless the key index answers it: the
+/// term tests a sub-attribute's own value, past no hop, and every name of its
+/// path was recorded.
+pub(crate) fn equality_candidates(term: &TermReading, operand: &Operand, rows: &EntityRowRefs, names: &QueryNames) -> Option<SelectStatement> {
+    if !term.hops().is_empty() || term.sub_attributes().is_empty() || !matches!(term.terminal(), Terminal::OwnValue) {
         return None;
     }
-    match local_target(path) {
-        LocalTarget::OwnValue => {}
-        LocalTarget::TrailingMember { .. } | LocalTarget::TargetLanguage(_) | LocalTarget::NestedMember(_) => return None,
-    }
-    let element = ElementPath::resolve(path, ProbedRow::Current, &names.attributes)?;
-    if element.chain.is_empty() || element.field.is_some() {
-        return None;
-    }
-    let keys = operand_keys(element.path_hash(), scalar)
+    let element = ElementPath::of_term(term, ProbedRow::Current, &names.attributes)?;
+    let keys = operand_keys(element.path_hash(), operand)
         .into_iter()
         .map(SubAttributeKey::get)
         .collect::<Vec<_>>();
-    let value = equality_value(SetMembership::Within, rhs, element.holder());
+    let value = equals_any_value(slice::from_ref(operand), Polarity::Asserted, element.holder());
     let mut select = Query::select();
     select
         .expr(projection_column(CurrentAttributes::EntityKey))
@@ -72,8 +54,11 @@ pub(crate) fn equality_candidates(pred: &Predicate, rows: &EntityRowRefs, names:
 
 #[cfg(test)]
 mod tests {
-    use crate::{entity_row_refs::EntityRowRefs, q_predicate::keyed_term::keyed_candidates, query_names::QueryNames};
-    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse};
+    use crate::{
+        entity_row_refs::EntityRowRefs,
+        q_predicate::{keyed_term::keyed_candidates, lowered_filter::reading_of},
+        query_names::QueryNames,
+    };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::assert_eq;
@@ -91,8 +76,7 @@ mod tests {
     }
 
     fn candidates(q: &str) -> Option<SelectStatement> {
-        let expr = parse(q).expect("parse q");
-        keyed_candidates(&expr, &EntityRowRefs::unaliased(None), &names(), LanguageMatching::TagEquality).map(|keyed| keyed.select)
+        keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names()).map(|keyed| keyed.select)
     }
 
     /// The statement of a keyed equality on `temperature.source` with `operand`.

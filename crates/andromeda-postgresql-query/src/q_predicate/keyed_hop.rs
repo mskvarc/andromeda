@@ -13,65 +13,46 @@ use crate::{
     q_predicate::{keyed_branches::union_of, projection::linked_condition, traversal::LinkedHop},
     query_names::QueryNames,
 };
-use andromeda_ngsi_ld_query::filter::{
-    language_matching::LanguageMatching,
-    path::QueryPath,
-    predicate::{Predicate, SetMembership},
+use andromeda_ngsi_ld_query::filter::reading::{
+    term_reading::{TermReading, Test},
+    value_test::Polarity,
 };
 use sea_query::SelectStatement;
 
 /// `SELECT "entity_key"` over the Entities whose standing Relationship
-/// instance names a linked entity `pred` keeps, `None` unless `pred` is a
-/// single hop of a recorded Relationship whose inner term an index can
-/// enumerate. A target language of the inner term selects keys by `matching`.
-pub(crate) fn hop_candidates(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames, matching: LanguageMatching) -> Option<SelectStatement> {
-    let QueryPath::Linked {
-        relationship,
-        guard_types,
-        inner,
-    } = pred.path()
-    else {
-        return None;
-    };
-    if !enumerates_linked_matches(pred, inner) {
-        return None;
-    }
-    let relationship_id = names.attributes.get(relationship)?;
-    let hop = LinkedHop::at_depth(1);
-    let inner_rows = hop.inner_rows(rows.schema().cloned());
-    let inner_condition = linked_condition(pred, inner, &inner_rows, names, matching, 1);
-    union_of(hop.linking_branches(relationship_id, guard_types, &names.types, rows, inner_condition))
-}
-
-/// Whether the linked entities `pred` keeps along `inner` can be read before
-/// the Entities linking to them.
+/// instance names a linked entity `term` keeps, `None` unless `term` crosses
+/// one hop, of a recorded Relationship, and its test is one an index can
+/// enumerate.
 ///
-/// A negated term (`!=`, `!~=`) holds for an entity none of whose values
-/// match, which no index of values enumerates, and a further hop is itself a
-/// probe outward from every entity, so either would read every entity of the
-/// tenant before the first candidate.
-const fn enumerates_linked_matches(pred: &Predicate, inner: &QueryPath) -> bool {
-    let positive = match pred {
-        Predicate::Exists(_)
-        | Predicate::Equality {
-            membership: SetMembership::Within,
-            ..
-        }
-        | Predicate::Ordering { .. }
-        | Predicate::MatchPattern { .. } => true,
-        Predicate::Equality {
-            membership: SetMembership::Outside,
-            ..
-        }
-        | Predicate::NotMatchPattern { .. } => false,
+/// A complement (`!=`, `!~=`) holds for an entity none of whose values pass
+/// the test, which no index of values enumerates, and a further hop is itself
+/// a probe outward from every entity, so either would read every entity of
+/// the tenant before the first candidate.
+pub(crate) fn hop_candidates(term: &TermReading, rows: &EntityRowRefs, names: &QueryNames) -> Option<SelectStatement> {
+    let [hop] = term.hops() else {
+        return None;
     };
-    positive && !inner.is_linked()
+    match term.test() {
+        Test::Exists => {}
+        Test::Value(value) => match value.polarity() {
+            Polarity::Asserted => {}
+            Polarity::Complement => return None,
+        },
+    }
+    let relationship_id = names.attributes.get(hop.relationship())?;
+    let linked = LinkedHop::at_depth(1);
+    let inner_rows = linked.inner_rows(rows.schema().cloned());
+    let inner_condition = linked_condition(term, &inner_rows, names, 1);
+    union_of(linked.linking_branches(relationship_id, hop.guard_types(), &names.types, rows, inner_condition))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{entity_row_refs::EntityRowRefs, q_predicate::keyed_hop::hop_candidates, query_names::QueryNames};
-    use andromeda_ngsi_ld_query::filter::{expression::Expr, language_matching::LanguageMatching, parser::parse};
+    use crate::{
+        entity_row_refs::EntityRowRefs,
+        q_predicate::{keyed_hop::hop_candidates, lowered_filter::term_of},
+        query_names::QueryNames,
+    };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::assert_eq;
@@ -92,10 +73,7 @@ mod tests {
     }
 
     fn candidates_in(q: &str, rows: &EntityRowRefs) -> Option<SelectStatement> {
-        let Expr::Pred(pred) = parse(q).expect("parse q") else {
-            panic!("a single predicate");
-        };
-        hop_candidates(&pred, rows, &names(), LanguageMatching::TagEquality)
+        hop_candidates(&term_of(q), rows, &names())
     }
 
     fn candidates(q: &str) -> Option<SelectStatement> {

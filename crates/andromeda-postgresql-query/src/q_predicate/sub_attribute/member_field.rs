@@ -16,8 +16,7 @@ use crate::{
 use andromeda_ngsi_ld_query::{
     filter::{
         instance_metadata::InstanceMetadata,
-        predicate::{CmpOp, PatternPolarity, Predicate, SetMembership},
-        scalar::{CompareValue, Scalar},
+        reading::{comparator::Comparator, operand::Operand, order_relation::OrderRelation, scalar_test::ScalarTest, term_reading::Test, value_test::Polarity},
     },
     pattern::Pattern,
 };
@@ -34,19 +33,18 @@ use andromeda_postgresql_seaquery::{
 use andromeda_postgresql_stored_values::stored_unit_code::stored_unit_code;
 use cefact_units::UnitCode;
 use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Query, SimpleExpr};
-use std::slice;
 
 /// The alias the dictionary row naming one type is read under.
 const NAMED_TYPE: &str = "mt";
 
-/// Whether `member` of the instance `holder` satisfies `pred`.
+/// Whether `member` of the instance `holder` satisfies `test`.
 ///
 /// The elements of a history row record no `createdAt` or `modifiedAt`
 /// (clause 5.2.5 system times a sub-attribute is stored without), so a path
 /// ending on either below the top level matches nothing in history.
 #[must_use]
-pub fn member_condition(member: InstanceMetadata, holder: InstanceRow, pred: &Predicate) -> Condition {
-    StoredMember::of(member, holder).condition(pred)
+pub fn member_condition(member: InstanceMetadata, holder: InstanceRow, test: &Test) -> Condition {
+    StoredMember::of(member, holder).condition(test)
 }
 
 /// How a stored instance holds one member, as the expression reading it.
@@ -97,27 +95,28 @@ impl StoredMember {
         }
     }
 
-    /// Whether the member satisfies `pred`.
+    /// Whether the member satisfies `test`.
     ///
     /// An operand of a kind the member is not compares with no member: clause
     /// 4.9 makes it non-matching and, under `unequal`, unequal. A stored
-    /// instant keeps no written text, so a pattern matches none of them.
-    fn condition(&self, pred: &Predicate) -> Condition {
+    /// instant keeps no written text, so a pattern matches none of them. A
+    /// pattern states its own complement, over a String member alone; every
+    /// other complement asks for the member and for no match in it.
+    fn condition(&self, test: &Test) -> Condition {
         if matches!(self, StoredMember::Unheld) {
             return Condition::all().add(false_literal());
         }
-        match pred {
-            Predicate::Exists(_) => Condition::all().add(self.present()),
-            Predicate::Equality { membership, rhs, .. } => {
-                let equal = self.equal(rhs);
-                match membership {
-                    SetMembership::Within => equal,
-                    SetMembership::Outside => Condition::all().add(self.present()).add(does_not_hold(equal)),
+        match test {
+            Test::Exists => Condition::all().add(self.present()),
+            Test::Value(value) => match (value.test(), value.polarity()) {
+                (ScalarTest::Matches(pattern), polarity) => Condition::all().add(self.matched(pattern, polarity)),
+                (ScalarTest::EqualsAny(_) | ScalarTest::Within(_) | ScalarTest::Ordered { .. } | ScalarTest::Unsatisfiable, Polarity::Asserted) => {
+                    self.positive(value.test())
                 }
-            }
-            Predicate::Ordering { op, rhs, .. } => Condition::all().add(self.compared(op.as_cmp_op(), rhs)),
-            Predicate::MatchPattern { pattern, .. } => Condition::all().add(self.matched(pattern, PatternPolarity::Match)),
-            Predicate::NotMatchPattern { pattern, .. } => Condition::all().add(self.matched(pattern, PatternPolarity::NotMatch)),
+                (ScalarTest::EqualsAny(_) | ScalarTest::Within(_) | ScalarTest::Ordered { .. } | ScalarTest::Unsatisfiable, Polarity::Complement) => {
+                    Condition::all().add(self.present()).add(does_not_hold(self.positive(value.test())))
+                }
+            },
         }
     }
 
@@ -131,27 +130,40 @@ impl StoredMember {
         }
     }
 
-    /// Whether the member equals the operand of an equality, within its
-    /// range, or one of its values.
+    /// Whether the member passes `test`, stated positively: equal to an
+    /// operand, ordered against it, within a range, or matching a pattern.
     ///
     /// Clause 4.9: an operand "Is included in the target value, if the latter
     /// is an array", so an `objectType` is equal to any type it lists.
-    fn equal(&self, rhs: &CompareValue) -> Condition {
-        match (self, rhs) {
-            (StoredMember::TypeKeys(keys), CompareValue::Scalar(scalar)) => Condition::all().add(some_type_named(keys, slice::from_ref(scalar))),
-            (StoredMember::TypeKeys(keys), CompareValue::ValueList(values)) => Condition::all().add(some_type_named(keys, values)),
-            (StoredMember::Instant(_) | StoredMember::UnitCode(_) | StoredMember::Text(_) | StoredMember::Unheld, CompareValue::Scalar(scalar)) => {
-                Condition::all().add(self.compared(CmpOp::Equal, scalar))
-            }
-            (StoredMember::Instant(_) | StoredMember::UnitCode(_) | StoredMember::Text(_) | StoredMember::Unheld, CompareValue::ValueList(values)) => {
-                values.iter().fold(Condition::any(), |any, value| any.add(self.compared(CmpOp::Equal, value)))
+    fn positive(&self, test: &ScalarTest) -> Condition {
+        match (self, test) {
+            (StoredMember::TypeKeys(keys), ScalarTest::EqualsAny(operands)) => Condition::all().add(some_type_named(keys, operands)),
+            (StoredMember::Instant(_) | StoredMember::UnitCode(_) | StoredMember::Text(_) | StoredMember::Unheld, ScalarTest::EqualsAny(operands)) => {
+                match operands.as_slice() {
+                    [operand] => Condition::all().add(self.compared(Comparator::Equal, operand)),
+                    operands => operands
+                        .iter()
+                        .fold(Condition::any(), |any, operand| any.add(self.compared(Comparator::Equal, operand))),
+                }
             }
             (
                 StoredMember::Instant(_) | StoredMember::UnitCode(_) | StoredMember::Text(_) | StoredMember::TypeKeys(_) | StoredMember::Unheld,
-                CompareValue::Range { min, max },
+                ScalarTest::Within(interval),
             ) => Condition::all()
-                .add(self.compared(CmpOp::GreaterEq, min))
-                .add(self.compared(CmpOp::LessEq, max)),
+                .add(self.compared(Comparator::Ordered(OrderRelation::GreaterOrEqual), interval.min()))
+                .add(self.compared(Comparator::Ordered(OrderRelation::LessOrEqual), interval.max())),
+            (
+                StoredMember::Instant(_) | StoredMember::UnitCode(_) | StoredMember::Text(_) | StoredMember::TypeKeys(_) | StoredMember::Unheld,
+                ScalarTest::Ordered { relation, operand },
+            ) => Condition::all().add(self.compared(Comparator::Ordered(*relation), operand)),
+            (
+                StoredMember::Instant(_) | StoredMember::UnitCode(_) | StoredMember::Text(_) | StoredMember::TypeKeys(_) | StoredMember::Unheld,
+                ScalarTest::Matches(pattern),
+            ) => Condition::all().add(self.matched(pattern, Polarity::Asserted)),
+            (
+                StoredMember::Instant(_) | StoredMember::UnitCode(_) | StoredMember::Text(_) | StoredMember::TypeKeys(_) | StoredMember::Unheld,
+                ScalarTest::Unsatisfiable,
+            ) => Condition::all().add(false_literal()),
         }
     }
 
@@ -160,21 +172,20 @@ impl StoredMember {
     ///
     /// An `objectType` listing several types is an array, which no ordering
     /// holds for, so only a single type compares.
-    fn compared(&self, op: CmpOp, scalar: &Scalar) -> SimpleExpr {
-        match (self, scalar) {
-            (StoredMember::Instant(field), Scalar::DateTime(instant)) => compare(field.clone(), op, SeaExpr::val(*instant)),
-            (StoredMember::UnitCode(field), Scalar::Str(operand)) => listed_code_where(field, |code| op.holds_for_strings(code, operand)),
-            (StoredMember::Text(text), Scalar::Str(operand) | Scalar::Uri(operand)) => text_compared(text.clone(), op, scalar, operand),
-            (StoredMember::TypeKeys(keys), Scalar::Str(operand) | Scalar::Uri(operand)) => text_compared(single_type_name(keys), op, scalar, operand),
-            (StoredMember::Instant(_), Scalar::Number(_) | Scalar::Bool(_) | Scalar::Str(_) | Scalar::Uri(_) | Scalar::Date(_) | Scalar::Time(_))
-            | (StoredMember::UnitCode(_), Scalar::Number(_) | Scalar::Bool(_) | Scalar::Uri(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_))
+    fn compared(&self, comparator: Comparator, operand: &Operand) -> SimpleExpr {
+        match (self, operand) {
+            (StoredMember::Instant(field), Operand::DateTime(instant)) => compare(field.clone(), comparator, SeaExpr::val(*instant)),
+            (StoredMember::UnitCode(field), Operand::Text(text)) => listed_code_where(field, |code| comparator.holds_for_strings(code, text)),
+            (StoredMember::Text(stored), Operand::Text(text)) => text_compared(stored.clone(), comparator, operand, text),
+            (StoredMember::TypeKeys(keys), Operand::Text(text)) => text_compared(single_type_name(keys), comparator, operand, text),
+            (StoredMember::Instant(_), Operand::Number(_) | Operand::Boolean(_) | Operand::Text(_) | Operand::Date(_) | Operand::Time(_))
             | (
-                StoredMember::Text(_) | StoredMember::TypeKeys(_),
-                Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_),
+                StoredMember::UnitCode(_) | StoredMember::Text(_) | StoredMember::TypeKeys(_),
+                Operand::Number(_) | Operand::Boolean(_) | Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_),
             )
             | (
                 StoredMember::Unheld,
-                Scalar::Number(_) | Scalar::Bool(_) | Scalar::Str(_) | Scalar::Uri(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_),
+                Operand::Number(_) | Operand::Boolean(_) | Operand::Text(_) | Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_),
             ) => false_literal(),
         }
     }
@@ -183,11 +194,11 @@ impl StoredMember {
     ///
     /// Clause 4.9 tests a pattern against a String only, so an instant and an
     /// `objectType` listing several types match no pattern either way.
-    fn matched(&self, pattern: &Pattern, polarity: PatternPolarity) -> SimpleExpr {
+    fn matched(&self, pattern: &Pattern, polarity: Polarity) -> SimpleExpr {
         match self {
             StoredMember::UnitCode(field) => listed_code_where(field, |code| match polarity {
-                PatternPolarity::Match => pattern.is_match(code),
-                PatternPolarity::NotMatch => !pattern.is_match(code),
+                Polarity::Asserted => pattern.is_match(code),
+                Polarity::Complement => !pattern.is_match(code),
             }),
             StoredMember::Text(text) => pattern_test(text.clone(), polarity, pattern, PatternIndexes::None),
             StoredMember::TypeKeys(keys) => pattern_test(single_type_name(keys), polarity, pattern, PatternIndexes::None),
@@ -196,10 +207,10 @@ impl StoredMember {
     }
 }
 
-/// `text` compared with the String or `URI` operand `operand` spells, a String
-/// ordering collating as a stored String value's does.
-fn text_compared(text: SimpleExpr, op: CmpOp, scalar: &Scalar, operand: &str) -> SimpleExpr {
-    compare(ordered_string(text, scalar, op), op, SeaExpr::val(operand))
+/// `stored` compared with `text`, the text `operand` is, a String ordering
+/// collating as a stored String value's does.
+fn text_compared(stored: SimpleExpr, comparator: Comparator, operand: &Operand, text: &str) -> SimpleExpr {
+    compare(ordered_string(stored, operand, comparator), comparator, SeaExpr::val(text))
 }
 
 /// The expanded IRI the `entity_type_names` key `key` names, NULL for a NULL
@@ -228,13 +239,13 @@ pub fn single_type_name(keys: &SimpleExpr) -> SimpleExpr {
 
 /// Whether some type `keys` lists is spelled by one of `operands`; a number,
 /// a boolean or a time spells no type.
-fn some_type_named(keys: &SimpleExpr, operands: &[Scalar]) -> SimpleExpr {
+fn some_type_named(keys: &SimpleExpr, operands: &[Operand]) -> SimpleExpr {
     // clone: the bound array owns its elements
     let spellings: Vec<String> = operands
         .iter()
-        .filter_map(|scalar| match scalar {
-            Scalar::Str(operand) | Scalar::Uri(operand) => Some(operand.clone()),
-            Scalar::Number(_) | Scalar::Bool(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_) => None,
+        .filter_map(|operand| match operand {
+            Operand::Text(text) => Some(text.clone()),
+            Operand::Number(_) | Operand::Boolean(_) | Operand::DateTime(_) | Operand::Date(_) | Operand::Time(_) => None,
         })
         .collect();
     if spellings.is_empty() {
@@ -287,9 +298,10 @@ pub fn unit_code_text(field: SimpleExpr) -> SimpleExpr {
 mod tests {
     use crate::q_predicate::{
         instance_row::{ElementLevel, InstanceRow},
+        lowered_filter::term_of,
         sub_attribute::member_field::{member_condition, unit_code_text},
     };
-    use andromeda_ngsi_ld_query::filter::{expression::Expr, instance_metadata::InstanceMetadata, parser::parse};
+    use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, reading::terminal::Terminal};
     use andromeda_postgresql_schema::{
         current::{CurrentAttributes, SubAttribute},
         temporal::AttributeHistory,
@@ -303,10 +315,9 @@ mod tests {
     /// The statement of the `q` term `"https://example.com/t".<member><term>`
     /// over `holder`.
     fn member_sql(member: InstanceMetadata, term: &str, holder: InstanceRow) -> SelectStatement {
-        let Expr::Pred(pred) = parse(&format!("\"https://example.com/t\".\"{}\"{term}", member.iri().as_str())).expect("parse q") else {
-            panic!("a single predicate");
-        };
-        Query::select().cond_where(member_condition(member, holder, &pred)).to_owned()
+        let term = term_of(&format!("\"https://example.com/t\".\"{}\"{term}", member.iri().as_str()));
+        assert_eq!(term.terminal(), &Terminal::InstanceMember(member));
+        Query::select().cond_where(member_condition(member, holder, term.test())).to_owned()
     }
 
     #[test]
@@ -385,11 +396,9 @@ mod tests {
     /// The statement of `q` `"https://example.com/t"."unitCode"<term>` over a
     /// current row.
     fn unit_code_condition(term: &str) -> SelectStatement {
-        let Expr::Pred(pred) = parse(&format!("\"https://example.com/t\".\"https://uri.etsi.org/ngsi-ld/unitCode\"{term}")).expect("parse q") else {
-            panic!("a single predicate");
-        };
+        let term = term_of(&format!("\"https://example.com/t\".\"https://uri.etsi.org/ngsi-ld/unitCode\"{term}"));
         Query::select()
-            .cond_where(member_condition(InstanceMetadata::UnitCode, InstanceRow::Current, &pred))
+            .cond_where(member_condition(InstanceMetadata::UnitCode, InstanceRow::Current, term.test()))
             .to_owned()
     }
 

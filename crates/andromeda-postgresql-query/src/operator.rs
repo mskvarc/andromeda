@@ -1,7 +1,7 @@
 //! How clause 4.9's comparison and pattern operators are spelled in PostgreSQL.
 
 use andromeda_ngsi_ld_query::{
-    filter::predicate::{CmpOp, PatternPolarity},
+    filter::reading::{comparator::Comparator, order_relation::OrderRelation, value_test::Polarity},
     pattern::Pattern,
     subject_start::SubjectStart,
 };
@@ -10,25 +10,24 @@ use andromeda_postgresql_seaquery::{
     operator::negate_total,
     pg_operator::PgBinaryOperator,
 };
-use sea_query::{BinOper, Condition, Expr, ExprTrait, SimpleExpr};
+use sea_query::{Condition, Expr, ExprTrait, SimpleExpr};
 
-/// Build a clause 4.9 comparison between two already-lifted operands.
+/// Build one clause 4.9 comparison between two already-lifted operands.
 ///
-/// Shared by every rendering of clause 4.9, so a predicate cannot compare with
-/// one operator against `current_attributes`, another against a JSON value
-/// and a third against a registration's properties. The operator token differs
-/// from the clause 4.9 spelling only at `==`, which SQL writes `=`, and `!=`,
-/// which is kept over the equivalent `<>`.
+/// Shared by every rendering of clause 4.9, so a term cannot compare with one
+/// operator against `current_attributes`, another against a JSON value and a
+/// third against a registration's properties. The operator token differs from
+/// the clause 4.9 spelling only at `==`, which SQL writes `=`. No comparison is
+/// unequal: `!=` is the complement of `==` ([`does_not_hold`]).
 #[must_use]
-pub fn compare(lhs: SimpleExpr, op: CmpOp, rhs: SimpleExpr) -> SimpleExpr {
+pub fn compare(lhs: SimpleExpr, comparator: Comparator, rhs: SimpleExpr) -> SimpleExpr {
     let lhs = Expr::expr(lhs);
-    match op {
-        CmpOp::Equal => lhs.eq(rhs),
-        CmpOp::Unequal => lhs.binary(BinOper::Custom("!="), rhs),
-        CmpOp::Greater => lhs.gt(rhs),
-        CmpOp::GreaterEq => lhs.gte(rhs),
-        CmpOp::Less => lhs.lt(rhs),
-        CmpOp::LessEq => lhs.lte(rhs),
+    match comparator {
+        Comparator::Equal => lhs.eq(rhs),
+        Comparator::Ordered(OrderRelation::Greater) => lhs.gt(rhs),
+        Comparator::Ordered(OrderRelation::GreaterOrEqual) => lhs.gte(rhs),
+        Comparator::Ordered(OrderRelation::Less) => lhs.lt(rhs),
+        Comparator::Ordered(OrderRelation::LessOrEqual) => lhs.lte(rhs),
     }
 }
 
@@ -59,7 +58,8 @@ pub enum PatternIndexes {
 
 /// Test `target` against the portable restatement of `pattern`, a clause 4.9
 /// `RegExp` or a clause 5.7.2 `idPattern`, under the collation the index that
-/// answers it reads.
+/// answers it reads: matching it when asserted, and not matching it under a
+/// complement, which one String target makes `!~`.
 ///
 /// The restatement means the same under every collation, so the collation
 /// decides only which index can answer the test:
@@ -76,7 +76,7 @@ pub enum PatternIndexes {
 ///   Every trigram index column declares the database's default, and a test
 ///   it answers runs under it, so both sides classify alike.
 #[must_use]
-pub fn pattern(target: SimpleExpr, polarity: PatternPolarity, pattern: &Pattern, indexes: PatternIndexes) -> SimpleExpr {
+pub fn pattern(target: SimpleExpr, polarity: Polarity, pattern: &Pattern, indexes: PatternIndexes) -> SimpleExpr {
     let target = match (indexes, pattern.subject_start()) {
         (PatternIndexes::None, SubjectStart::Fixed | SubjectStart::Open) | (PatternIndexes::TrigramsAndByteOrder, SubjectStart::Fixed) => target,
         (PatternIndexes::Trigrams, SubjectStart::Fixed | SubjectStart::Open) | (PatternIndexes::TrigramsAndByteOrder, SubjectStart::Open) => {
@@ -85,17 +85,15 @@ pub fn pattern(target: SimpleExpr, polarity: PatternPolarity, pattern: &Pattern,
     };
     let restatement = Expr::val(pattern.portable().as_str());
     match polarity {
-        PatternPolarity::Match => target.posix_matches(restatement),
-        PatternPolarity::NotMatch => target.posix_not_matches(restatement),
+        Polarity::Asserted => target.posix_matches(restatement),
+        Polarity::Complement => target.posix_not_matches(restatement),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_ngsi_ld_query::filter::predicate::{OrderingOp, SetMembership};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
-    use pretty_assertions::assert_eq;
     use sea_query::{Query, SelectStatement};
 
     fn render(expr: SimpleExpr) -> SelectStatement {
@@ -111,35 +109,30 @@ mod tests {
         let (lhs, rhs) = operands();
         assert_statement_snapshot!(
             "operator-equality-is-the-one-operator-sql-spells-differently-from-clause-4-9",
-            render(compare(lhs, SetMembership::Within.as_cmp_op(), rhs))
-        );
-        assert_eq!(SetMembership::Within.ngsi_token(), "==");
-    }
-
-    #[test]
-    fn inequality_keeps_the_bang_equals_spelling() {
-        let (lhs, rhs) = operands();
-        assert_statement_snapshot!(
-            "operator-inequality-keeps-the-bang-equals-spelling",
-            render(compare(lhs, SetMembership::Outside.as_cmp_op(), rhs))
+            render(compare(lhs, Comparator::Equal, rhs))
         );
     }
 
     #[test]
     fn each_ordering_operator_renders_its_own_token() {
-        for (index, op) in [OrderingOp::Greater, OrderingOp::GreaterEq, OrderingOp::Less, OrderingOp::LessEq]
-            .into_iter()
-            .enumerate()
+        for (index, relation) in [
+            OrderRelation::Greater,
+            OrderRelation::GreaterOrEqual,
+            OrderRelation::Less,
+            OrderRelation::LessOrEqual,
+        ]
+        .into_iter()
+        .enumerate()
         {
             let (lhs, rhs) = operands();
             assert_statement_snapshot!(
                 format!("operator-each-ordering-operator-renders-its-own-token-{}", index + 1),
-                render(compare(lhs, op.as_cmp_op(), rhs))
+                render(compare(lhs, Comparator::Ordered(relation), rhs))
             );
         }
     }
 
-    fn pattern_on_stored(raw: &str, polarity: PatternPolarity, indexes: PatternIndexes) -> SelectStatement {
+    fn pattern_on_stored(raw: &str, polarity: Polarity, indexes: PatternIndexes) -> SelectStatement {
         let parsed = Pattern::parse(raw).expect("valid pattern");
         render(pattern(Expr::col(sea_query::Alias::new("stored")), polarity, &parsed, indexes))
     }
@@ -148,11 +141,11 @@ mod tests {
     fn a_pattern_predicate_renders_the_posix_operator_of_its_polarity() {
         assert_statement_snapshot!(
             "operator-a-pattern-predicate-renders-the-posix-operator-of-its-polarity-1",
-            pattern_on_stored("abc", PatternPolarity::Match, PatternIndexes::None)
+            pattern_on_stored("abc", Polarity::Asserted, PatternIndexes::None)
         );
         assert_statement_snapshot!(
             "operator-a-pattern-predicate-renders-the-posix-operator-of-its-polarity-2",
-            pattern_on_stored("abc", PatternPolarity::NotMatch, PatternIndexes::None)
+            pattern_on_stored("abc", Polarity::Complement, PatternIndexes::None)
         );
     }
 
@@ -161,7 +154,7 @@ mod tests {
     fn a_pattern_predicate_tests_the_portable_restatement() {
         assert_statement_snapshot!(
             "operator-a-pattern-predicate-tests-the-portable-restatement",
-            pattern_on_stored("(?i)čer", PatternPolarity::Match, PatternIndexes::None)
+            pattern_on_stored("(?i)čer", Polarity::Asserted, PatternIndexes::None)
         );
     }
 
@@ -177,7 +170,7 @@ mod tests {
             .map(|raw| (*raw, PatternIndexes::TrigramsAndByteOrder))
             .chain(OPEN.iter().chain(&FIXED).map(|raw| (*raw, PatternIndexes::Trigrams)));
         for (index, (raw, indexes)) in answered.enumerate() {
-            for (side, polarity) in [PatternPolarity::Match, PatternPolarity::NotMatch].into_iter().enumerate() {
+            for (side, polarity) in [Polarity::Asserted, Polarity::Complement].into_iter().enumerate() {
                 assert_statement_snapshot!(
                     format!(
                         "operator-a-pattern-a-trigram-index-answers-is-tested-under-the-database-default-{}-{}",
@@ -200,7 +193,7 @@ mod tests {
                     "operator-a-pattern-fixing-the-start-of-byte-ordered-text-keeps-the-column-collation-{}",
                     index + 1
                 ),
-                pattern_on_stored(raw, PatternPolarity::Match, PatternIndexes::TrigramsAndByteOrder)
+                pattern_on_stored(raw, Polarity::Asserted, PatternIndexes::TrigramsAndByteOrder)
             );
         }
     }
@@ -210,7 +203,7 @@ mod tests {
         for (index, raw) in OPEN.iter().chain(&FIXED).enumerate() {
             assert_statement_snapshot!(
                 format!("operator-a-pattern-no-index-answers-keeps-the-target-collation-{}", index + 1),
-                pattern_on_stored(raw, PatternPolarity::Match, PatternIndexes::None)
+                pattern_on_stored(raw, Polarity::Asserted, PatternIndexes::None)
             );
         }
     }

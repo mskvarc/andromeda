@@ -66,7 +66,7 @@ use andromeda_ngsi_ld_lexicon::{
     },
 };
 use andromeda_ngsi_ld_number::declared_number::DeclaredNumber;
-use andromeda_ngsi_ld_query::filter::scalar::Scalar;
+use andromeda_ngsi_ld_query::filter::reading::operand::Operand;
 use andromeda_ngsi_ld_vocabulary::keyword;
 use andromeda_postgresql_schema::name_dictionary::EntityTypeNames;
 use andromeda_postgresql_seaquery::{
@@ -79,7 +79,7 @@ use andromeda_postgresql_seaquery::{
 use andromeda_postgresql_stored_values::attribute_kind::AttributeKind;
 use sea_query::{CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Query, QueryStatementBuilder, SimpleExpr};
 
-/// Whether the structured value in `column` carries `scalar` as its clause 4.9
+/// Whether the structured value in `column` carries `operand` as its clause 4.9
 /// target value, `value_type` being the instance's `valueType` key.
 ///
 /// This is the `equal` operator over a structured target with no target
@@ -96,12 +96,12 @@ use sea_query::{CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Query, Que
 /// `@value` is JSON, no value node. Only a Property's and a `ListProperty`'s
 /// `valueType` declares their members (clause 4.5.2).
 #[must_use]
-pub fn carries_operand(column: &SimpleExpr, value_type: &SimpleExpr, family: &SimpleExpr, scalar: &Scalar) -> Condition {
+pub fn carries_operand(column: &SimpleExpr, value_type: &SimpleExpr, family: &SimpleExpr, operand: &Operand) -> Condition {
     let declaring = declaring_value_type(value_type, family);
     Condition::all()
         // clone: sea-query owns every operand, and one column is read by several tests
         .add(family.clone().ne(int_literal(i64::from(AttributeKind::JsonProperty.code()))))
-        .add(carried(column, &declaring, scalar))
+        .add(carried(column, &declaring, operand))
 }
 
 /// The `valueType` key that declares the members of the instance of the
@@ -115,19 +115,19 @@ fn declaring_value_type(value_type: &SimpleExpr, family: &SimpleExpr) -> SimpleE
 
 /// [`carries_operand`] once the instance's family holds a structured target,
 /// `value_type` being the `valueType` key that declares its members.
-fn carried(column: &SimpleExpr, value_type: &SimpleExpr, scalar: &Scalar) -> Condition {
-    match member_text(scalar) {
+fn carried(column: &SimpleExpr, value_type: &SimpleExpr, operand: &Operand) -> Condition {
+    match member_text(operand) {
         MemberText::Read { native, spellings } => {
             let probes = native
                 .into_iter()
                 .chain(spellings.into_iter().map(|text| cast(SeaExpr::val(text), PostgresType::Text)));
-            let candidate = probes.fold(Condition::any(), |candidate, operand| {
+            let candidate = probes.fold(Condition::any(), |candidate, probe| {
                 candidate
                     // clone: each element shape is built around its own copy of the operand
-                    .add(contains(column, bare_element(operand.clone())))
-                    .add(contains(column, value_element(operand)))
+                    .add(contains(column, bare_element(probe.clone())))
+                    .add(contains(column, value_element(probe)))
             });
-            Condition::all().add(candidate).add(some_member_equals(column, value_type, scalar))
+            Condition::all().add(candidate).add(some_member_equals(column, value_type, operand))
         }
         MemberText::Declared { form, text } => {
             let plain = Condition::any()
@@ -215,7 +215,7 @@ fn value_element(operand: SimpleExpr) -> SimpleExpr {
     jsonb_build_array(jsonb_build_object([text_literal(keyword::VALUE), operand]))
 }
 
-/// What a member equal to `scalar` holds.
+/// What a member equal to `operand` holds.
 ///
 /// Every operand carries an explicit cast: `jsonb_build_array` and
 /// `jsonb_build_object` are `VARIADIC "any"`, and an untyped placeholder in that
@@ -226,9 +226,9 @@ fn value_element(operand: SimpleExpr) -> SimpleExpr {
 /// it: `2` and `2.0` are one number there, as they are in the `value_number`
 /// column. A declared number is committed in the canonical lexical form of its
 /// datatype ([`NumberSpelling`]), of which there are two, often alike.
-fn member_text(scalar: &Scalar) -> MemberText {
-    match scalar {
-        Scalar::Number(number) => {
+fn member_text(operand: &Operand) -> MemberText {
+    match operand {
+        Operand::Number(number) => {
             // clone: the declared number the spellings are built from owns its value
             let declared = DeclaredNumber::Finite(number.clone());
             let mut spellings = vec![NumberSpelling::Decimal.spell(&declared)];
@@ -244,23 +244,23 @@ fn member_text(scalar: &Scalar) -> MemberText {
                 spellings,
             }
         }
-        Scalar::Bool(value) => MemberText::Read {
+        Operand::Boolean(value) => MemberText::Read {
             native: Some(cast(SeaExpr::val(*value), PostgresType::Boolean)),
             spellings: vec![value.to_string()],
         },
-        Scalar::Str(value) | Scalar::Uri(value) => MemberText::Read {
+        Operand::Text(value) => MemberText::Read {
             native: None,
             spellings: vec![value.as_str().to_owned()],
         },
-        Scalar::DateTime(instant) => MemberText::Declared {
+        Operand::DateTime(instant) => MemberText::Declared {
             form: TimeValueForm::DateTime,
             text: instant_text(*instant),
         },
-        Scalar::Date(date) => MemberText::Declared {
+        Operand::Date(date) => MemberText::Declared {
             form: TimeValueForm::Date,
             text: NgsiLdDate::from(*date).to_string(),
         },
-        Scalar::Time(time) => MemberText::Declared {
+        Operand::Time(time) => MemberText::Declared {
             form: TimeValueForm::Time,
             text: time_of_day_text(*time),
         },
@@ -271,7 +271,10 @@ fn member_text(scalar: &Scalar) -> MemberText {
 mod tests {
     use crate::q_predicate::structured_target::carries_operand;
     use andromeda_ngsi_ld_number::JsonNumber;
-    use andromeda_ngsi_ld_query::filter::scalar::{Scalar, parse_date, parse_date_time, parse_time};
+    use andromeda_ngsi_ld_query::filter::{
+        reading::operand::Operand,
+        scalar::{parse_date, parse_date_time, parse_time},
+    };
     use andromeda_postgresql_seaquery::{assert_statement_snapshot, literal::int_literal};
     use sea_query::{Alias, Condition, Expr as SeaExpr, Query, SelectStatement, SimpleExpr};
 
@@ -291,7 +294,7 @@ mod tests {
         // Clause 4.9 names an `objectList` of bare URIs and a `valueList` of
         // value nodes as targets of the same Query Term, so one comparison has
         // to reach both element shapes.
-        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Str("red".to_owned())));
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Operand::Text("red".to_owned())));
         assert_statement_snapshot!("structured-target-an-unselected-target-probes-both-element-shapes", statement);
     }
 
@@ -304,14 +307,14 @@ mod tests {
             &column(),
             &value_type(),
             &family(),
-            &Scalar::Number(JsonNumber::from(9_007_199_254_740_993_i64)),
+            &Operand::Number(JsonNumber::from(9_007_199_254_740_993_i64)),
         ));
         assert_statement_snapshot!("structured-target-a-number-operand-binds-numeric-so-json-compares-it-as-a-number", statement);
     }
 
     #[test]
     fn a_boolean_operand_binds_a_native_boolean() {
-        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Bool(true)));
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Operand::Boolean(true)));
         assert_statement_snapshot!("structured-target-a-boolean-operand-binds-a-native-boolean", statement);
     }
 
@@ -321,7 +324,7 @@ mod tests {
     #[test]
     fn a_number_operand_is_probed_as_each_canonical_spelling_and_read_back() {
         let number = "1E-7".parse::<JsonNumber>().expect("a JSON number");
-        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Number(number)));
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Operand::Number(number)));
         assert_statement_snapshot!(
             "structured-target-a-number-operand-is-probed-as-each-canonical-spelling-and-read-back",
             statement
@@ -330,7 +333,7 @@ mod tests {
 
     #[test]
     fn a_number_spelled_alike_in_both_forms_is_probed_once_as_text() {
-        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Number(JsonNumber::from(4))));
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Operand::Number(JsonNumber::from(4))));
         assert_statement_snapshot!("structured-target-a-number-spelled-alike-in-both-forms-is-probed-once-as-text", statement);
     }
 
@@ -338,7 +341,7 @@ mod tests {
     /// so containment of the text only narrows the candidates.
     #[test]
     fn a_string_operand_reads_the_members_of_a_candidate_under_their_declarations() {
-        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Str("4".to_owned())));
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Operand::Text("4".to_owned())));
         assert_statement_snapshot!(
             "structured-target-a-string-operand-reads-the-members-of-a-candidate-under-their-declarations",
             statement
@@ -359,7 +362,7 @@ mod tests {
     /// operand.
     #[test]
     fn a_json_property_carries_no_operand() {
-        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Number(JsonNumber::from(4))));
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Operand::Number(JsonNumber::from(4))));
         assert_statement_snapshot!("structured-target-a-json-property-carries-no-operand", statement);
     }
 
@@ -367,7 +370,7 @@ mod tests {
     /// declares their members; no other family's does.
     #[test]
     fn only_a_property_or_a_list_property_value_type_declares_the_members() {
-        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Number(JsonNumber::from(4))));
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Operand::Number(JsonNumber::from(4))));
         assert_statement_snapshot!(
             "structured-target-only-a-property-or-a-list-property-value-type-declares-the-members",
             statement
@@ -380,21 +383,21 @@ mod tests {
     #[test]
     fn a_date_time_operand_is_contained_once_as_a_declared_member() {
         let instant = parse_date_time("2024-01-01T00:00:00.000Z").expect("valid date-time");
-        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::DateTime(instant)));
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Operand::DateTime(instant)));
         assert_statement_snapshot!("structured-target-a-date-time-operand-is-contained-once-as-a-declared-member", statement);
     }
 
     #[test]
     fn a_time_operand_is_contained_in_its_served_spelling() {
         let time = parse_time("12:00:00,5Z").expect("valid time");
-        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Time(time)));
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Operand::Time(time)));
         assert_statement_snapshot!("structured-target-a-time-operand-is-contained-in-its-served-spelling", statement);
     }
 
     #[test]
     fn a_date_operand_is_contained_as_its_one_text() {
         let date = parse_date("2024-01-01").expect("valid date");
-        let statement = render(carries_operand(&column(), &value_type(), &family(), &Scalar::Date(date)));
+        let statement = render(carries_operand(&column(), &value_type(), &family(), &Operand::Date(date)));
         assert_statement_snapshot!("structured-target-a-date-operand-is-contained-as-its-one-text", statement);
     }
 }

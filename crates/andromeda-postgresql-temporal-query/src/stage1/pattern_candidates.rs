@@ -9,7 +9,7 @@
 //! rows holding a Temporal Evolution.
 
 use crate::stage1::queued_candidates::queued_candidates;
-use andromeda_ngsi_ld_query::{filter::predicate::PatternPolarity, pattern::Pattern};
+use andromeda_ngsi_ld_query::{filter::reading::value_test::Polarity, pattern::Pattern};
 use andromeda_postgresql_query::{
     history_source::{HistoryBranch, PendingEntries},
     operator::{PatternIndexes, pattern as pattern_predicate},
@@ -33,7 +33,7 @@ pub(super) fn pattern_candidates(branch: &HistoryBranch, pattern: &Pattern) -> S
         .from(qualified(branch.schema(), Entities::Table))
         .and_where(pattern_predicate(
             Expr::col((Entities::Table, Entities::Id)),
-            PatternPolarity::Match,
+            Polarity::Asserted,
             pattern,
             PatternIndexes::TrigramsAndByteOrder,
         ))
@@ -44,7 +44,7 @@ pub(super) fn pattern_candidates(branch: &HistoryBranch, pattern: &Pattern) -> S
             let mut queued = queued_candidates(branch);
             queued.and_where(pattern_predicate(
                 Expr::col(TemporalAppendIntents::EntityId),
-                PatternPolarity::Match,
+                Polarity::Asserted,
                 pattern,
                 PatternIndexes::None,
             ));

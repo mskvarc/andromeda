@@ -35,7 +35,14 @@ use crate::{
     },
     query_names::QueryNames,
 };
-use andromeda_ngsi_ld_query::filter::{expression::Expr, language_matching::LanguageMatching, predicate::Predicate};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_query::filter::reading::{
+    filter_reading::FilterReading,
+    scalar_test::ScalarTest,
+    term_reading::{TermReading, Test},
+    terminal::Terminal,
+    value_test::Polarity,
+};
 use sea_query::SelectStatement;
 use std::slice::from_ref;
 
@@ -57,69 +64,88 @@ pub enum CandidateRead {
     Linked,
 }
 
-/// One term of a `q` expression's top-level conjunction and the candidates
-/// the index path reads for it.
+/// One term of a `q` filter's top-level conjunction and the candidates the
+/// index path reads for it.
 #[derive(Debug)]
 pub struct KeyedCandidates<'q> {
     /// The term the candidates answer, which the page leaves out of the
     /// filter it applies to them.
-    pub term: &'q Predicate,
+    pub term: &'q TermReading,
     /// `SELECT "entity_key" …`, every candidate.
     pub select: SelectStatement,
     /// What reading one candidate costs.
     pub read: CandidateRead,
 }
 
-/// The first term of `expr`'s top-level conjunction the index path answers,
-/// with its candidates read in the branch `rows` names.
+/// The first term of the top-level conjunction of `reading` the index path
+/// answers, with its candidates read in the branch `rows` names.
 ///
 /// Only a conjunct can narrow the page to its candidates: an entity a
-/// disjunction keeps for another arm need not be one of them. A target
-/// language selects `languageMap` keys by `matching`.
+/// disjunction keeps for another arm need not be one of them.
 #[must_use]
-pub fn keyed_candidates<'q>(expr: &'q Expr, rows: &EntityRowRefs, names: &QueryNames, matching: LanguageMatching) -> Option<KeyedCandidates<'q>> {
-    let conjuncts = match expr {
-        Expr::And(terms) => terms.as_slice(),
-        Expr::Or(_) | Expr::Pred(_) => from_ref(expr),
+pub fn keyed_candidates<'q>(reading: &'q FilterReading, rows: &EntityRowRefs, names: &QueryNames) -> Option<KeyedCandidates<'q>> {
+    let conjuncts = match reading {
+        FilterReading::All(children) => children.as_slice(),
+        FilterReading::Any(_) | FilterReading::Term(_) => from_ref(reading),
     };
-    conjuncts.iter().find_map(|term| match term {
-        Expr::Pred(pred) => candidates_of(pred, rows, names, matching).map(|(select, read)| KeyedCandidates { term: pred, select, read }),
-        Expr::And(_) | Expr::Or(_) => None,
+    conjuncts.iter().find_map(|conjunct| match conjunct {
+        FilterReading::Term(term) => candidates_of(term, rows, names).map(|(select, read)| KeyedCandidates { term, select, read }),
+        FilterReading::All(_) | FilterReading::Any(_) => None,
     })
 }
 
 /// The candidate statement of one term and what reading it costs, `None`
 /// when no index answers it.
 ///
-/// A hop of any operator is read inward, whatever its inner term compares.
-/// `!~=` never narrows: an Entity holds when none of its strings match, which
-/// no index of matching strings can enumerate.
-fn candidates_of(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames, matching: LanguageMatching) -> Option<(SelectStatement, CandidateRead)> {
+/// A hop is read inward, whatever its inner term compares. A complement
+/// (`!=`, `!~=`) never narrows: an Entity holds when none of its values pass
+/// the test, which no index of passing values can enumerate.
+fn candidates_of(term: &TermReading, rows: &EntityRowRefs, names: &QueryNames) -> Option<(SelectStatement, CandidateRead)> {
     let rechecked = |select| (select, CandidateRead::Rechecked);
     let ranged = |select| (select, CandidateRead::Ranged);
     let probed = |select| (select, CandidateRead::Probed);
-    if pred.path().is_linked() {
-        return hop_candidates(pred, rows, names, matching).map(|select| (select, CandidateRead::Linked));
+    if !term.hops().is_empty() {
+        return hop_candidates(term, rows, names).map(|select| (select, CandidateRead::Linked));
     }
-    match pred {
-        Predicate::Equality { .. } => equality_candidates(pred, rows, names)
-            .map(rechecked)
-            .or_else(|| ordering_candidates(pred, rows, names).map(ranged)),
-        Predicate::Ordering { .. } => ordering_candidates(pred, rows, names).map(ranged),
-        Predicate::MatchPattern { .. } => pattern_candidates(pred, rows, names).map(rechecked),
-        Predicate::Exists(_) => existence_candidates(pred, rows, names).map(probed),
-        Predicate::NotMatchPattern { .. } => None,
+    let value = match term.test() {
+        Test::Exists => return existence_candidates(own_value_attribute(term)?, rows, names).map(probed),
+        Test::Value(value) => value,
+    };
+    match (value.test(), value.polarity()) {
+        (ScalarTest::EqualsAny(operands), Polarity::Asserted) => match operands.as_slice() {
+            [operand] => equality_candidates(term, operand, rows, names).map(rechecked),
+            [] | [_, _, ..] => None,
+        },
+        (ScalarTest::Ordered { .. } | ScalarTest::Within(_), Polarity::Asserted) => {
+            ordering_candidates(own_value_attribute(term)?, value.test(), rows, names).map(ranged)
+        }
+        (ScalarTest::Matches(pattern), Polarity::Asserted) => pattern_candidates(own_value_attribute(term)?, value, pattern, rows, names).map(rechecked),
+        (ScalarTest::Unsatisfiable, Polarity::Asserted)
+        | (
+            ScalarTest::EqualsAny(_) | ScalarTest::Ordered { .. } | ScalarTest::Within(_) | ScalarTest::Matches(_) | ScalarTest::Unsatisfiable,
+            Polarity::Complement,
+        ) => None,
     }
+}
+
+/// The attribute whose own value `term` tests, `None` when it tests a value
+/// past a hop, below a sub-attribute or inside the value: those are elements
+/// of an instance, which the indexes over a row's own value do not read.
+fn own_value_attribute(term: &TermReading) -> Option<&AttributeName> {
+    (term.hops().is_empty() && term.sub_attributes().is_empty() && matches!(term.terminal(), Terminal::OwnValue)).then(|| term.attribute())
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         entity_row_refs::EntityRowRefs,
-        q_predicate::keyed_term::{CandidateRead, keyed_candidates},
+        q_predicate::{
+            keyed_term::{CandidateRead, keyed_candidates},
+            lowered_filter::reading_of,
+        },
         query_names::QueryNames,
     };
-    use andromeda_ngsi_ld_query::filter::{language_matching::LanguageMatching, parser::parse};
+
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::assert_eq;
@@ -137,13 +163,11 @@ mod tests {
     }
 
     fn candidates(q: &str) -> Option<SelectStatement> {
-        let expr = parse(q).expect("parse q");
-        keyed_candidates(&expr, &EntityRowRefs::unaliased(None), &names(), LanguageMatching::TagEquality).map(|keyed| keyed.select)
+        keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names()).map(|keyed| keyed.select)
     }
 
     fn read(q: &str) -> Option<CandidateRead> {
-        let expr = parse(q).expect("parse q");
-        keyed_candidates(&expr, &EntityRowRefs::unaliased(None), &names(), LanguageMatching::TagEquality).map(|keyed| keyed.read)
+        keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names()).map(|keyed| keyed.read)
     }
 
     /// A trigram or key match is rechecked against the value; a range of the

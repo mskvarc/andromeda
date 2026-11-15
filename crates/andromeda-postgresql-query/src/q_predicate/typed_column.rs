@@ -38,7 +38,7 @@ use crate::{
     q_predicate::{instance_row::InstanceRow, string_ordering::ordered_string, value_column::ValueColumn},
 };
 use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
-use andromeda_ngsi_ld_query::filter::{predicate::CmpOp, scalar::Scalar};
+use andromeda_ngsi_ld_query::filter::reading::{comparator::Comparator, operand::Operand};
 use andromeda_postgresql_seaquery::{literal::false_literal, numeric_special::is_not_nan};
 use andromeda_postgresql_stored_values::{
     value_kind::ValueKind,
@@ -46,7 +46,7 @@ use andromeda_postgresql_stored_values::{
 };
 use sea_query::{Expr as SeaExpr, ExprTrait, SimpleExpr};
 
-/// Compare one scalar against the typed column that holds values of its kind.
+/// Compare one operand against the typed column that holds values of its kind.
 ///
 /// Every arm names exactly one typed column and compares it to a bound value, so
 /// each comparison is the shape the partial index over that column is predicated
@@ -58,49 +58,49 @@ use sea_query::{Expr as SeaExpr, ExprTrait, SimpleExpr};
 /// its `value_kind`.
 ///
 /// A row whose value lives in another column therefore yields NULL, not FALSE,
-/// which is the reading clause 4.9 wants under every operator compiled here.
-/// `equal` and the ordering operators all state it the same way: "If there is
-/// no equality between the target value data type and the Query Term value data
-/// type, then it shall be considered as not matching", and an unknown that the
-/// enclosing `EXISTS` drops is exactly that.
+/// which is the reading clause 4.9 wants under every comparison compiled here.
+/// Equality and the orderings state it the same way: "If there is no equality
+/// between the target value data type and the Query Term value data type, then
+/// it shall be considered as not matching", and an unknown that the enclosing
+/// `EXISTS` drops is exactly that.
 ///
-/// `unequal` is the one operator that reads a datatype difference the other way,
-/// and it is not compiled here: clause 4.9 makes such a target *unequal*, so
-/// `crate::q_predicate::projection` compiles it as the total negation of the
-/// whole `equal` condition rather than as a per-column `!=` that a NULL would
+/// Unequal reads a datatype difference the other way, and no comparison here
+/// is unequal: clause 4.9 makes such a target *unequal*, so
+/// `crate::q_predicate::projection` compiles `!=` as the total negation of the
+/// whole equality condition rather than as a per-column `!=` that a NULL would
 /// swallow.
 #[must_use]
-pub fn typed_column_condition(scalar: &Scalar, op: CmpOp, row: InstanceRow) -> SimpleExpr {
+pub fn typed_column_condition(operand: &Operand, comparator: Comparator, row: InstanceRow) -> SimpleExpr {
     let on_field = |field: ValueField| row.value(ValueColumn::Field(field));
-    match scalar {
-        Scalar::Number(number) => on_kind(ValueKind::Number, row, |field| {
+    match operand {
+        Operand::Number(number) => on_kind(ValueKind::Number, row, |field| {
             // SeaQuery owns every value in its AST, so this is the one necessary
             // clone between the borrowed query domain value and the NUMERIC bind.
-            let compared = compare(on_field(field), op, SeaExpr::val(number.decimal().clone()));
-            number_condition(compared, op, on_field(field))
+            let compared = compare(on_field(field), comparator, SeaExpr::val(number.decimal().clone()));
+            number_condition(compared, comparator, on_field(field))
         }),
-        Scalar::Bool(value) => on_kind(ValueKind::Boolean, row, |field| compare(on_field(field), op, SeaExpr::val(*value))),
-        Scalar::Str(value) | Scalar::Uri(value) => {
-            let string_test = string_condition(scalar, value.as_str(), op, row);
-            match relationship_object_is_comparable(op) {
+        Operand::Boolean(value) => on_kind(ValueKind::Boolean, row, |field| compare(on_field(field), comparator, SeaExpr::val(*value))),
+        Operand::Text(value) => {
+            let string_test = string_condition(operand, value.as_str(), comparator, row);
+            match relationship_object_is_comparable(comparator) {
                 RelationshipObjects::Comparable => {
                     // Equality is byte identity, so a stored object equal to the
                     // operand sits in the one column the operand would be placed
                     // in, and only that column is read.
                     let uri_test = on_kind(ValueKind::Uri, row, |field| {
-                        compare(row.value(ValueColumn::holding(field, value.as_str())), op, SeaExpr::val(value.as_str()))
+                        compare(row.value(ValueColumn::holding(field, value.as_str())), comparator, SeaExpr::val(value.as_str()))
                     });
                     string_test.or(uri_test)
                 }
                 RelationshipObjects::NonMatching => string_test,
             }
         }
-        Scalar::DateTime(value) => on_kind(ValueKind::DateTime, row, |field| compare(on_field(field), op, SeaExpr::val(*value))),
-        Scalar::Date(value) => on_kind(ValueKind::Date, row, |field| {
-            compare(on_field(field), op, SeaExpr::val(NgsiLdDate::from(*value).to_string()))
+        Operand::DateTime(value) => on_kind(ValueKind::DateTime, row, |field| compare(on_field(field), comparator, SeaExpr::val(*value))),
+        Operand::Date(value) => on_kind(ValueKind::Date, row, |field| {
+            compare(on_field(field), comparator, SeaExpr::val(NgsiLdDate::from(*value).to_string()))
         }),
-        Scalar::Time(value) => on_kind(ValueKind::Time, row, |field| {
-            compare(on_field(field), op, SeaExpr::val(NgsiLdTime::normalise(*value).to_string()))
+        Operand::Time(value) => on_kind(ValueKind::Time, row, |field| {
+            compare(on_field(field), comparator, SeaExpr::val(NgsiLdTime::normalise(*value).to_string()))
         }),
     }
 }
@@ -134,8 +134,8 @@ fn on_kind(kind: ValueKind, row: InstanceRow, compared: impl FnOnce(ValueField) 
     }
 }
 
-/// A comparison of the number column, under `op`, that leaves `NaN` out of
-/// every ordering.
+/// A comparison of the number column, by `comparator`, that leaves `NaN` out
+/// of every ordering.
 ///
 /// A declared `xsd:float` or `xsd:double` holds `INF`, `-INF` and `NaN` as the
 /// `numeric` values PostgreSQL orders `-Infinity` below every finite value,
@@ -143,10 +143,10 @@ fn on_kind(kind: ValueKind, row: InstanceRow, compared: impl FnOnce(ValueField) 
 /// already order as XSD orders them. `NaN` is unordered, so it must fail every
 /// ordering; it never equals an operand, which is always finite, so equality
 /// needs no guard, and `!=`, the total negation of `==`, holds for it.
-fn number_condition(compared: SimpleExpr, op: CmpOp, column: SimpleExpr) -> SimpleExpr {
-    match op {
-        CmpOp::Equal | CmpOp::Unequal => compared,
-        CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => compared.and(is_not_nan(column)),
+fn number_condition(compared: SimpleExpr, comparator: Comparator, column: SimpleExpr) -> SimpleExpr {
+    match comparator {
+        Comparator::Equal => compared,
+        Comparator::Ordered(_) => compared.and(is_not_nan(column)),
     }
 }
 
@@ -160,26 +160,26 @@ fn number_condition(compared: SimpleExpr, op: CmpOp, column: SimpleExpr) -> Simp
 /// on either side of the operand; a row whose value is in the other column
 /// yields NULL for that arm, which the disjunction absorbs. An ordering
 /// compares under the collation [`ordered_string`] picks.
-fn string_condition(scalar: &Scalar, value: &str, op: CmpOp, row: InstanceRow) -> SimpleExpr {
-    on_kind(ValueKind::String, row, |field| match op {
-        CmpOp::Equal | CmpOp::Unequal => compare(row.value(ValueColumn::holding(field, value)), op, SeaExpr::val(value)),
-        CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => {
-            let ordered = |column: ValueColumn| compare(ordered_string(row.value(column), scalar, op), op, SeaExpr::val(value));
+fn string_condition(operand: &Operand, value: &str, comparator: Comparator, row: InstanceRow) -> SimpleExpr {
+    on_kind(ValueKind::String, row, |field| match comparator {
+        Comparator::Equal => compare(row.value(ValueColumn::holding(field, value)), comparator, SeaExpr::val(value)),
+        Comparator::Ordered(_) => {
+            let ordered = |column: ValueColumn| compare(ordered_string(row.value(column), operand, comparator), comparator, SeaExpr::val(value));
             row.columns(field).map(ordered).reduce(ExprTrait::or).unwrap_or_else(false_literal)
         }
     })
 }
 
-/// Whether a Relationship's object is a comparison target under one operator.
+/// Whether a Relationship's object is a comparison target of one comparison.
 ///
 /// `value_uri` and `value_long_uri` hold Relationship
 /// objects and nothing else, so probing them is exactly the decision of whether
 /// the predicate may match a Relationship.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RelationshipObjects {
-    /// The operator admits a Relationship's object as a comparison target.
+    /// The comparison admits a Relationship's object as a target.
     Comparable,
-    /// Clause 4.9 requires a Relationship operand to non-match this operator.
+    /// Clause 4.9 requires a Relationship operand to non-match the comparison.
     NonMatching,
 }
 
@@ -196,10 +196,10 @@ enum RelationshipObjects {
 /// the containment test in
 /// [`crate::q_predicate::structured_target`] is what compares a URI Query Term
 /// against them.
-const fn relationship_object_is_comparable(op: CmpOp) -> RelationshipObjects {
-    match op {
-        CmpOp::Equal | CmpOp::Unequal => RelationshipObjects::Comparable,
-        CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => RelationshipObjects::NonMatching,
+const fn relationship_object_is_comparable(comparator: Comparator) -> RelationshipObjects {
+    match comparator {
+        Comparator::Equal => RelationshipObjects::Comparable,
+        Comparator::Ordered(_) => RelationshipObjects::NonMatching,
     }
 }
 
@@ -210,16 +210,28 @@ mod tests {
         typed_column::typed_column_condition,
     };
     use andromeda_ngsi_ld_query::filter::{
-        predicate::CmpOp,
-        scalar::{Scalar, parse_date, parse_time},
+        reading::{comparator::Comparator, operand::Operand, order_relation::OrderRelation},
+        scalar::{parse_date, parse_time},
     };
     use andromeda_postgresql_schema::{string_value_column::INDEXED_STRING_BYTE_LIMIT, uri_value_column::INDEXED_URI_BYTE_LIMIT};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::{Query, SelectStatement, SimpleExpr};
 
+    /// The four orderings, in the order the ordering operators are written.
+    const ORDERINGS: [Comparator; 4] = [
+        Comparator::Ordered(OrderRelation::Greater),
+        Comparator::Ordered(OrderRelation::GreaterOrEqual),
+        Comparator::Ordered(OrderRelation::Less),
+        Comparator::Ordered(OrderRelation::LessOrEqual),
+    ];
+
     /// The comparison over a current row.
-    fn current(scalar: &Scalar, op: CmpOp) -> SimpleExpr {
-        typed_column_condition(scalar, op, InstanceRow::Current)
+    fn current(operand: &Operand, comparator: Comparator) -> SimpleExpr {
+        typed_column_condition(operand, comparator, InstanceRow::Current)
+    }
+
+    fn text(value: impl Into<String>) -> Operand {
+        Operand::Text(value.into())
     }
 
     fn render(expr: SimpleExpr) -> SelectStatement {
@@ -228,13 +240,10 @@ mod tests {
 
     #[test]
     fn each_operand_kind_names_the_column_the_write_path_projects_it_into() {
-        for (index, scalar) in [Scalar::Number(1.into()), Scalar::Bool(true), Scalar::Str("red".to_owned())]
-            .into_iter()
-            .enumerate()
-        {
+        for (index, operand) in [Operand::Number(1.into()), Operand::Boolean(true), text("red")].into_iter().enumerate() {
             assert_statement_snapshot!(
                 format!("typed-column-each-operand-kind-names-the-column-the-write-path-projects-it-into-{}", index + 1),
-                render(current(&scalar, CmpOp::Equal))
+                render(current(&operand, Comparator::Equal))
             );
         }
     }
@@ -244,14 +253,11 @@ mod tests {
     /// and nothing else.
     #[test]
     fn only_the_equality_operators_reach_relationship_objects() {
-        let scalar = Scalar::Str("urn:ngsi-ld:Person:1".to_owned());
-        for (index, op) in [CmpOp::Equal, CmpOp::Unequal, CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq]
-            .into_iter()
-            .enumerate()
-        {
+        let operand = text("urn:ngsi-ld:Person:1");
+        for (index, comparator) in [Comparator::Equal].into_iter().chain(ORDERINGS).enumerate() {
             assert_statement_snapshot!(
                 format!("typed-column-only-the-equality-operators-reach-relationship-objects-{}", index + 1),
-                render(current(&scalar, op))
+                render(current(&operand, comparator))
             );
         }
     }
@@ -261,16 +267,13 @@ mod tests {
     /// alone, and reads it for both number kinds.
     #[test]
     fn a_number_ordering_leaves_not_a_number_out_and_equality_does_not_guard() {
-        for (index, op) in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq, CmpOp::Equal]
-            .into_iter()
-            .enumerate()
-        {
+        for (index, comparator) in ORDERINGS.into_iter().chain([Comparator::Equal]).enumerate() {
             assert_statement_snapshot!(
                 format!(
                     "typed-column-a-number-ordering-leaves-not-a-number-out-and-equality-does-not-guard-{}",
                     index + 1
                 ),
-                render(current(&Scalar::Number(3.into()), op))
+                render(current(&Operand::Number(3.into()), comparator))
             );
         }
     }
@@ -279,18 +282,10 @@ mod tests {
     /// equivalent to the character, so the operand is compared as written.
     #[test]
     fn a_percent_encoded_relationship_operand_is_compared_as_written() {
-        for (index, scalar) in [
-            Scalar::Str("urn:ngsi-ld%3ABuilding%3A1".to_owned()),
-            Scalar::Uri("urn:ngsi-ld%3ABuilding%3A1".to_owned()),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            assert_statement_snapshot!(
-                format!("typed-column-a-percent-encoded-relationship-operand-is-compared-as-written-{}", index + 1),
-                render(current(&scalar, CmpOp::Equal))
-            );
-        }
+        assert_statement_snapshot!(
+            "typed-column-a-percent-encoded-relationship-operand-is-compared-as-written",
+            render(current(&text("urn:ngsi-ld%3ABuilding%3A1"), Comparator::Equal))
+        );
     }
 
     /// A Relationship object past the B-tree bound is projected into
@@ -298,20 +293,18 @@ mod tests {
     /// column and never `value_uri`, where no such object can be.
     #[test]
     fn a_uri_equality_past_the_limit_reads_only_the_overflow_uri_column() {
-        let long = Scalar::Str(format!("urn:ngsi-ld:Person:{}", "a".repeat(6000)));
-        for (index, op) in [CmpOp::Equal, CmpOp::Unequal].into_iter().enumerate() {
-            assert_statement_snapshot!(
-                format!("typed-column-a-uri-equality-past-the-limit-reads-only-the-overflow-uri-column-{}", index + 1),
-                render(current(&long, op))
-            );
-        }
+        let long = text(format!("urn:ngsi-ld:Person:{}", "a".repeat(6000)));
+        assert_statement_snapshot!(
+            "typed-column-a-uri-equality-past-the-limit-reads-only-the-overflow-uri-column",
+            render(current(&long, Comparator::Equal))
+        );
     }
 
     #[test]
     fn a_uri_equality_at_the_limit_reads_only_the_indexed_uri_column() {
         let prefix = "urn:ngsi-ld:Person:";
         let at_limit = format!("{prefix}{}", "a".repeat(INDEXED_URI_BYTE_LIMIT - prefix.len()));
-        let statement = render(current(&Scalar::Str(at_limit), CmpOp::Equal));
+        let statement = render(current(&text(at_limit), Comparator::Equal));
         assert_statement_snapshot!("typed-column-a-uri-equality-at-the-limit-reads-only-the-indexed-uri-column", statement);
     }
 
@@ -320,7 +313,7 @@ mod tests {
     #[test]
     fn a_long_uri_equality_over_history_reads_the_one_history_uri_column() {
         let long = format!("urn:ngsi-ld:Person:{}", "a".repeat(6000));
-        let statement = render(typed_column_condition(&Scalar::Str(long), CmpOp::Equal, InstanceRow::History));
+        let statement = render(typed_column_condition(&text(long), Comparator::Equal, InstanceRow::History));
         assert_statement_snapshot!("typed-column-a-long-uri-equality-over-history-reads-the-one-history-uri-column", statement);
     }
 
@@ -329,8 +322,8 @@ mod tests {
     #[test]
     fn an_element_string_ordering_reads_its_one_string_field() {
         let statement = render(typed_column_condition(
-            &Scalar::Str("m".to_owned()),
-            CmpOp::Greater,
+            &text("m"),
+            Comparator::Ordered(OrderRelation::Greater),
             InstanceRow::Element(ElementLevel::at(0)),
         ));
         assert_statement_snapshot!("typed-column-an-element-string-ordering-reads-its-one-string-field", statement);
@@ -338,26 +331,26 @@ mod tests {
 
     #[test]
     fn a_short_string_equality_reads_only_the_indexed_column() {
-        let statement = render(current(&Scalar::Str("red".to_owned()), CmpOp::Equal));
+        let statement = render(current(&text("red"), Comparator::Equal));
         assert_statement_snapshot!("typed-column-a-short-string-equality-reads-only-the-indexed-column", statement);
     }
 
     #[test]
     fn a_string_equality_past_the_limit_reads_only_the_overflow_column() {
         let long = "a".repeat(INDEXED_STRING_BYTE_LIMIT + 1);
-        let statement = render(current(&Scalar::Str(long), CmpOp::Equal));
+        let statement = render(current(&text(long), Comparator::Equal));
         assert_statement_snapshot!("typed-column-a-string-equality-past-the-limit-reads-only-the-overflow-column", statement);
     }
 
     #[test]
     fn string_ordering_reads_both_string_columns_and_never_relationship_objects() {
-        for (index, op) in [CmpOp::Greater, CmpOp::GreaterEq, CmpOp::Less, CmpOp::LessEq].into_iter().enumerate() {
+        for (index, comparator) in ORDERINGS.into_iter().enumerate() {
             assert_statement_snapshot!(
                 format!(
                     "typed-column-string-ordering-reads-both-string-columns-and-never-relationship-objects-{}",
                     index + 1
                 ),
-                render(current(&Scalar::Str("m".to_owned()), op))
+                render(current(&text("m"), comparator))
             );
         }
     }
@@ -366,12 +359,10 @@ mod tests {
     /// equality keeps the byte order of the column and its index.
     #[test]
     fn a_string_equality_compares_under_the_column_byte_order() {
-        for (index, op) in [CmpOp::Equal, CmpOp::Unequal].into_iter().enumerate() {
-            assert_statement_snapshot!(
-                format!("typed-column-a-string-equality-compares-under-the-column-byte-order-{}", index + 1),
-                render(current(&Scalar::Str("m".to_owned()), op))
-            );
-        }
+        assert_statement_snapshot!(
+            "typed-column-a-string-equality-compares-under-the-column-byte-order",
+            render(current(&text("m"), Comparator::Equal))
+        );
     }
 
     /// History keeps a String of any length in `value_string`, so a long
@@ -379,7 +370,7 @@ mod tests {
     #[test]
     fn a_long_string_equality_over_history_reads_the_one_history_string_column() {
         let long = "a".repeat(INDEXED_STRING_BYTE_LIMIT + 1);
-        let statement = render(typed_column_condition(&Scalar::Str(long), CmpOp::Equal, InstanceRow::History));
+        let statement = render(typed_column_condition(&text(long), Comparator::Equal, InstanceRow::History));
         assert_statement_snapshot!(
             "typed-column-a-long-string-equality-over-history-reads-the-one-history-string-column",
             statement
@@ -390,15 +381,15 @@ mod tests {
     fn date_and_time_operands_never_read_the_overflow_column() {
         let date = parse_date("2024-01-15").expect("a date");
         let time = parse_time("12:00:00Z").expect("a time");
-        for (scalar_index, scalar) in [Scalar::Date(date), Scalar::Time(time)].into_iter().enumerate() {
-            for (op_index, op) in [CmpOp::Equal, CmpOp::Greater, CmpOp::Less].into_iter().enumerate() {
+        for (scalar_index, operand) in [Operand::Date(date), Operand::Time(time)].into_iter().enumerate() {
+            for (op_index, comparator) in [Comparator::Equal, ORDERINGS[0], ORDERINGS[2]].into_iter().enumerate() {
                 assert_statement_snapshot!(
                     format!(
                         "typed-column-date-and-time-operands-never-read-the-overflow-column-{}-{}",
                         scalar_index + 1,
                         op_index + 1
                     ),
-                    render(current(&scalar, op))
+                    render(current(&operand, comparator))
                 );
             }
         }
@@ -411,14 +402,14 @@ mod tests {
     fn a_time_operand_compares_one_fixed_width_text_under_its_value_kind() {
         let time = parse_time("12:00:00,5Z").expect("the comma compatibility form");
         for (row_index, row) in [InstanceRow::Current, InstanceRow::Element(ElementLevel::at(0))].into_iter().enumerate() {
-            for (op_index, op) in [CmpOp::Equal, CmpOp::Greater, CmpOp::LessEq].into_iter().enumerate() {
+            for (op_index, comparator) in [Comparator::Equal, ORDERINGS[0], ORDERINGS[3]].into_iter().enumerate() {
                 assert_statement_snapshot!(
                     format!(
                         "typed-column-a-time-operand-compares-one-fixed-width-text-under-its-value-kind-{}-{}",
                         row_index + 1,
                         op_index + 1
                     ),
-                    render(typed_column_condition(&Scalar::Time(time), op, row))
+                    render(typed_column_condition(&Operand::Time(time), comparator, row))
                 );
             }
         }
@@ -427,7 +418,7 @@ mod tests {
     #[test]
     fn a_date_operand_reads_value_kind_8() {
         let date = parse_date("2024-01-15").expect("a date");
-        let statement = render(current(&Scalar::Date(date), CmpOp::Equal));
+        let statement = render(current(&Operand::Date(date), Comparator::Equal));
         assert_statement_snapshot!("typed-column-a-date-operand-reads-value-kind-8", statement);
     }
 
@@ -435,10 +426,10 @@ mod tests {
     /// `Time` the string column also holds.
     #[test]
     fn a_string_operand_reads_value_kind_2() {
-        for (index, op) in [CmpOp::Equal, CmpOp::Greater].into_iter().enumerate() {
+        for (index, comparator) in [Comparator::Equal, ORDERINGS[0]].into_iter().enumerate() {
             assert_statement_snapshot!(
                 format!("typed-column-a-string-operand-reads-value-kind-2-{}", index + 1),
-                render(current(&Scalar::Str("2024-01-15".to_owned()), op))
+                render(current(&text("2024-01-15"), comparator))
             );
         }
     }

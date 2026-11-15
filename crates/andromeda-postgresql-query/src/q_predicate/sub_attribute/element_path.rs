@@ -17,7 +17,7 @@
 
 use crate::q_predicate::instance_row::{ElementLevel, InstanceRow, ProbedRow};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, path::AttrPath};
+use andromeda_ngsi_ld_query::filter::reading::term_reading::TermReading;
 use andromeda_postgresql_schema::current::SubAttribute;
 use andromeda_postgresql_seaquery::unnest::{exists_in_positional_tree, first_in_positional_tree};
 use andromeda_postgresql_stored_form::expiry::unexpired;
@@ -27,7 +27,8 @@ use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
 /// The `parent` an element under the top-level instance itself carries.
 const INSTANCE_PARENT: i64 = 0;
 
-/// The stored location of a path's target element.
+/// The stored location of the instance a term's target element is, or is a
+/// member of.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ElementPath {
     /// The row the top-level instance is read from.
@@ -37,25 +38,33 @@ pub struct ElementPath {
     /// The dictionary key of each sub-attribute on the way down, outermost
     /// first; empty for the top-level instance itself.
     pub chain: Vec<AttributeNameKey>,
-    /// The member of the last instance the path ends on, if it ends on one.
-    pub field: Option<InstanceMetadata>,
 }
 
 impl ElementPath {
-    /// The element `path` addresses in the instances of `row`, or `None` when
-    /// one of its names was never recorded: no instance can then hold it.
+    /// The instance `term` addresses in the instances of `row`, its attribute
+    /// and its sub-attributes, or `None` when one of their names was never
+    /// recorded: no instance can then hold it.
     #[must_use]
-    pub fn resolve(path: &AttrPath, row: ProbedRow, attributes: &ResolvedNames<AttributeName>) -> Option<ElementPath> {
-        let attribute = attributes.get(&path.attr)?;
-        let (names, field) = match path.ending_member() {
-            Some((member, above)) => (above, Some(member)),
-            None => (path.sub_attrs.as_slice(), None),
-        };
-        let chain = names.iter().map(|name| attributes.get(name)).collect::<Option<Vec<_>>>()?;
-        Some(ElementPath { row, attribute, chain, field })
+    pub fn of_term(term: &TermReading, row: ProbedRow, attributes: &ResolvedNames<AttributeName>) -> Option<ElementPath> {
+        ElementPath::of_names(term.attribute(), term.sub_attributes(), row, attributes)
     }
 
-    /// The instance whose value (or member) the path's target is: the row for
+    /// The instance of `attribute` reached through `sub_attributes`, outermost
+    /// first, in the instances of `row`, or `None` when one of the names was
+    /// never recorded.
+    #[must_use]
+    pub fn of_names(
+        attribute: &AttributeName,
+        sub_attributes: &[AttributeName],
+        row: ProbedRow,
+        attributes: &ResolvedNames<AttributeName>,
+    ) -> Option<ElementPath> {
+        let attribute = attributes.get(attribute)?;
+        let chain = sub_attributes.iter().map(|name| attributes.get(name)).collect::<Option<Vec<_>>>()?;
+        Some(ElementPath { row, attribute, chain })
+    }
+
+    /// The instance whose value (or member) the term's target is: the row for
     /// an attribute or a member of it, else the last element of the chain.
     #[must_use]
     pub const fn holder(&self) -> InstanceRow {
@@ -135,6 +144,7 @@ mod tests {
             history_window::HistoryWindow,
             instance_row::{ElementLevel, InstanceRow, ProbedRow},
             instance_scan::InstanceScan,
+            lowered_filter::term_of,
             projection::compile,
             sub_attribute::element_path::ElementPath,
         },
@@ -143,7 +153,12 @@ mod tests {
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::{
-        filter::{expression::Expr, instance_metadata::InstanceMetadata, language_matching::LanguageMatching, parser::parse, path::QueryPath},
+        filter::{
+            instance_metadata::InstanceMetadata,
+            language_matching::LanguageMatching,
+            parser::parse,
+            reading::{filter_reading::FilterReading, terminal::Terminal},
+        },
         temporal::window::TimeInterval,
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
@@ -159,13 +174,7 @@ mod tests {
     }
 
     fn element_path_in(q: &str, row: ProbedRow) -> Option<ElementPath> {
-        let Expr::Pred(pred) = parse(q).expect("parse q") else {
-            panic!("a single predicate");
-        };
-        let QueryPath::Local(path) = pred.path() else {
-            panic!("a local path");
-        };
-        ElementPath::resolve(path, row, &names())
+        ElementPath::of_term(&term_of(q), row, &names())
     }
 
     fn element_path(q: &str) -> Option<ElementPath> {
@@ -188,28 +197,29 @@ mod tests {
             ..QueryNames::default()
         };
         let condition = compile(
-            &parse(q).expect("parse q"),
+            &FilterReading::lowered(&parse(q).expect("parse q"), LanguageMatching::TagEquality),
             &InstanceScan::History(&window),
             &names,
-            LanguageMatching::TagEquality,
         );
         Query::select().cond_where(condition).to_owned()
     }
 
     #[test]
     fn a_path_resolves_to_its_attribute_and_chain() {
-        let path = element_path("\"https://example.com/a\".\"https://example.com/b\".\"https://example.com/c\"==3").expect("resolved");
+        let q = "\"https://example.com/a\".\"https://example.com/b\".\"https://example.com/c\"==3";
+        let path = element_path(q).expect("resolved");
         assert_eq!(path.path_hash(), PathHash::of(&[2, 5, 9].map(AttributeNameKey::from)));
         assert_eq!(path.holder(), InstanceRow::Element(ElementLevel::at(1)));
-        assert_eq!(path.field, None);
+        assert_eq!(term_of(q).terminal(), &Terminal::OwnValue);
     }
 
     #[test]
     fn a_path_ending_on_a_member_is_held_by_the_instance_above_it() {
-        let path = element_path("\"https://example.com/a\".\"https://uri.etsi.org/ngsi-ld/observedAt\">\"2024-01-01T00:00:00Z\"").expect("resolved");
+        let q = "\"https://example.com/a\".\"https://uri.etsi.org/ngsi-ld/observedAt\">\"2024-01-01T00:00:00Z\"";
+        let path = element_path(q).expect("resolved");
         assert_eq!(path.chain, Vec::new());
         assert_eq!(path.holder(), InstanceRow::Current);
-        assert_eq!(path.field, Some(InstanceMetadata::ObservedAt));
+        assert_eq!(term_of(q).terminal(), &Terminal::InstanceMember(InstanceMetadata::ObservedAt));
     }
 
     /// Every member the in-memory evaluator reads ends a path here too, so
@@ -224,7 +234,7 @@ mod tests {
         ] {
             let q = format!("\"https://example.com/a\".\"https://example.com/b\".\"{}\"", member.iri().as_str());
             let path = element_path(&q).expect("resolved");
-            assert_eq!(path.field, Some(member), "{q}");
+            assert_eq!(term_of(&q).terminal(), &Terminal::InstanceMember(member), "{q}");
             assert_eq!(path.holder(), InstanceRow::Element(ElementLevel::at(0)), "{q}");
         }
     }
@@ -239,8 +249,9 @@ mod tests {
             element_path("\"https://example.com/a\".\"https://uri.etsi.org/ngsi-ld/observedAt\"[x]!=\"y\""),
             None
         );
-        let path = element_path("\"https://example.com/a\".\"https://uri.etsi.org/ngsi-ld/observedAt\"[*]>\"2024-01-01T00:00:00Z\"").expect("resolved");
-        assert_eq!(path.field, Some(InstanceMetadata::ObservedAt));
+        let q = "\"https://example.com/a\".\"https://uri.etsi.org/ngsi-ld/observedAt\"[*]>\"2024-01-01T00:00:00Z\"";
+        assert_eq!(element_path(q).expect("resolved").holder(), InstanceRow::Current);
+        assert_eq!(term_of(q).terminal(), &Terminal::InstanceMember(InstanceMetadata::ObservedAt));
     }
 
     #[test]

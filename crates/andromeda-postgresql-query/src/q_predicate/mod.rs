@@ -15,10 +15,12 @@
 //! A `current_attributes` row is one top-level attribute instance: its value in
 //! one typed column, or in `value_object` when it is not a single scalar, and
 //! its sub-attributes as a tree of elements in `sub_attributes`, each element
-//! holding a value the same way. What a path addresses is decided once, by
-//! [`local_target`](crate::q_predicate::local_target::local_target):
+//! holding a value the same way. What a path addresses is decided once, where
+//! the filter is lowered, as the
+//! [`Terminal`](andromeda_ngsi_ld_query::filter::reading::terminal::Terminal)
+//! of its term reading:
 //!
-//! | Predicate shape | Compiles to |
+//! | Term shape | Compiles to |
 //! |---|---|
 //! | comparison or pattern with no sub-attribute and no value path | a test of the row's value columns, whose ordering, pattern and range tests also read the strings of a `LanguageProperty` row's `languageMap` |
 //! | bare existence | the row's presence |
@@ -120,7 +122,8 @@ pub mod keyed_pattern;
 pub mod keyed_term;
 pub mod language_map;
 pub mod language_term;
-pub mod local_target;
+#[cfg(test)]
+mod lowered_filter;
 pub mod ordering_term;
 pub mod own_value_arms;
 pub mod pattern_term;

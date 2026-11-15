@@ -3,22 +3,21 @@
 //! Query Entities `q`, the in-window `attribute_history` rows for a temporal
 //! one.
 //!
-//! This module routes each Query Term by what its path addresses (see
-//! [`local_target`]) to the readings that can hold its target value, and
-//! compiles each reading with the comparison of its operator
-//! (`equality_term`, `ordering_term`, `pattern_term`, and existence here). It
-//! descends linked-entity hops first.
+//! This module routes each term reading by what its path ends on (its
+//! [`Terminal`]) to the readings that can hold its target value, and compiles
+//! each reading with the comparison of its test (`equality_term`,
+//! `ordering_term`, `pattern_term`, and existence here). It descends
+//! linked-entity hops first.
 
 use crate::{
     entity_row_refs::EntityRowRefs,
     q_predicate::{
-        equality_term::equality_value,
+        equality_term::{complemented, equals_any_value, range_value},
         instance_row::InstanceRow,
         instance_scan::InstanceScan,
         instance_test::{CompiledTerm, Disjunction, InstanceTest},
         language_map::{LanguageMap, LanguageSelection},
         language_term::language_term,
-        local_target::{LocalTarget, local_target},
         ordering_term::ordering_value,
         pattern_term::pattern_value,
         sub_attribute::{element_path::ElementPath, member_field::member_condition},
@@ -28,17 +27,19 @@ use crate::{
     query_names::QueryNames,
 };
 use andromeda_ngsi_ld_query::filter::{
-    expression::Expr,
     language_matching::LanguageMatching,
-    path::{AttrPath, QueryPath},
-    predicate::{PatternPolarity, Predicate},
+    reading::{
+        filter_reading::FilterReading,
+        scalar_test::ScalarTest,
+        term_reading::{TermReading, Test},
+        terminal::Terminal,
+    },
     target_language::LanguageSelector,
 };
 use andromeda_postgresql_seaquery::literal::false_literal;
 use sea_query::Condition;
-use std::ptr;
 
-/// Compile a parsed `q` expression into a sea-query [`Condition`].
+/// Compile the reading of a `q` filter into a sea-query [`Condition`].
 ///
 /// Compilation cannot fail: an attribute or entity type name the dictionary
 /// does not hold compiles to a constant `FALSE` rather than erroring, and every
@@ -55,49 +56,58 @@ use std::ptr;
 /// The existentials of a disjunction are one probe rather than several, which
 /// says the same thing (see [`Disjunction`]) in the one shape the planner can
 /// drive from the value indexes.
+#[must_use]
+pub fn compile(reading: &FilterReading, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
+    compile_with(reading, scan, names, None)
+}
+
+/// Compile one term reading on its own, as [`compile`] compiles a filter of
+/// that one term.
+#[must_use]
+pub fn compile_term(term: &TermReading, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
+    compiled_term(term, scan, names).into_condition(scan)
+}
+
+/// [`compile`], with `answered` (a term of the reading's top-level
+/// conjunction the statement answers on its own) compiled as no constraint.
 ///
-/// A target language selects `languageMap` keys by `matching`.
+/// A conjunct equal to `answered` asks what `answered` asks, so every one is
+/// left out, wherever the conjunction repeats it.
 #[must_use]
-pub fn compile(expr: &Expr, scan: &InstanceScan<'_>, names: &QueryNames, matching: LanguageMatching) -> Condition {
-    compile_with(expr, scan, names, matching, None)
+pub fn compile_except(reading: &FilterReading, answered: &TermReading, scan: &InstanceScan<'_>, names: &QueryNames) -> Condition {
+    compile_with(reading, scan, names, Some(answered))
 }
 
-/// [`compile`], with `answered` (a term of `expr`'s top-level conjunction the
-/// statement answers on its own) compiled as no constraint.
-#[must_use]
-pub fn compile_except(expr: &Expr, answered: &Predicate, scan: &InstanceScan<'_>, names: &QueryNames, matching: LanguageMatching) -> Condition {
-    compile_with(expr, scan, names, matching, Some(answered))
-}
-
-/// Compile `expr`, leaving out the one term `answered` names.
-fn compile_with(expr: &Expr, scan: &InstanceScan<'_>, names: &QueryNames, matching: LanguageMatching, answered: Option<&Predicate>) -> Condition {
-    match expr {
-        Expr::And(terms) => terms
+/// Compile `reading`, leaving out the conjuncts equal to `answered`.
+fn compile_with(reading: &FilterReading, scan: &InstanceScan<'_>, names: &QueryNames, answered: Option<&TermReading>) -> Condition {
+    match reading {
+        FilterReading::All(children) => children
             .iter()
-            .fold(Condition::all(), |cond, term| cond.add(compile_with(term, scan, names, matching, answered))),
-        Expr::Or(terms) => disjunction(terms, Disjunction::default(), scan, names, matching).into_condition(scan),
-        Expr::Pred(pred) if answered.is_some_and(|answered| ptr::eq(answered, pred)) => Condition::all(),
-        Expr::Pred(pred) => compile_predicate(pred, scan, names, matching).into_condition(scan),
+            .fold(Condition::all(), |cond, child| cond.add(compile_with(child, scan, names, answered))),
+        FilterReading::Any(children) => disjunction(children, Disjunction::default(), scan, names).into_condition(scan),
+        FilterReading::Term(term) if answered.is_some_and(|answered| answered == term.as_ref()) => Condition::all(),
+        FilterReading::Term(term) => compile_term(term, scan, names),
     }
 }
 
-/// Gather the terms of a disjunction, and of every disjunction nested directly
-/// in it, into `gathered`.
-fn disjunction(terms: &[Expr], gathered: Disjunction, scan: &InstanceScan<'_>, names: &QueryNames, matching: LanguageMatching) -> Disjunction {
-    terms.iter().fold(gathered, |gathered, term| match term {
-        Expr::Or(inner) => disjunction(inner, gathered, scan, names, matching),
-        Expr::And(_) => gathered.with(CompiledTerm::Standalone(compile(term, scan, names, matching))),
-        Expr::Pred(pred) => gathered.with(compile_predicate(pred, scan, names, matching)),
+/// Gather the children of a disjunction, and of every disjunction nested
+/// directly in it, into `gathered`.
+fn disjunction(children: &[FilterReading], gathered: Disjunction, scan: &InstanceScan<'_>, names: &QueryNames) -> Disjunction {
+    children.iter().fold(gathered, |gathered, child| match child {
+        FilterReading::Any(inner) => disjunction(inner, gathered, scan, names),
+        FilterReading::All(_) => gathered.with(CompiledTerm::Standalone(compile(child, scan, names))),
+        FilterReading::Term(term) => gathered.with(compiled_term(term, scan, names)),
     })
 }
 
-/// Compile one leaf predicate, descending any linked-entity hops its axis
-/// carries before compiling the comparison against the entity it lands on.
-fn compile_predicate(pred: &Predicate, scan: &InstanceScan<'_>, names: &QueryNames, matching: LanguageMatching) -> CompiledTerm {
-    compile_along_path(pred, pred.path(), scan, names, matching, 0)
+/// Compile one term, descending the linked-entity hops it carries before
+/// compiling its test against the entity it lands on.
+fn compiled_term(term: &TermReading, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
+    compile_from_hop(term, scan, names, 0)
 }
 
-/// Compile a predicate against the entity reached by the remaining axis.
+/// Compile a term against the entity reached by its hops from the one at
+/// `depth` on.
 ///
 /// `depth` is the number of hops already descended; it suffixes the aliases so
 /// a nested traversal's probes cannot shadow an enclosing one's.
@@ -108,53 +118,32 @@ fn compile_predicate(pred: &Predicate, scan: &InstanceScan<'_>, names: &QueryNam
 /// same window: the `temporal_linked_retrieval` extension renders every Linked
 /// Entity over the window of the roots, so a filter asking about a linked
 /// entity reads the history the answer shows of it.
-fn compile_along_path(
-    pred: &Predicate,
-    path: &QueryPath,
-    scan: &InstanceScan<'_>,
-    names: &QueryNames,
-    matching: LanguageMatching,
-    depth: usize,
-) -> CompiledTerm {
-    match path {
-        QueryPath::Local(local) => compile_local(pred, local, scan, names, matching),
-        QueryPath::Linked {
-            relationship,
-            guard_types,
-            inner,
-        } => {
-            let Some(relationship_id) = names.attributes.get(relationship) else {
-                // No `attribute_names` row means no instance of the
-                // Relationship was ever written, so no entity can be reached
-                // through it.
-                return unsatisfiable_term();
-            };
-            let hop = LinkedHop::at_depth(depth + 1);
-            let inner_condition = match scan {
-                InstanceScan::Current(_) => linked_condition(pred, inner, &hop.inner_rows(scan.schema().cloned()), names, matching, depth + 1),
-                InstanceScan::History(window) => {
-                    let linked = window.over(hop.linked_evolution());
-                    let linked_scan = InstanceScan::History(&linked);
-                    compile_along_path(pred, inner, &linked_scan, names, matching, depth + 1).into_condition(&linked_scan)
-                }
-            };
-            CompiledTerm::Standalone(hop.probe(relationship_id, guard_types, &names.types, scan, inner_condition))
+fn compile_from_hop(term: &TermReading, scan: &InstanceScan<'_>, names: &QueryNames, depth: usize) -> CompiledTerm {
+    let Some(hop) = term.hops().get(depth) else {
+        return compile_local(term, scan, names);
+    };
+    let Some(relationship_id) = names.attributes.get(hop.relationship()) else {
+        // No `attribute_names` row means no instance of the Relationship was
+        // ever written, so no entity can be reached through it.
+        return unsatisfiable_term();
+    };
+    let linked = LinkedHop::at_depth(depth + 1);
+    let inner_condition = match scan {
+        InstanceScan::Current(_) => linked_condition(term, &linked.inner_rows(scan.schema().cloned()), names, depth + 1),
+        InstanceScan::History(window) => {
+            let linked_window = window.over(linked.linked_evolution());
+            let linked_scan = InstanceScan::History(&linked_window);
+            compile_from_hop(term, &linked_scan, names, depth + 1).into_condition(&linked_scan)
         }
-    }
+    };
+    CompiledTerm::Standalone(linked.probe(relationship_id, hop.guard_types(), &names.types, scan, inner_condition))
 }
 
-/// What `pred` asks, along the rest `path` of its axis, of the linked entity
-/// `rows` names, reached `depth` hops into a traversal.
-pub(crate) fn linked_condition(
-    pred: &Predicate,
-    path: &QueryPath,
-    rows: &EntityRowRefs,
-    names: &QueryNames,
-    matching: LanguageMatching,
-    depth: usize,
-) -> Condition {
+/// What `term` asks, from its hop at `depth` on, of the linked entity `rows`
+/// names, reached `depth` hops into a traversal.
+pub(crate) fn linked_condition(term: &TermReading, rows: &EntityRowRefs, names: &QueryNames, depth: usize) -> Condition {
     let scan = InstanceScan::Current(rows);
-    compile_along_path(pred, path, &scan, names, matching, depth).into_condition(&scan)
+    compile_from_hop(term, &scan, names, depth).into_condition(&scan)
 }
 
 /// Compile a term over the instances `scan` reads.
@@ -164,32 +153,25 @@ pub(crate) fn linked_condition(
 /// history row hold both alike. A row's test joins the probe of its attribute,
 /// which a disjunction shares; an element's test is a probe of its own (see
 /// [`InstanceScan::exists_in_tree`]).
-fn compile_local(pred: &Predicate, path: &AttrPath, scan: &InstanceScan<'_>, names: &QueryNames, matching: LanguageMatching) -> CompiledTerm {
-    let Some(element) = ElementPath::resolve(path, scan.row(), &names.attributes) else {
+fn compile_local(term: &TermReading, scan: &InstanceScan<'_>, names: &QueryNames) -> CompiledTerm {
+    let Some(element) = ElementPath::of_term(term, scan.row(), &names.attributes) else {
         return unsatisfiable_term();
     };
     let holder = element.holder();
-    let value = if let Some(member) = element.field {
-        member_condition(member, holder, pred)
-    } else {
-        match local_target(path) {
-            LocalTarget::OwnValue => own_value(pred, holder),
-            // One trailing member has a second reading beside the compound
-            // member, the target language of a `LanguageProperty`, and the
-            // stored instance decides which applies. Neither can match the
-            // other's instances (a `languageMap` has no IRI-keyed members, a
-            // compound value no `@language`), so both are compiled and
-            // disjoined.
-            LocalTarget::TrailingMember { members, language } => {
-                let member = member_term(pred, members, holder);
-                match language {
-                    Some(language) => Condition::any().add(language_reading(pred, language, matching, holder)).add(member),
-                    None => member,
-                }
-            }
-            LocalTarget::NestedMember(members) => member_term(pred, members, holder),
-            LocalTarget::TargetLanguage(language) => language_reading(pred, language, matching, holder),
-        }
+    let test = term.test();
+    let value = match term.terminal() {
+        Terminal::OwnValue => own_value(test, holder),
+        Terminal::InstanceMember(member) => member_condition(*member, holder, test),
+        // One trailing member has a second reading beside the compound
+        // member, the target language of a `LanguageProperty`, and the stored
+        // instance decides which applies. Neither can match the other's
+        // instances (a `languageMap` has no IRI-keyed members, a compound
+        // value no `@language`), so both are compiled and disjoined.
+        Terminal::ByFamily { language, matching, members } => Condition::any()
+            .add(language_reading(test, LanguageSelector::Tag(language), *matching, holder))
+            .add(member_term(test, members, holder)),
+        Terminal::Members(members) => member_term(test, members, holder),
+        Terminal::Language { language, matching } => language_reading(test, language.selector(), *matching, holder),
     };
     if element.chain.is_empty() {
         return CompiledTerm::Instances(InstanceTest {
@@ -200,32 +182,39 @@ fn compile_local(pred: &Predicate, path: &AttrPath, scan: &InstanceScan<'_>, nam
     CompiledTerm::Standalone(scan.exists_in_tree(element.attribute, element.condition(value)))
 }
 
-/// A term against the instance's own value.
-fn own_value(pred: &Predicate, row: InstanceRow) -> Condition {
-    match pred {
+/// A test against the instance's own value.
+///
+/// Every test but a pattern is complemented by the total negation of its
+/// positive condition, which clause 4.9 makes hold for a target of another
+/// data type; a pattern states its own complement, over a String target alone.
+fn own_value(test: &Test, row: InstanceRow) -> Condition {
+    match test {
         // An instance *is* the attribute: an attribute deleted by clause
         // 5.6.16 leaves no row and no element behind, so presence needs no
         // further guard.
-        Predicate::Exists(_) => Condition::all(),
-        Predicate::Equality { membership, rhs, .. } => equality_value(*membership, rhs, row),
-        Predicate::Ordering { op, rhs, .. } => ordering_value(pred, *op, rhs, row),
-        Predicate::MatchPattern { pattern, .. } => pattern_value(pred, pattern, PatternPolarity::Match, row),
-        Predicate::NotMatchPattern { pattern, .. } => pattern_value(pred, pattern, PatternPolarity::NotMatch, row),
+        Test::Exists => Condition::all(),
+        Test::Value(value) => match value.test() {
+            ScalarTest::EqualsAny(operands) => equals_any_value(operands, value.polarity(), row),
+            ScalarTest::Within(interval) => range_value(interval, value.polarity(), row),
+            ScalarTest::Ordered { relation, operand } => complemented(value.polarity(), ordering_value(*relation, operand, row)),
+            ScalarTest::Matches(pattern) => pattern_value(value, pattern, row),
+            ScalarTest::Unsatisfiable => complemented(value.polarity(), unsatisfiable()),
+        },
     }
 }
 
-/// A term against the strings a `languageMap` holds under the keys one target
+/// A test against the strings a `languageMap` holds under the keys one target
 /// language selects (clause 4.9).
 ///
-/// Every operator is decided string by string over the selected entries, so
-/// the key comparison is the one `matching` names, case-insensitive under tag
+/// Every test is decided string by string over the selected entries, so the
+/// key comparison is the one `matching` names, case-insensitive under tag
 /// equality as RFC 5646 section 2.1.1 requires. Existence asks for a selected
 /// key-value pair, which is the target element of a language-selected path. A
 /// number, boolean or time operand matches no string, and clause 4.9 makes the
 /// datatype difference a non-match.
-fn language_reading(pred: &Predicate, language: LanguageSelector<'_>, matching: LanguageMatching, row: InstanceRow) -> Condition {
+fn language_reading(test: &Test, language: LanguageSelector<'_>, matching: LanguageMatching, row: InstanceRow) -> Condition {
     Condition::all().add(language_term(
-        pred,
+        test,
         &LanguageMap::of_instance(row),
         LanguageSelection::TargetLanguage(language, matching),
     ))
@@ -244,9 +233,12 @@ pub(crate) fn unsatisfiable_term() -> CompiledTerm {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entity_row_refs::EntityRowRefs;
+    use crate::{
+        entity_row_refs::EntityRowRefs,
+        q_predicate::lowered_filter::{reading_of, term_of},
+    };
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::filter::parser;
+    use andromeda_ngsi_ld_query::filter::parser::parse;
     use andromeda_postgresql_schema::{current::Entities, string_value_column::INDEXED_STRING_BYTE_LIMIT};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
@@ -314,8 +306,8 @@ mod tests {
     }
 
     fn render_under(q: &str, names: &QueryNames, rows: &EntityRowRefs, matching: LanguageMatching) -> SelectStatement {
-        let expr = parser::parse(q).expect("parse q");
-        let condition = compile(&expr, &InstanceScan::Current(rows), names, matching);
+        let expr = parse(q).expect("parse q");
+        let condition = compile(&FilterReading::lowered(&expr, matching), &InstanceScan::Current(rows), names);
         Query::select().column(Entities::Id).from(Entities::Table).cond_where(condition).to_owned()
     }
 
@@ -1117,5 +1109,31 @@ mod tests {
     fn a_range_filters_under_tag_equality_too() {
         let statement = render("\"https://example.com/color\"[*-GB]~=\"^L\"");
         assert_statement_snapshot!("projection-a-range-filters-under-tag-equality-too", statement);
+    }
+
+    fn select_where(condition: Condition) -> SelectStatement {
+        Query::select().column(Entities::Id).from(Entities::Table).cond_where(condition).to_owned()
+    }
+
+    /// The statement answers the term it leaves out, so a conjunct asking the
+    /// same is left out with it, each as no constraint, and one inside a
+    /// disjunction, which the statement does not answer, stays.
+    #[test]
+    fn compile_except_leaves_out_every_conjunct_equal_to_the_answered_term() {
+        let rows = EntityRowRefs::unaliased(None);
+        let scan = InstanceScan::Current(&rows);
+        let answered = term_of("\"https://example.com/a\"==1");
+        for (index, q) in [
+            "\"https://example.com/a\"==1;\"https://example.com/b\"==2;\"https://example.com/a\"==1",
+            "\"https://example.com/b\"==2;(\"https://example.com/a\"==1|\"https://example.com/c\"==3)",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_statement_snapshot!(
+                format!("projection-compile-except-leaves-out-every-conjunct-equal-to-the-answered-term-{}", index + 1),
+                select_where(compile_except(&reading_of(q), &answered, &scan, &names()))
+            );
+        }
     }
 }

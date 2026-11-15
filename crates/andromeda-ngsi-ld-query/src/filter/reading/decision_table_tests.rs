@@ -18,7 +18,7 @@ use crate::filter::{
         scalar_test::ScalarTest,
         target_kind::TargetKind,
         term_reading::Test,
-        value_test::{ComplementScope, Polarity, ValueTest},
+        value_test::{Polarity, ValueTest},
         verdict::Verdict,
     },
 };
@@ -290,7 +290,7 @@ fn a_pattern_and_its_negation_hold_on_strings_alone() {
     assert_eq!(verdicts(&asserted), expected(&[(TargetKind::String, Verdict::Holds(&pattern))], Verdict::Never));
     assert_eq!(array_rules(&asserted), ONE_OF_A_MAP);
     let negated = value_test("x!~=\"a.*\"");
-    assert_eq!(negated.polarity(), Polarity::Complement(ComplementScope::StringTarget));
+    assert_eq!(negated.polarity(), Polarity::Complement);
     assert_eq!(
         verdicts(&negated),
         expected(&[(TargetKind::String, Verdict::HoldsNot(&pattern))], Verdict::Never)
@@ -366,7 +366,7 @@ fn ruling_behind(test: &ValueTest, cell: Cell) -> Option<&'static str> {
     match cell {
         Cell::Kind(kind) if kind.non_finite().is_some() && test.test().compares_with(kind) => Some("numbers beyond the decimals follow XSD"),
         Cell::Array(ArrayTarget::AnyOneValue)
-            if matches!(test.polarity(), Polarity::Complement(_)) && matches!(test.test(), ScalarTest::Within(_) | ScalarTest::Matches(_)) =>
+            if matches!(test.polarity(), Polarity::Complement) && matches!(test.test(), ScalarTest::Within(_) | ScalarTest::Matches(_)) =>
         {
             Some("no value of a languageMap satisfies the asserted test")
         }

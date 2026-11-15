@@ -21,13 +21,15 @@ use crate::filter::reading::{
 pub enum Polarity {
     /// The test holds on the target.
     Asserted,
-    /// The test fails on a present target within the scope.
-    Complement(ComplementScope),
+    /// The test fails on a present target of a kind the complement of the
+    /// test scopes: every kind for a test `!=` negates, Strings for the
+    /// pattern `!~=` negates.
+    Complement,
 }
 
 /// The targets a negated operator matches when the test fails on them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ComplementScope {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ComplementScope {
     /// Every kind. A target the operand does not compare with "shall be
     /// considered unequal" (clause 4.9, Unequal): `!=` with a value, a list or
     /// a range.
@@ -48,9 +50,8 @@ pub struct ValueTest {
 }
 
 impl ValueTest {
-    /// The term asserting `test` under `polarity`. Only lowering pairs the two,
-    /// so a complement is scoped to every kind for `!=` and to Strings for
-    /// `!~=`, and an order is never negated.
+    /// The term asserting `test` under `polarity`. Only lowering pairs the
+    /// two, so an order is never negated.
     pub(super) const fn new(test: ScalarTest, polarity: Polarity) -> ValueTest {
         ValueTest { test, polarity }
     }
@@ -77,10 +78,10 @@ impl ValueTest {
     pub(super) const fn asserted_equality_mut(&mut self) -> Option<&mut Vec<Operand>> {
         match (&mut self.test, self.polarity) {
             (ScalarTest::EqualsAny(operands), Polarity::Asserted) => Some(operands),
-            (ScalarTest::EqualsAny(_), Polarity::Complement(_))
+            (ScalarTest::EqualsAny(_), Polarity::Complement)
             | (
                 ScalarTest::Ordered { .. } | ScalarTest::Within(_) | ScalarTest::Matches(_) | ScalarTest::Unsatisfiable,
-                Polarity::Asserted | Polarity::Complement(_),
+                Polarity::Asserted | Polarity::Complement,
             ) => None,
         }
     }
@@ -127,20 +128,34 @@ impl ValueTest {
     }
 }
 
+/// The targets the complement of `test` matches when the test fails on them.
+///
+/// The pattern is negated by `!~=`, whose complement is over Strings, and every
+/// other test by `!=`, whose complement is over every kind. An order is never
+/// negated, and is read as `!=` reads a range.
+const fn complement_scope(test: &ScalarTest) -> ComplementScope {
+    match test {
+        ScalarTest::Matches(_) => ComplementScope::StringTarget,
+        ScalarTest::EqualsAny(_) | ScalarTest::Ordered { .. } | ScalarTest::Within(_) | ScalarTest::Unsatisfiable => ComplementScope::AnyKind,
+    }
+}
+
 /// What `test` under `polarity` makes of one target of `kind`.
 fn verdict_under(test: &ScalarTest, polarity: Polarity, kind: TargetKind) -> Verdict<'_> {
     if !test.compares_with(kind) {
-        return match polarity {
-            Polarity::Complement(ComplementScope::AnyKind) => Verdict::Always,
-            Polarity::Asserted | Polarity::Complement(ComplementScope::StringTarget) => Verdict::Never,
+        return match (polarity, complement_scope(test)) {
+            (Polarity::Complement, ComplementScope::AnyKind) => Verdict::Always,
+            (Polarity::Asserted, ComplementScope::AnyKind | ComplementScope::StringTarget) | (Polarity::Complement, ComplementScope::StringTarget) => {
+                Verdict::Never
+            }
         };
     }
     match (kind.non_finite(), polarity) {
         (Some(value), Polarity::Asserted) if test.holds_beyond_decimals(value) => Verdict::Always,
-        (Some(value), Polarity::Complement(_)) if !test.holds_beyond_decimals(value) => Verdict::Always,
-        (Some(_), Polarity::Asserted | Polarity::Complement(_)) => Verdict::Never,
+        (Some(value), Polarity::Complement) if !test.holds_beyond_decimals(value) => Verdict::Always,
+        (Some(_), Polarity::Asserted | Polarity::Complement) => Verdict::Never,
         (None, Polarity::Asserted) => Verdict::Holds(test),
-        (None, Polarity::Complement(_)) => Verdict::HoldsNot(test),
+        (None, Polarity::Complement) => Verdict::HoldsNot(test),
     }
 }
 
@@ -150,19 +165,18 @@ const fn array_rule_under(test: &ScalarTest, polarity: Polarity, target: ArrayTa
     match target {
         ArrayTarget::AnyOneValue => match polarity {
             Polarity::Asserted => ArrayRule::SomeElement,
-            Polarity::Complement(_) => ArrayRule::NoElement,
+            Polarity::Complement => ArrayRule::NoElement,
         },
         ArrayTarget::ValueArray | ArrayTarget::ObjectArray => match (test, polarity) {
             (ScalarTest::EqualsAny(_), Polarity::Asserted) => ArrayRule::SomeElement,
-            (ScalarTest::EqualsAny(_), Polarity::Complement(_)) => ArrayRule::NoElement,
-            (
-                ScalarTest::Ordered { .. } | ScalarTest::Within(_) | ScalarTest::Matches(_) | ScalarTest::Unsatisfiable,
-                Polarity::Asserted | Polarity::Complement(ComplementScope::StringTarget),
-            ) => ArrayRule::Never,
-            (
-                ScalarTest::Ordered { .. } | ScalarTest::Within(_) | ScalarTest::Matches(_) | ScalarTest::Unsatisfiable,
-                Polarity::Complement(ComplementScope::AnyKind),
-            ) => ArrayRule::Always,
+            (ScalarTest::EqualsAny(_), Polarity::Complement) => ArrayRule::NoElement,
+            (ScalarTest::Ordered { .. } | ScalarTest::Within(_) | ScalarTest::Matches(_) | ScalarTest::Unsatisfiable, Polarity::Asserted) => ArrayRule::Never,
+            (ScalarTest::Ordered { .. } | ScalarTest::Within(_) | ScalarTest::Matches(_) | ScalarTest::Unsatisfiable, Polarity::Complement) => {
+                match complement_scope(test) {
+                    ComplementScope::AnyKind => ArrayRule::Always,
+                    ComplementScope::StringTarget => ArrayRule::Never,
+                }
+            }
         },
     }
 }

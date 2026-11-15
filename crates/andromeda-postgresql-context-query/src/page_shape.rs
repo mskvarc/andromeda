@@ -80,7 +80,7 @@ impl<'q> PageShape<'q> {
             .selection
             .q
             .as_ref()
-            .and_then(|q| keyed_candidates(q.expr(), rows, names, q.matching()).map(|keyed| (q, keyed)));
+            .and_then(|q| keyed_candidates(q.lowered(), rows, names).map(|keyed| (q, keyed)));
         match keyed {
             Some((q, keyed)) => PageShape::Keyed(q, keyed),
             None => carriers(query, names, schema)

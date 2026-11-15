@@ -21,7 +21,6 @@
 use crate::value_filters::{scope_history_target, temporal_geo_existential, windowed_instances};
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_query::{
-    filter::expression::Expr,
     split_filter::{FilterLeaf, SplitFilter},
     temporal::compiled::CompiledTemporalQuery,
 };
@@ -67,10 +66,9 @@ pub fn build_filter_leaf_truths(
 fn leaf_expression(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, leaf: FilterLeaf<'_>, names: &QueryNames) -> Result<SeaExpr, RenderError> {
     let of = HistoryOf::Entity(SeaExpr::col((E, Entities::Id)));
     match leaf {
-        FilterLeaf::Term { predicate, matching, .. } => {
-            let term = Expr::Pred(predicate.clone());
+        FilterLeaf::Term(term) => {
             let window = windowed_instances(branch, compiled, &of, WindowReach::Inside);
-            Ok(q_filter::compile(&term, &InstanceScan::History(&window), names, matching).into())
+            Ok(q_filter::compile_term(term, &InstanceScan::History(&window), names).into())
         }
         FilterLeaf::Geo(_) => Ok(temporal_geo_existential(branch, compiled, names, &of, WindowReach::Inside)?.map_or_else(false_literal, Into::into)),
         FilterLeaf::ScopeRequirement(pattern) => Ok(pattern_condition(pattern, &scope_history_target(branch, compiled, &of, WindowReach::Inside))),

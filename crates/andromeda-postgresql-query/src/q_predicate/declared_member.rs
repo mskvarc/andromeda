@@ -13,7 +13,7 @@
 //! is read ([`lift_comparison`]) to decide it.
 
 use crate::{jsonb::lift_comparison, operator::compare};
-use andromeda_ngsi_ld_query::filter::{predicate::CmpOp, scalar::Scalar};
+use andromeda_ngsi_ld_query::filter::reading::{comparator::Comparator, operand::Operand};
 use andromeda_ngsi_ld_vocabulary::keyword;
 use andromeda_postgresql_schema::name_dictionary::EntityTypeNames;
 use andromeda_postgresql_seaquery::{
@@ -34,7 +34,7 @@ const MEMBER_VALUE: &str = "value";
 /// under.
 const VALUE_TYPE: &str = "dmt";
 
-/// Whether some member of the structured value in `column` equals `scalar`,
+/// Whether some member of the structured value in `column` equals `operand`,
 /// `value_type` being the `valueType` key that declares the members, NULL
 /// when none does.
 ///
@@ -44,14 +44,14 @@ const VALUE_TYPE: &str = "dmt";
 /// order the planner picks, and unnesting an object raises an error rather
 /// than yielding no rows.
 #[must_use]
-pub fn some_member_equals(column: &SimpleExpr, value_type: &SimpleExpr, scalar: &Scalar) -> SimpleExpr {
+pub fn some_member_equals(column: &SimpleExpr, value_type: &SimpleExpr, operand: &Operand) -> SimpleExpr {
     // clone: sea-query owns every operand, and one column is read by several tests
     let array = CaseStatement::new().case(jsonb_type_is(column.clone(), JsonType::Array), column.clone());
     let member = || SimpleExpr::from(SeaExpr::col((Alias::new(MEMBER), Alias::new(MEMBER_VALUE))));
     let stored = SimpleExpr::from(Func::coalesce([member().json_get(text_literal(keyword::VALUE)), member()]));
     let declared_by_value_type = SimpleExpr::from(SeaExpr::col((Alias::new(VALUE_TYPE), EntityTypeNames::Name)));
     let datatype = SimpleExpr::from(Func::coalesce([declared_by_value_type, member().json_get_text(text_literal(keyword::TYPE))]));
-    let lifted = lift_comparison(scalar, stored, datatype);
+    let lifted = lift_comparison(operand, stored, datatype);
     let mut scan = Query::select();
     scan.expr(int_literal(1))
         .from_function(jsonb_array_elements(array.into()), Alias::new(MEMBER))
@@ -62,7 +62,7 @@ pub fn some_member_equals(column: &SimpleExpr, value_type: &SimpleExpr, scalar: 
             // clone: sea-query owns every operand, and one key is read by several tests
             SeaExpr::col((Alias::new(VALUE_TYPE), EntityTypeNames::EntityTypeNameKey)).eq(value_type.clone()),
         )
-        .and_where(compare(lifted.stored, CmpOp::Equal, lifted.operand));
+        .and_where(compare(lifted.stored, Comparator::Equal, lifted.operand));
     SeaExpr::exists(scan)
 }
 
@@ -70,7 +70,7 @@ pub fn some_member_equals(column: &SimpleExpr, value_type: &SimpleExpr, scalar: 
 mod tests {
     use crate::q_predicate::declared_member::some_member_equals;
     use andromeda_ngsi_ld_number::JsonNumber;
-    use andromeda_ngsi_ld_query::filter::scalar::Scalar;
+    use andromeda_ngsi_ld_query::filter::reading::operand::Operand;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::{Alias, Expr as SeaExpr, Query, SelectStatement, SimpleExpr};
 
@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn only_an_array_is_unnested() {
-        let statement = render(some_member_equals(&column(), &value_type(), &Scalar::Bool(true)));
+        let statement = render(some_member_equals(&column(), &value_type(), &Operand::Boolean(true)));
         assert_statement_snapshot!("declared-member-only-an-array-is-unnested", statement);
     }
 
@@ -96,19 +96,19 @@ mod tests {
     /// `@type` does.
     #[test]
     fn a_member_is_declared_by_the_value_type_before_its_own_type() {
-        let statement = render(some_member_equals(&column(), &value_type(), &Scalar::Number(JsonNumber::from(4))));
+        let statement = render(some_member_equals(&column(), &value_type(), &Operand::Number(JsonNumber::from(4))));
         assert_statement_snapshot!("declared-member-a-member-is-declared-by-the-value-type-before-its-own-type", statement);
     }
 
     #[test]
     fn a_number_member_reads_a_string_declared_as_an_xsd_number() {
-        let statement = render(some_member_equals(&column(), &value_type(), &Scalar::Number(JsonNumber::from(4))));
+        let statement = render(some_member_equals(&column(), &value_type(), &Operand::Number(JsonNumber::from(4))));
         assert_statement_snapshot!("declared-member-a-number-member-reads-a-string-declared-as-an-xsd-number", statement);
     }
 
     #[test]
     fn a_string_member_leaves_out_a_string_declared_as_another_data_type() {
-        let statement = render(some_member_equals(&column(), &value_type(), &Scalar::Str("4".to_owned())));
+        let statement = render(some_member_equals(&column(), &value_type(), &Operand::Text("4".to_owned())));
         assert_statement_snapshot!("declared-member-a-string-member-leaves-out-a-string-declared-as-another-data-type", statement);
     }
 }

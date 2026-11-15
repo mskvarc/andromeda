@@ -16,42 +16,31 @@ use crate::{
     q_predicate::{
         instance_row::InstanceRow,
         keyed_branches::{branch, language_property_rows, union_of},
-        local_target::{LocalTarget, local_target},
         pattern_term::{PatternTarget, pattern_on, pattern_targets},
     },
     query_names::QueryNames,
 };
-use andromeda_ngsi_ld_query::filter::{
-    path::QueryPath,
-    predicate::{PatternPolarity, Predicate},
-};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_query::{filter::reading::value_test::ValueTest, pattern::Pattern};
 use sea_query::{Condition, SelectStatement, SimpleExpr};
 
-/// `SELECT "entity_key"` over the rows of the attribute whose own value
-/// matches `pred`, `None` unless `pred` is a `~=` on a recorded attribute's
-/// own value.
+/// `SELECT "entity_key"` over the rows of `attribute` whose own value passes
+/// `value`, an asserted test of `pattern` (`~=`); `None` when the attribute
+/// was never recorded.
 ///
-/// A path with a trailing member, a sub-attribute or a hop reads a value no
-/// trigram index covers.
-pub(crate) fn pattern_candidates(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> Option<SelectStatement> {
-    let Predicate::MatchPattern {
-        path: QueryPath::Local(path),
-        pattern,
-    } = pred
-    else {
-        return None;
-    };
-    if !path.sub_attrs.is_empty() {
-        return None;
-    }
-    match local_target(path) {
-        LocalTarget::OwnValue => {}
-        LocalTarget::TrailingMember { .. } | LocalTarget::TargetLanguage(_) | LocalTarget::NestedMember(_) => return None,
-    }
-    let attribute = names.attributes.get(&path.attr)?;
+/// Only an attribute's own value is offered: a trailing member, a
+/// sub-attribute or a hop reads a value no trigram index covers.
+pub(crate) fn pattern_candidates(
+    attribute: &AttributeName,
+    value: &ValueTest,
+    pattern: &Pattern,
+    rows: &EntityRowRefs,
+    names: &QueryNames,
+) -> Option<SelectStatement> {
+    let attribute = names.attributes.get(attribute)?;
     let row = InstanceRow::Current;
     union_of(pattern_targets(row).map(|target| {
-        let test = Condition::all().add(pattern_on(target, pred, pattern, PatternPolarity::Match, row));
+        let test = Condition::all().add(pattern_on(target, value, pattern, row));
         branch(rows, attribute, holds_target(target), test)
     }))
 }
@@ -70,8 +59,11 @@ fn holds_target(target: PatternTarget) -> Option<SimpleExpr> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{entity_row_refs::EntityRowRefs, q_predicate::keyed_pattern::pattern_candidates, query_names::QueryNames};
-    use andromeda_ngsi_ld_query::filter::{expression::Expr, parser::parse};
+    use crate::{
+        entity_row_refs::EntityRowRefs,
+        q_predicate::{keyed_term::keyed_candidates, lowered_filter::reading_of},
+        query_names::QueryNames,
+    };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
     use pretty_assertions::assert_eq;
@@ -89,10 +81,7 @@ mod tests {
     }
 
     fn candidates(q: &str) -> Option<SelectStatement> {
-        let Expr::Pred(pred) = parse(q).expect("parse q") else {
-            panic!("a single predicate");
-        };
-        pattern_candidates(&pred, &EntityRowRefs::unaliased(None), &names())
+        keyed_candidates(&reading_of(q), &EntityRowRefs::unaliased(None), &names()).map(|keyed| keyed.select)
     }
 
     #[test]

@@ -22,7 +22,7 @@ where
         filter
             .leaves()
             .map(|leaf| match leaf {
-                FilterLeaf::Term { reading, .. } => term_holds(reading, entity, linked),
+                FilterLeaf::Term(reading) => term_holds(reading, entity, linked),
                 FilterLeaf::Geo(geo) => geo_query_matches(geo, entity),
                 FilterLeaf::ScopeRequirement(pattern) => entity.scopes().any(|scope| pattern.matches(scope)),
             })

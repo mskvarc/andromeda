@@ -6,7 +6,7 @@ use crate::{projected_members::projected_member_condition, stage1::evolution_wal
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
 use andromeda_ngsi_ld_query::{
     entity_selection::{ConsideredEntities, EntitySelector},
-    filter::predicate::PatternPolarity,
+    filter::reading::value_test::Polarity,
     identifier_axis::IdentifierAxis,
     temporal::compiled::CompiledTemporalQuery,
 };
@@ -105,7 +105,7 @@ fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<
         (IdentifierAxis::Pattern(pattern), PatternTest::Tested) => {
             condition = condition.add(pattern_predicate(
                 SeaExpr::col((E, Entities::Id)),
-                PatternPolarity::Match,
+                Polarity::Asserted,
                 pattern,
                 PatternIndexes::TrigramsAndByteOrder,
             ));

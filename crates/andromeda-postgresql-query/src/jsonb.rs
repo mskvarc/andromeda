@@ -6,7 +6,7 @@ use crate::{
     temporal_operand::{declared_date, declared_date_time, declared_time},
 };
 use andromeda_ngsi_ld_lexicon::time::{date::NgsiLdDate, time_of_day::NgsiLdTime};
-use andromeda_ngsi_ld_query::filter::scalar::Scalar;
+use andromeda_ngsi_ld_query::filter::reading::operand::Operand;
 use andromeda_postgresql_seaquery::{cast::cast, json_type::jsonb_whole_text, pg_type::PostgresType};
 use sea_query::{Expr as SeaExpr, SimpleExpr};
 
@@ -35,8 +35,8 @@ pub struct LiftedComparison {
 /// * a number reads a JSON number or a JSON string declared as an XSD number,
 ///   and a boolean a JSON boolean or a JSON string declared as `xsd:boolean`,
 ///   each cast on both sides,
-/// * a string or a URI reads only a JSON string its datatype gives no other
-///   data type, as text,
+/// * a text operand, quoted or a bare URI, reads only a JSON string its
+///   datatype gives no other data type, as text,
 /// * a `DateTime`, `Date` or `Time` compares only with a value declared as one
 ///   of its form (clause 4.9: no equality of data types, no match), a
 ///   `DateTime` as `timestamptz` bound as the instant itself, a `Time` in the
@@ -53,31 +53,31 @@ pub struct LiftedComparison {
 /// another data type unequal to the operand, and never makes the query fail
 /// over it.
 #[must_use]
-pub fn lift_comparison(scalar: &Scalar, stored: SimpleExpr, datatype: SimpleExpr) -> LiftedComparison {
-    match scalar {
-        Scalar::Number(number) => LiftedComparison {
+pub fn lift_comparison(operand: &Operand, stored: SimpleExpr, datatype: SimpleExpr) -> LiftedComparison {
+    match operand {
+        Operand::Number(number) => LiftedComparison {
             stored: number_reading(stored, datatype),
             // SeaQuery owns every AST bind, so the exact decimal must be cloned
             // from the borrowed query operand.
             operand: SeaExpr::val(number.decimal().clone()),
         },
-        Scalar::Bool(_) => LiftedComparison {
+        Operand::Boolean(value) => LiftedComparison {
             stored: boolean_reading(stored, datatype),
-            operand: cast(SeaExpr::val(scalar.literal_text()), PostgresType::Boolean),
+            operand: cast(SeaExpr::val(value.to_string()), PostgresType::Boolean),
         },
-        Scalar::Str(_) | Scalar::Uri(_) => LiftedComparison {
+        Operand::Text(text) => LiftedComparison {
             stored: string_reading(stored, datatype),
-            operand: SeaExpr::val(scalar.literal_text()),
+            operand: SeaExpr::val(text.as_str()),
         },
-        Scalar::DateTime(instant) => LiftedComparison {
+        Operand::DateTime(instant) => LiftedComparison {
             stored: declared_date_time(jsonb_whole_text(stored), datatype),
             operand: SeaExpr::val(*instant),
         },
-        Scalar::Date(date) => LiftedComparison {
+        Operand::Date(date) => LiftedComparison {
             stored: declared_date(jsonb_whole_text(stored), datatype),
             operand: SeaExpr::val(NgsiLdDate::from(*date).to_string()),
         },
-        Scalar::Time(time) => LiftedComparison {
+        Operand::Time(time) => LiftedComparison {
             stored: declared_time(jsonb_whole_text(stored), datatype),
             operand: SeaExpr::val(NgsiLdTime::normalise(*time).to_string()),
         },
@@ -87,7 +87,10 @@ pub fn lift_comparison(scalar: &Scalar, stored: SimpleExpr, datatype: SimpleExpr
 #[cfg(test)]
 mod tests {
     use crate::jsonb::lift_comparison;
-    use andromeda_ngsi_ld_query::filter::scalar::{Scalar, parse_date, parse_date_time, parse_time};
+    use andromeda_ngsi_ld_query::filter::{
+        reading::operand::Operand,
+        scalar::{parse_date, parse_date_time, parse_time},
+    };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::{Alias, Expr as SeaExpr, Query, SelectStatement, SimpleExpr};
 
@@ -108,7 +111,7 @@ mod tests {
 
     #[test]
     fn a_number_is_lifted_to_numeric_on_both_sides_so_it_is_not_ordered_as_text() {
-        let lifted = lift_comparison(&Scalar::Number(9.into()), stored(), datatype());
+        let lifted = lift_comparison(&Operand::Number(9.into()), stored(), datatype());
         assert_statement_snapshot!(
             "jsonb-a-number-is-lifted-to-numeric-on-both-sides-so-it-is-not-ordered-as-text-1",
             render(lifted.stored)
@@ -126,7 +129,7 @@ mod tests {
     fn a_number_lift_reads_a_json_number_or_a_string_declared_as_one() {
         assert_statement_snapshot!(
             "jsonb-a-number-lift-reads-a-json-number-or-a-string-declared-as-one",
-            render(lift_comparison(&Scalar::Number(4.into()), stored(), datatype()).stored)
+            render(lift_comparison(&Operand::Number(4.into()), stored(), datatype()).stored)
         );
     }
 
@@ -134,13 +137,13 @@ mod tests {
     fn a_boolean_lift_reads_a_json_boolean_or_a_string_declared_as_one() {
         assert_statement_snapshot!(
             "jsonb-a-boolean-lift-reads-a-json-boolean-or-a-string-declared-as-one",
-            render(lift_comparison(&Scalar::Bool(true), stored(), datatype()).stored)
+            render(lift_comparison(&Operand::Boolean(true), stored(), datatype()).stored)
         );
     }
 
     #[test]
     fn a_boolean_is_lifted_to_boolean_on_both_sides() {
-        let lifted = lift_comparison(&Scalar::Bool(true), stored(), datatype());
+        let lifted = lift_comparison(&Operand::Boolean(true), stored(), datatype());
         assert_statement_snapshot!("jsonb-a-boolean-is-lifted-to-boolean-on-both-sides-1", render(lifted.stored));
         assert_statement_snapshot!("jsonb-a-boolean-is-lifted-to-boolean-on-both-sides-2", render(lifted.operand));
     }
@@ -150,7 +153,7 @@ mod tests {
     /// and neither is a JSON string declared as a number.
     #[test]
     fn a_string_operand_reads_only_a_json_string_declared_as_no_other_data_type() {
-        let lifted = lift_comparison(&Scalar::Str("red".to_string()), stored(), datatype());
+        let lifted = lift_comparison(&Operand::Text("red".to_owned()), stored(), datatype());
         assert_statement_snapshot!(
             "jsonb-a-string-operand-reads-only-a-json-string-declared-as-no-other-data-type-1",
             render(lifted.stored)
@@ -165,7 +168,7 @@ mod tests {
     #[test]
     fn a_date_time_is_compared_as_a_timestamp_not_as_text() {
         let instant = parse_date_time("2024-01-01T00:00:00Z").expect("valid date-time");
-        let lifted = lift_comparison(&Scalar::DateTime(instant), stored(), datatype());
+        let lifted = lift_comparison(&Operand::DateTime(instant), stored(), datatype());
         assert_statement_snapshot!("jsonb-a-date-time-is-compared-as-a-timestamp-not-as-text", render(lifted.stored));
     }
 
@@ -174,14 +177,14 @@ mod tests {
     #[test]
     fn a_date_time_operand_binds_as_the_instant_it_names() {
         let instant = parse_date_time("2024-01-01T00:00:00.123456Z").expect("valid date-time");
-        let lifted = lift_comparison(&Scalar::DateTime(instant), stored(), datatype());
+        let lifted = lift_comparison(&Operand::DateTime(instant), stored(), datatype());
         assert_statement_snapshot!("jsonb-a-date-time-operand-binds-as-the-instant-it-names", render(lifted.operand));
     }
 
     #[test]
     fn a_time_is_brought_to_the_fixed_width_encoding_on_both_sides() {
         let time = parse_time("12:00:00,5Z").expect("the comma compatibility form");
-        let lifted = lift_comparison(&Scalar::Time(time), stored(), datatype());
+        let lifted = lift_comparison(&Operand::Time(time), stored(), datatype());
         assert_statement_snapshot!("jsonb-a-time-is-brought-to-the-fixed-width-encoding-on-both-sides-1", render(lifted.stored));
         assert_statement_snapshot!("jsonb-a-time-is-brought-to-the-fixed-width-encoding-on-both-sides-2", render(lifted.operand));
     }
@@ -189,7 +192,7 @@ mod tests {
     #[test]
     fn a_date_is_compared_as_text_because_its_one_spelling_already_sorts_chronologically() {
         let date = parse_date("2024-01-01").expect("valid full-date");
-        let lifted = lift_comparison(&Scalar::Date(date), stored(), datatype());
+        let lifted = lift_comparison(&Operand::Date(date), stored(), datatype());
         assert_statement_snapshot!(
             "jsonb-a-date-is-compared-as-text-because-its-one-spelling-already-sorts-chronologically-1",
             render(lifted.stored)

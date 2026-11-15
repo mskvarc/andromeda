@@ -15,7 +15,11 @@ use crate::{
 };
 use andromeda_architecture_checks::assert_named_snapshot;
 use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp};
-use andromeda_ngsi_ld_query::{filter::language_matching::LanguageMatching, temporal::window::TimeInterval, term_expander::TermExpander};
+use andromeda_ngsi_ld_query::{
+    filter::{language_matching::LanguageMatching, reading::filter_reading::FilterReading},
+    temporal::window::TimeInterval,
+    term_expander::TermExpander,
+};
 use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_seaquery::assert_statement_snapshot;
 use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
@@ -73,12 +77,13 @@ async fn every_corpus_filter_renders_the_statements_its_snapshots_fix() {
         match expanded_filter(case).await {
             Err(refusal) => assert_named_snapshot!(format!("refused-{name}"), format!("{}\n{refusal}", case.q)),
             Ok(expr) => {
-                let current = compile(&expr, &InstanceScan::Current(&rows), &names, LanguageMatching::TagEquality);
+                let reading = FilterReading::lowered(&expr, LanguageMatching::TagEquality);
+                let current = compile(&reading, &InstanceScan::Current(&rows), &names);
                 assert_statement_snapshot!(
                     format!("current-{name}"),
                     Query::select().column(Entities::Id).from(Entities::Table).cond_where(current).to_owned()
                 );
-                let history = compile(&expr, &InstanceScan::History(&window), &names, LanguageMatching::TagEquality);
+                let history = compile(&reading, &InstanceScan::History(&window), &names);
                 assert_statement_snapshot!(
                     format!("history-{name}"),
                     Query::select()

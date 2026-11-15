@@ -12,15 +12,12 @@ use crate::{
     q_predicate::{
         instance_row::InstanceRow,
         language_map::{LanguageMap, LanguageSelection},
-        language_term::language_term,
+        language_term::language_value_term,
         typed_column::as_string,
         value_column::ValueColumn,
     },
 };
-use andromeda_ngsi_ld_query::{
-    filter::predicate::{PatternPolarity, Predicate},
-    pattern::Pattern,
-};
+use andromeda_ngsi_ld_query::{filter::reading::value_test::ValueTest, pattern::Pattern};
 use andromeda_postgresql_stored_values::value_placement::ValueField;
 use sea_query::{Condition, SimpleExpr};
 
@@ -49,7 +46,8 @@ pub fn pattern_targets(row: InstanceRow) -> impl Iterator<Item = PatternTarget> 
     row.columns(ValueField::String).map(PatternTarget::Column).chain([PatternTarget::LanguageMap])
 }
 
-/// `pred`, a pattern term of `polarity`, tested against one target of `row`.
+/// `value`, a test of `pattern` under its polarity, tested against one target
+/// of `row`.
 ///
 /// A String field holds one string, which the pattern tests directly, and
 /// only when the value is a String: a `Date` and a `Time` share the field, and
@@ -57,10 +55,13 @@ pub fn pattern_targets(row: InstanceRow) -> impl Iterator<Item = PatternTarget> 
 /// operators "If the target value data type is different than String". Some
 /// string of a `languageMap` has to match `~=`, and none may match `!~=`.
 #[must_use]
-pub fn pattern_on(target: PatternTarget, pred: &Predicate, pattern: &Pattern, polarity: PatternPolarity, row: InstanceRow) -> SimpleExpr {
+pub fn pattern_on(target: PatternTarget, value: &ValueTest, pattern: &Pattern, row: InstanceRow) -> SimpleExpr {
     match target {
-        PatternTarget::Column(column) => as_string(pattern_predicate(row.value(column), polarity, pattern, column_indexes(row, column)), row),
-        PatternTarget::LanguageMap => language_term(pred, &LanguageMap::of_instance(row), LanguageSelection::AnyLanguage),
+        PatternTarget::Column(column) => as_string(
+            pattern_predicate(row.value(column), value.polarity(), pattern, column_indexes(row, column)),
+            row,
+        ),
+        PatternTarget::LanguageMap => language_value_term(value, &LanguageMap::of_instance(row), LanguageSelection::AnyLanguage),
     }
 }
 
@@ -90,35 +91,33 @@ const fn column_indexes(row: InstanceRow, column: ValueColumn) -> PatternIndexes
 /// page through the trigram indexes as well, one target at a time (see
 /// [`keyed_pattern`](crate::q_predicate::keyed_pattern)).
 #[must_use]
-pub(crate) fn pattern_value(pred: &Predicate, pattern: &Pattern, polarity: PatternPolarity, row: InstanceRow) -> Condition {
-    pattern_targets(row).fold(Condition::any(), |any, target| any.add(pattern_on(target, pred, pattern, polarity, row)))
+pub(crate) fn pattern_value(value: &ValueTest, pattern: &Pattern, row: InstanceRow) -> Condition {
+    pattern_targets(row).fold(Condition::any(), |any, target| any.add(pattern_on(target, value, pattern, row)))
 }
 
 #[cfg(test)]
 mod tests {
     use crate::q_predicate::{
         instance_row::InstanceRow,
+        lowered_filter::term_of,
         pattern_term::{PatternTarget, pattern_targets, pattern_value},
         value_column::ValueColumn,
     };
-    use andromeda_ngsi_ld_query::filter::{
-        expression::Expr,
-        parser::parse,
-        predicate::{PatternPolarity, Predicate},
-    };
+    use andromeda_ngsi_ld_query::filter::reading::{scalar_test::ScalarTest, term_reading::Test};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::value_placement::ValueField;
     use pretty_assertions::assert_eq;
     use sea_query::{Query, SelectStatement};
 
-    fn render(q: &str, polarity: PatternPolarity, row: InstanceRow) -> SelectStatement {
-        let Expr::Pred(pred) = parse(q).expect("parses") else {
-            panic!("a single predicate");
+    fn render(q: &str, row: InstanceRow) -> SelectStatement {
+        let term = term_of(q);
+        let Test::Value(value) = term.test() else {
+            panic!("a value test");
         };
-        let (Predicate::MatchPattern { pattern, .. } | Predicate::NotMatchPattern { pattern, .. }) = &pred else {
+        let ScalarTest::Matches(pattern) = value.test() else {
             panic!("a pattern term");
         };
-        Query::select().cond_where(pattern_value(&pred, pattern, polarity, row)).to_owned()
+        Query::select().cond_where(pattern_value(value, pattern, row)).to_owned()
     }
 
     #[test]
@@ -139,21 +138,21 @@ mod tests {
 
     #[test]
     fn a_pattern_on_a_current_row_disjoins_every_target() {
-        let statement = render("\"https://example.com/name\"~=\"^D\"", PatternPolarity::Match, InstanceRow::Current);
+        let statement = render("\"https://example.com/name\"~=\"^D\"", InstanceRow::Current);
         assert_statement_snapshot!("pattern-term-a-pattern-on-a-current-row-disjoins-every-target", statement);
     }
 
     /// Clause 4.9 `notPatternOp`: no string of a `languageMap` may match.
     #[test]
     fn a_not_pattern_denies_every_string_of_the_language_map() {
-        let statement = render("\"https://example.com/name\"!~=\"^D\"", PatternPolarity::NotMatch, InstanceRow::Current);
+        let statement = render("\"https://example.com/name\"!~=\"^D\"", InstanceRow::Current);
         assert_statement_snapshot!("pattern-term-a-not-pattern-denies-every-string-of-the-language-map", statement);
     }
 
     /// A Relationship's object is never a pattern target (clause 4.9).
     #[test]
     fn a_pattern_never_reads_a_relationship_object() {
-        let statement = render("\"https://example.com/owner\"~=\"urn:Person:.*\"", PatternPolarity::Match, InstanceRow::Current);
+        let statement = render("\"https://example.com/owner\"~=\"urn:Person:.*\"", InstanceRow::Current);
         assert_statement_snapshot!("pattern-term-a-pattern-never-reads-a-relationship-object", statement);
     }
 }

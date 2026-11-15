@@ -40,13 +40,14 @@ use andromeda_postgresql_stored_values::value_kind::ValueKind;
 use sea_query::{Alias, CaseStatement, Expr as SeaExpr, ExprTrait, Func, SimpleExpr};
 
 /// The typed value the read instance holds for the path, read off the
-/// columns of `source`.
-pub(crate) fn ordered_value(path: &AttrPath, element: Option<&ElementPath>, source: &Alias) -> OrderedValue {
+/// columns of `source`: `member` of the instance `element` locates when the
+/// path ends on one.
+pub(crate) fn ordered_value(path: &AttrPath, element: Option<&ElementPath>, member: Option<InstanceMetadata>, source: &Alias) -> OrderedValue {
     let holder = match element.map(|element| element.chain.is_empty()) {
         Some(false) => Holder::Element(SeaExpr::col((source.clone(), Alias::new(ELEMENT_COLUMN)))),
         Some(true) | None => Holder::Row(source.clone()),
     };
-    match (element.and_then(|element| element.field), &path.trailing) {
+    match (element.and(member), &path.trailing) {
         (Some(field), None | Some(TrailingPath::AllLanguages | TrailingPath::Members(_) | TrailingPath::Language(_))) => holder.member(field),
         (None, None | Some(TrailingPath::AllLanguages)) => holder.own_value(),
         (None, Some(TrailingPath::Members(members))) => holder.member_of_value(Some(members), path.target_language()),

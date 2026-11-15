@@ -6,8 +6,8 @@
 //! on its syntax tree is a reading of the clause that can drift from the
 //! others. The guard flags, in any production source outside
 //! `crates/andromeda-ngsi-ld-query/src/filter/`, a pattern that names a
-//! variant of `Predicate`, `SetMembership`, `OrderingOp`, `CompareValue`,
-//! `Scalar`, `CmpOp` or `PatternPolarity`: a `match` arm, an `if let`, a
+//! variant of `Predicate`, `SetMembership`, `OrderingOp`, `CompareValue` or
+//! `Scalar`: a `match` arm, an `if let`, a
 //! `let` with `else`, and the pattern of a `matches!` invocation, nested in
 //! another macro or not. A variant is named as `Type::Variant`, as
 //! `Self::Variant` inside an `impl` of a watched type, through a `use` that
@@ -36,27 +36,7 @@ const OWNER: &str = "crates/andromeda-ngsi-ld-query/src/filter/";
 /// The sites outside the owner, as the file and the number of sites it
 /// holds. Each change that moves a reading into the owner lowers or removes
 /// its file's entry.
-pub const Q_READING_BASELINE: &[(&str, usize)] = &[
-    ("crates/andromeda-postgresql-context-query/src/csr/filter.rs", 19),
-    ("crates/andromeda-postgresql-query/src/jsonb.rs", 7),
-    ("crates/andromeda-postgresql-query/src/operator.rs", 8),
-    ("crates/andromeda-postgresql-query/src/q_predicate/equality_term.rs", 9),
-    ("crates/andromeda-postgresql-query/src/q_predicate/json_value_term.rs", 3),
-    ("crates/andromeda-postgresql-query/src/q_predicate/keyed_existence.rs", 1),
-    ("crates/andromeda-postgresql-query/src/q_predicate/keyed_hop.rs", 8),
-    ("crates/andromeda-postgresql-query/src/q_predicate/keyed_ordering.rs", 16),
-    ("crates/andromeda-postgresql-query/src/q_predicate/keyed_pattern.rs", 1),
-    ("crates/andromeda-postgresql-query/src/q_predicate/keyed_term.rs", 5),
-    ("crates/andromeda-postgresql-query/src/q_predicate/language_term.rs", 24),
-    ("crates/andromeda-postgresql-query/src/q_predicate/projection.rs", 5),
-    ("crates/andromeda-postgresql-query/src/q_predicate/string_ordering.rs", 14),
-    ("crates/andromeda-postgresql-query/src/q_predicate/structured_target.rs", 7),
-    ("crates/andromeda-postgresql-query/src/q_predicate/sub_attribute/keyed_equality.rs", 3),
-    ("crates/andromeda-postgresql-query/src/q_predicate/sub_attribute/member_field.rs", 51),
-    ("crates/andromeda-postgresql-query/src/q_predicate/typed_column.rs", 25),
-    ("crates/andromeda-postgresql-query/src/q_predicate/value_object_member.rs", 10),
-    ("crates/andromeda-postgresql-query/src/sub_attribute_operand_keys.rs", 7),
-];
+pub const Q_READING_BASELINE: &[(&str, usize)] = &[("crates/andromeda-postgresql-context-query/src/csr/filter.rs", 19)];
 
 /// Every production site outside the owner that matches on a `q` term's
 /// syntax tree, as `path:line: what`, grouped by file.
