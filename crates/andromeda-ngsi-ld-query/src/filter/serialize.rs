@@ -100,7 +100,7 @@ const fn needs_parentheses(term: &Expr, separator: char) -> bool {
 /// operand, which clause 4.9 writes after a hop's closing brace
 /// (`rel{attr}=="x"`).
 fn write_predicate(buf: &mut String, pred: &Predicate, spelling: MemberSpelling) {
-    write_query_path(buf, pred.path(), spelling);
+    write_query_path(buf, pred.path(), spelling, PathHead::Query);
     match pred {
         Predicate::Exists(_) => {}
         Predicate::Equality { membership, rhs, .. } => {
@@ -122,29 +122,47 @@ fn write_predicate(buf: &mut String, pred: &Predicate, spelling: MemberSpelling)
     }
 }
 
-/// Write an attribute axis, every hop's braces closed.
-fn write_query_path(buf: &mut String, path: &QueryPath, spelling: MemberSpelling) {
+/// Where the leading name of a path stands.
+#[derive(Debug, Clone, Copy)]
+enum PathHead {
+    /// At the start of a Query Term.
+    Query,
+    /// Inside a hop's braces, where a colon ends a type guard.
+    Hop,
+}
+
+/// Write an attribute axis, every hop's braces closed, its leading name
+/// standing at `head`.
+fn write_query_path(buf: &mut String, path: &QueryPath, spelling: MemberSpelling, head: PathHead) {
     match path {
-        QueryPath::Local(local) => write_attr_path(buf, local, spelling),
+        QueryPath::Local(local) => write_attr_path(buf, local, spelling, head),
         QueryPath::Linked {
             relationship,
             guard_types,
             inner,
         } => {
-            write_ident(buf, relationship.as_str());
+            write_leading_name(buf, relationship.as_str(), head);
             buf.push('{');
             for (index, guard_type) in guard_types.iter().enumerate() {
                 if index > 0 {
                     buf.push(',');
                 }
-                write_guard_type(buf, guard_type.as_str());
+                write_hop_head_name(buf, guard_type.as_str());
             }
             if !guard_types.is_empty() {
                 buf.push(':');
             }
-            write_query_path(buf, inner, spelling);
+            write_query_path(buf, inner, spelling, PathHead::Hop);
             buf.push('}');
         }
+    }
+}
+
+/// Write the leading name of a path standing at `head`.
+fn write_leading_name(buf: &mut String, name: &str, head: PathHead) {
+    match head {
+        PathHead::Query => write_ident(buf, name),
+        PathHead::Hop => write_hop_head_name(buf, name),
     }
 }
 
@@ -158,14 +176,14 @@ fn write_query_path(buf: &mut String, path: &QueryPath, spelling: MemberSpelling
 #[must_use]
 pub fn serialize_attr_path(path: &AttrPath) -> String {
     let mut buffer = String::new();
-    write_attr_path(&mut buffer, path, MemberSpelling::Addressed);
+    write_attr_path(&mut buffer, path, MemberSpelling::Addressed, PathHead::Query);
     buffer
 }
 
 /// Write an attribute path, including sub-attributes and compound value keys
-/// in `spelling`.
-fn write_attr_path(buf: &mut String, path: &AttrPath, spelling: MemberSpelling) {
-    write_ident(buf, path.attr.as_str());
+/// in `spelling`, its attribute standing at `head`.
+fn write_attr_path(buf: &mut String, path: &AttrPath, spelling: MemberSpelling, head: PathHead) {
+    write_leading_name(buf, path.attr.as_str(), head);
     for sub in &path.sub_attrs {
         buf.push('.');
         write_ident(buf, sub.as_str());
@@ -195,15 +213,18 @@ fn write_attr_path(buf: &mut String, path: &AttrPath, spelling: MemberSpelling) 
     }
 }
 
-/// Write one entity type of a hop's guard, quoting it whenever it carries a
-/// colon.
+/// Write a name standing at the head of a hop, a type of its guard or the
+/// leading name of the path inside its braces, quoting it whenever it carries
+/// a colon.
 ///
-/// A guard type needs quoting the ordinary identifier rule does not ask for: the
-/// guard's terminating colon is written straight after the last type, so a bare
-/// type that contains one of its own leaves the parser two colons and no way to
-/// tell which ends the guard, a case the parser rejects. Quoting closes
-/// the type before the terminator and the filter reads back unchanged.
-fn write_guard_type(buf: &mut String, s: &str) {
+/// Such a name needs quoting the ordinary identifier rule does not ask for. A
+/// bare name holding a colon at the head of a hop opens a type guard, and the
+/// guard's terminating colon is written straight after the last type, so a
+/// bare type or a bare name after the guard that holds a colon of its own
+/// leaves the parser two colons and no way to tell which ends the guard, a
+/// case the parser rejects. Quoting closes the name and the filter reads back
+/// unchanged.
+fn write_hop_head_name(buf: &mut String, s: &str) {
     if s.contains(':') {
         write_quoted(buf, s);
     } else {
@@ -441,6 +462,15 @@ mod tests {
             "a{b{c}}==5",
             "a{b}",
             "a{prefix:name}==\"v\"",
+            "sensor{Device:humidity}==40",
+            "r{T1:s{T2:a}}==1",
+            "\"https://example.com/sensor\"{\"https://example.com/Device\":\"https://example.com/humidity\"}==40",
+            // A prefixed attribute name at the head of a hop is quoted, before a
+            // guard or after one, so its colon cannot be read as one that ends
+            // a guard.
+            "a{\"prefix:name\"}==\"v\"",
+            "rel{Store:\"ex:category\"}==\"x\"",
+            "rel{\"ex:link\"{name}}==\"x\"",
             "speed>50;isParkedIn{category}==\"x\"",
             "\"https://example.com/isParkedIn\"{\"https://example.com/Building\",\"https://example.com/Store\":\"https://example.com/category\"}==\"x\"",
             "\"https://example.com/rel\"{Building,Store:\"https://example.com/category\"}==\"x\"",

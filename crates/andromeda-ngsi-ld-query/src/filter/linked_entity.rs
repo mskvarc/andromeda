@@ -71,14 +71,20 @@ struct HopGuard<'a> {
 
 /// Parse the optional entity-type guard at the head of a linked-entity hop.
 ///
-/// Clause 4.9 spells the guard `*1(EntityType 1*("," EntityType) ":")`: two
-/// or more comma-separated types, then a colon. The tokeniser is
+/// Clause 4.9 spells the guard `*1(EntityType 1*("," EntityType) ":")` in its
+/// ABNF and writes it with one type in EXAMPLE 14 (`sensor{Device:humidity}`),
+/// so a guard names one type or more, then a colon. The tokeniser is
 /// context-free and `:` is a legal identifier character, so the colon
 /// arrives glued to whatever the client wrote next: `Store:category` is one
 /// identifier. The guard is therefore recognised from shape, not from a
-/// colon token: a comma directly after the first name inside the braces
-/// means a guard, and nothing else in the grammar puts a comma there. A lone
-/// `prefix:name` has no comma and is an ordinary prefixed attribute name.
+/// colon token. A comma directly after the first name inside the braces
+/// opens a guard of several types, and nothing else in the grammar puts a
+/// comma there. A first name holding a colon opens a guard of one type,
+/// written bare (`Device:humidity`) or quoted before a colon
+/// (`"https://example.com/Device":humidity`): no `AttrName` and no
+/// `EntityType` of the grammar holds a colon, so `X:y` inside the braces
+/// derives only as a type and an attribute. A prefixed attribute name there is
+/// written quoted (`sensor{"ex:humidity"}`).
 ///
 /// # Errors
 ///
@@ -87,8 +93,7 @@ struct HopGuard<'a> {
 /// colons and so is ambiguous, and [`QueryError::AttributeNameInvalid`] when a
 /// type name is outside the clause 4.6.2 grammar.
 fn parse_hop_guard<'a>(cursor: &mut TokenCursor<'a>) -> Result<HopGuard<'a>, QueryError> {
-    let opens_guard = matches!(cursor.peek(), Some(Token::Ident(_) | Token::QuotedStr(_))) && cursor.peek_ahead(1) == Some(&Token::Comma);
-    if !opens_guard {
+    if !opens_guard(cursor) {
         return Ok(HopGuard {
             types: Vec::new(),
             inner_leading: None,
@@ -104,6 +109,20 @@ fn parse_hop_guard<'a>(cursor: &mut TokenCursor<'a>) -> Result<HopGuard<'a>, Que
         }
         types.push(attribute_name(name)?);
         cursor.expect(&Token::Comma)?;
+    }
+}
+
+/// Whether the tokens at the head of a hop open a type guard: a name followed
+/// by a comma, a bare name holding a colon, or a quoted name followed by a
+/// colon.
+fn opens_guard(cursor: &TokenCursor<'_>) -> bool {
+    match (cursor.peek(), cursor.peek_ahead(1)) {
+        (Some(Token::Ident(_) | Token::QuotedStr(_)), Some(Token::Comma)) => true,
+        (Some(Token::Ident(name)), _) => name.contains(':'),
+        (Some(Token::QuotedStr(_)), Some(Token::Ident(next))) => next.starts_with(':'),
+        // Any other head is an inner path, or a token no path opens with,
+        // which the inner path's parse reports.
+        (Some(_) | None, _) => false,
     }
 }
 

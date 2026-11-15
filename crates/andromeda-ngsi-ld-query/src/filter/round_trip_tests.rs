@@ -18,13 +18,23 @@ use proptest::{
     test_runner::Config,
 };
 
-/// Attribute names, a prefixed name and a quoted IRI among them.
-const NAMES: [&str; 7] = ["a", "speed", "brandName", "x_1", "observedAt", "ex:name", "\"https://example.com/q\""];
+/// Attribute names, a prefixed name, a quoted IRI and a quoted prefixed name
+/// among them. A bare prefixed name at the head of a hop is the type of a
+/// guard and the attribute after it.
+const NAMES: [&str; 8] = [
+    "a",
+    "speed",
+    "brandName",
+    "x_1",
+    "observedAt",
+    "ex:name",
+    "\"https://example.com/q\"",
+    "\"ex:q\"",
+];
 
-/// The clause 4.9 `AttrName`s of [`NAMES`], the only names a hop reads after
-/// a type guard: a prefixed name or a quoted IRI there would make the colon
-/// ending the guard ambiguous, and the parser refuses it.
-const PLAIN_NAMES: [&str; 5] = ["a", "speed", "brandName", "x_1", "observedAt"];
+/// The names of [`NAMES`] a hop's path may open with after a type guard: a
+/// bare prefixed name there leaves the parser two colons, and it refuses it.
+const AFTER_GUARD_NAMES: [&str; 7] = ["a", "speed", "brandName", "x_1", "observedAt", "\"https://example.com/q\"", "\"ex:q\""];
 
 /// Entity types of a hop guard.
 const TYPES: [&str; 3] = ["T1", "Vehicle", "Building"];
@@ -97,21 +107,23 @@ fn attribute(depth: u32) -> BoxedStrategy<String> {
     prop_oneof![value_path(&NAMES), hop(depth)].boxed()
 }
 
-/// A hop, and up to `depth - 1` hops within it, into a value path, every name
-/// inside the braces a plain one.
+/// A hop, and up to `depth - 1` hops within it, into a value path, with no
+/// type guard, a guard of one type or a guard of several.
 fn hop(depth: u32) -> BoxedStrategy<String> {
+    let inner = |names: &'static [&'static str]| {
+        if depth > 1 {
+            prop_oneof![value_path(names), hop(depth - 1)].boxed()
+        } else {
+            value_path(names)
+        }
+    };
     let guard = prop_oneof![
-        Just(String::new()),
         select(&TYPES[..]).prop_map(|guard| format!("{guard}:")),
         vec(select(&TYPES[..]), 2..4).prop_map(|guards| format!("{}:", guards.join(","))),
     ];
-    let inner = if depth > 1 {
-        prop_oneof![value_path(&PLAIN_NAMES), hop(depth - 1)].boxed()
-    } else {
-        value_path(&PLAIN_NAMES)
-    };
-    (select(&["r", "isParked", "link"][..]), guard, inner)
-        .prop_map(|(relationship, guard, inner)| format!("{relationship}{{{guard}{inner}}}"))
+    let head = prop_oneof![(Just(String::new()), inner(&NAMES)), (guard, inner(&AFTER_GUARD_NAMES))];
+    (select(&["r", "isParked", "link"][..]), head)
+        .prop_map(|(relationship, (guard, inner))| format!("{relationship}{{{guard}{inner}}}"))
         .boxed()
 }
 

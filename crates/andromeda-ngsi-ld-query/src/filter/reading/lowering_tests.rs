@@ -195,6 +195,21 @@ fn a_chain_of_two_hops_keeps_each_guard_outermost_first() {
     assert_eq!(term.attribute(), &name("a"));
 }
 
+/// LW-13. Clause 4.9 EXAMPLE 14 writes a guard of one type, which the ABNF's
+/// two or more types does not admit.
+#[test]
+fn a_hop_guarded_by_one_type_keeps_its_guard() {
+    let term = term("r{T1:s{a}}==1");
+    let [outer, inner] = term.hops() else {
+        panic!("two hops: {:?}", term.hops());
+    };
+    assert_eq!(outer.relationship(), &name("r"));
+    assert_eq!(outer.guard_types(), ["T1".parse::<EntityTypeName>().expect("a type name")]);
+    assert_eq!(inner.relationship(), &name("s"));
+    assert_eq!(inner.guard_types(), Vec::<EntityTypeName>::new());
+    assert_eq!(term.attribute(), &name("a"));
+}
+
 /// LW-12. Clause 4.9 makes each name after the first "a (sub)Property or
 /// (sub)Relationship", and a Property's value member is neither: a compound
 /// value is entered through the trailing group. The segment is a sub-attribute
