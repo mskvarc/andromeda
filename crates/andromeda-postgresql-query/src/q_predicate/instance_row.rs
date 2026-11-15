@@ -12,6 +12,7 @@
 //! of whichever [`ProbedRow`] the probe reads.
 
 use crate::q_predicate::{history_aliases::HistoryAliases, projection_probe::projection_column, value_column::ValueColumn};
+use andromeda_ngsi_ld_query::standing_instant::StandingInstant;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, SubAttribute},
     temporal::AttributeHistory,
@@ -30,9 +31,11 @@ use std::iter;
 /// path walks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProbedRow {
-    /// The `current_attributes` row the value probe reads.
-    Current,
-    /// The `attribute_history` row a window probe reads.
+    /// The `current_attributes` row the value probe reads, its elements judged
+    /// standing at the instant given (clause 4.22).
+    Current(StandingInstant),
+    /// The `attribute_history` row a window probe reads, which records an
+    /// instance as it was and is read against no expiry.
     History,
 }
 
@@ -41,7 +44,7 @@ impl ProbedRow {
     #[must_use]
     pub const fn instance(self) -> InstanceRow {
         match self {
-            ProbedRow::Current => InstanceRow::Current,
+            ProbedRow::Current(_) => InstanceRow::Current,
             ProbedRow::History => InstanceRow::History,
         }
     }
@@ -50,7 +53,7 @@ impl ProbedRow {
     #[must_use]
     pub fn sub_attributes(self) -> SimpleExpr {
         match self {
-            ProbedRow::Current => projection_column(CurrentAttributes::SubAttributes),
+            ProbedRow::Current(_) => projection_column(CurrentAttributes::SubAttributes),
             ProbedRow::History => HistoryAliases::top_level().instance_column(AttributeHistory::SubAttributes),
         }
     }
@@ -191,6 +194,7 @@ mod tests {
         instance_row::{ElementLevel, InstanceRow, ProbedRow},
         value_column::ValueColumn,
     };
+    use andromeda_ngsi_ld_query::standing_instant::StandingInstant;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use sea_query::{Query, SelectStatement, SimpleExpr};
 
@@ -236,7 +240,7 @@ mod tests {
     fn each_probed_row_offers_its_own_sub_attribute_tree() {
         assert_statement_snapshot!(
             "instance-row-each-probed-row-offers-its-own-sub-attribute-tree-1",
-            render(ProbedRow::Current.sub_attributes())
+            render(ProbedRow::Current(StandingInstant::WhenRead).sub_attributes())
         );
         assert_statement_snapshot!(
             "instance-row-each-probed-row-offers-its-own-sub-attribute-tree-2",

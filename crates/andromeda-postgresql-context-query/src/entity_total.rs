@@ -8,7 +8,7 @@ use crate::{
     keyed_count::{KeyedCountFilters, count_bound, keyed_count},
     keyed_page::page_bound as keyed_page_bound,
 };
-use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery};
+use andromeda_ngsi_ld_query::{count_policy::CountPolicy, entity::compiled::CompiledEntityQuery, standing_instant::StandingInstant};
 use andromeda_postgresql_query::{
     entity_row_refs::EntityRowRefs,
     error::RenderError,
@@ -126,7 +126,7 @@ pub(crate) fn entity_total(
     let relations = EntityRelations::for_count(source.query, &source.names.types, source.schema);
     let total = match candidates {
         None => TotalCount {
-            count: count_over(relations, source.schema, whole),
+            count: count_over(relations, source.schema, source.rows.standing(), whole),
             walked: None,
         },
         Some(candidates) => {
@@ -149,7 +149,7 @@ pub(crate) fn entity_total(
             } else {
                 &[GatedStep::ShortWalk]
             };
-            let walked = count_over(relations.clone(), source.schema, whole.clone());
+            let walked = count_over(relations.clone(), source.schema, source.rows.standing(), whole.clone());
             let filters = KeyedCountFilters { remainder, whole };
             TotalCount {
                 count: keyed_count(&relations, source.schema, source.rows, filters, select, read),
@@ -164,11 +164,12 @@ pub(crate) fn entity_total(
 }
 
 /// `SELECT COUNT(*)` over `relations` in the branch `schema` (`None` for the
-/// live branch), filtered by `condition`.
-pub(crate) fn count_over(relations: EntityRelations, schema: Option<&DynIden>, condition: Condition) -> SelectStatement {
+/// live branch), the driving Entity standing at `standing`, filtered by
+/// `condition`.
+pub(crate) fn count_over(relations: EntityRelations, schema: Option<&DynIden>, standing: StandingInstant, condition: Condition) -> SelectStatement {
     let mut count = Query::select();
     count.expr(Func::count(Expr::col(Asterisk)));
-    relations.apply_from(&mut count, schema);
+    relations.apply_from(&mut count, schema, standing);
     count.cond_where(condition);
     count.take()
 }

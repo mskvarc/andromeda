@@ -12,8 +12,6 @@ pub mod discovery;
 pub mod entity_types;
 /// Entity expiry candidates.
 pub mod expiry;
-/// Whole entity payloads read a page at a time.
-pub mod payload_pages;
 /// Compiled entity queries and capability reporting.
 pub mod query;
 /// Entity payload and snapshot reads.

@@ -71,6 +71,8 @@ mod interval_candidates;
 mod interval_match;
 /// What one periodic notification carries of the entities it matched.
 mod interval_payload;
+/// The query a periodic notification reads its candidates with.
+mod interval_query;
 /// The immutable notification event a write produces.
 pub mod notification_event;
 /// The invariants notification delivery relies on.
@@ -90,6 +92,9 @@ mod outcome_recording_store;
 /// The committed entity changes handed to live evaluation and not yet
 /// evaluated.
 pub mod pending_change;
+/// A compiled periodic subscription and its tick, for tests.
+#[cfg(test)]
+mod periodic_fixture;
 /// Entity event notification evaluation.
 pub mod processor;
 /// The `@context` a notification is rendered under, and the failure recorded when it cannot be loaded.

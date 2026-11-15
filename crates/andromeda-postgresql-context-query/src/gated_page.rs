@@ -77,7 +77,7 @@ impl PageSource<'_> {
     /// projected, with the order it is read in.
     pub(crate) fn page(&self, condition: Condition, window: &PageWindow) -> Result<(ProjectedPage, ReadOrder), RenderError> {
         let mut page = Query::select();
-        self.relations.clone().apply_from(&mut page, self.schema);
+        self.relations.clone().apply_from(&mut page, self.schema, self.rows.standing());
         page.cond_where(condition);
         let (keys, read_order) = window_and_sort_keys(&mut page, self.rows, self.query, window, &self.names.attributes)?;
         Ok((projected_page(page, self.rows, keys, CountPolicy::Omit), read_order))
@@ -99,9 +99,9 @@ impl PageSource<'_> {
 }
 
 /// The rows the short walk's probe reads: `entity_key` and `id` from the
-/// walked Entity.
-pub(crate) fn walked_rows(schema: Option<&DynIden>) -> EntityRowRefs {
-    EntityRowRefs::unaliased(schema.cloned()).keyed_by(Walked)
+/// walked Entity, in the branch of `rows` and standing at their instant.
+pub(crate) fn walked_rows(rows: &EntityRowRefs) -> EntityRowRefs {
+    EntityRowRefs::unaliased(rows.schema().cloned()).keyed_by(Walked).standing_at(rows.standing())
 }
 
 /// The first step of a gated page.

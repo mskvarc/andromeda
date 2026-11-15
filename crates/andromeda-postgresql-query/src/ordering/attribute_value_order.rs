@@ -32,6 +32,7 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     filter::{instance_metadata::InstanceMetadata, path::AttrPath},
     ordering::sort_direction::SortDirection,
+    standing_instant::StandingInstant,
 };
 use andromeda_ngsi_ld_vocabulary::{
     expanded::classes::{DATE_TIME, TIME},
@@ -117,7 +118,7 @@ impl AttributeValue {
     pub fn lateral(&self, rows: &EntityRowRefs, path: &AttrPath, attributes: &ResolvedNames<AttributeName>) -> SelectStatement {
         let source = Alias::new(SOURCE_ALIAS);
         let read = instance_read(rows, path, attributes);
-        let (element, member) = ordered_element(path, attributes);
+        let (element, member) = ordered_element(path, attributes, rows.standing());
         let value = ordered_value(path, element.as_ref(), member, &source);
         let mut projection = Query::select();
         projection
@@ -202,12 +203,19 @@ impl AttributeValue {
 
 /// The instance of current state `path` orders by, `None` when one of its
 /// names was never recorded, and the member of it the path ends on.
-fn ordered_element(path: &AttrPath, attributes: &ResolvedNames<AttributeName>) -> (Option<ElementPath<'static>>, Option<InstanceMetadata>) {
+fn ordered_element(
+    path: &AttrPath,
+    attributes: &ResolvedNames<AttributeName>,
+    standing: StandingInstant,
+) -> (Option<ElementPath<'static>>, Option<InstanceMetadata>) {
     let (sub_attributes, member) = match path.ending_member() {
         Some((member, above)) => (above, Some(member)),
         None => (path.sub_attrs.as_slice(), None),
     };
-    (ElementPath::of_names(&path.attr, sub_attributes, ProbedRow::Current, attributes), member)
+    (
+        ElementPath::of_names(&path.attr, sub_attributes, ProbedRow::Current(standing), attributes),
+        member,
+    )
 }
 
 /// The one instance of the entity the term orders by, read from
@@ -221,13 +229,13 @@ fn instance_read(rows: &EntityRowRefs, path: &AttrPath, attributes: &ResolvedNam
         .and_where(projection_column(CurrentAttributes::EntityKey).eq(rows.entity_key_column()))
         .order_by_expr(projection_column(CurrentAttributes::Ordinal), Order::Asc)
         .limit(1);
-    match ordered_element(path, attributes).0 {
+    match ordered_element(path, attributes, rows.standing()).0 {
         // No dictionary row means no instance was ever written.
         None => {
             read.and_where(false_literal());
         }
         Some(element) => {
-            read.and_where(of_attribute(element.attribute)).and_where(standing());
+            read.and_where(of_attribute(element.attribute)).and_where(standing(rows));
             if let Some(first) = element.first_element() {
                 read.cond_where(element.condition(Condition::all())).expr_as(first, Alias::new(ELEMENT_COLUMN));
             }

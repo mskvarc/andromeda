@@ -1,100 +1,68 @@
 //! The entities a periodic (`timeInterval`) notification considers (clause
-//! 5.8.6): those its subscription's entity selectors select, read from the
-//! store a page at a time.
+//! 5.8.6): those the query of its subscription matches as they stand at the
+//! tick's instant, read from the store a page at a time.
 
-use crate::error::NotificationError;
+use crate::{error::NotificationError, interval_query::interval_query};
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_entity::port::{payload_pages::EntityPayloadPages, stored_entry::StoredEntry};
+use andromeda_entity::{error::EntityError, port::stored_entry::StoredEntry, query::EntityQueryService};
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_query::page_window::{PageStart, PageWindow};
 use andromeda_subscription::compiled::CompiledSubscription;
-use std::collections::HashSet;
+use chrono::{DateTime, Utc};
+use std::sync::Arc;
 
-/// Rows read per round trip while a periodic notification assembles its
+/// Entities read per round trip while a periodic notification assembles its
 /// candidate set.
 ///
-/// A selector whose type is a boolean expression cannot be pushed into a
-/// `WHERE`, so the broker reads every entity in the tenant and decides in
-/// memory. Reading that in pages bounds one round trip, and discarding
-/// non-matching rows as each page arrives is what bounds what is held.
+/// The store keeps only the Entities the subscription's selectors and filters
+/// select, which can still be every Entity in the tenant. Reading them in
+/// pages bounds one round trip and what one read holds.
 const INTERVAL_ENTITY_PAGE: u16 = 500;
 
-/// The candidate entities of one periodic notification, read from `pages`.
+/// The candidate entities of one periodic notification, read through
+/// `entity_query`.
 pub(crate) struct IntervalCandidates<'a> {
     /// The context the entities are read from.
     pub(crate) target: &'a ContextTarget,
-    /// The store's paged entity reads.
-    pub(crate) pages: &'a dyn EntityPayloadPages,
+    /// The query engine the entities are read through.
+    pub(crate) entity_query: &'a EntityQueryService,
 }
 
 impl IntervalCandidates<'_> {
-    /// The entities `sub`'s entity selectors select (clause 5.8.6), every
-    /// entity when it names none.
+    /// The entities `sub` notifies of as they stand at `at` (clause 5.8.6), in
+    /// identifier order: those its selectors select and its `q`, `geoQ` and
+    /// `scopeQ` keep, every entity when it names none, and none when a stored
+    /// `geoQ` no longer compiles.
     ///
-    /// The selectors are a union: an entity two of them select is one
-    /// candidate, in the place the first selector that selects it puts it.
+    /// Each page continues after the last identifier of the one before, never
+    /// by offset. An entity whose stored rows no longer read back is left out,
+    /// and the walk continues after it.
     ///
     /// # Errors
     ///
-    /// Returns the store's failure to read a page.
-    pub(crate) async fn matching(&self, sub: &CompiledSubscription) -> Result<Vec<EntityState>, NotificationError> {
-        if sub.selectors.is_empty() {
-            return self.collect_pages(None, |_| true).await;
-        }
-
-        let mut selected: HashSet<Identifier> = HashSet::new();
-        let mut candidates = Vec::new();
-        for selector in &sub.selectors {
-            // A by-type lookup takes one type, so only a leaf selector can be
-            // pushed down; a boolean expression reads every entity and is
-            // applied in memory.
-            let page_candidates = self
-                .collect_pages(selector.type_.as_single_type(), |entity| {
-                    selector.selects(entity.types().as_slice(), entity.id()) && selected.insert(entity.id().clone())
-                })
-                .await?;
-            candidates.extend(page_candidates);
-        }
-
-        Ok(candidates)
-    }
-
-    /// Read entities a page at a time, each page continuing after the last
-    /// identifier of the one before, keeping only those `keep` accepts. An
-    /// entity whose stored rows no longer read back is left out, and the walk
-    /// continues after it.
-    ///
-    /// `entity_type` narrows the read to one entity type when the selector names
-    /// exactly one; otherwise every entity is a candidate and the predicate is
-    /// the only filter. See [`INTERVAL_ENTITY_PAGE`] for why this pages.
-    async fn collect_pages(
-        &self,
-        entity_type: Option<&EntityTypeName>,
-        mut keep: impl FnMut(&EntityState) -> bool,
-    ) -> Result<Vec<EntityState>, NotificationError> {
+    /// Returns the store's failure to read a page, and the failure to read a
+    /// stored selector's type as the IRIs it was stored as.
+    pub(crate) async fn matching(&self, sub: &CompiledSubscription, at: DateTime<Utc>) -> Result<Vec<EntityState>, NotificationError> {
+        let Some(query) = interval_query(sub, at).map_err(EntityError::from)? else {
+            return Ok(Vec::new());
+        };
+        let query = Arc::new(query);
         let mut kept = Vec::new();
-        let mut after: Option<Identifier> = None;
+        let mut window = PageWindow {
+            limit: u32::from(INTERVAL_ENTITY_PAGE),
+            start: PageStart::Cursor(None),
+        };
         loop {
-            let page = match entity_type {
-                Some(type_name) => self
-                    .pages
-                    .get_entities_by_type(self.target, type_name, after.as_ref(), INTERVAL_ENTITY_PAGE)
-                    .await
-                    .map_err(NotificationError::from)?,
-                None => self
-                    .pages
-                    .get_all_entities(self.target, after.as_ref(), INTERVAL_ENTITY_PAGE)
-                    .await
-                    .map_err(NotificationError::from)?,
-            };
+            let page = self.entity_query.compiled_states(self.target, &query, &window).await?;
             let exhausted = page.len() < usize::from(INTERVAL_ENTITY_PAGE);
             // clone: the page is consumed by the filter that follows, so the cursor keeps its own copy of the last identifier
-            after = page.last().map(|entry| entry.id(EntityState::id).clone());
+            let last = page.last().map(|entry| entry.id(|entity| entity.state.id()).clone());
             // The store logged each entity that does not read back; the others
             // are still notified.
-            kept.extend(page.into_iter().filter_map(StoredEntry::read).filter(|entity| keep(entity)));
-            if exhausted {
-                return Ok(kept);
+            kept.extend(page.into_iter().filter_map(StoredEntry::read).map(|entity| Arc::unwrap_or_clone(entity.state)));
+            match last {
+                Some(last) if !exhausted => window = PageWindow::after(u32::from(INTERVAL_ENTITY_PAGE), last),
+                Some(_) | None => return Ok(kept),
             }
         }
     }
@@ -102,82 +70,87 @@ impl IntervalCandidates<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::interval_candidates::IntervalCandidates;
-    use andromeda_context_commit::{store_instant::StoreInstant, subscription_key::SubscriptionKey};
+    use crate::{
+        interval_candidates::IntervalCandidates,
+        notifier_test_double::entity_query,
+        periodic_fixture::{VEHICLE, periodic, tick},
+    };
     use andromeda_context_space::context_target::ContextTarget;
     use andromeda_entity::{
         error::EntityError,
-        port::{payload_pages::EntityPayloadPages, stored_entry::StoredEntry},
+        port::{query::EntityQueryStore, retrieved_entity::RetrievedEntity, stored_entry::StoredEntry},
+        query_outcome::QueryOutcome,
     };
     use andromeda_ngsi_ld_entity::entity_state::EntityState;
-    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, identifier::Identifier};
-    use andromeda_ngsi_ld_query::filter::language_matching::LanguageMatching;
-    use andromeda_subscription::{
-        compilation::compile_subscription,
-        compiled::CompiledSubscription,
-        notifying_since::NotifyingSince,
-        stored_subscription::StoredSubscription,
+    use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+    use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
+    use andromeda_ngsi_ld_query::{
+        count_policy::CountPolicy,
+        cursor::PageCursor,
+        entity::compiled::CompiledEntityQuery,
+        page_window::{PageStart, PageWindow},
+        standing_instant::StandingInstant,
     };
+    use andromeda_subscription::compiled::CompiledSubscription;
     use async_trait::async_trait;
     use chrono::{DateTime, Utc};
+    use pretty_assertions::assert_eq;
     use serde_json::json;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
-    const VEHICLE: &str = "https://example.org/Vehicle";
-
-    /// The stored entities in identifier order, served a page at a time, with
-    /// the `after` of every read noted.
-    struct StoredEntities {
+    /// The stored entities in identifier order, served a window at a time as
+    /// a query engine serves the matches of a cursor walk, with the window
+    /// and the instant of every read noted.
+    struct StoredMatches {
         entities: Vec<StoredEntry<EntityState>>,
-        reads: Mutex<Vec<Option<Identifier>>>,
+        reads: Mutex<Vec<(PageStart, StandingInstant)>>,
     }
 
-    impl StoredEntities {
-        fn of(entities: Vec<EntityState>) -> StoredEntities {
-            StoredEntities::with_entries(entities.into_iter().map(StoredEntry::Read).collect())
-        }
-
-        fn with_entries(entities: Vec<StoredEntry<EntityState>>) -> StoredEntities {
-            StoredEntities {
+    impl StoredMatches {
+        fn with_entries(entities: Vec<StoredEntry<EntityState>>) -> Arc<StoredMatches> {
+            Arc::new(StoredMatches {
                 entities,
                 reads: Mutex::new(Vec::new()),
-            }
+            })
         }
 
-        fn page(&self, entity_type: Option<&EntityTypeName>, after: Option<&Identifier>, limit: u16) -> Vec<StoredEntry<EntityState>> {
-            self.reads.lock().expect("the notes are not poisoned").push(after.cloned());
-            self.entities
-                .iter()
-                .filter(|entry| match entry {
-                    StoredEntry::Read(entity) => entity_type.is_none_or(|wanted| entity.types().as_slice().contains(wanted)),
-                    StoredEntry::Unreadable(_) => true,
-                })
-                .filter(|entry| after.is_none_or(|after| entry.id(EntityState::id).as_str() > after.as_str()))
-                .take(usize::from(limit))
-                .cloned()
-                .collect()
+        fn reads(&self) -> Vec<(PageStart, StandingInstant)> {
+            self.reads.lock().expect("the notes are not poisoned").clone()
         }
     }
 
     #[async_trait]
-    impl EntityPayloadPages for StoredEntities {
-        async fn get_entities_by_type(
+    impl EntityQueryStore for StoredMatches {
+        async fn query_compiled(
             &self,
             _target: &ContextTarget,
-            entity_type: &EntityTypeName,
-            after: Option<&Identifier>,
-            limit: u16,
-        ) -> Result<Vec<StoredEntry<EntityState>>, EntityError> {
-            Ok(self.page(Some(entity_type), after, limit))
+            compiled: &CompiledEntityQuery,
+            window: &PageWindow,
+            _count: CountPolicy,
+        ) -> Result<QueryOutcome, EntityError> {
+            self.reads
+                .lock()
+                .expect("the notes are not poisoned")
+                .push((window.start.clone(), compiled.selection.standing));
+            let rows = window
+                .cut(self.entities.clone(), |entry| entry.id(EntityState::id).as_str())
+                .into_iter()
+                .map(|entry| {
+                    entry.map(|state| RetrievedEntity {
+                        state: Arc::new(state),
+                        sys_attrs: SysAttrsSnapshot {
+                            created_at: DateTime::<Utc>::MIN_UTC,
+                            modified_at: DateTime::<Utc>::MIN_UTC,
+                            expires_at: None,
+                        },
+                    })
+                })
+                .collect();
+            Ok(QueryOutcome { rows, total_count: None })
         }
 
-        async fn get_all_entities(
-            &self,
-            _target: &ContextTarget,
-            after: Option<&Identifier>,
-            limit: u16,
-        ) -> Result<Vec<StoredEntry<EntityState>>, EntityError> {
-            Ok(self.page(None, after, limit))
+        async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery, _window: &PageWindow) -> Result<Vec<Identifier>, EntityError> {
+            Ok(Vec::new())
         }
     }
 
@@ -186,96 +159,57 @@ mod tests {
         EntityState::from_slice(&serde_json::to_vec(&document).expect("JSON")).expect("a stored entity decodes")
     }
 
-    /// Clause 5.8.6 notifies the entities the selectors select, a union of
-    /// selectors (clause 5.2.33), so an entity both select is carried once.
+    fn vehicles(count: usize) -> Vec<String> {
+        (0..count).map(|n| format!("urn:ngsi-ld:Vehicle:{n:05}")).collect()
+    }
+
+    fn every_vehicle() -> CompiledSubscription {
+        periodic(&json!({"entities": [{"type": VEHICLE}]}))
+    }
+
+    fn after(id: &str) -> PageStart {
+        PageStart::Cursor(Some(PageCursor::After(id.parse().expect("a valid URI"))))
+    }
+
+    async fn matched_ids(store: &Arc<StoredMatches>, sub: &CompiledSubscription) -> Vec<String> {
+        let service = entity_query(Arc::<StoredMatches>::clone(store));
+        let candidates = IntervalCandidates {
+            target: &ContextTarget::Live,
+            entity_query: &service,
+        };
+        let matched = candidates.matching(sub, tick()).await.expect("the pages read");
+        matched.iter().map(|entity| entity.id().as_str().to_owned()).collect()
+    }
+
+    /// The walk starts at the first identifier and continues after the last
+    /// identifier of each full page, never by offset, reading every match
+    /// once, each page at the tick's one instant.
     #[tokio::test]
-    async fn an_entity_two_selectors_select_is_a_periodic_candidate_once() {
-        let subscription = serde_json::from_value(json!({
-            "id": "urn:ngsi-ld:Subscription:fleet",
-            "type": "Subscription",
-            "entities": [{"type": VEHICLE, "id": "urn:ngsi-ld:Vehicle:2"}, {"type": VEHICLE}],
-            "timeInterval": 60,
-            "notification": {"endpoint": {"uri": "http://subscriber.example.org/notify", "accept": "application/json"}},
-            "status": "active",
-            "createdAt": "2024-01-01T00:00:00Z",
-            "modifiedAt": "2024-01-01T00:00:00Z"
-        }))
-        .expect("valid subscription");
-        let compiled = compile_subscription(
-            &StoredSubscription {
-                key: SubscriptionKey::try_from(1).expect("a valid key"),
-                subscription,
-                notifying_since: NotifyingSince {
-                    active: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
-                    selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
-                },
-            },
-            LanguageMatching::TagEquality,
+    async fn a_walk_over_several_pages_continues_after_each_last_identifier_at_the_tick_instant() {
+        let ids = vehicles(1_100);
+        let store = StoredMatches::with_entries(ids.iter().map(|id| StoredEntry::Read(vehicle(id))).collect());
+
+        let matched = matched_ids(&store, &every_vehicle()).await;
+
+        assert_eq!(matched, ids);
+        let at = StandingInstant::At(tick());
+        assert_eq!(
+            store.reads(),
+            vec![
+                (PageStart::Cursor(None), at),
+                (after("urn:ngsi-ld:Vehicle:00499"), at),
+                (after("urn:ngsi-ld:Vehicle:00999"), at),
+            ]
         );
-        let pages = StoredEntities::of(vec![vehicle("urn:ngsi-ld:Vehicle:1"), vehicle("urn:ngsi-ld:Vehicle:2")]);
-        let candidates = IntervalCandidates {
-            target: &ContextTarget::Live,
-            pages: &pages,
-        };
-
-        let matched = candidates.matching(&compiled).await.expect("the pages read");
-
-        pretty_assertions::assert_eq!(matched, vec![vehicle("urn:ngsi-ld:Vehicle:2"), vehicle("urn:ngsi-ld:Vehicle:1")]);
-    }
-
-    /// A periodic subscription on every Vehicle.
-    fn all_vehicles() -> CompiledSubscription {
-        let subscription = serde_json::from_value(json!({
-            "id": "urn:ngsi-ld:Subscription:fleet",
-            "type": "Subscription",
-            "entities": [{"type": VEHICLE}],
-            "timeInterval": 60,
-            "notification": {"endpoint": {"uri": "http://subscriber.example.org/notify", "accept": "application/json"}},
-            "status": "active",
-            "createdAt": "2024-01-01T00:00:00Z",
-            "modifiedAt": "2024-01-01T00:00:00Z"
-        }))
-        .expect("valid subscription");
-        compile_subscription(
-            &StoredSubscription {
-                key: SubscriptionKey::try_from(1).expect("a valid key"),
-                subscription,
-                notifying_since: NotifyingSince {
-                    active: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
-                    selected: StoreInstant::new(DateTime::<Utc>::MIN_UTC),
-                },
-            },
-            LanguageMatching::TagEquality,
-        )
-    }
-
-    /// Done when: the walk continues after the last identifier of the previous
-    /// page, never by offset, and reads every entity once.
-    #[tokio::test]
-    async fn a_walk_over_several_pages_continues_after_each_last_identifier() {
-        let ids: Vec<String> = (0..1_100).map(|n| format!("urn:ngsi-ld:Vehicle:{n:05}")).collect();
-        let pages = StoredEntities::of(ids.iter().map(|id| vehicle(id)).collect());
-        let candidates = IntervalCandidates {
-            target: &ContextTarget::Live,
-            pages: &pages,
-        };
-
-        let matched = candidates.matching(&all_vehicles()).await.expect("the pages read");
-
-        let matched_ids: Vec<&str> = matched.iter().map(|entity| entity.id().as_str()).collect();
-        pretty_assertions::assert_eq!(matched_ids, ids.iter().map(String::as_str).collect::<Vec<_>>());
-        let reads = pages.reads.lock().expect("the notes are not poisoned");
-        let afters: Vec<Option<&str>> = reads.iter().map(|after| after.as_ref().map(Identifier::as_str)).collect();
-        pretty_assertions::assert_eq!(afters, vec![None, Some("urn:ngsi-ld:Vehicle:00499"), Some("urn:ngsi-ld:Vehicle:00999")]);
     }
 
     /// An entity stored in a form the broker no longer reads, last on its
     /// page, is left out, and the next page still continues after it.
     #[tokio::test]
     async fn an_unreadable_entity_is_left_out_and_the_walk_continues_after_it() {
-        let ids: Vec<String> = (0..600).map(|n| format!("urn:ngsi-ld:Vehicle:{n:05}")).collect();
+        let ids = vehicles(600);
         let unreadable = "urn:ngsi-ld:Vehicle:00499";
-        let pages = StoredEntities::with_entries(
+        let store = StoredMatches::with_entries(
             ids.iter()
                 .map(|id| match id.as_str() {
                     raw if raw == unreadable => StoredEntry::Unreadable(raw.parse().expect("a valid URI")),
@@ -283,18 +217,27 @@ mod tests {
                 })
                 .collect(),
         );
-        let candidates = IntervalCandidates {
-            target: &ContextTarget::Live,
-            pages: &pages,
-        };
 
-        let matched = candidates.matching(&all_vehicles()).await.expect("the pages read");
+        let matched = matched_ids(&store, &every_vehicle()).await;
 
-        let matched_ids: Vec<&str> = matched.iter().map(|entity| entity.id().as_str()).collect();
-        let expected: Vec<&str> = ids.iter().map(String::as_str).filter(|id| *id != unreadable).collect();
-        pretty_assertions::assert_eq!(matched_ids, expected);
-        let reads = pages.reads.lock().expect("the notes are not poisoned");
-        let afters: Vec<Option<&str>> = reads.iter().map(|after| after.as_ref().map(Identifier::as_str)).collect();
-        pretty_assertions::assert_eq!(afters, vec![None, Some(unreadable)]);
+        let expected: Vec<String> = ids.into_iter().filter(|id| id != unreadable).collect();
+        assert_eq!(matched, expected);
+        let reads: Vec<PageStart> = store.reads().into_iter().map(|(start, _)| start).collect();
+        assert_eq!(reads, vec![PageStart::Cursor(None), after(unreadable)]);
+    }
+
+    /// Clause 5.8.6: a stored `geoQ` that no longer compiles is a defined
+    /// geoquery, so the notification reads no Entity at all.
+    #[tokio::test]
+    async fn a_geo_q_that_no_longer_compiles_reads_no_page() {
+        let store = StoredMatches::with_entries(vehicles(3).iter().map(|id| StoredEntry::Read(vehicle(id))).collect());
+        let unusable = periodic(&json!({
+            "entities": [{"type": VEHICLE}],
+            "geoQ": {"georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": "[1, "}
+        }));
+
+        let matched = matched_ids(&store, &unusable).await;
+
+        assert_eq!((matched, store.reads()), (Vec::new(), Vec::new()));
     }
 }

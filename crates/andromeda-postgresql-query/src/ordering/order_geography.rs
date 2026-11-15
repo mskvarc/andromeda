@@ -3,6 +3,7 @@
 use crate::{
     attribute_instance_correlation::{geometry_instances_of, instance_geometry_column},
     entity_row_refs::EntityRowRefs,
+    standing_instant::instant_of,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
@@ -54,7 +55,7 @@ pub fn geo_order_distance(
         OrderSubject::LocationColumn => Some(
             CaseStatement::new()
                 .case(
-                    unexpired(outer.search_column(EntitySearch::LocationExpiresAt)),
+                    unexpired(outer.search_column(EntitySearch::LocationExpiresAt), instant_of(outer.standing())),
                     st_distance_sphere(outer.search_column(EntitySearch::Location), reference_geometry()),
                 )
                 .finally(Keyword::Null)

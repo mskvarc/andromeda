@@ -46,7 +46,7 @@ impl InstanceScan<'_> {
     #[must_use]
     pub const fn row(&self) -> ProbedRow {
         match self {
-            InstanceScan::Current(_) => ProbedRow::Current,
+            InstanceScan::Current(rows) => ProbedRow::Current(rows.standing()),
             InstanceScan::History(_) => ProbedRow::History,
         }
     }

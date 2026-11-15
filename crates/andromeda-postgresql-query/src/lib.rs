@@ -47,6 +47,7 @@ pub mod query_names;
 pub mod scope_predicate;
 pub mod scope_validity;
 pub mod sort_key;
+pub mod standing_instant;
 pub mod stored_geometry;
 pub mod sub_attribute_operand_keys;
 pub mod temporal_operand;

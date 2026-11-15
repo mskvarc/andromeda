@@ -20,7 +20,6 @@ use andromeda_entity::{
         discovery::EntityDiscoveryStore,
         entity_types::EntityTypeReader,
         expiry::EntityExpirySource,
-        payload_pages::EntityPayloadPages,
         query::EntityQueryStore,
         reader::EntityReader,
         registry_types::RegistryTypeSource,
@@ -126,8 +125,6 @@ pub(super) struct EntityStoragePorts {
     pub(super) query: Arc<dyn EntityQueryStore>,
     /// What the existing entities carry, for clause 5.7 discovery.
     pub(super) discovery: Arc<dyn EntityDiscoveryStore>,
-    /// Stored entity states paged in identifier order, all or of one type.
-    pub(super) payload_pages: Arc<dyn EntityPayloadPages>,
     /// Candidates for the entity expiry sweep.
     pub(super) expiry: Arc<dyn EntityExpirySource>,
     /// Entity locations read to seed and rebuild the in-memory spatial index.
@@ -276,7 +273,6 @@ pub(super) async fn initialize_storage(
         reader: Arc::clone(&entity_repository) as Arc<dyn EntityReader>,
         query: Arc::clone(&entity_repository) as Arc<dyn EntityQueryStore>,
         discovery: Arc::clone(&entity_repository) as Arc<dyn EntityDiscoveryStore>,
-        payload_pages: Arc::clone(&entity_repository) as Arc<dyn EntityPayloadPages>,
         expiry: Arc::clone(&entity_repository) as Arc<dyn EntityExpirySource>,
         spatial_snapshots: Arc::clone(&entity_repository) as Arc<dyn EntitySpatialSnapshotSource>,
         deletion_outline: Arc::clone(&entity_repository) as Arc<dyn DeletionOutlineReader>,

@@ -35,7 +35,7 @@ pub(crate) fn hop_candidates(term: &ResolvedTerm<'_>, rows: &EntityRowRefs) -> O
         },
     }
     let linked = LinkedHop::at_depth(1);
-    let inner_rows = linked.inner_rows(rows.schema().cloned());
+    let inner_rows = linked.inner_rows(rows);
     let inner_condition = linked_condition(term, &inner_rows, 1);
     union_of(linked.linking_branches(hop.relationship(), hop.guard(), rows, inner_condition))
 }

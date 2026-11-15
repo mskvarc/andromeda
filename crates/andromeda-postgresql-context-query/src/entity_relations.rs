@@ -25,10 +25,12 @@ use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::{ConsideredEntities, EntitySelection},
     ordering::term::{CompiledOrderTerm, OrderTarget},
+    standing_instant::StandingInstant,
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 use andromeda_postgresql_query::{
     entity_row_refs::EntityRowRefs,
+    standing_instant::instant_of,
     type_membership::{drives, members_of_any},
 };
 use andromeda_postgresql_schema::{
@@ -113,11 +115,11 @@ impl EntityRelations {
     }
 
     /// How the statement's fragments reach the rows, in the given branch
-    /// schema, with the key and identifier read from the membership walk when
-    /// it drives the statement.
+    /// schema and standing at `standing`, with the key and identifier read
+    /// from the membership walk when it drives the statement.
     #[must_use]
-    pub fn rows(&self, schema: Option<DynIden>) -> EntityRowRefs {
-        let rows = EntityRowRefs::unaliased(schema);
+    pub fn rows(&self, schema: Option<DynIden>, standing: StandingInstant) -> EntityRowRefs {
+        let rows = EntityRowRefs::unaliased(schema).standing_at(standing);
         match self.source {
             RowSource::Entities => rows,
             RowSource::TypeMembers { .. } => rows.keyed_by(Selected),
@@ -126,14 +128,16 @@ impl EntityRelations {
 
     /// Add the driving relation and the joins this demand asks for to
     /// `select`, every relation qualified by the branch schema (`None` for the
-    /// live branch).
-    pub fn apply_from(self, select: &mut SelectStatement, schema: Option<&DynIden>) {
+    /// live branch), the driving Entity standing at `standing`.
+    pub fn apply_from(self, select: &mut SelectStatement, schema: Option<&DynIden>, standing: StandingInstant) {
         let driving_key: SimpleExpr = match self.source {
             RowSource::Entities => {
                 // An identity row whose current state a core deletion removed
                 // keeps only its Temporal Evolution, which no core read sees,
                 // and an Entity past its `expiresAt` is invalid (clause 4.22).
-                select.from(qualified(schema, Entities::Table)).and_where(holds_standing_state(Entities::Table));
+                select
+                    .from(qualified(schema, Entities::Table))
+                    .and_where(holds_standing_state(Entities::Table, instant_of(standing)));
                 Expr::col((Entities::Table, Entities::EntityKey))
             }
             RowSource::TypeMembers { walk, entities } => {
@@ -148,7 +152,7 @@ impl EntityRelations {
                 );
                 // The walk reads current-side memberships alone, so only the
                 // clause 4.22 expiry is left to test.
-                select.and_where(not_expired(key.clone(), schema));
+                select.and_where(not_expired(key.clone(), schema, instant_of(standing)));
                 key
             }
         };
@@ -262,6 +266,7 @@ mod tests {
         ordering::term::{CompiledOrderTerm, OrderDirection, OrderTarget},
         pattern::Pattern,
         scope::query::ScopeQuery,
+        standing_instant::StandingInstant,
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
@@ -316,8 +321,8 @@ mod tests {
     /// the rows it keys read.
     fn from_clause(relations: EntityRelations) -> SelectStatement {
         let mut select = Query::select();
-        select.expr(relations.rows(None).identity_column(Entities::Id));
-        relations.apply_from(&mut select, None);
+        select.expr(relations.rows(None, StandingInstant::WhenRead).identity_column(Entities::Id));
+        relations.apply_from(&mut select, None, StandingInstant::WhenRead);
         select
     }
 

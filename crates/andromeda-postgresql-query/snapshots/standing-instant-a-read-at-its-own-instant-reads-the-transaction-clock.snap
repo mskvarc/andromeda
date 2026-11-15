@@ -1,0 +1,6 @@
+---
+source: crates/andromeda-postgresql-query/src/standing_instant.rs
+---
+SELECT
+  "ca"."expires_at" IS NULL
+  OR "ca"."expires_at" > NOW()

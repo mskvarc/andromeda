@@ -39,8 +39,6 @@ pub mod repo;
 pub mod staged_geometry;
 /// The Scopes one entity's search row is matched by and read back from.
 pub mod staged_scopes;
-/// Reading whole Entities a page at a time.
-pub mod state_listing;
 /// Entities read back from their heads and rows, and assembled.
 pub mod stored_entities;
 /// What an Entity row or census ledger that no longer reads back looks like.

@@ -9,6 +9,7 @@
 use crate::{
     entity_row_refs::EntityRowRefs,
     q_predicate::instance_test::{InstanceTest, non_empty},
+    standing_instant::instant_of,
 };
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::{literal::int_literal, pg_array::is_none_of};
@@ -65,7 +66,7 @@ pub fn exists_on_projection(id: AttributeNameKey, value: Condition, rows: &Entit
 
 /// [`exists_on_projection`] in the shape `shape` asks for.
 pub(crate) fn probe(id: AttributeNameKey, value: Condition, rows: &EntityRowRefs, shape: ProbeShape) -> Condition {
-    let mut probe = projection_probe(Condition::all().add(of_attribute(id)).add(standing()).add_option(non_empty(value)), rows);
+    let mut probe = projection_probe(Condition::all().add(of_attribute(id)).add(standing(rows)).add_option(non_empty(value)), rows);
     match shape {
         ProbeShape::Planned => {}
         ProbeShape::Walked => {
@@ -87,7 +88,7 @@ pub(crate) fn exists_any_on_projection(tests: Vec<InstanceTest>, rows: &EntityRo
         let of_attribute = of_attribute(test.attribute);
         any.add(test.arm(of_attribute))
     });
-    Condition::all().add(SeaExpr::exists(projection_probe(Condition::all().add(standing()).add(any), rows)))
+    Condition::all().add(SeaExpr::exists(projection_probe(Condition::all().add(standing(rows)).add(any), rows)))
 }
 
 /// The correlated probe that holds when the Entity holds a current instance of
@@ -95,7 +96,7 @@ pub(crate) fn exists_any_on_projection(tests: Vec<InstanceTest>, rows: &EntityRo
 #[must_use]
 pub fn exists_besides_on_projection(set_apart: &[AttributeNameKey], rows: &EntityRowRefs) -> Condition {
     let besides = is_none_of(projection_column(CurrentAttributes::AttributeNameKey), set_apart.iter().map(|key| key.get()));
-    Condition::all().add(SeaExpr::exists(projection_probe(Condition::all().add(standing()).add(besides), rows)))
+    Condition::all().add(SeaExpr::exists(projection_probe(Condition::all().add(standing(rows)).add(besides), rows)))
 }
 
 /// An instance of the attribute with this dictionary key.
@@ -105,10 +106,11 @@ pub fn of_attribute(id: AttributeNameKey) -> SimpleExpr {
 }
 
 /// Clause 4.22: a past-due instance neither carries the attribute nor holds its
-/// value, whether or not the sweep has deleted it yet.
+/// value, whether or not the sweep has deleted it yet, judged at the instant
+/// `rows` stand at.
 #[must_use]
-pub fn standing() -> SimpleExpr {
-    unexpired(projection_column(CurrentAttributes::ExpiresAt))
+pub fn standing(rows: &EntityRowRefs) -> SimpleExpr {
+    unexpired(projection_column(CurrentAttributes::ExpiresAt), instant_of(rows.standing()))
 }
 
 /// The select over the instance rows that pass `filter`, correlated last on

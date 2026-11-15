@@ -35,6 +35,7 @@ use andromeda_postgresql_query::{
     id_pattern_trigrams::{ID_PATTERN_CANDIDATE_BOUND, ID_PATTERN_SHORT_WALK, trigram_pattern},
     one_time_gate::CandidateBound,
     operator::{PatternIndexes, pattern as pattern_predicate},
+    standing_instant::instant_of,
 };
 use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_stored_form::entity_sides::holds_standing_state;
@@ -45,7 +46,8 @@ pub(crate) struct PatternMatches<'q> {
     /// The selector's pattern.
     pub(crate) pattern: &'q Pattern,
     /// `SELECT "entity_key" FROM "entities" WHERE ("id") COLLATE "default" ~ <pattern> AND
-    /// "created_at" IS NOT NULL AND ("expires_at" IS NULL OR "expires_at" > NOW())`.
+    /// "created_at" IS NOT NULL AND ("expires_at" IS NULL OR "expires_at" > <instant>)`, the
+    /// instant the query's selection stands at.
     pub(crate) select: SelectStatement,
 }
 
@@ -71,7 +73,7 @@ pub(crate) fn pattern_matches<'q>(query: &'q CompiledEntityQuery, relations: &En
     if !(walked && alone) {
         return None;
     }
-    let rows = EntityRowRefs::unaliased(schema.cloned());
+    let rows = EntityRowRefs::unaliased(schema.cloned()).standing_at(selection.standing);
     let mut matches = Query::select();
     matches
         .expr(rows.entity_key_column())
@@ -81,7 +83,7 @@ pub(crate) fn pattern_matches<'q>(query: &'q CompiledEntityQuery, relations: &En
             pattern,
             PatternIndexes::TrigramsAndByteOrder,
         ))
-        .and_where(holds_standing_state(Entities::Table));
+        .and_where(holds_standing_state(Entities::Table, instant_of(rows.standing())));
     Some(PatternMatches {
         pattern,
         select: matches.take(),

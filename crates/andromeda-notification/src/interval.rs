@@ -10,10 +10,7 @@ use crate::{
 };
 use andromeda_context_space::{context_target::ContextTarget, snapshot_target::SnapshotTarget};
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
-use andromeda_entity::{
-    port::{payload_pages::EntityPayloadPages, reader::EntityReader},
-    query::EntityQueryService,
-};
+use andromeda_entity::{port::reader::EntityReader, query::EntityQueryService};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_entity::entity_state::EntityState;
 use andromeda_ngsi_ld_model::subscription::Subscription;
@@ -40,9 +37,8 @@ pub struct IntervalNotificationOperation {
     sub_repo: Arc<dyn SubscriptionStore>,
     /// System-attribute reads of the matched entities.
     entity_reader: Arc<dyn EntityReader>,
-    /// Paged reads of the candidate entities a subscription matches.
-    entity_pages: Arc<dyn EntityPayloadPages>,
-    /// Language targeting and linked-entity resolution for the payload.
+    /// The paged read of the candidate entities a subscription matches,
+    /// language targeting, and linked-entity resolution for the payload.
     entity_query: Arc<EntityQueryService>,
     /// Sends each notification over its endpoint's binding.
     transport: Arc<TransportDispatcher>,
@@ -60,9 +56,8 @@ pub struct IntervalNotificationDeps {
     pub sub_repo: Arc<dyn SubscriptionStore>,
     /// Entity system-attribute reads.
     pub entity_reader: Arc<dyn EntityReader>,
-    /// Paged reads of the entities a subscription matches.
-    pub entity_pages: Arc<dyn EntityPayloadPages>,
-    /// Linked-entity resolution for `join`, composed as a change-driven
+    /// The paged read of the entities a subscription matches, and
+    /// linked-entity resolution for `join`, composed as a change-driven
     /// notification's is.
     pub entity_query: Arc<EntityQueryService>,
     /// Tenant JSON-LD processor.
@@ -81,7 +76,6 @@ impl IntervalNotificationOperation {
             target: deps.target,
             sub_repo: deps.sub_repo,
             entity_reader: deps.entity_reader,
-            entity_pages: deps.entity_pages,
             entity_query: deps.entity_query,
             transport: deps.transport,
             engine: deps.engine,
@@ -106,6 +100,11 @@ impl IntervalNotificationOperation {
     /// Evaluate one subscription found due at `cutoff`: read what it matches,
     /// then notify it or record that it answered its grid with nothing to send.
     ///
+    /// Clause 5.8.6 fixes no instant within the tick, and clause 4.22 makes an
+    /// expired Entity or instance invalid, so one instant, taken before the
+    /// first read, decides what stands for every statement the store runs and
+    /// for the evaluation in memory alike.
+    ///
     /// A subscription that matched nothing still records `cutoff` as the
     /// instant it answered its grid at, so the sweep stops re-reading it, and
     /// re-running its paged scan, every pass until its next grid point.
@@ -115,7 +114,8 @@ impl IntervalNotificationOperation {
     pub async fn evaluate(&self, stored: StoredSubscription, cutoff: DateTime<Utc>) {
         let compiled = compile_subscription(&stored, self.entity_query.language_targeting().matching());
         let sub = &stored.subscription;
-        let entities = match self.candidates().matching(&compiled).await {
+        let at = Utc::now();
+        let entities = match self.candidates().matching(&compiled, at).await {
             Ok(e) => e,
             Err(e) => {
                 error!("IntervalWorker failed to fetch entities for {}: {}", sub.id, e);
@@ -134,7 +134,7 @@ impl IntervalNotificationOperation {
             }
         };
 
-        let entities = match matching_entities(&self.entity_query, &self.target, &compiled, entities, Utc::now()).await {
+        let entities = match matching_entities(&self.entity_query, &self.target, &compiled, entities, at).await {
             Ok(entities) => entities,
             Err(e) => {
                 error!("IntervalWorker failed to read the entities the filter of {} links to: {}", sub.id, e);
@@ -264,7 +264,7 @@ impl IntervalNotificationOperation {
     fn candidates(&self) -> IntervalCandidates<'_> {
         IntervalCandidates {
             target: &self.target,
-            pages: self.entity_pages.as_ref(),
+            entity_query: &self.entity_query,
         }
     }
 
@@ -311,8 +311,7 @@ mod tests {
             target: ContextTarget::Live,
             sub_repo: Arc::<ClaimRecordingStore>::clone(store),
             entity_reader: Arc::<NoEntities>::clone(&entities),
-            entity_pages: Arc::<NoEntities>::clone(&entities),
-            entity_query: entity_query(&entities),
+            entity_query: entity_query(entities),
             engine: offline_engine(),
             transport: transport(),
             tenant: TenantRef::UnnamedDefault,

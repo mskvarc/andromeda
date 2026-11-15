@@ -35,7 +35,7 @@ pub(crate) fn equality_candidates(term: &ResolvedTerm<'_>, operand: &Operand, ro
     if !reading.hops().is_empty() || reading.sub_attributes().is_empty() || !matches!(reading.terminal(), Terminal::OwnValue) {
         return None;
     }
-    let element = ElementPath::of_resolved(term, ProbedRow::Current);
+    let element = ElementPath::of_resolved(term, ProbedRow::Current(rows.standing()));
     let keys = operand_keys(element.path_hash(), operand)
         .into_iter()
         .map(SubAttributeKey::get)
@@ -46,7 +46,7 @@ pub(crate) fn equality_candidates(term: &ResolvedTerm<'_>, operand: &Operand, ro
         .expr(projection_column(CurrentAttributes::EntityKey))
         .from(rows.table(CurrentAttributes::Table).alias(Ca))
         .and_where(of_attribute(element.attribute))
-        .and_where(standing())
+        .and_where(standing(rows))
         .and_where(projection_column(CurrentAttributes::SubEqKeys).array_overlaps(hash_key_array(&keys)))
         .cond_where(element.condition(value));
     Some(select.take())

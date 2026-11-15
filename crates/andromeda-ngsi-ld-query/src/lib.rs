@@ -51,6 +51,7 @@ pub mod read_order;
 pub mod scope;
 pub mod selector_compilation;
 pub mod split_filter;
+pub mod standing_instant;
 pub mod subject_start;
 pub mod temporal;
 pub mod term_compactor;

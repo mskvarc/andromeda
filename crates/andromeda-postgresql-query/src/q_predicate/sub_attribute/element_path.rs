@@ -15,9 +15,12 @@
 //! its elements are read against expiry, which clause 4.22 places on the
 //! storage of the Entity as it stands.
 
-use crate::q_predicate::{
-    instance_row::{ElementLevel, InstanceRow, ProbedRow},
-    resolved_filter::ResolvedTerm,
+use crate::{
+    q_predicate::{
+        instance_row::{ElementLevel, InstanceRow, ProbedRow},
+        resolved_filter::ResolvedTerm,
+    },
+    standing_instant::instant_of,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_postgresql_schema::current::SubAttribute;
@@ -137,7 +140,7 @@ impl<'c> ElementPath<'c> {
             let level = ElementLevel::at(depth);
             let named = named.add(SeaExpr::expr(level.field(SubAttribute::AttributeNameKey)).eq(key.get()));
             match self.row {
-                ProbedRow::Current => named.add(unexpired(level.field(SubAttribute::ExpiresAt))),
+                ProbedRow::Current(standing) => named.add(unexpired(level.field(SubAttribute::ExpiresAt), instant_of(standing))),
                 ProbedRow::History => named,
             }
         });
@@ -168,6 +171,7 @@ mod tests {
             parser::parse,
             reading::{filter_reading::FilterReading, terminal::Terminal},
         },
+        standing_instant::StandingInstant,
         temporal::window::TimeInterval,
     };
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
@@ -188,7 +192,7 @@ mod tests {
     }
 
     fn element_path(q: &str) -> Option<ElementPath<'static>> {
-        element_path_in(q, ProbedRow::Current)
+        element_path_in(q, ProbedRow::Current(StandingInstant::WhenRead))
     }
 
     /// `q` compiled as a temporal query's, over the instances of an unbounded
