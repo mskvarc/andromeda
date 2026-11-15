@@ -18,10 +18,9 @@ use crate::{
         keyed_branches::{branch, language_property_rows, union_of},
         pattern_term::{PatternTarget, pattern_on, pattern_targets},
     },
-    query_names::QueryNames,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::pattern::Pattern;
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Condition, SelectStatement, SimpleExpr};
 
 /// `SELECT "entity_key"` over the rows of `attribute` whose own value matches
@@ -29,8 +28,7 @@ use sea_query::{Condition, SelectStatement, SimpleExpr};
 ///
 /// Only an attribute's own value is offered: a trailing member, a
 /// sub-attribute or a hop reads a value no trigram index covers.
-pub(crate) fn pattern_candidates(attribute: &AttributeName, pattern: &Pattern, rows: &EntityRowRefs, names: &QueryNames) -> Option<SelectStatement> {
-    let attribute = names.attributes.get(attribute)?;
+pub(crate) fn pattern_candidates(attribute: AttributeNameKey, pattern: &Pattern, rows: &EntityRowRefs) -> Option<SelectStatement> {
     let row = InstanceRow::Current;
     union_of(pattern_targets(row).map(|target| {
         let test = Condition::all().add(pattern_on(target, pattern, row));

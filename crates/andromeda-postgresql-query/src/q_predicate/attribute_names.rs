@@ -1,56 +1,36 @@
 //! Which attribute names a compiled `q` filter references by dictionary key.
 
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::filter::{expression::Expr, path::QueryPath};
+use andromeda_ngsi_ld_query::filter::reading::filter_reading::FilterReading;
 
-/// Attribute names a `q` expression reads by dictionary key.
+/// Attribute names the reading of a `q` filter reads by dictionary key.
 ///
 /// The attribute of each term and every sub-attribute on its path are keyed:
 /// a row and each element of its `sub_attributes` name their attribute by
 /// key. A path ending on a member of an instance (`observedAt`, `datasetId`,
-/// `valueType` and the rest) reads a field rather than an element, and value-path segments
-/// are navigated inside a `value_object`, so neither is resolved. A
-/// linked-entity traversal contributes the Relationship each hop descends
-/// through as well as the terminal attribute, because the hop probes that
-/// Relationship's instances by dictionary key.
-pub fn referenced_attribute_names(expr: &Expr, out: &mut Vec<AttributeName>) {
-    match expr {
-        Expr::And(terms) | Expr::Or(terms) => {
-            for term in terms {
-                referenced_attribute_names(term, out);
-            }
-        }
-        Expr::Pred(pred) => path_attribute_names(pred.path(), out),
-    }
-}
-
-/// Collect the dictionary-resolvable names one attribute axis mentions.
-fn path_attribute_names(path: &QueryPath, out: &mut Vec<AttributeName>) {
-    match path {
-        QueryPath::Local(local) => {
-            // clone: the caller owns the resolved list, which outlives the expression
-            out.push(local.attr.clone());
-            out.extend(local.ending_member().map_or(local.sub_attrs.as_slice(), |(_, above)| above).iter().cloned());
-        }
-        QueryPath::Linked { relationship, inner, .. } => {
-            // clone: the path is borrowed, and the list outlives the expression
-            out.push(relationship.clone());
-            path_attribute_names(inner, out);
-        }
+/// `valueType` and the rest) ends on a field, the term's terminal, and the
+/// members of a compound value are navigated inside a `value_object`, so
+/// neither is resolved. Each hop contributes the Relationship it descends
+/// through as well, because the hop probes that Relationship's instances by
+/// dictionary key.
+pub fn referenced_attribute_names(reading: &FilterReading, out: &mut Vec<AttributeName>) {
+    for term in reading.terms() {
+        // clone: the caller owns the resolved list, which outlives the reading
+        out.extend(term.hops().iter().map(|hop| hop.relationship().clone()));
+        out.push(term.attribute().clone());
+        out.extend(term.sub_attributes().iter().cloned());
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::q_predicate::attribute_names::referenced_attribute_names;
+    use crate::q_predicate::{attribute_names::referenced_attribute_names, lowered_filter::reading_of};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use andromeda_ngsi_ld_query::filter::parser;
     use pretty_assertions::assert_eq;
 
     fn collected(q: &str) -> Vec<String> {
-        let expr = parser::parse(q).expect("parse q");
         let mut names = Vec::new();
-        referenced_attribute_names(&expr, &mut names);
+        referenced_attribute_names(&reading_of(q), &mut names);
         names.sort();
         names.iter().map(AttributeName::as_str).map(str::to_string).collect()
     }

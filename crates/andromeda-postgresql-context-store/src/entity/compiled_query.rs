@@ -166,7 +166,7 @@ impl EntityRepository {
             .chain(compiled.selection.projected_members.names());
         let attribute_names = projected_attribute_names(
             members,
-            compiled.selection.q.as_ref().map(CompiledFilter::expr),
+            compiled.selection.q.as_ref().map(CompiledFilter::lowered),
             compiled.selection.geo.as_ref(),
             &compiled.ordering.terms,
         );

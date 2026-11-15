@@ -14,12 +14,12 @@ use crate::{
         equality_term::equals_any_value,
         instance_row::ProbedRow,
         projection_probe::{Ca, of_attribute, projection_column, standing},
+        resolved_filter::ResolvedTerm,
         sub_attribute::element_path::ElementPath,
     },
-    query_names::QueryNames,
     sub_attribute_operand_keys::operand_keys,
 };
-use andromeda_ngsi_ld_query::filter::reading::{operand::Operand, term_reading::TermReading, terminal::Terminal};
+use andromeda_ngsi_ld_query::filter::reading::{operand::Operand, terminal::Terminal};
 use andromeda_postgresql_schema::current::CurrentAttributes;
 use andromeda_postgresql_seaquery::{operator::hash_key_array, pg_operator::PgBinaryOperator};
 use andromeda_postgresql_stored_values::sub_attribute_key::key::SubAttributeKey;
@@ -29,13 +29,13 @@ use std::slice;
 /// `SELECT "ca"."entity_key"` over the rows whose sub-attribute tree holds
 /// `operand` at the name path of `term`, the candidates of `term` asserting
 /// `==` with that one operand; `None` unless the key index answers it: the
-/// term tests a sub-attribute's own value, past no hop, and every name of its
-/// path was recorded.
-pub(crate) fn equality_candidates(term: &TermReading, operand: &Operand, rows: &EntityRowRefs, names: &QueryNames) -> Option<SelectStatement> {
-    if !term.hops().is_empty() || term.sub_attributes().is_empty() || !matches!(term.terminal(), Terminal::OwnValue) {
+/// term tests a sub-attribute's own value, past no hop.
+pub(crate) fn equality_candidates(term: &ResolvedTerm<'_>, operand: &Operand, rows: &EntityRowRefs) -> Option<SelectStatement> {
+    let reading = term.term();
+    if !reading.hops().is_empty() || reading.sub_attributes().is_empty() || !matches!(reading.terminal(), Terminal::OwnValue) {
         return None;
     }
-    let element = ElementPath::of_term(term, ProbedRow::Current, &names.attributes)?;
+    let element = ElementPath::of_resolved(term, ProbedRow::Current);
     let keys = operand_keys(element.path_hash(), operand)
         .into_iter()
         .map(SubAttributeKey::get)

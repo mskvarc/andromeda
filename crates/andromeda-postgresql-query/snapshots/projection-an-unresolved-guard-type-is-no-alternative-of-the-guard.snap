@@ -36,10 +36,7 @@ WHERE
           OR "le1"."expires_at" > NOW()
         )
       )
-      AND (
-        ("ls1"."entity_type_name_keys" @> (ARRAY[31]))
-        OR (FALSE)
-      )
+      AND ("ls1"."entity_type_name_keys" @> (ARRAY[31]))
       AND EXISTS (
         SELECT
           1

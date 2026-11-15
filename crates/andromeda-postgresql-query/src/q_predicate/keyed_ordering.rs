@@ -23,10 +23,9 @@ use crate::{
         ordering_term::ordering_arms,
         own_value_arms::OwnValueArms,
     },
-    query_names::QueryNames,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::reading::{operand::Operand, scalar_test::ScalarTest};
+use andromeda_postgresql_stored_values::attribute_name_key::AttributeNameKey;
 use sea_query::{Condition, SelectStatement};
 
 /// Whether a value index orders an operand the way the term compares it.
@@ -55,7 +54,7 @@ const fn operand_order(operand: &Operand) -> OperandOrder {
 /// are ordered. A range outside its bounds (`!=a..b`) is a complement, which
 /// never narrows: an Entity holds when its value lies outside, which an index
 /// of values inside cannot enumerate.
-pub(crate) fn ordering_candidates(attribute: &AttributeName, test: &ScalarTest, rows: &EntityRowRefs, names: &QueryNames) -> Option<SelectStatement> {
+pub(crate) fn ordering_candidates(attribute: AttributeNameKey, test: &ScalarTest, rows: &EntityRowRefs) -> Option<SelectStatement> {
     let row = InstanceRow::Current;
     let (operand, arms) = match test {
         ScalarTest::Ordered { relation, operand } => (operand, ordering_arms(*relation, operand, row)),
@@ -66,7 +65,6 @@ pub(crate) fn ordering_candidates(attribute: &AttributeName, test: &ScalarTest, 
         OperandOrder::Indexed => {}
         OperandOrder::Unindexed => return None,
     }
-    let attribute = names.attributes.get(attribute)?;
     let OwnValueArms { typed, language } = arms;
     let typed = branch(rows, attribute, None, typed);
     let language = language.map(|language| branch(rows, attribute, Some(language_property_rows()), Condition::all().add(language)));

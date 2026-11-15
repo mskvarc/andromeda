@@ -35,9 +35,9 @@ use crate::{
         history_aliases::HistoryAliases,
         history_window::{HistoryWindow, WindowProbes},
         instance_scan::InstanceScan,
+        resolved_filter::HopGuard,
     },
 };
-use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_postgresql_schema::{
     current::{CurrentAttributes, Entities, EntitySearch},
     temporal::AttributeHistory,
@@ -45,12 +45,12 @@ use andromeda_postgresql_schema::{
 use andromeda_postgresql_seaquery::{
     branch::qualified,
     jsonb::{jsonb_array_elements_text, jsonb_build_array},
-    literal::{false_literal, int_literal},
+    literal::int_literal,
     operator::array_contains_key,
     pg_operator::PgBinaryOperator,
 };
 use andromeda_postgresql_stored_form::{entity_sides::holds_standing_state, expiry::unexpired};
-use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, attribute_name_key::AttributeNameKey, resolved_names::ResolvedNames};
+use andromeda_postgresql_stored_values::{attribute_kind::AttributeKind, attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
 use sea_query::{Alias, Condition, DynIden, Expr as SeaExpr, ExprTrait, Func, JoinType, Query, SelectStatement, SimpleExpr, TableRef};
 
 /// One hop of a traversal: the relations its probe introduces, and the probe
@@ -109,23 +109,16 @@ impl LinkedHop {
     ///
     /// A deleted Relationship needs no exclusion: `current_attributes` holds no
     /// tombstone row, and the history probe excludes deletions itself.
-    pub(crate) fn probe(
-        &self,
-        relationship_id: AttributeNameKey,
-        guard_types: &[EntityTypeName],
-        types: &ResolvedNames<EntityTypeName>,
-        outer: &InstanceScan<'_>,
-        inner: Condition,
-    ) -> Condition {
+    pub(crate) fn probe(&self, relationship_id: AttributeNameKey, guard: &HopGuard, outer: &InstanceScan<'_>, inner: Condition) -> Condition {
         match outer {
             InstanceScan::Current(rows) => {
                 let probe = self.current_objects(relationship_id, rows);
                 let guarded = GuardedRow::Search(outer.schema());
-                Condition::all().add(SeaExpr::exists(self.completed(probe, guard_types, types, guarded, inner)))
+                Condition::all().add(SeaExpr::exists(self.completed(probe, guard, guarded, inner)))
             }
             InstanceScan::History(window) => self
                 .windowed_objects(relationship_id, window)
-                .map(|probe| self.completed(probe, guard_types, types, GuardedRow::Catalogue, inner.clone())) // clone: each of the window's probes tests the linked entity
+                .map(|probe| self.completed(probe, guard, GuardedRow::Catalogue, inner.clone())) // clone: each of the window's probes tests the linked entity
                 .into_exists(),
         }
     }
@@ -144,8 +137,7 @@ impl LinkedHop {
     pub(crate) fn linking_branches(
         &self,
         relationship_id: AttributeNameKey,
-        guard_types: &[EntityTypeName],
-        types: &ResolvedNames<EntityTypeName>,
+        guard: &HopGuard,
         outer: &EntityRowRefs,
         inner: Condition,
     ) -> [SelectStatement; 2] {
@@ -155,8 +147,8 @@ impl LinkedHop {
         let several = SimpleExpr::from(SeaExpr::col((hop(), CurrentAttributes::ValueObject))).array_contains(jsonb_build_array(linked_id()));
         // clone: both selects test the linked entity
         [
-            self.linking_branch(relationship_id, guard_types, types, outer, inner.clone(), single),
-            self.linking_branch(relationship_id, guard_types, types, outer, inner, several),
+            self.linking_branch(relationship_id, guard, outer, inner.clone(), single),
+            self.linking_branch(relationship_id, guard, outer, inner, several),
         ]
     }
 
@@ -165,8 +157,7 @@ impl LinkedHop {
     fn linking_branch(
         &self,
         relationship_id: AttributeNameKey,
-        guard_types: &[EntityTypeName],
-        types: &ResolvedNames<EntityTypeName>,
+        guard: &HopGuard,
         outer: &EntityRowRefs,
         inner: Condition,
         names_linked: SimpleExpr,
@@ -186,20 +177,13 @@ impl LinkedHop {
             )
             .and_where(SeaExpr::col((hop(), CurrentAttributes::AttributeKind)).is_in(relationship_kinds()))
             .and_where(unexpired(SeaExpr::col((hop(), CurrentAttributes::ExpiresAt))));
-        self.completed(branch, guard_types, types, GuardedRow::Search(outer.schema()), inner)
+        self.completed(branch, guard, GuardedRow::Search(outer.schema()), inner)
     }
 
     /// One probe over the Relationship's instances, completed with the type
     /// guard, read from `guarded`, and the inner predicate on the entity each
     /// instance names.
-    fn completed(
-        &self,
-        mut probe: SelectStatement,
-        guard_types: &[EntityTypeName],
-        types: &ResolvedNames<EntityTypeName>,
-        guarded: GuardedRow<'_>,
-        inner: Condition,
-    ) -> SelectStatement {
+    fn completed(&self, mut probe: SelectStatement, guard: &HopGuard, guarded: GuardedRow<'_>, inner: Condition) -> SelectStatement {
         let linked = || Alias::new(self.linked_entity.as_str());
         // One identity row serves both APIs, so a hop over current state keeps
         // the linked entity only where it holds a current state that has not
@@ -216,21 +200,24 @@ impl LinkedHop {
         // the attribute-name test to match any entity in the tenant that carries it.
         // The guard is the only reader of the linked entity's search row, so the
         // row is joined only when there is one.
-        if !guard_types.is_empty() {
-            let entity_type_name_keys = match guarded {
-                GuardedRow::Search(schema) => {
-                    let search = || Alias::new(self.linked_search.as_str());
-                    probe.join_as(
-                        JoinType::Join,
-                        qualified(schema, EntitySearch::Table),
-                        search(),
-                        SeaExpr::col((search(), EntitySearch::EntityKey)).equals((linked(), Entities::EntityKey)),
-                    );
-                    SeaExpr::col((search(), EntitySearch::EntityTypeNameKeys))
-                }
-                GuardedRow::Catalogue => SeaExpr::col((linked(), Entities::EvolutionTypeNameKeys)),
-            };
-            probe.and_where(type_guard(guard_types, types, &entity_type_name_keys));
+        match guard {
+            HopGuard::AnyEntity => {}
+            HopGuard::OneOf(types) => {
+                let entity_type_name_keys = match guarded {
+                    GuardedRow::Search(schema) => {
+                        let search = || Alias::new(self.linked_search.as_str());
+                        probe.join_as(
+                            JoinType::Join,
+                            qualified(schema, EntitySearch::Table),
+                            search(),
+                            SeaExpr::col((search(), EntitySearch::EntityKey)).equals((linked(), Entities::EntityKey)),
+                        );
+                        SeaExpr::col((search(), EntitySearch::EntityTypeNameKeys))
+                    }
+                    GuardedRow::Catalogue => SeaExpr::col((linked(), Entities::EvolutionTypeNameKeys)),
+                };
+                probe.and_where(type_guard(types, &entity_type_name_keys));
+            }
         }
         // The inner predicate is added as its own condition for the same reason,
         // before any future compilation of it renders a top-level `OR`.
@@ -360,13 +347,12 @@ fn relationship_kinds() -> [SimpleExpr; 2] {
 /// markers unsubstituted and silently aliased onto other binds. Each arm is
 /// still a containment test the `entity_type_name_keys` GIN index answers, so the cost of
 /// the disjunction is an extra index probe per type rather than a scan.
-fn type_guard(guard_types: &[EntityTypeName], types: &ResolvedNames<EntityTypeName>, entity_type_name_keys: &SimpleExpr) -> SimpleExpr {
-    guard_types
+fn type_guard(types: &[EntityTypeNameKey], entity_type_name_keys: &SimpleExpr) -> SimpleExpr {
+    types
         .iter()
-        .fold(Condition::any(), |guard, guard_type| match types.get(guard_type) {
-            // clone: every arm names the same column
-            Some(id) => guard.add(array_contains_key(entity_type_name_keys.clone(), id.get())),
-            None => guard.add(false_literal()),
+        // clone: every arm names the same column
+        .fold(Condition::any(), |guard, key| {
+            guard.add(array_contains_key(entity_type_name_keys.clone(), key.get()))
         })
         .into()
 }
@@ -375,13 +361,13 @@ fn type_guard(guard_types: &[EntityTypeName], types: &ResolvedNames<EntityTypeNa
 mod tests {
     use crate::{
         history_source::{HistoryBranch, HistoryOf},
-        q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, traversal::LinkedHop},
+        q_predicate::{history_window::HistoryWindow, instance_scan::InstanceScan, resolved_filter::HopGuard, traversal::LinkedHop},
         window_reach::WindowReach,
     };
-    use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, time::date_time::NgsiLdDateTime, time_prop::TimeProp};
+    use andromeda_ngsi_ld_lexicon::{time::date_time::NgsiLdDateTime, time_prop::TimeProp};
     use andromeda_ngsi_ld_query::temporal::window::TimeInterval;
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
-    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
+    use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey};
     use sea_query::{Alias, Condition, Expr, ExprTrait, Query};
 
     /// Clause 5.7.4.4 with clause 4.11: a hop in a temporal `q` follows every
@@ -399,13 +385,7 @@ mod tests {
             .reach(WindowReach::InsideAndInEffect)
             .build();
         let inner = Condition::all().add(Expr::col((Alias::new("le1"), Alias::new("entity_key"))).eq(5));
-        let probe = LinkedHop::at_depth(1).probe(
-            AttributeNameKey::from(4),
-            &[],
-            &ResolvedNames::default(),
-            &InstanceScan::History(&window),
-            inner,
-        );
+        let probe = LinkedHop::at_depth(1).probe(AttributeNameKey::from(4), &HopGuard::AnyEntity, &InstanceScan::History(&window), inner);
         let statement = Query::select().expr(Expr::val(1)).cond_where(probe).to_owned();
         assert_statement_snapshot!("traversal-a-windowed-hop-probes-both-the-window-and-the-instance-in-effect", statement);
     }
@@ -423,12 +403,9 @@ mod tests {
             .interval(TimeInterval::After(start))
             .reach(WindowReach::Inside)
             .build();
-        let parking: EntityTypeName = "https://example.com/Parking".parse().expect("a valid type name");
-        let guard: Vec<EntityTypeName> = vec!["https://example.com/Parking".parse().expect("a valid name")];
         let probe = LinkedHop::at_depth(1).probe(
             AttributeNameKey::from(4),
-            &guard,
-            &ResolvedNames::from_pairs([(parking, EntityTypeNameKey::from(3))]),
+            &HopGuard::OneOf(vec![EntityTypeNameKey::from(3)]),
             &InstanceScan::History(&window),
             Condition::all(),
         );
@@ -452,8 +429,7 @@ mod tests {
             .build();
         let probe = LinkedHop::at_depth(1).probe(
             AttributeNameKey::from(4),
-            &[],
-            &ResolvedNames::default(),
+            &HopGuard::AnyEntity,
             &InstanceScan::History(&window),
             Condition::all(),
         );
