@@ -74,8 +74,10 @@ pub enum CorpusValue {
         /// The lexical form of the value.
         lexical: &'static str,
     },
-    /// A structured value, each member keyed by its short term.
-    Members(&'static [(&'static str, CorpusValue)]),
+    /// A structured value, each member keyed by its short term with the
+    /// values it holds: one written alone, none or several written as an
+    /// array.
+    Members(&'static [(&'static str, &'static [CorpusValue])]),
 }
 
 /// A data type a corpus value is declared as.

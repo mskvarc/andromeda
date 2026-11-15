@@ -36,7 +36,8 @@ pub enum CorpusEntity {
     E11,
     /// `k` 1 with the sub-property `src` "a".
     E12,
-    /// `addr` the object `{city: "X", zip: 1}`.
+    /// `addr` the object `{city: "X", zip: 1, tags: [], geo: {lat: 1}, mix:
+    /// [1, {a: 2}]}`.
     E13,
     /// `h` a Relationship to `http://example.com/a`, `hp` the String
     /// `"http://example.com/a"`, and `location` a Point at 13.4, 52.5.

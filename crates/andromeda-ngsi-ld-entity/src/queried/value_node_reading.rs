@@ -67,12 +67,8 @@ impl<'a, M: QueriedMode> QueriedValueNode<'a> for &'a ValueNode<M> {
         ValueNode::id(self).map(NodeId::as_str)
     }
 
-    fn member_values(self, member: &AttributeName) -> impl Iterator<Item = value_item::ValueItem<'a, &'a ValueNode<M>>> {
-        self.members()
-            .get(member.as_str())
-            .map(|values| M::held_values(values))
-            .into_iter()
-            .flatten()
-            .map(|value| item_of(value, None))
+    fn member_values(self, member: &AttributeName) -> Option<impl Iterator<Item = value_item::ValueItem<'a, &'a ValueNode<M>>>> {
+        let values = M::standing_values(self.members().get(member.as_str())?)?;
+        Some(values.iter().map(|value| item_of(value, None)))
     }
 }

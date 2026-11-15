@@ -94,7 +94,8 @@ fn rich() -> Value {
 }
 
 /// Two `datasetId` instances carrying the members a `.` segment can name, and
-/// a structured value.
+/// a structured value with a member holding the empty array and one holding a
+/// node.
 fn instance_members() -> Value {
     json!([{
         "@id": "urn:ngsi-ld:Sensor:1",
@@ -117,7 +118,9 @@ fn instance_members() -> Value {
             "@type": [PROPERTY],
             "https://uri.etsi.org/ngsi-ld/hasValue": [{
                 "https://example.com/city": [{"@value": "Berlin"}],
-                "https://example.com/extra": [{"@type": "@json", "@value": {"floor": 3}}]
+                "https://example.com/extra": [{"@type": "@json", "@value": {"floor": 3}}],
+                "https://example.com/tags": [],
+                "https://example.com/wing": [{"https://example.com/level": [{"@value": 1}]}]
             }]
         }],
         "https://uri.etsi.org/ngsi-ld/location": [{
@@ -242,6 +245,17 @@ fn instance_members_cases() -> Vec<(&'static str, bool)> {
             false,
         ),
         ("\"https://example.com/address\"[\"https://example.com/postcode\"]", false),
+        ("\"https://example.com/address\"[\"https://example.com/postcode\"]!=\"x\"", false),
+        ("\"https://example.com/address\"[\"https://example.com/tags\"]", true),
+        ("\"https://example.com/address\"[\"https://example.com/tags\"]!=\"x\"", true),
+        ("\"https://example.com/address\"[\"https://example.com/tags\"]==\"x\"", false),
+        ("\"https://example.com/address\"[\"https://example.com/wing\"]", true),
+        ("\"https://example.com/address\"[\"https://example.com/wing\"]!=\"x\"", true),
+        ("\"https://example.com/address\"[\"https://example.com/wing\"]==1", false),
+        (
+            "\"https://example.com/address\"[\"https://example.com/wing\".\"https://example.com/level\"]==1",
+            true,
+        ),
         (
             "\"https://uri.etsi.org/ngsi-ld/location\"==\"{\\\"type\\\":\\\"Point\\\",\\\"coordinates\\\":[13.4,52.5]}\"",
             true,

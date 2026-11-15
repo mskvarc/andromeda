@@ -554,6 +554,19 @@ fn a_structured_value_is_one_value_object() {
     pretty_assertions::assert_eq!(object_text(only_value(&rows)), history.get());
 }
 
+/// The `value_object` a `q` trailing path reads keeps a member holding the
+/// empty array, which clause 4.9 reads as a defined value.
+#[test]
+fn a_structured_member_holding_the_empty_array_round_trips_in_the_value_object() {
+    let state = committed(&document(&json!({ex("address"): [property(&json!([{
+        ex("tags"): [],
+        ex("city"): [{"@value": "X"}]
+    }]))]})));
+    let rows = round_trip(&state);
+    let stored: Value = serde_json::from_str(object_text(only_value(&rows))).expect("the stored value is JSON");
+    pretty_assertions::assert_eq!(stored[ex("tags")], json!([]));
+}
+
 #[test]
 fn a_json_property_is_opaque() {
     let state = committed(&document(

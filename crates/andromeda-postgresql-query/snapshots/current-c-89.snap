@@ -20,6 +20,7 @@ WHERE
       AND (
         (
           "ca"."attribute_kind" IN (1, 2, 4, 5, 6, 7, 8)
+          AND (NOT "ca"."attribute_kind" = (6))
           AND (
             EXISTS (
               SELECT
@@ -27,40 +28,34 @@ WHERE
               FROM
                 (
                   SELECT
-                    jsonb_path_query_array(
-                      "member"."member",
-                      'lax $[*] ? (exists(@."@value"))'
-                    ) AS "member"
+                    "member"."member" AS "member"
                   FROM
                     jsonb_path_query("ca"."value_object", 'strict $."a"', '{}', TRUE) AS "member"
                 ) AS "member"
               WHERE
                 TRUE
             )
-            OR (
-              (NOT "ca"."attribute_kind" = (6))
-              AND EXISTS (
-                SELECT
-                  1
-                FROM
-                  (
-                    SELECT
-                      "member"."member" AS "member"
-                    FROM
-                      jsonb_path_query(
-                        (
-                          CASE
-                            WHEN (("ca"."value_object" ->> ('@type')) = ('@json')) THEN "ca"."value_object" -> ('@value')
-                          END
-                        ),
-                        'strict $."a"',
-                        '{}',
-                        TRUE
-                      ) AS "member"
-                  ) AS "member"
-                WHERE
-                  TRUE
-              )
+            OR EXISTS (
+              SELECT
+                1
+              FROM
+                (
+                  SELECT
+                    "member"."member" AS "member"
+                  FROM
+                    jsonb_path_query(
+                      (
+                        CASE
+                          WHEN (("ca"."value_object" ->> ('@type')) = ('@json')) THEN "ca"."value_object" -> ('@value')
+                        END
+                      ),
+                      'strict $."a"',
+                      '{}',
+                      TRUE
+                    ) AS "member"
+                ) AS "member"
+              WHERE
+                TRUE
             )
           )
         )

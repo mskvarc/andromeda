@@ -113,4 +113,10 @@ corpus_cases! {
     n_qry_qlg_9190_a_coordinate_compares_as_its_shortest_spelling => "C-90",
     n_qry_qlg_9191_a_longitude_compares_as_its_shortest_spelling => "C-91",
     n_qry_qlg_9192_a_json_property_holding_a_literal_shaped_object_is_present => "C-92",
+    n_qry_qlg_9193_a_compound_member_holding_the_empty_array_is_present => "C-93",
+    n_qry_qlg_9194_a_compound_member_holding_the_empty_array_is_unequal_to_a_string => "C-94",
+    n_qry_qlg_9195_a_compound_member_holding_the_empty_array_includes_no_operand => "C-95",
+    n_qry_qlg_9196_a_structured_compound_member_is_unequal_to_a_string => "C-96",
+    n_qry_qlg_9197_an_element_of_a_compound_member_beside_a_structured_value_matches => "C-97",
+    n_qry_qlg_9198_an_ordering_never_selects_a_compound_member_holding_an_array => "C-98",
 }

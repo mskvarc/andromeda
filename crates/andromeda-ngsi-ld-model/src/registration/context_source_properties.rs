@@ -37,7 +37,11 @@ use andromeda_ngsi_ld_vocabulary::{
     compact::{classes as compact_classes, properties as compact_properties},
     keyword,
 };
-use std::{borrow::Cow, iter::empty, str::FromStr};
+use std::{
+    borrow::Cow,
+    iter::{Empty, empty},
+    str::FromStr,
+};
 
 /// The members of a registration a `csf` filter reads: a JSON object keyed by
 /// expanded name.
@@ -151,8 +155,8 @@ impl<'a> QueriedValueNode<'a> for NoStructuredValue {
     }
 
     // The type has no value, so no node of it holds a member.
-    fn member_values(self, _member: &AttributeName) -> impl Iterator<Item = ValueItem<'a, NoStructuredValue>> {
-        empty()
+    fn member_values(self, _member: &AttributeName) -> Option<impl Iterator<Item = ValueItem<'a, NoStructuredValue>>> {
+        None::<Empty<ValueItem<'a, NoStructuredValue>>>
     }
 }
 

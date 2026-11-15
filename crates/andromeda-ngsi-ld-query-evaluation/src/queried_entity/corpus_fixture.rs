@@ -123,7 +123,7 @@ fn value_node(value: &CorpusValue) -> Value {
         CorpusValue::Members(members) => Value::Object(
             members
                 .iter()
-                .map(|(term, member)| (CorpusVocabulary::attribute_iri(term), json!([value_node(member)])))
+                .map(|(term, values)| (CorpusVocabulary::attribute_iri(term), Value::Array(values.iter().map(value_node).collect())))
                 .collect(),
         ),
     }

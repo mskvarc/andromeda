@@ -470,7 +470,8 @@ fn entity_with_several_member_values() -> Value {
                     {"https://example.com/level": [{"@value": 1}]},
                     {"https://example.com/level": [{"@value": 2}]}
                 ],
-                "https://example.com/wing": [{"@id": "urn:ngsi-ld:Wing:1"}]
+                "https://example.com/wing": [{"@id": "urn:ngsi-ld:Wing:1"}],
+                "https://example.com/annexes": []
             }]
         }]
     }])
@@ -555,13 +556,28 @@ fn a_step_through_a_member_holding_several_values_reaches_nothing() {
     ));
 }
 
-/// A member holding only a node is the target element but carries no
-/// literal a Query Term could compare.
+/// A member holding only a node is the target element, and its value is an
+/// Object, which clause 4.9 makes unequal to an operand of another data type.
 #[test]
-fn a_member_holding_no_literal_exists_and_compares_with_nothing() {
+fn a_member_holding_a_node_exists_and_is_unequal_to_every_operand() {
     assert!(several_values_hold("\"https://example.com/address\"[\"https://example.com/wing\"]"));
     assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/wing\"]==4"));
-    assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/wing\"]!=4"));
+    assert!(several_values_hold("\"https://example.com/address\"[\"https://example.com/wing\"]!=4"));
+    assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/wing\"]>3"));
+    assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/wing\"]!~=\"x\""));
+}
+
+/// A member holding the empty array is a defined value (clause 4.9 evaluates
+/// the trailing path as a member expression), and the empty array includes no
+/// operand: `==` fails over it and `!=` holds.
+#[test]
+fn a_member_holding_the_empty_array_exists_and_includes_no_operand() {
+    assert!(several_values_hold("\"https://example.com/address\"[\"https://example.com/annexes\"]"));
+    assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/annexes\"]==4"));
+    assert!(several_values_hold("\"https://example.com/address\"[\"https://example.com/annexes\"]!=4"));
+    assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/annexes\"]<9"));
+    assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/annexes\"]~=\"x\""));
+    assert!(!several_values_hold("\"https://example.com/address\"[\"https://example.com/missing\"]!=4"));
 }
 
 /// A `JsonProperty`, whose value is raw JSON that JSON-LD expansion never

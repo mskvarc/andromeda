@@ -12,7 +12,10 @@ use crate::queried_entity::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
-use std::{borrow::Cow, iter::empty};
+use std::{
+    borrow::Cow,
+    iter::{Empty, empty},
+};
 
 /// The entities a hop may cross into, looked up by the Relationship object
 /// naming them.
@@ -92,8 +95,8 @@ impl<'a> QueriedValueNode<'a> for NoLinkedEntity {
     }
 
     // The type has no value, so no node of it holds a member.
-    fn member_values(self, _member: &AttributeName) -> impl Iterator<Item = ValueItem<'a, NoLinkedEntity>> {
-        empty()
+    fn member_values(self, _member: &AttributeName) -> Option<impl Iterator<Item = ValueItem<'a, NoLinkedEntity>>> {
+        None::<Empty<ValueItem<'a, NoLinkedEntity>>>
     }
 }
 

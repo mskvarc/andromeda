@@ -45,19 +45,13 @@ pub(crate) fn terminal_value<'a, N: QueriedValueNode<'a>>(keyword: TerminalKeywo
 #[must_use]
 pub fn family_target<'a, I: QueriedInstance<'a>>(instance: I) -> Option<ResolvedTarget<'a>> {
     let reading = family_reading(instance.family());
-    let terminals = instance.values().filter_map(|item| own_value(reading.terminal, item));
-    let value = match reading.layout {
-        ValueLayout::Nodes => match (held_values_target(terminals), reading.terminal, instance.value_presence()) {
-            (Some(value), TerminalKeyword::Literal | TerminalKeyword::Identifier, ValuePresence::Held | ValuePresence::Absent) => value,
-            (None, TerminalKeyword::Literal, ValuePresence::Held) => TargetValue::Array(Vec::new()),
-            (None, TerminalKeyword::Literal, ValuePresence::Absent) | (None, TerminalKeyword::Identifier, ValuePresence::Held | ValuePresence::Absent) => {
-                return None;
-            }
-        },
-        ValueLayout::OrderedList => match instance.value_presence() {
-            ValuePresence::Held => TargetValue::Array(terminals.collect()),
-            ValuePresence::Absent => return None,
-        },
+    let terminals = || instance.values().filter_map(|item| own_value(reading.terminal, item));
+    let value = match (reading.layout, reading.terminal, instance.value_presence()) {
+        (ValueLayout::Nodes, TerminalKeyword::Literal, ValuePresence::Held) => held_target(instance.values()),
+        (ValueLayout::Nodes, TerminalKeyword::Literal, ValuePresence::Absent)
+        | (ValueLayout::Nodes, TerminalKeyword::Identifier, ValuePresence::Held | ValuePresence::Absent) => held_values_target(terminals())?,
+        (ValueLayout::OrderedList, TerminalKeyword::Literal | TerminalKeyword::Identifier, ValuePresence::Held) => TargetValue::Array(terminals().collect()),
+        (ValueLayout::OrderedList, TerminalKeyword::Literal | TerminalKeyword::Identifier, ValuePresence::Absent) => return None,
     };
     Some(ResolvedTarget {
         value,
@@ -79,10 +73,18 @@ fn own_value<'a, N: QueriedValueNode<'a>>(keyword: TerminalKeyword, item: ValueI
     }
 }
 
-/// The target value a member holding one value node per value the client
-/// wrote carries: a single value is a scalar target, several are an array
-/// target, and none is no target.
-pub(crate) fn held_values_target<'a>(mut values: impl Iterator<Item = TargetValue<'a>>) -> Option<TargetValue<'a>> {
+/// The target value held literal-keyed values carry, the values of a
+/// Property or of a member of its structured value, one per value the client
+/// wrote: each literal is its value and every other value an Object target,
+/// one value is a scalar target, several an array target, and none the empty
+/// array, which includes no operand (clause 4.9).
+pub(crate) fn held_target<'a, N: QueriedValueNode<'a>>(values: impl Iterator<Item = ValueItem<'a, N>>) -> TargetValue<'a> {
+    held_values_target(values.filter_map(|item| own_value(TerminalKeyword::Literal, item))).unwrap_or_else(|| TargetValue::Array(Vec::new()))
+}
+
+/// The target value values carrying one target each hold: a single value is
+/// a scalar target, several are an array target, and none is no target.
+fn held_values_target<'a>(mut values: impl Iterator<Item = TargetValue<'a>>) -> Option<TargetValue<'a>> {
     let first = values.next()?;
     Some(match values.next() {
         None => first,
