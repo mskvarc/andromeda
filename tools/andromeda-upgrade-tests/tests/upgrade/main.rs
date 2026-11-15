@@ -10,6 +10,8 @@ mod fixtures;
 #[cfg(test)]
 mod lockstep;
 #[cfg(test)]
+mod registration;
+#[cfg(test)]
 mod seal;
 #[cfg(test)]
 mod tenancy;

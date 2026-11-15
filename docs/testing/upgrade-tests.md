@@ -8,7 +8,7 @@ The tests never reach a broker over the network, and they don't need one. They n
 
 ## What is covered
 
-The crate's one test target, `upgrade`, has three groups of tests.
+The crate's one test target, `upgrade`, has four groups of tests.
 
 `seal` covers the conversion of data-integrity seals (see [Data-integrity seals](../data-integrity-seals.md)), which migrations 0032, 0033 and 0034 perform.
 
@@ -50,6 +50,11 @@ The crate's one test target, `upgrade`, has three groups of tests.
 - A tenant v1.0.0 registered is served from the database name the registry stores for it, the name v1.0.0 derived from a 32-bit hash. The registry never derives that name again.
 - A tenant whose provisioning v1.0.0 left unfinished is provisioned under the database name v1.0.0 stored for it.
 - A tenant registered after the upgrade whose name shares its label with a v1.0.0 tenant, `Acme` beside `acme`, gets the database name this build derives, distinct from the stored one.
+
+`registration` covers the Context Source Property document a `csf` filter reads, which every registration row stores and migration 0037 brings to the shape this build writes.
+
+- A document v1.0.0 stored holds the `startAt` and `endAt` of `observationInterval` and `managementInterval` as plain strings. After the upgrade it equals, member for member, the document this build's own builder writes for the same registration, each instant declared as a `DateTime` with its text kept, an open interval still without `endAt`.
+- A member a registrant added that holds an object with a `startAt` of its own keeps it as written, and a document holding no time interval comes through unchanged.
 
 ## Running
 

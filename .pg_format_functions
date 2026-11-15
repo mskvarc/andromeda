@@ -3,7 +3,9 @@ cascade_entity_current_attributes
 check_current_attribute_entities
 check_current_attribute_name_keys
 create_hypertable
+declared_time_interval
 GREATEST
+jsonb_strip_nulls
 num_nonnulls
 pg_current_xact_id
 refuse_dictionary_change
