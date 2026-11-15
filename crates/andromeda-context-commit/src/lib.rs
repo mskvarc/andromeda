@@ -49,8 +49,6 @@ pub mod lease_holder;
 pub mod precondition;
 /// The attributes a payload carries, with the family of every instance.
 pub mod projected_attributes;
-/// Whether an entity held a Scope when a write removed it.
-pub mod scope_presence;
 /// The identity of one durable side-effect job.
 pub mod side_effect_job_id;
 /// An instant read from the store's own clock.

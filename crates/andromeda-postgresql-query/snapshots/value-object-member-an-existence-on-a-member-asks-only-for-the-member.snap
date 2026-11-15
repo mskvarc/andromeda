@@ -27,27 +27,30 @@ WHERE
         WHERE
           TRUE
       )
-      OR EXISTS (
-        SELECT
-          1
-        FROM
-          (
-            SELECT
-              "member"."member" AS "member"
-            FROM
-              jsonb_path_query(
-                (
-                  CASE
-                    WHEN (("ca"."value_object" ->> ('@type')) = ('@json')) THEN "ca"."value_object" -> ('@value')
-                  END
-                ),
-                'strict $."city"',
-                '{}',
-                TRUE
-              ) AS "member"
-          ) AS "member"
-        WHERE
-          TRUE
+      OR (
+        (NOT "ca"."attribute_kind" = (6))
+        AND EXISTS (
+          SELECT
+            1
+          FROM
+            (
+              SELECT
+                "member"."member" AS "member"
+              FROM
+                jsonb_path_query(
+                  (
+                    CASE
+                      WHEN (("ca"."value_object" ->> ('@type')) = ('@json')) THEN "ca"."value_object" -> ('@value')
+                    END
+                  ),
+                  'strict $."city"',
+                  '{}',
+                  TRUE
+                ) AS "member"
+            ) AS "member"
+          WHERE
+            TRUE
+        )
       )
     )
   )

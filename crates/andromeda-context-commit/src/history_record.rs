@@ -1,6 +1,5 @@
 //! Temporal Evolution consequences carried by an atomic write.
 
-use crate::scope_presence::ScopePresence;
 use andromeda_ngsi_ld_entity::{
     document::EntityDocument,
     entity_state::EntityState,
@@ -10,7 +9,7 @@ use andromeda_ngsi_ld_entity::{
         removed_instance::{RemovedAttributeInstance, removed_attribute_instances},
     },
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, identifier::Identifier, scope::presence::ScopePresence};
 use derive_more::IsVariant;
 use std::sync::Arc;
 
@@ -172,17 +171,14 @@ pub fn deletion_tombstones(instances: impl IntoIterator<Item = (AttributeInstanc
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        history_record::{HistoryRecord, deletion_history, deletion_tombstones, mutation_history},
-        scope_presence::ScopePresence,
-    };
+    use crate::history_record::{HistoryRecord, deletion_history, deletion_tombstones, mutation_history};
     use andromeda_ngsi_ld_entity::{
         entity_state::EntityState,
         history::written_observation::written_observation,
         reads::{attribute_instance_key::AttributeInstanceKey, removed_instance::RemovedAttributeInstance},
         scopes::Scopes,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier};
+    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, identifier::Identifier, scope::presence::ScopePresence};
     use serde_json::{Value, json};
     use std::sync::Arc;
 

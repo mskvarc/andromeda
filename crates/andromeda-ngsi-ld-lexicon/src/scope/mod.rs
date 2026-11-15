@@ -3,8 +3,10 @@
 //! The one owner of what a Scope is: [`grammar`] is the clause 4.18 ABNF,
 //! [`level`] admits a level, and [`path`] parses a whole path against the
 //! grammar and its storage bounds and splits it into its levels. Every other
-//! crate reads a Scope through [`path::ScopePath`].
+//! crate reads a Scope through [`path::ScopePath`], and whether an Entity holds
+//! one through [`presence::ScopePresence`].
 
 pub mod grammar;
 pub mod level;
 pub mod path;
+pub mod presence;

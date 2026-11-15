@@ -375,8 +375,8 @@ mod tests {
     /// (clause 5.7.4.4), and clause 5.5.14 holds a follow-up to them.
     #[tokio::test]
     async fn a_changed_attribute_list_is_a_changed_temporal_request() -> Result<(), EntityMapError> {
-        let created = temporal_query("type=Vehicle&attrs=speed&timerel=after&timeAt=2020-01-01T00:00:00Z").await?;
-        let reordered = temporal_query("type=Vehicle&attrs=speed&timerel=after&timeAt=2020-01-01T00:00:00Z").await?;
+        let created = temporal_query("type=Vehicle&attrs=speed,brand&timerel=after&timeAt=2020-01-01T00:00:00Z").await?;
+        let reordered = temporal_query("type=Vehicle&attrs=brand,speed&timerel=after&timeAt=2020-01-01T00:00:00Z").await?;
         pretty_assertions::assert_eq!(created.compare(&reordered), RequestComparison::Same);
         pretty_assertions::assert_eq!(
             created.compare(&temporal_query("type=Vehicle&attrs=brand&timerel=after&timeAt=2020-01-01T00:00:00Z").await?),

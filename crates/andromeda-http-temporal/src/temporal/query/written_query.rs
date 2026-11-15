@@ -9,7 +9,7 @@
 
 use crate::temporal::{ContextSpec, ProblemResponse, ResultInstanceExt, TemporalQueryParameters, query::request_entity_map::open_window};
 use andromeda_ngsi_ld_query::{projection::attrs_selection::AttrsAdmission, temporal::compiled::CompiledTemporalQuery};
-use andromeda_ngsi_ld_request::query::temporal::operation::TemporalQueryOperation;
+use andromeda_ngsi_ld_request::query::temporal::{admitted::AdmittedTemporalRequest, operation::TemporalQueryOperation};
 use andromeda_temporal::{query_reading::QueryReading, service::TemporalService};
 use axum::http::Uri;
 use std::sync::OnceLock;
@@ -22,8 +22,8 @@ pub(super) struct WrittenQuery<'a> {
     /// The `@context` the query's terms expand under.
     context: &'a ContextSpec,
     /// The parameters as the client wrote them, before an Entity Map narrows
-    /// the request's own.
-    params: TemporalQueryParameters,
+    /// the request's own, admitted with an omitted window opened.
+    admitted: AdmittedTemporalRequest,
     /// The request a failure is reported against.
     instance: &'a Uri,
     /// The compiled query, once something read it.
@@ -32,17 +32,6 @@ pub(super) struct WrittenQuery<'a> {
 
 impl<'a> WrittenQuery<'a> {
     /// The query `params` hold as the client wrote them.
-    pub(super) const fn new(service: &'a TemporalService, context: &'a ContextSpec, params: TemporalQueryParameters, instance: &'a Uri) -> WrittenQuery<'a> {
-        WrittenQuery {
-            service,
-            context,
-            params,
-            instance,
-            compiled: OnceLock::new(),
-        }
-    }
-
-    /// The compiled query, compiled on the first call.
     ///
     /// A follow-up under an Entity Map may omit the temporal window, which the
     /// identity does not carry, so an omitted one is stood for the open window
@@ -50,7 +39,32 @@ impl<'a> WrittenQuery<'a> {
     ///
     /// # Errors
     ///
-    /// The classified failure of admitting and compiling the query.
+    /// The classified failure of opening the window and of admitting the
+    /// query.
+    pub(super) fn new(
+        service: &'a TemporalService,
+        context: &'a ContextSpec,
+        mut params: TemporalQueryParameters,
+        instance: &'a Uri,
+    ) -> Result<WrittenQuery<'a>, ProblemResponse> {
+        open_window(&mut params).with_instance(instance)?;
+        let admitted = params
+            .admit(TemporalQueryOperation::Query, service.linked_retrieval(), service.filter_admission())
+            .with_instance(instance)?;
+        Ok(WrittenQuery {
+            service,
+            context,
+            admitted,
+            instance,
+            compiled: OnceLock::new(),
+        })
+    }
+
+    /// The compiled query, compiled on the first call.
+    ///
+    /// # Errors
+    ///
+    /// The classified failure of compiling the query.
     pub(super) async fn compiled(&self) -> Result<&CompiledTemporalQuery, ProblemResponse> {
         if let Some(compiled) = self.compiled.get() {
             return Ok(compiled);
@@ -59,17 +73,11 @@ impl<'a> WrittenQuery<'a> {
         Ok(self.compiled.get_or_init(|| compiled))
     }
 
-    /// Admit and compile the written parameters.
+    /// Compile the written parameters.
     async fn compile(&self) -> Result<CompiledTemporalQuery, ProblemResponse> {
-        // clone: the window is opened on the compiled copy, while the parameters stay as written
-        let mut written = self.params.clone();
-        open_window(&mut written).with_instance(self.instance)?;
-        let admitted = written
-            .admit(TemporalQueryOperation::Query, self.service.linked_retrieval(), self.service.filter_admission())
-            .with_instance(self.instance)?;
         self.service
             .compile_temporal_query(
-                &admitted,
+                &self.admitted,
                 QueryReading {
                     context: self.context,
                     language_targeting: self.service.language_targeting(),

@@ -160,8 +160,8 @@ const E17_ATTRIBUTES: &[CorpusAttribute] = &[
     attribute!("llink", ListRelationship(&[Entity(CorpusEntity::E1)])),
     attribute!("hm", Relationship(&[Identifier("http://example.com/a"), Identifier("urn:x:9")])),
 ];
-/// `n1` the one-element array 10.
-const E18_ATTRIBUTES: &[CorpusAttribute] = &[attribute!("n1", Property(&[Integer(10)]))];
+/// `n1` the one-element array 10 and `e0` the empty array.
+const E18_ATTRIBUTES: &[CorpusAttribute] = &[attribute!("n1", Property(&[Integer(10)])), attribute!("e0", Property(&[]))];
 /// `t` a Time.
 const E19_ATTRIBUTES: &[CorpusAttribute] = &[attribute!(
     "t",
@@ -233,7 +233,7 @@ mod tests {
             written_terms(),
             [
                 "n", "s", "b", "other", "r", "rl", "l", "d", "tm", "f", "g", "m", "k", "src", "addr", "h", "hp", "location", "vp", "lp", "jp", "jn", "link",
-                "link2", "llink", "hm", "n1", "t"
+                "link2", "llink", "hm", "n1", "e0", "t"
             ]
         );
     }

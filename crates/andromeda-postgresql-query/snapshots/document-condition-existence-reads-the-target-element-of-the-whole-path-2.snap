@@ -6,4 +6,28 @@ SELECT
 FROM
   "context_source_registrations"
 WHERE
-  (("context_source_properties" -> ('a')) -> ('b')) IS NOT NULL
+  (
+    SELECT
+      (
+        CASE
+          WHEN (
+            ("j" -> ('value')) IS NOT NULL
+            OR ("j" ->> ('type')) IN (
+              'Property',
+              'Relationship',
+              'GeoProperty',
+              'VocabProperty',
+              'LanguageProperty',
+              'JsonProperty',
+              'ListProperty',
+              'ListRelationship'
+            )
+          ) THEN "j" -> ('b')
+        END
+      )
+    FROM
+      (
+        SELECT
+          "context_source_properties" -> ('a') AS "j"
+      ) AS "s"
+  ) IS NOT NULL

@@ -105,4 +105,7 @@ corpus_cases! {
     n_qry_qlg_9182_an_element_of_an_array_member_matches => "C-82",
     n_qry_qlg_9183_an_element_of_a_nested_array_is_no_element_of_the_member => "C-83",
     n_qry_qlg_9184_a_nested_array_includes_no_operand => "C-84",
+    n_qry_qlg_9185_an_empty_array_is_unequal_to_a_string => "C-85",
+    n_qry_qlg_9186_an_empty_array_includes_no_operand => "C-86",
+    n_qry_qlg_9187_an_empty_array_value_defines_the_attribute => "C-87",
 }

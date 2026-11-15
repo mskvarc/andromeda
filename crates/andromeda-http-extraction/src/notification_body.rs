@@ -68,7 +68,7 @@ mod tests {
         rejection.into_response().status()
     }
 
-    /// N-D2: `application/merge-patch+json` is the Merge Entity body alone.
+    /// `application/merge-patch+json` is the Merge Entity body alone.
     #[tokio::test]
     async fn merge_patch_is_not_a_notification() {
         let rejection = NotificationBody::from_request(request("application/merge-patch+json", NOTIFICATION, None), &())

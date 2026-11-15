@@ -4,10 +4,11 @@
 //!
 //! A document holds each property as its writer wrote it, and reads it as the
 //! in-memory evaluator reads a registration's Context Source Properties: a
-//! JSON object holding a `value` member is the property's node, whose value is
-//! that member and whose other members are its sub-properties and instance
-//! members (clause 4.5.2.3), and any other JSON, an array included, is the
-//! value itself.
+//! JSON object holding a `value` member, or naming an NGSI-LD attribute family
+//! by `type`, is the property's node, whose value is its `value` member and
+//! whose other members are its sub-properties and instance members (clause
+//! 4.5.2.3), and any other JSON, an array included, is the value itself, which
+//! has no sub-property.
 
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, time::value::TimeValueForm};
 use andromeda_ngsi_ld_query::filter::{
@@ -27,7 +28,7 @@ use andromeda_ngsi_ld_vocabulary::{
     keyword,
 };
 use andromeda_postgresql_seaquery::{
-    cast::typed_null,
+    cast::{cast, typed_null},
     column_reference::ColumnReference,
     datetime::pg_input_is_valid,
     json_type::{JsonType, jsonb_type_is, jsonb_whole_text},
@@ -154,16 +155,17 @@ impl<'a> PropertyPath<'a> {
     ///
     /// Clause 4.9 makes each name after the first of a path "a (sub)Property
     /// or (sub)Relationship", and a sub-property is a member of its property's
-    /// node, beside the node's value.
+    /// node, beside the node's value; a property written as its value alone
+    /// has none.
     fn node(self, document: &ColumnReference) -> SimpleExpr {
         let node = self
             .sub_properties
             .iter()
             .fold(document.column_expr().json_get(text_literal(self.attribute.as_str())), |node, sub| {
-                node.json_get(text_literal(sub.as_str()))
+                node_member(node, sub.as_str())
             });
         match self.ending {
-            Ending::InstanceMember(member) => node.json_get(text_literal(member.iri().as_str())),
+            Ending::InstanceMember(member) => node_member(node, member.iri().as_str()),
             Ending::Node | Ending::Members(_) => node,
         }
     }
@@ -187,10 +189,31 @@ fn read_once(node: SimpleExpr, read: SimpleExpr) -> SimpleExpr {
     SimpleExpr::SubQuery(None, Box::new(read.into_sub_query_statement()))
 }
 
-/// The value the aliased node holds: its `value` member, or the node itself
-/// when it holds none.
+/// Whether the aliased JSON is a property's node: an object holding `value`,
+/// or naming an NGSI-LD attribute family by `type`.
+fn is_node() -> SimpleExpr {
+    let families = AttributeType::ALL.into_iter().map(|family| text_literal(<&'static str>::from(family)));
+    SeaExpr::expr(aliased_node().json_get(text_literal(compact_properties::VALUE)))
+        .is_not_null()
+        .or(SeaExpr::expr(aliased_node().json_get_text(text_literal(keyword::TYPE_ALIAS))).is_in(families))
+}
+
+/// The value the aliased JSON holds: the `value` member of a node, the empty
+/// array for a node holding none, which includes no operand as the in-memory
+/// evaluator reads a Property holding no value, or the JSON itself when it is
+/// no node.
 fn held_value() -> SimpleExpr {
-    Func::coalesce([aliased_node().json_get(text_literal(compact_properties::VALUE)), aliased_node()]).into()
+    let value = SimpleExpr::from(Func::coalesce([
+        aliased_node().json_get(text_literal(compact_properties::VALUE)),
+        cast(text_literal("[]"), PostgresType::Jsonb),
+    ]));
+    CaseStatement::new().case(is_node(), value).finally(aliased_node()).into()
+}
+
+/// The member `name` of the node `node` is, NULL when `node` is no node,
+/// reading `node` exactly once.
+fn node_member(node: SimpleExpr, name: &str) -> SimpleExpr {
+    read_once(node, CaseStatement::new().case(is_node(), aliased_node().json_get(text_literal(name))).into())
 }
 
 /// The value `node` holds, reading `node` exactly once.

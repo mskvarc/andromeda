@@ -273,11 +273,15 @@ mod tests {
     use crate::{
         compilation::{compile_grouping, compile_instance_page, compile_representation},
         instance_limits::TemporalInstanceLimits,
+        query_reading::QueryReading,
+        stub_broker::{StubBroker, admitted, service},
     };
     use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat};
     use andromeda_ngsi_ld_query::{
-        filter::expansion::expand_json_keys,
+        filter::{expansion::expand_json_keys, language_targeting::LanguageTargeting},
+        projection::attrs_selection::AttrsAdmission,
+        query_identity::{IdentifierScope, QueryIdentity},
         temporal::{aggregation_period::AggregationPeriod, grouping::group_key::GroupKey, instance_page::InstancePage, period_budget::PeriodBudget},
     };
     use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
@@ -310,6 +314,39 @@ mod tests {
             .iter()
             .map(|name| name.as_str().to_owned())
             .collect()
+    }
+
+    /// The identity record of a temporal query naming `attrs`, compiled as
+    /// every temporal read compiles one.
+    async fn identity_naming(attrs: &[&str]) -> Vec<u8> {
+        let params = admitted(TemporalQueryParameters {
+            attrs: Some(attrs.iter().map(|name| name.parse().expect("valid attribute name")).collect()),
+            ..TemporalQueryParameters::default()
+        });
+        let context = ContextSpec::core_only();
+        let reading = QueryReading {
+            context: &context,
+            language_targeting: LanguageTargeting::Specification,
+        };
+        let compiled = service(StubBroker::new([]))
+            .compile_temporal_query(&params, reading, AttrsAdmission::ReifiedScopeAdmitted)
+            .await
+            .expect("the query compiles");
+        QueryIdentity::of_temporal(&compiled, None, IdentifierScope::Excepted)
+            .record()
+            .expect("a writable identity")
+    }
+
+    /// Clause 5.7.4.4 step S1 selects Entities by the Attributes `attrs`
+    /// names, so the compiled query carries them where its identity reads
+    /// them: another list is another identity, and the same list in another
+    /// order is the same one.
+    #[tokio::test]
+    async fn the_identity_of_a_compiled_temporal_query_carries_its_attrs() {
+        let speed_and_brand = identity_naming(&["speed", "brand"]).await;
+        pretty_assertions::assert_eq!(speed_and_brand, identity_naming(&["brand", "speed"]).await);
+        assert_ne!(speed_and_brand, identity_naming(&["speed"]).await);
+        assert_ne!(speed_and_brand, identity_naming(&[]).await);
     }
 
     /// Clause 4.9 EXAMPLE 11: under a `jsonKeys` attribute `value` is the

@@ -14,12 +14,14 @@ use ngsi_ld::{
 };
 
 /// Pins: over registrations r1 (`zones` the bare array a and b, `rank` the bare array 1 and 5), r2 (`concise` the
-/// concise Property x), r3 (`nodes` an array holding the Property node x), r4 (`empty` the empty array) and r5
-/// (`nested` the array 1 and the array 2), Query Context Source Registrations and a Context Source Registration
-/// Subscription with each csf select alike: zones=="b" r1, zones!="a" none, zones!="c" r1, rank==5 r1, rank>2 none,
-/// concise=="x" r2, nodes=="x" none, nodes r3, empty r4, empty!="x" r4, nested==1 r5, nested==2 none and
-/// nested!=2 r5; a Context Source Property is one Property whose bare array is one array value, an object holding
-/// `value` is its node, and an array is compared by its single elements
+/// concise Property x, `typed` a Property node holding no value, `settings` the object value with `timeout` 5), r3
+/// (`nodes` an array holding the Property node x), r4 (`empty` the empty array) and r5 (`nested` the array 1 and the
+/// array 2), Query Context Source Registrations and a Context Source Registration Subscription with each csf select
+/// alike: zones=="b" r1, zones!="a" none, zones!="c" r1, rank==5 r1, rank>2 none, concise=="x" r2, typed r2,
+/// typed!="x" r2, settings[timeout]==5 r2, settings.timeout==5 none, nodes=="x" none, nodes r3, empty r4,
+/// empty!="x" r4, nested==1 r5, nested==2 none and nested!=2 r5; a Context Source Property is one Property whose
+/// bare array is one array value, an object holding `value` or naming its family by `type` is its node, a value
+/// written alone has no sub-property, and an array is compared by its single elements
 /// Clause: 4.5.2.3, 4.9, 5.2.9, 5.10.2.4, 5.11.2.4
 #[gtest]
 #[tokio::test]
@@ -49,6 +51,8 @@ async fn n_csr_qry_9093_a_context_source_property_reads_alike_in_every_written_f
     let zones: RawJson = r#"["a", "b"]"#.parse()?;
     let rank: RawJson = "[1, 5]".parse()?;
     let concise: RawJson = r#"{"value": "x"}"#.parse()?;
+    let typed: RawJson = r#"{"type": "Property"}"#.parse()?;
+    let settings: RawJson = r#"{"timeout": 5}"#.parse()?;
     let nodes: RawJson = r#"[{"type": "Property", "value": "x"}]"#.parse()?;
     let empty: RawJson = "[]".parse()?;
     let nested: RawJson = "[1, [2]]".parse()?;
@@ -63,7 +67,7 @@ async fn n_csr_qry_9093_a_context_source_property_reads_alike_in_every_written_f
         },
         CsfRegistration {
             registration: second,
-            properties: &[("concise", &concise)],
+            properties: &[("concise", &concise), ("typed", &typed), ("settings", &settings)],
         },
         CsfRegistration {
             registration: third,
@@ -99,6 +103,19 @@ async fn n_csr_qry_9093_a_context_source_property_reads_alike_in_every_written_f
         CsfCase {
             csf: "concise==\"x\"",
             selects: &[r2],
+        },
+        CsfCase { csf: "typed", selects: &[r2] },
+        CsfCase {
+            csf: "typed!=\"x\"",
+            selects: &[r2],
+        },
+        CsfCase {
+            csf: "settings[timeout]==5",
+            selects: &[r2],
+        },
+        CsfCase {
+            csf: "settings.timeout==5",
+            selects: &[],
         },
         CsfCase {
             csf: "nodes==\"x\"",

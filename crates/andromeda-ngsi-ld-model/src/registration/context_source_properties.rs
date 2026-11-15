@@ -5,14 +5,16 @@
 //! `CSourceRegistration`" (clause 4.9). Those members are not an expanded
 //! entity: each is held under its expanded name as the registration spells it,
 //! and each is one Property, since the instances of clause 4.5.5 are an
-//! Entity's. A JSON object holding a `value` member is the Property's node
-//! (clause 4.5.2.3: normalized when it carries `type`, and a Property inferred
-//! from `value` when it does not): its value is that member, and its other
-//! members are its sub-properties and instance members. Any other JSON (a
-//! scalar, an array, an object holding no `value` such as `management` or a
-//! `GeoJSON` geometry) is the value itself, an array one array value clause 4.9
-//! compares by membership. The value is raw JSON whose keys a compound path
-//! addresses verbatim. A value object whose `@type` declares a clause 4.6.3
+//! Entity's. A JSON object holding a `value` member, or naming an NGSI-LD
+//! attribute family by `type`, is the Property's node (clause 4.5.2.3: an
+//! object carrying `type` is the normalized representation, and a Property is
+//! inferred from `value`): its value is its `value` member, and one holding
+//! none holds no value, which includes no operand as the empty array does; its
+//! other members are its sub-properties and instance members.
+//! Any other JSON (a scalar, an array, an object such as `management` or a
+//! `GeoJSON` geometry) is the value itself, which has no sub-property: an array
+//! is one array value clause 4.9 compares by membership, and a key of an object
+//! is a member of the value, which a compound path addresses verbatim. A value object whose `@type` declares a clause 4.6.3
 //! time value, by the core context's term or by its IRI, is that time value
 //! (annex C.6), the one reading a time operand compares with. The SQL
 //! rendering of a `csf` reads a stored document by these same rules.
@@ -33,10 +35,7 @@ use andromeda_ngsi_ld_vocabulary::{
     compact::{classes as compact_classes, properties as compact_properties},
     keyword,
 };
-use std::{
-    borrow::Cow,
-    iter::{empty, once},
-};
+use std::{borrow::Cow, iter::empty, str::FromStr};
 
 /// The members of a registration a `csf` filter reads: a JSON object keyed by
 /// expanded name.
@@ -67,23 +66,38 @@ impl<'a> ContextSourceProperties<'a> {
 pub struct PropertyValue<'a>(JsonPiece<'a>);
 
 impl<'a> PropertyValue<'a> {
-    /// The value the property holds: the `value` member of its node, or the
-    /// JSON itself when it holds none.
-    fn held(self) -> JsonPiece<'a> {
-        self.0.member(compact_properties::VALUE).unwrap_or(self.0)
+    /// Whether the property is written as its node: an object holding `value`,
+    /// or naming an NGSI-LD attribute family by `type`.
+    fn is_node(self) -> bool {
+        self.0.member(compact_properties::VALUE).is_some()
+            || self
+                .0
+                .member(keyword::TYPE_ALIAS)
+                .and_then(JsonPiece::as_str)
+                .is_some_and(|family| AttributeType::from_str(&family).is_ok())
     }
 
-    /// The one value the property holds as the `q` evaluator reads it: a
-    /// declared time value or the raw JSON it holds.
-    fn item(self) -> ValueItem<'a, NoStructuredValue> {
-        let held = self.held();
-        declared_time(held).map_or(ValueItem::Json(held), |time| ValueItem::Literal(LiteralValue::Time(time)))
+    /// The value the property holds: the `value` member of its node, none for
+    /// a node holding none, or the JSON itself when it is no node.
+    fn held(self) -> Option<JsonPiece<'a>> {
+        if self.is_node() {
+            self.0.member(compact_properties::VALUE)
+        } else {
+            Some(self.0)
+        }
     }
 
-    /// The member `name` of the property's node: a sub-property or an instance
-    /// member.
+    /// The value the property holds as the `q` evaluator reads it: a declared
+    /// time value or the raw JSON it holds.
+    fn item(self) -> Option<ValueItem<'a, NoStructuredValue>> {
+        let held = self.held()?;
+        Some(declared_time(held).map_or(ValueItem::Json(held), |time| ValueItem::Literal(LiteralValue::Time(time))))
+    }
+
+    /// The member `name` of the property's node, a sub-property or an
+    /// instance member; none when the property is written as its value alone.
     fn member(self, name: &str) -> Option<PropertyValue<'a>> {
-        self.0.member(name).map(PropertyValue)
+        self.is_node().then(|| self.0.member(name)).flatten().map(PropertyValue)
     }
 }
 
@@ -140,7 +154,7 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
     }
 
     fn values(self) -> impl Iterator<Item = ValueItem<'a, NoStructuredValue>> {
-        once(self.item())
+        self.item().into_iter()
     }
 
     /// Clause 5.2.9 Context Source Properties are Properties, never a
@@ -154,7 +168,10 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
     }
 
     fn metadata(self, member: InstanceMetadata) -> impl Iterator<Item = Cow<'a, str>> {
-        self.member(member.iri().as_str()).and_then(|held| held.held().as_str()).into_iter()
+        self.member(member.iri().as_str())
+            .and_then(PropertyValue::held)
+            .and_then(JsonPiece::as_str)
+            .into_iter()
     }
 }
 
@@ -217,20 +234,36 @@ mod tests {
     }
 
     /// Clause 4.5.2.3 infers a Property from `value`, so a concise node is read
-    /// by its value, and an object holding no `value` is the value itself
-    /// whatever `type` it carries.
+    /// by its value, and treats an object carrying `type` as the normalized
+    /// representation, so a node naming its family and holding no `value`
+    /// holds no value, which includes no operand as the empty array does; an
+    /// object naming no family by `type`, such as a `GeoJSON` geometry, is the
+    /// value itself.
     #[test]
-    fn an_object_holding_value_is_the_node_of_the_property() {
+    fn an_object_holding_value_or_naming_a_family_is_the_node_of_the_property() {
         let properties = json!({
             "https://example.com/concise": {"value": "x", "https://example.com/since": 2020},
-            "https://example.com/typed": {"type": "Property"}
+            "https://example.com/typed": {"type": "Property"},
+            "https://example.com/area": {"type": "Point", "coordinates": [1, 2]}
         });
         assert!(holds("\"https://example.com/concise\"==\"x\"", &properties));
         assert!(holds("\"https://example.com/concise\".\"https://example.com/since\"==2020", &properties));
         assert!(holds("\"https://example.com/typed\"", &properties));
         assert!(!holds("\"https://example.com/typed\"==\"Property\"", &properties));
         assert!(holds("\"https://example.com/typed\"!=\"x\"", &properties));
-        assert!(holds("\"https://example.com/typed\"[type]==\"Property\"", &properties));
+        assert!(!holds("\"https://example.com/typed\"[type]==\"Property\"", &properties));
+        assert!(holds("\"https://example.com/area\"[type]==\"Point\"", &properties));
+    }
+
+    /// A Property written as its value alone has no sub-attribute (clause
+    /// 4.5.2.3), so a key of an object value is a member of the value, read
+    /// through a trailing path and never through `.`.
+    #[test]
+    fn a_key_of_an_object_value_is_a_member_and_no_sub_property() {
+        let properties = json!({"https://example.com/management": {"timeout": 5}});
+        assert!(holds("\"https://example.com/management\"[timeout]==5", &properties));
+        assert!(!holds("\"https://example.com/management\".timeout==5", &properties));
+        assert!(!holds("\"https://example.com/management\".timeout", &properties));
     }
 
     /// A Context Source Property has no clause 4.5.5 instances, so an array of

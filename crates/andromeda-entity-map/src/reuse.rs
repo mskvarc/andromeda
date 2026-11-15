@@ -72,12 +72,11 @@ impl EntityMapUse {
         flag: EntityMapFlag,
         mint: impl FnOnce() -> Result<EntityMap, EntityMapError>,
     ) -> Result<EntityMapUse, EntityMapError> {
-        Ok(match (referenced, flag) {
-            (Some(ReferencedEntityMap::Live(map)), EntityMapFlag::Requested | EntityMapFlag::NotRequested) => EntityMapUse::Reuse(map),
-            (Some(ReferencedEntityMap::Unavailable), EntityMapFlag::Requested | EntityMapFlag::NotRequested) | (None, EntityMapFlag::Requested) => {
-                EntityMapUse::Mint(Box::new(mint()?))
-            }
-            (None, EntityMapFlag::NotRequested) => EntityMapUse::None,
+        Ok(match referenced {
+            Some(ReferencedEntityMap::Live(map)) => EntityMapUse::Reuse(map),
+            Some(ReferencedEntityMap::Unavailable) => EntityMapUse::Mint(Box::new(mint()?)),
+            None if flag.involves_a_map(None) => EntityMapUse::Mint(Box::new(mint()?)),
+            None => EntityMapUse::None,
         })
     }
 

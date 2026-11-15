@@ -5,10 +5,10 @@ use crate::{
     error::EntityError,
     port::deletion_outline::DeletionOutlineReader,
 };
-use andromeda_context_commit::{entity_version::EntityVersion, scope_presence::ScopePresence};
+use andromeda_context_commit::entity_version::EntityVersion;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::{entity_state::EntityState, reads::attribute_instance_key::AttributeInstanceKey};
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, scope::presence::ScopePresence};
 use async_trait::async_trait;
 use std::sync::Arc;
 

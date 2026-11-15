@@ -7,11 +7,14 @@
 //! well: [`held_text`] owns that rule, and the request text admission applies
 //! it with the number range in one pass.
 
-use bigdecimal::{BigDecimal, ParseBigDecimalError, Zero, serde::json_num};
+use bigdecimal::{BigDecimal, ParseBigDecimalError, RoundingMode, Zero, serde::json_num};
 use derive_more::Display;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError, ser::Error as SerializeError};
 use serde_json::Number;
-use std::str::FromStr;
+use std::{
+    num::{NonZeroU8, NonZeroU64},
+    str::FromStr,
+};
 use thiserror::Error;
 
 pub mod declared_number;
@@ -97,6 +100,28 @@ impl JsonNumber {
     #[must_use]
     pub fn into_decimal(self) -> BigDecimal {
         self.0
+    }
+
+    /// The number rounded half to even to at most `decimals` fractional
+    /// digits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JsonNumberError`] as [`JsonNumber::from_decimal`] does when
+    /// the rounded value leaves the range `NUMERIC` stores.
+    pub fn rounded_to_decimals(&self, decimals: u8) -> Result<JsonNumber, JsonNumberError> {
+        JsonNumber::from_decimal(&self.0.with_scale_round(i64::from(decimals), RoundingMode::HalfEven))
+    }
+
+    /// The number rounded half to even to at most `digits` significant
+    /// digits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JsonNumberError`] as [`JsonNumber::from_decimal`] does when
+    /// the rounded value leaves the range `NUMERIC` stores.
+    pub fn rounded_to_significant_digits(&self, digits: NonZeroU8) -> Result<JsonNumber, JsonNumberError> {
+        JsonNumber::from_decimal(&self.0.with_precision_round(NonZeroU64::from(digits), RoundingMode::HalfEven))
     }
 
     /// Constructs the native `serde_json` number token for this exact value.
@@ -268,7 +293,7 @@ andromeda_architecture_checks::forbid_sql!();
 #[cfg(test)]
 mod tests {
     use crate::{JsonNumber, JsonNumberError, MAX_FRACTIONAL_DIGITS, MAX_INTEGRAL_DIGITS};
-    use std::str::FromStr;
+    use std::{num::NonZeroU8, str::FromStr};
 
     #[test]
     fn raw_numbers_preserve_their_exact_mathematical_values() {
@@ -284,6 +309,23 @@ mod tests {
             let encoded = serde_json::to_string(&number).expect("a bare JSON number");
             pretty_assertions::assert_eq!(JsonNumber::from_str(&encoded).expect("the serialized number"), number);
         }
+    }
+
+    /// Half to even rounds a tie to the even digit and never pads, so a number
+    /// with fewer digits than asked is itself.
+    #[test]
+    fn rounding_is_half_to_even_and_never_pads() {
+        let number = |text: &str| JsonNumber::from_str(text).expect("a number");
+        assert_eq!(number("129.41675").rounded_to_decimals(4).expect("in range"), number("129.4168"));
+        assert_eq!(number("0.125").rounded_to_decimals(2).expect("in range"), number("0.12"));
+        assert_eq!(number("0.135").rounded_to_decimals(2).expect("in range"), number("0.14"));
+        assert_eq!(number("52.6").rounded_to_decimals(15).expect("in range"), number("52.6"));
+        let sixteen = NonZeroU8::MIN.saturating_add(15);
+        assert_eq!(
+            number("1.2345678901234567e-9").rounded_to_significant_digits(sixteen).expect("in range"),
+            number("1.234567890123457e-9")
+        );
+        assert_eq!(number("2e20").rounded_to_significant_digits(sixteen).expect("in range"), number("2e20"));
     }
 
     #[test]

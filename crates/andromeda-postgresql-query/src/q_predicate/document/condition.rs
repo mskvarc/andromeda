@@ -194,7 +194,7 @@ mod tests {
         let shallow = render("a.b>1");
         let deeper = render("a.b.c.d.e>1");
         assert_statement_snapshot!("document-condition-a-sub-property-path-steps-the-property-nodes-and-unwraps-one-value", deeper);
-        let unwraps = |statement: &SelectStatement| statement.to_string(PostgresQueryBuilder).matches("CASE").count();
+        let unwraps = |statement: &SelectStatement| statement.to_string(PostgresQueryBuilder).matches("COALESCE").count();
         assert_eq!(unwraps(&deeper), unwraps(&shallow));
     }
 

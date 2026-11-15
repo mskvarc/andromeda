@@ -10,9 +10,9 @@
 //! state, so a deletion no subscription can be owed reads the outline instead
 //! of a state that may run to gigabytes once decoded.
 
-use andromeda_context_commit::{entity_version::EntityVersion, scope_presence::ScopePresence};
+use andromeda_context_commit::entity_version::EntityVersion;
 use andromeda_ngsi_ld_entity::reads::attribute_instance_key::AttributeInstanceKey;
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, entity_type_name::EntityTypeName, scope::presence::ScopePresence};
 
 /// The entity a deletion removes, as far as the deletion itself reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]

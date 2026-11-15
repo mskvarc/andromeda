@@ -60,7 +60,7 @@ fn many_comparisons(count: usize) -> String {
     format!("type=Vehicle&{WINDOW}&q=speed%3D%3D{values}")
 }
 
-/// CP-3, clause 5.5.6: a filter of 1 001 comparisons is too complex under the
+/// Clause 5.5.6: a filter of 1 001 comparisons is too complex under the
 /// default limits and one of 1 000 is not, for every temporal operation and the
 /// delete-by-query.
 #[test]
@@ -79,7 +79,7 @@ fn a_q_past_the_comparison_limit_is_refused_at_validation() {
     assert!(matches!(refused, ParameterError::Query(QueryError::QTooManyComparisons { .. })), "{refused:?}");
 }
 
-/// CP-4, clause 4.9: a full language tag as a target language is admitted at
+/// Clause 4.9: a full language tag as a target language is admitted at
 /// the language-tags level and refused at the specification level.
 #[test]
 fn a_language_tag_target_is_admitted_only_at_the_language_tags_level() {
@@ -98,7 +98,7 @@ fn a_language_tag_target_is_admitted_only_at_the_language_tags_level() {
     assert!(matches!(refused, ParameterError::Query(QueryError::LanguageTagNotAdmitted(_))), "{refused:?}");
 }
 
-/// CP-7, clauses 5.7.3.4, 5.7.4.4 and 5.14.5.4: a temporal operation retrieves
+/// Clauses 5.7.3.4, 5.7.4.4 and 5.14.5.4: a temporal operation retrieves
 /// no Linked Entity, so a hop is refused, and with the temporal Linked Entity
 /// extension it follows the Core rule.
 #[test]
@@ -123,7 +123,7 @@ fn a_temporal_operation_refuses_a_hop_unless_the_extension_retrieves_it() {
 }
 
 /// The extension follows the Core rule for a hop: it needs a retrieving join,
-/// and no deeper than `joinLevel` (CP-5 and CP-6).
+/// and no deeper than `joinLevel`.
 #[test]
 fn under_the_extension_a_hop_needs_a_join_that_reaches_it() {
     let admission = broker(LanguageTargeting::Specification);

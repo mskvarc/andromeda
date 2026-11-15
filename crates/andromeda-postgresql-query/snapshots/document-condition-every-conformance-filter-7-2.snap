@@ -8,7 +8,24 @@ FROM
 WHERE
   (
     SELECT
-      COALESCE("j" -> ('value'), "j")
+      (
+        CASE
+          WHEN (
+            ("j" -> ('value')) IS NOT NULL
+            OR ("j" ->> ('type')) IN (
+              'Property',
+              'Relationship',
+              'GeoProperty',
+              'VocabProperty',
+              'LanguageProperty',
+              'JsonProperty',
+              'ListProperty',
+              'ListRelationship'
+            )
+          ) THEN COALESCE("j" -> ('value'), '[]'::jsonb)
+          ELSE "j"
+        END
+      )
     FROM
       (
         SELECT
@@ -19,7 +36,24 @@ WHERE
     jsonb_typeof(
       (
         SELECT
-          COALESCE("j" -> ('value'), "j")
+          (
+            CASE
+              WHEN (
+                ("j" -> ('value')) IS NOT NULL
+                OR ("j" ->> ('type')) IN (
+                  'Property',
+                  'Relationship',
+                  'GeoProperty',
+                  'VocabProperty',
+                  'LanguageProperty',
+                  'JsonProperty',
+                  'ListProperty',
+                  'ListRelationship'
+                )
+              ) THEN COALESCE("j" -> ('value'), '[]'::jsonb)
+              ELSE "j"
+            END
+          )
         FROM
           (
             SELECT
@@ -32,7 +66,24 @@ WHERE
         jsonb_typeof(
           (
             SELECT
-              COALESCE("j" -> ('value'), "j")
+              (
+                CASE
+                  WHEN (
+                    ("j" -> ('value')) IS NOT NULL
+                    OR ("j" ->> ('type')) IN (
+                      'Property',
+                      'Relationship',
+                      'GeoProperty',
+                      'VocabProperty',
+                      'LanguageProperty',
+                      'JsonProperty',
+                      'ListProperty',
+                      'ListRelationship'
+                    )
+                  ) THEN COALESCE("j" -> ('value'), '[]'::jsonb)
+                  ELSE "j"
+                END
+              )
             FROM
               (
                 SELECT
@@ -44,7 +95,24 @@ WHERE
           (
             (
               SELECT
-                COALESCE("j" -> ('value'), "j")
+                (
+                  CASE
+                    WHEN (
+                      ("j" -> ('value')) IS NOT NULL
+                      OR ("j" ->> ('type')) IN (
+                        'Property',
+                        'Relationship',
+                        'GeoProperty',
+                        'VocabProperty',
+                        'LanguageProperty',
+                        'JsonProperty',
+                        'ListProperty',
+                        'ListRelationship'
+                      )
+                    ) THEN COALESCE("j" -> ('value'), '[]'::jsonb)
+                    ELSE "j"
+                  END
+                )
               FROM
                 (
                   SELECT

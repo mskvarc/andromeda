@@ -50,8 +50,9 @@ enum ParameterRole {
     /// map is reused through the `NGSILD-EntityMap` header, never a parameter.
     Artefact,
     /// A parameter a compiled query's identity carries: which entities the
-    /// walk passes, read in the normal form of the compiled query rather than
-    /// as written.
+    /// walk passes, `pick` and `omit` among them since an Entity they leave
+    /// with no member is not selected, read in the normal form of the compiled
+    /// query rather than as written.
     Identity,
     /// Which elements the walk passes, or anything not known to be paging or
     /// presentation.
@@ -153,8 +154,6 @@ const fn role(parameter: QueryParameter) -> ParameterRole {
         | QueryParameter::Options
         | QueryParameter::Format
         | QueryParameter::Lang
-        | QueryParameter::Pick
-        | QueryParameter::Omit
         | QueryParameter::GeometryProperty
         | QueryParameter::Join
         | QueryParameter::JoinLevel
@@ -164,6 +163,8 @@ const fn role(parameter: QueryParameter) -> ParameterRole {
         | QueryParameter::Type
         | QueryParameter::IdPattern
         | QueryParameter::Attrs
+        | QueryParameter::Pick
+        | QueryParameter::Omit
         | QueryParameter::Q
         | QueryParameter::Csf
         | QueryParameter::Georel
@@ -261,7 +262,7 @@ mod tests {
             walked
         );
         assert_eq!(
-            of("type=Vehicle&q=speed%3E10&options=keyValues,sysAttrs&count=true&format=simplified&lang=en&pick=speed&omit=brand&join=flat&joinLevel=2"),
+            of("type=Vehicle&q=speed%3E10&options=keyValues,sysAttrs&count=true&format=simplified&lang=en&join=flat&joinLevel=2"),
             walked
         );
     }
@@ -325,7 +326,7 @@ mod tests {
     fn an_identified_digest_ignores_paging_and_presentation_parameters() {
         let walked = identified("timerel=after&timeAt=2020-01-01T00:00:00Z");
         assert_eq!(
-            identified("timerel=after&timeAt=2020-01-01T00:00:00Z&limit=3&offset=2&count=true&options=keyValues&pick=speed&omit=brand&lang=en&cursor=YWJj"),
+            identified("timerel=after&timeAt=2020-01-01T00:00:00Z&limit=3&offset=2&count=true&options=keyValues&lang=en&cursor=YWJj"),
             walked
         );
     }
@@ -336,7 +337,9 @@ mod tests {
     fn an_identified_digest_ignores_the_text_of_the_parameters_the_identity_carries() {
         let walked = identified("lastN=2");
         assert_eq!(
-            identified("lastN=2&q=b%3D%3D2%3Ba%3D%3D1&type=Vehicle&id=urn:ngsi-ld:Vehicle:1&idPattern=.*&attrs=speed&csf=g%3D%3D1&scopeQ=/a"),
+            identified(
+                "lastN=2&q=b%3D%3D2%3Ba%3D%3D1&type=Vehicle&id=urn:ngsi-ld:Vehicle:1&idPattern=.*&attrs=speed&pick=speed&omit=brand&csf=g%3D%3D1&scopeQ=/a"
+            ),
             walked
         );
         assert_eq!(

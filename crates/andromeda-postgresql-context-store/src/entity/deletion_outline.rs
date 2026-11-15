@@ -18,11 +18,11 @@ use crate::{
     error::ContextStoreError,
     subscription_store::trigger_code::stored_trigger,
 };
-use andromeda_context_commit::{entity_version::EntityVersion, scope_presence::ScopePresence};
+use andromeda_context_commit::entity_version::EntityVersion;
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::deletion_outline::{DeletionOutline, DeletionWatchers};
 use andromeda_ngsi_ld_entity::reads::attribute_instance_key::AttributeInstanceKey;
-use andromeda_ngsi_ld_lexicon::identifier::Identifier;
+use andromeda_ngsi_ld_lexicon::{identifier::Identifier, scope::presence::ScopePresence};
 use andromeda_ngsi_ld_model::notification::{NotificationTrigger, effective_notification_triggers};
 use andromeda_postgresql_branch::table_of;
 use andromeda_postgresql_schema::{

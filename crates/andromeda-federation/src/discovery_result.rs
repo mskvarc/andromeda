@@ -339,7 +339,7 @@ mod tests {
         Discovered::Types(serde_json::from_value(body).expect("an EntityTypeList"))
     }
 
-    /// F-D1: a spec-shaped remote `EntityTypeInfo` contributes its attribute
+    /// A spec-shaped remote `EntityTypeInfo` contributes its attribute
     /// details, their families unioned with the local ones.
     #[tokio::test]
     async fn type_info_merges_attribute_details() {
@@ -356,7 +356,7 @@ mod tests {
         pretty_assertions::assert_eq!(merged["entityCount"], json!(5));
     }
 
-    /// F-D2: a remote `Attribute` record contributes its families and count.
+    /// A remote `Attribute` record contributes its families and count.
     #[tokio::test]
     async fn attribute_info_merges_types_and_counts() {
         let local =
@@ -370,7 +370,7 @@ mod tests {
         pretty_assertions::assert_eq!(merged["typeNames"], json!(["Vehicle", "Car"]));
     }
 
-    /// F-D4: a malformed discovery answer contributes nothing and a warning
+    /// A malformed discovery answer contributes nothing and a warning
     /// naming its registration.
     #[tokio::test]
     async fn a_malformed_discovery_answer_is_reported() {
