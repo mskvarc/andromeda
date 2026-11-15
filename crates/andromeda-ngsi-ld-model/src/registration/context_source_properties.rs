@@ -9,9 +9,10 @@
 //! attribute family by `type`, is the Property's node (clause 4.5.2.3: an
 //! object carrying `type` is the normalized representation, and a Property is
 //! inferred from `value`): its value is its `value` member, one holding none
-//! holding no value, and its other members but those the Property family
-//! carries for itself are its sub-properties, its instance members read under
-//! their expanded names.
+//! holding no value, its instance members are read under the terms clause
+//! 4.5.2.2 writes them by, and its other members, but `type` and those any
+//! family defines (clause 4.5.1 bars those terms as Attribute names), are its
+//! sub-properties.
 //! Any other JSON (a scalar, an array, an object such as `management` or a
 //! `GeoJSON` geometry) is the value itself, which has no sub-property: an array
 //! is one array value clause 4.9 compares by membership, and a key of an object
@@ -87,9 +88,8 @@ impl<'a> PropertyValue<'a> {
         let Some(members) = written.members() else {
             return PropertyValue(WrittenProperty::Value(written));
         };
-        let member = |name: &str| members.iter().rev().find_map(|(key, value)| (key == name).then_some(*value));
-        let value = member(compact_properties::VALUE);
-        let names_a_family = member(keyword::TYPE_ALIAS)
+        let value = JsonPiece::member_among(&members, compact_properties::VALUE);
+        let names_a_family = JsonPiece::member_among(&members, keyword::TYPE_ALIAS)
             .and_then(JsonPiece::as_str)
             .is_some_and(|family| AttributeType::from_str(&family).is_ok());
         if value.is_some() || names_a_family {
@@ -196,21 +196,20 @@ impl<'a> QueriedInstance<'a> for PropertyValue<'a> {
         empty()
     }
 
-    /// A member the Property family carries for itself (`value`, `type`,
-    /// `unitCode`, ...) is no sub-property, so a `.` naming one reaches
-    /// nothing.
+    /// A member a node carries for itself under any family (`value`, `type`,
+    /// `object`, `unitCode`, ...) is no sub-property, so a `.` naming one
+    /// reaches nothing.
     fn sub_attribute_instances(self, name: &AttributeName) -> impl Iterator<Item = PropertyValue<'a>> {
-        (!AttributeType::Property.carries_member(name.as_str()))
+        (!AttributeType::is_own_member(name.as_str()))
             .then(|| self.member(name.as_str()))
             .flatten()
             .into_iter()
     }
 
+    /// The member as the node holds it, under the term clause 4.5.2.2 writes
+    /// it by.
     fn metadata(self, member: InstanceMetadata) -> impl Iterator<Item = Cow<'a, str>> {
-        self.member(member.iri().as_str())
-            .and_then(PropertyValue::held)
-            .and_then(JsonPiece::as_str)
-            .into_iter()
+        self.member(member.term()).and_then(PropertyValue::held).and_then(JsonPiece::as_str).into_iter()
     }
 }
 
@@ -293,18 +292,27 @@ mod tests {
         assert!(holds("\"https://example.com/area\"[type]==\"Point\"", &properties));
     }
 
-    /// A node carries `value`, `type` and its instance members for itself, so
-    /// a `.` naming one of them by its compact name reaches nothing (clause
-    /// 4.6.2 bars those terms as attribute names).
+    /// A node carries `type` and the members any family defines for itself,
+    /// whatever family it names, so a `.` naming one of them reaches nothing
+    /// (clause 4.5.1 bars those terms as Attribute names); `name`, which the
+    /// core `@context` does not define, is a sub-property like any other.
     #[test]
     fn a_member_the_node_carries_for_itself_is_no_sub_property() {
-        let properties = json!({"https://example.com/tier": {"type": "Property", "value": "gold", "unitCode": "C62"}});
+        let properties = json!({
+            "https://example.com/tier": {"type": "Property", "value": "gold"},
+            "https://example.com/link": {"type": "Relationship", "object": "urn:x:1"},
+            "https://example.com/owner": {"type": "Property", "value": "acme", "name": {"type": "Property", "value": "Alice"}}
+        });
         assert!(holds("\"https://example.com/tier\"==\"gold\"", &properties));
-        for path in ["value", "type", "unitCode"] {
+        for path in ["value", "type"] {
             assert!(!holds(&format!("\"https://example.com/tier\".{path}"), &properties), "{path}");
         }
         assert!(!holds("\"https://example.com/tier\".value==\"gold\"", &properties));
         assert!(!holds("\"https://example.com/tier\".type==\"Property\"", &properties));
+        assert!(holds("\"https://example.com/link\"", &properties));
+        assert!(!holds("\"https://example.com/link\".object==\"urn:x:1\"", &properties));
+        assert!(!holds("\"https://example.com/link\".object", &properties));
+        assert!(holds("\"https://example.com/owner\".name==\"Alice\"", &properties));
     }
 
     /// A Property written as its value alone has no sub-attribute (clause
@@ -349,17 +357,22 @@ mod tests {
         assert!(!holds("\"https://example.com/expanded\".\"https://example.com/since\"==2020", &properties));
     }
 
-    /// An instance member holding an instant (clause 4.8) is the `DateTime`
+    /// An instance member is read off the node under the term clause 4.5.2.2
+    /// writes it by, and the path names it by its expanded IRI, as a `csf`
+    /// expands its term. One holding an instant (clause 4.8) is the `DateTime`
     /// its text spells, whether the node holds it bare or as a concise node,
     /// and a member that is no string is no instance member.
     #[test]
     fn an_instance_member_is_read_as_the_text_it_holds() {
-        let properties = json!({"https://example.com/seen": {
-            "value": 1,
-            "https://uri.etsi.org/ngsi-ld/observedAt": "2031-01-01T00:00:00Z",
-            "https://uri.etsi.org/ngsi-ld/unitCode": {"@value": "CEL"},
-            "https://uri.etsi.org/ngsi-ld/datasetId": {"value": "urn:x:d"}
-        }});
+        let properties = json!({
+            "https://example.com/seen": {
+                "value": 1,
+                "observedAt": "2031-01-01T00:00:00Z",
+                "unitCode": {"@value": "CEL"},
+                "datasetId": {"value": "urn:x:d"}
+            },
+            "https://example.com/tier": {"type": "Property", "value": "gold", "unitCode": "C62"}
+        });
         let observed = "\"https://example.com/seen\".\"https://uri.etsi.org/ngsi-ld/observedAt\"";
         assert!(holds(&format!("{observed}>2030-01-01T00:00:00Z"), &properties));
         assert!(!holds(&format!("{observed}==\"2031-01-01T00:00:00Z\""), &properties));
@@ -370,6 +383,11 @@ mod tests {
             "\"https://example.com/seen\".\"https://uri.etsi.org/ngsi-ld/datasetId\"==\"urn:x:d\"",
             &properties
         ));
+        assert!(holds(
+            "\"https://example.com/tier\".\"https://uri.etsi.org/ngsi-ld/unitCode\"==\"C62\"",
+            &properties
+        ));
+        assert!(!holds("\"https://example.com/tier\".\"https://uri.etsi.org/ngsi-ld/datasetId\"", &properties));
     }
 
     /// A compound path reads the raw JSON value by the key the registrant

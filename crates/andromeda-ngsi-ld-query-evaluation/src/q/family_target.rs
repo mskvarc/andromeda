@@ -37,8 +37,9 @@ pub(crate) fn terminal_value<'a, N: QueriedValueNode<'a>>(keyword: TerminalKeywo
 /// asserted test fails over it and its complement holds, as the SQL rendering
 /// probes the instance whatever its value. A Property holding the empty array
 /// holds an empty array target, which includes no operand, so `==` fails over
-/// it and `!=` holds alike; an instance holding no value, a deletion among
-/// them, has no target value. A path addressing a member of a structured value
+/// it and `!=` holds alike; so does a list family holding an empty list. An
+/// instance holding no value, a deletion among them, has no target value,
+/// whatever its family. A path addressing a member of a structured value
 /// descends into it instead. A Relationship's node without an object names
 /// nothing and is no target.
 #[must_use]
@@ -53,7 +54,10 @@ pub fn family_target<'a, I: QueriedInstance<'a>>(instance: I) -> Option<Resolved
                 return None;
             }
         },
-        ValueLayout::OrderedList => TargetValue::Array(terminals.collect()),
+        ValueLayout::OrderedList => match instance.value_presence() {
+            ValuePresence::Held => TargetValue::Array(terminals.collect()),
+            ValuePresence::Absent => return None,
+        },
     };
     Some(ResolvedTarget {
         value,
@@ -193,6 +197,24 @@ mod tests {
     #[test]
     fn an_empty_array_valued_property_resolves_an_empty_array() {
         let (value, origin) = target_of(&json!({"https://uri.etsi.org/ngsi-ld/hasValue": []}));
+        pretty_assertions::assert_eq!(value, json!([]));
+        assert_eq!(origin, TargetOrigin::AttributeValue);
+    }
+
+    /// An instance holding no value member has no target value, unlike one
+    /// holding the empty array, so no comparison and no complement holds
+    /// over it.
+    #[test]
+    fn an_instance_holding_no_value_has_no_target_value() {
+        let instance = FixtureInstance::from_expanded(&json!({"@type": ["https://uri.etsi.org/ngsi-ld/Property"]}));
+        assert!(family_target(&instance).is_none());
+    }
+
+    /// An empty `valueList` is held, so it is the empty array target, which
+    /// includes no operand.
+    #[test]
+    fn an_empty_value_list_is_an_empty_array_target() {
+        let (value, origin) = target_of(&json!({"https://uri.etsi.org/ngsi-ld/hasValueList": [{"@list": []}]}));
         pretty_assertions::assert_eq!(value, json!([]));
         assert_eq!(origin, TargetOrigin::AttributeValue);
     }

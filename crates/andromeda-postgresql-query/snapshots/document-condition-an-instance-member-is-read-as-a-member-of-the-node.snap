@@ -70,7 +70,7 @@ WHERE
                       'ListProperty',
                       'ListRelationship'
                     )
-                  ) THEN "j" -> ('https://uri.etsi.org/ngsi-ld/observedAt')
+                  ) THEN "j" -> ('observedAt')
                 END
               )
             FROM
@@ -152,7 +152,7 @@ WHERE
                                     'ListProperty',
                                     'ListRelationship'
                                   )
-                                ) THEN "j" -> ('https://uri.etsi.org/ngsi-ld/observedAt')
+                                ) THEN "j" -> ('observedAt')
                               END
                             )
                           FROM
@@ -162,5 +162,5 @@ WHERE
                             ) AS "s"
                         ) AS "j"
                     ) AS "s"
-                ) #>> ('{}'), 'timestamptz')) THEN 'https://uri.etsi.org/ngsi-ld/DateTime' END) = ('https://uri.etsi.org/ngsi-ld/DateTime') AND pg_input_is_valid((SELECT (CASE WHEN (jsonb_typeof((CASE WHEN (("j" -> ('value')) IS NOT NULL OR ("j" ->> ('type')) IN ('Property', 'Relationship', 'GeoProperty', 'VocabProperty', 'LanguageProperty', 'JsonProperty', 'ListProperty', 'ListRelationship')) THEN "j" -> ('value') ELSE "j" END)) = ('string')) THEN (CASE WHEN (("j" -> ('value')) IS NOT NULL OR ("j" ->> ('type')) IN ('Property', 'Relationship', 'GeoProperty', 'VocabProperty', 'LanguageProperty', 'JsonProperty', 'ListProperty', 'ListRelationship')) THEN "j" -> ('value') ELSE "j" END) END) FROM (SELECT (SELECT (CASE WHEN (("j" -> ('value')) IS NOT NULL OR ("j" ->> ('type')) IN ('Property', 'Relationship', 'GeoProperty', 'VocabProperty', 'LanguageProperty', 'JsonProperty', 'ListProperty', 'ListRelationship')) THEN "j" -> ('https://uri.etsi.org/ngsi-ld/observedAt') END) FROM (SELECT "context_source_properties" -> ('a') AS "j") AS "s") AS "j") AS "s") #>> ('{}'), 'timestamptz')) THEN ((SELECT (CASE WHEN (jsonb_typeof((CASE WHEN (("j" -> ('value')) IS NOT NULL OR ("j" ->> ('type')) IN ('Property', 'Relationship', 'GeoProperty', 'VocabProperty', 'LanguageProperty', 'JsonProperty', 'ListProperty', 'ListRelationship')) THEN "j" -> ('value') ELSE "j" END)) = ('string')) THEN (CASE WHEN (("j" -> ('value')) IS NOT NULL OR ("j" ->> ('type')) IN ('Property', 'Relationship', 'GeoProperty', 'VocabProperty', 'LanguageProperty', 'JsonProperty', 'ListProperty', 'ListRelationship')) THEN "j" -> ('value') ELSE "j" END) END) FROM (SELECT (SELECT (CASE WHEN (("j" -> ('value')) IS NOT NULL OR ("j" ->> ('type')) IN ('Property', 'Relationship', 'GeoProperty', 'VocabProperty', 'LanguageProperty', 'JsonProperty', 'ListProperty', 'ListRelationship')) THEN "j" -> ('https://uri.etsi.org/ngsi-ld/observedAt') END) FROM (SELECT "context_source_properties" -> ('a') AS "j") AS "s") AS "j") AS "s") #>> ('{}'))::timestamptz END) > $1
+                ) #>> ('{}'), 'timestamptz')) THEN 'https://uri.etsi.org/ngsi-ld/DateTime' END) = ('https://uri.etsi.org/ngsi-ld/DateTime') AND pg_input_is_valid((SELECT (CASE WHEN (jsonb_typeof((CASE WHEN (("j" -> ('value')) IS NOT NULL OR ("j" ->> ('type')) IN ('Property', 'Relationship', 'GeoProperty', 'VocabProperty', 'LanguageProperty', 'JsonProperty', 'ListProperty', 'ListRelationship')) THEN "j" -> ('value') ELSE "j" END)) = ('string')) THEN (CASE WHEN (("j" -> ('value')) IS NOT NULL OR ("j" ->> ('type')) IN ('Property', 'Relationship', 'GeoProperty', 'VocabProperty', 'LanguageProperty', 'JsonProperty', 'ListProperty', 'ListRelationship')) THEN "j" -> ('value') ELSE "j" END) END) FROM (SELECT (SELECT (CASE WHEN (("j" -> ('value')) IS NOT NULL OR ("j" ->> ('type')) IN ('Property', 'Relationship', 'GeoProperty', 'VocabProperty', 'LanguageProperty', 'JsonProperty', 'ListProperty', 'ListRelationship')) THEN "j" -> ('observedAt') END) FROM (SELECT "context_source_properties" -> ('a') AS "j") AS "s") AS "j") AS "s") #>> ('{}'), 'timestamptz')) THEN ((SELECT (CASE WHEN (jsonb_typeof((CASE WHEN (("j" -> ('value')) IS NOT NULL OR ("j" ->> ('type')) IN ('Property', 'Relationship', 'GeoProperty', 'VocabProperty', 'LanguageProperty', 'JsonProperty', 'ListProperty', 'ListRelationship')) THEN "j" -> ('value') ELSE "j" END)) = ('string')) THEN (CASE WHEN (("j" -> ('value')) IS NOT NULL OR ("j" ->> ('type')) IN ('Property', 'Relationship', 'GeoProperty', 'VocabProperty', 'LanguageProperty', 'JsonProperty', 'ListProperty', 'ListRelationship')) THEN "j" -> ('value') ELSE "j" END) END) FROM (SELECT (SELECT (CASE WHEN (("j" -> ('value')) IS NOT NULL OR ("j" ->> ('type')) IN ('Property', 'Relationship', 'GeoProperty', 'VocabProperty', 'LanguageProperty', 'JsonProperty', 'ListProperty', 'ListRelationship')) THEN "j" -> ('observedAt') END) FROM (SELECT "context_source_properties" -> ('a') AS "j") AS "s") AS "j") AS "s") #>> ('{}'))::timestamptz END) > $1
 1: ChronoDateTimeUtc '2030-01-01 00:00:00.000000 +00:00'

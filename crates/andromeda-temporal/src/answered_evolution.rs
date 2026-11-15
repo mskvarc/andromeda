@@ -21,12 +21,16 @@
 //! has been set), and the instant a source set it at is not in its answer.
 
 use crate::reified_scope::reified_paths;
-use andromeda_ngsi_ld_entity::document::{EntityDocument, instance_document::InstanceDocument, written_value::ValueSlot};
+use andromeda_ngsi_ld_entity::document::{EntityDocument, instance_document::InstanceDocument};
 use andromeda_ngsi_ld_geometry::form::GeometryForm;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::path::ScopePath};
 use andromeda_ngsi_ld_model::temporal::temporal_document::TemporalDocument;
 use andromeda_ngsi_ld_query::temporal::window::TemporalWindow;
-use andromeda_ngsi_ld_query_evaluation::queried_entity::{attribute_reading::QueriedEntity, located_entity::LocatedEntity, scoped_entity::ScopedEntity};
+use andromeda_ngsi_ld_query_evaluation::queried_entity::{
+    attribute_reading::{QueriedEntity, QueriedInstance, ValuePresence},
+    located_entity::LocatedEntity,
+    scoped_entity::ScopedEntity,
+};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use std::borrow::Cow;
 
@@ -60,26 +64,19 @@ fn counts_in(instance: &InstanceDocument, window: TemporalWindow) -> bool {
     instance.lies_within(window) || instance.instant_on(window.timeproperty).is_none()
 }
 
-/// Whether an answered instance carries a value of its attribute rather than
-/// recording its deletion or holding no value member, which no local history
-/// row does.
-const fn carries_a_value(instance: &InstanceDocument) -> bool {
-    match instance.value() {
-        ValueSlot::Set(_) => true,
-        ValueSlot::Absent | ValueSlot::Remove(_) => false,
-    }
-}
-
 impl<'a> QueriedEntity<'a> for &'a AnsweredEvolution<'a> {
     type Instance = &'a InstanceDocument;
 
+    /// The instances lying in the window that carry a value of the attribute
+    /// rather than recording its deletion or holding no value member, which
+    /// no local history row does.
     fn attribute_instances(self, attribute: &AttributeName) -> impl Iterator<Item = &'a InstanceDocument> {
         // The Scope is not an attribute a filter reads.
         let named_scope = attribute.as_str() == expanded_properties::SCOPE.as_str();
         let window = self.window;
         self.document
             .attribute_instances(attribute)
-            .filter(move |instance| !named_scope && instance.lies_within(window) && carries_a_value(instance))
+            .filter(move |instance| !named_scope && instance.lies_within(window) && instance.value_presence() == ValuePresence::Held)
     }
 
     fn types(self) -> impl Iterator<Item = &'a EntityTypeName> {

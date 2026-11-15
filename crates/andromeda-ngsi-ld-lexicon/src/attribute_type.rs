@@ -62,8 +62,9 @@ impl AsRef<str> for AttributeType {
 /// Expands to the reserved compacted member names of one attribute type: the
 /// type-specific names passed in, followed by the members every attribute
 /// instance reserves whatever its type: `observedAt` and `expiresAt` (clause
-/// 4.5.1), `datasetId` and `instanceId` (clause 4.5.5), the system attributes
-/// of clause 4.8, and the `name` member a simplified representation carries.
+/// 4.5.1), `datasetId` and `instanceId` (clause 4.5.5) and the system
+/// attributes of clause 4.8. Each is a term the core `@context` defines as a
+/// non-reified Property, which clause 4.5.1 bars as an Attribute name.
 ///
 /// Written once and invoked once per [`AttributeType`] variant in
 /// [`AttributeType::reserved_fields`], so the shared tail cannot drift between
@@ -79,7 +80,6 @@ macro_rules! reserved_compact_members {
             compact_properties::CREATED_AT,
             compact_properties::MODIFIED_AT,
             compact_properties::DELETED_AT,
-            "name",
         ]
     };
 }
@@ -315,12 +315,19 @@ impl AttributeType {
         self.reserved_fields().contains(&member)
     }
 
-    /// Whether `member` names a member an instance of the family carries for
-    /// itself rather than a sub-attribute: `type`, or one the family defines
+    /// Whether the compact member `member` is one an attribute instance's
+    /// node carries for itself rather than a sub-attribute, whatever family it
+    /// names by `type`: `type`, or a member some family defines
     /// ([`AttributeType::defines_member`]).
+    ///
+    /// Clause 4.5.1 bars the terms the core `@context` defines as non-reified
+    /// Properties as Attribute names, and every member a family defines is one
+    /// of them, so none names a sub-attribute of any node. A term the core
+    /// `@context` does not define, such as `name`, is a sub-attribute name like
+    /// any other.
     #[must_use]
-    pub fn carries_member(self, member: &str) -> bool {
-        member == keyword::TYPE_ALIAS || self.defines_member(member)
+    pub fn is_own_member(member: &str) -> bool {
+        member == keyword::TYPE_ALIAS || AttributeType::ALL.into_iter().any(|family| family.defines_member(member))
     }
 
     /// Returns the short (compacted) name for this attribute type as a static string.
@@ -352,8 +359,65 @@ impl AttributeType {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::attribute_type::{AttributeType, SimplifiedValueEncoding};
+    use andromeda_ngsi_ld_vocabulary::{
+        compact::properties as compact_properties,
+        core_context::NGSI_LD_CORE_CONTEXT_V19,
+        expanded::properties as expanded_properties,
+    };
+    use serde_json::Value;
     use std::str::FromStr;
+
+    /// Clause 4.5.1 bars the core `@context`'s non-reified terms as Attribute
+    /// names, which is what makes a family's members its own: every member a
+    /// family defines is a term of the v1.9 core `@context`.
+    #[test]
+    fn every_member_a_family_defines_is_a_core_context_term() {
+        let context: Value = serde_json::from_str(NGSI_LD_CORE_CONTEXT_V19).expect("the core context is JSON");
+        let terms = context.get("@context").and_then(Value::as_object).expect("a context object");
+        for variant in AttributeType::ALL {
+            for member in variant.reserved_fields() {
+                assert!(terms.contains_key(*member), "{variant} defines {member}, which the core context does not");
+            }
+        }
+    }
+
+    /// A node may name any family by `type`, so `type` and every family's
+    /// members are its own; `name`, which the core `@context` does not
+    /// define, and any other name are sub-attribute names.
+    #[test]
+    fn type_and_every_familys_members_are_a_nodes_own_and_other_names_are_not() {
+        for member in [
+            "type",
+            "value",
+            "object",
+            "languageMap",
+            "vocab",
+            "json",
+            "valueList",
+            "objectList",
+            "entity",
+            "entityList",
+            "previousValue",
+            "unitCode",
+            "valueType",
+            "objectType",
+            "observedAt",
+            "datasetId",
+            "instanceId",
+            "deletedAt",
+        ] {
+            assert!(AttributeType::is_own_member(member), "{member}");
+        }
+        for member in [
+            "name",
+            "speed",
+            "https://uri.etsi.org/ngsi-ld/hasValue",
+            "https://uri.etsi.org/ngsi-ld/unitCode",
+        ] {
+            assert!(!AttributeType::is_own_member(member), "{member}");
+        }
+    }
 
     #[test]
     fn display_and_parse_round_trip() {

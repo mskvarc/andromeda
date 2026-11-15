@@ -137,7 +137,15 @@ impl<'a> JsonPiece<'a> {
     /// it.
     #[must_use]
     pub fn member(self, name: &str) -> Option<JsonPiece<'a>> {
-        self.members()?.into_iter().rev().find_map(|(key, value)| (key == name).then_some(value))
+        JsonPiece::member_among(&self.members()?, name)
+    }
+
+    /// The member named `name` among the `members` an object's
+    /// [`JsonPiece::members`] read; of a name written twice, the last, as
+    /// [`JsonPiece::member`] reads it.
+    #[must_use]
+    pub fn member_among(members: &[(Cow<'a, str>, JsonPiece<'a>)], name: &str) -> Option<JsonPiece<'a>> {
+        members.iter().rev().find_map(|(key, value)| (key == name).then_some(*value))
     }
 
     /// The value the member path `names` leads to from this piece, each name

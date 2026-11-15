@@ -192,11 +192,17 @@ fn terminal_target<'a, I: QueriedInstance<'a>>(instance: I, terminal: &Terminal)
             origin: TargetOrigin::AttributeValue,
             reading: MultiValueReading::WholeArray,
         }),
-        Terminal::Language { language, matching } => keyed_by_language(instance).then(|| language_target(instance, language.selector(), *matching)),
+        Terminal::Language { language, matching } => {
+            if keyed_by_language(instance) {
+                language_target(instance, language.selector(), *matching)
+            } else {
+                None
+            }
+        }
         Terminal::Members(members) => resolve_compound_member(instance, members),
         Terminal::ByFamily { language, matching, members } => {
             if keyed_by_language(instance) {
-                Some(language_target(instance, LanguageSelector::Tag(language), *matching))
+                language_target(instance, LanguageSelector::Tag(language), *matching)
             } else {
                 resolve_compound_member(instance, members)
             }
