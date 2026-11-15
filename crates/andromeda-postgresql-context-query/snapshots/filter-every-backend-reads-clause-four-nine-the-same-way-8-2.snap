@@ -6,5 +6,6 @@ SELECT
 FROM
   "entities"
 WHERE
-  "context_source_properties" ? $1
-1: String 'https://example.com/speed'
+  (
+    "context_source_properties" -> ('https://example.com/speed')
+  ) IS NOT NULL

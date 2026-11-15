@@ -1,0 +1,9 @@
+---
+source: crates/andromeda-postgresql-context-query/src/csr/filter.rs
+---
+SELECT
+  1
+FROM
+  "context_source_registrations"
+WHERE
+  (("context_source_properties" -> ('a')) -> ('b')) IS NOT NULL

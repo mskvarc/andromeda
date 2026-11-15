@@ -229,6 +229,25 @@ mod tests {
         assert!(holds("\"https://example.com/coverage\".\"https://example.com/since\"==2020", &properties));
     }
 
+    /// A sub-property is a member of its property's node beside the node's
+    /// value, and a compound member is a key of the value, so an existence term
+    /// reads each where a comparison reads it.
+    #[test]
+    fn existence_reads_a_sub_property_beside_the_value_and_a_member_inside_it() {
+        let nested = json!({"https://example.com/a": {
+            "type": "Property",
+            "value": {"m": 1},
+            "https://example.com/b": {"type": "Property", "value": 2}
+        }});
+        let flat = json!({"https://example.com/a": {"type": "Property", "value": 1}});
+        assert!(holds("\"https://example.com/a\".\"https://example.com/b\"", &nested));
+        assert!(holds("\"https://example.com/a\".\"https://example.com/b\"==2", &nested));
+        assert!(!holds("\"https://example.com/a\".\"https://example.com/b\"", &flat));
+        assert!(holds("\"https://example.com/a\"[m]", &nested));
+        assert!(!holds("\"https://example.com/a\"[m]", &flat));
+        assert!(holds("\"https://example.com/a\"", &flat));
+    }
+
     #[test]
     fn json_that_is_no_object_holds_no_property() {
         assert!(!holds("\"https://example.com/sourceGroup\"", &json!("alpha")));

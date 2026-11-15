@@ -27,7 +27,7 @@ use andromeda_postgresql_query::{
 use andromeda_postgresql_seaquery::{
     cast::typed_null,
     json_type::{JsonType, jsonb_type_is, jsonb_whole_text},
-    jsonb::{jsonb_key_exists, jsonb_path_query},
+    jsonb::jsonb_path_query,
     literal::{false_literal, int_literal, text_literal},
     operator::{negate_total, present_and},
     pg_operator::PgBinaryOperator,
@@ -80,7 +80,7 @@ fn csr_pred_to_condition(pred: &Predicate) -> Condition {
         return no_registration_matches();
     }
     match pred {
-        Predicate::Exists(_) => Condition::all().add(jsonb_key_exists(context_source_properties(), SeaExpr::val(path.attr.as_str()))),
+        Predicate::Exists(_) => Condition::all().add(present(csr_target_element(path))),
         Predicate::Equality { membership, rhs, .. } => csr_equality_condition(path, *membership, rhs),
         Predicate::Ordering { op, rhs, .. } => csr_ordering_condition(path, *op, rhs),
         Predicate::MatchPattern { pattern, .. } => csr_pattern_condition(path, pattern, PatternPolarity::Match),
@@ -127,15 +127,39 @@ fn csr_pattern_condition(path: &AttrPath, pattern: &Pattern, polarity: PatternPo
     Condition::all().add(present_and(string, value))
 }
 
-/// Build an expression that extracts the value of a CSR property from
-/// `context_source_properties`, unwrapping the `Property` value wrapper at each
-/// sub-attribute level and then stepping into any compound value members.
+/// The target element a path names in `context_source_properties`, NULL when
+/// it is absent: the node of its last (sub-)property, or the compound value
+/// member a trailing group steps to.
 ///
-/// Each sub-attribute level references the prior expression exactly once,
-/// aliased inside a scalar subquery. Inlining the `CASE` would embed the prior
-/// expression three times per level, growing the SQL as `~3^depth`; the
-/// subquery keeps growth linear in the sub-attribute depth (which the `q`
-/// parser also bounds).
+/// Clause 4.9 makes an existence term select what "define[s] the target
+/// element ... regardless of any target value", so a property node with no
+/// value is present, and a trailing member is present when the value holds it.
+fn csr_target_element(path: &AttrPath) -> SimpleExpr {
+    match path.members() {
+        Some(_) => csr_value_extract(path),
+        None => csr_property_node(path),
+    }
+}
+
+/// The node of the last (sub-)property a path names in
+/// `context_source_properties`: the property node, then the node of each
+/// sub-property below it.
+///
+/// Clause 4.9 makes each name after the first of a path "a (sub)Property or
+/// (sub)Relationship", and a sub-property is a member of its property's node,
+/// beside the node's value.
+fn csr_property_node(path: &AttrPath) -> SimpleExpr {
+    path.sub_attrs
+        .iter()
+        .fold(context_source_properties().json_get(text_literal(path.attr.as_str())), |node, sub| {
+            node.json_get(text_literal(sub.as_str()))
+        })
+}
+
+/// Build an expression that extracts the target value a path names from
+/// `context_source_properties`: the value its last (sub-)property node holds,
+/// unwrapped once, and each compound value member stepped into that value.
+/// NULL when any of them is absent.
 ///
 /// The trailing members are stepped afterwards, and without `unwrap_property`: a
 /// compound member (`address[city]`) is an ordinary JSON object key inside the
@@ -144,24 +168,18 @@ fn csr_pattern_condition(path: &AttrPath, pattern: &Pattern, polarity: PatternPo
 /// never carries. Dropping them would compare the whole compound value's JSON
 /// text instead of the addressed member.
 fn csr_value_extract(path: &AttrPath) -> SimpleExpr {
-    let mut json_path = unwrap_property(context_source_properties().json_get(text_literal(path.attr.as_str())));
-
-    for sub in &path.sub_attrs {
-        json_path = unwrap_property(json_path.json_get(text_literal(sub.as_str())));
-    }
-
-    for member in path.members().into_iter().flat_map(|members| &members.addressed) {
-        json_path = json_path.json_get(text_literal(member.as_str()));
-    }
-
-    json_path
+    path.members()
+        .into_iter()
+        .flat_map(|members| &members.addressed)
+        .fold(unwrap_property(csr_property_node(path)), |value, member| {
+            value.json_get(text_literal(member.as_str()))
+        })
 }
 
 /// Unwrap one NGSI-LD `Property` wrapper, using `expr` exactly once.
 ///
 /// The expression is aliased as `j` in a scalar subquery so the `CASE` reads a
-/// column three times rather than re-embedding the whole prior expression,
-/// which is what keeps [`csr_value_extract`] linear rather than exponential.
+/// column three times rather than embedding the node expression three times.
 fn unwrap_property(expr: SimpleExpr) -> SimpleExpr {
     let derived = Query::select().expr_as(expr, Alias::new("j")).to_owned();
     // `j` is read three times (the type test, the unwrapped value, and the
@@ -300,9 +318,14 @@ mod tests {
             .to_owned()
     }
 
+    /// Clause 4.9: an existence term selects what defines the target element
+    /// its whole path names, so a sub-property and a compound member are read
+    /// as a comparison reads them.
     #[test]
-    fn existence_probes_the_jsonb_key() {
-        assert_statement_snapshot!("filter-existence-probes-the-jsonb-key", render("temperature"));
+    fn existence_reads_the_target_element_of_the_whole_path() {
+        assert_statement_snapshot!("filter-existence-reads-the-target-element-of-the-whole-path-1", render("temperature"));
+        assert_statement_snapshot!("filter-existence-reads-the-target-element-of-the-whole-path-2", render("a.b"));
+        assert_statement_snapshot!("filter-existence-reads-the-target-element-of-the-whole-path-3", render("a[m]"));
     }
 
     #[test]
@@ -310,19 +333,16 @@ mod tests {
         assert_statement_snapshot!("filter-a-comparison-unwraps-the-property-envelope", render("temperature>10"));
     }
 
+    /// A sub-property is a member of its property's node beside its value, so
+    /// every level steps a node and only the last node's value is unwrapped,
+    /// however deep the path.
     #[test]
-    fn a_deep_sub_attribute_path_extracts_through_nested_subqueries_not_exponentially() {
-        // Each level references the prior expression once, via an aliased
-        // scalar subquery, so the SQL grows linearly with depth rather than as
-        // ~3^depth.
+    fn a_sub_property_path_steps_the_property_nodes_and_unwraps_one_value() {
         let shallow = render("a.b>1");
         let deeper = render("a.b.c.d.e>1");
-        assert_statement_snapshot!("filter-a-deep-sub-attribute-path-extracts-through-nested-subqueries-not-exponentially", deeper);
-        let shallow = shallow.to_string(PostgresQueryBuilder);
-        let deeper = deeper.to_string(PostgresQueryBuilder);
-        // Three more levels under linear growth stay within a small multiple;
-        // under ~3^depth they would be orders of magnitude larger.
-        assert!(deeper.len() < shallow.len() * 6, "growth must be linear: {} vs {}", deeper.len(), shallow.len());
+        assert_statement_snapshot!("filter-a-sub-property-path-steps-the-property-nodes-and-unwraps-one-value", deeper);
+        let unwraps = |statement: &SelectStatement| statement.to_string(PostgresQueryBuilder).matches("CASE").count();
+        pretty_assertions::assert_eq!(unwraps(&deeper), unwraps(&shallow));
     }
 
     /// An apostrophe cannot appear in a short attribute name (the clause 5.2.4
