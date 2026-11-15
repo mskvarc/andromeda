@@ -24,7 +24,7 @@ pub(crate) fn terminal_value<'a, N: QueriedValueNode<'a>>(keyword: TerminalKeywo
         (TerminalKeyword::Identifier, ValueItem::Reference(iri)) => Some(TargetValue::Text(Cow::Borrowed(iri))),
         (TerminalKeyword::Identifier, ValueItem::Node(node)) => node.id().map(|iri| TargetValue::Text(Cow::Borrowed(iri))),
         (TerminalKeyword::Literal, ValueItem::Reference(_) | ValueItem::Node(_))
-        | (TerminalKeyword::Literal | TerminalKeyword::Identifier, ValueItem::Geometry(_) | ValueItem::Opaque) => None,
+        | (TerminalKeyword::Literal | TerminalKeyword::Identifier, ValueItem::Geometry | ValueItem::Opaque) => None,
     }
 }
 
@@ -65,9 +65,9 @@ pub fn family_target<'a, I: QueriedInstance<'a>>(instance: I) -> Option<Resolved
 /// holds none.
 fn own_value<'a, N: QueriedValueNode<'a>>(keyword: TerminalKeyword, item: ValueItem<'a, N>) -> Option<TargetValue<'a>> {
     match (keyword, &item) {
-        (TerminalKeyword::Literal, ValueItem::Reference(_) | ValueItem::Node(_) | ValueItem::Geometry(_) | ValueItem::Opaque) => Some(TargetValue::Structure),
+        (TerminalKeyword::Literal, ValueItem::Reference(_) | ValueItem::Node(_) | ValueItem::Geometry | ValueItem::Opaque) => Some(TargetValue::Structure),
         (TerminalKeyword::Literal | TerminalKeyword::Identifier, ValueItem::Literal(_) | ValueItem::Json(_))
-        | (TerminalKeyword::Identifier, ValueItem::Reference(_) | ValueItem::Node(_) | ValueItem::Geometry(_) | ValueItem::Opaque) => {
+        | (TerminalKeyword::Identifier, ValueItem::Reference(_) | ValueItem::Node(_) | ValueItem::Geometry | ValueItem::Opaque) => {
             terminal_value(keyword, item)
         }
     }

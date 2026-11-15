@@ -41,7 +41,9 @@ pub enum CorpusEntity {
     /// `DateTime` of the ISO 8601 year `0000`.
     E13,
     /// `h` a Relationship to `http://example.com/a`, `hp` the String
-    /// `"http://example.com/a"`, and `location` a Point at 13.4, 52.5.
+    /// `"http://example.com/a"`, and `location` a Point at 13.4, 52.5 with the
+    /// `bbox` 13.3, 52.4, 13.5, 52.6, the foreign member `title` "Gate" and
+    /// the foreign member `meta` holding `source` "survey".
     E14,
     /// `vp` a `VocabProperty` holding the term `Male`.
     E15,

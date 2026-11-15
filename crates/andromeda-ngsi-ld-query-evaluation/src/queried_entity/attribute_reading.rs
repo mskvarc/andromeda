@@ -6,7 +6,7 @@
 //! evaluator passes them by value and every value it reads borrows from the
 //! entity for `'a`.
 
-use crate::queried_entity::value_item::ValueItem;
+use crate::queried_entity::{queried_geometry::QueriedGeometry, value_item::ValueItem};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_query::filter::{instance_metadata::InstanceMetadata, language_matching::LanguageMatching, target_language::LanguageSelector};
 use std::borrow::Cow;
@@ -45,6 +45,9 @@ pub trait QueriedInstance<'a>: Copy {
     /// One node of a structured value this instance holds.
     type Node: QueriedValueNode<'a>;
 
+    /// The geometry a `GeoProperty` instance holds.
+    type Geometry: QueriedGeometry<'a>;
+
     /// The attribute family the instance belongs to (clause 5.2.4), which
     /// decides how clause 4.9 reads its values.
     fn family(self) -> AttributeType;
@@ -56,6 +59,13 @@ pub trait QueriedInstance<'a>: Copy {
     /// map, the `json` of a `JsonProperty`, and the items of the list a
     /// `ListProperty` or a `ListRelationship` holds.
     fn values(self) -> impl Iterator<Item = ValueItem<'a, Self::Node>>;
+
+    /// The geometry the instance holds as the `GeoJSON` object it is, whose
+    /// members a trailing path reads (clause 4.9); none for an instance
+    /// holding no geometry, a geometry written as a string (clause 4.7.2)
+    /// among them, since that value is a String. [`Self::values`] yields it
+    /// as [`ValueItem::Geometry`].
+    fn geometry(self) -> Option<Self::Geometry>;
 
     /// Whether the instance holds a value of its family at all.
     /// [`Self::values`] yields nothing both for a value that is the empty

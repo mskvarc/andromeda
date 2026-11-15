@@ -86,7 +86,7 @@ WHERE
                   "member"."member" AS "member"
                 FROM
                   jsonb_path_query(
-                    ST_AsGeoJSON("ca"."value_geometry", 15)::jsonb,
+                    "ca"."value_geometry_members",
                     'strict $."a"',
                     '{}',
                     TRUE

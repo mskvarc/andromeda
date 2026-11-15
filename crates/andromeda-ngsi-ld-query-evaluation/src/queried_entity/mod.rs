@@ -9,7 +9,8 @@
 //!
 //! [`attribute_reading`] is what `q` reads: attribute instances by name, the
 //! values of their family member, their sub-attributes and the members an
-//! instance holds as data of its own. [`linked_entities`] is where a `q` hop
+//! instance holds as data of its own, and [`queried_geometry`] the `GeoJSON`
+//! object a `GeoProperty`'s geometry is. [`linked_entities`] is where a `q` hop
 //! reads the entities a Relationship links to. [`located_entity`] is what a
 //! geo-query reads and [`scoped_entity`] what a scope query reads.
 //! [`resource_members`] is what `q` reads of a resource that is no entity.
@@ -17,6 +18,7 @@
 pub mod attribute_reading;
 pub mod linked_entities;
 pub mod located_entity;
+pub mod queried_geometry;
 pub mod raw_json;
 pub mod resource_members;
 pub mod scoped_entity;
@@ -26,6 +28,8 @@ pub mod value_item;
 pub(crate) mod corpus_fixture;
 #[cfg(test)]
 pub(crate) mod expanded_fixture;
+#[cfg(test)]
+pub(crate) mod fixture_geometry;
 #[cfg(test)]
 pub(crate) mod fixture_literal;
 #[cfg(test)]

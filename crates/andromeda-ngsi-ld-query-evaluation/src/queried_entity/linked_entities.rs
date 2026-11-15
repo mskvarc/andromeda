@@ -8,6 +8,7 @@
 
 use crate::queried_entity::{
     attribute_reading::{QueriedEntity, QueriedInstance, QueriedValueNode, ValuePresence},
+    queried_geometry::NoGeometry,
     value_item::ValueItem,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
@@ -63,6 +64,7 @@ impl<'a> QueriedEntity<'a> for NoLinkedEntity {
 
 impl<'a> QueriedInstance<'a> for NoLinkedEntity {
     type Node = NoLinkedEntity;
+    type Geometry = NoGeometry;
 
     fn family(self) -> AttributeType {
         match self {}
@@ -70,6 +72,10 @@ impl<'a> QueriedInstance<'a> for NoLinkedEntity {
 
     fn values(self) -> impl Iterator<Item = ValueItem<'a, NoLinkedEntity>> {
         empty()
+    }
+
+    fn geometry(self) -> Option<NoGeometry> {
+        match self {}
     }
 
     fn value_presence(self) -> ValuePresence {

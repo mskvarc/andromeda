@@ -40,22 +40,28 @@ use andromeda_ngsi_ld_query::filter::{
 /// `@context` expands them to.
 ///
 /// A `GeoProperty`'s value is its geometry, whose members are read from the
-/// `GeoJSON` object it is, by the names the client wrote ([`MemberSource`]).
+/// `GeoJSON` object it is ([`MemberSource`]).
 pub(crate) fn resolve_compound_member<'a, I: QueriedInstance<'a>>(instance: I, members: &MemberPath) -> Option<ResolvedTarget<'a>> {
     match family_reading(instance.family()).members {
-        MemberSource::Geometry => geometry_member_target(instance, &members.written),
+        MemberSource::Geometry => geometry_member(instance.geometry()?, members),
         MemberSource::Value => {
             resolve_member_hops(first_family_value(instance), &members.addressed).or_else(|| json_member(&family_target(instance)?, &members.written))
         }
     }
 }
 
-/// The member of the geometry `instance` holds that `written` names, read
-/// from the `GeoJSON` object the geometry is.
-fn geometry_member_target<'a, I: QueriedInstance<'a>>(instance: I, written: &[AttributeName]) -> Option<ResolvedTarget<'a>> {
-    match first_family_value(instance)? {
-        ValueItem::Geometry(form) => geometry_member(form, written),
-        ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Node(_) | ValueItem::Opaque => None,
+/// The target the members `rest` reach from a member holding `values`: the
+/// values themselves when `rest` is empty, read as a structured value's
+/// member is, and otherwise the member `rest` reaches within the one node they
+/// must be.
+pub(crate) fn resolve_member_values<'a, N: QueriedValueNode<'a>>(
+    values: impl Iterator<Item = ValueItem<'a, N>>,
+    rest: &[AttributeName],
+) -> Option<ResolvedTarget<'a>> {
+    if rest.is_empty() {
+        Some(member_target(values))
+    } else {
+        resolve_member_hops(sole_value(values), rest)
     }
 }
 
@@ -68,11 +74,16 @@ fn geometry_member_target<'a, I: QueriedInstance<'a>>(instance: I, written: &[At
 /// and a member holding the empty array holds the empty array, a defined
 /// value.
 fn resolve_member_hops<'a, N: QueriedValueNode<'a>>(start: Option<ValueItem<'a, N>>, value_path: &[AttributeName]) -> Option<ResolvedTarget<'a>> {
-    Some(ResolvedTarget {
-        value: held_target(walk_member_hops(start, value_path)?),
+    Some(member_target(walk_member_hops(start, value_path)?))
+}
+
+/// The target a member of a structured value holding `values` is.
+fn member_target<'a, N: QueriedValueNode<'a>>(values: impl Iterator<Item = ValueItem<'a, N>>) -> ResolvedTarget<'a> {
+    ResolvedTarget {
+        value: held_target(values),
         origin: TargetOrigin::AttributeValue,
         reading: MultiValueReading::WholeArray,
-    })
+    }
 }
 
 /// The values of the member a structured value's member path leads to, or
@@ -89,11 +100,11 @@ fn walk_member_hops<'a, N: QueriedValueNode<'a>>(
     let (last, steps) = value_path.split_last()?;
     let node = steps.iter().try_fold(start?, |current, member| match current {
         ValueItem::Node(node) => sole_value(node.member_values(member)?),
-        ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Geometry(_) | ValueItem::Opaque => None,
+        ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Geometry | ValueItem::Opaque => None,
     })?;
     match node {
         ValueItem::Node(node) => node.member_values(last),
-        ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Geometry(_) | ValueItem::Opaque => None,
+        ValueItem::Literal(_) | ValueItem::Json(_) | ValueItem::Reference(_) | ValueItem::Geometry | ValueItem::Opaque => None,
     }
 }
 

@@ -14,10 +14,10 @@ use ngsi_ld::model::{
 /// Pins: for a Kiosk whose `location` is the Point 13.4, 52.5 stored with a `bbox`, a Kiosk whose `location` is the
 /// `LineString` from 13.4, 52.5 to 13.5, 52.6 and a Kiosk with no `location`, Query Entities and a Subscription with q
 /// location[type]=="Point" select the first, location[type]=="Polygon" none, location[coordinates] the first two,
-/// location[coordinates]==13.4 the first, location[coordinates]!=13.4 the second and location[bbox] none; a trailing
-/// path is a member expression against the `GeoJSON` geometry object of the geometry, whose `type` member the core
-/// context maps to a keyword, a stored `bbox` is no member of it, and a position is a single element of a `LineString`'s
-/// coordinates that includes no number
+/// location[coordinates]==13.4 the first, location[coordinates]!=13.4 the second and location[bbox] the first; a
+/// trailing path is a member expression against the `GeoJSON` geometry object of the geometry, whose `type` member the
+/// core context maps to a keyword, a stored `bbox` is its `bbox` member, and a position is a single element of a
+/// `LineString`'s coordinates that includes no number
 /// Clause: 4.9, 4.7, 5.8.1
 #[gtest]
 #[tokio::test]
@@ -76,7 +76,7 @@ async fn n_qry_qlg_9388_a_trailing_path_reads_the_members_of_a_geometry_in_a_que
         },
         QCase {
             q: "location[bbox]",
-            selects: &[],
+            selects: &[&placed_id],
             request: QRequest::PLAIN,
         },
     ];

@@ -95,14 +95,33 @@ fn content_nodes(content: &CorpusContent) -> (AttributeType, Vec<Value>) {
             AttributeType::JsonProperty,
             vec![json!({"@type": "@json", "@value": serde_json::from_str::<Value>(text).expect("a corpus JSON text parses")})],
         ),
-        CorpusContent::GeoProperty { longitude, latitude } => (
-            AttributeType::GeoProperty,
-            vec![json!({
-                "@type": ["https://purl.org/geojson/vocab#Point"],
-                "https://purl.org/geojson/vocab#coordinates": [{"@list": [{"@value": longitude}, {"@value": latitude}]}]
-            })],
-        ),
+        CorpusContent::GeoProperty {
+            longitude,
+            latitude,
+            bbox,
+            foreign,
+        } => (AttributeType::GeoProperty, vec![geometry_node(*longitude, *latitude, bbox.as_ref(), foreign)]),
     }
+}
+
+/// The expanded `GeoJSON` node of a Point at `longitude`, `latitude`, with the
+/// `bbox` and the foreign members written beside it, a foreign member keyed by
+/// expanded name as a member of a structured value is.
+fn geometry_node(longitude: f64, latitude: f64, bbox: Option<&[f64; 4]>, foreign: &[(&str, &[CorpusValue])]) -> Value {
+    let mut node = Map::new();
+    node.insert("@type".to_owned(), json!(["https://purl.org/geojson/vocab#Point"]));
+    node.insert(
+        "https://purl.org/geojson/vocab#coordinates".to_owned(),
+        json!([{"@list": [{"@value": longitude}, {"@value": latitude}]}]),
+    );
+    if let Some(bbox) = bbox {
+        let ordinates: Vec<Value> = bbox.iter().map(|ordinate| json!({"@value": ordinate})).collect();
+        node.insert("https://purl.org/geojson/vocab#bbox".to_owned(), json!([{"@list": ordinates}]));
+    }
+    for (term, values) in foreign {
+        node.insert(CorpusVocabulary::attribute_iri(term), Value::Array(values.iter().map(value_node).collect()));
+    }
+    Value::Object(node)
 }
 
 /// The node of a Relationship object.

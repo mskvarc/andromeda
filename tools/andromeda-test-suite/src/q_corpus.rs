@@ -39,7 +39,7 @@ use ngsi_ld::model::{
     Value,
     VocabProperty,
     VocabTerm,
-    geometry::{Position, Shape},
+    geometry::{BoundingBox, Geometry, Position, Shape},
 };
 use std::collections::BTreeMap;
 use strum::IntoEnumIterator;
@@ -111,7 +111,13 @@ impl CorpusEntities {
             CorpusEntity::E14 => builder
                 .relationship("h", Relationship::builder("http://example.com/a".parse::<EntityId>()?))
                 .property("hp", "http://example.com/a")
-                .geo_property("location", Shape::Point(Position::try_new(13.4, 52.5)?)),
+                .geo_property(
+                    "location",
+                    Geometry::from(Shape::Point(Position::try_new(13.4, 52.5)?))
+                        .with_bbox(BoundingBox::try_new(Position::try_new(13.3, 52.4)?, Position::try_new(13.5, 52.6)?)?)?
+                        .with_foreign_member("title".parse()?, r#""Gate""#.parse::<RawJson>()?)
+                        .with_foreign_member("meta".parse()?, r#"{"source":"survey"}"#.parse::<RawJson>()?),
+                ),
             CorpusEntity::E15 => builder.vocab_property("vp", VocabProperty::builder("Male".parse::<VocabTerm>()?)),
             CorpusEntity::E16 => builder
                 .list_property("lp", ListProperty::builder(vec![number("1")?, number("2")?]))

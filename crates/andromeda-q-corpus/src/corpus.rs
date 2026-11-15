@@ -192,6 +192,16 @@ pub const CORPUS: &[CorpusCase] = &[
     local("C-98", "addr[mix]>0", &[]),
     local("C-99", "addr[since]<0001-01-01T00:00:00Z", &[E13]),
     local("C-100", "addr[since]==0000-02-29T12:00:00Z", &[E13]),
+    local("C-101", "location[bbox]", &[E14]),
+    local("C-102", "location[bbox]==13.3", &[E14]),
+    local("C-103", "location[bbox]>0", &[]),
+    local("C-104", "location[bbox]!=13.3", &[]),
+    local("C-105", "location[title]==\"Gate\"", &[E14]),
+    local("C-106", "location[title]==\"Door\"", &[]),
+    local("C-107", "location[meta.source]==\"survey\"", &[E14]),
+    local("C-108", "location[meta]!=\"x\"", &[E14]),
+    local("C-109", "location[missing]", &[]),
+    local("C-110", "place[bbox]", &[]),
 ];
 
 #[cfg(test)]
