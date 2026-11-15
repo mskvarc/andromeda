@@ -61,9 +61,8 @@ pub mod history_work_probe;
 pub(crate) mod horizon_raise;
 /// The temporal hypertables whose storage policy is reconciled, and their columnstore layout.
 pub mod hypertable_policy;
-/// Reading the instances a split query's filters read in effect when its
-/// window opens.
-pub(crate) mod in_effect_instance_read;
+/// Reading the Scope event in force when a split query's window opens.
+pub(crate) mod in_effect_scope_read;
 /// The invariant that one client-supplied `instanceId` names one attribute
 /// instance across every sibling `datasetId` stream of an attribute, and the
 /// race a statement meeting it lost.

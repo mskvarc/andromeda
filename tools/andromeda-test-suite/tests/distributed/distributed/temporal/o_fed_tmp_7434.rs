@@ -1,6 +1,14 @@
-//! A newer source deletion ends the local instance in effect.
+//! A local value observed before the window matches, whatever a source deleted.
 
-use andromeda_test_suite::{broker, context_source::ContextSource, namespace::Namespace, outcome::Upserted, source_answer, source_request::SourceRequest};
+use andromeda_test_suite::{
+    broker,
+    cleanup::Cleanup,
+    context_source::ContextSource,
+    namespace::Namespace,
+    outcome::Upserted,
+    source_answer,
+    source_request::SourceRequest,
+};
 use googletest::prelude::*;
 use http::Method;
 use ngsi_ld::{
@@ -15,11 +23,12 @@ use ngsi_ld::{
 };
 
 /// Pins: under `splitEntities` a between 12:00-13:00 query q=speed>50 does not answer an Entity whose local speed
-/// 60 was observed at 11:00 when a source deleted speed at 11:30, a deletion holding no value (clause 4.5.7)
-/// Clause: 5.7.4.4, 4.11, 4.5.7
+/// 60 was observed at 11:00, before the window, whether or not a source deleted speed at 11:30: the `q` reads the
+/// instances inside the window alone
+/// Clause: 5.7.4.4, 4.11, 4.9
 #[gtest]
 #[tokio::test]
-async fn o_fed_tmp_7434_a_newer_source_deletion_ends_the_local_instance_in_effect() -> Result<()> {
+async fn o_fed_tmp_7434_a_local_value_observed_before_the_window_matches_whatever_a_source_deleted() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let source = ContextSource::start().await?;
@@ -41,13 +50,17 @@ async fn o_fed_tmp_7434_a_newer_source_deletion_ends_the_local_instance_in_effec
         .operations([DistributedOperation::QueryTemporal])
         .build()?;
     broker.registrations().register(&registration).send().await?;
+    // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
+    // cooldown that opens there holds back a later test's registration naming the same endpoint.
+    let _registration_cleanup = Cleanup::of(&broker).registration(&registration_id);
+    let source_before = [];
     source
         .answer_when(
             SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/temporal/entities")
                 .query("timerel", "before")
                 .query("timeproperty", "observedAt")
                 .priority(1),
-            source_answer::temporal_entities(&[]),
+            source_answer::temporal_entities(&source_before),
         )
         .await?;
     let deletion = TemporalEntity::builder()
@@ -67,10 +80,15 @@ async fn o_fed_tmp_7434_a_newer_source_deletion_ends_the_local_instance_in_effec
             source_answer::temporal_entities(&[deletion]),
         )
         .await?;
+    let source_window = [TemporalEntity::builder()
+        .id(vehicle_id.clone())
+        .entity_type(vehicle_type.clone())
+        .property("brand", Property::builder("BMW").observed_at("2020-08-01T12:20:00Z".parse()?))
+        .build()?];
     source
         .answer_when(
             SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/temporal/entities").priority(10),
-            source_answer::temporal_entities(&[]),
+            source_answer::temporal_entities(&source_window),
         )
         .await?;
     let page = broker
@@ -83,5 +101,7 @@ async fn o_fed_tmp_7434_a_newer_source_deletion_ends_the_local_instance_in_effec
         .send()
         .await?;
     expect_that!(page.items(), len(eq(0)));
+    let before_the_window = SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/temporal/entities").query("timerel", "before");
+    expect_that!(source.received_matching(&before_the_window).await?, len(eq(0)));
     Ok(())
 }

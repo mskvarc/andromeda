@@ -78,8 +78,8 @@ pub mod forwarding_url;
 pub mod gateway_failure;
 /// Sending a built request through the pre-send guard.
 mod guarded_send;
-/// Asking a source for the instances a split temporal query's filters read
-/// when its window opens.
+/// Asking a source for the Scope a split temporal query's scope filter reads
+/// in force when its window opens.
 pub mod in_effect_probe;
 /// The warning of a paged answer the walk could not read to its end.
 pub mod incomplete_answer;

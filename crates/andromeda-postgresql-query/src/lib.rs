@@ -53,7 +53,7 @@ pub mod time_column;
 pub mod time_interval_predicate;
 pub mod type_membership;
 pub mod type_predicate;
-/// Which of the instances valid within a temporal window a probe reads.
+/// Which of the Scope events valid within a temporal window a probe reads.
 pub mod window_reach;
 
 #[cfg(test)]

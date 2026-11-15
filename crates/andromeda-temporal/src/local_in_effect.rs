@@ -1,25 +1,16 @@
-//! What this broker holds in effect of each entity a Context Source
-//! contributed to a split temporal query, when its window opens (clauses 4.11
+//! The Scope this broker holds in force for each entity a Context Source
+//! contributed to a split temporal query, when its window opens (clauses 4.18
 //! and 5.7.4.4).
 //!
-//! The local part is one of the parts whose in-effect instances are merged
-//! before the filters judge them, so it is read into the same document a
-//! source's answer is, every instance carrying the system times a window on
-//! `createdAt` or `modifiedAt` places it by.
+//! The local part is one of the parts whose Scope events are merged before the
+//! scope filter judges them, so it is read into the same document a source's
+//! answer is, every instance carrying the system times a window on `createdAt`
+//! or `modifiedAt` places it by.
 
-use crate::{
-    error::TemporalError,
-    port::{
-        in_effect_reads::{InEffectReads, ScopeRead},
-        read_scope::ScopeReach,
-    },
-    query_reading::QueryReading,
-    service::TemporalService,
-    temporal_invariant::TemporalInvariant,
-};
+use crate::{error::TemporalError, port::read_scope::ScopeReach, query_reading::QueryReading, service::TemporalService, temporal_invariant::TemporalInvariant};
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_entity::document::{EntityDocument, attribute_member::AttributeMember, instance_document::InstanceDocument};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, identifier::Identifier};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, identifier::Identifier};
 use andromeda_ngsi_ld_model::{
     entity_system_times::EntitySystemTimes,
     temporal::{TemporalHistoryRow, temporal_document::TemporalDocument},
@@ -31,32 +22,26 @@ use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalReques
 use indexmap::IndexMap;
 use std::collections::HashMap;
 
-/// The part this broker holds in effect of each contributed entity when a
-/// split query's window opens.
+/// The Scope event this broker holds in force for each contributed entity
+/// when a split query's window opens.
 #[derive(Debug, Default)]
 pub struct LocalInEffect {
-    /// The in-effect instances of each entity holding any, by entity.
+    /// The in-force Scope events of each entity holding any, by entity.
     parts: HashMap<Identifier, TemporalDocument>,
 }
 
 impl LocalInEffect {
-    /// The in-effect part of `entity_id`, if this broker holds one.
+    /// The in-force Scope part of `entity_id`, if this broker holds one.
     #[must_use]
     pub fn part_of(&self, entity_id: &Identifier) -> Option<&TemporalDocument> {
         self.parts.get(entity_id)
     }
-
-    /// Every in-effect part this broker holds.
-    pub fn parts(&self) -> impl Iterator<Item = &TemporalDocument> {
-        self.parts.values()
-    }
 }
 
 impl TemporalService {
-    /// Read what this broker holds in effect of each of `entity_ids` when the
-    /// window of `params` opens: the instances the query's filters read, and
-    /// the Scope in force. Empty when the query carries no filter or its
-    /// window has no instance in effect before it.
+    /// Read the Scope this broker holds in force for each of `entity_ids` when
+    /// the window of `params` opens. Empty when the query carries no scope
+    /// filter or its window has no Scope in effect before it.
     ///
     /// The request's terms and `q` target languages are read as `reading`
     /// says.
@@ -64,7 +49,7 @@ impl TemporalService {
     /// # Errors
     ///
     /// Returns [`TemporalError`] when the query does not compile, the context
-    /// does not resolve, the instances cannot be read, or a stored row no
+    /// does not resolve, the Scope events cannot be read, or a stored row no
     /// longer reads as the instance it recorded.
     pub async fn read_local_in_effect(
         &self,
@@ -75,34 +60,28 @@ impl TemporalService {
     ) -> Result<LocalInEffect, TemporalError> {
         let compiled = self.compile_temporal_query(params, reading, AttrsAdmission::ReifiedScopeAdmitted).await?;
         let filter = SplitFilter::of(&compiled.entities);
-        if entity_ids.is_empty() || filter.is_empty() || compiled.window.in_effect_start().is_none() {
+        if entity_ids.is_empty() || !filter.reads_scope() || compiled.window.in_effect_start().is_none() {
             return Ok(LocalInEffect::default());
         }
-        let attributes = filter.read_attributes();
-        let reads = InEffectReads {
-            attributes: &attributes,
-            scope: if filter.reads_scope() { ScopeRead::Read } else { ScopeRead::Unread },
-        };
         let scope = self.reader.read_scope(target, ScopeReach::Every).await?;
-        let rows = self.reader.in_effect_instances(&scope, &compiled, entity_ids, reads).await?;
+        let rows = self.reader.in_effect_scope(&scope, &compiled, entity_ids).await?;
         let parts = rows
             .into_iter()
-            .map(|(entity_id, rows)| part_document(&entity_id, &[], rows).map(|part| (entity_id, part)))
+            .map(|(entity_id, rows)| part_document(&entity_id, rows).map(|part| (entity_id, part)))
             .collect::<Result<_, _>>()?;
         Ok(LocalInEffect { parts })
     }
 }
 
 /// The document the `rows` this broker holds of `entity_id` make up, every
-/// instance carrying its system times, as a split query judges a part, the
-/// entity named by `types`, which a part whose types another part names may
-/// leave empty.
+/// instance carrying its system times, as a split query judges a part. The part
+/// names no types: the parts a source answered do.
 ///
 /// # Errors
 ///
 /// Returns [`TemporalInvariant::RenderedInstance`] when a stored row no longer
 /// reads as the instance it recorded.
-pub(crate) fn part_document(entity_id: &Identifier, types: &[EntityTypeName], rows: Vec<TemporalHistoryRow>) -> Result<TemporalDocument, TemporalError> {
+pub(crate) fn part_document(entity_id: &Identifier, rows: Vec<TemporalHistoryRow>) -> Result<TemporalDocument, TemporalError> {
     let mut instances: IndexMap<AttributeName, Vec<InstanceDocument>> = IndexMap::new();
     for row in rows {
         // clone: the name is taken before `row` is moved into the instance.
@@ -115,7 +94,7 @@ pub(crate) fn part_document(entity_id: &Identifier, types: &[EntityTypeName], ro
         .into_iter()
         .map(|(attribute, instances)| (attribute, AttributeMember::Instances(instances)))
         .collect();
-    let entity = EntityDocument::new(Some(entity_id.clone()), types.to_vec(), None, None, attributes);
+    let entity = EntityDocument::new(Some(entity_id.clone()), Vec::new(), None, None, attributes);
     Ok(TemporalDocument::new(entity, EntitySystemTimes::default(), IndexMap::new()))
 }
 
@@ -171,7 +150,7 @@ mod tests {
                 "urn:ngsi-ld:Instance:2",
             ),
         ];
-        let part = part_document(&entity, &[], rows).expect("the rows read as instances");
+        let part = part_document(&entity, rows).expect("the rows read as instances");
         let instances = part.entity().attributes().get("https://example.com/speed").expect("speed").instances();
         pretty_assertions::assert_eq!(instances.len(), 2);
         let value = instances.first().expect("the value");
@@ -204,7 +183,7 @@ mod tests {
             metadata: None,
             stream_extent: StreamExtent::Whole,
         };
-        let part = part_document(&entity, &[], vec![row]).expect("the row reads as an instance");
+        let part = part_document(&entity, vec![row]).expect("the row reads as an instance");
         let removed = part.entity().attributes().get(scope).expect("scope").instances();
         pretty_assertions::assert_eq!(
             removed.first().expect("the removal").instant_on(TimeProp::Observed),

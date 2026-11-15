@@ -53,7 +53,7 @@ pub(crate) mod followed_query;
 pub(crate) mod forwarding;
 /// Aggregating here the entities a distributed aggregated query meets in more than one part.
 pub(crate) mod hub_aggregation;
-/// Gathering what every part holds in effect when a split query's window opens.
+/// Gathering the Scope every part holds in force when a split query's window opens.
 mod in_effect_gathering;
 /// Folding what those sources returned into the locally read history.
 mod merged_history;

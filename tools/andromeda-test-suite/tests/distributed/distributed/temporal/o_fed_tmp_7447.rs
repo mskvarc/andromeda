@@ -1,4 +1,4 @@
-//! A modified at window reads the peer instance in effect by its modification.
+//! A modified at window reads the peer instances recorded inside it alone.
 
 use andromeda_test_suite::{
     broker,
@@ -24,15 +24,17 @@ use ngsi_ld::{
 };
 
 /// Pins: under `splitEntities` a query on broker A on timeproperty `modifiedAt` after the instant broker A recorded
-/// a Vehicle's brand at answers q=speed>50 and not q=speed>70 when broker B recorded speed 60 before that instant
+/// a Vehicle's brand at answers q=speed>50 and not q=speed>95 for the Vehicle whose speed 90 broker B recorded after
+/// that instant, and does not answer the Vehicle whose speed 60 broker B recorded before it
 /// Clause: 5.7.4.4, 4.11, 4.8, 5.2.21
 #[gtest]
 #[tokio::test]
-async fn o_fed_tmp_7447_a_modified_at_window_reads_the_peer_instance_in_effect_by_its_modification() -> Result<()> {
+async fn o_fed_tmp_7447_a_modified_at_window_reads_the_peer_instances_recorded_inside_it_alone() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let broker_b = broker::client(BrokerRole::B)?;
     let vehicle_id = namespace.urn("Vehicle", 1)?;
+    let vehicle_2_id = namespace.urn("Vehicle", 2)?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
     let registration_id = namespace.registration_id(1)?;
     let vehicle_evolution = TemporalEntity::builder()
@@ -67,6 +69,12 @@ async fn o_fed_tmp_7447_a_modified_at_window_reads_the_peer_instance_in_effect_b
         .await?;
     let evolution = retrieved.body();
     let opened = instance_time_at(evolution, &"brand".parse()?, 0, SystemMember::ModifiedAt)?;
+    let vehicle_2_evolution = TemporalEntity::builder()
+        .id(vehicle_2_id.clone())
+        .entity_type(vehicle_type.clone())
+        .property("speed", Property::builder(90).observed_at("2020-08-01T11:00:00Z".parse()?))
+        .build()?;
+    broker_b.temporal().create_or_update(&vehicle_2_evolution).send().await?.created()?;
     let page = broker
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .temporal()
@@ -77,14 +85,14 @@ async fn o_fed_tmp_7447_a_modified_at_window_reads_the_peer_instance_in_effect_b
         .send()
         .await?;
     expect_that!(page.items(), len(eq(1)));
-    expect_that!(page.items(), nth(0, has_id(&vehicle_id)));
+    expect_that!(page.items(), nth(0, has_id(&vehicle_2_id)));
     let page_2 = broker
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .temporal()
         .query(temporal_query::after(opened).time_property(TemporalProperty::ModifiedAt))
         .entity_type(&vehicle_type)
         .split_entities(EntitySplitting::Split)
-        .q(q::attr("speed").gt(70))
+        .q(q::attr("speed").gt(95))
         .send()
         .await?;
     expect_that!(page_2.items(), len(eq(0)));

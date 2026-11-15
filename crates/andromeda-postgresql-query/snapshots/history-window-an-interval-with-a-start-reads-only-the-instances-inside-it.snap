@@ -4,7 +4,8 @@ source: crates/andromeda-postgresql-query/src/q_predicate/history_window.rs
 SELECT
   $1
 WHERE
-  EXISTS (
+  "flag" = TRUE
+  AND EXISTS (
     SELECT
       1
     FROM
@@ -171,6 +172,8 @@ WHERE
       "qh"."attribute_name_key" = $2
       AND "qh"."value_kind" <> (0)
       AND "qh"."observed_at" IS NOT NULL
+      AND "qh"."observed_at" >= $3
   )
 1: Int 1
 2: Int 7
+3: ChronoDateTimeUtc '2019-01-01 00:00:00.000000 +00:00'

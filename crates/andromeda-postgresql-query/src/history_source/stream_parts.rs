@@ -29,7 +29,7 @@ use sea_query::{DynIden, Expr, ExprTrait, Query, SelectStatement};
 fn recorded_stream_rows(schema: Option<&DynIden>, stream: &HistoryStream, pending: PendingEntries) -> SelectStatement {
     let mut select = Query::select();
     select
-        .expr_as(stream.column(stream.evolution()), stream.evolution())
+        .expr_as(stream.column(HistoryGrain::EntityId), HistoryGrain::EntityId)
         .expr_as(stream.column(HistoryGrain::AttributeNameKey), HistoryGrain::AttributeNameKey)
         .expr_as(stream.column(HistoryGrain::DatasetKey), HistoryGrain::DatasetKey)
         .exprs(IDENTITY_COLUMNS.map(|column| Expr::col((RecordedRow, column))));
@@ -94,9 +94,9 @@ pub fn whole_stream_parts(branch: &HistoryBranch, stream: &HistoryStream) -> Str
 
 #[cfg(test)]
 mod tests {
-    use crate::history_source::{EvolutionColumns, HistoryBranch, HistoryOf, HistoryStream, stream_parts::whole_stream_parts};
+    use crate::history_source::{HistoryBranch, HistoryStream, stream_parts::whole_stream_parts};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
-    use sea_query::{Alias, DynIden, Expr, IntoIden, SelectStatement};
+    use sea_query::{Alias, DynIden, IntoIden, SelectStatement};
     use std::iter::once;
 
     fn snapshot() -> DynIden {
@@ -147,21 +147,5 @@ mod tests {
             "stream-parts-a-stream-keeps-its-recorded-rows-in-one-part-with-every-system-time-as-stored",
             *statement
         );
-    }
-
-    /// A stream read for an Evolution by key over recorded rows names the
-    /// Evolution by the key its stream row carries, as the stream source does.
-    #[test]
-    fn a_stream_read_by_key_names_its_evolution_by_key() {
-        let of = HistoryOf::Evolution(EvolutionColumns {
-            id: Expr::col((Alias::new("e"), Alias::new("id"))),
-            key: Expr::col((Alias::new("e"), Alias::new("entity_key"))),
-        });
-        let recorded = HistoryBranch::recorded_in(snapshot());
-        let (keyed, _) = whole_stream_parts(&recorded, &HistoryStream::read_for(&recorded, &of, Alias::new("st"))).into_reads();
-        assert_statement_snapshot!("stream-parts-a-stream-read-by-key-names-its-evolution-by-key-1", keyed);
-        let live = HistoryBranch::live();
-        let (by_id, _) = whole_stream_parts(&live, &HistoryStream::read_for(&live, &of, Alias::new("st"))).into_reads();
-        assert_statement_snapshot!("stream-parts-a-stream-read-by-key-names-its-evolution-by-key-2", by_id);
     }
 }

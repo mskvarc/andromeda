@@ -5,10 +5,7 @@ use crate::{
     error::TemporalError,
     merged_parts::LocalPart,
     outcome::TemporalEntityIdOutcome,
-    port::{
-        in_effect_reads::InEffectReads,
-        read_scope::{ScopeReach, TemporalReadScope},
-    },
+    port::read_scope::{ScopeReach, TemporalReadScope},
 };
 use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName, identifier::Identifier};
@@ -166,9 +163,9 @@ pub trait TemporalHistoryReader: Send + Sync {
     /// Clause 5.7.4.4 applies those filters to an entity held in several parts
     /// once the parts are aggregated, and every leaf is existential over the
     /// instances it reads, so the part held here is judged leaf by leaf over
-    /// the instances inside the window. The clause 4.11 instance in effect
-    /// when the window opens is read apart, by [`Self::in_effect_instances`],
-    /// because it is the latest across every part, and a Query Term crossing a
+    /// the instances inside the window. The clause 4.18 Scope in effect when
+    /// the window opens is read apart, by [`Self::in_effect_scope`], because it
+    /// is the latest across every part, and a Query Term crossing a
     /// Relationship hop is judged again in memory over the targets of every
     /// part ([`Self::window_relationship_instances`]). An entity this view
     /// holds no Temporal Evolution of is absent from the result.
@@ -180,26 +177,22 @@ pub trait TemporalHistoryReader: Send + Sync {
         entity_ids: &[Identifier],
     ) -> Result<HashMap<Identifier, LeafTruths>, TemporalError>;
 
-    /// The instances in effect when the query's window opens, in the part of
-    /// each of `entity_ids` this view holds: the latest instance of every
-    /// stream of the attributes `reads` names placed before the start, a
-    /// deletion included, and the Scope event in force at the start when
-    /// `reads` covers it, as history rows.
+    /// The Scope event in force when the query's window opens, in the part of
+    /// each of `entity_ids` this view holds, as history rows.
     ///
-    /// Clause 4.11 counts the instance in effect when the window opens among
-    /// the instances valid within it, and under clause 5.7.4.4 that is the
-    /// latest across every part of a split entity, which a deletion in one
-    /// part can end, so each part answers its own and the parts are merged
-    /// before the filters judge the survivor. A window with no instance in
-    /// effect before it reads nothing, and an entity this view holds nothing
-    /// in effect of is absent from the result.
-    #[must_use = "in-effect instance reads must be awaited"]
-    async fn in_effect_instances(
+    /// Clause 4.18 counts the Scope in force when the window opens among the
+    /// Scope the window reads, and under clause 5.7.4.4 that is the latest
+    /// event across every part of a split entity, which a removal in one part
+    /// can end, so each part answers its own and the parts are merged before
+    /// the scope filter judges the survivor. A window with no Scope in effect
+    /// before it reads nothing, and an entity this view holds no Scope event
+    /// of is absent from the result.
+    #[must_use = "in-effect Scope reads must be awaited"]
+    async fn in_effect_scope(
         &self,
         scope: &TemporalReadScope<'_>,
         compiled: &CompiledTemporalQuery,
         entity_ids: &[Identifier],
-        reads: InEffectReads<'_>,
     ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError>;
 
     /// The instances inside the window of the Relationships the first hop of

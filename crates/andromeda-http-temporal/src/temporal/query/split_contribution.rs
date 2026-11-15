@@ -6,7 +6,7 @@
 //! information, if there is any, has been aggregated". An entity no source
 //! answered with has no part outside this broker, so the local query keeps
 //! deciding it in the store; only the entities a source answered the window
-//! or an in-effect probe with are exempt locally and judged here, over every
+//! or a Scope probe with are exempt locally and judged here, over every
 //! part, once the sources have answered. An entity holding nothing inside the
 //! window in any part is never answered: the judgement only drops entities.
 
@@ -155,7 +155,7 @@ struct SettledRequest<'r> {
     language_targeting: LanguageTargeting,
     /// What the sources answered.
     forwarded: Option<&'r ForwardedHistory>,
-    /// What every part holds in effect when the window opens.
+    /// The Scope every part holds in force when the window opens.
     in_effect: Option<&'r InEffectGathering>,
 }
 
@@ -176,8 +176,8 @@ pub(crate) const fn carries_split_filters(params: &TemporalQueryParameters) -> b
 }
 
 /// The entities a source answered a split query with, for the window or for
-/// the instances in effect when it opens, which the local read exempts from
-/// the value, geo and scope filters.
+/// the Scope in force when it opens, which the local read exempts from the
+/// value, geo and scope filters.
 ///
 /// Empty unless the query is split, carries one of those filters, and a
 /// source answered: every other query reads exactly as one that was never
@@ -395,7 +395,7 @@ mod tests {
     }
 
     /// Clause 5.7.4.4 judges an entity over every part, so one a source
-    /// answered only the in-effect probe for is exempt locally too.
+    /// answered only the Scope probe for is exempt locally too.
     #[tokio::test]
     async fn probe_answers_join_the_contributed_set() {
         let forwarded = ForwardedHistory {

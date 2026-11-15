@@ -1,4 +1,4 @@
-//! An in effect instance a newer source instance supersedes does not match.
+//! A location observed before the window does not match, whichever part holds it.
 
 use andromeda_test_suite::{
     broker,
@@ -24,12 +24,12 @@ use ngsi_ld::{
 };
 
 /// Pins: under `splitEntities` a between 12:00-13:00 near `geoQ` does not answer an Entity whose local location
-/// observed at 11:00 lies inside the fence when the source holds a newer location observed at 11:50 outside it, the
-/// instance in effect at 12:00 being the latest across both parts
+/// observed at 11:00 lies outside the fence beside a source location observed at 11:50 inside it, the geo-query
+/// reading the instances inside the window alone, and the source is asked for nothing before the window
 /// Clause: 5.7.4.4, 4.11, 4.10
 #[gtest]
 #[tokio::test]
-async fn o_fed_tmp_7431_an_in_effect_instance_a_newer_source_instance_supersedes_does_not_match() -> Result<()> {
+async fn o_fed_tmp_7431_a_location_observed_before_the_window_matches_in_no_part() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let source = ContextSource::start().await?;
@@ -41,7 +41,7 @@ async fn o_fed_tmp_7431_an_in_effect_instance_a_newer_source_instance_supersedes
         .entity_type(vehicle_type.clone())
         .geo_property(
             "location",
-            GeoProperty::builder(Shape::Point(Position::try_new(8.0, 44.0)?)).observed_at("2020-08-01T11:00:00Z".parse()?),
+            GeoProperty::builder(Shape::Point(Position::try_new(20.0, 20.0)?)).observed_at("2020-08-01T11:00:00Z".parse()?),
         )
         .property("speed", Property::builder(60).observed_at("2020-08-01T12:10:00Z".parse()?))
         .build()?;
@@ -57,12 +57,12 @@ async fn o_fed_tmp_7431_an_in_effect_instance_a_newer_source_instance_supersedes
     // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
     // cooldown that opens there holds back a later test's registration naming the same endpoint.
     let _registration_cleanup = Cleanup::of(&broker).registration(&registration_id);
-    let source_evolutions = [TemporalEntity::builder()
+    let source_before = [TemporalEntity::builder()
         .id(vehicle_id.clone())
         .entity_type(vehicle_type.clone())
         .geo_property(
             "location",
-            GeoProperty::builder(Shape::Point(Position::try_new(20.0, 20.0)?)).observed_at("2020-08-01T11:50:00Z".parse()?),
+            GeoProperty::builder(Shape::Point(Position::try_new(8.0, 44.0)?)).observed_at("2020-08-01T11:50:00Z".parse()?),
         )
         .build()?];
     source
@@ -71,24 +71,18 @@ async fn o_fed_tmp_7431_an_in_effect_instance_a_newer_source_instance_supersedes
                 .query("timerel", "before")
                 .query("timeproperty", "observedAt")
                 .priority(1),
-            source_answer::temporal_entities(&source_evolutions),
+            source_answer::temporal_entities(&source_before),
         )
         .await?;
-    let source_evolutions_2 = [];
-    source
-        .answer_when(
-            SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/temporal/entities")
-                .query("timerel", "before")
-                .query("timeproperty", "deletedAt")
-                .priority(1),
-            source_answer::temporal_entities(&source_evolutions_2),
-        )
-        .await?;
-    let source_evolutions_3 = [];
+    let source_window = [TemporalEntity::builder()
+        .id(vehicle_id.clone())
+        .entity_type(vehicle_type.clone())
+        .property("brand", Property::builder("Mercedes").observed_at("2020-08-01T12:20:00Z".parse()?))
+        .build()?];
     source
         .answer_when(
             SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/temporal/entities").priority(10),
-            source_answer::temporal_entities(&source_evolutions_3),
+            source_answer::temporal_entities(&source_window),
         )
         .await?;
     let page = broker
@@ -101,5 +95,7 @@ async fn o_fed_tmp_7431_an_in_effect_instance_a_newer_source_instance_supersedes
         .send()
         .await?;
     expect_that!(page.items(), len(eq(0)));
+    let before_the_window = SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/temporal/entities").query("timerel", "before");
+    expect_that!(source.received_matching(&before_the_window).await?, len(eq(0)));
     Ok(())
 }

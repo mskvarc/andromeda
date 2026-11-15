@@ -108,700 +108,191 @@ WITH
         50 OFFSET 0
     ) AS "e"
   WHERE
-    (
-      EXISTS (
-        SELECT
-          1
-        FROM
+    EXISTS (
+      SELECT
+        1
+      FROM
+        (
+          SELECT
+            "re"."id" AS "entity_id",
+            "rs"."attribute_name_key" AS "attribute_name_key",
+            "rs"."dataset_key" AS "dataset_key",
+            "rh"."recorded_at",
+            "rh"."write_id",
+            "rh"."write_ordinal",
+            "rh"."attribute_kind",
+            "rh"."value_kind",
+            "rh"."observed_at",
+            "rh"."created_at",
+            "rh"."modified_at",
+            "rh"."deleted_at",
+            "rh"."value_date_time",
+            "rh"."expires_at",
+            "rh"."generated_instance_id",
+            "rh"."value_type_key",
+            "rh"."value_datatype_key",
+            "rh"."unit_code_id",
+            "rh"."value_boolean",
+            "rh"."verbatim_instance_id",
+            "rh"."value_number",
+            "rh"."value_string",
+            "rh"."value_language",
+            "rh"."value_geometry",
+            "rh"."value_geometry_valid",
+            "rh"."value_geometry_reach",
+            "rh"."value_geometry_members",
+            "rh"."value_object",
+            "rh"."value_uri",
+            "rh"."object_type_keys",
+            "rh"."sub_attributes"
+          FROM
+            "attribute_history" AS "rh"
+            JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+            JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+          WHERE
+            "re"."id" = "e"."id"
+            AND (
+              "rh"."verbatim_instance_id" IS NULL
+              OR (
+                NOT EXISTS (
+                  SELECT
+                    1
+                  FROM
+                    "temporal_append_entries" AS "pr"
+                  WHERE
+                    "pr"."entity_id" = "re"."id"
+                    AND "pr"."attribute_name_key" = "rs"."attribute_name_key"
+                    AND "pr"."verbatim_instance_id" = "rh"."verbatim_instance_id"
+                    AND "pr"."entry_kind" IN (1, 2)
+                )
+              )
+            )
+          UNION ALL
           (
             SELECT
-              "re"."id" AS "entity_id",
-              "rs"."attribute_name_key" AS "attribute_name_key",
-              "rs"."dataset_key" AS "dataset_key",
-              "rh"."recorded_at",
-              "rh"."write_id",
-              "rh"."write_ordinal",
-              "rh"."attribute_kind",
-              "rh"."value_kind",
-              "rh"."observed_at",
-              "rh"."created_at",
-              "rh"."modified_at",
-              "rh"."deleted_at",
-              "rh"."value_date_time",
-              "rh"."expires_at",
-              "rh"."generated_instance_id",
-              "rh"."value_type_key",
-              "rh"."value_datatype_key",
-              "rh"."unit_code_id",
-              "rh"."value_boolean",
-              "rh"."verbatim_instance_id",
-              "rh"."value_number",
-              "rh"."value_string",
-              "rh"."value_language",
-              "rh"."value_geometry",
-              "rh"."value_geometry_valid",
-              "rh"."value_geometry_reach",
-              "rh"."value_geometry_members",
-              "rh"."value_object",
-              "rh"."value_uri",
-              "rh"."object_type_keys",
-              "rh"."sub_attributes"
+              "pe"."entity_id" AS "entity_id",
+              "pe"."attribute_name_key" AS "attribute_name_key",
+              "pe"."dataset_key" AS "dataset_key",
+              "pe"."recorded_at" AS "recorded_at",
+              "pe"."write_id" AS "write_id",
+              "pe"."write_ordinal" AS "write_ordinal",
+              "pe"."attribute_kind" AS "attribute_kind",
+              "pe"."value_kind" AS "value_kind",
+              "pe"."observed_at" AS "observed_at",
+              "pe"."created_at" AS "created_at",
+              "pe"."modified_at" AS "modified_at",
+              "pe"."deleted_at" AS "deleted_at",
+              "pe"."value_date_time" AS "value_date_time",
+              "pe"."expires_at" AS "expires_at",
+              "pe"."generated_instance_id" AS "generated_instance_id",
+              "pe"."value_type_key" AS "value_type_key",
+              "pe"."value_datatype_key" AS "value_datatype_key",
+              "pe"."unit_code_id" AS "unit_code_id",
+              "pe"."value_boolean" AS "value_boolean",
+              "pe"."verbatim_instance_id" AS "verbatim_instance_id",
+              "pe"."value_number" AS "value_number",
+              "pe"."value_string" AS "value_string",
+              "pe"."value_language" AS "value_language",
+              "pe"."value_geometry" AS "value_geometry",
+              (
+                CASE
+                  WHEN (ST_IsValid("pe"."value_geometry")) THEN NULL
+                  ELSE ST_MakeValid("pe"."value_geometry")
+                END
+              ) AS "value_geometry_valid",
+              "pe"."value_geometry_reach" AS "value_geometry_reach",
+              "pe"."value_geometry_members" AS "value_geometry_members",
+              "pe"."value_object" AS "value_object",
+              "pe"."value_uri" AS "value_uri",
+              "pe"."object_type_keys" AS "object_type_keys",
+              "pe"."sub_attributes" AS "sub_attributes"
             FROM
-              "attribute_history" AS "rh"
-              JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
-              JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+              "temporal_append_entries" AS "pe"
             WHERE
-              "re"."id" = "e"."id"
+              "pe"."entry_kind" IN (1, 2)
               AND (
-                "rh"."verbatim_instance_id" IS NULL
+                EXISTS (
+                  SELECT
+                    1
+                  FROM
+                    "entities" AS "pv"
+                  WHERE
+                    "pv"."id" = "pe"."entity_id"
+                    AND "pv"."evolution_created_at" IS NOT NULL
+                )
+                OR EXISTS (
+                  SELECT
+                    1
+                  FROM
+                    "temporal_append_intents" AS "pt"
+                  WHERE
+                    "pt"."entity_id" = "pe"."entity_id"
+                    AND cardinality("pt"."entity_type_name_keys") > 0
+                    AND (
+                      "pe"."entry_kind" <> (2)
+                      OR "pt"."intent_key" <= "pe"."intent_key"
+                    )
+                )
+              )
+              AND (
+                (
+                  "pe"."verbatim_instance_id" IS NOT NULL
+                  AND (
+                    NOT EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        "temporal_append_entries" AS "pr"
+                      WHERE
+                        "pr"."entity_id" = "pe"."entity_id"
+                        AND "pr"."attribute_name_key" = "pe"."attribute_name_key"
+                        AND "pr"."verbatim_instance_id" = "pe"."verbatim_instance_id"
+                        AND "pr"."entry_kind" IN (1, 2)
+                        AND "pr"."intent_key" > "pe"."intent_key"
+                    )
+                  )
+                )
                 OR (
-                  NOT EXISTS (
-                    SELECT
-                      1
-                    FROM
-                      "temporal_append_entries" AS "pr"
-                    WHERE
-                      "pr"."entity_id" = "re"."id"
-                      AND "pr"."attribute_name_key" = "rs"."attribute_name_key"
-                      AND "pr"."verbatim_instance_id" = "rh"."verbatim_instance_id"
-                      AND "pr"."entry_kind" IN (1, 2)
+                  "pe"."verbatim_instance_id" IS NULL
+                  AND (
+                    NOT EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        "attribute_history" AS "pd"
+                      WHERE
+                        "pd"."recorded_at" = "pe"."recorded_at"
+                        AND "pd"."write_id" = "pe"."write_id"
+                        AND "pd"."write_ordinal" = "pe"."write_ordinal"
+                    )
                   )
                 )
               )
-            UNION ALL
-            (
-              SELECT
-                "pe"."entity_id" AS "entity_id",
-                "pe"."attribute_name_key" AS "attribute_name_key",
-                "pe"."dataset_key" AS "dataset_key",
-                "pe"."recorded_at" AS "recorded_at",
-                "pe"."write_id" AS "write_id",
-                "pe"."write_ordinal" AS "write_ordinal",
-                "pe"."attribute_kind" AS "attribute_kind",
-                "pe"."value_kind" AS "value_kind",
-                "pe"."observed_at" AS "observed_at",
-                "pe"."created_at" AS "created_at",
-                "pe"."modified_at" AS "modified_at",
-                "pe"."deleted_at" AS "deleted_at",
-                "pe"."value_date_time" AS "value_date_time",
-                "pe"."expires_at" AS "expires_at",
-                "pe"."generated_instance_id" AS "generated_instance_id",
-                "pe"."value_type_key" AS "value_type_key",
-                "pe"."value_datatype_key" AS "value_datatype_key",
-                "pe"."unit_code_id" AS "unit_code_id",
-                "pe"."value_boolean" AS "value_boolean",
-                "pe"."verbatim_instance_id" AS "verbatim_instance_id",
-                "pe"."value_number" AS "value_number",
-                "pe"."value_string" AS "value_string",
-                "pe"."value_language" AS "value_language",
-                "pe"."value_geometry" AS "value_geometry",
-                (
-                  CASE
-                    WHEN (ST_IsValid("pe"."value_geometry")) THEN NULL
-                    ELSE ST_MakeValid("pe"."value_geometry")
-                  END
-                ) AS "value_geometry_valid",
-                "pe"."value_geometry_reach" AS "value_geometry_reach",
-                "pe"."value_geometry_members" AS "value_geometry_members",
-                "pe"."value_object" AS "value_object",
-                "pe"."value_uri" AS "value_uri",
-                "pe"."object_type_keys" AS "object_type_keys",
-                "pe"."sub_attributes" AS "sub_attributes"
-              FROM
-                "temporal_append_entries" AS "pe"
-              WHERE
-                "pe"."entry_kind" IN (1, 2)
-                AND (
-                  EXISTS (
-                    SELECT
-                      1
-                    FROM
-                      "entities" AS "pv"
-                    WHERE
-                      "pv"."id" = "pe"."entity_id"
-                      AND "pv"."evolution_created_at" IS NOT NULL
-                  )
-                  OR EXISTS (
-                    SELECT
-                      1
-                    FROM
-                      "temporal_append_intents" AS "pt"
-                    WHERE
-                      "pt"."entity_id" = "pe"."entity_id"
-                      AND cardinality("pt"."entity_type_name_keys") > 0
-                      AND (
-                        "pe"."entry_kind" <> (2)
-                        OR "pt"."intent_key" <= "pe"."intent_key"
-                      )
-                  )
-                )
-                AND (
-                  (
-                    "pe"."verbatim_instance_id" IS NOT NULL
-                    AND (
-                      NOT EXISTS (
-                        SELECT
-                          1
-                        FROM
-                          "temporal_append_entries" AS "pr"
-                        WHERE
-                          "pr"."entity_id" = "pe"."entity_id"
-                          AND "pr"."attribute_name_key" = "pe"."attribute_name_key"
-                          AND "pr"."verbatim_instance_id" = "pe"."verbatim_instance_id"
-                          AND "pr"."entry_kind" IN (1, 2)
-                          AND "pr"."intent_key" > "pe"."intent_key"
-                      )
-                    )
-                  )
-                  OR (
-                    "pe"."verbatim_instance_id" IS NULL
-                    AND (
-                      NOT EXISTS (
-                        SELECT
-                          1
-                        FROM
-                          "attribute_history" AS "pd"
-                        WHERE
-                          "pd"."recorded_at" = "pe"."recorded_at"
-                          AND "pd"."write_id" = "pe"."write_id"
-                          AND "pd"."write_ordinal" = "pe"."write_ordinal"
-                      )
-                    )
-                  )
-                )
-                AND "pe"."entity_id" = "e"."id"
-            )
-          ) AS "qh"
-        WHERE
-          "qh"."attribute_name_key" = $1
-          AND (
-            (
-              COALESCE(
-                "qh"."value_geometry_reach",
-                "qh"."value_geometry_valid",
-                "qh"."value_geometry"
-              )::box2d && ST_MakeEnvelope($2, $3, $4, $5, $6)::box2d
-            )
-            AND _ST_DWithin(
-              COALESCE(
-                "qh"."value_geometry_valid",
-                "qh"."value_geometry"
-              )::geography,
-              ST_MakeValid(ST_GeomFromEWKB($7))::geography,
-              $8
-            )
+              AND "pe"."entity_id" = "e"."id"
           )
-          AND "qh"."value_kind" <> (0)
-          AND "qh"."observed_at" IS NOT NULL
-          AND "qh"."observed_at" >= $9
-      )
-      OR EXISTS (
-        SELECT
-          1
-        FROM
+        ) AS "qh"
+      WHERE
+        "qh"."attribute_name_key" = $1
+        AND (
           (
-            SELECT
-              "re"."id" AS "entity_id",
-              "rs"."attribute_name_key" AS "attribute_name_key",
-              "rs"."dataset_key" AS "dataset_key",
-              "rs"."stream_key" AS "stream_key"
-            FROM
-              "temporal_attribute_streams" AS "rs"
-              JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
-            WHERE
-              "re"."id" = "e"."id"
-            UNION ALL
-            (
-              SELECT DISTINCT
-                "pe"."entity_id" AS "entity_id",
-                "pe"."attribute_name_key" AS "attribute_name_key",
-                "pe"."dataset_key" AS "dataset_key",
-                NULL::bigint AS "stream_key"
-              FROM
-                "temporal_append_entries" AS "pe"
-              WHERE
-                "pe"."entry_kind" IN (1, 2)
-                AND (
-                  EXISTS (
-                    SELECT
-                      1
-                    FROM
-                      "entities" AS "pv"
-                    WHERE
-                      "pv"."id" = "pe"."entity_id"
-                      AND "pv"."evolution_created_at" IS NOT NULL
-                  )
-                  OR EXISTS (
-                    SELECT
-                      1
-                    FROM
-                      "temporal_append_intents" AS "pt"
-                    WHERE
-                      "pt"."entity_id" = "pe"."entity_id"
-                      AND cardinality("pt"."entity_type_name_keys") > 0
-                      AND (
-                        "pe"."entry_kind" <> (2)
-                        OR "pt"."intent_key" <= "pe"."intent_key"
-                      )
-                  )
-                )
-                AND (
-                  NOT EXISTS (
-                    SELECT
-                      1
-                    FROM
-                      "temporal_attribute_streams" AS "ps"
-                      JOIN "entities" AS "pv" ON "pv"."entity_key" = "ps"."entity_key"
-                    WHERE
-                      "pv"."id" = "pe"."entity_id"
-                      AND "ps"."attribute_name_key" = "pe"."attribute_name_key"
-                      AND "ps"."dataset_key" = "pe"."dataset_key"
-                  )
-                )
-                AND "pe"."entity_id" = "e"."id"
-            )
-          ) AS "qs"
-          JOIN LATERAL (
-            SELECT
-              *
-            FROM
-              (
-                (
-                  SELECT
-                    *
-                  FROM
-                    (
-                      (
-                        SELECT
-                          "qi".*,
-                          "qi"."observed_at" AS "placed"
-                        FROM
-                          (
-                            SELECT
-                              "qs"."entity_id" AS "entity_id",
-                              "qs"."attribute_name_key" AS "attribute_name_key",
-                              "qs"."dataset_key" AS "dataset_key",
-                              "rh"."recorded_at",
-                              "rh"."write_id",
-                              "rh"."write_ordinal",
-                              "rh"."attribute_kind" AS "attribute_kind",
-                              "rh"."value_kind" AS "value_kind",
-                              "rh"."observed_at" AS "observed_at",
-                              "rh"."created_at" AS "created_at",
-                              "rh"."modified_at" AS "modified_at",
-                              "rh"."deleted_at" AS "deleted_at",
-                              "rh"."value_date_time" AS "value_date_time",
-                              "rh"."expires_at" AS "expires_at",
-                              "rh"."generated_instance_id" AS "generated_instance_id",
-                              "rh"."value_type_key" AS "value_type_key",
-                              "rh"."value_datatype_key" AS "value_datatype_key",
-                              "rh"."unit_code_id" AS "unit_code_id",
-                              "rh"."value_boolean" AS "value_boolean",
-                              "rh"."verbatim_instance_id" AS "verbatim_instance_id",
-                              "rh"."value_number" AS "value_number",
-                              "rh"."value_string" AS "value_string",
-                              "rh"."value_language" AS "value_language",
-                              "rh"."value_geometry" AS "value_geometry",
-                              "rh"."value_geometry_valid" AS "value_geometry_valid",
-                              "rh"."value_geometry_reach" AS "value_geometry_reach",
-                              "rh"."value_geometry_members" AS "value_geometry_members",
-                              "rh"."value_object" AS "value_object",
-                              "rh"."value_uri" AS "value_uri",
-                              "rh"."object_type_keys" AS "object_type_keys",
-                              "rh"."sub_attributes" AS "sub_attributes"
-                            FROM
-                              "attribute_history" AS "rh"
-                            WHERE
-                              "rh"."stream_key" = "qs"."stream_key"
-                              AND (
-                                "rh"."verbatim_instance_id" IS NULL
-                                OR (
-                                  NOT EXISTS (
-                                    SELECT
-                                      1
-                                    FROM
-                                      "temporal_append_entries" AS "pr"
-                                    WHERE
-                                      "pr"."entity_id" = "qs"."entity_id"
-                                      AND "pr"."attribute_name_key" = "qs"."attribute_name_key"
-                                      AND "pr"."verbatim_instance_id" = "rh"."verbatim_instance_id"
-                                      AND "pr"."entry_kind" IN (1, 2)
-                                  )
-                                )
-                              )
-                          ) AS "qi"
-                        WHERE
-                          "qi"."observed_at" <= $10
-                        ORDER BY
-                          "qi"."observed_at" DESC
-                      )
-                      FETCH FIRST
-                        1 ROW
-                      WITH
-                      TIES
-                    ) AS "qe"
-                  UNION ALL
-                  (
-                    SELECT
-                      *
-                    FROM
-                      (
-                        (
-                          SELECT
-                            "qi".*,
-                            "qi"."deleted_at" AS "placed"
-                          FROM
-                            (
-                              SELECT
-                                "qs"."entity_id" AS "entity_id",
-                                "qs"."attribute_name_key" AS "attribute_name_key",
-                                "qs"."dataset_key" AS "dataset_key",
-                                "rh"."recorded_at",
-                                "rh"."write_id",
-                                "rh"."write_ordinal",
-                                "rh"."attribute_kind" AS "attribute_kind",
-                                "rh"."value_kind" AS "value_kind",
-                                "rh"."observed_at" AS "observed_at",
-                                "rh"."created_at" AS "created_at",
-                                "rh"."modified_at" AS "modified_at",
-                                "rh"."deleted_at" AS "deleted_at",
-                                "rh"."value_date_time" AS "value_date_time",
-                                "rh"."expires_at" AS "expires_at",
-                                "rh"."generated_instance_id" AS "generated_instance_id",
-                                "rh"."value_type_key" AS "value_type_key",
-                                "rh"."value_datatype_key" AS "value_datatype_key",
-                                "rh"."unit_code_id" AS "unit_code_id",
-                                "rh"."value_boolean" AS "value_boolean",
-                                "rh"."verbatim_instance_id" AS "verbatim_instance_id",
-                                "rh"."value_number" AS "value_number",
-                                "rh"."value_string" AS "value_string",
-                                "rh"."value_language" AS "value_language",
-                                "rh"."value_geometry" AS "value_geometry",
-                                "rh"."value_geometry_valid" AS "value_geometry_valid",
-                                "rh"."value_geometry_reach" AS "value_geometry_reach",
-                                "rh"."value_geometry_members" AS "value_geometry_members",
-                                "rh"."value_object" AS "value_object",
-                                "rh"."value_uri" AS "value_uri",
-                                "rh"."object_type_keys" AS "object_type_keys",
-                                "rh"."sub_attributes" AS "sub_attributes"
-                              FROM
-                                "attribute_history" AS "rh"
-                              WHERE
-                                "rh"."stream_key" = "qs"."stream_key"
-                                AND (
-                                  "rh"."verbatim_instance_id" IS NULL
-                                  OR (
-                                    NOT EXISTS (
-                                      SELECT
-                                        1
-                                      FROM
-                                        "temporal_append_entries" AS "pr"
-                                      WHERE
-                                        "pr"."entity_id" = "qs"."entity_id"
-                                        AND "pr"."attribute_name_key" = "qs"."attribute_name_key"
-                                        AND "pr"."verbatim_instance_id" = "rh"."verbatim_instance_id"
-                                        AND "pr"."entry_kind" IN (1, 2)
-                                    )
-                                  )
-                                )
-                            ) AS "qi"
-                          WHERE
-                            "qi"."deleted_at" <= $11
-                            AND "qi"."observed_at" IS NULL
-                          ORDER BY
-                            "qi"."deleted_at" DESC
-                        )
-                        FETCH FIRST
-                          1 ROW
-                        WITH
-                        TIES
-                      ) AS "qe"
-                  )
-                  UNION ALL
-                  (
-                    SELECT
-                      *
-                    FROM
-                      (
-                        (
-                          SELECT
-                            "qi".*,
-                            "qi"."observed_at" AS "placed"
-                          FROM
-                            (
-                              SELECT
-                                "pe"."entity_id" AS "entity_id",
-                                "pe"."attribute_name_key" AS "attribute_name_key",
-                                "pe"."dataset_key" AS "dataset_key",
-                                "pe"."recorded_at" AS "recorded_at",
-                                "pe"."write_id" AS "write_id",
-                                "pe"."write_ordinal" AS "write_ordinal",
-                                "pe"."attribute_kind" AS "attribute_kind",
-                                "pe"."value_kind" AS "value_kind",
-                                "pe"."observed_at" AS "observed_at",
-                                "pe"."created_at" AS "created_at",
-                                "pe"."modified_at" AS "modified_at",
-                                "pe"."deleted_at" AS "deleted_at",
-                                "pe"."value_date_time" AS "value_date_time",
-                                "pe"."expires_at" AS "expires_at",
-                                "pe"."generated_instance_id" AS "generated_instance_id",
-                                "pe"."value_type_key" AS "value_type_key",
-                                "pe"."value_datatype_key" AS "value_datatype_key",
-                                "pe"."unit_code_id" AS "unit_code_id",
-                                "pe"."value_boolean" AS "value_boolean",
-                                "pe"."verbatim_instance_id" AS "verbatim_instance_id",
-                                "pe"."value_number" AS "value_number",
-                                "pe"."value_string" AS "value_string",
-                                "pe"."value_language" AS "value_language",
-                                "pe"."value_geometry" AS "value_geometry",
-                                (
-                                  CASE
-                                    WHEN (ST_IsValid("pe"."value_geometry")) THEN NULL
-                                    ELSE ST_MakeValid("pe"."value_geometry")
-                                  END
-                                ) AS "value_geometry_valid",
-                                "pe"."value_geometry_reach" AS "value_geometry_reach",
-                                "pe"."value_geometry_members" AS "value_geometry_members",
-                                "pe"."value_object" AS "value_object",
-                                "pe"."value_uri" AS "value_uri",
-                                "pe"."object_type_keys" AS "object_type_keys",
-                                "pe"."sub_attributes" AS "sub_attributes"
-                              FROM
-                                "temporal_append_entries" AS "pe"
-                              WHERE
-                                "pe"."entry_kind" IN (1, 2)
-                                AND (
-                                  EXISTS (
-                                    SELECT
-                                      1
-                                    FROM
-                                      "entities" AS "pv"
-                                    WHERE
-                                      "pv"."id" = "pe"."entity_id"
-                                      AND "pv"."evolution_created_at" IS NOT NULL
-                                  )
-                                  OR EXISTS (
-                                    SELECT
-                                      1
-                                    FROM
-                                      "temporal_append_intents" AS "pt"
-                                    WHERE
-                                      "pt"."entity_id" = "pe"."entity_id"
-                                      AND cardinality("pt"."entity_type_name_keys") > 0
-                                      AND (
-                                        "pe"."entry_kind" <> (2)
-                                        OR "pt"."intent_key" <= "pe"."intent_key"
-                                      )
-                                  )
-                                )
-                                AND (
-                                  (
-                                    "pe"."verbatim_instance_id" IS NOT NULL
-                                    AND (
-                                      NOT EXISTS (
-                                        SELECT
-                                          1
-                                        FROM
-                                          "temporal_append_entries" AS "pr"
-                                        WHERE
-                                          "pr"."entity_id" = "pe"."entity_id"
-                                          AND "pr"."attribute_name_key" = "pe"."attribute_name_key"
-                                          AND "pr"."verbatim_instance_id" = "pe"."verbatim_instance_id"
-                                          AND "pr"."entry_kind" IN (1, 2)
-                                          AND "pr"."intent_key" > "pe"."intent_key"
-                                      )
-                                    )
-                                  )
-                                  OR (
-                                    "pe"."verbatim_instance_id" IS NULL
-                                    AND (
-                                      NOT EXISTS (
-                                        SELECT
-                                          1
-                                        FROM
-                                          "attribute_history" AS "pd"
-                                        WHERE
-                                          "pd"."recorded_at" = "pe"."recorded_at"
-                                          AND "pd"."write_id" = "pe"."write_id"
-                                          AND "pd"."write_ordinal" = "pe"."write_ordinal"
-                                      )
-                                    )
-                                  )
-                                )
-                                AND "pe"."entity_id" = "qs"."entity_id"
-                                AND "pe"."attribute_name_key" = "qs"."attribute_name_key"
-                                AND "pe"."dataset_key" = "qs"."dataset_key"
-                            ) AS "qi"
-                          WHERE
-                            "qi"."observed_at" <= $12
-                          ORDER BY
-                            "qi"."observed_at" DESC
-                        )
-                        FETCH FIRST
-                          1 ROW
-                        WITH
-                        TIES
-                      ) AS "qe"
-                  )
-                  UNION ALL
-                  (
-                    SELECT
-                      *
-                    FROM
-                      (
-                        (
-                          SELECT
-                            "qi".*,
-                            "qi"."deleted_at" AS "placed"
-                          FROM
-                            (
-                              SELECT
-                                "pe"."entity_id" AS "entity_id",
-                                "pe"."attribute_name_key" AS "attribute_name_key",
-                                "pe"."dataset_key" AS "dataset_key",
-                                "pe"."recorded_at" AS "recorded_at",
-                                "pe"."write_id" AS "write_id",
-                                "pe"."write_ordinal" AS "write_ordinal",
-                                "pe"."attribute_kind" AS "attribute_kind",
-                                "pe"."value_kind" AS "value_kind",
-                                "pe"."observed_at" AS "observed_at",
-                                "pe"."created_at" AS "created_at",
-                                "pe"."modified_at" AS "modified_at",
-                                "pe"."deleted_at" AS "deleted_at",
-                                "pe"."value_date_time" AS "value_date_time",
-                                "pe"."expires_at" AS "expires_at",
-                                "pe"."generated_instance_id" AS "generated_instance_id",
-                                "pe"."value_type_key" AS "value_type_key",
-                                "pe"."value_datatype_key" AS "value_datatype_key",
-                                "pe"."unit_code_id" AS "unit_code_id",
-                                "pe"."value_boolean" AS "value_boolean",
-                                "pe"."verbatim_instance_id" AS "verbatim_instance_id",
-                                "pe"."value_number" AS "value_number",
-                                "pe"."value_string" AS "value_string",
-                                "pe"."value_language" AS "value_language",
-                                "pe"."value_geometry" AS "value_geometry",
-                                (
-                                  CASE
-                                    WHEN (ST_IsValid("pe"."value_geometry")) THEN NULL
-                                    ELSE ST_MakeValid("pe"."value_geometry")
-                                  END
-                                ) AS "value_geometry_valid",
-                                "pe"."value_geometry_reach" AS "value_geometry_reach",
-                                "pe"."value_geometry_members" AS "value_geometry_members",
-                                "pe"."value_object" AS "value_object",
-                                "pe"."value_uri" AS "value_uri",
-                                "pe"."object_type_keys" AS "object_type_keys",
-                                "pe"."sub_attributes" AS "sub_attributes"
-                              FROM
-                                "temporal_append_entries" AS "pe"
-                              WHERE
-                                "pe"."entry_kind" IN (1, 2)
-                                AND (
-                                  EXISTS (
-                                    SELECT
-                                      1
-                                    FROM
-                                      "entities" AS "pv"
-                                    WHERE
-                                      "pv"."id" = "pe"."entity_id"
-                                      AND "pv"."evolution_created_at" IS NOT NULL
-                                  )
-                                  OR EXISTS (
-                                    SELECT
-                                      1
-                                    FROM
-                                      "temporal_append_intents" AS "pt"
-                                    WHERE
-                                      "pt"."entity_id" = "pe"."entity_id"
-                                      AND cardinality("pt"."entity_type_name_keys") > 0
-                                      AND (
-                                        "pe"."entry_kind" <> (2)
-                                        OR "pt"."intent_key" <= "pe"."intent_key"
-                                      )
-                                  )
-                                )
-                                AND (
-                                  (
-                                    "pe"."verbatim_instance_id" IS NOT NULL
-                                    AND (
-                                      NOT EXISTS (
-                                        SELECT
-                                          1
-                                        FROM
-                                          "temporal_append_entries" AS "pr"
-                                        WHERE
-                                          "pr"."entity_id" = "pe"."entity_id"
-                                          AND "pr"."attribute_name_key" = "pe"."attribute_name_key"
-                                          AND "pr"."verbatim_instance_id" = "pe"."verbatim_instance_id"
-                                          AND "pr"."entry_kind" IN (1, 2)
-                                          AND "pr"."intent_key" > "pe"."intent_key"
-                                      )
-                                    )
-                                  )
-                                  OR (
-                                    "pe"."verbatim_instance_id" IS NULL
-                                    AND (
-                                      NOT EXISTS (
-                                        SELECT
-                                          1
-                                        FROM
-                                          "attribute_history" AS "pd"
-                                        WHERE
-                                          "pd"."recorded_at" = "pe"."recorded_at"
-                                          AND "pd"."write_id" = "pe"."write_id"
-                                          AND "pd"."write_ordinal" = "pe"."write_ordinal"
-                                      )
-                                    )
-                                  )
-                                )
-                                AND "pe"."entity_id" = "qs"."entity_id"
-                                AND "pe"."attribute_name_key" = "qs"."attribute_name_key"
-                                AND "pe"."dataset_key" = "qs"."dataset_key"
-                            ) AS "qi"
-                          WHERE
-                            "qi"."deleted_at" <= $13
-                            AND "qi"."observed_at" IS NULL
-                          ORDER BY
-                            "qi"."deleted_at" DESC
-                        )
-                        FETCH FIRST
-                          1 ROW
-                        WITH
-                        TIES
-                      ) AS "qe"
-                  )
-                  ORDER BY
-                    "placed" DESC
-                )
-                FETCH FIRST
-                  1 ROW
-                WITH
-                TIES
-              ) AS "qe"
-          ) AS "qh" ON TRUE
-        WHERE
-          "qs"."attribute_name_key" = $14
-          AND "qh"."placed" < $15
-          AND "qh"."attribute_name_key" = $16
-          AND (
-            (
-              COALESCE(
-                "qh"."value_geometry_reach",
-                "qh"."value_geometry_valid",
-                "qh"."value_geometry"
-              )::box2d && ST_MakeEnvelope($17, $18, $19, $20, $21)::box2d
-            )
-            AND _ST_DWithin(
-              COALESCE(
-                "qh"."value_geometry_valid",
-                "qh"."value_geometry"
-              )::geography,
-              ST_MakeValid(ST_GeomFromEWKB($22))::geography,
-              $23
-            )
+            COALESCE(
+              "qh"."value_geometry_reach",
+              "qh"."value_geometry_valid",
+              "qh"."value_geometry"
+            )::box2d && ST_MakeEnvelope($2, $3, $4, $5, $6)::box2d
           )
-          AND "qh"."value_kind" <> (0)
-      )
+          AND _ST_DWithin(
+            COALESCE(
+              "qh"."value_geometry_valid",
+              "qh"."value_geometry"
+            )::geography,
+            ST_MakeValid(ST_GeomFromEWKB($7))::geography,
+            $8
+          )
+        )
+        AND "qh"."value_kind" <> (0)
+        AND "qh"."observed_at" IS NOT NULL
+        AND "qh"."observed_at" >= $9
     )
     AND EXISTS (
       SELECT
@@ -967,7 +458,7 @@ WITH
           )
         ) AS "ah"
       WHERE
-        "ah"."observed_at" >= $24
+        "ah"."observed_at" >= $10
     )
   ORDER BY
     "e"."id" ASC
@@ -981,9 +472,9 @@ WITH
     "temporal_attribute_streams" AS "rs"
     JOIN "entities" AS "ri" ON "ri"."entity_key" = "rs"."entity_key"
   WHERE
-    "rs"."attribute_name_key" = $25
+    "rs"."attribute_name_key" = $11
     AND (
-      "rs"."value_extent" && ST_MakeEnvelope($26, $27, $28, $29, $30)
+      "rs"."value_extent" && ST_MakeEnvelope($12, $13, $14, $15, $16)
     )
   UNION ALL
   (
@@ -1009,7 +500,7 @@ FROM
           COUNT(*)
         FROM
           "short_walk"
-      ) >= $31
+      ) >= $17
     ORDER BY
       "entity_id" ASC
     LIMIT
@@ -1131,713 +622,204 @@ UNION ALL
             "id" ASC OFFSET 0
         ) AS "e"
       WHERE
-        (
-          EXISTS (
-            SELECT
-              1
-            FROM
+        EXISTS (
+          SELECT
+            1
+          FROM
+            (
+              SELECT
+                "re"."id" AS "entity_id",
+                "rs"."attribute_name_key" AS "attribute_name_key",
+                "rs"."dataset_key" AS "dataset_key",
+                "rh"."recorded_at",
+                "rh"."write_id",
+                "rh"."write_ordinal",
+                "rh"."attribute_kind",
+                "rh"."value_kind",
+                "rh"."observed_at",
+                "rh"."created_at",
+                "rh"."modified_at",
+                "rh"."deleted_at",
+                "rh"."value_date_time",
+                "rh"."expires_at",
+                "rh"."generated_instance_id",
+                "rh"."value_type_key",
+                "rh"."value_datatype_key",
+                "rh"."unit_code_id",
+                "rh"."value_boolean",
+                "rh"."verbatim_instance_id",
+                "rh"."value_number",
+                "rh"."value_string",
+                "rh"."value_language",
+                "rh"."value_geometry",
+                "rh"."value_geometry_valid",
+                "rh"."value_geometry_reach",
+                "rh"."value_geometry_members",
+                "rh"."value_object",
+                "rh"."value_uri",
+                "rh"."object_type_keys",
+                "rh"."sub_attributes"
+              FROM
+                "attribute_history" AS "rh"
+                JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+                JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+              WHERE
+                "re"."id" = "e"."id"
+                AND (
+                  "rh"."verbatim_instance_id" IS NULL
+                  OR (
+                    NOT EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        "temporal_append_entries" AS "pr"
+                      WHERE
+                        "pr"."entity_id" = "re"."id"
+                        AND "pr"."attribute_name_key" = "rs"."attribute_name_key"
+                        AND "pr"."verbatim_instance_id" = "rh"."verbatim_instance_id"
+                        AND "pr"."entry_kind" IN (1, 2)
+                    )
+                  )
+                )
+              UNION ALL
               (
                 SELECT
-                  "re"."id" AS "entity_id",
-                  "rs"."attribute_name_key" AS "attribute_name_key",
-                  "rs"."dataset_key" AS "dataset_key",
-                  "rh"."recorded_at",
-                  "rh"."write_id",
-                  "rh"."write_ordinal",
-                  "rh"."attribute_kind",
-                  "rh"."value_kind",
-                  "rh"."observed_at",
-                  "rh"."created_at",
-                  "rh"."modified_at",
-                  "rh"."deleted_at",
-                  "rh"."value_date_time",
-                  "rh"."expires_at",
-                  "rh"."generated_instance_id",
-                  "rh"."value_type_key",
-                  "rh"."value_datatype_key",
-                  "rh"."unit_code_id",
-                  "rh"."value_boolean",
-                  "rh"."verbatim_instance_id",
-                  "rh"."value_number",
-                  "rh"."value_string",
-                  "rh"."value_language",
-                  "rh"."value_geometry",
-                  "rh"."value_geometry_valid",
-                  "rh"."value_geometry_reach",
-                  "rh"."value_geometry_members",
-                  "rh"."value_object",
-                  "rh"."value_uri",
-                  "rh"."object_type_keys",
-                  "rh"."sub_attributes"
+                  "pe"."entity_id" AS "entity_id",
+                  "pe"."attribute_name_key" AS "attribute_name_key",
+                  "pe"."dataset_key" AS "dataset_key",
+                  "pe"."recorded_at" AS "recorded_at",
+                  "pe"."write_id" AS "write_id",
+                  "pe"."write_ordinal" AS "write_ordinal",
+                  "pe"."attribute_kind" AS "attribute_kind",
+                  "pe"."value_kind" AS "value_kind",
+                  "pe"."observed_at" AS "observed_at",
+                  "pe"."created_at" AS "created_at",
+                  "pe"."modified_at" AS "modified_at",
+                  "pe"."deleted_at" AS "deleted_at",
+                  "pe"."value_date_time" AS "value_date_time",
+                  "pe"."expires_at" AS "expires_at",
+                  "pe"."generated_instance_id" AS "generated_instance_id",
+                  "pe"."value_type_key" AS "value_type_key",
+                  "pe"."value_datatype_key" AS "value_datatype_key",
+                  "pe"."unit_code_id" AS "unit_code_id",
+                  "pe"."value_boolean" AS "value_boolean",
+                  "pe"."verbatim_instance_id" AS "verbatim_instance_id",
+                  "pe"."value_number" AS "value_number",
+                  "pe"."value_string" AS "value_string",
+                  "pe"."value_language" AS "value_language",
+                  "pe"."value_geometry" AS "value_geometry",
+                  (
+                    CASE
+                      WHEN (ST_IsValid("pe"."value_geometry")) THEN NULL
+                      ELSE ST_MakeValid("pe"."value_geometry")
+                    END
+                  ) AS "value_geometry_valid",
+                  "pe"."value_geometry_reach" AS "value_geometry_reach",
+                  "pe"."value_geometry_members" AS "value_geometry_members",
+                  "pe"."value_object" AS "value_object",
+                  "pe"."value_uri" AS "value_uri",
+                  "pe"."object_type_keys" AS "object_type_keys",
+                  "pe"."sub_attributes" AS "sub_attributes"
                 FROM
-                  "attribute_history" AS "rh"
-                  JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
-                  JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+                  "temporal_append_entries" AS "pe"
                 WHERE
-                  "re"."id" = "e"."id"
+                  "pe"."entry_kind" IN (1, 2)
                   AND (
-                    "rh"."verbatim_instance_id" IS NULL
+                    EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        "entities" AS "pv"
+                      WHERE
+                        "pv"."id" = "pe"."entity_id"
+                        AND "pv"."evolution_created_at" IS NOT NULL
+                    )
+                    OR EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        "temporal_append_intents" AS "pt"
+                      WHERE
+                        "pt"."entity_id" = "pe"."entity_id"
+                        AND cardinality("pt"."entity_type_name_keys") > 0
+                        AND (
+                          "pe"."entry_kind" <> (2)
+                          OR "pt"."intent_key" <= "pe"."intent_key"
+                        )
+                    )
+                  )
+                  AND (
+                    (
+                      "pe"."verbatim_instance_id" IS NOT NULL
+                      AND (
+                        NOT EXISTS (
+                          SELECT
+                            1
+                          FROM
+                            "temporal_append_entries" AS "pr"
+                          WHERE
+                            "pr"."entity_id" = "pe"."entity_id"
+                            AND "pr"."attribute_name_key" = "pe"."attribute_name_key"
+                            AND "pr"."verbatim_instance_id" = "pe"."verbatim_instance_id"
+                            AND "pr"."entry_kind" IN (1, 2)
+                            AND "pr"."intent_key" > "pe"."intent_key"
+                        )
+                      )
+                    )
                     OR (
-                      NOT EXISTS (
-                        SELECT
-                          1
-                        FROM
-                          "temporal_append_entries" AS "pr"
-                        WHERE
-                          "pr"."entity_id" = "re"."id"
-                          AND "pr"."attribute_name_key" = "rs"."attribute_name_key"
-                          AND "pr"."verbatim_instance_id" = "rh"."verbatim_instance_id"
-                          AND "pr"."entry_kind" IN (1, 2)
+                      "pe"."verbatim_instance_id" IS NULL
+                      AND (
+                        NOT EXISTS (
+                          SELECT
+                            1
+                          FROM
+                            "attribute_history" AS "pd"
+                          WHERE
+                            "pd"."recorded_at" = "pe"."recorded_at"
+                            AND "pd"."write_id" = "pe"."write_id"
+                            AND "pd"."write_ordinal" = "pe"."write_ordinal"
+                        )
                       )
                     )
                   )
-                UNION ALL
-                (
-                  SELECT
-                    "pe"."entity_id" AS "entity_id",
-                    "pe"."attribute_name_key" AS "attribute_name_key",
-                    "pe"."dataset_key" AS "dataset_key",
-                    "pe"."recorded_at" AS "recorded_at",
-                    "pe"."write_id" AS "write_id",
-                    "pe"."write_ordinal" AS "write_ordinal",
-                    "pe"."attribute_kind" AS "attribute_kind",
-                    "pe"."value_kind" AS "value_kind",
-                    "pe"."observed_at" AS "observed_at",
-                    "pe"."created_at" AS "created_at",
-                    "pe"."modified_at" AS "modified_at",
-                    "pe"."deleted_at" AS "deleted_at",
-                    "pe"."value_date_time" AS "value_date_time",
-                    "pe"."expires_at" AS "expires_at",
-                    "pe"."generated_instance_id" AS "generated_instance_id",
-                    "pe"."value_type_key" AS "value_type_key",
-                    "pe"."value_datatype_key" AS "value_datatype_key",
-                    "pe"."unit_code_id" AS "unit_code_id",
-                    "pe"."value_boolean" AS "value_boolean",
-                    "pe"."verbatim_instance_id" AS "verbatim_instance_id",
-                    "pe"."value_number" AS "value_number",
-                    "pe"."value_string" AS "value_string",
-                    "pe"."value_language" AS "value_language",
-                    "pe"."value_geometry" AS "value_geometry",
-                    (
-                      CASE
-                        WHEN (ST_IsValid("pe"."value_geometry")) THEN NULL
-                        ELSE ST_MakeValid("pe"."value_geometry")
-                      END
-                    ) AS "value_geometry_valid",
-                    "pe"."value_geometry_reach" AS "value_geometry_reach",
-                    "pe"."value_geometry_members" AS "value_geometry_members",
-                    "pe"."value_object" AS "value_object",
-                    "pe"."value_uri" AS "value_uri",
-                    "pe"."object_type_keys" AS "object_type_keys",
-                    "pe"."sub_attributes" AS "sub_attributes"
-                  FROM
-                    "temporal_append_entries" AS "pe"
-                  WHERE
-                    "pe"."entry_kind" IN (1, 2)
-                    AND (
-                      EXISTS (
-                        SELECT
-                          1
-                        FROM
-                          "entities" AS "pv"
-                        WHERE
-                          "pv"."id" = "pe"."entity_id"
-                          AND "pv"."evolution_created_at" IS NOT NULL
-                      )
-                      OR EXISTS (
-                        SELECT
-                          1
-                        FROM
-                          "temporal_append_intents" AS "pt"
-                        WHERE
-                          "pt"."entity_id" = "pe"."entity_id"
-                          AND cardinality("pt"."entity_type_name_keys") > 0
-                          AND (
-                            "pe"."entry_kind" <> (2)
-                            OR "pt"."intent_key" <= "pe"."intent_key"
-                          )
-                      )
-                    )
-                    AND (
-                      (
-                        "pe"."verbatim_instance_id" IS NOT NULL
-                        AND (
-                          NOT EXISTS (
-                            SELECT
-                              1
-                            FROM
-                              "temporal_append_entries" AS "pr"
-                            WHERE
-                              "pr"."entity_id" = "pe"."entity_id"
-                              AND "pr"."attribute_name_key" = "pe"."attribute_name_key"
-                              AND "pr"."verbatim_instance_id" = "pe"."verbatim_instance_id"
-                              AND "pr"."entry_kind" IN (1, 2)
-                              AND "pr"."intent_key" > "pe"."intent_key"
-                          )
-                        )
-                      )
-                      OR (
-                        "pe"."verbatim_instance_id" IS NULL
-                        AND (
-                          NOT EXISTS (
-                            SELECT
-                              1
-                            FROM
-                              "attribute_history" AS "pd"
-                            WHERE
-                              "pd"."recorded_at" = "pe"."recorded_at"
-                              AND "pd"."write_id" = "pe"."write_id"
-                              AND "pd"."write_ordinal" = "pe"."write_ordinal"
-                          )
-                        )
-                      )
-                    )
-                    AND "pe"."entity_id" = "e"."id"
-                )
-              ) AS "qh"
-            WHERE
-              "qh"."attribute_name_key" = $32
-              AND (
-                (
-                  COALESCE(
-                    "qh"."value_geometry_reach",
-                    "qh"."value_geometry_valid",
-                    "qh"."value_geometry"
-                  )::box2d && ST_MakeEnvelope($33, $34, $35, $36, $37)::box2d
-                )
-                AND _ST_DWithin(
-                  COALESCE(
-                    "qh"."value_geometry_valid",
-                    "qh"."value_geometry"
-                  )::geography,
-                  ST_MakeValid(ST_GeomFromEWKB($38))::geography,
-                  $39
-                )
+                  AND "pe"."entity_id" = "e"."id"
               )
-              AND "qh"."value_kind" <> (0)
-              AND "qh"."observed_at" IS NOT NULL
-              AND "qh"."observed_at" >= $40
-          )
-          OR EXISTS (
-            SELECT
-              1
-            FROM
+            ) AS "qh"
+          WHERE
+            "qh"."attribute_name_key" = $18
+            AND (
               (
-                SELECT
-                  "re"."id" AS "entity_id",
-                  "rs"."attribute_name_key" AS "attribute_name_key",
-                  "rs"."dataset_key" AS "dataset_key",
-                  "rs"."stream_key" AS "stream_key"
-                FROM
-                  "temporal_attribute_streams" AS "rs"
-                  JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
-                WHERE
-                  "re"."id" = "e"."id"
-                UNION ALL
-                (
-                  SELECT DISTINCT
-                    "pe"."entity_id" AS "entity_id",
-                    "pe"."attribute_name_key" AS "attribute_name_key",
-                    "pe"."dataset_key" AS "dataset_key",
-                    NULL::bigint AS "stream_key"
-                  FROM
-                    "temporal_append_entries" AS "pe"
-                  WHERE
-                    "pe"."entry_kind" IN (1, 2)
-                    AND (
-                      EXISTS (
-                        SELECT
-                          1
-                        FROM
-                          "entities" AS "pv"
-                        WHERE
-                          "pv"."id" = "pe"."entity_id"
-                          AND "pv"."evolution_created_at" IS NOT NULL
-                      )
-                      OR EXISTS (
-                        SELECT
-                          1
-                        FROM
-                          "temporal_append_intents" AS "pt"
-                        WHERE
-                          "pt"."entity_id" = "pe"."entity_id"
-                          AND cardinality("pt"."entity_type_name_keys") > 0
-                          AND (
-                            "pe"."entry_kind" <> (2)
-                            OR "pt"."intent_key" <= "pe"."intent_key"
-                          )
-                      )
-                    )
-                    AND (
-                      NOT EXISTS (
-                        SELECT
-                          1
-                        FROM
-                          "temporal_attribute_streams" AS "ps"
-                          JOIN "entities" AS "pv" ON "pv"."entity_key" = "ps"."entity_key"
-                        WHERE
-                          "pv"."id" = "pe"."entity_id"
-                          AND "ps"."attribute_name_key" = "pe"."attribute_name_key"
-                          AND "ps"."dataset_key" = "pe"."dataset_key"
-                      )
-                    )
-                    AND "pe"."entity_id" = "e"."id"
-                )
-              ) AS "qs"
-              JOIN LATERAL (
-                SELECT
-                  *
-                FROM
-                  (
-                    (
-                      SELECT
-                        *
-                      FROM
-                        (
-                          (
-                            SELECT
-                              "qi".*,
-                              "qi"."observed_at" AS "placed"
-                            FROM
-                              (
-                                SELECT
-                                  "qs"."entity_id" AS "entity_id",
-                                  "qs"."attribute_name_key" AS "attribute_name_key",
-                                  "qs"."dataset_key" AS "dataset_key",
-                                  "rh"."recorded_at",
-                                  "rh"."write_id",
-                                  "rh"."write_ordinal",
-                                  "rh"."attribute_kind" AS "attribute_kind",
-                                  "rh"."value_kind" AS "value_kind",
-                                  "rh"."observed_at" AS "observed_at",
-                                  "rh"."created_at" AS "created_at",
-                                  "rh"."modified_at" AS "modified_at",
-                                  "rh"."deleted_at" AS "deleted_at",
-                                  "rh"."value_date_time" AS "value_date_time",
-                                  "rh"."expires_at" AS "expires_at",
-                                  "rh"."generated_instance_id" AS "generated_instance_id",
-                                  "rh"."value_type_key" AS "value_type_key",
-                                  "rh"."value_datatype_key" AS "value_datatype_key",
-                                  "rh"."unit_code_id" AS "unit_code_id",
-                                  "rh"."value_boolean" AS "value_boolean",
-                                  "rh"."verbatim_instance_id" AS "verbatim_instance_id",
-                                  "rh"."value_number" AS "value_number",
-                                  "rh"."value_string" AS "value_string",
-                                  "rh"."value_language" AS "value_language",
-                                  "rh"."value_geometry" AS "value_geometry",
-                                  "rh"."value_geometry_valid" AS "value_geometry_valid",
-                                  "rh"."value_geometry_reach" AS "value_geometry_reach",
-                                  "rh"."value_geometry_members" AS "value_geometry_members",
-                                  "rh"."value_object" AS "value_object",
-                                  "rh"."value_uri" AS "value_uri",
-                                  "rh"."object_type_keys" AS "object_type_keys",
-                                  "rh"."sub_attributes" AS "sub_attributes"
-                                FROM
-                                  "attribute_history" AS "rh"
-                                WHERE
-                                  "rh"."stream_key" = "qs"."stream_key"
-                                  AND (
-                                    "rh"."verbatim_instance_id" IS NULL
-                                    OR (
-                                      NOT EXISTS (
-                                        SELECT
-                                          1
-                                        FROM
-                                          "temporal_append_entries" AS "pr"
-                                        WHERE
-                                          "pr"."entity_id" = "qs"."entity_id"
-                                          AND "pr"."attribute_name_key" = "qs"."attribute_name_key"
-                                          AND "pr"."verbatim_instance_id" = "rh"."verbatim_instance_id"
-                                          AND "pr"."entry_kind" IN (1, 2)
-                                      )
-                                    )
-                                  )
-                              ) AS "qi"
-                            WHERE
-                              "qi"."observed_at" <= $41
-                            ORDER BY
-                              "qi"."observed_at" DESC
-                          )
-                          FETCH FIRST
-                            1 ROW
-                          WITH
-                          TIES
-                        ) AS "qe"
-                      UNION ALL
-                      (
-                        SELECT
-                          *
-                        FROM
-                          (
-                            (
-                              SELECT
-                                "qi".*,
-                                "qi"."deleted_at" AS "placed"
-                              FROM
-                                (
-                                  SELECT
-                                    "qs"."entity_id" AS "entity_id",
-                                    "qs"."attribute_name_key" AS "attribute_name_key",
-                                    "qs"."dataset_key" AS "dataset_key",
-                                    "rh"."recorded_at",
-                                    "rh"."write_id",
-                                    "rh"."write_ordinal",
-                                    "rh"."attribute_kind" AS "attribute_kind",
-                                    "rh"."value_kind" AS "value_kind",
-                                    "rh"."observed_at" AS "observed_at",
-                                    "rh"."created_at" AS "created_at",
-                                    "rh"."modified_at" AS "modified_at",
-                                    "rh"."deleted_at" AS "deleted_at",
-                                    "rh"."value_date_time" AS "value_date_time",
-                                    "rh"."expires_at" AS "expires_at",
-                                    "rh"."generated_instance_id" AS "generated_instance_id",
-                                    "rh"."value_type_key" AS "value_type_key",
-                                    "rh"."value_datatype_key" AS "value_datatype_key",
-                                    "rh"."unit_code_id" AS "unit_code_id",
-                                    "rh"."value_boolean" AS "value_boolean",
-                                    "rh"."verbatim_instance_id" AS "verbatim_instance_id",
-                                    "rh"."value_number" AS "value_number",
-                                    "rh"."value_string" AS "value_string",
-                                    "rh"."value_language" AS "value_language",
-                                    "rh"."value_geometry" AS "value_geometry",
-                                    "rh"."value_geometry_valid" AS "value_geometry_valid",
-                                    "rh"."value_geometry_reach" AS "value_geometry_reach",
-                                    "rh"."value_geometry_members" AS "value_geometry_members",
-                                    "rh"."value_object" AS "value_object",
-                                    "rh"."value_uri" AS "value_uri",
-                                    "rh"."object_type_keys" AS "object_type_keys",
-                                    "rh"."sub_attributes" AS "sub_attributes"
-                                  FROM
-                                    "attribute_history" AS "rh"
-                                  WHERE
-                                    "rh"."stream_key" = "qs"."stream_key"
-                                    AND (
-                                      "rh"."verbatim_instance_id" IS NULL
-                                      OR (
-                                        NOT EXISTS (
-                                          SELECT
-                                            1
-                                          FROM
-                                            "temporal_append_entries" AS "pr"
-                                          WHERE
-                                            "pr"."entity_id" = "qs"."entity_id"
-                                            AND "pr"."attribute_name_key" = "qs"."attribute_name_key"
-                                            AND "pr"."verbatim_instance_id" = "rh"."verbatim_instance_id"
-                                            AND "pr"."entry_kind" IN (1, 2)
-                                        )
-                                      )
-                                    )
-                                ) AS "qi"
-                              WHERE
-                                "qi"."deleted_at" <= $42
-                                AND "qi"."observed_at" IS NULL
-                              ORDER BY
-                                "qi"."deleted_at" DESC
-                            )
-                            FETCH FIRST
-                              1 ROW
-                            WITH
-                            TIES
-                          ) AS "qe"
-                      )
-                      UNION ALL
-                      (
-                        SELECT
-                          *
-                        FROM
-                          (
-                            (
-                              SELECT
-                                "qi".*,
-                                "qi"."observed_at" AS "placed"
-                              FROM
-                                (
-                                  SELECT
-                                    "pe"."entity_id" AS "entity_id",
-                                    "pe"."attribute_name_key" AS "attribute_name_key",
-                                    "pe"."dataset_key" AS "dataset_key",
-                                    "pe"."recorded_at" AS "recorded_at",
-                                    "pe"."write_id" AS "write_id",
-                                    "pe"."write_ordinal" AS "write_ordinal",
-                                    "pe"."attribute_kind" AS "attribute_kind",
-                                    "pe"."value_kind" AS "value_kind",
-                                    "pe"."observed_at" AS "observed_at",
-                                    "pe"."created_at" AS "created_at",
-                                    "pe"."modified_at" AS "modified_at",
-                                    "pe"."deleted_at" AS "deleted_at",
-                                    "pe"."value_date_time" AS "value_date_time",
-                                    "pe"."expires_at" AS "expires_at",
-                                    "pe"."generated_instance_id" AS "generated_instance_id",
-                                    "pe"."value_type_key" AS "value_type_key",
-                                    "pe"."value_datatype_key" AS "value_datatype_key",
-                                    "pe"."unit_code_id" AS "unit_code_id",
-                                    "pe"."value_boolean" AS "value_boolean",
-                                    "pe"."verbatim_instance_id" AS "verbatim_instance_id",
-                                    "pe"."value_number" AS "value_number",
-                                    "pe"."value_string" AS "value_string",
-                                    "pe"."value_language" AS "value_language",
-                                    "pe"."value_geometry" AS "value_geometry",
-                                    (
-                                      CASE
-                                        WHEN (ST_IsValid("pe"."value_geometry")) THEN NULL
-                                        ELSE ST_MakeValid("pe"."value_geometry")
-                                      END
-                                    ) AS "value_geometry_valid",
-                                    "pe"."value_geometry_reach" AS "value_geometry_reach",
-                                    "pe"."value_geometry_members" AS "value_geometry_members",
-                                    "pe"."value_object" AS "value_object",
-                                    "pe"."value_uri" AS "value_uri",
-                                    "pe"."object_type_keys" AS "object_type_keys",
-                                    "pe"."sub_attributes" AS "sub_attributes"
-                                  FROM
-                                    "temporal_append_entries" AS "pe"
-                                  WHERE
-                                    "pe"."entry_kind" IN (1, 2)
-                                    AND (
-                                      EXISTS (
-                                        SELECT
-                                          1
-                                        FROM
-                                          "entities" AS "pv"
-                                        WHERE
-                                          "pv"."id" = "pe"."entity_id"
-                                          AND "pv"."evolution_created_at" IS NOT NULL
-                                      )
-                                      OR EXISTS (
-                                        SELECT
-                                          1
-                                        FROM
-                                          "temporal_append_intents" AS "pt"
-                                        WHERE
-                                          "pt"."entity_id" = "pe"."entity_id"
-                                          AND cardinality("pt"."entity_type_name_keys") > 0
-                                          AND (
-                                            "pe"."entry_kind" <> (2)
-                                            OR "pt"."intent_key" <= "pe"."intent_key"
-                                          )
-                                      )
-                                    )
-                                    AND (
-                                      (
-                                        "pe"."verbatim_instance_id" IS NOT NULL
-                                        AND (
-                                          NOT EXISTS (
-                                            SELECT
-                                              1
-                                            FROM
-                                              "temporal_append_entries" AS "pr"
-                                            WHERE
-                                              "pr"."entity_id" = "pe"."entity_id"
-                                              AND "pr"."attribute_name_key" = "pe"."attribute_name_key"
-                                              AND "pr"."verbatim_instance_id" = "pe"."verbatim_instance_id"
-                                              AND "pr"."entry_kind" IN (1, 2)
-                                              AND "pr"."intent_key" > "pe"."intent_key"
-                                          )
-                                        )
-                                      )
-                                      OR (
-                                        "pe"."verbatim_instance_id" IS NULL
-                                        AND (
-                                          NOT EXISTS (
-                                            SELECT
-                                              1
-                                            FROM
-                                              "attribute_history" AS "pd"
-                                            WHERE
-                                              "pd"."recorded_at" = "pe"."recorded_at"
-                                              AND "pd"."write_id" = "pe"."write_id"
-                                              AND "pd"."write_ordinal" = "pe"."write_ordinal"
-                                          )
-                                        )
-                                      )
-                                    )
-                                    AND "pe"."entity_id" = "qs"."entity_id"
-                                    AND "pe"."attribute_name_key" = "qs"."attribute_name_key"
-                                    AND "pe"."dataset_key" = "qs"."dataset_key"
-                                ) AS "qi"
-                              WHERE
-                                "qi"."observed_at" <= $43
-                              ORDER BY
-                                "qi"."observed_at" DESC
-                            )
-                            FETCH FIRST
-                              1 ROW
-                            WITH
-                            TIES
-                          ) AS "qe"
-                      )
-                      UNION ALL
-                      (
-                        SELECT
-                          *
-                        FROM
-                          (
-                            (
-                              SELECT
-                                "qi".*,
-                                "qi"."deleted_at" AS "placed"
-                              FROM
-                                (
-                                  SELECT
-                                    "pe"."entity_id" AS "entity_id",
-                                    "pe"."attribute_name_key" AS "attribute_name_key",
-                                    "pe"."dataset_key" AS "dataset_key",
-                                    "pe"."recorded_at" AS "recorded_at",
-                                    "pe"."write_id" AS "write_id",
-                                    "pe"."write_ordinal" AS "write_ordinal",
-                                    "pe"."attribute_kind" AS "attribute_kind",
-                                    "pe"."value_kind" AS "value_kind",
-                                    "pe"."observed_at" AS "observed_at",
-                                    "pe"."created_at" AS "created_at",
-                                    "pe"."modified_at" AS "modified_at",
-                                    "pe"."deleted_at" AS "deleted_at",
-                                    "pe"."value_date_time" AS "value_date_time",
-                                    "pe"."expires_at" AS "expires_at",
-                                    "pe"."generated_instance_id" AS "generated_instance_id",
-                                    "pe"."value_type_key" AS "value_type_key",
-                                    "pe"."value_datatype_key" AS "value_datatype_key",
-                                    "pe"."unit_code_id" AS "unit_code_id",
-                                    "pe"."value_boolean" AS "value_boolean",
-                                    "pe"."verbatim_instance_id" AS "verbatim_instance_id",
-                                    "pe"."value_number" AS "value_number",
-                                    "pe"."value_string" AS "value_string",
-                                    "pe"."value_language" AS "value_language",
-                                    "pe"."value_geometry" AS "value_geometry",
-                                    (
-                                      CASE
-                                        WHEN (ST_IsValid("pe"."value_geometry")) THEN NULL
-                                        ELSE ST_MakeValid("pe"."value_geometry")
-                                      END
-                                    ) AS "value_geometry_valid",
-                                    "pe"."value_geometry_reach" AS "value_geometry_reach",
-                                    "pe"."value_geometry_members" AS "value_geometry_members",
-                                    "pe"."value_object" AS "value_object",
-                                    "pe"."value_uri" AS "value_uri",
-                                    "pe"."object_type_keys" AS "object_type_keys",
-                                    "pe"."sub_attributes" AS "sub_attributes"
-                                  FROM
-                                    "temporal_append_entries" AS "pe"
-                                  WHERE
-                                    "pe"."entry_kind" IN (1, 2)
-                                    AND (
-                                      EXISTS (
-                                        SELECT
-                                          1
-                                        FROM
-                                          "entities" AS "pv"
-                                        WHERE
-                                          "pv"."id" = "pe"."entity_id"
-                                          AND "pv"."evolution_created_at" IS NOT NULL
-                                      )
-                                      OR EXISTS (
-                                        SELECT
-                                          1
-                                        FROM
-                                          "temporal_append_intents" AS "pt"
-                                        WHERE
-                                          "pt"."entity_id" = "pe"."entity_id"
-                                          AND cardinality("pt"."entity_type_name_keys") > 0
-                                          AND (
-                                            "pe"."entry_kind" <> (2)
-                                            OR "pt"."intent_key" <= "pe"."intent_key"
-                                          )
-                                      )
-                                    )
-                                    AND (
-                                      (
-                                        "pe"."verbatim_instance_id" IS NOT NULL
-                                        AND (
-                                          NOT EXISTS (
-                                            SELECT
-                                              1
-                                            FROM
-                                              "temporal_append_entries" AS "pr"
-                                            WHERE
-                                              "pr"."entity_id" = "pe"."entity_id"
-                                              AND "pr"."attribute_name_key" = "pe"."attribute_name_key"
-                                              AND "pr"."verbatim_instance_id" = "pe"."verbatim_instance_id"
-                                              AND "pr"."entry_kind" IN (1, 2)
-                                              AND "pr"."intent_key" > "pe"."intent_key"
-                                          )
-                                        )
-                                      )
-                                      OR (
-                                        "pe"."verbatim_instance_id" IS NULL
-                                        AND (
-                                          NOT EXISTS (
-                                            SELECT
-                                              1
-                                            FROM
-                                              "attribute_history" AS "pd"
-                                            WHERE
-                                              "pd"."recorded_at" = "pe"."recorded_at"
-                                              AND "pd"."write_id" = "pe"."write_id"
-                                              AND "pd"."write_ordinal" = "pe"."write_ordinal"
-                                          )
-                                        )
-                                      )
-                                    )
-                                    AND "pe"."entity_id" = "qs"."entity_id"
-                                    AND "pe"."attribute_name_key" = "qs"."attribute_name_key"
-                                    AND "pe"."dataset_key" = "qs"."dataset_key"
-                                ) AS "qi"
-                              WHERE
-                                "qi"."deleted_at" <= $44
-                                AND "qi"."observed_at" IS NULL
-                              ORDER BY
-                                "qi"."deleted_at" DESC
-                            )
-                            FETCH FIRST
-                              1 ROW
-                            WITH
-                            TIES
-                          ) AS "qe"
-                      )
-                      ORDER BY
-                        "placed" DESC
-                    )
-                    FETCH FIRST
-                      1 ROW
-                    WITH
-                    TIES
-                  ) AS "qe"
-              ) AS "qh" ON TRUE
-            WHERE
-              "qs"."attribute_name_key" = $45
-              AND "qh"."placed" < $46
-              AND "qh"."attribute_name_key" = $47
-              AND (
-                (
-                  COALESCE(
-                    "qh"."value_geometry_reach",
-                    "qh"."value_geometry_valid",
-                    "qh"."value_geometry"
-                  )::box2d && ST_MakeEnvelope($48, $49, $50, $51, $52)::box2d
-                )
-                AND _ST_DWithin(
-                  COALESCE(
-                    "qh"."value_geometry_valid",
-                    "qh"."value_geometry"
-                  )::geography,
-                  ST_MakeValid(ST_GeomFromEWKB($53))::geography,
-                  $54
-                )
+                COALESCE(
+                  "qh"."value_geometry_reach",
+                  "qh"."value_geometry_valid",
+                  "qh"."value_geometry"
+                )::box2d && ST_MakeEnvelope($19, $20, $21, $22, $23)::box2d
               )
-              AND "qh"."value_kind" <> (0)
-          )
+              AND _ST_DWithin(
+                COALESCE(
+                  "qh"."value_geometry_valid",
+                  "qh"."value_geometry"
+                )::geography,
+                ST_MakeValid(ST_GeomFromEWKB($24))::geography,
+                $25
+              )
+            )
+            AND "qh"."value_kind" <> (0)
+            AND "qh"."observed_at" IS NOT NULL
+            AND "qh"."observed_at" >= $26
         )
         AND (
           SELECT
             COUNT(*)
           FROM
             "short_walk"
-        ) < $55
+        ) < $27
         AND (
           SELECT
             COUNT(*)
           FROM
             "candidates"
-        ) <= $56
+        ) <= $28
         AND EXISTS (
           SELECT
             1
@@ -2002,7 +984,7 @@ UNION ALL
               )
             ) AS "ah"
           WHERE
-            "ah"."observed_at" >= $57
+            "ah"."observed_at" >= $29
         )
       ORDER BY
         "e"."id" ASC
@@ -2112,713 +1094,204 @@ UNION ALL
             )
         ) AS "e"
       WHERE
-        (
-          EXISTS (
-            SELECT
-              1
-            FROM
+        EXISTS (
+          SELECT
+            1
+          FROM
+            (
+              SELECT
+                "re"."id" AS "entity_id",
+                "rs"."attribute_name_key" AS "attribute_name_key",
+                "rs"."dataset_key" AS "dataset_key",
+                "rh"."recorded_at",
+                "rh"."write_id",
+                "rh"."write_ordinal",
+                "rh"."attribute_kind",
+                "rh"."value_kind",
+                "rh"."observed_at",
+                "rh"."created_at",
+                "rh"."modified_at",
+                "rh"."deleted_at",
+                "rh"."value_date_time",
+                "rh"."expires_at",
+                "rh"."generated_instance_id",
+                "rh"."value_type_key",
+                "rh"."value_datatype_key",
+                "rh"."unit_code_id",
+                "rh"."value_boolean",
+                "rh"."verbatim_instance_id",
+                "rh"."value_number",
+                "rh"."value_string",
+                "rh"."value_language",
+                "rh"."value_geometry",
+                "rh"."value_geometry_valid",
+                "rh"."value_geometry_reach",
+                "rh"."value_geometry_members",
+                "rh"."value_object",
+                "rh"."value_uri",
+                "rh"."object_type_keys",
+                "rh"."sub_attributes"
+              FROM
+                "attribute_history" AS "rh"
+                JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
+                JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+              WHERE
+                "re"."id" = "e"."id"
+                AND (
+                  "rh"."verbatim_instance_id" IS NULL
+                  OR (
+                    NOT EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        "temporal_append_entries" AS "pr"
+                      WHERE
+                        "pr"."entity_id" = "re"."id"
+                        AND "pr"."attribute_name_key" = "rs"."attribute_name_key"
+                        AND "pr"."verbatim_instance_id" = "rh"."verbatim_instance_id"
+                        AND "pr"."entry_kind" IN (1, 2)
+                    )
+                  )
+                )
+              UNION ALL
               (
                 SELECT
-                  "re"."id" AS "entity_id",
-                  "rs"."attribute_name_key" AS "attribute_name_key",
-                  "rs"."dataset_key" AS "dataset_key",
-                  "rh"."recorded_at",
-                  "rh"."write_id",
-                  "rh"."write_ordinal",
-                  "rh"."attribute_kind",
-                  "rh"."value_kind",
-                  "rh"."observed_at",
-                  "rh"."created_at",
-                  "rh"."modified_at",
-                  "rh"."deleted_at",
-                  "rh"."value_date_time",
-                  "rh"."expires_at",
-                  "rh"."generated_instance_id",
-                  "rh"."value_type_key",
-                  "rh"."value_datatype_key",
-                  "rh"."unit_code_id",
-                  "rh"."value_boolean",
-                  "rh"."verbatim_instance_id",
-                  "rh"."value_number",
-                  "rh"."value_string",
-                  "rh"."value_language",
-                  "rh"."value_geometry",
-                  "rh"."value_geometry_valid",
-                  "rh"."value_geometry_reach",
-                  "rh"."value_geometry_members",
-                  "rh"."value_object",
-                  "rh"."value_uri",
-                  "rh"."object_type_keys",
-                  "rh"."sub_attributes"
+                  "pe"."entity_id" AS "entity_id",
+                  "pe"."attribute_name_key" AS "attribute_name_key",
+                  "pe"."dataset_key" AS "dataset_key",
+                  "pe"."recorded_at" AS "recorded_at",
+                  "pe"."write_id" AS "write_id",
+                  "pe"."write_ordinal" AS "write_ordinal",
+                  "pe"."attribute_kind" AS "attribute_kind",
+                  "pe"."value_kind" AS "value_kind",
+                  "pe"."observed_at" AS "observed_at",
+                  "pe"."created_at" AS "created_at",
+                  "pe"."modified_at" AS "modified_at",
+                  "pe"."deleted_at" AS "deleted_at",
+                  "pe"."value_date_time" AS "value_date_time",
+                  "pe"."expires_at" AS "expires_at",
+                  "pe"."generated_instance_id" AS "generated_instance_id",
+                  "pe"."value_type_key" AS "value_type_key",
+                  "pe"."value_datatype_key" AS "value_datatype_key",
+                  "pe"."unit_code_id" AS "unit_code_id",
+                  "pe"."value_boolean" AS "value_boolean",
+                  "pe"."verbatim_instance_id" AS "verbatim_instance_id",
+                  "pe"."value_number" AS "value_number",
+                  "pe"."value_string" AS "value_string",
+                  "pe"."value_language" AS "value_language",
+                  "pe"."value_geometry" AS "value_geometry",
+                  (
+                    CASE
+                      WHEN (ST_IsValid("pe"."value_geometry")) THEN NULL
+                      ELSE ST_MakeValid("pe"."value_geometry")
+                    END
+                  ) AS "value_geometry_valid",
+                  "pe"."value_geometry_reach" AS "value_geometry_reach",
+                  "pe"."value_geometry_members" AS "value_geometry_members",
+                  "pe"."value_object" AS "value_object",
+                  "pe"."value_uri" AS "value_uri",
+                  "pe"."object_type_keys" AS "object_type_keys",
+                  "pe"."sub_attributes" AS "sub_attributes"
                 FROM
-                  "attribute_history" AS "rh"
-                  JOIN "temporal_attribute_streams" AS "rs" ON "rs"."stream_key" = "rh"."stream_key"
-                  JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
+                  "temporal_append_entries" AS "pe"
                 WHERE
-                  "re"."id" = "e"."id"
+                  "pe"."entry_kind" IN (1, 2)
                   AND (
-                    "rh"."verbatim_instance_id" IS NULL
+                    EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        "entities" AS "pv"
+                      WHERE
+                        "pv"."id" = "pe"."entity_id"
+                        AND "pv"."evolution_created_at" IS NOT NULL
+                    )
+                    OR EXISTS (
+                      SELECT
+                        1
+                      FROM
+                        "temporal_append_intents" AS "pt"
+                      WHERE
+                        "pt"."entity_id" = "pe"."entity_id"
+                        AND cardinality("pt"."entity_type_name_keys") > 0
+                        AND (
+                          "pe"."entry_kind" <> (2)
+                          OR "pt"."intent_key" <= "pe"."intent_key"
+                        )
+                    )
+                  )
+                  AND (
+                    (
+                      "pe"."verbatim_instance_id" IS NOT NULL
+                      AND (
+                        NOT EXISTS (
+                          SELECT
+                            1
+                          FROM
+                            "temporal_append_entries" AS "pr"
+                          WHERE
+                            "pr"."entity_id" = "pe"."entity_id"
+                            AND "pr"."attribute_name_key" = "pe"."attribute_name_key"
+                            AND "pr"."verbatim_instance_id" = "pe"."verbatim_instance_id"
+                            AND "pr"."entry_kind" IN (1, 2)
+                            AND "pr"."intent_key" > "pe"."intent_key"
+                        )
+                      )
+                    )
                     OR (
-                      NOT EXISTS (
-                        SELECT
-                          1
-                        FROM
-                          "temporal_append_entries" AS "pr"
-                        WHERE
-                          "pr"."entity_id" = "re"."id"
-                          AND "pr"."attribute_name_key" = "rs"."attribute_name_key"
-                          AND "pr"."verbatim_instance_id" = "rh"."verbatim_instance_id"
-                          AND "pr"."entry_kind" IN (1, 2)
+                      "pe"."verbatim_instance_id" IS NULL
+                      AND (
+                        NOT EXISTS (
+                          SELECT
+                            1
+                          FROM
+                            "attribute_history" AS "pd"
+                          WHERE
+                            "pd"."recorded_at" = "pe"."recorded_at"
+                            AND "pd"."write_id" = "pe"."write_id"
+                            AND "pd"."write_ordinal" = "pe"."write_ordinal"
+                        )
                       )
                     )
                   )
-                UNION ALL
-                (
-                  SELECT
-                    "pe"."entity_id" AS "entity_id",
-                    "pe"."attribute_name_key" AS "attribute_name_key",
-                    "pe"."dataset_key" AS "dataset_key",
-                    "pe"."recorded_at" AS "recorded_at",
-                    "pe"."write_id" AS "write_id",
-                    "pe"."write_ordinal" AS "write_ordinal",
-                    "pe"."attribute_kind" AS "attribute_kind",
-                    "pe"."value_kind" AS "value_kind",
-                    "pe"."observed_at" AS "observed_at",
-                    "pe"."created_at" AS "created_at",
-                    "pe"."modified_at" AS "modified_at",
-                    "pe"."deleted_at" AS "deleted_at",
-                    "pe"."value_date_time" AS "value_date_time",
-                    "pe"."expires_at" AS "expires_at",
-                    "pe"."generated_instance_id" AS "generated_instance_id",
-                    "pe"."value_type_key" AS "value_type_key",
-                    "pe"."value_datatype_key" AS "value_datatype_key",
-                    "pe"."unit_code_id" AS "unit_code_id",
-                    "pe"."value_boolean" AS "value_boolean",
-                    "pe"."verbatim_instance_id" AS "verbatim_instance_id",
-                    "pe"."value_number" AS "value_number",
-                    "pe"."value_string" AS "value_string",
-                    "pe"."value_language" AS "value_language",
-                    "pe"."value_geometry" AS "value_geometry",
-                    (
-                      CASE
-                        WHEN (ST_IsValid("pe"."value_geometry")) THEN NULL
-                        ELSE ST_MakeValid("pe"."value_geometry")
-                      END
-                    ) AS "value_geometry_valid",
-                    "pe"."value_geometry_reach" AS "value_geometry_reach",
-                    "pe"."value_geometry_members" AS "value_geometry_members",
-                    "pe"."value_object" AS "value_object",
-                    "pe"."value_uri" AS "value_uri",
-                    "pe"."object_type_keys" AS "object_type_keys",
-                    "pe"."sub_attributes" AS "sub_attributes"
-                  FROM
-                    "temporal_append_entries" AS "pe"
-                  WHERE
-                    "pe"."entry_kind" IN (1, 2)
-                    AND (
-                      EXISTS (
-                        SELECT
-                          1
-                        FROM
-                          "entities" AS "pv"
-                        WHERE
-                          "pv"."id" = "pe"."entity_id"
-                          AND "pv"."evolution_created_at" IS NOT NULL
-                      )
-                      OR EXISTS (
-                        SELECT
-                          1
-                        FROM
-                          "temporal_append_intents" AS "pt"
-                        WHERE
-                          "pt"."entity_id" = "pe"."entity_id"
-                          AND cardinality("pt"."entity_type_name_keys") > 0
-                          AND (
-                            "pe"."entry_kind" <> (2)
-                            OR "pt"."intent_key" <= "pe"."intent_key"
-                          )
-                      )
-                    )
-                    AND (
-                      (
-                        "pe"."verbatim_instance_id" IS NOT NULL
-                        AND (
-                          NOT EXISTS (
-                            SELECT
-                              1
-                            FROM
-                              "temporal_append_entries" AS "pr"
-                            WHERE
-                              "pr"."entity_id" = "pe"."entity_id"
-                              AND "pr"."attribute_name_key" = "pe"."attribute_name_key"
-                              AND "pr"."verbatim_instance_id" = "pe"."verbatim_instance_id"
-                              AND "pr"."entry_kind" IN (1, 2)
-                              AND "pr"."intent_key" > "pe"."intent_key"
-                          )
-                        )
-                      )
-                      OR (
-                        "pe"."verbatim_instance_id" IS NULL
-                        AND (
-                          NOT EXISTS (
-                            SELECT
-                              1
-                            FROM
-                              "attribute_history" AS "pd"
-                            WHERE
-                              "pd"."recorded_at" = "pe"."recorded_at"
-                              AND "pd"."write_id" = "pe"."write_id"
-                              AND "pd"."write_ordinal" = "pe"."write_ordinal"
-                          )
-                        )
-                      )
-                    )
-                    AND "pe"."entity_id" = "e"."id"
-                )
-              ) AS "qh"
-            WHERE
-              "qh"."attribute_name_key" = $58
-              AND (
-                (
-                  COALESCE(
-                    "qh"."value_geometry_reach",
-                    "qh"."value_geometry_valid",
-                    "qh"."value_geometry"
-                  )::box2d && ST_MakeEnvelope($59, $60, $61, $62, $63)::box2d
-                )
-                AND _ST_DWithin(
-                  COALESCE(
-                    "qh"."value_geometry_valid",
-                    "qh"."value_geometry"
-                  )::geography,
-                  ST_MakeValid(ST_GeomFromEWKB($64))::geography,
-                  $65
-                )
+                  AND "pe"."entity_id" = "e"."id"
               )
-              AND "qh"."value_kind" <> (0)
-              AND "qh"."observed_at" IS NOT NULL
-              AND "qh"."observed_at" >= $66
-          )
-          OR EXISTS (
-            SELECT
-              1
-            FROM
+            ) AS "qh"
+          WHERE
+            "qh"."attribute_name_key" = $30
+            AND (
               (
-                SELECT
-                  "re"."id" AS "entity_id",
-                  "rs"."attribute_name_key" AS "attribute_name_key",
-                  "rs"."dataset_key" AS "dataset_key",
-                  "rs"."stream_key" AS "stream_key"
-                FROM
-                  "temporal_attribute_streams" AS "rs"
-                  JOIN "entities" AS "re" ON "re"."entity_key" = "rs"."entity_key"
-                WHERE
-                  "re"."id" = "e"."id"
-                UNION ALL
-                (
-                  SELECT DISTINCT
-                    "pe"."entity_id" AS "entity_id",
-                    "pe"."attribute_name_key" AS "attribute_name_key",
-                    "pe"."dataset_key" AS "dataset_key",
-                    NULL::bigint AS "stream_key"
-                  FROM
-                    "temporal_append_entries" AS "pe"
-                  WHERE
-                    "pe"."entry_kind" IN (1, 2)
-                    AND (
-                      EXISTS (
-                        SELECT
-                          1
-                        FROM
-                          "entities" AS "pv"
-                        WHERE
-                          "pv"."id" = "pe"."entity_id"
-                          AND "pv"."evolution_created_at" IS NOT NULL
-                      )
-                      OR EXISTS (
-                        SELECT
-                          1
-                        FROM
-                          "temporal_append_intents" AS "pt"
-                        WHERE
-                          "pt"."entity_id" = "pe"."entity_id"
-                          AND cardinality("pt"."entity_type_name_keys") > 0
-                          AND (
-                            "pe"."entry_kind" <> (2)
-                            OR "pt"."intent_key" <= "pe"."intent_key"
-                          )
-                      )
-                    )
-                    AND (
-                      NOT EXISTS (
-                        SELECT
-                          1
-                        FROM
-                          "temporal_attribute_streams" AS "ps"
-                          JOIN "entities" AS "pv" ON "pv"."entity_key" = "ps"."entity_key"
-                        WHERE
-                          "pv"."id" = "pe"."entity_id"
-                          AND "ps"."attribute_name_key" = "pe"."attribute_name_key"
-                          AND "ps"."dataset_key" = "pe"."dataset_key"
-                      )
-                    )
-                    AND "pe"."entity_id" = "e"."id"
-                )
-              ) AS "qs"
-              JOIN LATERAL (
-                SELECT
-                  *
-                FROM
-                  (
-                    (
-                      SELECT
-                        *
-                      FROM
-                        (
-                          (
-                            SELECT
-                              "qi".*,
-                              "qi"."observed_at" AS "placed"
-                            FROM
-                              (
-                                SELECT
-                                  "qs"."entity_id" AS "entity_id",
-                                  "qs"."attribute_name_key" AS "attribute_name_key",
-                                  "qs"."dataset_key" AS "dataset_key",
-                                  "rh"."recorded_at",
-                                  "rh"."write_id",
-                                  "rh"."write_ordinal",
-                                  "rh"."attribute_kind" AS "attribute_kind",
-                                  "rh"."value_kind" AS "value_kind",
-                                  "rh"."observed_at" AS "observed_at",
-                                  "rh"."created_at" AS "created_at",
-                                  "rh"."modified_at" AS "modified_at",
-                                  "rh"."deleted_at" AS "deleted_at",
-                                  "rh"."value_date_time" AS "value_date_time",
-                                  "rh"."expires_at" AS "expires_at",
-                                  "rh"."generated_instance_id" AS "generated_instance_id",
-                                  "rh"."value_type_key" AS "value_type_key",
-                                  "rh"."value_datatype_key" AS "value_datatype_key",
-                                  "rh"."unit_code_id" AS "unit_code_id",
-                                  "rh"."value_boolean" AS "value_boolean",
-                                  "rh"."verbatim_instance_id" AS "verbatim_instance_id",
-                                  "rh"."value_number" AS "value_number",
-                                  "rh"."value_string" AS "value_string",
-                                  "rh"."value_language" AS "value_language",
-                                  "rh"."value_geometry" AS "value_geometry",
-                                  "rh"."value_geometry_valid" AS "value_geometry_valid",
-                                  "rh"."value_geometry_reach" AS "value_geometry_reach",
-                                  "rh"."value_geometry_members" AS "value_geometry_members",
-                                  "rh"."value_object" AS "value_object",
-                                  "rh"."value_uri" AS "value_uri",
-                                  "rh"."object_type_keys" AS "object_type_keys",
-                                  "rh"."sub_attributes" AS "sub_attributes"
-                                FROM
-                                  "attribute_history" AS "rh"
-                                WHERE
-                                  "rh"."stream_key" = "qs"."stream_key"
-                                  AND (
-                                    "rh"."verbatim_instance_id" IS NULL
-                                    OR (
-                                      NOT EXISTS (
-                                        SELECT
-                                          1
-                                        FROM
-                                          "temporal_append_entries" AS "pr"
-                                        WHERE
-                                          "pr"."entity_id" = "qs"."entity_id"
-                                          AND "pr"."attribute_name_key" = "qs"."attribute_name_key"
-                                          AND "pr"."verbatim_instance_id" = "rh"."verbatim_instance_id"
-                                          AND "pr"."entry_kind" IN (1, 2)
-                                      )
-                                    )
-                                  )
-                              ) AS "qi"
-                            WHERE
-                              "qi"."observed_at" <= $67
-                            ORDER BY
-                              "qi"."observed_at" DESC
-                          )
-                          FETCH FIRST
-                            1 ROW
-                          WITH
-                          TIES
-                        ) AS "qe"
-                      UNION ALL
-                      (
-                        SELECT
-                          *
-                        FROM
-                          (
-                            (
-                              SELECT
-                                "qi".*,
-                                "qi"."deleted_at" AS "placed"
-                              FROM
-                                (
-                                  SELECT
-                                    "qs"."entity_id" AS "entity_id",
-                                    "qs"."attribute_name_key" AS "attribute_name_key",
-                                    "qs"."dataset_key" AS "dataset_key",
-                                    "rh"."recorded_at",
-                                    "rh"."write_id",
-                                    "rh"."write_ordinal",
-                                    "rh"."attribute_kind" AS "attribute_kind",
-                                    "rh"."value_kind" AS "value_kind",
-                                    "rh"."observed_at" AS "observed_at",
-                                    "rh"."created_at" AS "created_at",
-                                    "rh"."modified_at" AS "modified_at",
-                                    "rh"."deleted_at" AS "deleted_at",
-                                    "rh"."value_date_time" AS "value_date_time",
-                                    "rh"."expires_at" AS "expires_at",
-                                    "rh"."generated_instance_id" AS "generated_instance_id",
-                                    "rh"."value_type_key" AS "value_type_key",
-                                    "rh"."value_datatype_key" AS "value_datatype_key",
-                                    "rh"."unit_code_id" AS "unit_code_id",
-                                    "rh"."value_boolean" AS "value_boolean",
-                                    "rh"."verbatim_instance_id" AS "verbatim_instance_id",
-                                    "rh"."value_number" AS "value_number",
-                                    "rh"."value_string" AS "value_string",
-                                    "rh"."value_language" AS "value_language",
-                                    "rh"."value_geometry" AS "value_geometry",
-                                    "rh"."value_geometry_valid" AS "value_geometry_valid",
-                                    "rh"."value_geometry_reach" AS "value_geometry_reach",
-                                    "rh"."value_geometry_members" AS "value_geometry_members",
-                                    "rh"."value_object" AS "value_object",
-                                    "rh"."value_uri" AS "value_uri",
-                                    "rh"."object_type_keys" AS "object_type_keys",
-                                    "rh"."sub_attributes" AS "sub_attributes"
-                                  FROM
-                                    "attribute_history" AS "rh"
-                                  WHERE
-                                    "rh"."stream_key" = "qs"."stream_key"
-                                    AND (
-                                      "rh"."verbatim_instance_id" IS NULL
-                                      OR (
-                                        NOT EXISTS (
-                                          SELECT
-                                            1
-                                          FROM
-                                            "temporal_append_entries" AS "pr"
-                                          WHERE
-                                            "pr"."entity_id" = "qs"."entity_id"
-                                            AND "pr"."attribute_name_key" = "qs"."attribute_name_key"
-                                            AND "pr"."verbatim_instance_id" = "rh"."verbatim_instance_id"
-                                            AND "pr"."entry_kind" IN (1, 2)
-                                        )
-                                      )
-                                    )
-                                ) AS "qi"
-                              WHERE
-                                "qi"."deleted_at" <= $68
-                                AND "qi"."observed_at" IS NULL
-                              ORDER BY
-                                "qi"."deleted_at" DESC
-                            )
-                            FETCH FIRST
-                              1 ROW
-                            WITH
-                            TIES
-                          ) AS "qe"
-                      )
-                      UNION ALL
-                      (
-                        SELECT
-                          *
-                        FROM
-                          (
-                            (
-                              SELECT
-                                "qi".*,
-                                "qi"."observed_at" AS "placed"
-                              FROM
-                                (
-                                  SELECT
-                                    "pe"."entity_id" AS "entity_id",
-                                    "pe"."attribute_name_key" AS "attribute_name_key",
-                                    "pe"."dataset_key" AS "dataset_key",
-                                    "pe"."recorded_at" AS "recorded_at",
-                                    "pe"."write_id" AS "write_id",
-                                    "pe"."write_ordinal" AS "write_ordinal",
-                                    "pe"."attribute_kind" AS "attribute_kind",
-                                    "pe"."value_kind" AS "value_kind",
-                                    "pe"."observed_at" AS "observed_at",
-                                    "pe"."created_at" AS "created_at",
-                                    "pe"."modified_at" AS "modified_at",
-                                    "pe"."deleted_at" AS "deleted_at",
-                                    "pe"."value_date_time" AS "value_date_time",
-                                    "pe"."expires_at" AS "expires_at",
-                                    "pe"."generated_instance_id" AS "generated_instance_id",
-                                    "pe"."value_type_key" AS "value_type_key",
-                                    "pe"."value_datatype_key" AS "value_datatype_key",
-                                    "pe"."unit_code_id" AS "unit_code_id",
-                                    "pe"."value_boolean" AS "value_boolean",
-                                    "pe"."verbatim_instance_id" AS "verbatim_instance_id",
-                                    "pe"."value_number" AS "value_number",
-                                    "pe"."value_string" AS "value_string",
-                                    "pe"."value_language" AS "value_language",
-                                    "pe"."value_geometry" AS "value_geometry",
-                                    (
-                                      CASE
-                                        WHEN (ST_IsValid("pe"."value_geometry")) THEN NULL
-                                        ELSE ST_MakeValid("pe"."value_geometry")
-                                      END
-                                    ) AS "value_geometry_valid",
-                                    "pe"."value_geometry_reach" AS "value_geometry_reach",
-                                    "pe"."value_geometry_members" AS "value_geometry_members",
-                                    "pe"."value_object" AS "value_object",
-                                    "pe"."value_uri" AS "value_uri",
-                                    "pe"."object_type_keys" AS "object_type_keys",
-                                    "pe"."sub_attributes" AS "sub_attributes"
-                                  FROM
-                                    "temporal_append_entries" AS "pe"
-                                  WHERE
-                                    "pe"."entry_kind" IN (1, 2)
-                                    AND (
-                                      EXISTS (
-                                        SELECT
-                                          1
-                                        FROM
-                                          "entities" AS "pv"
-                                        WHERE
-                                          "pv"."id" = "pe"."entity_id"
-                                          AND "pv"."evolution_created_at" IS NOT NULL
-                                      )
-                                      OR EXISTS (
-                                        SELECT
-                                          1
-                                        FROM
-                                          "temporal_append_intents" AS "pt"
-                                        WHERE
-                                          "pt"."entity_id" = "pe"."entity_id"
-                                          AND cardinality("pt"."entity_type_name_keys") > 0
-                                          AND (
-                                            "pe"."entry_kind" <> (2)
-                                            OR "pt"."intent_key" <= "pe"."intent_key"
-                                          )
-                                      )
-                                    )
-                                    AND (
-                                      (
-                                        "pe"."verbatim_instance_id" IS NOT NULL
-                                        AND (
-                                          NOT EXISTS (
-                                            SELECT
-                                              1
-                                            FROM
-                                              "temporal_append_entries" AS "pr"
-                                            WHERE
-                                              "pr"."entity_id" = "pe"."entity_id"
-                                              AND "pr"."attribute_name_key" = "pe"."attribute_name_key"
-                                              AND "pr"."verbatim_instance_id" = "pe"."verbatim_instance_id"
-                                              AND "pr"."entry_kind" IN (1, 2)
-                                              AND "pr"."intent_key" > "pe"."intent_key"
-                                          )
-                                        )
-                                      )
-                                      OR (
-                                        "pe"."verbatim_instance_id" IS NULL
-                                        AND (
-                                          NOT EXISTS (
-                                            SELECT
-                                              1
-                                            FROM
-                                              "attribute_history" AS "pd"
-                                            WHERE
-                                              "pd"."recorded_at" = "pe"."recorded_at"
-                                              AND "pd"."write_id" = "pe"."write_id"
-                                              AND "pd"."write_ordinal" = "pe"."write_ordinal"
-                                          )
-                                        )
-                                      )
-                                    )
-                                    AND "pe"."entity_id" = "qs"."entity_id"
-                                    AND "pe"."attribute_name_key" = "qs"."attribute_name_key"
-                                    AND "pe"."dataset_key" = "qs"."dataset_key"
-                                ) AS "qi"
-                              WHERE
-                                "qi"."observed_at" <= $69
-                              ORDER BY
-                                "qi"."observed_at" DESC
-                            )
-                            FETCH FIRST
-                              1 ROW
-                            WITH
-                            TIES
-                          ) AS "qe"
-                      )
-                      UNION ALL
-                      (
-                        SELECT
-                          *
-                        FROM
-                          (
-                            (
-                              SELECT
-                                "qi".*,
-                                "qi"."deleted_at" AS "placed"
-                              FROM
-                                (
-                                  SELECT
-                                    "pe"."entity_id" AS "entity_id",
-                                    "pe"."attribute_name_key" AS "attribute_name_key",
-                                    "pe"."dataset_key" AS "dataset_key",
-                                    "pe"."recorded_at" AS "recorded_at",
-                                    "pe"."write_id" AS "write_id",
-                                    "pe"."write_ordinal" AS "write_ordinal",
-                                    "pe"."attribute_kind" AS "attribute_kind",
-                                    "pe"."value_kind" AS "value_kind",
-                                    "pe"."observed_at" AS "observed_at",
-                                    "pe"."created_at" AS "created_at",
-                                    "pe"."modified_at" AS "modified_at",
-                                    "pe"."deleted_at" AS "deleted_at",
-                                    "pe"."value_date_time" AS "value_date_time",
-                                    "pe"."expires_at" AS "expires_at",
-                                    "pe"."generated_instance_id" AS "generated_instance_id",
-                                    "pe"."value_type_key" AS "value_type_key",
-                                    "pe"."value_datatype_key" AS "value_datatype_key",
-                                    "pe"."unit_code_id" AS "unit_code_id",
-                                    "pe"."value_boolean" AS "value_boolean",
-                                    "pe"."verbatim_instance_id" AS "verbatim_instance_id",
-                                    "pe"."value_number" AS "value_number",
-                                    "pe"."value_string" AS "value_string",
-                                    "pe"."value_language" AS "value_language",
-                                    "pe"."value_geometry" AS "value_geometry",
-                                    (
-                                      CASE
-                                        WHEN (ST_IsValid("pe"."value_geometry")) THEN NULL
-                                        ELSE ST_MakeValid("pe"."value_geometry")
-                                      END
-                                    ) AS "value_geometry_valid",
-                                    "pe"."value_geometry_reach" AS "value_geometry_reach",
-                                    "pe"."value_geometry_members" AS "value_geometry_members",
-                                    "pe"."value_object" AS "value_object",
-                                    "pe"."value_uri" AS "value_uri",
-                                    "pe"."object_type_keys" AS "object_type_keys",
-                                    "pe"."sub_attributes" AS "sub_attributes"
-                                  FROM
-                                    "temporal_append_entries" AS "pe"
-                                  WHERE
-                                    "pe"."entry_kind" IN (1, 2)
-                                    AND (
-                                      EXISTS (
-                                        SELECT
-                                          1
-                                        FROM
-                                          "entities" AS "pv"
-                                        WHERE
-                                          "pv"."id" = "pe"."entity_id"
-                                          AND "pv"."evolution_created_at" IS NOT NULL
-                                      )
-                                      OR EXISTS (
-                                        SELECT
-                                          1
-                                        FROM
-                                          "temporal_append_intents" AS "pt"
-                                        WHERE
-                                          "pt"."entity_id" = "pe"."entity_id"
-                                          AND cardinality("pt"."entity_type_name_keys") > 0
-                                          AND (
-                                            "pe"."entry_kind" <> (2)
-                                            OR "pt"."intent_key" <= "pe"."intent_key"
-                                          )
-                                      )
-                                    )
-                                    AND (
-                                      (
-                                        "pe"."verbatim_instance_id" IS NOT NULL
-                                        AND (
-                                          NOT EXISTS (
-                                            SELECT
-                                              1
-                                            FROM
-                                              "temporal_append_entries" AS "pr"
-                                            WHERE
-                                              "pr"."entity_id" = "pe"."entity_id"
-                                              AND "pr"."attribute_name_key" = "pe"."attribute_name_key"
-                                              AND "pr"."verbatim_instance_id" = "pe"."verbatim_instance_id"
-                                              AND "pr"."entry_kind" IN (1, 2)
-                                              AND "pr"."intent_key" > "pe"."intent_key"
-                                          )
-                                        )
-                                      )
-                                      OR (
-                                        "pe"."verbatim_instance_id" IS NULL
-                                        AND (
-                                          NOT EXISTS (
-                                            SELECT
-                                              1
-                                            FROM
-                                              "attribute_history" AS "pd"
-                                            WHERE
-                                              "pd"."recorded_at" = "pe"."recorded_at"
-                                              AND "pd"."write_id" = "pe"."write_id"
-                                              AND "pd"."write_ordinal" = "pe"."write_ordinal"
-                                          )
-                                        )
-                                      )
-                                    )
-                                    AND "pe"."entity_id" = "qs"."entity_id"
-                                    AND "pe"."attribute_name_key" = "qs"."attribute_name_key"
-                                    AND "pe"."dataset_key" = "qs"."dataset_key"
-                                ) AS "qi"
-                              WHERE
-                                "qi"."deleted_at" <= $70
-                                AND "qi"."observed_at" IS NULL
-                              ORDER BY
-                                "qi"."deleted_at" DESC
-                            )
-                            FETCH FIRST
-                              1 ROW
-                            WITH
-                            TIES
-                          ) AS "qe"
-                      )
-                      ORDER BY
-                        "placed" DESC
-                    )
-                    FETCH FIRST
-                      1 ROW
-                    WITH
-                    TIES
-                  ) AS "qe"
-              ) AS "qh" ON TRUE
-            WHERE
-              "qs"."attribute_name_key" = $71
-              AND "qh"."placed" < $72
-              AND "qh"."attribute_name_key" = $73
-              AND (
-                (
-                  COALESCE(
-                    "qh"."value_geometry_reach",
-                    "qh"."value_geometry_valid",
-                    "qh"."value_geometry"
-                  )::box2d && ST_MakeEnvelope($74, $75, $76, $77, $78)::box2d
-                )
-                AND _ST_DWithin(
-                  COALESCE(
-                    "qh"."value_geometry_valid",
-                    "qh"."value_geometry"
-                  )::geography,
-                  ST_MakeValid(ST_GeomFromEWKB($79))::geography,
-                  $80
-                )
+                COALESCE(
+                  "qh"."value_geometry_reach",
+                  "qh"."value_geometry_valid",
+                  "qh"."value_geometry"
+                )::box2d && ST_MakeEnvelope($31, $32, $33, $34, $35)::box2d
               )
-              AND "qh"."value_kind" <> (0)
-          )
+              AND _ST_DWithin(
+                COALESCE(
+                  "qh"."value_geometry_valid",
+                  "qh"."value_geometry"
+                )::geography,
+                ST_MakeValid(ST_GeomFromEWKB($36))::geography,
+                $37
+              )
+            )
+            AND "qh"."value_kind" <> (0)
+            AND "qh"."observed_at" IS NOT NULL
+            AND "qh"."observed_at" >= $38
         )
         AND (
           SELECT
             COUNT(*)
           FROM
             "short_walk"
-        ) < $81
+        ) < $39
         AND (
           SELECT
             COUNT(*)
           FROM
             "candidates"
-        ) > $82
+        ) > $40
         AND EXISTS (
           SELECT
             1
@@ -2983,7 +1456,7 @@ UNION ALL
               )
             ) AS "ah"
           WHERE
-            "ah"."observed_at" >= $83
+            "ah"."observed_at" >= $41
         )
       ORDER BY
         "e"."id" ASC
@@ -3001,76 +1474,34 @@ UNION ALL
 8: Double 2000
 9: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
 10: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-11: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-12: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-13: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-14: Int 9
-15: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-16: Int 9
-17: Double -8.527047498534149
-18: Double 41.18391161045816
-19: Double -8.478952501465852
-20: Double 41.220088389541836
-21: Int 4326
-22: Bytes '\x0101000020E6100000A8C64B37890121C060E5D022DB994440'
-23: Double 2000
-24: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-25: Int 9
-26: Double -8.527047498534149
-27: Double 41.18391161045816
-28: Double -8.478952501465852
-29: Double 41.220088389541836
-30: Int 4326
-31: BigUnsigned 20
-32: Int 9
-33: Double -8.527047498534149
-34: Double 41.18391161045816
-35: Double -8.478952501465852
-36: Double 41.220088389541836
-37: Int 4326
-38: Bytes '\x0101000020E6100000A8C64B37890121C060E5D022DB994440'
-39: Double 2000
-40: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
+11: Int 9
+12: Double -8.527047498534149
+13: Double 41.18391161045816
+14: Double -8.478952501465852
+15: Double 41.220088389541836
+16: Int 4326
+17: BigUnsigned 20
+18: Int 9
+19: Double -8.527047498534149
+20: Double 41.18391161045816
+21: Double -8.478952501465852
+22: Double 41.220088389541836
+23: Int 4326
+24: Bytes '\x0101000020E6100000A8C64B37890121C060E5D022DB994440'
+25: Double 2000
+26: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
+27: BigUnsigned 20
+28: BigUnsigned 10000
+29: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
+30: Int 9
+31: Double -8.527047498534149
+32: Double 41.18391161045816
+33: Double -8.478952501465852
+34: Double 41.220088389541836
+35: Int 4326
+36: Bytes '\x0101000020E6100000A8C64B37890121C060E5D022DB994440'
+37: Double 2000
+38: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
+39: BigUnsigned 20
+40: BigUnsigned 10000
 41: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-42: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-43: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-44: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-45: Int 9
-46: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-47: Int 9
-48: Double -8.527047498534149
-49: Double 41.18391161045816
-50: Double -8.478952501465852
-51: Double 41.220088389541836
-52: Int 4326
-53: Bytes '\x0101000020E6100000A8C64B37890121C060E5D022DB994440'
-54: Double 2000
-55: BigUnsigned 20
-56: BigUnsigned 10000
-57: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-58: Int 9
-59: Double -8.527047498534149
-60: Double 41.18391161045816
-61: Double -8.478952501465852
-62: Double 41.220088389541836
-63: Int 4326
-64: Bytes '\x0101000020E6100000A8C64B37890121C060E5D022DB994440'
-65: Double 2000
-66: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-67: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-68: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-69: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-70: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-71: Int 9
-72: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'
-73: Int 9
-74: Double -8.527047498534149
-75: Double 41.18391161045816
-76: Double -8.478952501465852
-77: Double 41.220088389541836
-78: Int 4326
-79: Bytes '\x0101000020E6100000A8C64B37890121C060E5D022DB994440'
-80: Double 2000
-81: BigUnsigned 20
-82: BigUnsigned 10000
-83: ChronoDateTimeUtc '2020-07-01 12:05:00.000000 +00:00'

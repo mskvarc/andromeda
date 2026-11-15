@@ -6,7 +6,6 @@ use crate::{
     outcome::TemporalEntityIdOutcome,
     port::{
         history_reader::{RecordedAttributeShape, RecordedValueKind, ShapeHolders, TemporalAggregationOutcome, TemporalHistoryOutcome, TemporalHistoryReader},
-        in_effect_reads::InEffectReads,
         read_scope::{ScopeReach, TemporalReadScope, UnrecordedHistory},
     },
     query_reading::QueryReading,
@@ -128,12 +127,11 @@ impl TemporalHistoryReader for ShapedReader {
         panic!("no split query is read")
     }
 
-    async fn in_effect_instances(
+    async fn in_effect_scope(
         &self,
         _scope: &TemporalReadScope<'_>,
         _compiled: &CompiledTemporalQuery,
         _entity_ids: &[Identifier],
-        _reads: InEffectReads<'_>,
     ) -> Result<HashMap<Identifier, Vec<TemporalHistoryRow>>, TemporalError> {
         panic!("no split query is read")
     }

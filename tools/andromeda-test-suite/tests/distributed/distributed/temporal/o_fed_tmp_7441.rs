@@ -1,4 +1,4 @@
-//! A location only a peer held before the window answers the geo query.
+//! A location only a peer held inside the window answers the geo query, one before it does not.
 
 use andromeda_test_suite::{
     broker,
@@ -23,13 +23,13 @@ use ngsi_ld::{
     registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo},
 };
 
-/// Pins: under `splitEntities` a between 12:00-13:00 near `geoQ` on broker A answers Vehicle 1, holding speed on
-/// broker A at 12:10 and whose only location broker B observed at 11:00 inside the fence, and not Vehicle 2, which
-/// broker B alone holds before the window and no broker holds data of inside it
+/// Pins: under `splitEntities` a between 12:00-13:00 near `geoQ` on broker A answers Vehicle 2, whose only location
+/// broker B observed at 12:30 inside the fence, and not Vehicle 1, holding speed on broker A at 12:10 and whose only
+/// location broker B observed at 11:00 inside the fence, before the window
 /// Clause: 5.7.4.4, 4.11, 4.10
 #[gtest]
 #[tokio::test]
-async fn o_fed_tmp_7441_a_location_only_a_peer_held_before_the_window_answers_the_geo_query() -> Result<()> {
+async fn o_fed_tmp_7441_a_location_only_a_peer_held_before_the_window_does_not_answer_the_geo_query() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let vehicle_id = namespace.urn("Vehicle", 1)?;
@@ -53,11 +53,11 @@ async fn o_fed_tmp_7441_a_location_only_a_peer_held_before_the_window_answers_th
         .build()?;
     broker_b.temporal().create_or_update(&vehicle_evolution_2).send().await?.created()?;
     let vehicle_2_evolution = TemporalEntity::builder()
-        .id(vehicle_2_id)
+        .id(vehicle_2_id.clone())
         .entity_type(vehicle_type.clone())
         .geo_property(
             "location",
-            GeoProperty::builder(Shape::Point(Position::try_new(8.0, 44.0)?)).observed_at("2020-08-01T11:00:00Z".parse()?),
+            GeoProperty::builder(Shape::Point(Position::try_new(8.0, 44.0)?)).observed_at("2020-08-01T12:30:00Z".parse()?),
         )
         .build()?;
     broker_b.temporal().create_or_update(&vehicle_2_evolution).send().await?.created()?;
@@ -82,6 +82,6 @@ async fn o_fed_tmp_7441_a_location_only_a_peer_held_before_the_window_answers_th
         .send()
         .await?;
     expect_that!(page.items(), len(eq(1)));
-    expect_that!(page.items(), nth(0, has_id(&vehicle_id)));
+    expect_that!(page.items(), nth(0, has_id(&vehicle_2_id)));
     Ok(())
 }

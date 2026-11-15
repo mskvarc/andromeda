@@ -50,12 +50,12 @@ pub(crate) fn value_filter_condition(branch: &HistoryBranch, compiled: &Compiled
     if let Some(q) = compiled.entities.q.as_ref() {
         filters = filters.add(q_filter::compile(
             q.lowered(),
-            &InstanceScan::History(&windowed_instances(branch, compiled, &of, WindowReach::InsideAndInEffect)),
+            &InstanceScan::History(&windowed_instances(branch, compiled, &of)),
             names,
         ));
         present = true;
     }
-    if let Some(geo) = temporal_geo_existential(branch, compiled, names, &of, WindowReach::InsideAndInEffect)? {
+    if let Some(geo) = temporal_geo_existential(branch, compiled, names, &of)? {
         filters = filters.add(geo);
         present = true;
     }
@@ -97,21 +97,19 @@ pub(crate) fn scope_history_target(branch: &HistoryBranch, compiled: &CompiledTe
 }
 
 /// The Attribute instances a temporal `q` is checked against (clause 5.7.4.4
-/// step S2): the history rows of the Evolution `of` names valid within the
-/// window on the requested Temporal Property, of every `datasetId`, those
-/// `reach` names.
-pub(crate) fn windowed_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, of: &HistoryOf, reach: WindowReach) -> HistoryWindow {
+/// step S2): the history rows of the Evolution `of` names inside the
+/// window on the requested Temporal Property, of every `datasetId`.
+pub(crate) fn windowed_instances(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, of: &HistoryOf) -> HistoryWindow {
     HistoryWindow::builder()
         .branch(branch.clone())
         .of(of.clone())
         .timeproperty(compiled.window.timeproperty)
         .interval(compiled.window.interval)
-        .reach(reach)
         .build()
 }
 
-/// Whether one `GeoProperty` instance of the Evolution `of` names, valid
-/// within the temporal window, meets the query's geo restriction (clause 4.10;
+/// Whether one `GeoProperty` instance of the Evolution `of` names, inside
+/// the temporal window, meets the query's geo restriction (clause 4.10;
 /// clause 5.7.4.4 step S3); `None` when the query carries none.
 ///
 /// Every instance of the target `GeoProperty`, the default `location` and any
@@ -130,12 +128,11 @@ pub(crate) fn temporal_geo_existential(
     compiled: &CompiledTemporalQuery,
     names: &QueryNames,
     of: &HistoryOf,
-    reach: WindowReach,
 ) -> Result<Option<Condition>, RenderError> {
     let Some(geo) = &compiled.entities.geo else {
         return Ok(None);
     };
-    windowed_instances(branch, compiled, of, reach)
+    windowed_instances(branch, compiled, of)
         .exists_geo(names.attributes.get(&geo.geoproperty), geo)
         .map(Some)
 }
@@ -162,7 +159,7 @@ mod tests {
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_postgresql_query::{history_source::HistoryBranch, query_names::QueryNames, window_reach::WindowReach};
+    use andromeda_postgresql_query::{history_source::HistoryBranch, query_names::QueryNames};
     use andromeda_postgresql_seaquery::assert_statement_snapshot;
     use andromeda_postgresql_stored_values::{attribute_name_key::AttributeNameKey, entity_type_name_key::EntityTypeNameKey, resolved_names::ResolvedNames};
     use chrono::{DateTime, Utc};
@@ -271,7 +268,7 @@ mod tests {
 
     /// The geo filter of `compiled` alone.
     fn geo_filter(branch: &HistoryBranch, compiled: &CompiledTemporalQuery, names: &QueryNames) -> SelectStatement {
-        let condition = temporal_geo_existential(branch, compiled, names, &stage1_evolution(), WindowReach::InsideAndInEffect)
+        let condition = temporal_geo_existential(branch, compiled, names, &stage1_evolution())
             .expect("renders")
             .expect("a geo query");
         Query::select().expr(Expr::val(1)).cond_where(condition).to_owned()
@@ -345,13 +342,12 @@ mod tests {
         assert_statement_snapshot!("value-filters-a-recorded-branch-correlates-the-q-probe-by-evolution-key", statement);
     }
 
-    /// Clause 4.11 with Annex C clause C.5.5: an `after` window also reads the
-    /// instance in effect when it opens, through the stream source narrowed
-    /// by the key and the rows of each stream read by its stream key.
+    /// Clause 5.7.4.4 step S2: an `after` window reads the instances inside it
+    /// alone, none its streams held when it opened.
     #[test]
-    fn a_recorded_branch_correlates_the_in_effect_instance_by_evolution_key() {
+    fn an_after_window_reads_the_q_instances_inside_it_alone() {
         let statement = filters(&HistoryBranch::live_recorded(), &rare_q(compiled(after_2019())));
-        assert_statement_snapshot!("value-filters-a-recorded-branch-correlates-the-in-effect-instance-by-evolution-key", statement);
+        assert_statement_snapshot!("value-filters-an-after-window-reads-the-q-instances-inside-it-alone", statement);
     }
 
     #[test]
@@ -361,9 +357,8 @@ mod tests {
     }
 
     /// Clause 5.7.4.4 steps S2 and S3 read the same instances: for one window,
-    /// `q` and `georel` both probe the instances inside it and the instance in
-    /// effect when it opens (the one placed on its stream, `qi`), and neither
-    /// counts a deletion.
+    /// `q` and `georel` both probe the instances inside it, and neither counts
+    /// a deletion.
     #[test]
     fn q_and_georel_read_the_same_window_instances() {
         let q = filters(&HistoryBranch::live_recorded(), &rare_q(compiled(after_2019())));

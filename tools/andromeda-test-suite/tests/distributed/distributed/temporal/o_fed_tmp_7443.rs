@@ -1,43 +1,25 @@
-//! A deletion a peer recorded ends the local instance in effect.
+//! A local value observed before a window opening after now matches in no broker.
 
-use andromeda_test_suite::{
-    broker,
-    cleanup::Cleanup,
-    config::{BrokerRole, PeerRole},
-    identity_matcher::has_id,
-    namespace::Namespace,
-    nth::nth,
-    outcome::Upserted,
-    problem::answered,
-};
+use andromeda_test_suite::{broker, cleanup::Cleanup, config::PeerRole, identity_matcher::has_id, namespace::Namespace, nth::nth, outcome::Upserted};
 use googletest::prelude::*;
-use http::StatusCode;
 use ngsi_ld::{
     http::headers::Accept,
-    model::{
-        AttributeKind,
-        NgsiLdMediaType,
-        Property,
-        evolution::{DeletedInstance, TemporalEntity},
-    },
+    model::{NgsiLdMediaType, Property, evolution::TemporalEntity},
     query::{EntitySplitting, q, temporal_query},
     registration::{CSourceRegistration, DistributedOperation, EntityInfo, RegistrationInfo},
 };
 
-/// Pins: under `splitEntities` a query on broker A over a window opening after now answers q=speed>50 for a Vehicle
-/// whose speed 60 broker A observed in 2020 only until broker B records speed deleted, the deletion stamped at the
-/// instant broker B records it, now, which ends that instance before the window opens: a deletion holding no value,
-/// placed at the instant it was recorded (`deletedAt` is a system time, clause 4.8)
-/// Clause: 5.7.4.4, 4.11, 4.5.7, 4.8
+/// Pins: under `splitEntities` a query on broker A over a window opening after now does not answer q=speed>50 for a
+/// Vehicle whose speed 60 broker A observed in 2020 only, and a query over a window holding that instant answers it
+/// Clause: 5.7.4.4, 4.11, 4.9
 #[gtest]
 #[tokio::test]
-async fn o_fed_tmp_7443_a_deletion_a_peer_recorded_ends_the_local_instance_in_effect() -> Result<()> {
+async fn o_fed_tmp_7443_a_local_value_observed_before_a_window_opening_after_now_matches_nothing() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let vehicle_id = namespace.urn("Vehicle", 1)?;
     let vehicle_type = namespace.entity_type("Vehicle")?;
     let registration_id = namespace.registration_id(1)?;
-    let broker_b = broker::client(BrokerRole::B)?;
     let vehicle_evolution = TemporalEntity::builder()
         .id(vehicle_id.clone())
         .entity_type(vehicle_type.clone())
@@ -65,27 +47,17 @@ async fn o_fed_tmp_7443_a_deletion_a_peer_recorded_ends_the_local_instance_in_ef
         .q(q::attr("speed").gt(50))
         .send()
         .await?;
-    expect_that!(page.items(), len(eq(1)));
-    expect_that!(page.items(), nth(0, has_id(&vehicle_id)));
-    let vehicle_evolution_2 = TemporalEntity::builder()
-        .id(vehicle_id.clone())
-        .entity_type(vehicle_type.clone())
-        .deleted(
-            "speed",
-            DeletedInstance::builder(AttributeKind::Property, "2020-08-01T11:30:00Z".parse()?).build(),
-        )
-        .build()?;
-    let answer = broker_b.with_responses().temporal().create_or_update(&vehicle_evolution_2).send().await;
-    expect_that!(&answer, answered(StatusCode::CREATED));
+    expect_that!(page.items(), len(eq(0)));
     let page_2 = broker
         .with_accept(Accept::new(NgsiLdMediaType::Json))
         .temporal()
-        .query(temporal_query::between("2099-01-01T00:00:00Z".parse()?, "2099-01-01T01:00:00Z".parse()?))
+        .query(temporal_query::between("2020-08-01T10:00:00Z".parse()?, "2020-08-01T12:00:00Z".parse()?))
         .entity_type(&vehicle_type)
         .split_entities(EntitySplitting::Split)
         .q(q::attr("speed").gt(50))
         .send()
         .await?;
-    expect_that!(page_2.items(), len(eq(0)));
+    expect_that!(page_2.items(), len(eq(1)));
+    expect_that!(page_2.items(), nth(0, has_id(&vehicle_id)));
     Ok(())
 }

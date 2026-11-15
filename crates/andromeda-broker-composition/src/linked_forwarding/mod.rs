@@ -80,30 +80,29 @@ trait LinkedAnswer {
     /// The form the source's entities arrive in.
     type Entity;
 
-    /// The registration the source answered for, the entities it answered
-    /// with, and the clause 6.3.17 warnings the attempt raised.
-    fn into_parts(self) -> (Option<Identifier>, Vec<Self::Entity>, Vec<NgsiLdWarning>);
+    /// The entities the source answered with and the clause 6.3.17 warnings
+    /// the attempt raised.
+    fn into_parts(self) -> (Vec<Self::Entity>, Vec<NgsiLdWarning>);
 }
 
 impl LinkedAnswer for ForwardedEntities {
     type Entity = ReceivedState;
 
-    fn into_parts(self) -> (Option<Identifier>, Vec<ReceivedState>, Vec<NgsiLdWarning>) {
-        (self.registration_id, self.entities, self.warnings)
+    fn into_parts(self) -> (Vec<ReceivedState>, Vec<NgsiLdWarning>) {
+        (self.entities, self.warnings)
     }
 }
 
 impl LinkedAnswer for ForwardedTemporalEntities {
     type Entity = TemporalHistory;
 
-    fn into_parts(self) -> (Option<Identifier>, Vec<TemporalHistory>, Vec<NgsiLdWarning>) {
-        (self.registration_id, self.entities, self.warnings)
+    fn into_parts(self) -> (Vec<TemporalHistory>, Vec<NgsiLdWarning>) {
+        (self.entities, self.warnings)
     }
 }
 
 /// What the forwarded retrieval of the Linked Entity `id` resolved, each
-/// source's entities taken into the resolution by `gather` beside the
-/// registration of the source that answered them.
+/// source's entities taken into the resolution by `gather`.
 ///
 /// A Linked Entity that cannot be reached degrades the join instead of the
 /// request (clause 4.5.23): the Relationship keeps its plain URI and the
@@ -111,7 +110,7 @@ impl LinkedAnswer for ForwardedTemporalEntities {
 fn resolution<A: LinkedAnswer, T>(
     id: &Identifier,
     forwarded: Result<ForwardReadOutcome<A>, FederationError>,
-    mut gather: impl FnMut(&mut Vec<T>, Option<&Identifier>, A::Entity),
+    mut gather: impl FnMut(&mut Vec<T>, A::Entity),
 ) -> RemoteResolution<T> {
     match forwarded {
         Ok(outcome) => {
@@ -120,10 +119,10 @@ fn resolution<A: LinkedAnswer, T>(
                 failures: Vec::new(),
             };
             for source in outcome.results {
-                let (registration, entities, warnings) = source.into_parts();
+                let (entities, warnings) = source.into_parts();
                 resolved.failures.extend(source_failures(id, warnings));
                 for entity in entities {
-                    gather(&mut resolved.entities, registration.as_ref(), entity);
+                    gather(&mut resolved.entities, entity);
                 }
             }
             resolved
@@ -175,7 +174,7 @@ mod tests {
             sources: MatchedSources::default(),
         };
 
-        let resolved = resolution(&id, Ok(outcome), |gathered: &mut Vec<_>, _, history| gathered.push(history));
+        let resolved = resolution(&id, Ok(outcome), |gathered: &mut Vec<_>, history| gathered.push(history));
 
         let kinds: Vec<_> = resolved.failures.iter().map(|failure| (failure.id.clone(), failure.kind)).collect();
         pretty_assertions::assert_eq!(
@@ -197,7 +196,7 @@ mod tests {
         };
         let detail = error.to_string();
 
-        let resolved = resolution::<ForwardedTemporalEntities, TemporalHistory>(&id, Err(error), |gathered, _, history| gathered.push(history));
+        let resolved = resolution::<ForwardedTemporalEntities, TemporalHistory>(&id, Err(error), Vec::push);
 
         assert!(resolved.entities.is_empty());
         pretty_assertions::assert_eq!(

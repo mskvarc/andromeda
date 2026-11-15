@@ -1,78 +1,37 @@
-//! Gathering the instances a split temporal query's filters read in effect
+//! Gathering the Scope a split temporal query's scope filter reads in force
 //! when its window opens, from every part of the entities it judges (clauses
-//! 4.11 and 5.7.4.4).
+//! 4.18 and 5.7.4.4).
 //!
 //! The window query a source answers holds the instances inside the window
-//! only, and the local read decides its own part, so the instance each stream
-//! held when the window opens, the latest across every part, is gathered
-//! apart: each source is probed for the latest instance and the latest
-//! deletion of every filter attribute before the start, this broker reads its
-//! own, and every dataset a source answering per Attribute may have hidden is
-//! probed for on its own. The latest deletion is the one with the latest
-//! `deletedAt`, which an undated deletion placed after the instance in effect
-//! can fall before, so a source that answered a deletion is asked again for
-//! the older deletions of that stream until they can no longer pass the
-//! instance in effect. An entity a source answered a probe for is judged over
-//! every part even when no source answered it for the window.
+//! only, and the local read decides its own part, so the Scope in force when
+//! the window opens, the latest across every part, is gathered apart: each
+//! source is probed for the latest instance and the latest deletion before the
+//! start, and this broker reads its own. The value and geo filters read the
+//! instances inside the window alone (clause 5.7.4.4 steps S2 and S3), so only
+//! a query carrying a scope filter gathers. An entity a source answered a probe
+//! for is judged over every part even when no source answered it for the
+//! window.
 
 use crate::temporal::{
     ProblemResponse,
     ResultInstanceExt,
-    query::{
-        forwarding::{ForwardedHistory, InEffectRequest, TemporalForwarding, forward_in_effect_probes},
-        split_contribution::carries_split_filters,
-    },
+    query::forwarding::{ForwardedHistory, InEffectRequest, TemporalForwarding, forward_in_effect_probes},
 };
 use andromeda_context_space::context_target::ContextTarget;
-use andromeda_federation::{
-    in_effect_probe::{InEffectProbe, InEffectReading},
-    outcome::ForwardedTemporalEntities,
-    split_entities::SplitEntities,
-};
+use andromeda_federation::{in_effect_probe::InEffectReading, outcome::ForwardedTemporalEntities, split_entities::SplitEntities};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::identifier::Identifier;
 use andromeda_ngsi_ld_model::temporal::{temporal_document::TemporalDocument, temporal_history::TemporalHistory};
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, filter::language_targeting::LanguageTargeting, temporal::window::TemporalWindow};
+use andromeda_ngsi_ld_query::filter::language_targeting::LanguageTargeting;
 use andromeda_ngsi_ld_request::query::temporal::admitted::AdmittedTemporalRequest;
-use andromeda_temporal::{
-    deletion_follow_up::{SourcedDocuments, follow_earlier_deletions},
-    in_effect_follow_up::follow_up_datasets,
-    local_in_effect::LocalInEffect,
-    query_reading::QueryReading,
-    service::TemporalService,
-};
+use andromeda_temporal::{local_in_effect::LocalInEffect, query_reading::QueryReading, service::TemporalService};
 use axum::http::Uri;
-use std::{collections::HashMap, slice};
 
-/// The probe for the latest instance, asked across every dataset.
-const PLACED_ACROSS_DATASETS: InEffectProbe<'static> = InEffectProbe {
-    reading: InEffectReading::Placed,
-    dataset: None,
-};
-
-/// The probe for the latest deletion, asked across every dataset.
-const DELETION_ACROSS_DATASETS: InEffectProbe<'static> = InEffectProbe {
-    reading: InEffectReading::Deletion,
-    dataset: None,
-};
-
-/// What gathering has read of the parts of the entities judged, apart from
-/// the deletions it is following up.
-#[derive(Clone, Copy)]
-struct HeldParts<'a> {
-    /// What this broker holds in effect.
-    local: &'a LocalInEffect,
-    /// The parts the sources answered the window query with.
-    window_parts: &'a [&'a TemporalDocument],
-    /// What the sources answered the instance probes with.
-    probed: &'a [ForwardedTemporalEntities],
-}
-
-/// What every part holds in effect when a split query's window opens.
+/// The Scope every part holds in force when a split query's window opens.
 pub(crate) struct InEffectGathering {
     /// What each source answered each probe with.
     pub(crate) sources: Vec<ForwardedTemporalEntities>,
-    /// What this broker holds in effect of every entity judged.
+    /// The Scope this broker holds in force for every entity judged.
     pub(crate) local: LocalInEffect,
 }
 
@@ -89,7 +48,7 @@ pub(crate) fn instance_documents(sources: &[ForwardedTemporalEntities]) -> impl 
 }
 
 /// What gathering parts of the queried entities reads of the request: the
-/// in-effect parts of a split query, and the instances of the entities an
+/// Scope parts of a split query, and the instances of the entities an
 /// aggregated query aggregates here.
 #[derive(Clone, Copy)]
 pub(crate) struct GatheringRequest<'r> {
@@ -122,10 +81,10 @@ impl<'r> GatheringRequest<'r> {
     }
 }
 
-/// Gather what every part holds in effect when the window opens, of every
+/// Gather the Scope every part holds in force when the window opens, of every
 /// entity a source answered the window or a probe with; `None` unless the
-/// query is split, distributed, carries a value, geo or scope filter, and its
-/// window has an instance in effect before it.
+/// query is split, distributed, carries a scope filter, and its window has an
+/// instance in effect before it.
 ///
 /// # Errors
 ///
@@ -139,18 +98,13 @@ pub(crate) async fn gather_in_effect(
     forwarded: Option<&ForwardedHistory>,
 ) -> Result<Option<InEffectGathering>, ProblemResponse> {
     let GatheringRequest { target, query } = request;
-    let window = query.params.window().ok().filter(|window| window.in_effect_start().is_some());
-    let (Some(forwarded), SplitEntities::Split, true, Some(window)) = (forwarded, filtering, carries_split_filters(query.params), window) else {
+    let has_start = query.params.window().is_ok_and(|window| window.in_effect_start().is_some());
+    let (Some(forwarded), SplitEntities::Split, true, true) = (forwarded, filtering, query.params.scope_q.is_some(), has_start) else {
         return Ok(None);
     };
-    let mut probed = forward_in_effect_probes(sources, target, query, &[PLACED_ACROSS_DATASETS]).await?;
-    let mut deletions = forward_in_effect_probes(sources, target, query, &[DELETION_ACROSS_DATASETS]).await?;
-    let window_parts: Vec<&TemporalDocument> = instance_documents(&forwarded.sources).collect();
-    let mut entity_ids: Vec<Identifier> = window_parts
-        .iter()
-        .copied()
+    let probed = forward_in_effect_probes(sources, target, query, &[InEffectReading::Placed, InEffectReading::Deletion]).await?;
+    let mut entity_ids: Vec<Identifier> = instance_documents(&forwarded.sources)
         .chain(instance_documents(&probed))
-        .chain(instance_documents(&deletions))
         .filter_map(TemporalDocument::id)
         .cloned()
         .collect();
@@ -168,80 +122,5 @@ pub(crate) async fn gather_in_effect(
         )
         .await
         .with_instance(query.instance)?;
-    let datasets = follow_up_datasets(&by_source(probed.iter().chain(&deletions)), local.parts().chain(window_parts.iter().copied()));
-    if !datasets.is_empty() {
-        probed.extend(forward_in_effect_probes(sources, target, query, &dataset_probes(&datasets, InEffectReading::Placed)).await?);
-        deletions.extend(forward_in_effect_probes(sources, target, query, &dataset_probes(&datasets, InEffectReading::Deletion)).await?);
-    }
-    let held = HeldParts {
-        local: &local,
-        window_parts: &window_parts,
-        probed: &probed,
-    };
-    let deletions = follow_up_deletions(sources, target, query, window, held, deletions).await?;
-    probed.extend(deletions);
     Ok(Some(InEffectGathering { sources: probed, local }))
-}
-
-/// One probe of `reading` per dataset of `datasets`.
-fn dataset_probes<'a>(datasets: &'a [DatasetSelector], reading: InEffectReading<'static>) -> Vec<InEffectProbe<'a>> {
-    datasets
-        .iter()
-        .map(|dataset| InEffectProbe {
-            reading,
-            dataset: Some(dataset),
-        })
-        .collect()
-}
-
-/// Ask each source that answered a deletion again, for the older deletions of
-/// the stream it answered (clauses 4.5.7 and 4.11), until the streams are
-/// followed to the instance in effect; `deletions` and the answers to the
-/// repeated requests.
-///
-/// # Errors
-///
-/// The failures of [`forward_in_effect_probes`].
-async fn follow_up_deletions(
-    sources: TemporalForwarding<'_>,
-    target: &ContextTarget,
-    query: InEffectRequest<'_>,
-    window: TemporalWindow,
-    held: HeldParts<'_>,
-    deletions: Vec<ForwardedTemporalEntities>,
-) -> Result<Vec<ForwardedTemporalEntities>, ProblemResponse> {
-    let known: Vec<&TemporalDocument> = held
-        .local
-        .parts()
-        .chain(held.window_parts.iter().copied())
-        .chain(instance_documents(held.probed))
-        .collect();
-    follow_earlier_deletions(window, &known, deletions, sourced_documents, async |request| {
-        let probe = InEffectProbe {
-            reading: InEffectReading::EarlierDeletion(request),
-            dataset: None,
-        };
-        forward_in_effect_probes(sources, target, query, &[probe]).await
-    })
-    .await
-}
-
-/// The source `answer` came from and the parts it holds.
-fn sourced_documents(answer: &ForwardedTemporalEntities) -> SourcedDocuments<'_> {
-    SourcedDocuments {
-        source: answer.registration_id.as_ref(),
-        documents: instance_documents(slice::from_ref(answer)).collect(),
-    }
-}
-
-/// The parts `probed` answered, one list per source.
-fn by_source<'a>(probed: impl IntoIterator<Item = &'a ForwardedTemporalEntities>) -> Vec<Vec<&'a TemporalDocument>> {
-    let mut sources: HashMap<Option<&Identifier>, Vec<&TemporalDocument>> = HashMap::new();
-    for answer in probed {
-        sources
-            .entry(answer.registration_id.as_ref())
-            .or_default()
-            .extend(instance_documents(slice::from_ref(answer)));
-    }
-    sources.into_values().collect()
 }

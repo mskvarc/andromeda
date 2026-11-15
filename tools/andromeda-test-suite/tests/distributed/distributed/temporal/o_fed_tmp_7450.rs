@@ -1,4 +1,4 @@
-//! A dataset a per attribute source hid is probed on its own.
+//! A geo query asks a per attribute source for nothing before the window.
 
 use andromeda_test_suite::{
     broker,
@@ -24,13 +24,12 @@ use ngsi_ld::{
 };
 
 /// Pins: under `splitEntities` a between 12:00-13:00 near `geoQ` does not answer a Vehicle whose local dataset d1
-/// location was observed at 10:00 inside the fence when a source applying `lastN` per Attribute answers the probe
-/// with dataset d2 alone and, asked again for d1 by `datasetId`, with d1 observed at 11:00 outside; the follow-up
-/// probes name d1
+/// location was observed at 10:00 inside the fence, and a source applying `lastN` per Attribute is asked for the
+/// window alone: neither a request before the window nor one naming a `datasetId` reaches it
 /// Clause: 5.7.4.4, 4.11, 4.5.5, 6.18.3.2
 #[gtest]
 #[tokio::test]
-async fn o_fed_tmp_7450_a_dataset_a_per_attribute_source_hid_is_probed_on_its_own() -> Result<()> {
+async fn o_fed_tmp_7450_a_geo_query_asks_a_per_attribute_source_for_the_window_alone() -> Result<()> {
     let namespace = Namespace::fresh();
     let broker = broker::front()?;
     let source = ContextSource::start().await?;
@@ -60,7 +59,7 @@ async fn o_fed_tmp_7450_a_dataset_a_per_attribute_source_hid_is_probed_on_its_ow
     // Registrations are deleted when the test ends: a forward to one left behind fails at its endpoint, and the
     // cooldown that opens there holds back a later test's registration naming the same endpoint.
     let _registration_cleanup = Cleanup::of(&broker).registration(&registration_id);
-    let source_evolutions = [TemporalEntity::builder()
+    let source_before = [TemporalEntity::builder()
         .id(vehicle_id.clone())
         .entity_type(vehicle_type.clone())
         .geo_property(
@@ -75,45 +74,24 @@ async fn o_fed_tmp_7450_a_dataset_a_per_attribute_source_hid_is_probed_on_its_ow
             SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/temporal/entities")
                 .query("timerel", "before")
                 .query("timeproperty", "observedAt")
-                .query("datasetId", format!("urn:ngsi-ld:dataset:{namespace}-d1"))
                 .priority(1),
-            source_answer::temporal_entities(&source_evolutions),
+            source_answer::temporal_entities(&source_before),
         )
         .await?;
-    let source_evolutions_2 = [TemporalEntity::builder()
+    let source_window = [TemporalEntity::builder()
         .id(vehicle_id.clone())
         .entity_type(vehicle_type.clone())
         .geo_property(
             "location",
             GeoProperty::builder(Shape::Point(Position::try_new(30.0, 30.0)?))
                 .dataset_id(namespace.dataset_id("dataset", "d2")?)
-                .observed_at("2020-08-01T11:40:00Z".parse()?),
+                .observed_at("2020-08-01T12:20:00Z".parse()?),
         )
         .build()?];
     source
         .answer_when(
-            SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/temporal/entities")
-                .query("timerel", "before")
-                .query("timeproperty", "observedAt")
-                .priority(2),
-            source_answer::temporal_entities(&source_evolutions_2),
-        )
-        .await?;
-    let source_evolutions_3 = [];
-    source
-        .answer_when(
-            SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/temporal/entities")
-                .query("timerel", "before")
-                .query("timeproperty", "deletedAt")
-                .priority(3),
-            source_answer::temporal_entities(&source_evolutions_3),
-        )
-        .await?;
-    let source_evolutions_4 = [];
-    source
-        .answer_when(
             SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/temporal/entities").priority(10),
-            source_answer::temporal_entities(&source_evolutions_4),
+            source_answer::temporal_entities(&source_window),
         )
         .await?;
     let page = broker
@@ -126,9 +104,9 @@ async fn o_fed_tmp_7450_a_dataset_a_per_attribute_source_hid_is_probed_on_its_ow
         .send()
         .await?;
     expect_that!(page.items(), len(eq(0)));
-    let forwarded_request =
-        SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/temporal/entities").query("datasetId", format!("urn:ngsi-ld:dataset:{namespace}-d1"));
-    let forwarded = source.received_matching(&forwarded_request).await?;
-    expect_that!(forwarded, len(eq(2)));
+    let before_the_window = SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/temporal/entities").query("timerel", "before");
+    expect_that!(source.received_matching(&before_the_window).await?, len(eq(0)));
+    let by_dataset = SourceRequest::new(Method::GET, "/a/ngsi-ld/v1/temporal/entities").query("datasetId", format!("urn:ngsi-ld:dataset:{namespace}-d1"));
+    expect_that!(source.received_matching(&by_dataset).await?, len(eq(0)));
     Ok(())
 }

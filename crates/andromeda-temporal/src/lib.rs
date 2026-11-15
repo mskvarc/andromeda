@@ -24,28 +24,17 @@ pub mod delete_by_query;
 /// Evolution write folds against it.
 #[cfg(test)]
 mod deleted_while_folding;
-/// The streams whose older deletions a split query still has to ask its
-/// sources for.
-pub mod deletion_follow_up;
 pub mod error;
 mod evolution_write;
 /// What a distributed temporal write hands to registrations and keeps locally.
 pub mod forwarded_evolution;
 /// How many grouping terms nest the aggregates of a read.
 mod grouping_depth;
-/// The instances the entities a split query's hops reach hold in effect when
-/// its window opens, gathered from every holder.
-mod hop_in_effect;
-/// One entity a split query's hop reaches, as the hop judges it.
-mod hop_target;
 /// The entities a split query's hops reach, read over its window.
 mod hop_targets;
-/// The instances a split query's filters read in effect when its window
+/// The Scope a split query's scope filter reads in force when its window
 /// opens, merged over every part of an entity.
-mod in_effect_entity;
-/// The datasets a split query asks its sources about one by one for the
-/// instance in effect.
-pub mod in_effect_follow_up;
+mod in_effect_scope;
 /// The page sizes an instance-returning temporal read runs under.
 pub mod instance_limits;
 /// Bounded delivery of queued temporal append intents, and the mutation
@@ -56,8 +45,8 @@ mod intent_preparation;
 pub mod intent_retry_policy;
 /// Clause 4.5.23 join over the temporal evolution of Linked Entities.
 pub mod linked;
-/// What this broker holds in effect of each contributed entity when a split
-/// query's window opens.
+/// The Scope this broker holds in force for each contributed entity when a
+/// split query's window opens.
 pub mod local_in_effect;
 /// The parts an entity held in more than one place is aggregated over.
 pub mod merged_parts;

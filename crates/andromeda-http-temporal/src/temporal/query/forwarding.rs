@@ -19,7 +19,7 @@ use andromeda_failure_classification::{
 use andromeda_federation::{
     FederationService,
     expanded_registration_filters::ExpandedRegistrationFilters,
-    in_effect_probe::InEffectProbe,
+    in_effect_probe::InEffectReading,
     instance_budget::InstanceBudget,
     outcome::{ForwardReadOutcome, ForwardedTemporalEntities},
     query_forwarding_error::QueryForwardingError,
@@ -270,9 +270,9 @@ pub(crate) fn forwarding_outcome(
     }
 }
 
-/// Ask every matching context source, once per probe of `probes`, for the
-/// instances the filters of the query read in effect when its window opens
-/// (clauses 4.11 and 5.7.4.4).
+/// Ask every matching context source, once per reading of `readings`, for the
+/// Scope the query's scope filter reads in force when its window opens
+/// (clauses 4.18 and 5.7.4.4).
 ///
 /// Each probe walks every page of every source's answer under a budget of
 /// its own, the size of the window query's (clause 4.12), and a source that
@@ -287,7 +287,7 @@ pub(crate) async fn forward_in_effect_probes(
     sources: TemporalForwarding<'_>,
     target: &ContextTarget,
     request: InEffectRequest<'_>,
-    probes: &[InEffectProbe<'_>],
+    readings: &[InEffectReading],
 ) -> Result<Vec<ForwardedTemporalEntities>, ProblemResponse> {
     let TemporalForwarding {
         forwarding,
@@ -307,7 +307,7 @@ pub(crate) async fn forward_in_effect_probes(
         instance,
     } = request;
     let mut answers = Vec::new();
-    for probe in probes {
+    for reading in readings {
         let budget = ResultBudget::new(forwarding.result_limits());
         let forwarded = forwarding
             .forward_in_effect_probe(
@@ -325,7 +325,7 @@ pub(crate) async fn forward_in_effect_probes(
                     entity_map: EntityMapInUse::from(map_use),
                     paging: SourcePaging::Walk(&budget),
                 },
-                *probe,
+                *reading,
             )
             .await;
         answers.extend(forwarding_outcome(forwarded, instance)?.results);

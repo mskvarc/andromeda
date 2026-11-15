@@ -57,7 +57,7 @@ pub enum ScopeTarget {
         interval: TimeInterval,
         /// The branch whose scope history the probe reads.
         branch: HistoryBranch,
-        /// Which of the events valid within the window count.
+        /// Which of the Scope events valid within the window count.
         reach: WindowReach,
     },
 }
