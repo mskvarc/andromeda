@@ -38,8 +38,12 @@ async fn n_sub_qry_9119_subscriptions_are_listed_from_the_broker_alone_beside_a_
         .notification(NotificationParams::builder(Endpoint::builder(sink.endpoint(1)?).accept(NgsiLdMediaType::Json).build()?).build()?)
         .build()?;
     broker.subscriptions().create(&subscription).send().await?;
-    let listed = broker.with_accept(Accept::any()).subscriptions().query().send().await?;
-    let matching = listed.items().iter().filter(|listed_subscription| listed_subscription.id() == &subscription_id);
+    // The default tenant holds the Subscriptions of every test running beside this one, so the listing is walked to
+    // its last page before the one this test created is looked for in it.
+    let listing = broker.with_accept(Accept::any());
+    let first = listing.subscriptions().query().send().await?;
+    let listed = listing.pages(first).try_collect().await?;
+    let matching = listed.iter().filter(|listed_subscription| listed_subscription.id() == &subscription_id);
     expect_that!(matching.count(), eq(1));
     expect_unreached(&source, &SourceRequest::matching(Method::GET, "/a/.*")).await?;
     Ok(())
