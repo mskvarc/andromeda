@@ -154,6 +154,7 @@ andromeda_architecture_checks::dependency_boundary! {
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-json-literal",
+        "andromeda-ngsi-ld-query-evaluation",
         "andromeda-ngsi-ld-representation",
         "andromeda-postgresql-pool",
     ],

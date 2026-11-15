@@ -1,0 +1,64 @@
+---
+source: crates/andromeda-postgresql-query/src/q_predicate/projection.rs
+---
+SELECT
+  "id"
+FROM
+  "entities"
+WHERE
+  EXISTS (
+    SELECT
+      1
+    FROM
+      "current_attributes" AS "ca"
+    WHERE
+      "ca"."attribute_name_key" = $1
+      AND (
+        "ca"."expires_at" IS NULL
+        OR "ca"."expires_at" > NOW()
+      )
+      AND (
+        "ca"."sub_attributes" IS NOT NULL
+        AND (
+          EXISTS (
+            SELECT
+              1
+            FROM
+              UNNEST("ca"."sub_attributes")
+            WITH
+            ORDINALITY AS "l0"
+            JOIN UNNEST("ca"."sub_attributes")
+            WITH
+            ORDINALITY AS "l1" ON "l1"."parent" = "l0"."ordinality"
+            JOIN UNNEST("ca"."sub_attributes") AS "l2" ON "l2"."parent" = "l1"."ordinality"
+            WHERE
+              "l0"."parent" = $2
+              AND (
+                "l0"."attribute_name_key" = $3
+                AND (
+                  "l0"."expires_at" IS NULL
+                  OR "l0"."expires_at" > NOW()
+                )
+                AND "l1"."attribute_name_key" = $4
+                AND (
+                  "l1"."expires_at" IS NULL
+                  OR "l1"."expires_at" > NOW()
+                )
+                AND "l2"."attribute_name_key" = $5
+                AND (
+                  "l2"."expires_at" IS NULL
+                  OR "l2"."expires_at" > NOW()
+                )
+              )
+              AND "l2"."observed_at" > $6
+          )
+        )
+      )
+      AND "ca"."entity_key" = "entities"."entity_key" OFFSET 0
+  )
+1: Int 12
+2: BigInt 0
+3: Int 16
+4: Int 17
+5: Int 18
+6: ChronoDateTimeUtc '2024-01-01 00:00:00.000000 +00:00'

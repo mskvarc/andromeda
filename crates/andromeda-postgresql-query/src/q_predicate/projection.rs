@@ -1053,6 +1053,49 @@ mod tests {
         assert_statement_snapshot!("projection-nested-hops-number-their-aliases-by-depth", statement);
     }
 
+    /// Each hop's guard tests the types of the entity that hop reaches, at its
+    /// own depth (clause 4.9).
+    #[test]
+    fn a_two_level_hop_guards_each_linked_entity_by_its_own_types() {
+        let statement = render(&format!(
+            "{}{{{}:{}{{{}:{}}}}}==\"north\"",
+            quoted("https://example.com/outer"),
+            quoted("https://example.com/Building"),
+            quoted("https://example.com/inner"),
+            quoted("https://example.com/Store"),
+            quoted("https://example.com/zone")
+        ));
+        assert_statement_snapshot!("projection-a-two-level-hop-guards-each-linked-entity-by-its-own-types", statement);
+    }
+
+    /// The terms of a disjunction that each read one attribute's rows share one
+    /// probe of the instance rows, so the planner can drive it from one bitmap
+    /// over every arm; the members of a structured value each arm also reads
+    /// are scanned inside it.
+    #[test]
+    fn a_disjunction_of_three_plain_terms_renders_one_probe() {
+        let statement = render(&format!(
+            "{}>50|\"https://example.com/brandName\"==\"Mercedes\"|\"https://example.com/active\"==true",
+            quoted(SPEED)
+        ));
+        let (sql, _) = statement.build(sea_query::PostgresQueryBuilder);
+        assert_eq!(sql.matches("FROM \"current_attributes\"").count(), 1, "{sql}");
+        assert_statement_snapshot!("projection-a-disjunction-of-three-plain-terms-renders-one-probe", statement);
+    }
+
+    /// A chain of three sub-attributes ending on an instance member compares
+    /// the member field of the last element, rechecked through the tree.
+    #[test]
+    fn a_sub_attribute_chain_of_depth_three_ends_on_the_member_of_its_last_element() {
+        let statement = render(
+            "\"https://example.com/temperature\".\"https://example.com/a\".\"https://example.com/b\".\"https://example.com/c\".\"https://uri.etsi.org/ngsi-ld/observedAt\">2024-01-01T00:00:00Z",
+        );
+        assert_statement_snapshot!(
+            "projection-a-sub-attribute-chain-of-depth-three-ends-on-the-member-of-its-last-element",
+            statement
+        );
+    }
+
     #[test]
     fn a_bare_existence_through_a_hop_probes_the_rows_of_the_linked_entity() {
         let statement = render(&format!("{}{{{}}}", quoted(IS_PARKED_IN), quoted(CATEGORY)));
